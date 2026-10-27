@@ -3,7 +3,7 @@ import { createRng } from '@/sim/rng';
 import { layoutToAscii } from './ascii';
 import { GENERATOR_VERSION, generateStore } from './generateStore';
 import { LOT_RANGES, pickLot } from './lots';
-import { FRONT_WALL_Y, type LotSpec } from './types';
+import { FRONT_WALL_Y, type LotSpec, type StoreLayout } from './types';
 import { isWalkable, validateLayout } from './validate';
 
 // Opakowanie zostawia createRng bez zmian, ale pozwala policzyć próby generatora (podseedy `store:try:n`).
@@ -11,6 +11,12 @@ vi.mock('@/sim/rng', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/sim/rng')>();
   return { ...actual, createRng: vi.fn(actual.createRng) };
 });
+
+/** Kolumna ściany bocznej bliższej wejścia (0 albo width − 1). */
+const nearerSideColumn = (l: StoreLayout): number => {
+  const xs = l.entrance.map((e) => e.x);
+  return Math.min(...xs) <= l.width - 1 - Math.max(...xs) ? 0 : l.width - 1;
+};
 
 const triedSeeds = (): string[] =>
   vi.mocked(createRng).mock.calls.map(([seed]) => seed).filter((seed) => seed.includes(':store:try:'));
@@ -73,12 +79,14 @@ describe('generateStore', () => {
       expect(midWallY).toBe(5 + lot.salesDepth);
       expect(l.cells).toHaveLength(width * depth);
       const at = (x: number, y: number) => l.cells[y * width + x];
+      const cornerX = lot.corner ? nearerSideColumn(l) : -1;   // w lokalu narożnym druga witryna, inaczej nie ma jej wcale
       for (let y = 0; y < depth; y++) {
         for (let x = 0; x < width; x++) {
           const edge = x === 0 || x === width - 1;
           const t = at(x, y);
           if (y < FRONT_WALL_Y) expect(t).toBe('outside');
           else if (y === FRONT_WALL_Y) expect(edge ? t === 'wall' : ['window', 'entrance'].includes(t!)).toBe(true);
+          else if (x === cornerX && y < midWallY) expect(t).toBe('window');
           else if (edge || y === depth - 1) expect(t).toBe('wall');
           else if (y === midWallY) expect(['wall', 'fixture']).toContain(t);
           else if (y > midWallY) expect(t).toBe('backroom');
@@ -96,6 +104,44 @@ describe('generateStore', () => {
         expect(c.y === 1 || c.y === 2).toBe(true);
         expect(isWalkable(l, c.x, c.y)).toBe(true);
         expect(entranceXs.every((ex) => Math.abs(c.x - ex) > 1)).toBe(true);
+      }
+    }
+  });
+
+  it('lokal narożny: druga witryna w bocznej ścianie bliższej wejścia', () => {
+    const sides = new Set<string>();
+    for (let i = 0; i < 40; i++) {
+      const lot: LotSpec = { kind: 'kamienica', interiorWidth: 12 + (i % 7), salesDepth: 12 + (i % 5), backroomDepth: 3 + (i % 2), corner: true };
+      const l = generateStore(`narożnik-${i}`, lot);
+      const { width, depth, midWallY } = l;
+      expect(validateLayout(l), `narożnik-${i}\n${layoutToAscii(l)}`).toEqual({ ok: true, errors: [] });
+
+      const column = (x: number) => Array.from({ length: depth }, (_, y) => l.cells[y * width + x]);
+      const salesRows = (x: number) => column(x).slice(FRONT_WALL_Y + 1, midWallY);
+      const cornerX = [0, width - 1].filter((x) => salesRows(x).every((t) => t === 'window'));
+      expect(cornerX).toHaveLength(1);                                  // dokładnie jedna boczna witryna
+      const [corner] = cornerX as [number];
+      const opposite = corner === 0 ? width - 1 : 0;
+      expect(salesRows(opposite).every((t) => t === 'wall')).toBe(true);
+      // poza wierszami sali kolumna rogu zostaje ścianą (róg ściany frontowej, ściana środkowa, zaplecze, tył)
+      expect(column(corner).filter((_, y) => y === FRONT_WALL_Y || y >= midWallY).every((t) => t === 'wall')).toBe(true);
+
+      // wejście jest po stronie rogu: bliżej niego niż przeciwległej ściany i najwyżej 6 kratek od ściany rogu
+      const distance = (x: number) => Math.min(...l.entrance.map((e) => Math.abs(e.x - x)));
+      expect(distance(corner)).toBeLessThan(distance(opposite));
+      expect(distance(corner)).toBeLessThanOrEqual(6);
+      sides.add(corner === 0 ? 'W' : 'E');
+    }
+    expect(sides).toEqual(new Set(['W', 'E']));                         // odbicie daje oba warianty
+  });
+
+  it('lokal bez narożnika nie ma bocznych witryn', () => {
+    for (let i = 0; i < 20; i++) {
+      const lot: LotSpec = { kind: 'blok', interiorWidth: 16 + (i % 5), salesDepth: 12 + (i % 5), backroomDepth: 4 + (i % 3), corner: false };
+      const l = generateStore(`bez-narożnika-${i}`, lot);
+      for (let y = FRONT_WALL_Y + 1; y < l.depth; y++) {
+        expect(l.cells[y * l.width]).toBe('wall');
+        expect(l.cells[y * l.width + l.width - 1]).toBe('wall');
       }
     }
   });

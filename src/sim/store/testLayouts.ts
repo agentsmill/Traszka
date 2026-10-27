@@ -1,14 +1,8 @@
 // Pomocnik testów: ręcznie złożony, poprawny sklep (bez generatora) oraz funkcje psujące
 // dokładnie jedną regułę walidacji. Nie jest importowany przez kod gry.
 import type { Cell } from '@/sim/grid';
-import {
-  FRONT_WALL_Y,
-  SIDEWALK_ROWS,
-  type CellType,
-  type Fixture,
-  type LotSpec,
-  type StoreLayout,
-} from './types';
+import { palletZone, spawnPoints, storeDimensions, typeCells } from './assemble';
+import { FRONT_WALL_Y, type Fixture, type LotSpec, type StoreLayout } from './types';
 
 export interface LayoutParts {
   lot: LotSpec;
@@ -51,40 +45,10 @@ export function validParts(): LayoutParts {
   };
 }
 
-/** Składa pełny StoreLayout: ściany, witryna, wejścia, podłoga, zaplecze, a potem kratki mebli. */
+/** Składa pełny StoreLayout produkcyjnym kodem siatki (assemble.ts), bez generatora. */
 export function layoutFromParts(parts: LayoutParts): StoreLayout {
   const { lot } = parts;
-  const width = lot.interiorWidth + 2;
-  const depth = SIDEWALK_ROWS + 1 + lot.salesDepth + 1 + lot.backroomDepth + 1;
-  const midWallY = FRONT_WALL_Y + 1 + lot.salesDepth;
-
-  const cells: CellType[] = [];
-  for (let y = 0; y < depth; y++) {
-    for (let x = 0; x < width; x++) {
-      let t: CellType;
-      if (y < SIDEWALK_ROWS) t = 'outside';
-      else if (y === FRONT_WALL_Y) t = x === 0 || x === width - 1 ? 'wall' : 'window';
-      else if (x === 0 || x === width - 1 || y === midWallY || y === depth - 1) t = 'wall';
-      else t = y < midWallY ? 'floor' : 'backroom';
-      cells.push(t);
-    }
-  }
-  for (const e of parts.entrance) cells[e.y * width + e.x] = 'entrance';
-  for (const f of parts.fixtures) {
-    for (let dy = 0; dy < f.d; dy++) {
-      for (let dx = 0; dx < f.w; dx++) cells[(f.y + dy) * width + f.x + dx] = 'fixture';
-    }
-  }
-
-  // Paleta: wiersze 1–2 chodnika, bez pasa przed wejściem (x wejścia ±1).
-  const entranceXs = parts.entrance.map((e) => e.x);
-  const palletZoneOutside: Cell[] = [];
-  for (let y = 1; y <= 2; y++) {
-    for (let x = 1; x < width - 1; x++) {
-      if (entranceXs.every((ex) => Math.abs(x - ex) > 1)) palletZoneOutside.push({ x, y });
-    }
-  }
-
+  const { width, depth, midWallY } = storeDimensions(lot);
   return {
     generatorVersion: 0,
     seed: 'test-valid',
@@ -92,12 +56,12 @@ export function layoutFromParts(parts: LayoutParts): StoreLayout {
     width,
     depth,
     midWallY,
-    cells,
+    cells: typeCells(lot, parts.entrance, parts.fixtures),
     fixtures: parts.fixtures,
     entrance: parts.entrance,
     checkoutQueue: parts.checkoutQueue,
-    palletZoneOutside,
-    spawnPoints: [{ x: 0, y: 1 }, { x: width - 1, y: 1 }],
+    palletZoneOutside: palletZone(width, parts.entrance),
+    spawnPoints: spawnPoints(width),
   };
 }
 

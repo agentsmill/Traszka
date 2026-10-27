@@ -1,10 +1,9 @@
 import type { Cell } from '@/sim/grid';
 import { createRng, subSeed, type Rng } from '@/sim/rng';
+import { palletZone, spawnPoints, storeDimensions, typeCells } from './assemble';
 import { pickLot } from './lots';
 import {
   FRONT_WALL_Y,
-  SIDEWALK_ROWS,
-  type CellType,
   type Facing,
   type Fixture,
   type FixtureKind,
@@ -199,11 +198,11 @@ interface Build {
 
 function newBuild(lot: LotSpec, rng: Rng): Build {
   const gap = rng.chance(STAFF_GAP_2_CHANCE) && lot.interiorWidth >= STAFF_GAP_2_MIN_WIDTH ? 2 : 1;
-  const midWallY = SALES_TOP + lot.salesDepth;
+  const { width, midWallY } = storeDimensions(lot);
   return {
     rng,
     lot,
-    floor: new Floor(lot.interiorWidth + 2, midWallY),
+    floor: new Floor(width, midWallY),
     block: planBlock(rng, 2 + gap),           // x=1 regał, potem pas personelu, potem kasa
     mirror: rng.chance(0.5),
     entranceX: 0,
@@ -213,7 +212,7 @@ function newBuild(lot: LotSpec, rng: Rng): Build {
   };
 }
 
-/** Krok 1. Wejście (w lokalu narożnym tuż przy rogu z witryną, inaczej bliżej boku z kasą), drzwi na zaplecze, korytarz od wejścia. */
+/** Krok 1. Wejście (w lokalu narożnym przy rogu z drugą witryną, inaczej bliżej boku z kasą), drzwi na zaplecze, korytarz od wejścia. */
 function buildShell(b: Build): void {
   const { floor, rng, block, lot } = b;
   const checkout = blockItem(block, 'checkout');
@@ -372,32 +371,14 @@ function buildQueue(b: Build): void {
   b.queue = sequence(0, length).map((i) => ({ x: b.queueStart.x, y: b.queueStart.y + i }));
 }
 
-/** Składa ostateczny układ: odbija go (jeśli wylosowano), typuje kratki siatki i dolicza strefę palet. */
+/** Składa ostateczny układ: odbija go (jeśli wylosowano), a siatkę, strefę palet (krok 10) i punkty pojawiania się daje assemble.ts. */
 function assemble(seed: string, lot: LotSpec, b: Build): StoreLayout {
-  const { floor } = b;
-  const width = floor.width;
-  const midWallY = floor.midWallY;
-  const depth = SIDEWALK_ROWS + 1 + lot.salesDepth + 1 + lot.backroomDepth + 1;
+  const { width, depth, midWallY } = storeDimensions(lot);
   const flip = (x: number, w = 1): number => (b.mirror ? width - x - w : x);
 
-  const fixtures = floor.fixtures.map((f): Fixture =>
+  const fixtures = b.floor.fixtures.map((f): Fixture =>
     b.mirror ? { ...f, x: flip(f.x, f.w), facing: MIRRORED[f.facing] } : f);
   const entrance = [b.entranceX, b.entranceX + 1].map((x) => ({ x: flip(x), y: FRONT_WALL_Y })).sort((p, q) => p.x - q.x);
-  const checkoutQueue = b.queue.map((c) => ({ x: flip(c.x), y: c.y }));
-
-  const cells: CellType[] = [];
-  for (let y = 0; y < depth; y++) {
-    for (let x = 0; x < width; x++) {
-      if (y < SIDEWALK_ROWS) cells.push('outside');
-      else if (y === FRONT_WALL_Y) cells.push(x === 0 || x === width - 1 ? 'wall' : 'window');
-      else if (x === 0 || x === width - 1 || y === midWallY || y === depth - 1) cells.push('wall');
-      else cells.push(y < midWallY ? 'floor' : 'backroom');
-    }
-  }
-  for (const e of entrance) cells[e.y * width + e.x] = 'entrance';
-  for (const f of fixtures) {
-    for (let dy = 0; dy < f.d; dy++) for (let dx = 0; dx < f.w; dx++) cells[(f.y + dy) * width + f.x + dx] = 'fixture';
-  }
 
   return {
     generatorVersion: GENERATOR_VERSION,
@@ -406,24 +387,13 @@ function assemble(seed: string, lot: LotSpec, b: Build): StoreLayout {
     width,
     depth,
     midWallY,
-    cells,
+    cells: typeCells(lot, entrance, fixtures),
     fixtures,
     entrance,
-    checkoutQueue,
+    checkoutQueue: b.queue.map((c) => ({ x: flip(c.x), y: c.y })),
     palletZoneOutside: palletZone(width, entrance),
-    spawnPoints: [{ x: 0, y: 1 }, { x: width - 1, y: 1 }],
+    spawnPoints: spawnPoints(width),
   };
-}
-
-/** Krok 10. Chodnik w wierszach 1–2, bez pasa przed wejściem (x wejścia ±1). */
-function palletZone(width: number, entrance: Cell[]): Cell[] {
-  const out: Cell[] = [];
-  for (let y = 1; y <= 2; y++) {
-    for (let x = 1; x < width - 1; x++) {
-      if (entrance.every((e) => Math.abs(x - e.x) > 1)) out.push({ x, y });
-    }
-  }
-  return out;
 }
 
 function buildAttempt(seed: string, lot: LotSpec, rng: Rng): StoreLayout | null {

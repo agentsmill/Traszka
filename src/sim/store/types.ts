@@ -21,6 +21,8 @@ export const FRONT_WALL_Y = 4;       // ściana frontowa z witryną i wejściem
  * Siatka sklepu. y = 0 to brzeg od strony ulicy. Wiersze 0..3 chodnik, wiersz 4 ściana frontowa,
  * 5..midWallY−1 sala sprzedaży, midWallY ściana z drzwiami na zaplecze, potem zaplecze,
  * ostatni wiersz to ściana tylna. Kolumny 0 i width−1 są ścianami bocznymi (od wiersza 4 w dół).
+ * Wyjątek: w lokalu narożnym (`lot.corner`) boczna ściana bliższa wejścia jest drugą witryną, więc jej kratki w wierszach
+ * sali sprzedaży (FRONT_WALL_Y + 1 .. midWallY − 1) mają typ 'window', reszta tej kolumny i cała druga kolumna to 'wall'.
  * Kratki zajęte przez meble mają w `cells` typ 'fixture'.
  */
 export interface StoreLayout {
