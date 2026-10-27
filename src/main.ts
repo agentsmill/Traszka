@@ -6,6 +6,7 @@ import { BEVEL, PALETTE, material } from '@/render/style';
 import { cellToWorld } from '@/render/coords';
 import { buildStore } from '@/render/store/buildStore';
 import { fillShelves } from '@/render/store/products';
+import { buildStreet, type StreetView } from '@/render/street/buildStreet';
 import { generateStore } from '@/sim/store/generateStore';
 import { CELL_SIZE_M } from '@/sim/grid';
 
@@ -88,8 +89,8 @@ function startTestScene(canvas: HTMLCanvasElement, preset: QualityPresetId): voi
 }
 
 /**
- * Podgląd sklepu `?seed=<seed>`: generateStore → buildStore. Sterowanie jak w scenie próbnej plus N dzień/noc,
- * X widok z zewnątrz (pełne ściany i szyld); przekrój (cutaway) podąża za obrotem kamery.
+ * Podgląd sklepu `?seed=<seed>`: generateStore → buildStore → buildStreet. Sterowanie jak w scenie próbnej plus N dzień/noc,
+ * X widok z zewnątrz (pełne ściany, szyld i pełna zabudowa ulicy); przekrój (cutaway) podąża za obrotem kamery.
  * Parametry do zrzutów: `yaw` (0–3), `night=1`, `ext=1`, `zoom` (wysokość widoku w m), `q` (preset jakości).
  */
 function startStoreScene(canvas: HTMLCanvasElement, seed: string, preset: QualityPresetId, params: URLSearchParams): void {
@@ -105,6 +106,10 @@ function startStoreScene(canvas: HTMLCanvasElement, seed: string, preset: Qualit
   const goods = fillShelves(view, seed);
   view.root.add(goods); // view.dispose() zwalnia też bufory instancji towaru
   ctx.scene.add(view.root);
+
+  // ulica dochodzi asynchronicznie (modele GLB); przed jej gotowością sklep jest już widoczny
+  let street: StreetView | null = null;
+  let disposed = false;
 
   const lo = cellToWorld(layout, 0, 0);
   const hi = cellToWorld(layout, layout.width - 1, layout.depth - 1);
@@ -129,11 +134,29 @@ function startStoreScene(canvas: HTMLCanvasElement, seed: string, preset: Qualit
       night = !night;
       ctx.setTimeOfDay(night ? 'night' : 'day');
       view.setTimeOfDay(night ? 'night' : 'day');
+      street?.setTimeOfDay(night ? 'night' : 'day');
     },
-    x: () => view.setExteriorMode((exterior = !exterior)),
+    x: () => {
+      view.setExteriorMode((exterior = !exterior));
+      street?.setBuildingCutaway(!exterior);
+    },
   });
   startRenderLoop(ctx);
-  Object.assign(window, { traszkaStore: { ctx, view, layout, goods } });
+  // zmiana seeda: zwolnić ulicę razem ze sklepem
+  const dispose = (): void => {
+    disposed = true;
+    street?.dispose();
+    view.dispose();
+  };
+  const handle = { ctx, view, layout, goods, street: null as StreetView | null, dispose };
+  Object.assign(window, { traszkaStore: handle });
+  void buildStreet(layout, seed).then((built) => {
+    if (disposed) { built.dispose(); return; }
+    street = handle.street = built;
+    built.setBuildingCutaway(!exterior);
+    built.setTimeOfDay(night ? 'night' : 'day');
+    ctx.scene.add(built.root);
+  }).catch((error: unknown) => console.error('Nie udało się zbudować ulicy.', error));
 }
 
 const params = new URLSearchParams(location.search);
