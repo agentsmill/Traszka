@@ -7,6 +7,7 @@ import { cellToWorld } from '@/render/coords';
 import { buildStore } from '@/render/store/buildStore';
 import { fillShelves } from '@/render/store/products';
 import { buildStreet, type StreetView } from '@/render/street/buildStreet';
+import { startCharTestPage } from '@/render/characters/charTestPage';
 import { generateStore } from '@/sim/store/generateStore';
 import { CELL_SIZE_M } from '@/sim/grid';
 
@@ -162,7 +163,10 @@ function startStoreScene(canvas: HTMLCanvasElement, seed: string, preset: Qualit
 const params = new URLSearchParams(location.search);
 const canvas = document.getElementById('scene') as HTMLCanvasElement;
 
-if (params.get('scene') === 'test') {
+if (params.get('charTest') === '1') {
+  const q = params.get('q');
+  startCharTestPage(canvas, q && q in QUALITY ? (q as QualityPresetId) : pickInitialPreset(detectDeviceCaps()), params);
+} else if (params.get('scene') === 'test') {
   const q = params.get('q');
   startTestScene(canvas, q && q in QUALITY ? (q as QualityPresetId) : pickInitialPreset(detectDeviceCaps()));
 } else if (params.get('seed')) {
