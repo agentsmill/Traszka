@@ -436,7 +436,8 @@ function placeProps(layout: StoreLayout, rng: Rng, lay: Layout, extent: [number,
     if (!blocked(x, zones, 2.6)) { van = { x, z: lay.zr0 - 1.3, rotY: Math.PI / 2 }; break; }
   }
 
-  // ławka i kosz w wierszu 0 siatki (przy krawężniku), przed sklepem albo bramą, z dala od wejścia i od siebie
+  // ławka i kosz w wierszu 0 siatki (przy krawężniku), przed sklepem albo bramą, z dala od wejścia i od siebie.
+  // Wiersz 0 jest zablokowany dla klientów w buildNav (src/sim/crowd/crowd.ts), więc nikt przez nie nie przechodzi.
   const entranceX = layout.entrance.reduce((sum, c) => sum + cellToWorld(layout, c.x, c.y).x, 0) / layout.entrance.length;
   const spot = (clearance: number, avoid: number | null, fallback: number): number => {
     for (let tries = 0; tries < 80; tries++) {

@@ -376,3 +376,14 @@ describe('wydajność', () => {
     expect(elapsed).toBeLessThan(200);
   });
 });
+
+describe('pas mebli ulicznych', () => {
+  it('żaden klient nie wchodzi w wiersz 0 chodnika (ławka i kosz stoją tam w buildStreet)', () => {
+    for (const seed of SEEDS) {
+      const sim = makeSim(seed, { targetCount: 12, spawnPerMinute: 30 });
+      let lowest = Infinity;
+      run(sim, 120, () => { for (const a of sim.crowd.agents) lowest = Math.min(lowest, Math.floor(a.y)); });
+      expect(lowest, seed).toBeGreaterThanOrEqual(1);
+    }
+  });
+});

@@ -57,6 +57,8 @@ describe('advanceClock', () => {
     const clock = { acc: 0.01 };
     expect(advanceClock(clock, -1, 1)).toBe(0);
     expect(advanceClock(clock, Number.NaN, 1)).toBe(0);
+    expect(advanceClock(clock, Number.POSITIVE_INFINITY, 8)).toBe(0);
+    expect(advanceClock(clock, 1 / 30, Number.NaN as unknown as 1)).toBe(0);
     expect(clock.acc).toBe(0.01);
   });
 });

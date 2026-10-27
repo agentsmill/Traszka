@@ -17,8 +17,8 @@ const STEP_EPSILON = 1e-9;                // s; błąd zaokrągleń przy porówn
  * przepada (symulacja zwalnia zamiast gonić w nieskończoność). Pauza (prędkość 0) nie zmienia `acc`.
  */
 export function advanceClock(clock: { acc: number }, frameDt: number, speed: Speed): number {
-  if (speed === 0) return 0;
-  if (frameDt > 0) clock.acc += Math.min(frameDt, MAX_FRAME_DT) * speed;   // NaN i ujemne dt nic nie dodają
+  if (!(speed > 0)) return 0;                                                 // pauza; NaN z UI nie zatruwa acc
+  if (Number.isFinite(frameDt) && frameDt > 0) clock.acc += Math.min(frameDt, MAX_FRAME_DT) * speed;   // NaN, ±∞ i ujemne dt nic nie dodają
 
   let steps = 0;
   while (clock.acc >= SIM_STEP - STEP_EPSILON && steps < MAX_STEPS_PER_FRAME) {

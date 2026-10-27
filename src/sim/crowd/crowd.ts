@@ -169,6 +169,8 @@ function buildNav(layout: StoreLayout): Nav {
     for (let x = 0; x < width; x++) blocked[y * width + x] = isWalkable(layout, x, y) ? 0 : 1;
   }
   for (const c of staffStripCells(layout)) blocked[at(c)] = 1;
+  // wiersz 0 chodnika to pas mebli ulicznych (ławka, kosz, latarnie, drzewa z buildStreet): klienci tam nie wchodzą
+  for (let x = 0; x < width; x++) blocked[x] = 1;
 
   const queueIndex = new Int16Array(width * height).fill(-1);
   layout.checkoutQueue.forEach((c, i) => { queueIndex[at(c)] = i; });
