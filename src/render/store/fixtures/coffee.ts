@@ -13,7 +13,7 @@ export function buildCoffee(f: Fixture): Object3D {
   const metal = painted(FIX.metal);
   const TOP = 0.89;
 
-  box(inner, [L - 0.06, 0.1, D - 0.06], [0, 0, 0], frame, { name: 'plinth' });
+  box(inner, [L - 0.14, 0.1, D - 0.12], [0, 0, 0], frame, { name: 'plinth' });
   box(inner, [L - 0.08, 0.72, D - 0.06], [0, 0.1, 0], matte(BRAND.green), { name: 'body' });
   box(inner, [L, 0.07, D], [0, 0.82, 0], woodMat(FIX.wood), { name: 'counterTop', seg: 3, radius: 0.032 });
   plateSign(inner, 'Kawa 3 zł\nKubek 4 zł', [0.34, 0.085], [0, 0.45, (D - 0.06) / 2 + 0.001], 1);

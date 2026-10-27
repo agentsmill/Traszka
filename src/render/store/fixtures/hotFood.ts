@@ -16,7 +16,7 @@ export function buildHotFood(f: Fixture): Object3D {
   const metal = painted(FIX.metal);
   const TOP = 0.89;
 
-  box(inner, [L - 0.06, 0.1, D - 0.06], [0, 0, 0], frame, { name: 'plinth' });
+  box(inner, [L - 0.14, 0.1, D - 0.12], [0, 0, 0], frame, { name: 'plinth' });
   box(inner, [L - 0.08, 0.72, D - 0.06], [0, 0.1, 0], matte(BRAND.green), { name: 'body' });
   box(inner, [L - 0.12, 0.05, 0.012], [0, 0.42, (D - 0.06) / 2 + 0.006], gloss(BRAND.orange), { name: 'stripe' });
   box(inner, [L, 0.07, D], [0, 0.82, 0], woodMat(FIX.wood), { name: 'counterTop', seg: 3, radius: 0.032 });
