@@ -1,5 +1,6 @@
 import { Group, MathUtils, Mesh, type BufferGeometry, type Material } from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import { BENCH_CROWD, BENCH_SEED, createBenchSession } from '@/bench/bench';
 import { createRenderContext, type RenderContext } from '@/render/renderer';
 import { ISO_PITCH_DEG } from '@/render/cameraRig';
 import { QUALITY, detectDeviceCaps, pickInitialPreset, type QualityPresetId } from '@/render/quality';
@@ -170,6 +171,10 @@ function writeSeedToUrl(seed: string): void {
  * Parametry do zrzutów: `yaw` (0–3), `night=1`, `ext=1`, `zoom` (wysokość widoku w m), `q` (preset jakości), `pack`
  * (`ubc` zamiast domyślnych postaci `modular`), `perf=1` (nakładka wydajności od startu).
  *
+ * `bench=1` to benchmark (src/bench): seed `bench`, 60 postaci, stała kamera, bez sterowania. Parametry `seed`, `yaw`, `zoom`,
+ * `night` i `ext` są wtedy ignorowane, żeby wyniki były porównywalne. Bieg liczy klatki w tej samej pętli co gra
+ * (te same liczniki rysowania), a `quick=1` skraca go do próbnego uruchomienia.
+ *
  * Symulacja idzie stałym krokiem SIM_STEP (advanceClock), render interpoluje pozycje współczynnikiem acc / SIM_STEP.
  * Prędkość to `world.speed`; sklep i tłum startują, gdy postacie są gotowe (do tego czasu symulacja stoi).
  *
@@ -195,8 +200,9 @@ function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: st
   crowdRoot.name = 'crowd';
   ctx.scene.add(crowdRoot);
 
-  let tod: TimeOfDay = params.get('night') === '1' ? 'night' : 'day';
-  let exterior = params.get('ext') === '1';
+  const benchMode = params.get('bench') === '1';
+  let tod: TimeOfDay = !benchMode && params.get('night') === '1' ? 'night' : 'day';
+  let exterior = !benchMode && params.get('ext') === '1';
   let factory: CharacterFactory | null = null;
   let loaded: Loaded | null = null;
   let generation = 0;               // odrzuca wyniki asynchroniczne, które wróciły po zmianie seeda
@@ -216,7 +222,7 @@ function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: st
     unload();
     const mine = generation;
 
-    const world = createWorld(seed);
+    const world = createWorld(seed, benchMode ? BENCH_CROWD : undefined);
     world.speed = speed;
     const { layout } = world;
     const view = buildStore(layout);
@@ -251,9 +257,9 @@ function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: st
   }
 
   const zoom = Number(params.get('zoom'));
-  if (zoom > 0) ctx.rig.zoomBy(14 / zoom);
+  if (!benchMode && zoom > 0) ctx.rig.zoomBy(14 / zoom);
   const yaw = Number(params.get('yaw'));
-  if (yaw >= 1 && yaw <= 3) ctx.rig.yawIndex = yaw as 1 | 2 | 3;
+  if (!benchMode && yaw >= 1 && yaw <= 3) ctx.rig.yawIndex = yaw as 1 | 2 | 3;
   ctx.setTimeOfDay(tod);
   ctx.rig.onChange(() => loaded?.view.setCutaway(ctx.rig.yawIndex));
   load(initialSeed);
@@ -287,28 +293,35 @@ function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: st
     randomize: () => setSeed(randomSeed()),
   };
 
-  bindControls(ctx, {
-    setPreset: (id) => controls.setPreset(id),
-    extra: {
-      n: () => controls.setTimeOfDay(tod === 'day' ? 'night' : 'day'),
-      x: () => {
-        exterior = !exterior;
-        loaded?.view.setExteriorMode(exterior);
-        loaded?.street?.setBuildingCutaway(!exterior);
+  // W benchmarku nic nie steruje kamerą ani presetem: wynik zależy tylko od biegu.
+  if (!benchMode) {
+    bindControls(ctx, {
+      setPreset: (id) => controls.setPreset(id),
+      extra: {
+        n: () => controls.setTimeOfDay(tod === 'day' ? 'night' : 'day'),
+        x: () => {
+          exterior = !exterior;
+          loaded?.view.setExteriorMode(exterior);
+          loaded?.street?.setBuildingCutaway(!exterior);
+        },
+        r: () => controls.randomize(),
+        F3: () => { ui.showPerf.value = !ui.showPerf.value; },
       },
-      r: () => controls.randomize(),
-      F3: () => { ui.showPerf.value = !ui.showPerf.value; },
-    },
-  });
+    });
+  }
 
   void createCharacterFactory(pack).then((created) => {
     factory = created;
     if (loaded && !loaded.crowdView) loaded.crowdView = new CrowdView(created, loaded.world.layout, crowdRoot, pack);
   }).catch((error: unknown) => console.error('Nie udało się wczytać postaci.', error));
 
+  const bench = benchMode
+    ? createBenchSession(ctx, crowdRoot, { quick: params.get('quick') === '1', onProgress: (progress) => { ui.bench.value = progress; } })
+    : null;
   const meter = new FrameMeter();
   let last: number | null = null;
   const frame = (now: number): void => {
+    const cpuStart = performance.now();
     ctx.renderer.info.reset();
     const frameDt = last === null ? 0 : Math.max(0, (now - last) / 1000);
     last = now;
@@ -318,9 +331,15 @@ function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: st
       for (let i = 0; i < steps; i++) stepCrowd(world.crowd, world.layout, SIM_STEP);
       crowdView.sync(world.crowd, clockAlpha(clock), Math.min(frameDt, MAX_FRAME_DT) * world.speed);
     }
+    bench?.beforeRender();
     ctx.render();
-    const sample = meter.tick(now, ctx.renderer.info.render.calls, ctx.renderer.info.render.triangles);
+    const { calls, triangles } = ctx.renderer.info.render;
+    const sample = meter.tick(now, calls, triangles);
     if (sample) ui.perf.value = sample;
+    bench?.afterRender(now, {
+      calls, tris: triangles, agents: loaded?.world.crowd.agents.length ?? 0, ready: !!loaded?.crowdView && !!loaded.street,
+      cpuMs: performance.now() - cpuStart,
+    });
     requestAnimationFrame(frame);
   };
   requestAnimationFrame(frame);
@@ -338,7 +357,7 @@ function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: st
     },
   });
 
-  renderUi(root, controls);   // sterowanie działa od tej chwili
+  if (!benchMode) renderUi(root, controls);   // sterowanie działa od tej chwili; benchmark zostaje z samą nakładką wyników
 }
 
 const params = new URLSearchParams(location.search);
@@ -353,7 +372,7 @@ if (params.get('charTest') === '1') {
   startTestScene(canvas, q && q in QUALITY ? (q as QualityPresetId) : pickInitialPreset(detectDeviceCaps()));
 } else {
   const q = params.get('q');
-  const requested = params.get('seed');
+  const requested = params.get('bench') === '1' ? BENCH_SEED : params.get('seed');
   const seed = requested || randomSeed();
   if (!requested) writeSeedToUrl(seed);
   const pack: CharacterPack = params.get('pack') === 'ubc' ? 'ubc' : 'modular';   // ruling R31: modular, dopóki zadanie 16 nie wybierze

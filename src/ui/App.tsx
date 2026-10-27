@@ -1,5 +1,6 @@
 import { render } from 'preact';
 import { PALETTE } from '@/render/style';
+import { BenchOverlay } from './BenchOverlay';
 import { Notice } from './Notice';
 import { PerfOverlay } from './PerfOverlay';
 import { TopBar } from './TopBar';
@@ -21,6 +22,7 @@ export function App({ controls }: { controls: Controls | null }) {
   return (
     <div class="tt-ui" style={brandVars}>
       <Notice />
+      <BenchOverlay />
       {controls && <TopBar controls={controls} />}
       {controls && <PerfOverlay />}
     </div>

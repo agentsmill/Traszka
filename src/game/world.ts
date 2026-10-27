@@ -1,4 +1,4 @@
-import { createCrowd, type Crowd } from '@/sim/crowd/crowd';
+import { createCrowd, type Crowd, type CrowdOptions } from '@/sim/crowd/crowd';
 import { generateStore } from '@/sim/store/generateStore';
 import type { StoreLayout } from '@/sim/store/types';
 import type { Speed } from './loop';
@@ -9,7 +9,8 @@ export interface World { seed: string; layout: StoreLayout; crowd: Crowd; speed:
 /** Normalny rozmiar tłumu w etapie 1: do 12 klientów naraz, 10 nowych na minutę. */
 export const CROWD_OPTIONS = { targetCount: 12, spawnPerMinute: 10 } as const;
 
-export function createWorld(seed: string): World {
+/** `crowd` zmienia rozmiar tłumu (benchmark: 60 postaci); układ sklepu zależy tylko od seeda. */
+export function createWorld(seed: string, crowd: CrowdOptions = CROWD_OPTIONS): World {
   const layout = generateStore(seed);
-  return { seed, layout, crowd: createCrowd(layout, seed, { ...CROWD_OPTIONS }), speed: 1 };
+  return { seed, layout, crowd: createCrowd(layout, seed, { ...crowd }), speed: 1 };
 }

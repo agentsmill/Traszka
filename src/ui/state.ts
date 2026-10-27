@@ -2,6 +2,7 @@ import { signal, type Signal } from '@preact/signals';
 import type { Speed } from '@/game/loop';
 import type { QualityPresetId } from '@/render/quality';
 import type { TimeOfDay } from '@/render/lighting';
+import type { BenchProgress } from '@/bench/bench';
 import type { PerfSnapshot } from './perfMeter';
 
 /*
@@ -14,6 +15,8 @@ export const speed: Signal<Speed> = signal<Speed>(1);
 export const timeOfDay: Signal<TimeOfDay> = signal<TimeOfDay>('day');
 export const perf: Signal<PerfSnapshot> = signal<PerfSnapshot>({ fps: 0, ms: 0, calls: 0, tris: 0 });
 export const showPerf: Signal<boolean> = signal(false);
+/** Postęp benchmarku (`?bench=1`) albo null poza nim. */
+export const bench: Signal<BenchProgress | null> = signal<BenchProgress | null>(null);
 /** Komunikat dla gracza z `traszka:notice` albo null. */
 export const notice: Signal<string | null> = signal<string | null>(null);
 
