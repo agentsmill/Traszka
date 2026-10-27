@@ -151,16 +151,29 @@ describe(`buildStore(generateStore('${SEED}'))`, () => {
     view.setCutaway(0);
   });
 
-  it('noc: ≤ 6 ciepłych świateł punktowych bez cieni, włączonych tylko w nocy', () => {
+  it('noc: ≤ 6 ciepłych świateł punktowych bez cieni, świecących tylko w nocy (zawsze w scenie: bez rekompilacji)', () => {
     const lights: PointLight[] = [];
     view.root.traverse((o) => { if ((o as PointLight).isPointLight) lights.push(o as PointLight); });
     expect(lights.length).toBeGreaterThan(0);
     expect(lights.length).toBeLessThanOrEqual(6);
     view.setTimeOfDay('day');
-    expect(lights.every((l) => !l.visible)).toBe(true);
+    expect(lights.every((l) => l.visible && l.intensity === 0)).toBe(true);
+    expect(view.root.getObjectByName('window-glow')!.visible).toBe(false);
     view.setTimeOfDay('night');
-    expect(lights.every((l) => l.visible && !l.castShadow)).toBe(true);
+    expect(lights.every((l) => l.visible && l.intensity > 0 && !l.castShadow)).toBe(true);
+    expect(view.root.getObjectByName('window-glow')!.visible).toBe(true);
     view.setTimeOfDay('day');
+  });
+
+  it('lampy sufitowe świecą wg przewodnika §4 (brand.cream, 2–2,5), nocą mocniej niż w dzień', () => {
+    const panel = (): number => ((view.root.getObjectByName('lamps')!.children[0] as Mesh).material as Material & { emissiveIntensity: number }).emissiveIntensity;
+    view.setTimeOfDay('day');
+    const day = panel();
+    view.setTimeOfDay('night');
+    const night = panel();
+    view.setTimeOfDay('day');
+    for (const v of [day, night]) { expect(v).toBeGreaterThanOrEqual(2); expect(v).toBeLessThanOrEqual(2.5); }
+    expect(night).toBeGreaterThan(day);
   });
 
   it('dispose() można wywołać dwa razy', () => {

@@ -1,15 +1,16 @@
-import { Group, Vector3, type Texture } from 'three';
+import { AdditiveBlending, Color, Group, MeshBasicMaterial, Vector3, type Texture } from 'three';
 import { createRng, subSeed, type Rng } from '@/sim/rng';
 import type { Cell } from '@/sim/grid';
 import { FRONT_WALL_Y, type CellType, type StoreLayout } from '@/sim/store/types';
 import { cellToWorld } from '@/render/coords';
 import { PALETTE } from '@/render/style';
 import {
-  BRAND, FIX, M, box, cachedTexture, canvasTexture, cyl, fabricMat, font, glassMat, glow, gloss, makeTextured, matte, painted,
-  plane, texturedMaterial, wrapLines, woodMat, type Vec3,
+  BRAND, FIX, M, box, cachedTexture, canvasTexture, cyl, font, glassMat, glow, gloss, makeTextured, matte, painted,
+  plane, texturedMaterial, woodMat, type Vec3,
 } from './parts';
 import { BACKROOM_DOOR_H, DOOR_WALL_T } from './fixtures/backroomDoor';
-import { SIGN_ASPECT, drawNewt, makeSignGlowTexture, makeSignTexture } from './signTexture';
+import { POSTERS, SLOGANS, buildDoormat, buildPoster, sloganTexture, windowGlowTexture } from './props';
+import { SIGN_ASPECT, makeSignGlowTexture, makeSignTexture } from './signTexture';
 
 /**
  * Powłoka sklepu: podłoga z płytek i fugą, ściany z oknami, szyldem i wejściem, lampy sufitowe (bez stropu),
@@ -29,10 +30,19 @@ export const CAP_H = 0.02;
 /** Wysokość, do której obniża się ściana od strony kamery. */
 export const CUTAWAY_H = WAINSCOT_H + CAP_H;
 const STRIPE_H = 0.45;
+/** Wysokość pasa z hasłami (na wewnętrznym licu pasa marki, z marginesem). */
+const SLOGAN_H = 0.41;
 const SILL = 0.9;
 const GLASS_TOP = 2.55;
 const ENTRANCE_H = 2.3;
 const LAMP_Y = 2.7;
+/**
+ * Świecące panele lamp sufitowych (docs/style-guide.md §4: lampy `brand.cream` 2–2,5). Sklep świeci też w dzień,
+ * nocą mocniej. Panele startują z materiałem dziennym; `buildStore.setTimeOfDay` podmienia go na nocny.
+ */
+export const LAMP_EMISSIVE = { day: 2.0, night: 2.5 } as const;
+/** Poświata witryny na chodniku nocą: kolor okien nocą (przewodnik §4), głębokość plamy (m). */
+const WINDOW_GLOW = { color: '#ffd28a', opacity: 0.5, depth: 2.6 } as const;
 
 export interface WallParts { low: Group; cap: Group; high: Group }
 export interface Shell {
@@ -43,6 +53,8 @@ export interface Shell {
   ceiling: Group;
   /** Świecące panele lamp (jeden materiał, żeby dzień/noc przełączało jedno podmienienie). */
   lamps: Group;
+  /** Poświata witryn i wejścia na chodniku (widoczna tylko nocą, jeden materiał addytywny). */
+  windowGlow: Group;
   lampPositions: Vector3[];
   /** Zasoby stworzone dla tego sklepu (szyld), które zwalnia `dispose()`. */
   disposables: { dispose(): void }[];
@@ -120,59 +132,6 @@ function foilTexture(): Texture {
     ctx.font = font(34, '900');
     ctx.fillText('PROMOCJA', w / 2, 386);
   }, true));
-}
-
-function matTexture(): Texture {
-  return cachedTexture('doormat', () => canvasTexture(512, 320, (ctx, w, h) => {
-    ctx.fillStyle = BRAND.greenDark;
-    ctx.fillRect(0, 0, w, h);
-    ctx.strokeStyle = BRAND.orange;
-    ctx.lineWidth = 10;
-    ctx.strokeRect(18, 18, w - 36, h - 36);
-    drawNewt(ctx, 74, 88, 90, BRAND.orange, BRAND.cream, BRAND.greenDark);
-    ctx.fillStyle = BRAND.cream;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.font = font(92, '900');
-    ctx.fillText('WITAMY', w / 2 + 40, 100);
-    ctx.fillStyle = BRAND.orange;
-    ctx.font = font(34);
-    ctx.fillText('Centrala widzi, że wchodzisz', w / 2, 232);
-  }));
-}
-
-const POSTERS: readonly { title: string; footer: string }[] = [
-  { title: 'KPI to stan umysłu.', footer: '— Centrala' },
-  { title: 'Promocja: 3 w cenie 3!', footer: 'Tylko w Traszce' },
-  { title: 'Nadgodziny budują charakter.', footer: '— Centrala' },
-  { title: 'Ogonki: chrupią, więc zdrowe.', footer: 'Ogonki. Chrup i wróć' },
-];
-
-function posterTexture(p: { title: string; footer: string }): Texture {
-  return cachedTexture(`poster|${p.title}`, () => canvasTexture(256, 352, (ctx, w, h) => {
-    ctx.fillStyle = BRAND.cream;
-    ctx.fillRect(0, 0, w, h);
-    ctx.fillStyle = BRAND.green;
-    ctx.fillRect(0, 0, w, 72);
-    drawNewt(ctx, 62, 40, 84, BRAND.orange, BRAND.cream, BRAND.greenDark);
-    ctx.fillStyle = BRAND.cream;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.font = font(34, '900');
-    ctx.fillText('TRASZKA', 168, 40);
-    ctx.fillStyle = BRAND.greenDark;
-    ctx.font = font(36, '900');
-    const lines = wrapLines(ctx, p.title, w - 40);
-    lines.forEach((l, i) => ctx.fillText(l, w / 2, 150 + (i - (lines.length - 1) / 2) * 44));
-    ctx.fillStyle = BRAND.orange;
-    ctx.fillRect(0, h - 58, w, 58);
-    ctx.fillStyle = BRAND.cream;
-    ctx.font = font(22);
-    ctx.fillText(p.footer, w / 2, h - 29);
-    ctx.strokeStyle = BRAND.greenDark;
-    ctx.lineWidth = 8;
-    ctx.strokeRect(4, 4, w - 8, h - 8);
-  }));
 }
 
 // --- Ściany --------------------------------------------------------------------------------------------
@@ -331,11 +290,6 @@ function buildSign(g: Group, uc: number, disposables: { dispose(): void }[]): vo
   plane(g, [SW, SH], [uc, y0 + 0.03 + SH / 2, -WALL_T - 0.1605], mat, { rot: [0, Math.PI, 0], name: 'sign face', cast: false });
 }
 
-function poster(g: Group, u: number, p: { title: string; footer: string }): void {
-  box(g, [0.46, 0.62, 0.012], [u, 1.43, 0.006], matte(BRAND.cream), { name: 'poster frame' });
-  plane(g, [0.42, 0.58], [u, 1.45 + 0.29, 0.0125], texturedMaterial(`poster|${p.title}`, posterTexture(p), { roughness: 0.6 }), { name: 'poster' });
-}
-
 // --- Podłoga, zaplecze, lampy -----------------------------------------------------------------------
 
 function floorPlane(g: Group, name: string, tex: Texture, w: number, d: number, cx: number, cz: number, y: number): void {
@@ -367,10 +321,8 @@ function buildFloor(layout: StoreLayout, g: Group): void {
   // pas przy wejściu: 4 kratki szerokości, 2 kratki w głąb
   const ex = (cellToWorld(layout, entrance[0]!.x, 0).x + cellToWorld(layout, entrance[1]!.x, 0).x) / 2;
   floorPlane(g, 'akcent', accent, 4 * M, 2 * M, ex, zFront + M, 0.004);
-  // mata przy drzwiach
-  const matMat = texturedMaterial('doormat', matTexture(), { roughness: 0.95 });
-  box(g, [1.0, 0.025, 0.62], [ex, 0.004, zFront + 0.4], fabricMat(BRAND.greenDark), { name: 'doormat', seg: 1, radius: 0.008 });
-  plane(g, [0.94, 0.56], [ex, 0.0305, zFront + 0.4], matMat, { rot: [-Math.PI / 2, 0, 0], receive: true, name: 'doormat top' });
+  // mata „Witamy w Traszce” przy drzwiach (props.ts)
+  buildDoormat(g, ex, zFront + 0.4);
 }
 
 function buildBackroom(layout: StoreLayout, g: Group, rng: Rng): void {
@@ -411,7 +363,7 @@ function buildLamps(layout: StoreLayout, ceiling: Group, lamps: Group, positions
   const cx = (x1 + x2) / 2;
   const cz = (zFront + zMid) / 2;
   const housing = painted(FIX.metal);
-  const panel = glow(BRAND.cream, 2.2);
+  const panel = glow(BRAND.cream, LAMP_EMISSIVE.day);
   const one = (x: number, z: number, light: boolean): void => {
     // świecąca belka widoczna z góry i z dołu, z metalowymi zaślepkami na końcach
     box(lamps, [1.2, 0.05, 0.14], [x, LAMP_Y, z], panel, { name: 'lamp panel', cast: false });
@@ -436,7 +388,16 @@ export function buildShell(layout: StoreLayout): Shell {
   const floor = new Group();
   const ceiling = new Group();
   const lamps = new Group();
+  const windowGlow = new Group();
   const lampPositions: Vector3[] = [];
+  const glowMaterial = new MeshBasicMaterial({
+    name: 'windowGlow', map: windowGlowTexture(), color: new Color(WINDOW_GLOW.color), transparent: true,
+    opacity: WINDOW_GLOW.opacity, depthWrite: false, blending: AdditiveBlending,
+  });
+  disposables.push(glowMaterial);
+  // hasła na pasie marki: kolejność z własnego strumienia, kolejne odcinki ścian dostają kolejne hasła
+  const sloganOrder = createRng(subSeed(layout.seed, 'hasła')).shuffle(SLOGANS.map((_, i) => i));
+  let sloganCursor = 0;
 
   const lines = wallLines(layout);
   const posterSpots: { side: WallSide; g: Group; u: number }[] = [];
@@ -458,6 +419,35 @@ export function buildShell(layout: StoreLayout): Shell {
         case 'entrance': entranceRun(lg, run.u0, run.u1, run.tone); break;
         case 'door': doorRun(lg, run.u0, run.u1); break;
       }
+      // nocą witryna i wejście rzucają ciepłą plamę światła na chodnik (po zewnętrznej stronie muru)
+      if (run.kind === 'window' || run.kind === 'entrance') {
+        const glowGroup = new Group();
+        glowGroup.position.set(...line.at);
+        glowGroup.rotation.y = line.rotY;
+        windowGlow.add(glowGroup);
+        plane(glowGroup, [len + 0.8, WINDOW_GLOW.depth], [uc, 0.02, -WALL_T - WINDOW_GLOW.depth / 2], glowMaterial, {
+          rot: [-Math.PI / 2, 0, 0], name: 'window glow',
+        });
+      }
+    }
+    // hasła na pasie marki: odcinki ściany w tonie sali (pas biegnie nad oknami, drzwiami i wejściem bez przerw)
+    let spanStart: number | null = null;
+    let u = 0;
+    const spans: [number, number][] = [];
+    for (const seg of line.segs) {
+      if (seg.tone === 'sales' && spanStart === null) spanStart = u;
+      if (seg.tone !== 'sales' && spanStart !== null) { spans.push([spanStart, u]); spanStart = null; }
+      u += seg.len;
+    }
+    if (spanStart !== null) spans.push([spanStart, u]);
+    for (const [s0, s1] of spans) {
+      if (s1 - s0 < 1.5) continue;
+      const order = [...sloganOrder.slice(sloganCursor), ...sloganOrder.slice(0, sloganCursor)];
+      const { texture, used } = sloganTexture(order, s1 - s0, SLOGAN_H);
+      sloganCursor = (sloganOrder.indexOf(used[used.length - 1] ?? order[0]!) + 1) % sloganOrder.length;
+      const mat = makeTextured('slogan', texture, { roughness: 0.6 });
+      disposables.push(texture, mat);
+      plane(lg.high, [s1 - s0, SLOGAN_H], [(s0 + s1) / 2, WALL_H - STRIPE_H / 2, 0.0015], mat, { name: 'slogan' });
     }
     // kratki, na których można powiesić plakat: goły mur z pustą podłogą przed nim
     if (line.side === 'left' || line.side === 'right' || line.side === 'mid') {
@@ -481,10 +471,11 @@ export function buildShell(layout: StoreLayout): Shell {
     if (chosen.length >= POSTERS.length) break;
     if (chosen.every((c) => c.g !== spot.g || Math.abs(c.u - spot.u) >= 4 * M)) chosen.push(spot);
   }
-  chosen.forEach((s, i) => poster(s.g, s.u, POSTERS[i]!));
+  const posterOrder = rng.shuffle(POSTERS.map((_, i) => i));
+  chosen.forEach((s, i) => buildPoster(s.g, s.u, POSTERS[posterOrder[i]!]!));
 
   buildFloor(layout, floor);
   buildBackroom(layout, floor, rng);
   buildLamps(layout, ceiling, lamps, lampPositions);
-  return { walls, floor, ceiling, lamps, lampPositions, disposables };
+  return { walls, floor, ceiling, lamps, windowGlow, lampPositions, disposables };
 }

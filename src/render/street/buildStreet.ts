@@ -7,10 +7,14 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { ASSETS, loadGLB } from '@/render/assets';
 import { cellToWorld } from '@/render/coords';
 import { PALETTE, material } from '@/render/style';
-import { BRAND, FIX, box, cachedTexture, canvasTexture, cyl, matte, painted, woodMat } from '@/render/store/parts';
+import { BRAND, FIX, cachedTexture, canvasTexture, makeTextured } from '@/render/store/parts';
+import {
+  BOARD_LINES, buildBench, buildBin, buildNewsStand, buildPlanter, buildPylon, buildSandwichBoard, pylonTextures,
+} from '@/render/store/props';
 import { createRng, subSeed, type Rng } from '@/sim/rng';
 import type { StoreLayout } from '@/sim/store/types';
-import { buildBuildings, cornerSide, GeomBuilder, planRow, SIDE_STREET, storeOuter, type StoreOuter } from './buildings';
+import { buildBuildings, cornerSide, GeomBuilder, planRow, SIDE_STREET, storeOuter, type StoreOuter, type YawIndex } from './buildings';
+import { COURT_DEPTH, buildCourtyard, buildTree } from './courtyard';
 import { createFacadeAtlas } from './facadeAtlas';
 
 /**
@@ -23,8 +27,11 @@ import { createFacadeAtlas } from './facadeAtlas';
 
 export interface StreetView {
   root: Group;
-  /** Przekrój (widok wnętrza): bryła nad sklepem znika, sąsiedzi spadają do 0,5 m. `false` pokazuje pełną zabudowę. */
-  setBuildingCutaway(on: boolean): void;
+  /**
+   * Przekrój (widok wnętrza): bryła nad sklepem znika, sąsiad od strony kamery (`yawIndex`, tabela w CameraRig) spada
+   * do 0,5 m, dalszy zostaje w pełnej wysokości. `false` pokazuje pełną zabudowę.
+   */
+  setBuildingCutaway(on: boolean, yawIndex?: YawIndex): void;
   /** Noc: świecą okna budynków i głowice latarni. */
   setTimeOfDay(t: 'day' | 'night'): void;
   dispose(): void;
@@ -133,7 +140,7 @@ function buildGround(g: Ground, lay: Layout, rng: Rng, crossing: number | null):
   const farZ1 = zr1 - CURB_W;
   layPlates(g, rng, lay.gridX, -LIMIT, LIMIT, farZ1 - FAR_SIDEWALK_W, farZ1);
   if (side) {
-    const back = o.z1;
+    const back = o.z1 + COURT_DEPTH;   // chodniki przecznicy biegną wzdłuż podwórka (courtyard.ts)
     layPlates(g, rng, lay.gridX, side[0] - SIDE_STREET.sidewalk, side[0] - CURB_W, o.z0, back);
     layPlates(g, rng, lay.gridX, side[1] + CURB_W, side[1] + SIDE_STREET.sidewalk, o.z0, back);
   }
@@ -171,8 +178,9 @@ function buildGround(g: Ground, lay: Layout, rng: Rng, crossing: number | null):
   }
   for (let x = -LIMIT; x < LIMIT; x += CURB_SEG) curb(x, x + CURB_SEG, zr1 - CURB_W, zr1);
   if (side) {
-    for (let z = zs - CURB_W; z < o.z1; z += CURB_SEG) {
-      const z1 = Math.min(z + CURB_SEG, o.z1);
+    const back = o.z1 + COURT_DEPTH;
+    for (let z = zs - CURB_W; z < back; z += CURB_SEG) {
+      const z1 = Math.min(z + CURB_SEG, back);
       curb(side[0] - CURB_W, side[0], z, z1);
       curb(side[1], side[1] + CURB_W, z, z1);
     }
@@ -184,6 +192,8 @@ function buildGround(g: Ground, lay: Layout, rng: Rng, crossing: number | null):
 type PropKind = 'tree' | 'lamp' | 'van';
 
 const LAMP_GLOW = '#ffb35c';
+/** Neon pylonu (napis i logo `brand.cream`): nocą jak neon szyldu (przewodnik §4: 3), w dzień ledwie się żarzy. */
+const PYLON_GLOW = { day: 0.35, night: 3 } as const;
 const LAMP_HEAD_NIGHT = 3;
 /** Głowica latarni: nocą emissive `#ffb35c` (docs/style-guide.md §4), w dzień kremowa obudowa. */
 const lampHeadMaterial = (night: boolean): Material =>
@@ -327,63 +337,51 @@ interface PropSpec {
 }
 const LEAVES = [BRAND.green, PALETTE.productCategory.napoje[3], PALETTE.productCategory.przekaski[3]];
 
-// --- Ławka i kosz (proceduralne) -------------------------------------------------------------------------
-
-/** Ławka z deskami: siedzisko drewniane, oparcie w zieleni marki (ławka sponsorowana przez Centralę), stalowe boki. Przód to +z. */
-function buildBench(): Group {
-  const g = new Group();
-  g.name = 'prop:bench:0';
-  const frame = painted(PALETTE.fixture.fridgeFrame);
-  for (const sx of [-0.72, 0.72]) {
-    box(g, [0.07, 0.42, 0.44], [sx, 0, 0.02], frame);
-    box(g, [0.07, 0.4, 0.07], [sx, 0.4, -0.2], frame);
-  }
-  for (const z of [-0.12, 0.0, 0.12]) box(g, [1.7, 0.04, 0.1], [0, 0.42, z + 0.04], woodMat(FIX.wood));
-  for (const y of [0.56, 0.7]) box(g, [1.7, 0.1, 0.03], [0, y, -0.2], matte(BRAND.green), { rot: [-0.12, 0, 0] });
-  return g;
-}
-
-/** Kosz uliczny: ciemnozielony walec z kremowym pasem i metalowym rantem. */
-function buildBin(): Group {
-  const g = new Group();
-  g.name = 'prop:bin:0';
-  cyl(g, 0.21, 0.74, [0, 0.37, 0], painted(BRAND.greenDark), { segs: 16 });
-  cyl(g, 0.215, 0.12, [0, 0.52, 0], matte(BRAND.cream), { segs: 16 });
-  cyl(g, 0.24, 0.06, [0, 0.77, 0], painted(FIX.metal), { segs: 16 });
-  cyl(g, 0.17, 0.04, [0, 0.82, 0], painted(PALETTE.fixture.fridgeFrame), { segs: 16 });
-  return g;
-}
+// --- Rekwizyty proceduralne (props.ts) --------------------------------------------------------------
 
 /**
- * Scala wszystkie siatki grupy w jedną z kolorami wierzchołków (kolor z materiału każdej części), więc ławka i kosz
- * kosztują po jednym draw callu. Źródłowe geometrie są współdzielone (cache parts.ts) i zostają nietknięte.
+ * Scala siatki grupy, żeby rekwizyt kosztował jak najmniej draw calli: części bez tekstury w jedną siatkę z kolorami
+ * wierzchołków (kolor z materiału części, `material`), części z teksturą (napisy) w jedną siatkę na materiał. Źródłowe
+ * geometrie są współdzielone (cache parts.ts) i zostają nietknięte; wynik trafia do `owned`.
  */
 function bake(group: Group, material: Material, owned: BufferGeometry[]): void {
   group.updateMatrixWorld(true);
   const inverse = group.matrixWorld.clone().invert();
   const meshes: Mesh[] = [];
   group.traverse((o) => { if ((o as Mesh).isMesh) meshes.push(o as Mesh); });
-  const parts: BufferGeometry[] = [];
+  const plain: BufferGeometry[] = [];
+  const textured = new Map<Material, BufferGeometry[]>();
   for (const mesh of meshes) {
-    const color = (mesh.material as MeshStandardMaterial).color;
+    const mat = mesh.material as MeshStandardMaterial;
     const g = mesh.geometry.index ? mesh.geometry.toNonIndexed() : mesh.geometry.clone();
-    for (const name of Object.keys(g.attributes)) if (name !== 'position' && name !== 'normal') g.deleteAttribute(name);
     g.applyMatrix4(mesh.matrixWorld.clone().premultiply(inverse));
-    const colors = new Float32Array(g.attributes.position!.count * 3);
-    for (let i = 0; i < colors.length; i += 3) { colors[i] = color.r; colors[i + 1] = color.g; colors[i + 2] = color.b; }
-    g.setAttribute('color', new Float32BufferAttribute(colors, 3));
-    parts.push(g);
+    if (mat.map) {
+      for (const name of Object.keys(g.attributes)) if (name !== 'position' && name !== 'normal' && name !== 'uv') g.deleteAttribute(name);
+      textured.set(mat, [...(textured.get(mat) ?? []), g]);
+    } else {
+      for (const name of Object.keys(g.attributes)) if (name !== 'position' && name !== 'normal') g.deleteAttribute(name);
+      const colors = new Float32Array(g.attributes.position!.count * 3);
+      for (let i = 0; i < colors.length; i += 3) { colors[i] = mat.color.r; colors[i + 1] = mat.color.g; colors[i + 2] = mat.color.b; }
+      g.setAttribute('color', new Float32BufferAttribute(colors, 3));
+      plain.push(g);
+    }
     mesh.removeFromParent();
   }
-  const merged = mergeGeometries(parts, false);
-  for (const g of parts) g.dispose();
-  if (!merged) return;
-  owned.push(merged);
-  const out = new Mesh(merged, material);
-  out.name = `${group.name}:mesh`;
-  out.castShadow = true;
-  out.receiveShadow = true;
-  group.add(out);
+  const add = (parts: BufferGeometry[], mat: Material, name: string, cast: boolean): void => {
+    const merged = mergeGeometries(parts, false);
+    for (const g of parts) g.dispose();
+    if (!merged) return;
+    owned.push(merged);
+    const out = new Mesh(merged, mat);
+    out.name = name;
+    out.castShadow = cast;
+    out.receiveShadow = true;
+    group.add(out);
+  };
+  // puste podgrupy po zdjęciu siatek (np. nogi potykacza) nie są potrzebne; siatka z kolorami wierzchołków idzie pierwsza
+  for (const g of group.children.slice()) if (!(g as Mesh).isMesh && g.children.length === 0) g.removeFromParent();
+  if (plain.length) add(plain, material, `${group.name}:mesh`, true);
+  for (const [mat, parts] of textured) add(parts, mat, `${group.name}:${mat.name}`, false);
 }
 
 // --- Rozmieszczenie rekwizytów z seeda ------------------------------------------------------------------
@@ -395,6 +393,7 @@ const blocked = (x: number, zones: [number, number][], pad: number): boolean => 
 
 function placeProps(layout: StoreLayout, rng: Rng, lay: Layout, extent: [number, number], crossing: number | null): {
   lamps: Placement[]; trees: Placement[]; van: Placement; bench: Placement; bin: Placement;
+  board: Placement | null; pylon: Placement | null; planter: Placement | null; newsstand: Placement | null;
 } {
   const { o, side } = lay;
   const zs = o.zs;
@@ -448,10 +447,42 @@ function placeProps(layout: StoreLayout, rng: Rng, lay: Layout, extent: [number,
   };
   const benchX = spot(2.2, null, entranceX - 3.2);
   const binX = spot(1.4, benchX, entranceX + 3.2);
+
+  // potykacz przy wejściu, donica i stojak z gazetami: też w wierszu 0, z dala od siebie, od wejścia i od przecznicy
+  const taken: [number, number][] = [[benchX - 0.9, benchX + 0.9], [binX - 0.3, binX + 0.3]];
+  const fits = (x: number, half: number): boolean =>
+    !blocked(x, zones, half + 0.3) && taken.every(([a, b]) => x + half + 0.35 < a || x - half - 0.35 > b);
+  const claim = (x: number, half: number): Placement => {
+    taken.push([x - half, x + half]);
+    return { x, z: zs + 0.27, rotY: 0 };
+  };
+  const extra = (half: number, clearance: number, lo: number, hi: number): Placement | null => {
+    for (let tries = 0; tries < 80; tries++) {
+      const x = rng.range(lo + half, hi - half);
+      if (Math.abs(x - entranceX) > clearance && fits(x, half)) return claim(x, half);
+    }
+    return null;
+  };
+  let board: Placement | null = null;
+  const boardSide = rng.chance(0.5) ? 1 : -1;
+  for (const dir of [boardSide, -boardSide]) {
+    const x = entranceX + dir * rng.range(1.0, 1.5);
+    if (fits(x, 0.32)) { board = claim(x, 0.32); break; }
+  }
+  // pylon z neonem marki po drugiej stronie wejścia (w przekroju to on niesie szyld i neon w kadrze)
+  let pylon: Placement | null = null;
+  for (const dir of [-boardSide, boardSide]) {
+    const x = entranceX + dir * rng.range(1.9, 2.6);
+    if (fits(x, 0.47)) { pylon = claim(x, 0.47); break; }
+  }
+  pylon ??= extra(0.47, 1.6, extent[0] - 1, extent[1] + 1);
+  const planter = extra(0.5, 1.6, extent[0] - 2, extent[1] + 2);
+  const newsstand = extra(0.4, 1.4, extent[0] - 2, extent[1] + 2);
   return {
     lamps, trees, van,
     bench: { x: benchX, z: zs + 0.27, rotY: 0 },
     bin: { x: binX, z: zs + 0.27, rotY: 0 },
+    board, pylon, planter, newsstand,
   };
 }
 
@@ -503,6 +534,13 @@ export async function buildStreet(layout: StoreLayout, seed: string, load: (url:
   // podłoże: chodnik z płyt, jezdnia, reszta (krawężniki, podłoże, donice drzew)
   const ground: Ground = { plates: new GeomBuilder([0.5, 0.5]), road: new GeomBuilder([0.5, 0.5]), flat: new GeomBuilder([0.5, 0.5]) };
   buildGround(ground, lay, createRng(subSeed(street, 'podłoże')), crossing);
+  // podwórko za wierszem budynków (trawniki, trzepak, wiata śmietnikowa, drzewa, garaże), w siatce podłoża
+  const rowMin = Math.min(...plan.own.map((v) => v.x0), ...plan.neighbours.map((v) => v.x0));
+  const rowMax = Math.max(...plan.own.map((v) => v.x1), ...plan.neighbours.map((v) => v.x1));
+  buildCourtyard(ground.flat, {
+    x0: rowMin - 4, x1: rowMax + 4, z: o.z1,
+    avoid: side ? [side[0] - SIDE_STREET.sidewalk, side[1] + SIDE_STREET.sidewalk] : null,
+  }, createRng(subSeed(street, 'podwórko')));
   const props = placeProps(layout, createRng(subSeed(street, 'rekwizyty')), lay, [ownMin, ownMax], crossing);
   for (const t of props.trees) {
     ground.flat.rbox([t.x - 0.55, 0, t.z - 0.55], [t.x + 0.55, 0.08, t.z + 0.55], PALETTE.street.curb[1], 0.04, 2);
@@ -560,15 +598,37 @@ export async function buildStreet(layout: StoreLayout, seed: string, load: (url:
     specs.push({ kind, group, url, height, leaves: treeRng.pick(LEAVES) });
   };
   props.lamps.forEach((p, i) => addProp('lamp', i, p, ASSETS.props.lamp, 4.5));
+  // drzewa proceduralne (courtyard.ts), jak na podwórku: modele Kenneya obok krępych mebli wyglądały płasko (zadanie 16)
   props.trees.forEach((p, i) => {
-    const fat = treeRng.chance(0.4);
-    addProp('tree', i, p, fat ? ASSETS.props.tree2 : ASSETS.props.tree1, fat ? treeRng.range(3.6, 4.4) : treeRng.range(4.4, 5.6));
+    const group = new Group();
+    group.name = `prop:tree:${i}`;
+    group.position.set(p.x, 0, p.z);
+    group.rotation.y = p.rotY;
+    const builder = new GeomBuilder([0.5, 0.5]);
+    buildTree(builder, 0, 0, treeRng.range(4.0, 5.4), treeRng);
+    const geometry = builder.toGeometry();
+    owned.push(geometry);
+    const mesh = new Mesh(geometry, propMaterial);
+    mesh.name = `prop:tree:${i}:mesh`;
+    mesh.castShadow = mesh.receiveShadow = false;
+    group.add(mesh);
+    root.add(group);
   });
   addProp('van', 0, props.van, ASSETS.props.van, 2.2);
 
-  // ławka i kosz: proceduralne (w paczkach Kenneya ich nie ma), scalone do kilku siatek
-  for (const [group, spot] of [[buildBench(), props.bench], [buildBin(), props.bin]] as const) {
+  // rekwizyty proceduralne w wierszu 0 (props.ts): ławka, kosz, potykacz z hasłem dnia, donica, stojak z gazetami
+  const boardLines = BOARD_LINES[createRng(subSeed(street, 'potykacz')).int(0, BOARD_LINES.length)]!;
+  const pylonTex = pylonTextures();
+  const pylonFace = makeTextured('pylon', pylonTex.map, { roughness: 0.4, emissiveMap: pylonTex.glow, emissive: BRAND.cream, emissiveIntensity: PYLON_GLOW.day });
+  materials.push(pylonFace);
+  const procedural: [Group, Placement | null][] = [
+    [buildBench(), props.bench], [buildBin(), props.bin], [buildSandwichBoard(boardLines), props.board],
+    [buildPylon(pylonFace), props.pylon], [buildPlanter(), props.planter], [buildNewsStand(), props.newsstand],
+  ];
+  for (const [group, spot] of procedural) {
+    if (!spot) continue;
     group.position.set(spot.x, 0, spot.z);
+    group.rotation.y = spot.rotY;
     bake(group, propMaterial, owned);
     root.add(group);
   }
@@ -592,12 +652,13 @@ export async function buildStreet(layout: StoreLayout, seed: string, load: (url:
   let disposed = false;
   return {
     root,
-    setBuildingCutaway(on) { buildings.setCutaway(on); },
+    setBuildingCutaway(on, yawIndex = 0) { buildings.setCutaway(on, yawIndex); },
     setTimeOfDay(t) {
       const night = t === 'night';
       buildings.setNight(night);
       pools.visible = night;
       for (const head of lampHeads) head.material = lampHeadMaterial(night);
+      pylonFace.emissiveIntensity = night ? PYLON_GLOW.night : PYLON_GLOW.day;
     },
     dispose() {
       if (disposed) return;

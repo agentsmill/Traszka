@@ -4,7 +4,7 @@ import { cellToWorld } from '@/render/coords';
 import type { StoreLayout } from '@/sim/store/types';
 import { BRAND, M, glow, type Category, type ShelfSlotLocal, type Vec3 } from './parts';
 import { FIXTURE_BUILDERS, type FixtureBuilder } from './fixtures';
-import { WALL_SIDES, buildShell, type WallSide } from './shell';
+import { LAMP_EMISSIVE, WALL_SIDES, buildShell, type WallSide } from './shell';
 
 export { FIXTURE_BUILDERS, type FixtureBuilder };
 export { makeSignTexture } from './signTexture';
@@ -33,7 +33,11 @@ export interface StoreView {
   setCutaway(yawIndex: 0 | 1 | 2 | 3): void;
   /** Widok z zewnątrz: pełne ściany, szyld i witryna niezależnie od przekroju. */
   setExteriorMode(on: boolean): void;
-  /** Dzień: lampy przygaszone, ciepłe światło wnętrza wyłączone. Noc: lampy pełne, do 6 świateł punktowych. */
+  /**
+   * Dzień: lampy świecą słabiej, ciepłe światło wnętrza ma natężenie 0. Noc: lampy pełne, do 6 świateł punktowych,
+   * poświata witryn na chodniku. Światła punktowe zostają w scenie (widoczne) przez cały czas, a zmienia się tylko ich
+   * natężenie: zmiana liczby świateł przekompilowałaby przy pierwszym przełączeniu wszystkie materiały (przycięcie klatki).
+   */
   setTimeOfDay(t: 'day' | 'night'): void;
   dispose(): void;
 }
@@ -48,8 +52,6 @@ const NEAR_WALLS: Record<0 | 1 | 2 | 3, readonly WallSide[]> = {
 
 /** Ciepłe światło wnętrza nocą: kolor okien nocą z tabeli świateł (docs/style-guide.md §4), bez cieni. */
 const INTERIOR_LIGHT = { color: '#ffd28a', intensity: 9, distance: 9, decay: 2, max: 6 } as const;
-const LAMP_DAY = 1.0;
-const LAMP_NIGHT = 2.4;
 
 interface Bucket { material: Material; cast: boolean; receive: boolean; geometries: BufferGeometry[] }
 
@@ -144,8 +146,10 @@ export function buildStore(layout: StoreLayout): StoreView {
   const staticGroup = mergedGroup('static', staticSources, owned);
   const lampsGroup = mergedGroup('lamps', [shell.lamps], owned);
   const lampMesh = lampsGroup.children[0] as Mesh | undefined;
-  const lampDay = glow(BRAND.cream, LAMP_DAY);
-  const lampNight = glow(BRAND.cream, LAMP_NIGHT);
+  const lampDay = glow(BRAND.cream, LAMP_EMISSIVE.day);
+  const lampNight = glow(BRAND.cream, LAMP_EMISSIVE.night);
+  const windowGlow = mergedGroup('window-glow', [shell.windowGlow], owned);
+  windowGlow.visible = false;
 
   // ściany: low zawsze, high (pełna) albo cap (przekrój) zależnie od kamery
   const walls = {} as Record<WallSide, { group: Group; high: Group; cap: Group }>;
@@ -166,14 +170,13 @@ export function buildStore(layout: StoreLayout): StoreView {
   const lights = new Group();
   lights.name = 'interior-lights';
   for (const p of pickEven(shell.lampPositions, INTERIOR_LIGHT.max)) {
-    const light = new PointLight(INTERIOR_LIGHT.color, INTERIOR_LIGHT.intensity, INTERIOR_LIGHT.distance, INTERIOR_LIGHT.decay);
+    const light = new PointLight(INTERIOR_LIGHT.color, 0, INTERIOR_LIGHT.distance, INTERIOR_LIGHT.decay);
     light.castShadow = false;
     light.position.copy(p);
-    light.visible = false;
     lights.add(light);
   }
 
-  root.add(staticGroup, lampsGroup, ...WALL_SIDES.map((s) => walls[s].group), anchors, lights);
+  root.add(staticGroup, lampsGroup, windowGlow, ...WALL_SIDES.map((s) => walls[s].group), anchors, lights);
 
   let yaw: 0 | 1 | 2 | 3 = 0;
   let exterior = false;
@@ -194,8 +197,9 @@ export function buildStore(layout: StoreLayout): StoreView {
     setExteriorMode(on) { exterior = on; applyWalls(); },
     setTimeOfDay(t) {
       const night = t === 'night';
-      for (const l of lights.children) l.visible = night;
+      for (const l of lights.children) (l as PointLight).intensity = night ? INTERIOR_LIGHT.intensity : 0;
       if (lampMesh) lampMesh.material = night ? lampNight : lampDay;
+      windowGlow.visible = night;
     },
     dispose() {
       if (disposed) return;

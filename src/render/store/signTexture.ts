@@ -53,7 +53,10 @@ const H = 192;
 function drawSign(ctx: CanvasRenderingContext2D, text: string, glowOnly: boolean): void {
   const cream = BRAND.cream;
   if (glowOnly) {
-    ctx.clearRect(0, 0, W, H);
+    // czarne tło, nie przezroczyste: mapa emissive czyta tylko RGB, a półprzezroczyste brzegi liter po clearRect mają
+    // pełny kolor (canvas oddaje kolor bez premnożenia przez alfę), więc neon miał jaśniejszą, poszarpaną obwódkę
+    ctx.fillStyle = '#000000';
+    ctx.fillRect(0, 0, W, H);
   } else {
     ctx.fillStyle = BRAND.green;
     ctx.fillRect(0, 0, W, H);
@@ -89,7 +92,7 @@ export function makeSignTexture(text: string): CanvasTexture | DataTexture {
   return canvasTexture(W, H, (ctx) => drawSign(ctx, text, false));
 }
 
-/** Mapa świecenia szyldu: tylko napis i logo na czerni, żeby neon świecił, a tło szyldu nie. */
+/** Mapa świecenia szyldu: tylko napis i logo na czerni (maska, nie kolor powierzchni), żeby neon świecił, a tło szyldu nie. */
 export function makeSignGlowTexture(text: string): CanvasTexture | DataTexture {
   return canvasTexture(W, H, (ctx) => drawSign(ctx, text, true));
 }

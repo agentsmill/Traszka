@@ -12,7 +12,8 @@ import { fillShelves } from '@/render/store/products';
 import { buildStreet, type StreetView } from '@/render/street/buildStreet';
 import { startCharTestPage } from '@/render/characters/charTestPage';
 import { createCharacterFactory, type CharacterFactory, type CharacterPack } from '@/render/characters/characterFactory';
-import { CrowdView } from '@/render/crowdView';
+import { ANIM_SPEED_CAP, CrowdView } from '@/render/crowdView';
+import { createBlobShadows } from '@/render/characters/blobShadows';
 import { MAX_FRAME_DT, advanceClock, clockAlpha } from '@/game/loop';
 import { randomSeed } from '@/game/seedWords';
 import { createWorld, type World } from '@/game/world';
@@ -169,7 +170,7 @@ function writeSeedToUrl(seed: string): void {
  * Sterowanie jak w scenie próbnej (bindControls) plus N dzień/noc, X widok z zewnątrz (pełne ściany, szyld i pełna zabudowa
  * ulicy), R nowy losowy seed; przekrój (cutaway) podąża za obrotem kamery. F3 włącza nakładkę wydajności.
  * Parametry do zrzutów: `yaw` (0–3), `night=1`, `ext=1`, `zoom` (wysokość widoku w m), `q` (preset jakości), `pack`
- * (`ubc` zamiast domyślnych postaci `modular`), `perf=1` (nakładka wydajności od startu).
+ * (`ubc` zamiast postaci `modular`, tylko do porównań), `perf=1` (nakładka wydajności od startu).
  *
  * `bench=1` to benchmark (src/bench): seed `bench`, 60 postaci, stała kamera, bez sterowania. Parametry `seed`, `yaw`, `zoom`,
  * `night` i `ext` są wtedy ignorowane, żeby wyniki były porównywalne. Bieg liczy klatki w tej samej pętli co gra
@@ -199,6 +200,9 @@ function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: st
   const crowdRoot = new Group();
   crowdRoot.name = 'crowd';
   ctx.scene.add(crowdRoot);
+  // plamy cienia pod postaciami: jedna siatka na całą grę, w grupie tłumu (benchmark ukrywa je razem z tłumem)
+  const blobs = createBlobShadows();
+  crowdRoot.add(blobs.mesh);
 
   const benchMode = params.get('bench') === '1';
   let tod: TimeOfDay = !benchMode && params.get('night') === '1' ? 'night' : 'day';
@@ -228,7 +232,7 @@ function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: st
     const view = buildStore(layout);
     view.root.add(fillShelves(view, seed));   // view.dispose() zwalnia też bufory instancji towaru
     ctx.scene.add(view.root);
-    const current: Loaded = { world, view, street: null, crowdView: factory ? new CrowdView(factory, layout, crowdRoot, pack) : null };
+    const current: Loaded = { world, view, street: null, crowdView: factory ? new CrowdView(factory, layout, crowdRoot, pack, blobs) : null };
     loaded = current;
     clock.acc = 0;
 
@@ -244,7 +248,7 @@ function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: st
     void buildStreet(layout, seed).then((built) => {
       if (mine !== generation) { built.dispose(); return; }
       current.street = built;
-      built.setBuildingCutaway(!exterior);
+      built.setBuildingCutaway(!exterior, ctx.rig.yawIndex);
       built.setTimeOfDay(tod);
       ctx.scene.add(built.root);
     }).catch((error: unknown) => console.error('Nie udało się zbudować ulicy.', error));
@@ -261,7 +265,10 @@ function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: st
   const yaw = Number(params.get('yaw'));
   if (!benchMode && yaw >= 1 && yaw <= 3) ctx.rig.yawIndex = yaw as 1 | 2 | 3;
   ctx.setTimeOfDay(tod);
-  ctx.rig.onChange(() => loaded?.view.setCutaway(ctx.rig.yawIndex));
+  ctx.rig.onChange(() => {
+    loaded?.view.setCutaway(ctx.rig.yawIndex);
+    loaded?.street?.setBuildingCutaway(!exterior, ctx.rig.yawIndex);
+  });
   load(initialSeed);
 
   // stan startowy dla nakładki (świat startuje z prędkością ×1)
@@ -302,7 +309,7 @@ function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: st
         x: () => {
           exterior = !exterior;
           loaded?.view.setExteriorMode(exterior);
-          loaded?.street?.setBuildingCutaway(!exterior);
+          loaded?.street?.setBuildingCutaway(!exterior, ctx.rig.yawIndex);
         },
         r: () => controls.randomize(),
         F3: () => { ui.showPerf.value = !ui.showPerf.value; },
@@ -312,7 +319,7 @@ function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: st
 
   void createCharacterFactory(pack).then((created) => {
     factory = created;
-    if (loaded && !loaded.crowdView) loaded.crowdView = new CrowdView(created, loaded.world.layout, crowdRoot, pack);
+    if (loaded && !loaded.crowdView) loaded.crowdView = new CrowdView(created, loaded.world.layout, crowdRoot, pack, blobs);
   }).catch((error: unknown) => console.error('Nie udało się wczytać postaci.', error));
 
   const bench = benchMode
@@ -335,7 +342,9 @@ function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: st
       const { world, crowdView } = loaded;
       const steps = advanceClock(clock, frameDt, world.speed);
       for (let i = 0; i < steps; i++) stepCrowd(world.crowd, world.layout, SIM_STEP);
-      crowdView.sync(world.crowd, clockAlpha(clock), Math.min(frameDt, MAX_FRAME_DT) * world.speed);
+      const realDt = Math.min(frameDt, MAX_FRAME_DT);
+      crowdView.setCharacterShadows(QUALITY[ctx.preset].characterShadows);
+      crowdView.sync(world.crowd, clockAlpha(clock), realDt * world.speed, realDt * Math.min(world.speed, ANIM_SPEED_CAP));
     }
     bench?.beforeRender();
     ctx.render();
@@ -380,6 +389,8 @@ if (params.get('charTest') === '1') {
   const requested = params.get('bench') === '1' ? BENCH_SEED : params.get('seed');
   const seed = requested || randomSeed();
   if (!requested) writeSeedToUrl(seed);
-  const pack: CharacterPack = params.get('pack') === 'ubc' ? 'ubc' : 'modular';   // ruling R31: modular, dopóki zadanie 16 nie wybierze
+  // Zadanie 16: modular to jedyna paczka gry (docs/style-guide.md §5). `?pack=ubc` zostaje tylko do porównań, dopóki
+  // zadanie 16b nie usunie paczki UBC z potoku assetów.
+  const pack: CharacterPack = params.get('pack') === 'ubc' ? 'ubc' : 'modular';
   startGame(canvas, uiRoot, seed, q && q in QUALITY ? (q as QualityPresetId) : pickInitialPreset(detectDeviceCaps()), params, pack);
 }

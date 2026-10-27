@@ -14,7 +14,7 @@ import { createFacadeAtlas, type AtlasCellName } from './facadeAtlas';
 /** Po jednym seedzie na rodzaj lokalu; `d` to kamienica narożna z przecznicą po prawej, `kiełbasa-12` z przecznicą po lewej. */
 const SEEDS: Record<LotKind, string> = { blok: 'kiełbasa-42', kamienica: 'kiełbasa-12', pawilon: 'traszka-1' };
 const KINDS = Object.keys(SEEDS) as LotKind[];
-const CELLS: AtlasCellName[] = ['okno', 'oknoGasne', 'loggia', 'szewPlyty', 'tynk', 'witryna', 'brama', 'gzyms'];
+const CELLS: AtlasCellName[] = ['okno', 'oknoGasne', 'loggia', 'szewPlyty', 'tynk', 'witryna', 'brama', 'gzyms', 'mural', 'muralSzop', 'podloga'];
 
 /** Loader, który zawsze zawodzi: w Node nie ma sieci ani WebGL, a ulica ma wtedy dać same grupy rekwizytów (ruling R5). */
 const failing = (): Promise<GLTF> => Promise.reject(new Error('brak sieci'));
@@ -75,14 +75,26 @@ describe('buildStreet: budynki', () => {
     it(`${kind}: w przekroju nic nad sklepem nie przekracza stropu (${WALL_H} m), po wyłączeniu przekroju stoi pełny budynek`, async () => {
       const { view, layout } = await street(SEEDS[kind]);
       const o = storeOuter(layout);
-      const over = (m: Mesh): boolean => {
-        const b = boxOf(m);
-        return b.max.x > o.x0 && b.min.x < o.x1 && b.max.z > o.z0 && b.min.z < o.z1;
+      // wierzchołki (nie bryły brzegowe): siatka podłoża obejmuje też podwórko z drzewami, a dalszy sąsiad stoi przy
+      // sklepie i jego relief (parapety 14 cm, mural) wchodzi nad obrys, więc liczy się wnętrze obrysu z marginesem 20 cm
+      const topOver = (): number => {
+        let top = 0;
+        const p = new Vector3();
+        for (const m of meshesOf(view.root).filter(visible)) {
+          m.updateWorldMatrix(true, false);
+          const pos = m.geometry.attributes.position!;
+          for (let i = 0; i < pos.count; i++) {
+            p.fromBufferAttribute(pos, i).applyMatrix4(m.matrixWorld);
+            if (p.x > o.x0 + 0.2 && p.x < o.x1 - 0.2 && p.z > o.z0 + 0.2 && p.z < o.z1 - 0.2) top = Math.max(top, p.y);
+          }
+        }
+        return top;
       };
-      const topOver = (): number => Math.max(0, ...meshesOf(view.root).filter((m) => visible(m) && over(m)).map((m) => boxOf(m).max.y));
 
-      view.setBuildingCutaway(true);
-      expect(topOver()).toBeLessThanOrEqual(WALL_H + 1e-6);
+      for (const yaw of [0, 1, 2, 3] as const) {
+        view.setBuildingCutaway(true, yaw);
+        expect(topOver(), `yaw ${yaw}`).toBeLessThanOrEqual(WALL_H + 1e-6);
+      }
 
       view.setBuildingCutaway(false);
       const spec = planRow(layout, SEEDS[kind]).own[0]!;
@@ -90,13 +102,21 @@ describe('buildStreet: budynki', () => {
       expect(topOver()).toBeGreaterThan(WALL_H);
     });
 
-    it(`${kind}: sąsiedzi w przekroju spadają do 0,5 m, a bez przekroju mają pełną wysokość`, async () => {
+    it(`${kind}: w przekroju sąsiad od strony kamery spada do 0,5 m, dalszy i oba bez przekroju mają pełną wysokość`, async () => {
       const { view, layout } = await street(SEEDS[kind]);
       const plan = planRow(layout, SEEDS[kind]);
+      const o = storeOuter(layout);
       const topOfNeighbour = (i: number): number =>
         Math.max(...meshesOf(view.root.getObjectByName(`neighbour:${i}`)!).filter(visible).map((m) => boxOf(m).max.y));
-      view.setBuildingCutaway(true);
-      for (const i of [0, 1]) expect(topOfNeighbour(i)).toBeLessThanOrEqual(0.5 + 1e-6);
+      for (const yaw of [0, 1, 2, 3] as const) {
+        view.setBuildingCutaway(true, yaw);
+        // kamera stoi po stronie −x dla yaw 0 i 1 (tabela w CameraRig), więc wtedy blisko jest sąsiad od strony −x
+        plan.neighbours.forEach((n, i) => {
+          const near = (n.x1 <= o.x0 + 1e-6) === (yaw <= 1);
+          if (near) expect(topOfNeighbour(i), `yaw ${yaw} sąsiad ${i}`).toBeLessThanOrEqual(0.5 + 1e-6);
+          else expect(topOfNeighbour(i), `yaw ${yaw} sąsiad ${i}`).toBeGreaterThan(volumeHeight(n));
+        });
+      }
       view.setBuildingCutaway(false);
       plan.neighbours.forEach((n, i) => expect(topOfNeighbour(i)).toBeGreaterThan(volumeHeight(n)));
     });
@@ -221,9 +241,11 @@ describe('buildStreet: rekwizyty i seed', () => {
     const { view } = await street('kiełbasa-42');
     const warn = vi.mocked(console.warn);
     expect(warn).toHaveBeenCalledTimes(1);
-    for (const prefix of ['prop:tree:', 'prop:lamp:', 'prop:van:']) {
+    for (const prefix of ['prop:lamp:', 'prop:van:']) {
       for (const c of view.root.children.filter((o) => o.name.startsWith(prefix))) expect(c.children, c.name).toHaveLength(0);
     }
+    // drzewa są proceduralne (zadanie 16), więc nie zależą od wczytania modeli
+    for (const c of view.root.children.filter((o) => o.name.startsWith('prop:tree:'))) expect(meshesOf(c), c.name).toHaveLength(1);
   });
 
   it('wczytany model trafia do grupy, jest skalowany do rzeczywistych wymiarów i stoi na ziemi', async () => {

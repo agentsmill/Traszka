@@ -1,6 +1,7 @@
 import type { Texture } from 'three';
 import { PALETTE } from '@/render/style';
-import { cachedTexture, canvasTexture } from '@/render/store/parts';
+import { cachedTexture, canvasTexture, font } from '@/render/store/parts';
+import { drawNewt } from '@/render/store/signTexture';
 
 /**
  * Atlas elewacji (1024×1024): jedna tekstura koloru i jedna emissive dla wszystkich budynków ulicy, więc budynki
@@ -15,7 +16,8 @@ import { cachedTexture, canvasTexture } from '@/render/store/parts';
  * świecenia), nie kolorem powierzchni, więc czerń i szarości w niej nie łamią zasady „bez czerni i szarości” z przewodnika.
  */
 
-export type AtlasCellName = 'okno' | 'oknoGasne' | 'loggia' | 'szewPlyty' | 'tynk' | 'witryna' | 'brama' | 'gzyms';
+export type AtlasCellName = 'okno' | 'oknoGasne' | 'loggia' | 'szewPlyty' | 'tynk' | 'witryna' | 'brama' | 'gzyms'
+  | 'mural' | 'muralSzop' | 'podloga';
 
 export interface FacadeAtlas {
   map: Texture;
@@ -39,6 +41,9 @@ const LAYOUT: Record<AtlasCellName, Rect> = {
   tynk: { x: 256, y: 256, w: 256, h: 256 },
   brama: { x: 512, y: 256, w: 256, h: 320 },
   gzyms: { x: 768, y: 256, w: 256, h: 64 },
+  podloga: { x: 768, y: 320, w: 256, h: 256 },
+  mural: { x: 0, y: 512, w: 512, h: 512 },
+  muralSzop: { x: 512, y: 576, w: 512, h: 448 },
 };
 
 const CELL_NAMES = Object.keys(LAYOUT) as AtlasCellName[];
@@ -106,7 +111,90 @@ function drawWindowGlow(ctx: Ctx, w: number, h: number): void {
   rect(ctx, '#000000', m, h * 0.34, w - 2 * m, 10);
 }
 
+/** Wyśrodkowany napis o szerokości ≤ `maxW` (czcionka zmniejszana do skutku). */
+function fitText(ctx: Ctx, text: string, x: number, y: number, px: number, maxW: number, color: string): void {
+  ctx.font = font(px, '900');
+  const w = ctx.measureText(text).width;
+  if (w > maxW) ctx.font = font(Math.floor((px * maxW) / w), '900');
+  ctx.fillStyle = color;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, x, y);
+}
+
+/**
+ * Mural na odsłoniętej ścianie szczytowej sąsiada (widać ją w przekroju, gdy bryła nad sklepem znika): reklama
+ * Centrali w barwach marki. Duże litery, więc to żart czytelny z domyślnego zoomu (przewodnik §6).
+ */
+function drawMural(ctx: Ctx, w: number, h: number): void {
+  rect(ctx, brand.cream, 0, 0, w, h);
+  rect(ctx, brand.green, 18, 18, w - 36, h - 36);
+  rect(ctx, brand.greenDark, 18, h - 132, w - 36, 114);
+  drawNewt(ctx, w / 2, 120, 330, brand.orange, brand.cream, brand.greenDark);
+  fitText(ctx, 'CENTRALA', w / 2, 262, 92, w - 80, brand.cream);
+  fitText(ctx, 'MYŚLI ZA CIEBIE', w / 2, 340, 56, w - 80, brand.orange);
+  fitText(ctx, 'Ty tylko uzupełnij tabelkę.', w / 2, h - 92, 30, w - 80, brand.cream);
+  fitText(ctx, 'TRASZKA · ZAWSZE BLISKO', w / 2, h - 46, 26, w - 80, brand.orange);
+  // zacieki i spłowienie starego muralu
+  for (let x = 40; x < w - 40; x += 57) rect(ctx, PALETTE.wall[4], x, 18, 3, 26 + ((x * 7) % 40), 0.12);
+}
+
+/** Mural konkurencji: „Szop 24h” (sieć z gry, bez prawdziwych marek), szop z maską i żart z całodobowej Traszki. */
+function drawMuralSzop(ctx: Ctx, w: number, h: number): void {
+  const violet = PALETTE.clothes[6];
+  const grey = PALETTE.street.kamienicaPlaster[5];
+  rect(ctx, brand.cream, 0, 0, w, h);
+  rect(ctx, violet, 18, 18, w - 36, h - 36);
+  // szop: uszy, głowa, maska, oczy, nos
+  const cx = w / 2, cy = 128;
+  ctx.fillStyle = grey;
+  for (const sx of [-1, 1]) {
+    ctx.beginPath();
+    ctx.moveTo(cx + sx * 50, cy - 40);
+    ctx.lineTo(cx + sx * 92, cy - 96);
+    ctx.lineTo(cx + sx * 104, cy - 22);
+    ctx.fill();
+  }
+  ctx.beginPath();
+  ctx.ellipse(cx, cy, 108, 80, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = PALETTE.wall[4];
+  ctx.beginPath();
+  ctx.ellipse(cx - 44, cy - 6, 44, 26, -0.25, 0, Math.PI * 2);
+  ctx.ellipse(cx + 44, cy - 6, 44, 26, 0.25, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = brand.cream;
+  for (const sx of [-1, 1]) { ctx.beginPath(); ctx.arc(cx + sx * 40, cy - 8, 11, 0, Math.PI * 2); ctx.fill(); }
+  ctx.fillStyle = PALETTE.wall[4];
+  ctx.beginPath();
+  ctx.ellipse(cx, cy + 40, 16, 11, 0, 0, Math.PI * 2);
+  ctx.fill();
+  fitText(ctx, 'SZOP 24h', w / 2, 270, 96, w - 80, brand.cream);
+  fitText(ctx, 'OTWARTE, GDY TRASZKA ŚPI', w / 2, 340, 38, w - 70, PALETTE.productCategory.przekaski[0]);
+  fitText(ctx, '* Traszka nie śpi. Sprawdzaliśmy.', w / 2, h - 52, 26, w - 80, brand.cream);
+}
+
+/** Podłoga w przekroju sąsiada: deski w jodełkę (kremowe, kolor daje wierzchołek). */
+function drawFloorBoards(ctx: Ctx, w: number, h: number): void {
+  rect(ctx, FRAME, 0, 0, w, h);
+  const bw = 32, bl = 96;
+  let k = 0;
+  for (let y = -bl; y < h + bl; y += bw) {
+    for (let x = -bl; x < w + bl; x += bl) {
+      const off = (Math.floor(y / bw) % 2) * (bl / 2);
+      rect(ctx, k++ % 3 === 0 ? plaster[5] : plaster[0], x + off + 2, y + 2, bl - 4, bw - 4, 0.08 + (k % 4) * 0.03);
+      rect(ctx, PALETTE.wall[4], x + off, y, bl, 2, 0.12);
+      rect(ctx, PALETTE.wall[4], x + off, y, 2, bw, 0.12);
+    }
+  }
+}
+
+const DIM_GLOW: DrawCell = (ctx, w, h) => rect(ctx, '#404040', 0, 0, w, h);
+
 const DRAW: Record<AtlasCellName, { color: DrawCell; glow: DrawCell | null }> = {
+  mural: { color: drawMural, glow: DIM_GLOW },
+  muralSzop: { color: drawMuralSzop, glow: DIM_GLOW },
+  podloga: { color: drawFloorBoards, glow: null },
   okno: { color: (c, w, h) => drawWindow(c, w, h, pastel[1], false), glow: drawWindowGlow },
   oknoGasne: { color: (c, w, h) => drawWindow(c, w, h, null, true), glow: null },
   loggia: {

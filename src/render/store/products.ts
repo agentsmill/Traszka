@@ -15,7 +15,7 @@ import {
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { createRng, subSeed, type Rng } from '@/sim/rng';
-import { PALETTE } from '@/render/style';
+import { BEVEL, PALETTE } from '@/render/style';
 import type { ShelfSlot, StoreView } from './buildStore';
 import { gloss, matte, type Category } from './parts';
 
@@ -42,8 +42,11 @@ interface ShapeSpec {
 
 // --- Geometrie ---------------------------------------------------------------------------------------
 
-/** Faza drobiazgu < 5 cm w co najmniej jednym wymiarze: 1 segment (docs/style-guide.md §1), czyli 108 trójkątów na bryłę. */
-function softBox(w: number, h: number, d: number, radius = 0.012): BufferGeometry {
+/**
+ * Opakowanie towaru: faza `BEVEL.small` w 1 segmencie (wyjątek „opakowania towaru” z docs/style-guide.md §1), czyli
+ * 108 trójkątów na bryłę. 2 segmenty dałyby ~+91 tys. trójkątów na kiełbasa-42 przy obiektach ~5 px w domyślnym zoomie.
+ */
+function softBox(w: number, h: number, d: number, radius: number = BEVEL.small): BufferGeometry {
   const g = new RoundedBoxGeometry(w, h, d, 1, Math.min(radius, 0.4 * Math.min(w, h, d)));
   g.translate(0, h / 2, 0);
   return g;

@@ -1,4 +1,4 @@
-import { BufferGeometry, Color, Float32BufferAttribute, Group, Mesh, MeshStandardMaterial } from 'three';
+import { BufferGeometry, Color, Float32BufferAttribute, Group, Matrix4, Mesh, MeshStandardMaterial } from 'three';
 import { createRng, subSeed, type Rng } from '@/sim/rng';
 import { FRONT_WALL_Y, type LotKind, type StoreLayout } from '@/sim/store/types';
 import { CELL_SIZE_M } from '@/sim/grid';
@@ -23,7 +23,8 @@ const WHITE = '#ffffff'; // baza kolorów wierzchołków dla komórek z własnym
 const STREET = PALETTE.street;
 const CREAM = STREET.kamienicaPlaster[2];
 const STONE = STREET.curb[0];
-const ROOF = STREET.asphalt[1];
+/** Pokłady dachów: papa, jasna papa, żwir; budynki w wierszu dostają je po kolei, żeby dachy nie były jednolicie ciemne. */
+const ROOFS = [STREET.asphalt[1], STREET.curb[1], STREET.sidewalk[3]] as const;
 
 // --- Ściana (układ lokalny) --------------------------------------------------------------------------------
 
@@ -115,11 +116,34 @@ export class GeomBuilder {
     this.quad(f.p(s0, y0, off), f.p(s1, y0, off), f.p(s1, y1, off), f.p(s0, y1, off), uv, color);
   }
 
-  /** Płaska bryła przy ścianie (parapet, nadproże, gzyms, płyta balkonu) od `off0` do `off1` od muru. */
+  /** Płaska bryła przy ścianie (parapet, nadproże) od `off0` do `off1` od muru. */
   faceBox(f: Face, s0: number, s1: number, y0: number, y1: number, off0: number, off1: number, color: string): void {
     const a = f.p(s0, y0, off0);
     const b = f.p(s1, y1, off1);
     this.box([Math.min(a[0], b[0]), y0, Math.min(a[2], b[2])], [Math.max(a[0], b[0]), y1, Math.max(a[2], b[2])], color);
+  }
+
+  /**
+   * To samo z fazą (przewodnik §1: duże elementy mają fazowane krawędzie): gzymsy, płyty balkonów, daszki. Drobne parapety
+   * zostają ostre (`faceBox`), bo faza na nich to setki trójkątów na budynek przy kilku pikselach na ekranie.
+   */
+  faceRBox(f: Face, s0: number, s1: number, y0: number, y1: number, off0: number, off1: number, color: string, radius = 0.03, segments = 1): void {
+    const a = f.p(s0, y0, off0);
+    const b = f.p(s1, y1, off1);
+    this.rbox([Math.min(a[0], b[0]), y0, Math.min(a[2], b[2])], [Math.max(a[0], b[0]), y1, Math.max(a[2], b[2])], color, radius, segments);
+  }
+
+  /** Dowolna geometria (pozycja i normalne) po przekształceniu `matrix`, w jednym kolorze, z płaskim UV. */
+  mesh(geometry: BufferGeometry, matrix: Matrix4, color: string): void {
+    const g = geometry.index ? geometry.toNonIndexed() : geometry.clone();
+    g.applyMatrix4(matrix);
+    const p = g.attributes.position!;
+    const n = g.attributes.normal!;
+    this.tmp.set(color);
+    for (let i = 0; i < p.count; i++) {
+      this.vertex([p.getX(i), p.getY(i), p.getZ(i)], [n.getX(i), n.getY(i), n.getZ(i)], this.flat[0], this.flat[1], this.tmp);
+    }
+    g.dispose();
   }
 
   toGeometry(): BufferGeometry {
@@ -152,6 +176,11 @@ export interface VolumeSpec {
   /** Wysokość sąsiada przy ścianie x0 / x1 (ściana poniżej jest zasłonięta); 0 = ściana odsłonięta. */
   coverMin: number;
   coverMax: number;
+  /**
+   * Mural na ślepej ścianie szczytowej od strony sklepu (tylko sąsiedzi). W przekroju bryła nad sklepem znika, a dalszy
+   * sąsiad zostaje w pełnej wysokości, więc ta ściana jest odsłonięta.
+   */
+  mural: 'mural' | 'muralSzop' | null;
 }
 
 const PARAPET_H = 0.5;
@@ -179,7 +208,7 @@ function windowBay(c: Ctx, s: VolumeSpec, f: Face, s0: number, s1: number, y0: n
   const tall = s.style === 'kamienica';
   if (kind === 'loggia') {
     const w = bw * 0.9;
-    c.b.faceBox(f, mid - w / 2 - 0.04, mid + w / 2 + 0.04, y0 + SIGN_CLEARANCE, y0 + 0.15, 0.012, 0.42, s.accent);
+    c.b.faceRBox(f, mid - w / 2 - 0.04, mid + w / 2 + 0.04, y0 + SIGN_CLEARANCE, y0 + 0.15, 0.012, 0.42, s.accent, 0.04, 2);
     c.b.faceQuad(f, mid - w / 2, mid + w / 2, y0 + 0.15, y1 - 0.12, 0.03, c.cell('loggia'), WHITE);
     return;
   }
@@ -207,10 +236,10 @@ function upperFloors(c: Ctx, s: VolumeSpec, f: Face, fromFloor: number, loggias:
     }
     if (s.style === 'kamienica' && k >= 1) {
       // gzyms nad parterem i pod każdą kondygnacją
-      c.b.faceBox(f, 0, f.length, y0 + SIGN_CLEARANCE, y0 + 0.32, 0.012, 0.14, CREAM);
+      c.b.faceRBox(f, 0, f.length, y0 + SIGN_CLEARANCE, y0 + 0.32, 0.012, 0.14, CREAM, 0.035);
       for (let i = 0; i < n; i++) c.b.faceQuad(f, i * bw, (i + 1) * bw, y0 + SIGN_CLEARANCE, y0 + 0.32, 0.1545, c.cell('gzyms'), WHITE);
     } else if (s.style === 'blok') {
-      c.b.faceBox(f, 0, f.length, y0 + SIGN_CLEARANCE, y0 + 0.16, 0.012, 0.1, STONE);
+      c.b.faceRBox(f, 0, f.length, y0 + SIGN_CLEARANCE, y0 + 0.16, 0.012, 0.1, STONE, 0.03);
     }
   }
 }
@@ -237,7 +266,7 @@ function groundFloor(c: Ctx, s: VolumeSpec, f: Face, front: boolean): void {
     if (entrance) c.b.faceQuad(f, mid - 0.8, mid + 0.8, 0, 2.5, 0.03, c.cell('brama'), WHITE);
     else c.b.faceQuad(f, s0 + 0.2, s1 - 0.2, 0.25, 2.95, 0.03, c.cell('witryna'), WHITE);
     c.b.faceBox(f, s0 + 0.05, s1 - 0.05, 0, 0.25, 0.012, 0.08, s.accent);
-    if (!entrance && c.rng.chance(0.5)) c.b.faceBox(f, s0 + 0.15, s1 - 0.15, 3.0, 3.18, 0.012, 0.85, s.accent);
+    if (!entrance && c.rng.chance(0.5)) c.b.faceRBox(f, s0 + 0.15, s1 - 0.15, 3.0, 3.18, 0.012, 0.85, s.accent, 0.05, 2);
   }
 }
 
@@ -252,21 +281,47 @@ function facades(c: Ctx, s: VolumeSpec): void {
     { f: new Face(s.x1, s.z1, 1, 0, s.z1 - s.z0), front: false, cover: s.coverMax },
   ];
   for (const { f, front, cover } of sides) {
-    if (cover >= H) continue;
+    if (cover >= H) {
+      if (s.mural && cover > 0) mural(c, s.mural, f, H);
+      continue;
+    }
     if (!s.overStore) groundFloor(c, s, f, front);
     if (s.floors > 1) upperFloors(c, s, f, 1, front);
     if (s.style === 'kamienica' && front) {
       // lizeny w narożach i gzyms koronujący
-      for (const [a, b] of [[0, 0.4], [f.length - 0.4, f.length]] as const) c.b.faceBox(f, a, b, yStart + (s.overStore ? SIGN_CLEARANCE : 0), H, 0.012, 0.1, CREAM);
-      c.b.faceBox(f, 0, f.length, H - 0.1, H + 0.3, 0.012, 0.32, CREAM);
+      for (const [a, b] of [[0, 0.4], [f.length - 0.4, f.length]] as const) c.b.faceRBox(f, a, b, yStart + (s.overStore ? SIGN_CLEARANCE : 0), H, 0.012, 0.1, CREAM, 0.03);
+      c.b.faceRBox(f, 0, f.length, H - 0.1, H + 0.3, 0.012, 0.32, CREAM, 0.06, 2);
       const n = bayCount(f.length, 1.7);
       for (let i = 0; i < n; i++) c.b.faceQuad(f, (i * f.length) / n, ((i + 1) * f.length) / n, H - 0.1, H + 0.3, 0.3345, c.cell('gzyms'), WHITE);
     }
   }
 }
 
+/** Najwyższy mural (m): przy domyślnym zoomie nad sklepem widać ~3,5 m ściany, a cały mural ma się zmieścić w kadrze. */
+const MURAL_MAX_H = 3.3;
+/** Proporcje komórek muralu w atlasie (szerokość / wysokość wnętrza komórki). */
+const MURAL_ASPECT = { mural: 500 / 500, muralSzop: 500 / 436 } as const;
+
+/**
+ * Mural na ślepej ścianie szczytowej: największy prostokąt o proporcjach komórki, który mieści się nad parterem sklepu
+ * (od WALL_H + 0,35 m do H − 0,6 m) z marginesem 0,5 m od naroży, oparty o dolną krawędź (tuż nad sklepem, więc mieści się
+ * w kadrze domyślnego zoomu). Niski budynek muralu nie dostaje.
+ */
+function mural(c: Ctx, cell: 'mural' | 'muralSzop', f: Face, H: number): void {
+  const y0 = WALL_H + 0.35;
+  const y1 = H - 0.6;
+  const maxW = f.length - 1;
+  const maxH = y1 - y0;
+  if (maxW < 2 || maxH < 2) return;
+  const aspect = MURAL_ASPECT[cell];
+  const w = Math.min(maxW, Math.min(maxH, MURAL_MAX_H) * aspect);
+  const h = w / aspect;
+  const mid = f.length / 2;
+  c.b.faceQuad(f, mid - w / 2, mid + w / 2, y0, y0 + h, 0.02, c.cell(cell), WHITE);
+}
+
 /** Dach: pokład, attyka dookoła i kilka drobiazgów (klatka schodowa, wentylatory, kominy). */
-function roof(c: Ctx, s: VolumeSpec): void {
+function roof(c: Ctx, s: VolumeSpec, roofColor: string): void {
   const H = volumeHeight(s);
   const t = 0.28;
   const ph = s.floors === 1 ? ATTIC_H : PARAPET_H;
@@ -282,7 +337,7 @@ function roof(c: Ctx, s: VolumeSpec): void {
   c.b.rbox([x1 - t - 0.04, H + ph - 0.07, z0 + t], [x1 + 0.04, H + ph + 0.05, z1 - t], STONE, 0.03, 2);
   // pokład dachu; nad sklepem (parter pawilonu) to płyta stropu
   const deck = H + (s.overStore && s.floors === 1 ? SLAB_T : 0.02);
-  c.b.rbox([x0 + t, H - 0.02, z0 + t], [x1 - t, deck, z1 - t], ROOF, 0.02, 1);
+  c.b.rbox([x0 + t, H - 0.02, z0 + t], [x1 - t, deck, z1 - t], roofColor, 0.02, 1);
   // drobiazgi
   const items = s.style === 'blok' ? 3 : 2;
   for (let i = 0; i < items; i++) {
@@ -295,21 +350,54 @@ function roof(c: Ctx, s: VolumeSpec): void {
   }
 }
 
-/** Przekrój budynku sąsiada: niski mur po obrysie (0,5 m) z wierzchem w kolorze przekroju i podłoga. */
-function cutVolume(b: GeomBuilder, s: VolumeSpec): void {
+const CUT_WALL_T = 0.12;
+const FLOOR_TILE_M = 2;
+
+/**
+ * Przekrój budynku sąsiada jak przekrój sklepu: niski mur po obrysie (0,5 m) z wierzchem w kolorze przekroju, podłoga
+ * z desek (komórka 'podloga', kafle po 2 m, bo komórka atlasu się nie powtarza) i ściany działowe z przejściami
+ * (front lokalu, zaplecze i klatka schodowa), żeby ścięty budynek czytał się jak wnętrze, a nie pusty plac.
+ */
+function cutVolume(c: Ctx, s: VolumeSpec): void {
+  const b = c.b;
   const t = WALL_T;
   const { x0, x1, z0, z1 } = s;
   const cap = PALETTE.wall[4];
-  b.rbox([x0, 0, z0 + t], [x1, 0.02, z1 - t], PALETTE.floor[3], 0.005, 1);
-  const walls: [V3, V3][] = [
-    [[x0, 0, z0], [x1, CUT_H - 0.02, z0 + t]],
-    [[x0, 0, z1 - t], [x1, CUT_H - 0.02, z1]],
-    [[x0, 0, z0 + t], [x0 + t, CUT_H - 0.02, z1 - t]],
-    [[x1 - t, 0, z0 + t], [x1, CUT_H - 0.02, z1 - t]],
-  ];
-  for (const [lo, hi] of walls) {
-    b.rbox(lo, hi, s.main, 0.03, 2);
-    b.rbox([lo[0], CUT_H - 0.02, lo[2]], [hi[0], CUT_H, hi[2]], cap, 0.008, 1);
+  const floorCell = c.cell('podloga');
+  const fy = 0.02;
+  for (let x = x0 + t; x < x1 - t - 1e-6; x += FLOOR_TILE_M) {
+    const xe = Math.min(x + FLOOR_TILE_M, x1 - t);
+    for (let z = z0 + t; z < z1 - t - 1e-6; z += FLOOR_TILE_M) {
+      const ze = Math.min(z + FLOOR_TILE_M, z1 - t);
+      const du = (floorCell[2] - floorCell[0]) * ((xe - x) / FLOOR_TILE_M);
+      const dv = (floorCell[3] - floorCell[1]) * ((ze - z) / FLOOR_TILE_M);
+      b.quad([x, fy, ze], [xe, fy, ze], [xe, fy, z], [x, fy, z], [floorCell[0], floorCell[1], floorCell[0] + du, floorCell[1] + dv], PALETTE.floor[1]);
+    }
+  }
+  const wall = (lo: V3, hi: V3, th = CUT_H): void => {
+    b.rbox(lo, [hi[0], th - 0.02, hi[2]], s.main, 0.03, 2);
+    b.rbox([lo[0], th - 0.02, lo[2]], [hi[0], th, hi[2]], cap, 0.008, 1);
+  };
+  wall([x0, 0, z0], [x1, 0, z0 + t]);
+  wall([x0, 0, z1 - t], [x1, 0, z1]);
+  wall([x0, 0, z0 + t], [x0 + t, 0, z1 - t]);
+  wall([x1 - t, 0, z0 + t], [x1, 0, z1 - t]);
+  // działówki: poprzeczna w 45% głębokości z przejściem, podłużna do tyłu z drugim przejściem
+  const w = x1 - x0;
+  const zMid = z0 + 0.45 * (z1 - z0);
+  const door = 1.0;
+  const gap = x0 + 0.3 * w;
+  const half = CUT_WALL_T / 2;
+  wall([x0 + t, 0, zMid - half], [gap, 0, zMid + half]);
+  wall([gap + door, 0, zMid - half], [x1 - t, 0, zMid + half]);
+  const xMid = x0 + 0.6 * w;
+  const zDoor = zMid + 0.5 * (z1 - zMid);
+  wall([xMid - half, 0, zMid + half], [xMid + half, 0, zDoor - door / 2]);
+  wall([xMid - half, 0, zDoor + door / 2], [xMid + half, 0, z1 - t]);
+  // biegi schodów w tylnym pokoju (klatka schodowa): stopnie po 0,1 m
+  const sx = Math.min(x1 - t - 0.2, xMid + 2.2);
+  for (let k = 0; k < 4; k++) {
+    b.rbox([sx - 1.0, 0, z1 - t - 1.2 + k * 0.28], [sx, 0.1 + k * 0.1, z1 - t - 1.2 + (k + 1) * 0.28], STREET.curb[k % 2], 0.01, 1);
   }
 }
 
@@ -376,7 +464,7 @@ export function planRow(layout: StoreLayout, seed: string): { own: VolumeSpec[];
     taken.push(colors[0]);
     return {
       style, x0, x1, z0: o.z0, z1: o.z1, floors, groundH: r.groundH, floorH: r.floorH,
-      main: colors[0], accent: colors[1], overStore: false, gate: false, coverMin: 0, coverMax: 0, ...extra,
+      main: colors[0], accent: colors[1], overStore: false, gate: false, coverMin: 0, coverMax: 0, mural: null, ...extra,
     };
   };
   const between = (range: [number, number]): number => rng.int(range[0], range[1] + 1);
@@ -403,6 +491,11 @@ export function planRow(layout: StoreLayout, seed: string): { own: VolumeSpec[];
     neighbours.push(side === 'minX' ? mk(style, lo - gap - width, lo - gap, floors) : mk(style, hi + gap, hi + gap + width, floors));
   }
 
+  // murale na ślepych ścianach od strony sklepu: reklama Centrali i konkurencji, kolejność z osobnego strumienia,
+  // żeby nie przesuwać losowań kolorów i szerokości
+  const murals = createRng(subSeed(subSeed(seed, 'street'), 'murale')).chance(0.5) ? (['mural', 'muralSzop'] as const) : (['muralSzop', 'mural'] as const);
+  neighbours.forEach((n, i) => { n.mural = murals[i]!; });
+
   const all = [...own, ...neighbours];
   for (const a of all) {
     for (const b of all) {
@@ -414,10 +507,18 @@ export function planRow(layout: StoreLayout, seed: string): { own: VolumeSpec[];
   return { own, neighbours };
 }
 
+/** Kamera o danym `yawIndex` (tabela w CameraRig) stoi po stronie −x dla 0 i 1, po stronie +x dla 2 i 3. */
+export type YawIndex = 0 | 1 | 2 | 3;
+const cameraSide = (yaw: YawIndex): 'minX' | 'maxX' => (yaw <= 1 ? 'minX' : 'maxX');
+
 export interface Buildings {
   root: Group;
-  /** Przekrój: bryła nad sklepem znika, sąsiedzi spadają do 0,5 m z przekrojem muru; pełna zabudowa po `false`. */
-  setCutaway(on: boolean): void;
+  /**
+   * Przekrój: bryła nad sklepem znika, a sąsiad od strony kamery (dla `yawIndex`) spada do 0,5 m z przekrojem wnętrza.
+   * Dalszy sąsiad zostaje w pełnej wysokości: nie zasłania sklepu (promienie do kamery biegną od niego), a kadr wygląda
+   * jak miasto, nie jak plac. `false` pokazuje pełną zabudowę.
+   */
+  setCutaway(on: boolean, yawIndex?: YawIndex): void;
   /** Noc zapala emissive okien (część okien, wg atlasu). */
   setNight(on: boolean): void;
   dispose(): void;
@@ -436,16 +537,17 @@ export function buildBuildings(layout: StoreLayout, seed: string, atlas: FacadeA
   const owned: BufferGeometry[] = [];
   const root = new Group();
   root.name = 'buildings';
-  const toggles: { full: Mesh; cut: Mesh | null }[] = [];
+  const toggles: { full: Mesh; cut: Mesh | null; side: 'own' | 'minX' | 'maxX' }[] = [];
+  let roofIndex = 0;
 
-  const make = (name: string, volumes: VolumeSpec[], cutVolumes: VolumeSpec[]): void => {
+  const make = (name: string, volumes: VolumeSpec[], cutVolumes: VolumeSpec[], side: 'own' | 'minX' | 'maxX'): void => {
     const c: Ctx = { b: new GeomBuilder(flat), atlas, rng, cell: (n) => atlas.cell(n) };
     for (const s of volumes) {
       const yStart = s.overStore ? s.groundH : 0;
       const H = volumeHeight(s);
       if (H > yStart + 0.01) c.b.rbox([s.x0, yStart, s.z0], [s.x1, H, s.z1], s.main, 0.12, 3);
       facades(c, s);
-      roof(c, s);
+      roof(c, s, ROOFS[roofIndex++ % ROOFS.length]!);
     }
     const group = new Group();
     group.name = name;
@@ -456,29 +558,32 @@ export function buildBuildings(layout: StoreLayout, seed: string, atlas: FacadeA
     group.add(full);
     let cut: Mesh | null = null;
     if (cutVolumes.length > 0) {
-      const cb = new GeomBuilder(flat);
-      for (const s of cutVolumes) cutVolume(cb, s);
-      cut = new Mesh(cb.toGeometry(), material);
+      const cc: Ctx = { b: new GeomBuilder(flat), atlas, rng, cell: (n) => atlas.cell(n) };
+      for (const s of cutVolumes) cutVolume(cc, s);
+      cut = new Mesh(cc.b.toGeometry(), material);
       cut.name = `${name}:cut`;
       cut.castShadow = cut.receiveShadow = false;
       cut.visible = false;
       owned.push(cut.geometry);
       group.add(cut);
     }
-    toggles.push({ full, cut });
+    toggles.push({ full, cut, side });
     root.add(group);
   };
 
-  make(`building:${layout.lot.kind}`, plan.own, plan.own.filter((s) => !s.overStore));
-  plan.neighbours.forEach((n, i) => make(`neighbour:${i}`, [n], [n]));
+  const o = storeOuter(layout);
+  make(`building:${layout.lot.kind}`, plan.own, plan.own.filter((s) => !s.overStore), 'own');
+  plan.neighbours.forEach((n, i) => make(`neighbour:${i}`, [n], [n], n.x1 <= o.x0 + 1e-6 ? 'minX' : 'maxX'));
 
   let disposed = false;
   return {
     root,
-    setCutaway(on) {
+    setCutaway(on, yawIndex = 0) {
+      const near = cameraSide(yawIndex);
       for (const t of toggles) {
-        t.full.visible = !on;
-        if (t.cut) t.cut.visible = on;
+        const cutHere = on && (t.side === 'own' || t.side === near);
+        t.full.visible = !cutHere;
+        if (t.cut) t.cut.visible = cutHere;
       }
     },
     setNight(on) { material.emissiveIntensity = on ? WINDOW_GLOW.night : 0; },

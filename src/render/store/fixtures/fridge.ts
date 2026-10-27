@@ -31,7 +31,14 @@ export function buildFridge(f: Fixture, seed = ''): Object3D {
   box(inner, [W - 0.06, 0.12, bodyDepth - 0.06], [0, 0, cz], frame, { name: 'plinth' });
   box(inner, [W * 0.6, 0.05, 0.012], [0, 0.035, cz + (bodyDepth - 0.06) / 2 + 0.004], painted(FIX.metal), { name: 'grille' });
   for (const s of [-1, 1]) box(inner, [0.06, BODY_TOP - BODY_BOTTOM, bodyDepth], [s * (W / 2 - 0.03), BODY_BOTTOM, cz], frame, { name: 'side' });
-  box(inner, [W - 0.1, BODY_TOP - BODY_BOTTOM, 0.03], [0, BODY_BOTTOM, back + 0.015], matte(PALETTE.wall[0]), { name: 'inner back' });
+  // plecy: kremowe od środka, z zewnątrz w kolorze ramy z kratką skraplacza i tabliczką marki (w przekroju ściana za
+  // lodówką znika, więc tył widać z sali; zadanie 16, decyzja R22)
+  box(inner, [W - 0.1, BODY_TOP - BODY_BOTTOM, 0.03], [0, BODY_BOTTOM, back + 0.027], matte(PALETTE.wall[0]), { name: 'inner back' });
+  box(inner, [W - 0.06, BODY_TOP - BODY_BOTTOM + 0.1, 0.012], [0, 0.02, back + 0.006], frame, { name: 'outer back', seg: 1, radius: 0.004 });
+  for (let k = 0; k < 4; k++) {
+    box(inner, [W * 0.7, 0.025, 0.008], [0, BODY_TOP - 0.34 + k * 0.07, back - 0.002], painted(FIX.metal), { name: 'condenser grille', seg: 1, radius: 0.003 });
+  }
+  plateSign(inner, 'TRASZKA', [Math.min(0.56, W - 0.2), Math.min(0.56, W - 0.2) / 4], [0, 0.9, back - 0.001], -1);
 
   // rama otworu drzwi: dwa słupki, górna i dolna poprzeczka
   const openW = W - 0.12;                // między słupkami (po 6 cm z każdej strony)
