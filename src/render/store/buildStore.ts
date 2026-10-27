@@ -1,4 +1,4 @@
-import { Group, Mesh, PointLight, type BufferGeometry, type Material, type Object3D } from 'three';
+import { Group, Mesh, PointLight, type BufferGeometry, type InstancedMesh, type Material, type Object3D } from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { cellToWorld } from '@/render/coords';
 import type { StoreLayout } from '@/sim/store/types';
@@ -200,6 +200,8 @@ export function buildStore(layout: StoreLayout): StoreView {
     dispose() {
       if (disposed) return;
       disposed = true;
+      // dołożony towar (Task 9): instancje mają własne bufory na GPU; geometrie i materiały są wspólne i zostają
+      root.traverse((o) => { if ((o as InstancedMesh).isInstancedMesh) (o as InstancedMesh).dispose(); });
       root.removeFromParent();
       for (const g of owned) g.dispose();
       owned.length = 0;

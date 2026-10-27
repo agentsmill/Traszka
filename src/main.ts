@@ -5,6 +5,7 @@ import { QUALITY, detectDeviceCaps, pickInitialPreset, type QualityPresetId } fr
 import { BEVEL, PALETTE, material } from '@/render/style';
 import { cellToWorld } from '@/render/coords';
 import { buildStore } from '@/render/store/buildStore';
+import { fillShelves } from '@/render/store/products';
 import { generateStore } from '@/sim/store/generateStore';
 import { CELL_SIZE_M } from '@/sim/grid';
 
@@ -101,6 +102,8 @@ function startStoreScene(canvas: HTMLCanvasElement, seed: string, preset: Qualit
   }
   const layout = generateStore(seed);
   const view = buildStore(layout);
+  const goods = fillShelves(view, seed);
+  view.root.add(goods); // view.dispose() zwalnia też bufory instancji towaru
   ctx.scene.add(view.root);
 
   const lo = cellToWorld(layout, 0, 0);
@@ -130,7 +133,7 @@ function startStoreScene(canvas: HTMLCanvasElement, seed: string, preset: Qualit
     x: () => view.setExteriorMode((exterior = !exterior)),
   });
   startRenderLoop(ctx);
-  Object.assign(window, { traszkaStore: { ctx, view, layout } });
+  Object.assign(window, { traszkaStore: { ctx, view, layout, goods } });
 }
 
 const params = new URLSearchParams(location.search);
