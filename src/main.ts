@@ -3,6 +3,42 @@ import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.j
 import { createRenderContext, type RenderContext } from '@/render/renderer';
 import { QUALITY, detectDeviceCaps, pickInitialPreset, type QualityPresetId } from '@/render/quality';
 import { BEVEL, PALETTE, material } from '@/render/style';
+import { cellToWorld } from '@/render/coords';
+import { buildStore } from '@/render/store/buildStore';
+import { generateStore } from '@/sim/store/generateStore';
+import { CELL_SIZE_M } from '@/sim/grid';
+
+/**
+ * Sterowanie wspólne dla scen próbnych: Q/E obrót, +/− zoom, strzałki pan, kółko myszy, 1/2/3 preset jakości.
+ * `extra` dokłada klawisze sceny (np. N dzień/noc).
+ */
+function bindControls(ctx: RenderContext, extra: Record<string, () => void> = {}): void {
+  const keys: Record<string, () => void> = {
+    q: () => ctx.rig.rotate(-1),
+    e: () => ctx.rig.rotate(1),
+    '+': () => ctx.rig.zoomBy(1.15),
+    '=': () => ctx.rig.zoomBy(1.15),
+    '-': () => ctx.rig.zoomBy(1 / 1.15),
+    ArrowLeft: () => ctx.rig.panBy(-0.5, 0),
+    ArrowRight: () => ctx.rig.panBy(0.5, 0),
+    ArrowUp: () => ctx.rig.panBy(0, -0.5),
+    ArrowDown: () => ctx.rig.panBy(0, 0.5),
+    '1': () => ctx.setPreset('niska'),
+    '2': () => ctx.setPreset('srednia'),
+    '3': () => ctx.setPreset('wysoka'),
+    ...extra,
+  };
+  window.addEventListener('keydown', (e) => keys[e.key]?.());
+  window.addEventListener('wheel', (e) => ctx.rig.zoomBy(e.deltaY < 0 ? 1.1 : 1 / 1.1), { passive: true });
+}
+
+function startRenderLoop(ctx: RenderContext): void {
+  const loop = (): void => {
+    ctx.render();
+    requestAnimationFrame(loop);
+  };
+  requestAnimationFrame(loop);
+}
 
 /**
  * Tymczasowa scena `?scene=test` do oglądania renderera: kilka zaokrąglonych brył na podłodze, kolory z PALETTE.
@@ -43,31 +79,58 @@ function startTestScene(canvas: HTMLCanvasElement, preset: QualityPresetId): voi
   ctx.rig.setBounds(-5, -5, 5, 5);
   ctx.setTimeOfDay('day');
 
-  const keys: Record<string, () => void> = {
-    q: () => ctx.rig.rotate(-1),
-    e: () => ctx.rig.rotate(1),
-    '+': () => ctx.rig.zoomBy(1.15),
-    '=': () => ctx.rig.zoomBy(1.15),
-    '-': () => ctx.rig.zoomBy(1 / 1.15),
-    ArrowLeft: () => ctx.rig.panBy(-0.5, 0),
-    ArrowRight: () => ctx.rig.panBy(0.5, 0),
-    ArrowUp: () => ctx.rig.panBy(0, -0.5),
-    ArrowDown: () => ctx.rig.panBy(0, 0.5),
-    n: () => ctx.setTimeOfDay((night = !night) ? 'night' : 'day'),
-    '1': () => ctx.setPreset('niska'),
-    '2': () => ctx.setPreset('srednia'),
-    '3': () => ctx.setPreset('wysoka'),
-  };
   let night = false;
-  window.addEventListener('keydown', (e) => keys[e.key]?.());
-  window.addEventListener('wheel', (e) => ctx.rig.zoomBy(e.deltaY < 0 ? 1.1 : 1 / 1.1), { passive: true });
+  bindControls(ctx, { n: () => ctx.setTimeOfDay((night = !night) ? 'night' : 'day') });
 
-  const loop = (): void => {
-    ctx.render();
-    requestAnimationFrame(loop);
-  };
-  requestAnimationFrame(loop);
+  startRenderLoop(ctx);
   Object.assign(window, { traszkaTest: ctx });
+}
+
+/**
+ * Podgląd sklepu `?seed=<seed>`: generateStore → buildStore. Sterowanie jak w scenie próbnej plus N dzień/noc,
+ * X widok z zewnątrz (pełne ściany i szyld); przekrój (cutaway) podąża za obrotem kamery.
+ * Parametry do zrzutów: `yaw` (0–3), `night=1`, `ext=1`, `zoom` (wysokość widoku w m), `q` (preset jakości).
+ */
+function startStoreScene(canvas: HTMLCanvasElement, seed: string, preset: QualityPresetId, params: URLSearchParams): void {
+  let ctx: RenderContext;
+  try {
+    ctx = createRenderContext(canvas, preset);
+  } catch (error) {
+    console.error('Nie udało się uruchomić renderera.', error);
+    return;
+  }
+  const layout = generateStore(seed);
+  const view = buildStore(layout);
+  ctx.scene.add(view.root);
+
+  const lo = cellToWorld(layout, 0, 0);
+  const hi = cellToWorld(layout, layout.width - 1, layout.depth - 1);
+  ctx.rig.setBounds(lo.x - CELL_SIZE_M / 2, lo.z - CELL_SIZE_M / 2, hi.x + CELL_SIZE_M / 2, hi.z + CELL_SIZE_M / 2);
+  // start: środek sali sprzedaży i zaplecza (bez chodnika)
+  ctx.rig.panBy(0, cellToWorld(layout, 0, (5 + layout.depth) / 2).z);
+  const zoom = Number(params.get('zoom'));
+  if (zoom > 0) ctx.rig.zoomBy(14 / zoom);
+  const yaw = Number(params.get('yaw'));
+  if (yaw >= 1 && yaw <= 3) ctx.rig.yawIndex = yaw as 1 | 2 | 3;
+
+  let night = params.get('night') === '1';
+  let exterior = params.get('ext') === '1';
+  view.setCutaway(ctx.rig.yawIndex);
+  view.setExteriorMode(exterior);
+  view.setTimeOfDay(night ? 'night' : 'day');
+  ctx.setTimeOfDay(night ? 'night' : 'day');
+  ctx.rig.onChange(() => view.setCutaway(ctx.rig.yawIndex));
+
+  bindControls(ctx, {
+    n: () => {
+      night = !night;
+      ctx.setTimeOfDay(night ? 'night' : 'day');
+      view.setTimeOfDay(night ? 'night' : 'day');
+    },
+    x: () => view.setExteriorMode((exterior = !exterior)),
+  });
+  startRenderLoop(ctx);
+  Object.assign(window, { traszkaStore: { ctx, view, layout } });
 }
 
 const params = new URLSearchParams(location.search);
@@ -76,6 +139,9 @@ const canvas = document.getElementById('scene') as HTMLCanvasElement;
 if (params.get('scene') === 'test') {
   const q = params.get('q');
   startTestScene(canvas, q && q in QUALITY ? (q as QualityPresetId) : pickInitialPreset(detectDeviceCaps()));
+} else if (params.get('seed')) {
+  const q = params.get('q');
+  startStoreScene(canvas, params.get('seed')!, q && q in QUALITY ? (q as QualityPresetId) : pickInitialPreset(detectDeviceCaps()), params);
 } else {
   console.log('Traszka Tycoon');
 }
