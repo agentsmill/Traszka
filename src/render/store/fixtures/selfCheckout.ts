@@ -26,8 +26,9 @@ export function buildSelfCheckout(f: Fixture): Object3D {
   box(inner, [0.5, 0.04, D - 0.06], [-L / 2 + 0.3, 0.72, 0], matte(FIX.shelf), { name: 'bagging shelf' });
   for (const sx of [-1, 1]) cyl(inner, 0.012, 0.72, [-L / 2 + 0.3 + sx * 0.22, 0.36, -D / 2 + 0.06], metal, { name: 'shelf leg' });
   box(inner, [0.5, 0.05, 0.02], [-L / 2 + 0.3, 0.76, -D / 2 + 0.04], gloss(BRAND.orange), { name: 'shelf rail' });
-  // nadstawka z nazwą
-  box(inner, [0.5, 0.14, 0.05], [px - 0.02, 1.2, -0.04], matte(BRAND.green), { name: 'header' });
-  plateSign(inner, 'SAMOOBSŁUGA', [0.4, 0.1], [px - 0.02, 1.27, -0.04 + 0.0255], 1);
+  // nadstawka z nazwą (2 cm luzu do krawędzi obrysu z każdej strony)
+  const hx = px - 0.04;
+  box(inner, [0.44, 0.14, 0.05], [hx, 1.2, -0.04], matte(BRAND.green), { name: 'header' });
+  plateSign(inner, 'SAMOOBSŁUGA', [0.4, 0.1], [hx, 1.27, -0.04 + 0.0255], 1);
   return root;
 }

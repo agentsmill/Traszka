@@ -53,8 +53,7 @@ const H = 192;
 function drawSign(ctx: CanvasRenderingContext2D, text: string, glowOnly: boolean): void {
   const cream = BRAND.cream;
   if (glowOnly) {
-    ctx.fillStyle = '#000000';
-    ctx.fillRect(0, 0, W, H);
+    ctx.clearRect(0, 0, W, H);
   } else {
     ctx.fillStyle = BRAND.green;
     ctx.fillRect(0, 0, W, H);

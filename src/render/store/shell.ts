@@ -56,8 +56,7 @@ function tileTexture(name: string, base: string, grout: string): Texture {
     const tile = w / 4;
     ctx.fillStyle = grout;
     ctx.fillRect(0, 0, w, h);
-    let s = 12345;
-    const rnd = (): number => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296);
+    const rng = createRng(subSeed('tile', name));
     for (let ty = 0; ty < 4; ty++) {
       for (let tx = 0; tx < 4; tx++) {
         const x = tx * tile + 3;
@@ -65,7 +64,7 @@ function tileTexture(name: string, base: string, grout: string): Texture {
         const size = tile - 6;
         ctx.fillStyle = base;
         ctx.fillRect(x, y, size, size);
-        const v = rnd();
+        const v = rng.next();
         ctx.fillStyle = v > 0.5 ? BRAND.cream : PALETTE.wall[4];
         ctx.globalAlpha = Math.abs(v - 0.5) * 0.14;
         ctx.fillRect(x, y, size, size);

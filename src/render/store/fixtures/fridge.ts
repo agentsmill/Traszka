@@ -30,12 +30,12 @@ export function buildFridge(f: Fixture, seed = ''): Object3D {
 
   box(inner, [W - 0.06, 0.12, bodyDepth - 0.06], [0, 0, cz], frame, { name: 'plinth' });
   box(inner, [W * 0.6, 0.05, 0.012], [0, 0.035, cz + (bodyDepth - 0.06) / 2 + 0.004], painted(FIX.metal), { name: 'grille' });
-  for (const s of [-1, 1]) box(inner, [0.05, BODY_TOP - BODY_BOTTOM, bodyDepth], [s * (W / 2 - 0.025), BODY_BOTTOM, cz], frame, { name: 'side' });
+  for (const s of [-1, 1]) box(inner, [0.06, BODY_TOP - BODY_BOTTOM, bodyDepth], [s * (W / 2 - 0.03), BODY_BOTTOM, cz], frame, { name: 'side' });
   box(inner, [W - 0.1, BODY_TOP - BODY_BOTTOM, 0.03], [0, BODY_BOTTOM, back + 0.015], matte(PALETTE.wall[0]), { name: 'inner back' });
 
   // rama otworu drzwi: dwa słupki, górna i dolna poprzeczka
-  const openW = W - 0.1;
-  for (const s of [-1, 1]) box(inner, [0.05, BODY_TOP - BODY_BOTTOM, 0.06], [s * (W / 2 - 0.025), BODY_BOTTOM, frontZ + 0.01], frame, { name: 'stile' });
+  const openW = W - 0.12;                // między słupkami (po 6 cm z każdej strony)
+  for (const s of [-1, 1]) box(inner, [0.06, BODY_TOP - BODY_BOTTOM, 0.06], [s * (W / 2 - 0.03), BODY_BOTTOM, frontZ + 0.01], frame, { name: 'stile' });
   box(inner, [W, 0.07, 0.06], [0, BODY_BOTTOM, frontZ + 0.01], frame, { name: 'sill' });
   box(inner, [W, 0.07, 0.06], [0, BODY_TOP - 0.07, frontZ + 0.01], frame, { name: 'head' });
 
@@ -58,7 +58,7 @@ export function buildFridge(f: Fixture, seed = ''): Object3D {
   const shelfDepth = bodyDepth - 0.14;
   const shelfZ = back + 0.03 + shelfDepth / 2;
   for (let k = 0; k < FRIDGE_LEVELS; k++) {
-    box(inner, [openW - 0.02, 0.02, shelfDepth], [0, FRIDGE_FIRST_TOP - 0.02 + k * FRIDGE_STEP, shelfZ], painted(FIX.metal), { name: 'shelf' });
+    box(inner, [openW - 0.02, 0.04, shelfDepth], [0, FRIDGE_FIRST_TOP - 0.04 + k * FRIDGE_STEP, shelfZ], painted(FIX.metal), { name: 'shelf' });
   }
   const led = glow(BRAND.cream, 2.2);
   for (const s of [-1, 1]) box(inner, [0.02, BODY_TOP - BODY_BOTTOM - 0.2, 0.015], [s * (openW / 2 - 0.02), BODY_BOTTOM + 0.1, frontZ - 0.02], led, { name: 'led', cast: false });

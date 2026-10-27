@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { Box3, Mesh, PointLight, type BufferGeometry, type Material, type Object3D } from 'three';
+import { Box3, Mesh, PointLight, type BufferGeometry, type DataTexture, type Material, type Object3D } from 'three';
 import { generateStore } from '@/sim/store/generateStore';
 import type { Facing, Fixture, FixtureKind, StoreLayout } from '@/sim/store/types';
 import { CELL_SIZE_M } from '@/sim/grid';
@@ -58,16 +58,20 @@ describe('FIXTURE_BUILDERS (przed scaleniem geometrii)', () => {
   }
 
   it('mebel mieści się w swoim footprincie (origin w lewym-przednim rogu, +x/+z)', () => {
-    for (const kind of KINDS) {
-      if (kind === 'backroomDoor') continue; // drzwi stoją we wnęce ściany, obrys liczy się osobno
+    // buildSelfCheckout nie jest pod żadnym rodzajem z FIXTURE_BUILDERS (slot to tylko znacznik), więc idzie osobno
+    const cases: [string, FixtureKind, (f: Fixture) => Object3D][] = [
+      ...KINDS.filter((kind) => kind !== 'backroomDoor').map((kind): [string, FixtureKind, (f: Fixture) => Object3D] => [kind, kind, FIXTURE_BUILDERS[kind]]),
+      ['selfCheckout', 'selfCheckoutSlot', buildSelfCheckout],
+    ];
+    for (const [name, kind, build] of cases) {
       for (const facing of ['N', 'E', 'S', 'W'] as const) {
         const f = sample(kind, facing);
-        const box = new Box3().setFromObject(FIXTURE_BUILDERS[kind](f));
-        const eps = 0.06;
-        expect(box.min.x, `${kind}/${facing} min.x`).toBeGreaterThanOrEqual(-eps);
-        expect(box.min.z, `${kind}/${facing} min.z`).toBeGreaterThanOrEqual(-eps);
-        expect(box.max.x, `${kind}/${facing} max.x`).toBeLessThanOrEqual(f.w * CELL_SIZE_M + eps);
-        expect(box.max.z, `${kind}/${facing} max.z`).toBeLessThanOrEqual(f.d * CELL_SIZE_M + eps);
+        const box = new Box3().setFromObject(build(f));
+        const eps = 0.01; // 1 cm: przy 6 cm tolerancji 3 cm wystającej nadstawki kasy przechodziłyby niezauważone
+        expect(box.min.x, `${name}/${facing} min.x`).toBeGreaterThanOrEqual(-eps);
+        expect(box.min.z, `${name}/${facing} min.z`).toBeGreaterThanOrEqual(-eps);
+        expect(box.max.x, `${name}/${facing} max.x`).toBeLessThanOrEqual(f.w * CELL_SIZE_M + eps);
+        expect(box.max.z, `${name}/${facing} max.z`).toBeLessThanOrEqual(f.d * CELL_SIZE_M + eps);
       }
     }
   });
@@ -116,15 +120,15 @@ describe(`buildStore(generateStore('${SEED}'))`, () => {
   });
 
   it('scala geometrię: mało siatek w drzewie (budżet draw calls < 300)', () => {
-    const meshes = meshesOf(view.root).filter((m) => m.parent !== null);
+    const meshes = meshesOf(view.root);
     expect(meshes.length).toBeLessThan(150);
   });
 
-  it('setCutaway(yaw) obniża dokładnie dwie ściany od strony kamery do ≤ 0,5 m', () => {
-    const expected = [['front', 'left'], ['back', 'left'], ['back', 'right'], ['front', 'right']] as const;
+  it('setCutaway(yaw) obniża ściany od strony kamery do ≤ 0,5 m (ściana działowa zaplecza z tylną)', () => {
+    const expected = [['front', 'left'], ['back', 'mid', 'left'], ['back', 'mid', 'right'], ['front', 'right']] as const;
     for (const yaw of [0, 1, 2, 3] as const) {
       view.setCutaway(yaw);
-      for (const side of ['front', 'back', 'left', 'right'] as const) {
+      for (const side of ['front', 'back', 'left', 'right', 'mid'] as const) {
         const wall = view.root.getObjectByName(`wall:${side}`);
         expect(wall, `wall:${side}`).toBeDefined();
         const lowered = expected[yaw].includes(side as never);
@@ -184,7 +188,9 @@ describe('lokal narożny (druga witryna)', () => {
 
 describe('makeSignTexture', () => {
   it('w Node (bez document) zwraca atrapę 1×1 zamiast rzucać', () => {
-    const t = makeSignTexture('TRASZKA');
-    expect(t).toBeDefined();
+    const t = makeSignTexture('TRASZKA') as DataTexture;
+    expect(t.isDataTexture).toBe(true);
+    expect(t.image.width).toBe(1);
+    expect(t.image.height).toBe(1);
   });
 });
