@@ -1,11 +1,11 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { describe, it, expect } from 'vitest';
 
-function files(dir: string): string[] {
+function files(dir: string, ext = '.ts'): string[] {
   return readdirSync(dir).flatMap((f) => {
     const p = join(dir, f);
-    return statSync(p).isDirectory() ? files(p) : p.endsWith('.ts') ? [p] : [];
+    return statSync(p).isDirectory() ? files(p, ext) : p.endsWith(ext) ? [p] : [];
   });
 }
 
@@ -16,5 +16,13 @@ describe('architektura', () => {
       return /from ['"]three/.test(src) || /Math\.random/.test(src);
     });
     expect(offenders).toEqual([]);
+  });
+
+  it('każdy plik .glb w public/assets ma wpis w public/assets/LICENSES.md', () => {
+    const licenses = readFileSync('public/assets/LICENSES.md', 'utf8');
+    const missing = files('public/assets', '.glb')
+      .map((f) => basename(f))
+      .filter((name) => !licenses.includes(name));
+    expect(missing).toEqual([]);
   });
 });
