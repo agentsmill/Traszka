@@ -30,8 +30,8 @@ export const PALETTE: {
   brand: { green: '#2faa4f', greenDark: '#1d6b3a', orange: '#ff8a1f', cream: '#fff3df' },
   /** [0] płytka sali, [1] płytka akcentowa (obwódka, pas przy wejściu), [2] fuga, [3] posadzka zaplecza. */
   floor: ['#e3d2b5', '#cbb38e', '#ad9c80', '#a9a397'],
-  /** [0] ściana sali, [1] pas marki u góry ściany, [2] cokół i listwa przypodłogowa, [3] ściana zaplecza,
-   *  [4] przekrój (wierzch ściętej ściany w trybie cutaway). */
+  /** [0] ściana sali, [1] pas marki u góry ściany, [2] cokół i listwa przypodłogowa (ciemna zieleń: jedyny wpis
+   *  poza regułą spokojnego tła S ≤ 0,35), [3] ściana zaplecza, [4] przekrój (wierzch ściętej ściany w cutaway). */
   wall: ['#f3ece0', '#8fcf98', '#3f6b4f', '#d9d2c3', '#4b3f3a'],
   /** Korpusy mebli. shelf: gondole i regały ścienne; fridgeFrame: rama lodówki; counter: korpus lady kasy;
    *  wood: blaty, skrzynki, palety; metal: słupki, wsporniki, kosze. */
@@ -145,8 +145,8 @@ export function material(kind: MaterialKind, color: string, opts: MaterialOpts =
  * na przekątnej kamery (yaw 45° + 90°·k) w żadnym z czterech obrotów.
  * envIntensity → scene.environmentIntensity (RoomEnvironment), exposure → renderer.toneMappingExposure,
  * bloomStrength → intensywność BloomEffect (próg luminancji ~0,9, więc świeci tylko emissive). Tło sceny: hemi.sky.
- * Noc opisuje tylko niebo i księżyc. Ciepłe światło wnętrza sklepu, latarnie i okna dokłada renderer
- * (docs/style-guide.md, „Światło”).
+ * Noc opisuje tylko niebo i księżyc. Ciepłe światło wnętrza sklepu dodaje buildStore (zadanie 8), a latarnie
+ * i okna świecą przez emissive (zadanie 12); patrz docs/style-guide.md, „Światło”.
  */
 export const LIGHT_PRESETS: Record<'day' | 'night', {
   sun: { color: string; intensity: number; elevationDeg: number; azimuthDeg: number };

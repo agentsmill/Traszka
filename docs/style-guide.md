@@ -1,47 +1,33 @@
 # Przewodnik stylu Traszki
 
-Wzorzec: **Two Point Hospital**: ciepło, nasycenie, czytelność z daleka, miękkie przysadziste bryły, dużo detalu, humor w szczegółach. Wartości bierz z `src/render/style.ts`. Tone mapping: **Neutral** (AgX szarzy tę paletę). Każdy punkt to kryterium odbioru zadań 8–12 i 16.
+Wzorzec: **Two Point Hospital**, czyli ciepło, nasycenie i czytelność z daleka. Wartości bierz z `src/render/style.ts`, tone mapping **Neutral** (AgX szarzy paletę). Każdy punkt to kryterium odbioru zadań 8–12 i 16.
 
 ## 1. Bryła
-- Każdy widoczny prostopadłościan to `RoundedBoxGeometry`: `BEVEL.medium` (3 segmenty) dla części o najmniejszym wymiarze ≥ 10 cm, `BEVEL.small` (2 segmenty) dla cieńszych, poniżej 3 cm `min(BEVEL.small, 0,4 × wymiar)`; drobiazgi < 5 cm w każdym wymiarze (cenówki, przyciski) 1 segment. Gołe `BoxGeometry` w kadrze nie przechodzi.
-- Przysadziście: blat ≥ 6 cm z nawisem 3–5 cm, półka ≥ 4 cm, cokół 10–12 cm cofnięty o 3 cm, boki i słupki ≥ 6 cm.
-- Wysokości pod kamerę 35°: gondola ≤ 1,6 m, regał ścienny i lodówka 2,0 m, lada 0,95 m. Od brzegu footprintu 2–3 cm luzu.
-- Sylwetka ma ≥ 2 uskoki (cokół → korpus → nadstawka albo blat). Jednolity prostopadłościan to „klocek”.
-- Mebel: ≥ 3 siatki (gondola i lodówka ≥ 8), ≥ 1 element w kolorze marki, ≤ 10 tys. trójkątów bez towaru, statyka scalona per materiał. Minimum części:
-  - **gondola, regał ścienny:** zielony cokół, korpus z plecami, ≥ 4 półki, pomarańczowa listwa cenowa na każdej, kremowe cenówki, nadstawka z tabliczką kategorii;
-  - **lodówka:** rama `fixture.fridgeFrame`, cokół, nadstawka z szyldem, szklane drzwi z uchwytem, półki `metalPainted`, pionowa listwa LED;
-  - **kasa:** cokół, korpus `fixture.counter`, drewniany blat z nawisem, panel z logo, ekran, terminal, koszyk ze zdrapkami;
-  - **papierosy:** zamykane fronty, podświetlenie, tabliczka „18+”; **hot-dogi:** obudowa, ≥ 4 rolki z grzałką, szyba; **ekspres:** ekran, tacka, ≥ 2 kubki; **kasa samoobsługowa:** słupek, ekran, półka, skaner; **slot:** znacznik z `opacity` 0,5 i „+”.
-- Lampy sufitowe: widoczny pręt lub linka, bez cienia (pływający panel wygląda z góry jak plama na podłodze).
+- Prostopadłościany w kadrze to `RoundedBoxGeometry`: `BEVEL.medium` (3 segmenty) od 10 cm najmniejszego wymiaru, `BEVEL.small` (2) dla cieńszych, poniżej 3 cm `min(BEVEL.small, 0,4 × wymiar)`, drobiazgi < 5 cm: 1 segment.
+- Blat ≥ 6 cm z nawisem 3–5 cm, półka ≥ 4 cm, cokół 10–12 cm cofnięty o 3 cm, słupki ≥ 6 cm. Gondola ≤ 1,6 m, regał ścienny i lodówka 2,0 m, lada 0,95 m.
+- Sylwetka ma ≥ 2 uskoki (cokół → korpus → nadstawka lub blat).
+- Builder mebla, przed scaleniem geometrii: ≥ 3 siatki (gondola i lodówka ≥ 8), ≥ 1 element w kolorze marki, ≤ 10 tys. trójkątów bez towaru.
+- Obowiązkowe części. Gondola i regał: cokół, plecy, ≥ 4 półki z listwą cenową, nadstawka z kategorią. Lodówka: rama, szklane drzwi z uchwytem, półki, listwa LED. Kasa: blat z nawisem, ekran, terminal. Papierosy: fronty, podświetlenie. Hot-dogi: ≥ 4 rolki, szyba. Ekspres: tacka, kubki. Kasa samoobsługowa: słupek, ekran, skaner.
+- Lampy sufitowe wiszą na pręcie lub lince i nie rzucają cienia.
 
 ## 2. Kolor
-- Tylko z `PALETTE`. Wyjątki: biała baza `'#ffffff'` pod `setColorAt` i tabela świateł z §4. Bez czystej szarości, bieli i czerni (pilnuje `style.test.ts`).
-- Spokojne tło, kolorowy pierwszy plan: podłogi, ściany i nawierzchnie S ≤ 0,35, elewacje S ≤ 0,5, korpusy mebli jasne szałwiowe. Kolor niosą towar, marka i ludzie (S ≥ 0,5).
-- Marka: zieleń na cokołach, nadstawkach, szyldzie i koszulkach personelu; pomarańcz na listwach cenowych, logo i ladzie; krem na cenówkach i napisach.
-- Sala: płytki `floor[0]` z fugą `floor[2]`, pas `floor[1]` przy wejściu, zaplecze `floor[3]`. Ściana `wall[0]`, u góry pas marki `wall[1]` (40–50 cm), cokół `wall[2]` (12 cm), wierzch ściętej ściany `wall[4]`.
-- Ulica: płyty 50×50 z `sidewalk` losowane per płyta, `curb`, jezdnia `asphalt[0]` z łatami `[1]` i pasami `[2]`. Blok: dwa kolory z `blokPastel` w pasach. Kamienica: tynk z `kamienicaPlaster`, gzyms i cokół jaśniejsze.
+- Tylko `PALETTE`. Wyjątki: `'#ffffff'` jako baza pod `setColorAt` i światła z §4. Bez czystej szarości, bieli i czerni.
+- Tło spokojne, S ≤ 0,35: `floor`, `wall` poza cokołem `wall[2]`, `asphalt`, `sidewalk`, `curb`. Elewacje S ≤ 0,5. Kolor niosą towar (w każdej kategorii ≥ 3 kolory z S ≥ 0,5) i marka (zieleń i pomarańcz, S ≥ 0,6). Pilnuje tego `style.test.ts`.
+- Gondole i regały ścienne: korpus `fixture.shelf`, cokół i nadstawka `brand.green`, listwy cenowe `brand.orange`, cenówki `brand.cream`. Lada `fixture.counter`, rama lodówki `fixture.fridgeFrame`.
+- Indeksy `floor`, `wall` i `street.*` mają znaczenie opisane w JSDoc `style.ts`. Płyty chodnika i elewacje losuj z list per obiekt.
 
-## 3. Materiały: `material(kind, color, opts)`
-`plasticMatte` korpusy, ściany, plakaty · `plasticGloss` opakowania, listwy, obudowy ekranów · `metalPainted` ramy, słupki, kosze, latarnie · `wood` blaty, palety · `fabric` ubrania, wycieraczki, markizy · `glass` szyby · `emissive` tylko to, co świeci. Szkło i emissive: `castShadow = false`. Materiały są wspólne: nie zmieniaj ich pól, w `dispose()` zwalniaj tylko geometrie.
+## 3. Materiały
+`plasticMatte`: korpusy, ściany, plakaty; `plasticGloss`: opakowania, listwy; `metalPainted`: ramy, słupki, latarnie; `wood`: blaty, palety; `fabric`: ubrania, wycieraczki; `glass`: szyby; `emissive`: tylko to, co świeci. Szkło i emissive bez cieni. Materiałów z cache nie zmieniaj i nie zwalniaj.
 
 ## 4. Światło
-- **Dzień:** krótkie, widoczne cienie, nigdy czarne. Bloom ledwo muska świecące elementy.
-- **Noc:** granatowa ulica, a sklep jest najjaśniejszym miejscem kadru. Ciepłe światło wnętrza (bez cieni, nie przecieka na sąsiednie budynki) dokłada renderer. Świecą szyld, witryna, lampy, latarnie i okna. Bloom (próg ~0,9) łapie tylko emissive.
+Dzień: krótkie cienie, nigdy czarne. Noc: sklep najjaśniejszy w kadrze. Ciepłe światło wnętrza (bez cieni, tylko w sali) dodaje `buildStore` (zadanie 8). Latarnie i okna świecą przez emissive (zadanie 12). Bloom łapie tylko emissive.
 
-| Element | Kolor | `emissiveIntensity` |
-|---|---|---|
-| neon szyldu | `brand.green`, `brand.orange`, napis `brand.cream` | 3 |
-| lampy, listwy LED w lodówkach | `brand.cream` | 2–2,5 |
-| ekrany kas i terminali | `#8fd3ff` | 1,2 |
-| grzałka rolek | `brand.orange` | 1,5 |
-| latarnie (sodówki) | `#ffb35c` | 3 |
-| okna mieszkań nocą | `#ffd28a` | 1–1,6 |
+Emissive (kolor, `emissiveIntensity`): neon szyldu `brand.green`/`brand.orange`/`brand.cream` 3; lampy i LED w lodówkach `brand.cream` 2–2,5; ekrany `#8fd3ff` 1,2; grzałka rolek `brand.orange` 1,5; latarnie `#ffb35c` 3; okna nocą `#ffd28a` 1–1,6.
 
 ## 5. Postacie
-Głowa ×`headScale`, dłonie ×`handScale`, wzrost w metrach z `heightRange`, tusza z `widthRange`. Personel: koszulka `brand.green`, identyfikator `brand.orange`; klient nigdy w zieleni marki. Góra i dół w różnych kolorach, żeby sylwetka czytała się z daleka.
+Proporcje z `CHARACTER_STYLE`: wzrost w metrach, tusza jako mnożnik. Personel nosi `brand.green`, klient nigdy. Góra i dół w różnych kolorach.
 
-## 6. Humor w grafice
-- Po polsku, krótko (nagłówek plakatu ≤ 6 słów), czytelnie przy domyślnym zoomie. W kadrze sklepu ≥ 3 żarty (plakat, cenówka z dopiskiem, mata lub tabliczka).
-- Satyra celuje w Centralę, KPI i absurdy sieci, nigdy w kasjera ani klienta.
-- Zero prawdziwych marek, logo i nazwisk. Nazwy z gry: Traszka, Centrala, Ogonki, Traszkapka, Traszdog, Kraftuś, Lody BANDY XL, Mniamm, Szop 24h, Kawka Express.
-- Cenówki „4,99 zł”, co piąta z dopiskiem. Przykłady: „KPI to stan umysłu. Centrala”, „Promocja: 3 w cenie 3!”, „Kraftusia brak. Nie pytaj.”, „Witamy w Traszce. Wycieraj ogonki”, „Tylko dla personelu (i Centrali)”.
+## 6. Humor
+- Teksty po polsku, nagłówek plakatu ≤ 6 słów. W kadrze sklepu ≥ 3 żarty (plakat, cenówka, mata lub tabliczka).
+- Satyra celuje w Centralę i absurdy sieci, nigdy w kasjera ani klienta. Zero prawdziwych marek, logo i nazwisk; nazwy z gry: Traszka, Centrala, Ogonki, Traszdog, Kraftuś.
+- Przykłady: „KPI to stan umysłu. Centrala”, „Promocja: 3 w cenie 3!”.

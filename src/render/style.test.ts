@@ -49,8 +49,8 @@ describe('PALETTE', () => {
     }
   });
 
-  it('podłogi, ściany i nawierzchnie są spokojne (S ≤ 0,35)', () => {
-    const calm = [...PALETTE.floor, PALETTE.wall[0], PALETTE.wall[3], ...PALETTE.street.asphalt,
+  it('tło jest spokojne (S ≤ 0,35): floor, wall poza cokołem wall[2], asphalt, sidewalk, curb', () => {
+    const calm = [...PALETTE.floor, ...PALETTE.wall.filter((_, i) => i !== 2), ...PALETTE.street.asphalt,
       ...PALETTE.street.sidewalk, ...PALETTE.street.curb];
     for (const c of calm) expect(sv(c).s, c).toBeLessThanOrEqual(0.35);
   });
