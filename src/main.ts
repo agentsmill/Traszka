@@ -316,11 +316,17 @@ function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: st
   }).catch((error: unknown) => console.error('Nie udało się wczytać postaci.', error));
 
   const bench = benchMode
-    ? createBenchSession(ctx, crowdRoot, { quick: params.get('quick') === '1', onProgress: (progress) => { ui.bench.value = progress; } })
+    ? createBenchSession(ctx, crowdRoot, {
+      quick: params.get('quick') === '1',
+      onProgress: (progress) => { ui.bench.value = progress; },
+      onPreset: (id) => { ui.preset.value = id; },
+    })
     : null;
   const meter = new FrameMeter();
   let last: number | null = null;
   const frame = (now: number): void => {
+    // Następną klatkę planujemy od razu, przed resztą: wyjątek w tej klatce (np. w benchmarku) nie może zerwać pętli.
+    requestAnimationFrame(frame);
     const cpuStart = performance.now();
     ctx.renderer.info.reset();
     const frameDt = last === null ? 0 : Math.max(0, (now - last) / 1000);
@@ -340,7 +346,6 @@ function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: st
       calls, tris: triangles, agents: loaded?.world.crowd.agents.length ?? 0, ready: !!loaded?.crowdView && !!loaded.street,
       cpuMs: performance.now() - cpuStart,
     });
-    requestAnimationFrame(frame);
   };
   requestAnimationFrame(frame);
 

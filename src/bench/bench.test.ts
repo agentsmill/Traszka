@@ -1,8 +1,10 @@
 import { Group, Mesh } from 'three';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { QUALITY, type QualityPresetId } from '@/render/quality';
+import type { RenderContext } from '@/render/renderer';
 import {
-  BENCH_CROWD, BENCH_PRESETS, BENCH_SEED, BenchRun, createBenchHost, percentile, summarize,
+  BENCH_CROWD, BENCH_MAX_STALL_RESTARTS, BENCH_PRESETS, BENCH_SEED, BENCH_STALL_MS, BenchRun, createBenchHost, createBenchSession,
+  percentile, summarize,
   type BenchHost, type BenchProbe, type BenchProgress, type BenchTimings, type FrameInfo,
 } from './bench';
 
@@ -11,8 +13,10 @@ const TIMINGS: BenchTimings = {
 };
 const FRAME_MS = 20;
 
-/** Atrapa gospodarza: zapisuje wywołania i pamięta, jaka próba jest włączona. */
-function fakeHost(applied: Partial<Record<QualityPresetId, QualityPresetId>> = {}): BenchHost & { log: string[]; probe: BenchProbe | null } {
+/** Atrapa gospodarza: zapisuje wywołania i pamięta, jaka próba jest włączona. `initial` to preset sprzed biegu. */
+function fakeHost(
+  applied: Partial<Record<QualityPresetId, QualityPresetId>> = {}, initial: QualityPresetId = 'srednia',
+): BenchHost & { log: string[]; probe: BenchProbe | null } {
   const host = {
     log: [] as string[],
     probe: null as BenchProbe | null,
@@ -24,16 +28,36 @@ function fakeHost(applied: Partial<Record<QualityPresetId, QualityPresetId>> = {
       host.log.push(`probe:${probe}`);
       host.probe = probe;
     },
+    restore(): void {
+      host.log.push(`restore:${initial}`);
+      host.probe = null;
+    },
   };
   return host;
 }
 
-interface Drive { agents?: (host: { probe: BenchProbe | null }) => number; ready?: boolean; maxFrames?: number }
+interface Drive {
+  agents?: (host: { probe: BenchProbe | null }) => number;
+  ready?: boolean;
+  maxFrames?: number;
+  /** Odstęp (ms) przed daną klatką (numer od 1) zamiast FRAME_MS: przerwa w rAF. */
+  intervals?: Record<number, number>;
+  /** Numery klatek, przed którymi karta przechodzi w tło (`markHidden`). */
+  hiddenBefore?: number[];
+}
 
-/** Karmi bieg klatkami co FRAME_MS; liczby z renderera zależą od próby (bez cieni postaci mniej wywołań, bez tłumu mniej trójkątów i czasu JS). */
-function drive(run: BenchRun, host: { probe: BenchProbe | null }, { agents = () => 60, ready = true, maxFrames = 5000 }: Drive = {}): void {
+/**
+ * Karmi bieg klatkami co FRAME_MS; liczby z renderera zależą od próby (bez cieni postaci mniej wywołań, bez tłumu mniej
+ * trójkątów i czasu JS). Klatka i jej numer: klatka 0 startuje zegar, każda następna dostaje swój odstęp.
+ */
+function drive(
+  run: BenchRun, host: { probe: BenchProbe | null },
+  { agents = () => 60, ready = true, maxFrames = 5000, intervals = {}, hiddenBefore = [] }: Drive = {},
+): void {
   let now = 5000;
   for (let i = 0; i < maxFrames && !run.done; i++) {
+    if (i > 0) now += intervals[i] ?? FRAME_MS;
+    if (hiddenBefore.includes(i)) run.markHidden();
     const info: FrameInfo = {
       calls: host.probe === 'charShadowsOff' ? 100 : 160,
       tris: host.probe === 'crowdHidden' ? 50_000 : 200_000,
@@ -42,7 +66,6 @@ function drive(run: BenchRun, host: { probe: BenchProbe | null }, { agents = () 
       cpuMs: host.probe === 'crowdHidden' ? 2 : 5,
     };
     run.frame(now, info);
-    now += FRAME_MS;
   }
 }
 
@@ -83,6 +106,11 @@ describe('stałe benchmarku', () => {
     expect(BENCH_CROWD).toEqual({ targetCount: 60, spawnPerMinute: 1200 });
     expect(BENCH_PRESETS).toEqual(['niska', 'srednia', 'wysoka']);
   });
+
+  it('przerwy w klatkach: próg 500 ms i do 3 powtórzeń kroku', () => {
+    expect(BENCH_STALL_MS).toBe(500);
+    expect(BENCH_MAX_STALL_RESTARTS).toBe(3);
+  });
 });
 
 describe('BenchRun', () => {
@@ -95,6 +123,7 @@ describe('BenchRun', () => {
       'preset:niska', 'probe:charShadowsOff', 'probe:null',
       'preset:srednia', 'probe:charShadowsOff', 'probe:null', 'probe:crowdHidden', 'probe:null', 'probe:aoOff', 'probe:null',
       'preset:wysoka', 'probe:charShadowsOff', 'probe:null',
+      'restore:srednia',
     ]);
   });
 
@@ -206,6 +235,89 @@ describe('BenchRun', () => {
     expect(host.log.length).toBe(before);
     expect(run.rows).toHaveLength(3);
   });
+
+  it('wiersze postępu niosą ramki i maksimum klatki (tabela w nakładce i konsola z tych samych liczb)', () => {
+    const host = fakeHost();
+    const seen: BenchProgress[] = [];
+    const run = new BenchRun(host, TIMINGS, (p) => seen.push(p), BENCH_PRESETS, 0);
+    drive(run, host);
+    const last = seen[seen.length - 1]!;
+    expect(last.rows.every((r) => r.frames >= TIMINGS.measureMs / FRAME_MS - 2 && r.maxFrameMs === FRAME_MS)).toBe(true);
+    expect(last.probes.every((p) => p.maxFrameMs === FRAME_MS)).toBe(true);
+  });
+});
+
+describe('BenchRun: przerwy w klatkach', () => {
+  it('przerwa 10 s w środku pomiaru: krok powtórzony z ostrzeżeniem, okno pełne i bez 10-sekundowej klatki w wynikach', () => {
+    const host = fakeHost();
+    const run = new BenchRun(host, TIMINGS);
+    drive(run, host, { intervals: { 20: 10_000 } });
+    expect(run.warnings).toEqual(['niska: przerwa w klatkach 10000 ms (karta w tle?) — krok powtórzony']);
+    const niska = run.extra.presets.find((p) => p.preset === 'niska')!;
+    expect(niska.frames).toBeGreaterThanOrEqual(TIMINGS.measureMs / FRAME_MS - 2);
+    expect(niska.frames).toBeLessThanOrEqual(TIMINGS.measureMs / FRAME_MS);
+    expect(niska.maxFrameMs).toBe(FRAME_MS);
+    expect(run.rows[0]).toMatchObject({ preset: 'niska', avgFps: 50, p95FrameMs: FRAME_MS });
+  });
+
+  it('przerwa 60 s w rozgrzewce: rozgrzewka zaczyna się od nowa, pomiar dopiero po pełnej rozgrzewce', () => {
+    const host = fakeHost();
+    const statuses: string[] = [];
+    const run = new BenchRun(host, TIMINGS, (p) => statuses.push(p.status), BENCH_PRESETS, 0);
+    drive(run, host, { intervals: { 6: 60_000 } });
+    expect(run.warnings).toEqual(['niska: przerwa w klatkach 60000 ms (karta w tle?) — krok powtórzony']);
+    // statuses[i] to stan po klatce i (publikacja przy każdej klatce), więc pierwszy „pomiar” to pierwsza klatka po rozgrzewce
+    const measureAt = statuses.findIndex((s) => s.includes('pomiar'));
+    expect(measureAt - 6).toBeGreaterThanOrEqual(TIMINGS.warmupMs / FRAME_MS);
+  });
+
+  it('przerwa w próbie: etykieta to preset/próba i próba zaczyna się od nowa', () => {
+    const host = fakeHost();
+    const run = new BenchRun(host, TIMINGS);
+    drive(run, host, { intervals: { 70: 10_000 } });
+    expect(run.warnings).toEqual(['niska/charShadowsOff: przerwa w klatkach 10000 ms (karta w tle?) — krok powtórzony']);
+    expect(run.probes.find((p) => p.preset === 'niska')).toMatchObject({ probe: 'charShadowsOff', maxFrameMs: FRAME_MS });
+  });
+
+  it('cztery przerwy w jednym kroku: trzy powtórzenia, potem ostrzeżenie „za dużo przerw”', () => {
+    const host = fakeHost();
+    const run = new BenchRun(host, TIMINGS);
+    drive(run, host, { intervals: { 20: 10_000, 25: 10_000, 30: 10_000, 35: 10_000 } });
+    expect(run.done).toBe(true);
+    expect(run.warnings.filter((w) => w.endsWith('— krok powtórzony'))).toHaveLength(BENCH_MAX_STALL_RESTARTS);
+    expect(run.warnings.filter((w) => w.endsWith('— za dużo przerw, wynik niepewny'))).toEqual([
+      'niska: przerwa w klatkach 10000 ms (karta w tle?) — za dużo przerw, wynik niepewny',
+    ]);
+  });
+
+  it('karta ukryta przed klatką (markHidden): krok powtórzony z ostrzeżeniem o ukryciu', () => {
+    const host = fakeHost();
+    const run = new BenchRun(host, TIMINGS);
+    drive(run, host, { hiddenBefore: [20] });
+    expect(run.warnings).toEqual(['niska: przerwa w klatkach 20 ms (karta ukryta) — krok powtórzony']);
+    const niska = run.extra.presets.find((p) => p.preset === 'niska')!;
+    expect(niska.frames).toBeGreaterThanOrEqual(TIMINGS.measureMs / FRAME_MS - 2);
+  });
+});
+
+describe('BenchRun: koniec biegu', () => {
+  it('po ostatniej próbie przywraca preset sprzed biegu', () => {
+    const host = fakeHost({}, 'niska');
+    const run = new BenchRun(host, TIMINGS);
+    drive(run, host);
+    expect(host.log[host.log.length - 1]).toBe('restore:niska');
+  });
+
+  it('gdy przywracanie rzuci wyjątek, wyniki i stan „Gotowe” i tak trafiają do nakładki', () => {
+    const host = fakeHost();
+    host.restore = () => { throw new Error('renderer'); };
+    const seen: BenchProgress[] = [];
+    const run = new BenchRun(host, TIMINGS, (p) => seen.push(p), BENCH_PRESETS, 0);
+    expect(() => drive(run, host)).toThrow('renderer');
+    const last = seen[seen.length - 1]!;
+    expect(last.done).toBe(true);
+    expect(last.rows).toHaveLength(3);
+  });
 });
 
 describe('createBenchHost', () => {
@@ -263,16 +375,39 @@ describe('createBenchHost', () => {
     expect(crowd.visible).toBe(true);
   });
 
-  it('aoOff chwilowo wyłącza AO w bieżącym presecie i przywraca QUALITY co do pola', () => {
+  it('aoOff: renderer dostaje preset bez AO, a tabela QUALITY wraca od razu po ustawieniu presetu', () => {
     const { host, seen } = setup();
-    const before = QUALITY.srednia.ao;
     host.setProbe('aoOff');
-    expect(seen[0]).toEqual({ id: 'srednia', ao: 'off' });   // renderer zobaczył preset bez AO
-    expect(QUALITY.srednia.ao).toBe('off');
-    host.setProbe(null);
-    expect(seen[1]).toEqual({ id: 'srednia', ao: before });
-    expect(QUALITY.srednia.ao).toBe(before);
+    expect(seen).toEqual([{ id: 'srednia', ao: 'off' }]);    // renderer zobaczył preset bez AO
     expect(QUALITY.srednia.ao).toBe('half');
+    host.setProbe(null);
+    expect(seen[1]).toEqual({ id: 'srednia', ao: 'half' });  // zdjęcie próby przywraca AO
+    expect(QUALITY.srednia.ao).toBe('half');
+  });
+
+  it('aoOff: gdy renderer rzuci wyjątek, tabela QUALITY i tak wraca do stanu wyjściowego (finally)', () => {
+    const before = QUALITY.srednia.ao;
+    const ctx = {
+      get preset(): QualityPresetId { return 'srednia'; },
+      setPreset(id: QualityPresetId) { if (QUALITY[id].ao === 'off') throw new Error('brak AO w sterowniku'); },
+    };
+    const host = createBenchHost(ctx, new Group());
+    expect(() => host.setProbe('aoOff')).toThrow('brak AO w sterowniku');
+    expect(QUALITY.srednia.ao).toBe(before);
+  });
+
+  it('restore wraca do presetu sprzed biegu, zdejmuje próbę i zgłasza każdy ustawiony preset', () => {
+    let current: QualityPresetId = 'srednia';
+    const ctx = { get preset() { return current; }, setPreset(id: QualityPresetId) { current = id; } };
+    const crowd = new Group();
+    const reported: QualityPresetId[] = [];
+    const host = createBenchHost(ctx, crowd, (id) => { reported.push(id); });
+    host.setPreset('wysoka');
+    host.setProbe('crowdHidden');
+    host.restore();
+    expect(current).toBe('srednia');
+    expect(crowd.visible).toBe(true);
+    expect(reported).toEqual(['wysoka', 'srednia']);
   });
 
   it('zmiana próby na inną najpierw zdejmuje poprzednią', () => {
@@ -281,5 +416,53 @@ describe('createBenchHost', () => {
     host.setProbe('charShadowsOff');
     expect(crowd.visible).toBe(true);
     host.setProbe(null);
+  });
+});
+
+describe('createBenchSession', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('karta ukryta w trakcie biegu restartuje krok; po końcu słuchacz zdjęty, a nakładka dostaje bieg próbny', () => {
+    const doc = {
+      visibilityState: 'visible' as 'visible' | 'hidden',
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    };
+    vi.stubGlobal('document', doc);
+    vi.stubGlobal('window', { innerWidth: 1200, innerHeight: 728, devicePixelRatio: 2 });
+    vi.spyOn(console, 'table').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    let current: QualityPresetId = 'srednia';
+    const ctx = {
+      get preset() { return current; },
+      setPreset(id: QualityPresetId) { current = id; },
+    } as unknown as RenderContext;
+    const progress: BenchProgress[] = [];
+    const session = createBenchSession(ctx, new Group(), { quick: true, onProgress: (p) => progress.push(p) });
+    expect(doc.addEventListener).toHaveBeenCalledWith('visibilitychange', expect.any(Function));
+    const onVisibility = doc.addEventListener.mock.calls[0]![1] as () => void;
+
+    const info: FrameInfo = { calls: 100, tris: 1000, agents: 60, ready: true, cpuMs: 1 };
+    let now = 0;
+    for (let i = 0; i < 5000 && !(progress[progress.length - 1]?.done); i++) {
+      if (i === 60) {
+        // klatka 60 to pomiar pierwszego presetu w biegu quick (rozruch i rozgrzewka trwają ok. 55 klatek)
+        doc.visibilityState = 'hidden';
+        onVisibility();
+        doc.visibilityState = 'visible';
+      }
+      session.beforeRender();
+      session.afterRender(now, info);
+      now += FRAME_MS;
+    }
+    const last = progress[progress.length - 1]!;
+    expect(last.done).toBe(true);
+    expect(last.quick).toBe(true);
+    expect(last.warnings).toEqual(['niska: przerwa w klatkach 20 ms (karta ukryta) — krok powtórzony']);
+    expect(doc.removeEventListener).toHaveBeenCalledWith('visibilitychange', onVisibility);
   });
 });

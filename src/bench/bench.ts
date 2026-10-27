@@ -16,6 +16,10 @@ export const BENCH_SEED = 'bench';
 /** 60 postaci naraz; 1200 klientów na minutę napełnia sklep w kilka sekund (ruling R6). */
 export const BENCH_CROWD: CrowdOptions = { targetCount: 60, spawnPerMinute: 1200 };
 export const BENCH_PRESETS: readonly QualityPresetId[] = ['niska', 'srednia', 'wysoka'];
+/** Przerwa między klatkami dłuższa niż to (ms): karta w tle albo zawieszenie. Krok, który trwa, liczymy od nowa. */
+export const BENCH_STALL_MS = 500;
+/** Ile razy jeden krok powtarzamy po przerwach; kolejna przerwa tylko zostawia ostrzeżenie. */
+export const BENCH_MAX_STALL_RESTARTS = 3;
 
 export interface BenchTimings {
   /** Tyle postaci (`crowd.agents.length`) uznajemy za pełny tłum. */
@@ -106,9 +110,12 @@ export interface BenchProgress {
   status: string;
   /** „krok 4 z 14”. */
   step: string;
-  rows: BenchRow[];
+  /** Wiersze presetów z ramkami i maksimum klatki (liczby te same co w `__benchResult`, plus szczegóły do nakładki). */
+  rows: BenchPresetDetail[];
   probes: BenchProbeRow[];
   warnings: string[];
+  /** Bieg próbny (`quick=1`), nakładka to podpisuje. Ustawia sesja. */
+  quick?: boolean;
 }
 
 declare global {
@@ -162,6 +169,8 @@ export interface BenchHost {
   setPreset(id: QualityPresetId): QualityPresetId;
   /** Włącza próbę (poprzednia jest wcześniej zdejmowana) albo zdejmuje bieżącą (`null`). */
   setProbe(probe: BenchProbe | null): void;
+  /** Koniec biegu: zdejmuje próbę i wraca do presetu, który był aktywny przed startem. */
+  restore(): void;
 }
 
 export interface RenderBenchHost extends BenchHost {
@@ -170,15 +179,36 @@ export interface RenderBenchHost extends BenchHost {
 }
 
 /**
- * Gospodarz dla prawdziwego renderera. `crowdRoot` to grupa z postaciami tłumu.
+ * Gospodarz dla prawdziwego renderera. `crowdRoot` to grupa z postaciami tłumu, a `onPreset` dostaje każdy preset, który
+ * renderer faktycznie ustawił (żeby `ui.preset` był zgodny z grą).
  *
  * AO wyłączamy przez chwilowe nadpisanie `QUALITY[preset].ao`, bo `RenderContext.setPreset` czyta ustawienia z tej tabeli
- * i nie ma osobnego wejścia na pojedynczy parametr. Tabela wraca do stanu wyjściowego przy zdjęciu próby.
+ * i nie ma osobnego wejścia na pojedynczy parametr. Postprocessing czyta `ao` tylko przy zmianie presetu, więc tabela
+ * wraca do stanu wyjściowego zaraz po `setPreset`, w `finally`, nawet gdy renderer rzuci wyjątek.
  */
-export function createBenchHost(ctx: Pick<RenderContext, 'preset' | 'setPreset'>, crowdRoot: Object3D): RenderBenchHost {
+export function createBenchHost(
+  ctx: Pick<RenderContext, 'preset' | 'setPreset'>, crowdRoot: Object3D, onPreset: (id: QualityPresetId) => void = () => {},
+): RenderBenchHost {
+  const initial = ctx.preset;
   let probe: BenchProbe | null = null;
   const shadowless = new Set<Mesh>();                        // siatki, którym wyłączyliśmy cień
-  let aoPatch: { id: QualityPresetId; ao: (typeof QUALITY)[QualityPresetId]['ao'] } | null = null;
+  let aoProbePreset: QualityPresetId | null = null;          // preset, na którym działa próba bez AO
+
+  function applyPreset(id: QualityPresetId): QualityPresetId {
+    ctx.setPreset(id);
+    onPreset(ctx.preset);
+    return ctx.preset;
+  }
+
+  function applyPresetWithoutAo(id: QualityPresetId): void {
+    const saved = QUALITY[id].ao;
+    QUALITY[id].ao = 'off';
+    try {
+      applyPreset(id);
+    } finally {
+      QUALITY[id].ao = saved;
+    }
+  }
 
   function disableCharacterShadows(): void {
     crowdRoot.traverse((object) => {
@@ -191,7 +221,9 @@ export function createBenchHost(ctx: Pick<RenderContext, 'preset' | 'setPreset'>
   }
 
   function clearProbe(): void {
-    switch (probe) {
+    const was = probe;
+    probe = null;
+    switch (was) {
       case 'charShadowsOff':
         for (const mesh of shadowless) mesh.castShadow = true;
         shadowless.clear();
@@ -200,23 +232,19 @@ export function createBenchHost(ctx: Pick<RenderContext, 'preset' | 'setPreset'>
         crowdRoot.visible = true;
         break;
       case 'aoOff':
-        if (aoPatch) {
-          QUALITY[aoPatch.id].ao = aoPatch.ao;
-          ctx.setPreset(aoPatch.id);
-          aoPatch = null;
+        if (aoProbePreset !== null) {
+          const id = aoProbePreset;
+          aoProbePreset = null;
+          applyPreset(id);
         }
         break;
       case null:
         break;
     }
-    probe = null;
   }
 
   return {
-    setPreset(id) {
-      ctx.setPreset(id);
-      return ctx.preset;
-    },
+    setPreset: applyPreset,
     setProbe(next) {
       clearProbe();
       probe = next;
@@ -229,14 +257,17 @@ export function createBenchHost(ctx: Pick<RenderContext, 'preset' | 'setPreset'>
           break;
         case 'aoOff': {
           const id = ctx.preset;
-          aoPatch = { id, ao: QUALITY[id].ao };
-          QUALITY[id].ao = 'off';
-          ctx.setPreset(id);
+          aoProbePreset = id;
+          applyPresetWithoutAo(id);
           break;
         }
         case null:
           break;
       }
+    },
+    restore() {
+      clearProbe();
+      applyPreset(initial);
     },
     beforeRender() {
       if (probe === 'charShadowsOff') disableCharacterShadows();
@@ -260,6 +291,9 @@ export interface FrameInfo {
 }
 
 type StepKind = 'loading' | 'fill' | 'warmup' | 'measure' | 'probe';
+
+/** Kroki, w których przerwa restartuje krok. Ładowanie ma własny limit czasu. */
+const STALLABLE: ReadonlySet<StepKind> = new Set<StepKind>(['fill', 'warmup', 'measure', 'probe']);
 
 interface Step {
   kind: StepKind;
@@ -292,10 +326,14 @@ function buildSteps(presets: readonly QualityPresetId[], t: BenchTimings): Step[
 const seconds = (ms: number): number => Math.floor(ms / 1000);
 /** Sekundy do komunikatów: jedno miejsce po przecinku, żeby krótkie czasy (w testach) nie dawały „0 s”. */
 const secs = (ms: number): number => Math.round(ms / 100) / 10;
+/** Nazwa kroku w ostrzeżeniach: `srednia`, `srednia/aoOff`, a napełnianie przed pierwszym presetem to `rozruch`. */
+const stepLabel = (step: Step): string => (step.probe ? `${step.preset}/${step.probe}` : (step.preset ?? 'rozruch'));
 
 /**
  * Prowadzi bieg klatka po klatce. `frame` wołamy po narysowaniu każdej klatki, z czasem rAF (ms) i licznikami.
  * Zmiany presetu i prób dzieją się na końcu klatki, więc działają od następnej. Pierwsza klatka kroku nie jest mierzona.
+ * Przerwa dłuższa niż `BENCH_STALL_MS` (albo ukrycie karty, `markHidden`) w kroku, który mierzy lub czeka na tłum, restartuje
+ * ten krok: jego zegar i próbki zaczynają się od nowa, a klatka przerwy nie wchodzi do pomiaru.
  *
  * Pomiar to odstępy między kolejnymi klatkami rAF (z vsync): `avgFps` = klatki / czas, `p95FrameMs` = 95. percentyl
  * odstępów. Wyniki rosną w `rows` (po jednym na preset), `probes` i `warnings`; `done` mówi o końcu.
@@ -308,6 +346,8 @@ export class BenchRun {
   private lastPublish = Number.NEGATIVE_INFINITY;
   private finished = false;
   private applied: QualityPresetId = 'srednia';
+  private stalls = 0;                 // przerwy w bieżącym kroku
+  private hiddenSinceFrame = false;   // karta była ukryta od ostatniej klatki
 
   private readonly resultRows: BenchRow[] = [];
   private readonly presetDetails: BenchPresetDetail[] = [];
@@ -332,6 +372,11 @@ export class BenchRun {
     return { env: null, timings: this.timings, presets: [...this.presetDetails], probes: [...this.probeRows], warnings: [...this.warns] };
   }
 
+  /** Karta przeszła w tło: rAF tam stoi, więc następna klatka sprawdzi przerwę (zob. `checkStall`). */
+  markHidden(): void {
+    this.hiddenSinceFrame = true;
+  }
+
   frame(now: number, info: FrameInfo): void {
     if (this.finished) return;
     const dt = this.prevNow === null ? null : now - this.prevNow;
@@ -341,9 +386,10 @@ export class BenchRun {
     if (step.startedAt === null) {
       this.enter(step, now);
     } else {
+      const stalled = this.checkStall(step, now, dt);
       const elapsed = now - step.startedAt;
       const measuring = step.kind === 'measure' || step.kind === 'probe';
-      if (measuring && dt !== null && elapsed >= step.settleMs && elapsed < step.settleMs + step.durationMs) {
+      if (measuring && !stalled && dt !== null && elapsed >= step.settleMs && elapsed < step.settleMs + step.durationMs) {
         this.samples.dt.push(dt);
         this.samples.calls.push(info.calls);
         this.samples.tris.push(info.tris);
@@ -371,9 +417,32 @@ export class BenchRun {
     }
   }
 
+  /**
+   * Czy ta klatka to przerwa w kroku, który mierzy albo czeka na tłum. Do `BENCH_MAX_STALL_RESTARTS` przerw krok zaczyna
+   * się od nowa (z ostrzeżeniem). Kolejna przerwa tylko zapisuje ostrzeżenie, a krok idzie dalej po swoim czasie.
+   * Klatka przerwy nigdy nie jest próbką.
+   */
+  private checkStall(step: Step, now: number, dt: number | null): boolean {
+    const hidden = this.hiddenSinceFrame;
+    this.hiddenSinceFrame = false;
+    const gap = dt !== null && dt > BENCH_STALL_MS;
+    if (!(hidden || gap) || !STALLABLE.has(step.kind)) return false;
+    this.stalls++;
+    const head = `${stepLabel(step)}: przerwa w klatkach ${Math.round(dt ?? 0)} ms (${hidden ? 'karta ukryta' : 'karta w tle?'})`;
+    if (this.stalls <= BENCH_MAX_STALL_RESTARTS) {
+      this.warns.push(`${head} — krok powtórzony`);
+      step.startedAt = now;
+      this.samples = emptySamples();
+    } else if (this.stalls === BENCH_MAX_STALL_RESTARTS + 1) {
+      this.warns.push(`${head} — za dużo przerw, wynik niepewny`);
+    }
+    return true;
+  }
+
   private enter(step: Step, now: number): void {
     step.startedAt = now;
     this.samples = emptySamples();
+    this.stalls = 0;
     if (step.kind === 'fill' && step.preset !== null) {
       this.applied = this.host.setPreset(step.preset);
       if (this.applied !== step.preset) this.warns.push(`${step.preset}: renderer użył presetu ${this.applied} (sprzęt nie obsługuje pełnej grafiki)`);
@@ -409,7 +478,12 @@ export class BenchRun {
 
   private finish(): void {
     this.finished = true;
-    this.onProgress(this.progress('Gotowe.', this.steps.length));
+    try {
+      this.host.restore();
+    } finally {
+      // wyniki trafiają do nakładki i do window.__benchResult nawet wtedy, gdy przywracanie presetu rzuci wyjątek
+      this.onProgress(this.progress('Gotowe.', this.steps.length));
+    }
   }
 
   private publish(now: number, info: FrameInfo): void {
@@ -439,7 +513,7 @@ export class BenchRun {
       done: this.finished,
       status,
       step: `krok ${Math.min(stepIndex + 1, this.steps.length)} z ${this.steps.length}`,
-      rows: [...this.resultRows],
+      rows: [...this.presetDetails],
       probes: [...this.probeRows],
       warnings: [...this.warns],
     };
@@ -475,23 +549,30 @@ function readEnvironment(ctx: RenderContext, quick: boolean): BenchEnv {
 
 /**
  * Uruchamia bieg na prawdziwym rendererze. Na końcu: `console.table`, `window.__benchResult` (kształt z planu)
- * i `window.__benchExtra` (środowisko, próby, ostrzeżenia). `onProgress` dostaje stan do nakładki.
+ * i `window.__benchExtra` (środowisko, próby, ostrzeżenia). `onProgress` dostaje stan do nakładki, `onPreset` każdy
+ * preset, który renderer ustawia. Od startu do końca biegu sesja słucha zmiany widoczności karty.
  */
 export function createBenchSession(
-  ctx: RenderContext, crowdRoot: Object3D, opts: { quick: boolean; onProgress: (progress: BenchProgress) => void },
+  ctx: RenderContext, crowdRoot: Object3D,
+  opts: { quick: boolean; onProgress: (progress: BenchProgress) => void; onPreset?: (id: QualityPresetId) => void },
 ): BenchSession {
-  const host = createBenchHost(ctx, crowdRoot);
+  const host = createBenchHost(ctx, crowdRoot, opts.onPreset);
   const timings = opts.quick ? BENCH_TIMINGS_QUICK : BENCH_TIMINGS;
+  const onVisibility = (): void => {
+    if (document.visibilityState === 'hidden') run.markHidden();
+  };
   const run = new BenchRun(host, timings, (progress) => {
-    opts.onProgress(progress);
+    opts.onProgress({ ...progress, quick: opts.quick });
     if (!progress.done) return;
+    document.removeEventListener('visibilitychange', onVisibility);
     const extra = { ...run.extra, env: readEnvironment(ctx, opts.quick) };
-    console.table(run.rows);
-    console.table(run.probes.map(({ preset, probe, avgFps, p95FrameMs, calls, tris, cpuMs, frames }) => ({ preset, probe, avgFps, p95FrameMs, calls, tris, cpuMs, frames })));
+    console.table(extra.presets.map(({ preset, avgFps, p95FrameMs, maxFrameMs, frames, calls, tris }) => ({ preset, avgFps, p95FrameMs, maxFrameMs, frames, calls, tris })));
+    console.table(extra.probes.map(({ preset, probe, avgFps, p95FrameMs, maxFrameMs, frames, calls, tris, cpuMs }) => ({ preset, probe, avgFps, p95FrameMs, maxFrameMs, frames, calls, tris, cpuMs })));
     if (extra.warnings.length > 0) console.warn('Ostrzeżenia benchmarku:', extra.warnings);
     window.__benchExtra = extra;
     window.__benchResult = [...run.rows];
   });
+  document.addEventListener('visibilitychange', onVisibility);
   return {
     beforeRender: () => host.beforeRender(),
     afterRender: (now, info) => run.frame(now, info),
