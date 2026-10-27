@@ -8,7 +8,7 @@ import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.j
  */
 export const ASSETS: {
   characters: {
-    ubc: { male: string; female: string; hair: string[] };
+    ubc: { male: string; female: string; hair: string[]; eyebrows: string[] };
     modular: string[];
     animations: string;
   };
@@ -25,9 +25,8 @@ export const ASSETS: {
         '/assets/characters/hair-buzzed-female.glb',
         '/assets/characters/hair-long.glb',
         '/assets/characters/hair-simple-parted.glb',
-        '/assets/characters/eyebrows-regular.glb',
-        '/assets/characters/eyebrows-female.glb',
       ],
+      eyebrows: ['/assets/characters/eyebrows-regular.glb', '/assets/characters/eyebrows-female.glb'],
     },
     modular: [
       '/assets/characters/men-casual-hoodie.glb',
@@ -56,7 +55,10 @@ export const ASSETS: {
 const gltfLoader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
 const cache = new Map<string, Promise<GLTF>>();
 
-/** Wczytuje GLB (kompresja meshopt). Wynik jest cache'owany po URL; błędne wczytanie nie zostaje w cache. */
+/**
+ * Wczytuje GLB (kompresja meshopt). Wynik jest cache'owany po URL; błędne wczytanie nie zostaje w cache.
+ * `GLTF.scene` jest współdzielona: przed dodaniem do sceny klonuj ją przez `SkeletonUtils.clone`.
+ */
 export function loadGLB(url: string): Promise<GLTF> {
   let pending = cache.get(url);
   if (!pending) {

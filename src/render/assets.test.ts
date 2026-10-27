@@ -10,6 +10,7 @@ describe('ASSETS', () => {
       characters.ubc.male,
       characters.ubc.female,
       ...characters.ubc.hair,
+      ...characters.ubc.eyebrows,
       ...characters.modular,
       characters.animations,
       ...Object.values(props),

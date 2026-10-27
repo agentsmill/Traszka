@@ -20,9 +20,10 @@ describe('architektura', () => {
 
   it('każdy plik .glb w public/assets ma wpis w public/assets/LICENSES.md', () => {
     const licenses = readFileSync('public/assets/LICENSES.md', 'utf8');
-    const missing = files('public/assets', '.glb')
-      .map((f) => basename(f))
-      .filter((name) => !licenses.includes(name));
+    const glbs = files('public/assets', '.glb').map((f) => basename(f));
+    expect(glbs.length).toBeGreaterThan(0);
+    // nazwa w komórce tabeli z backtickami: `men-suit.glb` nie może przejść dzięki `women-suit.glb`
+    const missing = glbs.filter((name) => !licenses.includes('`' + name + '`'));
     expect(missing).toEqual([]);
   });
 });
