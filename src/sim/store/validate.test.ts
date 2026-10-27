@@ -70,6 +70,12 @@ describe('validateLayout', () => {
     it('3 kratki to za dużo', () => {
       expect(withCheckoutAt(5).errors).toContain('tobacco-not-behind');
     });
+    it('mebel w pasie personelu poza odcinkiem naprzeciw kasy nie przeszkadza', () => {
+      // pas x=2 jest sprawdzany tylko w wierszach 7..10 (kasa), a (2,12) leży poniżej
+      const p = validParts();
+      p.fixtures.push({ id: 'coffee-2', kind: 'coffee', x: 2, y: 12, w: 1, d: 1, facing: 'N' });
+      expect(validateLayout(layoutFromParts(p))).toEqual({ ok: true, errors: [] });
+    });
     it('0 kratek (regał przylega do kasy) to za mało', () => {
       const p = patchFixture(validParts(), 'tobaccoShelf-1', { x: 2 });
       expect(validateLayout(layoutFromParts(p)).errors).toContain('tobacco-not-behind');

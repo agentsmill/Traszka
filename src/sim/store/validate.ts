@@ -68,18 +68,37 @@ function checkoutIsNearEntrance(layout: StoreLayout, checkout: Fixture): boolean
 }
 
 // Regał stoi równolegle do kasy (front w tę samą stronę), po przeciwnej stronie niż jej front,
-// naprzeciw niej, a między nimi zostaje STAFF_GAP_MIN..STAFF_GAP_MAX wolnych kratek.
-function isBehindCheckout(checkout: Fixture, shelf: Fixture): boolean {
+// naprzeciw niej, a między nimi zostaje STAFF_GAP_MIN..STAFF_GAP_MAX kratek wolnej podłogi dla personelu
+// (pas sprawdzamy na odcinku, na którym kasa i regał leżą naprzeciw siebie).
+function isBehindCheckout(layout: StoreLayout, checkout: Fixture, shelf: Fixture): boolean {
   if (shelf.facing !== checkout.facing) return false;
-  let gap: number;
-  let facesOverlap: boolean;
+
+  // Pas między regałem a kasą, liczony wzdłuż osi frontu (włącznie); `across` to oś równoległa do frontu.
+  let gapFrom: number;
+  let gapTo: number;
   switch (checkout.facing) {
-    case 'E': gap = checkout.x - (shelf.x + shelf.w); facesOverlap = intervalGap(checkout.y, checkout.d, shelf.y, shelf.d) === 0; break;
-    case 'W': gap = shelf.x - (checkout.x + checkout.w); facesOverlap = intervalGap(checkout.y, checkout.d, shelf.y, shelf.d) === 0; break;
-    case 'S': gap = checkout.y - (shelf.y + shelf.d); facesOverlap = intervalGap(checkout.x, checkout.w, shelf.x, shelf.w) === 0; break;
-    case 'N': gap = shelf.y - (checkout.y + checkout.d); facesOverlap = intervalGap(checkout.x, checkout.w, shelf.x, shelf.w) === 0; break;
+    case 'E': gapFrom = shelf.x + shelf.w; gapTo = checkout.x - 1; break;
+    case 'W': gapFrom = checkout.x + checkout.w; gapTo = shelf.x - 1; break;
+    case 'S': gapFrom = shelf.y + shelf.d; gapTo = checkout.y - 1; break;
+    case 'N': gapFrom = checkout.y + checkout.d; gapTo = shelf.y - 1; break;
   }
-  return facesOverlap && gap >= STAFF_GAP_MIN && gap <= STAFF_GAP_MAX;
+  const gap = gapTo - gapFrom + 1;
+  if (gap < STAFF_GAP_MIN || gap > STAFF_GAP_MAX) return false;
+
+  const frontAlongX = checkout.facing === 'N' || checkout.facing === 'S';
+  const acrossFrom = frontAlongX ? Math.max(checkout.x, shelf.x) : Math.max(checkout.y, shelf.y);
+  const acrossTo = frontAlongX
+    ? Math.min(checkout.x + checkout.w, shelf.x + shelf.w) - 1
+    : Math.min(checkout.y + checkout.d, shelf.y + shelf.d) - 1;
+  if (acrossFrom > acrossTo) return false;
+
+  for (let a = gapFrom; a <= gapTo; a++) {
+    for (let b = acrossFrom; b <= acrossTo; b++) {
+      const c = frontAlongX ? { x: b, y: a } : { x: a, y: b };
+      if (!isInGrid(layout, c) || layout.cells[c.y * layout.width + c.x] !== 'floor') return false;
+    }
+  }
+  return true;
 }
 
 // Pas AISLE_MIN kratek wolnej podłogi wzdłuż każdego z dłuższych boków gondoli.
@@ -157,7 +176,7 @@ export function validateLayout(layout: StoreLayout): ValidationResult {
   // Reguły odnoszące się do kasy pomijamy, gdy jej brak (to już zgłasza checkout-far).
   if (checkout) {
     const tobacco = byKind('tobaccoShelf');
-    if (tobacco.length === 0 || !tobacco.every((t) => isBehindCheckout(checkout, t))) errors.push('tobacco-not-behind');
+    if (tobacco.length === 0 || !tobacco.every((t) => isBehindCheckout(layout, checkout, t))) errors.push('tobacco-not-behind');
 
     const hotFood = byKind('hotFood');
     const coffee = byKind('coffee');

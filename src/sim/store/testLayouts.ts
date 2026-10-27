@@ -179,6 +179,15 @@ export const BREAKS: Break[] = [
     make: () => layoutFromParts(patchFixture(validParts(), 'tobaccoShelf-1', { y: 11, d: 3 })),
   },
   {
+    name: 'w pasie personelu za kasą stoi mebel',
+    code: 'tobacco-not-behind',
+    make: () => {
+      const p = validParts();
+      p.fixtures.push(fx('coffee-2', 'coffee', 2, 8, 1, 1, 'N'));
+      return layoutFromParts(p);
+    },
+  },
+  {
     name: 'brak regału z papierosami',
     code: 'tobacco-not-behind',
     make: () => layoutFromParts(removeFixture(validParts(), 'tobaccoShelf-1')),
