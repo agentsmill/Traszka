@@ -1,0 +1,189 @@
+/*
+ * Pasek i nakładki gry. Układ jak w szkicu `.tt-hud` (.superpowers/brainstorm/…/ekrany-gry.html), kolory z PALETTE.brand:
+ * App.tsx podstawia je jako --tt-*. Całość przykrywa scenę, więc tylko elementy paska i komunikatu łapią kliknięcia.
+ */
+.tt-ui {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 10;
+  pointer-events: none;
+  font: 600 12px/1.2 system-ui, -apple-system, 'Segoe UI', sans-serif;
+  color: var(--tt-cream);
+}
+
+.tt-hud,
+.tt-notice {
+  pointer-events: auto;
+}
+
+.tt-hud {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  padding: 8px 10px;
+  background: var(--tt-green-dark);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+.tt-chip {
+  background: rgba(255, 243, 223, 0.14);
+  border-radius: 6px;
+  padding: 6px 9px;
+  white-space: nowrap;
+}
+
+.tt-brand {
+  background: var(--tt-cream);
+  color: var(--tt-green-dark);
+  font-weight: 800;
+  letter-spacing: 0.5px;
+}
+
+.tt-seed {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  margin: 0;
+}
+
+.tt-input {
+  width: 16ch;
+  min-width: 0;
+  border: 0;
+  border-radius: 6px;
+  padding: 6px 8px;
+  background: var(--tt-cream);
+  color: #1a1a1a;
+  font: inherit;
+}
+
+.tt-input::placeholder {
+  color: #7d6b5a;
+}
+
+.tt-seg {
+  display: flex;
+  gap: 2px;
+}
+
+.tt-btn {
+  background: rgba(255, 243, 223, 0.14);
+  color: var(--tt-cream);
+  border: 0;
+  border-radius: 6px;
+  padding: 6px 9px;
+  font: inherit;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.tt-icon {
+  font-size: 15px;
+  line-height: 1;
+  padding: 6px 10px;
+}
+
+.tt-btn:hover:not(.on) {
+  background: rgba(255, 243, 223, 0.26);
+}
+
+.tt-btn.on {
+  background: var(--tt-orange);
+  color: #1a1a1a;
+}
+
+.tt-primary {
+  background: var(--tt-cream);
+  color: var(--tt-green-dark);
+}
+
+.tt-primary:hover {
+  background: #ffffff;
+}
+
+.tt-ui button:focus-visible,
+.tt-ui input:focus-visible {
+  outline: 2px solid var(--tt-orange);
+  outline-offset: 2px;
+}
+
+.tt-notice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px 8px 14px;
+  background: var(--tt-cream);
+  color: var(--tt-green-dark);
+  border-left: 4px solid var(--tt-orange);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.tt-notice-text {
+  flex: 1;
+}
+
+.tt-notice-close {
+  background: none;
+  border: 0;
+  border-radius: 4px;
+  padding: 0 6px;
+  color: inherit;
+  font: inherit;
+  font-size: 18px;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+.tt-notice-close:hover {
+  background: rgba(29, 107, 58, 0.12);
+}
+
+.tt-perf {
+  position: fixed;
+  left: 12px;
+  bottom: 12px;
+  min-width: 210px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(19, 40, 28, 0.82);
+  color: var(--tt-cream);
+  font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.tt-perf div {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.tt-perf span {
+  opacity: 0.75;
+}
+
+.tt-perf b {
+  font-weight: 700;
+}
+
+.tt-perf p {
+  margin: 4px 0 0;
+  font-size: 11px;
+  opacity: 0.6;
+}
+
+@media (max-width: 640px) {
+  .tt-hud {
+    gap: 4px;
+    padding: 6px;
+  }
+
+  .tt-input {
+    width: 11ch;
+  }
+}

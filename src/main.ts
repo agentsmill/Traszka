@@ -3,6 +3,7 @@ import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.j
 import { createRenderContext, type RenderContext } from '@/render/renderer';
 import { ISO_PITCH_DEG } from '@/render/cameraRig';
 import { QUALITY, detectDeviceCaps, pickInitialPreset, type QualityPresetId } from '@/render/quality';
+import type { TimeOfDay } from '@/render/lighting';
 import { BEVEL, PALETTE, material } from '@/render/style';
 import { cellToWorld } from '@/render/coords';
 import { buildStore, type StoreView } from '@/render/store/buildStore';
@@ -16,6 +17,10 @@ import { randomSeed } from '@/game/seedWords';
 import { createWorld, type World } from '@/game/world';
 import { SIM_STEP, stepCrowd } from '@/sim/crowd/crowd';
 import { CELL_SIZE_M } from '@/sim/grid';
+import { renderUi } from '@/ui/App';
+import { listenForNotices } from '@/ui/Notice';
+import { FrameMeter } from '@/ui/perfMeter';
+import * as ui from '@/ui/state';
 
 /** Ile metrów na ekranie to jeden piksel (kamera ortograficzna: tyle samo w poziomie i w pionie). */
 const metersPerPixel = (ctx: RenderContext): number => ctx.rig.viewSize / Math.max(1, window.innerHeight);
@@ -33,11 +38,23 @@ function dragPan(ctx: RenderContext, dx: number, dy: number): void {
   ctx.rig.panBy(fz * right + fx * forward, -fx * right + fz * forward);
 }
 
+interface Bindings {
+  /** Klawisze sceny (np. N dzień/noc). Nadpisują domyślne, jeśli mają tę samą nazwę. */
+  extra?: Record<string, () => void>;
+  /** Zmiana presetu klawiszami 1/2/3. Gra przekazuje wersję, która od razu aktualizuje sygnał UI. */
+  setPreset?: (id: QualityPresetId) => void;
+}
+
+/** Klawisze nie działają, gdy gracz pisze w polu (np. seed), bo litery są wtedy tekstem, a nie poleceniem. */
+const isTyping = (target: EventTarget | null): boolean =>
+  target instanceof HTMLElement && (target.isContentEditable || target instanceof HTMLInputElement
+    || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement);
+
 /**
  * Sterowanie wspólne dla scen: Q/E obrót, +/− zoom, strzałki pan, kółko myszy zoom, przeciąganie prawym przyciskiem pan,
  * 1/2/3 preset jakości. `extra` dokłada klawisze sceny (np. N dzień/noc).
  */
-function bindControls(ctx: RenderContext, extra: Record<string, () => void> = {}): void {
+function bindControls(ctx: RenderContext, { extra = {}, setPreset = (id) => ctx.setPreset(id) }: Bindings = {}): void {
   const keys: Record<string, () => void> = {
     q: () => ctx.rig.rotate(-1),
     e: () => ctx.rig.rotate(1),
@@ -48,14 +65,17 @@ function bindControls(ctx: RenderContext, extra: Record<string, () => void> = {}
     ArrowRight: () => ctx.rig.panBy(0.5, 0),
     ArrowUp: () => ctx.rig.panBy(0, -0.5),
     ArrowDown: () => ctx.rig.panBy(0, 0.5),
-    '1': () => ctx.setPreset('niska'),
-    '2': () => ctx.setPreset('srednia'),
-    '3': () => ctx.setPreset('wysoka'),
+    '1': () => setPreset('niska'),
+    '2': () => setPreset('srednia'),
+    '3': () => setPreset('wysoka'),
     ...extra,
   };
   window.addEventListener('keydown', (e) => {
-    if (e.ctrlKey || e.metaKey || e.altKey) return;   // np. Cmd+R to przeładowanie strony, nie nowy seed
-    (keys[e.key] ?? keys[e.key.toLowerCase()])?.();
+    if (e.ctrlKey || e.metaKey || e.altKey || isTyping(e.target)) return;   // np. Cmd+R to przeładowanie strony, nie nowy seed
+    const action = keys[e.key] ?? keys[e.key.toLowerCase()];
+    if (!action) return;
+    e.preventDefault();   // F3 nie otwiera wyszukiwania przeglądarki, strzałki nie przewijają strony
+    action();
   });
   window.addEventListener('wheel', (e) => ctx.rig.zoomBy(e.deltaY < 0 ? 1.1 : 1 / 1.1), { passive: true });
 
@@ -122,7 +142,7 @@ function startTestScene(canvas: HTMLCanvasElement, preset: QualityPresetId): voi
   ctx.setTimeOfDay('day');
 
   let night = false;
-  bindControls(ctx, { n: () => ctx.setTimeOfDay((night = !night) ? 'night' : 'day') });
+  bindControls(ctx, { extra: { n: () => ctx.setTimeOfDay((night = !night) ? 'night' : 'day') } });
 
   startRenderLoop(ctx);
   Object.assign(window, { traszkaTest: ctx });
@@ -146,33 +166,41 @@ function writeSeedToUrl(seed: string): void {
 /**
  * Gra `?seed=<seed>` (bez seeda: losowy, wpisany do adresu): generateStore → buildStore → buildStreet + tłum z symulacji.
  * Sterowanie jak w scenie próbnej (bindControls) plus N dzień/noc, X widok z zewnątrz (pełne ściany, szyld i pełna zabudowa
- * ulicy), R nowy losowy seed; przekrój (cutaway) podąża za obrotem kamery.
+ * ulicy), R nowy losowy seed; przekrój (cutaway) podąża za obrotem kamery. F3 włącza nakładkę wydajności.
  * Parametry do zrzutów: `yaw` (0–3), `night=1`, `ext=1`, `zoom` (wysokość widoku w m), `q` (preset jakości), `pack`
- * (`ubc` zamiast domyślnych postaci `modular`).
+ * (`ubc` zamiast domyślnych postaci `modular`), `perf=1` (nakładka wydajności od startu).
  *
  * Symulacja idzie stałym krokiem SIM_STEP (advanceClock), render interpoluje pozycje współczynnikiem acc / SIM_STEP.
  * Prędkość to `world.speed`; sklep i tłum startują, gdy postacie są gotowe (do tego czasu symulacja stoi).
+ *
+ * Nakładka (`src/ui`) steruje grą przez `Controls`. Przyciski i klawisze wołają te same funkcje, a te aktualizują
+ * sygnały, które czyta interfejs, więc oba sposoby zawsze pokazują to samo.
  */
-function startGame(canvas: HTMLCanvasElement, initialSeed: string, preset: QualityPresetId, params: URLSearchParams, pack: CharacterPack): void {
+function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: string, preset: QualityPresetId, params: URLSearchParams, pack: CharacterPack): void {
+  // Nakładka wstaje pierwsza: komunikat z createRenderContext musi trafić w działający nasłuch. Bez renderera nie ma czego sterować.
+  listenForNotices();
+  renderUi(root, null);
+
   let ctx: RenderContext;
   try {
     ctx = createRenderContext(canvas, preset);
   } catch (error) {
+    // Komunikat dla gracza już poszedł zdarzeniem `traszka:notice` i zostaje na ekranie.
     console.error('Nie udało się uruchomić renderera.', error);
     return;
   }
+  // Liczniki z całej klatki (cienie, AO, postprocessing), a nie z ostatniego `render()`. Zerowane raz na klatkę w pętli.
+  ctx.renderer.info.autoReset = false;
   const crowdRoot = new Group();
   crowdRoot.name = 'crowd';
   ctx.scene.add(crowdRoot);
 
-  let night = params.get('night') === '1';
+  let tod: TimeOfDay = params.get('night') === '1' ? 'night' : 'day';
   let exterior = params.get('ext') === '1';
   let factory: CharacterFactory | null = null;
   let loaded: Loaded | null = null;
   let generation = 0;               // odrzuca wyniki asynchroniczne, które wróciły po zmianie seeda
   const clock = { acc: 0 };
-
-  const timeOfDay = (): 'day' | 'night' => (night ? 'night' : 'day');
 
   function unload(): void {
     generation++;
@@ -205,43 +233,72 @@ function startGame(canvas: HTMLCanvasElement, initialSeed: string, preset: Quali
     ctx.rig.panBy(-ctx.rig.target.x, cellToWorld(layout, 0, (5 + layout.depth) / 2).z - ctx.rig.target.z);
     view.setCutaway(ctx.rig.yawIndex);
     view.setExteriorMode(exterior);
-    view.setTimeOfDay(timeOfDay());
+    view.setTimeOfDay(tod);
 
     void buildStreet(layout, seed).then((built) => {
       if (mine !== generation) { built.dispose(); return; }
       current.street = built;
       built.setBuildingCutaway(!exterior);
-      built.setTimeOfDay(timeOfDay());
+      built.setTimeOfDay(tod);
       ctx.scene.add(built.root);
     }).catch((error: unknown) => console.error('Nie udało się zbudować ulicy.', error));
   }
 
-  function setSeed(seed: string): void {
-    writeSeedToUrl(seed);
-    load(seed);
+  function setSeed(next: string): void {
+    writeSeedToUrl(next);
+    load(next);
+    ui.seed.value = next;
   }
 
   const zoom = Number(params.get('zoom'));
   if (zoom > 0) ctx.rig.zoomBy(14 / zoom);
   const yaw = Number(params.get('yaw'));
   if (yaw >= 1 && yaw <= 3) ctx.rig.yawIndex = yaw as 1 | 2 | 3;
-  ctx.setTimeOfDay(timeOfDay());
+  ctx.setTimeOfDay(tod);
   ctx.rig.onChange(() => loaded?.view.setCutaway(ctx.rig.yawIndex));
   load(initialSeed);
 
+  // stan startowy dla nakładki (świat startuje z prędkością ×1)
+  ui.seed.value = initialSeed;
+  ui.speed.value = 1;
+  ui.timeOfDay.value = tod;
+  ui.preset.value = ctx.preset;
+  ui.showPerf.value = params.get('perf') === '1';
+
+  // Jedyne miejsce, w którym zmienia się stan gry na żądanie gracza. Przyciski i klawisze wołają te funkcje.
+  const controls: ui.Controls = {
+    setSpeed(next) {
+      ui.speed.value = next;
+      if (loaded) loaded.world.speed = next;
+    },
+    rotate: (dir) => ctx.rig.rotate(dir),
+    setTimeOfDay(next) {
+      tod = next;
+      ui.timeOfDay.value = next;
+      ctx.setTimeOfDay(next);
+      loaded?.view.setTimeOfDay(next);
+      loaded?.street?.setTimeOfDay(next);
+    },
+    setPreset(next) {
+      ctx.setPreset(next);
+      ui.preset.value = ctx.preset;   // bez AO renderer schodzi niżej i sam o tym informuje (traszka:notice)
+    },
+    generate: (text) => setSeed(text.trim() || randomSeed()),
+    randomize: () => setSeed(randomSeed()),
+  };
+
   bindControls(ctx, {
-    n: () => {
-      night = !night;
-      ctx.setTimeOfDay(timeOfDay());
-      loaded?.view.setTimeOfDay(timeOfDay());
-      loaded?.street?.setTimeOfDay(timeOfDay());
+    setPreset: (id) => controls.setPreset(id),
+    extra: {
+      n: () => controls.setTimeOfDay(tod === 'day' ? 'night' : 'day'),
+      x: () => {
+        exterior = !exterior;
+        loaded?.view.setExteriorMode(exterior);
+        loaded?.street?.setBuildingCutaway(!exterior);
+      },
+      r: () => controls.randomize(),
+      F3: () => { ui.showPerf.value = !ui.showPerf.value; },
     },
-    x: () => {
-      exterior = !exterior;
-      loaded?.view.setExteriorMode(exterior);
-      loaded?.street?.setBuildingCutaway(!exterior);
-    },
-    r: () => setSeed(randomSeed()),
   });
 
   void createCharacterFactory(pack).then((created) => {
@@ -249,8 +306,10 @@ function startGame(canvas: HTMLCanvasElement, initialSeed: string, preset: Quali
     if (loaded && !loaded.crowdView) loaded.crowdView = new CrowdView(created, loaded.world.layout, crowdRoot, pack);
   }).catch((error: unknown) => console.error('Nie udało się wczytać postaci.', error));
 
+  const meter = new FrameMeter();
   let last: number | null = null;
   const frame = (now: number): void => {
+    ctx.renderer.info.reset();
     const frameDt = last === null ? 0 : Math.max(0, (now - last) / 1000);
     last = now;
     if (loaded?.crowdView) {
@@ -260,11 +319,13 @@ function startGame(canvas: HTMLCanvasElement, initialSeed: string, preset: Quali
       crowdView.sync(world.crowd, clockAlpha(clock), Math.min(frameDt, MAX_FRAME_DT) * world.speed);
     }
     ctx.render();
+    const sample = meter.tick(now, ctx.renderer.info.render.calls, ctx.renderer.info.render.triangles);
+    if (sample) ui.perf.value = sample;
     requestAnimationFrame(frame);
   };
   requestAnimationFrame(frame);
 
-  // uchwyt do ręcznych testów w konsoli i do przyszłego UI (Task 14); pola odczytywane na bieżąco
+  // uchwyt do ręcznych testów w konsoli; pola odczytywane na bieżąco
   Object.assign(window, {
     traszkaGame: {
       ctx,
@@ -276,10 +337,13 @@ function startGame(canvas: HTMLCanvasElement, initialSeed: string, preset: Quali
       get factory() { return factory; },
     },
   });
+
+  renderUi(root, controls);   // sterowanie działa od tej chwili
 }
 
 const params = new URLSearchParams(location.search);
 const canvas = document.getElementById('scene') as HTMLCanvasElement;
+const uiRoot = document.getElementById('ui') as HTMLElement;
 
 if (params.get('charTest') === '1') {
   const q = params.get('q');
@@ -293,5 +357,5 @@ if (params.get('charTest') === '1') {
   const seed = requested || randomSeed();
   if (!requested) writeSeedToUrl(seed);
   const pack: CharacterPack = params.get('pack') === 'ubc' ? 'ubc' : 'modular';   // ruling R31: modular, dopóki zadanie 16 nie wybierze
-  startGame(canvas, seed, q && q in QUALITY ? (q as QualityPresetId) : pickInitialPreset(detectDeviceCaps()), params, pack);
+  startGame(canvas, uiRoot, seed, q && q in QUALITY ? (q as QualityPresetId) : pickInitialPreset(detectDeviceCaps()), params, pack);
 }
