@@ -12,14 +12,14 @@ mówić, co zjada czas (AO, cienie, skórkowanie), i oddać sprawę do zadania 1
 2. Otwórz `http://localhost:4173/?bench=1` w oknie przeglądarki na wierzchu, w docelowym rozmiarze (np. na cały ekran),
    przy podłączonym zasilaczu i bez innych ciężkich programów. Karta w tle zatrzymuje `requestAnimationFrame`, więc okno ma
    być widoczne przez cały bieg.
-3. Bieg trwa około 2 minut (najwyżej 3). Nakładka w lewym dolnym rogu pokazuje postęp; na końcu pisze „Gotowe.” i podaje
+3. Bieg trwa około 2 minut (najwyżej około 3,5). Nakładka w lewym dolnym rogu pokazuje postęp; na końcu pisze „Gotowe.” i podaje
    obie tabele. Nie dotykaj myszy ani klawiatury: sterowanie jest w tym trybie wyłączone, ale zasłonięcie okna psuje wynik.
 4. Wyniki odczytasz z konsoli (`console.table`) albo z obiektów na stronie:
    - `window.__benchResult`: `{ preset, avgFps, p95FrameMs, calls, tris }[]` (tabela główna),
    - `window.__benchExtra`: środowisko (GPU, rozmiar okna, `devicePixelRatio`), próby, ostrzeżenia.
    Całość w jednym kawałku: `copy(JSON.stringify({ result: __benchResult, extra: __benchExtra }, null, 1))`.
 
-Próbny bieg, który tylko sprawdza, że całość się kończy: `?bench=1&quick=1` (około 40 s). Liczby z niego niczego nie
+Próbny bieg, który tylko sprawdza, że całość się kończy: `?bench=1&quick=1` (około 35 s). Liczby z niego niczego nie
 mówią i nie wchodzą do tej strony.
 
 ## Co mierzy bieg
@@ -70,7 +70,11 @@ Oczekiwanie z kodu: każda postać to jeden `SkinnedMesh`, czyli 1 wywołanie w 
 
 **Kryterium `srednia.avgFps ≥ 55`:** spełnione (120 FPS, limit ekranu). Na M5 nie mówi to nic o M1 / Iris Xe.
 
-Ostrzeżenia z biegu (`__benchExtra.warnings`): brak. Każdy preset mierzony przy 60 postaciach.
+Ostrzeżenia z biegu (`__benchExtra.warnings`): brak. Każdy preset mierzony przy 60 postaciach. Ciągłość pomiaru:
+2399 / 2399 / 2338 klatek w 20 s, najdłuższa klatka 9,4 / 9,4 / 17,6 ms, więc bieg nie miał przerw.
+
+**Budżet 300 wywołań:** przekroczony przy 60 postaciach na `srednia` (316) i `wysoka` (315); spełniony na `niska`
+(287) i w zwykłej grze (12 klientów, ~230). Sprawa dla zadania 16, patrz niżej.
 
 ## Próby
 
