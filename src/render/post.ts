@@ -35,6 +35,14 @@ const AO_TINT = PALETTE.wall[4];
 /** Bloom łapie tylko to, co jaśniejsze od oświetlonej powierzchni, czyli materiały emissive (patrz style.ts). */
 const BLOOM_LUMINANCE_THRESHOLD = 0.9;
 
+/**
+ * Kolor poświaty AO dla N8AO. `new Color(hex)` zapisuje wartość już liniową, a N8AO sam zamienia `color` z sRGB na liniowy,
+ * więc bez cofnięcia tamtej konwersji kolor byłby przyciemniony dwukrotnie (prawie czarny). Cofamy ją tutaj.
+ */
+export function aoTintColor(): Color {
+  return new Color(AO_TINT).convertLinearToSRGB();
+}
+
 export const defaultPostFactories: PostFactories = {
   // Bufory half-float, bo bloom i tone mapping liczą na HDR. Bez MSAA, bo AO go nie znosi (antyaliasing robi SMAA).
   composer: (renderer) => new EffectComposer(renderer, { frameBufferType: HalfFloatType, multisampling: 0 }),
@@ -45,7 +53,7 @@ export const defaultPostFactories: PostFactories = {
     c.aoRadius = 0.7; // metry: pół metra cienia kontaktowego pod półką i przy ścianie
     c.distanceFalloff = 1;
     c.intensity = 4;
-    c.color = new Color(AO_TINT);
+    c.color = aoTintColor();
     return {
       pass,
       setQuality(mode) {

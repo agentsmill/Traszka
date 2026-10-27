@@ -24,6 +24,19 @@ export function pickInitialPreset(caps: DeviceCaps): QualityPresetId {
   return !caps.webgl2 || caps.isMobile ? 'niska' : 'srednia';
 }
 
+/** Co udało się uruchomić przy starcie renderera. */
+export interface StartSupport { context: boolean; post: boolean; ao: boolean }
+
+/**
+ * Preset, na którym faktycznie ruszy renderer, i czy to tryb oszczędny (wtedy gracz dostaje komunikat).
+ * Brak kontekstu, brak postprocessingu albo brak AO (tylko gdy preset je zamawia) zmuszają do 'niska'.
+ */
+export function resolveStartPreset(requested: QualityPresetId, support: StartSupport): { preset: QualityPresetId; reduced: boolean } {
+  const needsAo = QUALITY[requested].ao !== 'off';
+  const fallback = !support.context || !support.post || (needsAo && !support.ao);
+  return fallback ? { preset: 'niska', reduced: true } : { preset: requested, reduced: false };
+}
+
 /**
  * Wykrywa możliwości urządzenia w przeglądarce (bez tworzenia kontekstu WebGL, który zajmowałby slot).
  * Poza przeglądarką zwraca wartości zachowawcze.

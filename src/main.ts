@@ -1,6 +1,6 @@
 import { Mesh, type BufferGeometry, type Material } from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
-import { createRenderContext } from '@/render/renderer';
+import { createRenderContext, type RenderContext } from '@/render/renderer';
 import { QUALITY, detectDeviceCaps, pickInitialPreset, type QualityPresetId } from '@/render/quality';
 import { BEVEL, PALETTE, material } from '@/render/style';
 
@@ -9,7 +9,14 @@ import { BEVEL, PALETTE, material } from '@/render/style';
  * Sterowanie: Q/E obrót, +/− zoom, strzałki pan, N dzień/noc, 1/2/3 preset jakości. Zastąpi ją właściwy świat.
  */
 function startTestScene(canvas: HTMLCanvasElement, preset: QualityPresetId): void {
-  const ctx = createRenderContext(canvas, preset);
+  let ctx: RenderContext;
+  try {
+    ctx = createRenderContext(canvas, preset);
+  } catch (error) {
+    // Bez renderera nie ma pętli. Komunikat dla gracza już poszedł zdarzeniem `traszka:notice`.
+    console.error('Nie udało się uruchomić renderera.', error);
+    return;
+  }
 
   const block = (w: number, h: number, d: number, x: number, z: number, mat: Material, y = 0, radius: number = BEVEL.medium): Mesh => {
     const geometry: BufferGeometry = new RoundedBoxGeometry(w, h, d, 3, Math.min(radius, Math.min(w, h, d) * 0.4));

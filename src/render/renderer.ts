@@ -3,12 +3,13 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { CameraRig } from './cameraRig';
 import { createLighting, type TimeOfDay } from './lighting';
 import { createPostPipeline, type PostPipeline } from './post';
-import { QUALITY, type QualityPresetId } from './quality';
+import { QUALITY, resolveStartPreset, type QualityPresetId } from './quality';
 import { LIGHT_PRESETS } from './style';
 
 /** Zdarzenie na `window` z komunikatem dla gracza: `CustomEvent<{ text: string }>`. */
 export const NOTICE_EVENT = 'traszka:notice';
 export const NOTICE_REDUCED_GRAPHICS = 'Twoja przeglądarka nie obsługuje pełnej grafiki. Włączyliśmy tryb oszczędny.';
+export const NOTICE_NO_WEBGL2 = 'Twoja przeglądarka nie obsługuje WebGL 2, więc gra nie może się uruchomić. Spróbuj aktualnej wersji Chrome, Edge, Firefox lub Safari.';
 
 export interface RenderContext {
   renderer: WebGLRenderer;
@@ -37,17 +38,18 @@ function notify(text: string): void {
  * Awaria sprzętu nie przerywa gry, o ile da się jeszcze rysować. Gdy `getContext('webgl2')` z naszymi atrybutami zwróci
  * null (ale three.js zdoła utworzyć kontekst sam), gdy nie da się utworzyć pipeline'u postprocessingu (wtedy rysujemy
  * bezpośrednio) albo gdy zawiedzie AO, przechodzimy na preset 'niska' i wysyłamy `traszka:notice`. Brak WebGL 2 w ogóle
- * kończy się wyjątkiem: three.js 0.186 nie ma ścieżki WebGL 1.
+ * wysyła `traszka:notice` z `NOTICE_NO_WEBGL2` i dopiero potem rzuca wyjątek: three.js 0.186 nie ma ścieżki WebGL 1.
  */
 export function createRenderContext(canvas: HTMLCanvasElement, preset: QualityPresetId): RenderContext {
   const gl = canvas.getContext('webgl2', CONTEXT_ATTRIBUTES);
-  let current: QualityPresetId = gl ? preset : 'niska';
-  let reduced = !gl;
+  // Bez naszego kontekstu three.js szuka własnego, więc zamawiamy najbezpieczniejszy preset, bez AO i postprocessingu.
+  const requested: QualityPresetId = gl ? preset : 'niska';
 
   let renderer: WebGLRenderer;
   try {
     renderer = new WebGLRenderer({ canvas, context: gl ?? undefined, ...CONTEXT_ATTRIBUTES });
   } catch (cause) {
+    notify(NOTICE_NO_WEBGL2);
     throw new Error('Nie udało się uruchomić WebGL 2. Ta przeglądarka nie obsłuży gry.', { cause });
   }
   renderer.outputColorSpace = SRGBColorSpace;
@@ -59,7 +61,6 @@ export function createRenderContext(canvas: HTMLCanvasElement, preset: QualityPr
 
   const scene = new Scene();
   const rig = new CameraRig(window.innerWidth / window.innerHeight);
-  const lighting = createLighting(scene, QUALITY[current].shadowMapSize);
 
   const pmrem = new PMREMGenerator(renderer);
   const room = new RoomEnvironment();
@@ -70,17 +71,16 @@ export function createRenderContext(canvas: HTMLCanvasElement, preset: QualityPr
 
   let post: PostPipeline | null = null;
   try {
-    post = createPostPipeline(renderer, scene, rig.camera, QUALITY[current]);
+    post = createPostPipeline(renderer, scene, rig.camera, QUALITY[requested]);
   } catch (error) {
     console.warn('Postprocessing niedostępny, rysuję bezpośrednio.', error);
-    current = 'niska';
-    reduced = true;
   }
-  if (post && QUALITY[current].ao !== 'off' && !post.aoAvailable) {
-    post.setPreset(QUALITY.niska);
-    current = 'niska';
-    reduced = true;
-  }
+  const start = resolveStartPreset(requested, { context: gl !== null, post: post !== null, ao: post?.aoAvailable ?? false });
+  let current = start.preset;
+  // Pipeline powstał dla zamówionego presetu; gdy zeszliśmy niżej (brak AO), zdejmujemy jego AO i ostrzejsze efekty.
+  if (post && current !== requested) post.setPreset(QUALITY[current]);
+  // Mapa cienia zależy od presetu, więc światło tworzymy dopiero, gdy preset startowy jest ostateczny.
+  const lighting = createLighting(scene, QUALITY[current].shadowMapSize);
 
   function resize(): void {
     const w = Math.max(1, window.innerWidth);
@@ -139,7 +139,7 @@ export function createRenderContext(canvas: HTMLCanvasElement, preset: QualityPr
 
   setTimeOfDay('day');
   resize();
-  if (reduced) notify(NOTICE_REDUCED_GRAPHICS);
+  if (start.reduced) notify(NOTICE_REDUCED_GRAPHICS);
 
   return {
     renderer,

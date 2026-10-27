@@ -1,8 +1,9 @@
-import { OrthographicCamera, Scene, type Camera, type Vector2, type WebGLRenderer } from 'three';
+import { Color, OrthographicCamera, Scene, type Camera, type Vector2, type WebGLRenderer } from 'three';
 import type { Pass } from 'postprocessing';
 import { describe, expect, it, vi } from 'vitest';
 import { QUALITY, type QualitySettings } from './quality';
-import { createPostPipeline, type AoHandle, type EffectsHandle, type PostFactories } from './post';
+import { PALETTE } from './style';
+import { aoTintColor, createPostPipeline, type AoHandle, type EffectsHandle, type PostFactories } from './post';
 
 function fakes(opts: { ao?: () => AoHandle } = {}) {
   const composer = { addPass: vi.fn(), removePass: vi.fn(), render: vi.fn(), setSize: vi.fn(), dispose: vi.fn() };
@@ -120,5 +121,15 @@ describe('createPostPipeline', () => {
     const f = fakes();
     f.factories.composer.mockImplementation(() => { throw new Error('brak buforów zmiennoprzecinkowych'); });
     expect(() => createPostPipeline(f.renderer, scene, camera, QUALITY.srednia, f.factories)).toThrow('brak buforów');
+  });
+});
+
+describe('aoTintColor', () => {
+  it('N8AO zamienia kolor z sRGB na liniowy, więc po tej konwersji ma wyjść kolor z palety, a nie prawie czarny', () => {
+    const expected = new Color(PALETTE.wall[4]);
+    const seenByN8AO = aoTintColor().convertSRGBToLinear();
+    expect(seenByN8AO.r).toBeCloseTo(expected.r, 5);
+    expect(seenByN8AO.g).toBeCloseTo(expected.g, 5);
+    expect(seenByN8AO.b).toBeCloseTo(expected.b, 5);
   });
 });
