@@ -1,0 +1,30 @@
+import { describe, expect, it } from 'vitest';
+import { WALK_SPEED_MPS, WALK_TIME_SCALE_RANGE, walkTimeScale } from './walkSpeed';
+
+describe('walkTimeScale', () => {
+  it('prędkość agenta równa prędkości stopy w klipie daje 1', () => {
+    expect(walkTimeScale('modular', WALK_SPEED_MPS.modular, 1)).toBeCloseTo(1, 12);
+    expect(walkTimeScale('ubc', WALK_SPEED_MPS.ubc, 1)).toBeCloseTo(1, 12);
+  });
+
+  it('skaluje proporcjonalnie do prędkości agenta i odwrotnie do skali postaci', () => {
+    expect(walkTimeScale('modular', 1.3, 1)).toBeCloseTo(1.3 / 1.15, 12);
+    expect(walkTimeScale('modular', 1.3, 0.9)).toBeCloseTo(1.3 / (1.15 * 0.9), 12);
+    expect(walkTimeScale('ubc', 1.3, 1)).toBeGreaterThan(walkTimeScale('modular', 1.3, 1));   // wolniejszy klip trzeba przyspieszyć bardziej
+  });
+
+  it('jest ograniczony do WALK_TIME_SCALE_RANGE', () => {
+    expect(walkTimeScale('modular', 100, 1)).toBe(WALK_TIME_SCALE_RANGE.max);
+    expect(walkTimeScale('modular', 0.01, 1)).toBe(WALK_TIME_SCALE_RANGE.min);
+  });
+
+  it('zakres prędkości agentów (2,2–3,0 kratki/s) mieści się w granicach dla obu paczek', () => {
+    for (const pack of ['ubc', 'modular'] as const) {
+      for (const cellsPerS of [2.2, 3.0]) {
+        const k = walkTimeScale(pack, cellsPerS * 0.5, 0.9);
+        expect(k).toBeGreaterThan(WALK_TIME_SCALE_RANGE.min);
+        expect(k).toBeLessThan(WALK_TIME_SCALE_RANGE.max);
+      }
+    }
+  });
+});

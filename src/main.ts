@@ -1,19 +1,41 @@
-import { Mesh, type BufferGeometry, type Material } from 'three';
+import { Group, MathUtils, Mesh, type BufferGeometry, type Material } from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { createRenderContext, type RenderContext } from '@/render/renderer';
+import { ISO_PITCH_DEG } from '@/render/cameraRig';
 import { QUALITY, detectDeviceCaps, pickInitialPreset, type QualityPresetId } from '@/render/quality';
 import { BEVEL, PALETTE, material } from '@/render/style';
 import { cellToWorld } from '@/render/coords';
-import { buildStore } from '@/render/store/buildStore';
+import { buildStore, type StoreView } from '@/render/store/buildStore';
 import { fillShelves } from '@/render/store/products';
 import { buildStreet, type StreetView } from '@/render/street/buildStreet';
 import { startCharTestPage } from '@/render/characters/charTestPage';
-import { generateStore } from '@/sim/store/generateStore';
+import { createCharacterFactory, type CharacterFactory, type CharacterPack } from '@/render/characters/characterFactory';
+import { CrowdView } from '@/render/crowdView';
+import { MAX_FRAME_DT, advanceClock, clockAlpha } from '@/game/loop';
+import { randomSeed } from '@/game/seedWords';
+import { createWorld, type World } from '@/game/world';
+import { SIM_STEP, stepCrowd } from '@/sim/crowd/crowd';
 import { CELL_SIZE_M } from '@/sim/grid';
 
+/** Ile metrów na ekranie to jeden piksel (kamera ortograficzna: tyle samo w poziomie i w pionie). */
+const metersPerPixel = (ctx: RenderContext): number => ctx.rig.viewSize / Math.max(1, window.innerHeight);
+
 /**
- * Sterowanie wspólne dla scen próbnych: Q/E obrót, +/− zoom, strzałki pan, kółko myszy, 1/2/3 preset jakości.
- * `extra` dokłada klawisze sceny (np. N dzień/noc).
+ * Przesuwa cel kamery tak, żeby punkt podłogi pod kursorem został pod kursorem po przeciągnięciu o (dx, dy) pikseli.
+ * W prawo na ekranie to prostopadła do kierunku patrzenia, w górę ekranu to kierunek patrzenia na podłodze, którego
+ * odcinek jest na ekranie skrócony o sin(nachylenie), więc pion przeliczamy z tym dzieleniem.
+ */
+function dragPan(ctx: RenderContext, dx: number, dy: number): void {
+  const yaw = MathUtils.degToRad(45 + 90 * ctx.rig.yawIndex);
+  const fx = Math.sin(yaw), fz = Math.cos(yaw);   // kierunek patrzenia na podłodze (x, z)
+  const right = dx * metersPerPixel(ctx);
+  const forward = (dy * metersPerPixel(ctx)) / Math.sin(MathUtils.degToRad(ISO_PITCH_DEG));
+  ctx.rig.panBy(fz * right + fx * forward, -fx * right + fz * forward);
+}
+
+/**
+ * Sterowanie wspólne dla scen: Q/E obrót, +/− zoom, strzałki pan, kółko myszy zoom, przeciąganie prawym przyciskiem pan,
+ * 1/2/3 preset jakości. `extra` dokłada klawisze sceny (np. N dzień/noc).
  */
 function bindControls(ctx: RenderContext, extra: Record<string, () => void> = {}): void {
   const keys: Record<string, () => void> = {
@@ -31,8 +53,25 @@ function bindControls(ctx: RenderContext, extra: Record<string, () => void> = {}
     '3': () => ctx.setPreset('wysoka'),
     ...extra,
   };
-  window.addEventListener('keydown', (e) => keys[e.key]?.());
+  window.addEventListener('keydown', (e) => {
+    if (e.ctrlKey || e.metaKey || e.altKey) return;   // np. Cmd+R to przeładowanie strony, nie nowy seed
+    (keys[e.key] ?? keys[e.key.toLowerCase()])?.();
+  });
   window.addEventListener('wheel', (e) => ctx.rig.zoomBy(e.deltaY < 0 ? 1.1 : 1 / 1.1), { passive: true });
+
+  // pan: przeciąganie prawym przyciskiem (menu kontekstowe wyłączone, żeby nie wyskakiwało po puszczeniu)
+  let drag: { x: number; y: number } | null = null;
+  window.addEventListener('contextmenu', (e) => e.preventDefault());
+  window.addEventListener('pointerdown', (e) => { if (e.button === 2) drag = { x: e.clientX, y: e.clientY }; });
+  window.addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    if ((e.buttons & 2) === 0) { drag = null; return; }   // puszczony poza oknem
+    dragPan(ctx, e.clientX - drag.x, e.clientY - drag.y);
+    drag = { x: e.clientX, y: e.clientY };
+  });
+  const endDrag = (e: PointerEvent): void => { if (e.button === 2) drag = null; };
+  window.addEventListener('pointerup', endDrag);
+  window.addEventListener('pointercancel', endDrag);
 }
 
 function startRenderLoop(ctx: RenderContext): void {
@@ -89,12 +128,32 @@ function startTestScene(canvas: HTMLCanvasElement, preset: QualityPresetId): voi
   Object.assign(window, { traszkaTest: ctx });
 }
 
+/** Wszystko, co zależy od seeda sklepu. `unload` zwalnia to w całości, więc zmiana seeda niczego nie zostawia. */
+interface Loaded {
+  world: World;
+  view: StoreView;                  // razem z towarem na półkach (jest jego dzieckiem)
+  street: StreetView | null;        // dochodzi asynchronicznie (modele GLB)
+  crowdView: CrowdView | null;      // dochodzi, gdy fabryka postaci jest gotowa
+}
+
+/** Wpisuje seed do adresu (zachowując pozostałe parametry), żeby odświeżenie albo link odtworzyły ten sam sklep. */
+function writeSeedToUrl(seed: string): void {
+  const url = new URL(location.href);
+  url.searchParams.set('seed', seed);
+  history.replaceState(null, '', url);
+}
+
 /**
- * Podgląd sklepu `?seed=<seed>`: generateStore → buildStore → buildStreet. Sterowanie jak w scenie próbnej plus N dzień/noc,
- * X widok z zewnątrz (pełne ściany, szyld i pełna zabudowa ulicy); przekrój (cutaway) podąża za obrotem kamery.
- * Parametry do zrzutów: `yaw` (0–3), `night=1`, `ext=1`, `zoom` (wysokość widoku w m), `q` (preset jakości).
+ * Gra `?seed=<seed>` (bez seeda: losowy, wpisany do adresu): generateStore → buildStore → buildStreet + tłum z symulacji.
+ * Sterowanie jak w scenie próbnej (bindControls) plus N dzień/noc, X widok z zewnątrz (pełne ściany, szyld i pełna zabudowa
+ * ulicy), R nowy losowy seed; przekrój (cutaway) podąża za obrotem kamery.
+ * Parametry do zrzutów: `yaw` (0–3), `night=1`, `ext=1`, `zoom` (wysokość widoku w m), `q` (preset jakości), `pack`
+ * (`ubc` zamiast domyślnych postaci `modular`).
+ *
+ * Symulacja idzie stałym krokiem SIM_STEP (advanceClock), render interpoluje pozycje współczynnikiem acc / SIM_STEP.
+ * Prędkość to `world.speed`; sklep i tłum startują, gdy postacie są gotowe (do tego czasu symulacja stoi).
  */
-function startStoreScene(canvas: HTMLCanvasElement, seed: string, preset: QualityPresetId, params: URLSearchParams): void {
+function startGame(canvas: HTMLCanvasElement, initialSeed: string, preset: QualityPresetId, params: URLSearchParams, pack: CharacterPack): void {
   let ctx: RenderContext;
   try {
     ctx = createRenderContext(canvas, preset);
@@ -102,62 +161,121 @@ function startStoreScene(canvas: HTMLCanvasElement, seed: string, preset: Qualit
     console.error('Nie udało się uruchomić renderera.', error);
     return;
   }
-  const layout = generateStore(seed);
-  const view = buildStore(layout);
-  const goods = fillShelves(view, seed);
-  view.root.add(goods); // view.dispose() zwalnia też bufory instancji towaru
-  ctx.scene.add(view.root);
+  const crowdRoot = new Group();
+  crowdRoot.name = 'crowd';
+  ctx.scene.add(crowdRoot);
 
-  // ulica dochodzi asynchronicznie (modele GLB); przed jej gotowością sklep jest już widoczny
-  let street: StreetView | null = null;
-  let disposed = false;
+  let night = params.get('night') === '1';
+  let exterior = params.get('ext') === '1';
+  let factory: CharacterFactory | null = null;
+  let loaded: Loaded | null = null;
+  let generation = 0;               // odrzuca wyniki asynchroniczne, które wróciły po zmianie seeda
+  const clock = { acc: 0 };
 
-  const lo = cellToWorld(layout, 0, 0);
-  const hi = cellToWorld(layout, layout.width - 1, layout.depth - 1);
-  ctx.rig.setBounds(lo.x - CELL_SIZE_M / 2, lo.z - CELL_SIZE_M / 2, hi.x + CELL_SIZE_M / 2, hi.z + CELL_SIZE_M / 2);
-  // start: środek sali sprzedaży i zaplecza (bez chodnika)
-  ctx.rig.panBy(0, cellToWorld(layout, 0, (5 + layout.depth) / 2).z);
+  const timeOfDay = (): 'day' | 'night' => (night ? 'night' : 'day');
+
+  function unload(): void {
+    generation++;
+    if (!loaded) return;
+    loaded.crowdView?.dispose();
+    loaded.street?.dispose();
+    loaded.view.dispose();
+    loaded = null;
+  }
+
+  function load(seed: string): void {
+    const speed = loaded?.world.speed ?? 1;
+    unload();
+    const mine = generation;
+
+    const world = createWorld(seed);
+    world.speed = speed;
+    const { layout } = world;
+    const view = buildStore(layout);
+    view.root.add(fillShelves(view, seed));   // view.dispose() zwalnia też bufory instancji towaru
+    ctx.scene.add(view.root);
+    const current: Loaded = { world, view, street: null, crowdView: factory ? new CrowdView(factory, layout, crowdRoot, pack) : null };
+    loaded = current;
+    clock.acc = 0;
+
+    const lo = cellToWorld(layout, 0, 0);
+    const hi = cellToWorld(layout, layout.width - 1, layout.depth - 1);
+    ctx.rig.setBounds(lo.x - CELL_SIZE_M / 2, lo.z - CELL_SIZE_M / 2, hi.x + CELL_SIZE_M / 2, hi.z + CELL_SIZE_M / 2);
+    // cel kamery: środek sali sprzedaży i zaplecza (bez chodnika)
+    ctx.rig.panBy(-ctx.rig.target.x, cellToWorld(layout, 0, (5 + layout.depth) / 2).z - ctx.rig.target.z);
+    view.setCutaway(ctx.rig.yawIndex);
+    view.setExteriorMode(exterior);
+    view.setTimeOfDay(timeOfDay());
+
+    void buildStreet(layout, seed).then((built) => {
+      if (mine !== generation) { built.dispose(); return; }
+      current.street = built;
+      built.setBuildingCutaway(!exterior);
+      built.setTimeOfDay(timeOfDay());
+      ctx.scene.add(built.root);
+    }).catch((error: unknown) => console.error('Nie udało się zbudować ulicy.', error));
+  }
+
+  function setSeed(seed: string): void {
+    writeSeedToUrl(seed);
+    load(seed);
+  }
+
   const zoom = Number(params.get('zoom'));
   if (zoom > 0) ctx.rig.zoomBy(14 / zoom);
   const yaw = Number(params.get('yaw'));
   if (yaw >= 1 && yaw <= 3) ctx.rig.yawIndex = yaw as 1 | 2 | 3;
-
-  let night = params.get('night') === '1';
-  let exterior = params.get('ext') === '1';
-  view.setCutaway(ctx.rig.yawIndex);
-  view.setExteriorMode(exterior);
-  view.setTimeOfDay(night ? 'night' : 'day');
-  ctx.setTimeOfDay(night ? 'night' : 'day');
-  ctx.rig.onChange(() => view.setCutaway(ctx.rig.yawIndex));
+  ctx.setTimeOfDay(timeOfDay());
+  ctx.rig.onChange(() => loaded?.view.setCutaway(ctx.rig.yawIndex));
+  load(initialSeed);
 
   bindControls(ctx, {
     n: () => {
       night = !night;
-      ctx.setTimeOfDay(night ? 'night' : 'day');
-      view.setTimeOfDay(night ? 'night' : 'day');
-      street?.setTimeOfDay(night ? 'night' : 'day');
+      ctx.setTimeOfDay(timeOfDay());
+      loaded?.view.setTimeOfDay(timeOfDay());
+      loaded?.street?.setTimeOfDay(timeOfDay());
     },
     x: () => {
-      view.setExteriorMode((exterior = !exterior));
-      street?.setBuildingCutaway(!exterior);
+      exterior = !exterior;
+      loaded?.view.setExteriorMode(exterior);
+      loaded?.street?.setBuildingCutaway(!exterior);
+    },
+    r: () => setSeed(randomSeed()),
+  });
+
+  void createCharacterFactory(pack).then((created) => {
+    factory = created;
+    if (loaded && !loaded.crowdView) loaded.crowdView = new CrowdView(created, loaded.world.layout, crowdRoot, pack);
+  }).catch((error: unknown) => console.error('Nie udało się wczytać postaci.', error));
+
+  let last: number | null = null;
+  const frame = (now: number): void => {
+    const frameDt = last === null ? 0 : Math.max(0, (now - last) / 1000);
+    last = now;
+    if (loaded?.crowdView) {
+      const { world, crowdView } = loaded;
+      const steps = advanceClock(clock, frameDt, world.speed);
+      for (let i = 0; i < steps; i++) stepCrowd(world.crowd, world.layout, SIM_STEP);
+      crowdView.sync(world.crowd, clockAlpha(clock), Math.min(frameDt, MAX_FRAME_DT) * world.speed);
+    }
+    ctx.render();
+    requestAnimationFrame(frame);
+  };
+  requestAnimationFrame(frame);
+
+  // uchwyt do ręcznych testów w konsoli i do przyszłego UI (Task 14); pola odczytywane na bieżąco
+  Object.assign(window, {
+    traszkaGame: {
+      ctx,
+      setSeed,
+      get world() { return loaded?.world ?? null; },
+      get view() { return loaded?.view ?? null; },
+      get street() { return loaded?.street ?? null; },
+      get crowdView() { return loaded?.crowdView ?? null; },
+      get factory() { return factory; },
     },
   });
-  startRenderLoop(ctx);
-  // zmiana seeda: zwolnić ulicę razem ze sklepem
-  const dispose = (): void => {
-    disposed = true;
-    street?.dispose();
-    view.dispose();
-  };
-  const handle = { ctx, view, layout, goods, street: null as StreetView | null, dispose };
-  Object.assign(window, { traszkaStore: handle });
-  void buildStreet(layout, seed).then((built) => {
-    if (disposed) { built.dispose(); return; }
-    street = handle.street = built;
-    built.setBuildingCutaway(!exterior);
-    built.setTimeOfDay(night ? 'night' : 'day');
-    ctx.scene.add(built.root);
-  }).catch((error: unknown) => console.error('Nie udało się zbudować ulicy.', error));
 }
 
 const params = new URLSearchParams(location.search);
@@ -169,9 +287,11 @@ if (params.get('charTest') === '1') {
 } else if (params.get('scene') === 'test') {
   const q = params.get('q');
   startTestScene(canvas, q && q in QUALITY ? (q as QualityPresetId) : pickInitialPreset(detectDeviceCaps()));
-} else if (params.get('seed')) {
-  const q = params.get('q');
-  startStoreScene(canvas, params.get('seed')!, q && q in QUALITY ? (q as QualityPresetId) : pickInitialPreset(detectDeviceCaps()), params);
 } else {
-  console.log('Traszka Tycoon');
+  const q = params.get('q');
+  const requested = params.get('seed');
+  const seed = requested || randomSeed();
+  if (!requested) writeSeedToUrl(seed);
+  const pack: CharacterPack = params.get('pack') === 'ubc' ? 'ubc' : 'modular';   // ruling R31: modular, dopóki zadanie 16 nie wybierze
+  startGame(canvas, seed, q && q in QUALITY ? (q as QualityPresetId) : pickInitialPreset(detectDeviceCaps()), params, pack);
 }
