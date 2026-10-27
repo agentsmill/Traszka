@@ -1,0 +1,23 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`layoutToAscii > układ wzorcowy (obejrzany ręcznie) zgadza się ze snapshotem 1`] = `
+",,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,
+#WWWWWDDWWWWWWW#
+#........XX..EE#
+#T.K.........EE#
+#T.C..GG..GG..S#
+#T.Cq.GG..GG..S#
+#T.Cq.GG..GG..S#
+#T.Cq.GG..GG..S#
+#T.Hq..........#
+#T.Hq.FFFFFFFF.#
+#.....FFFFFFFF.#
+##BB############
+#bbbbbbbbbbbbbb#
+#bbbbbbbbbbbbbb#
+#bbbbbbbbbbbbbb#
+################"
+`;
