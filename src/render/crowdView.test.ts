@@ -1,4 +1,4 @@
-import { Group, type Object3D } from 'three';
+import { Group, Mesh, Vector3, type Object3D } from 'three';
 import { describe, expect, it, vi } from 'vitest';
 import { SIM_STEP, createCrowd, stepCrowd, type Agent, type Crowd } from '@/sim/crowd/crowd';
 import { CELL_SIZE_M } from '@/sim/grid';
@@ -6,7 +6,8 @@ import { generateStore } from '@/sim/store/generateStore';
 import type { CharacterFactory, CharacterInstance } from './characters/characterFactory';
 import { cellToWorld } from './coords';
 import { WALK_SPEED_MPS } from './characters/walkSpeed';
-import { CrowdView, TURN_RATE_MAX } from './crowdView';
+import { BLOB_RADIUS, createBlobShadows } from './characters/blobShadows';
+import { ANIM_SPEED_CAP, CrowdView, TURN_RATE_MAX } from './crowdView';
 
 /** Fabryka-atrapa: postać to pusta grupa, a wywołania zapisujemy. */
 function fakeFactory(scale = 1) {
@@ -265,3 +266,63 @@ describe('CrowdView', () => {
     expect(made.every((m) => m.dispose.mock.calls.length === 1)).toBe(true);
   });
 });
+
+describe('CrowdView: plamy cienia i polityka cieni (zadanie 16)', () => {
+  /** Fabryka, której postać ma jedną siatkę (żeby było czym rzucać cień). */
+  function meshFactory(): CharacterFactory {
+    return {
+      create() {
+        const object = new Group();
+        object.scale.set(0.9 * 1.2, 0.9, 0.9 * 1.2);   // wzrost 0,9 × model, tusza 1,2
+        const body = new Mesh();
+        body.castShadow = true;
+        object.add(body);
+        return { object, setAnim: vi.fn(), update: vi.fn(), dispose: vi.fn(() => object.removeFromParent()), isFallback: false };
+      },
+    };
+  }
+  const castOf = (parent: Object3D): boolean[] => {
+    const out: boolean[] = [];
+    parent.traverse((o) => { if ((o as Mesh).isMesh) out.push(o.castShadow); });
+    return out;
+  };
+
+  it('jedna plama na widoczną postać, pod jej stopami, elipsa wg tuszy; dispose chowa plamy', () => {
+    const blobs = createBlobShadows(8);
+    const view = new CrowdView(meshFactory(), layout, new Group(), 'modular', blobs);
+    view.sync(crowdOf(0, agent({ id: 1 }), agent({ id: 2, x: 12.5 }), agent({ id: 3, state: 'gone' })), 0, 0);
+    expect(blobs.mesh.count).toBe(2);
+    const m = new (blobs.mesh.instanceMatrix.array.constructor as Float32ArrayConstructor)(16);
+    blobs.mesh.instanceMatrix.array.slice(0, 16).forEach((v, i) => { m[i] = v; });
+    const at = cellToWorld(layout, 10, 8);
+    expect(m[12]).toBeCloseTo(at.x, 5);
+    expect(m[14]).toBeCloseTo(at.z, 5);
+    expect(m[0]).toBeCloseTo(BLOB_RADIUS * 1.2, 5);   // promień w metrach × tusza, bez skali wzrostu
+    view.dispose();
+    expect(blobs.mesh.count).toBe(0);
+    blobs.dispose();
+  });
+
+  it('setCharacterShadows wyłącza i włącza cień z mapy dla obecnych i nowych postaci', () => {
+    const parent = new Group();
+    const view = new CrowdView(meshFactory(), layout, parent);
+    view.sync(crowdOf(0, agent({ id: 1 })), 0, 0);
+    expect(castOf(parent)).toEqual([true]);
+    view.setCharacterShadows(false);
+    expect(castOf(parent)).toEqual([false]);
+    view.sync(crowdOf(SIM_STEP, agent({ id: 1 }), agent({ id: 2, x: 12.5 })), 0, 0);
+    expect(castOf(parent)).toEqual([false, false]);
+    view.setCharacterShadows(true);
+    expect(castOf(parent)).toEqual([true, true]);
+  });
+
+  it('animDt napędza animację niezależnie od czasu symulacji (×8 gra, nogi najwyżej ×4)', () => {
+    const { factory, made } = fakeFactory();
+    const view = new CrowdView(factory, layout, new Group());
+    const dt = 1 / 60;
+    view.sync(crowdOf(0, agent()), 0, 8 * dt, Math.min(8, ANIM_SPEED_CAP) * dt);
+    expect(made[0]!.update).toHaveBeenLastCalledWith(4 * dt);
+    expect(new Vector3().copy(made[0]!.character.object.position).length()).toBeGreaterThan(0);
+  });
+});
+

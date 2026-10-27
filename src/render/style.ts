@@ -23,7 +23,7 @@ export const PALETTE: {
   floor: string[]; wall: string[]; fixture: Record<'shelf' | 'fridgeFrame' | 'counter' | 'wood' | 'metal', string>;
   productCategory: Record<'napoje' | 'nabial' | 'slodycze' | 'przekaski' | 'pieczywo' | 'chemia' | 'alkohol', string[]>;
   skin: string[]; hair: string[]; clothes: string[];
-  street: Record<'asphalt' | 'sidewalk' | 'curb' | 'blokPastel' | 'kamienicaPlaster', string[]>;
+  street: Record<'asphalt' | 'sidewalk' | 'curb' | 'grass' | 'blokPastel' | 'kamienicaPlaster', string[]>;
 } = deepFreeze({
   /** green: szyld, cokoły, nadstawki, koszulki personelu; orange (brzuch traszki): listwy cenowe, logo, akcenty;
    *  cream: tło cenówek i plakatów, napisy na zielonym. */
@@ -61,6 +61,8 @@ export const PALETTE: {
     sidewalk: ['#bfb8ac', '#b3ab9e', '#c9c2b6', '#a8a094'],
     /** [0] krawężnik, [1] wariant (starszy odcinek). */
     curb: ['#d3cdc3', '#b9b2a7'],
+    /** Trawniki podwórka: [0] trawa, [1] ciemniejsza łata, [2] wydeptana jaśniejsza. Tło, więc spokojne (S ≤ 0,35). */
+    grass: ['#8fb07a', '#7fa36c', '#a5c08e'],
     /** Ocieplone bloki: żółty, łososiowy, miętowy, liliowy, błękit, róż. Dwa kolory na blok (pasy). */
     blokPastel: ['#f3d27a', '#f4b493', '#a9d9b9', '#c6b7e4', '#9fcbe8', '#f2a9a1'],
     /** Tynki kamienic: ochra, terakota, krem, szałwia, pudrowy róż, nieodnowiona szarość. */
@@ -165,9 +167,12 @@ export const LIGHT_PRESETS: Record<'day' | 'night', {
 });
 
 /**
- * Proporcje postaci w stylu Two Point. headScale i handScale to skala kości głowy i dłoni względem modelu bazowego.
- * heightRange: wzrost w metrach (od podeszwy do czubka głowy, już po powiększeniu głowy).
- * widthRange: mnożnik szerokości (oś X i Z) względem modelu bazowego, czyli „tusza”.
+ * Proporcje postaci w stylu Two Point (zadanie 16: modele Quaternius są smukłe i długonogie, Two Point ma duże głowy,
+ * krępy tułów i krótkie nogi). headScale, handScale i torsoScale to skala kości głowy, dłoni i tułowia (miednica, brzuch,
+ * klatka) względem modelu bazowego. Wzrost wyrównuje skala całej postaci, więc większa głowa i tułów skracają nogi
+ * w proporcji. heightRange: wzrost w metrach (od podeszwy do czubka głowy, po powiększeniu). widthRange: mnożnik
+ * szerokości całej postaci (oś X i Z), czyli „tusza”.
  */
-export const CHARACTER_STYLE: { headScale: number; handScale: number; heightRange: [number, number]; widthRange: [number, number] } =
-  deepFreeze({ headScale: 1.22, handScale: 1.3, heightRange: [1.58, 1.92], widthRange: [0.9, 1.22] });
+export const CHARACTER_STYLE: {
+  headScale: number; handScale: number; torsoScale: number; heightRange: [number, number]; widthRange: [number, number];
+} = deepFreeze({ headScale: 1.45, handScale: 1.35, torsoScale: 1.14, heightRange: [1.55, 1.88], widthRange: [0.95, 1.25] });

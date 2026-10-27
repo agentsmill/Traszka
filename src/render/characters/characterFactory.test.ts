@@ -149,6 +149,26 @@ describe.each([['ubc'], ['modular']] as [CharacterPack][])('createCharacterFacto
     c.dispose();
   });
 
+  it('tułów rośnie o torsoScale, a barki i szyja wracają do 1 (ręce i głowa nie rosną razem z tułowiem)', () => {
+    const c = factory.create('tulow');
+    c.setAnim('walk');
+    c.update(0.3);
+    const bones = skinnedMeshes(c.object)[0].skeleton.bones;
+    /** Skala kości względem modelu bazowego: iloczyn skal lokalnych kości od niej do korzenia szkieletu. */
+    const absolute = (re: RegExp): number => {
+      let k = 1;
+      for (let o: Object3D | null = bones.find((b) => re.test(b.name))!; o && (o as Bone).isBone; o = o.parent) k *= o.scale.x;
+      return k;
+    };
+    if (bones.some((b) => /^chest$/i.test(b.name))) {
+      for (const re of [/^hips$/i, /^abdomen$/i, /^torso$/i, /^chest$/i]) expect(absolute(re), String(re)).toBeCloseTo(CHARACTER_STYLE.torsoScale, 5);
+      for (const re of [/^neck$/i, /^shoulderl$/i, /^shoulderr$/i]) expect(absolute(re), String(re)).toBeCloseTo(1, 5);
+      expect(absolute(/^head$/i)).toBeCloseTo(CHARACTER_STYLE.headScale, 5);
+      expect(absolute(/^wristl$/i)).toBeCloseTo(CHARACTER_STYLE.handScale, 5);
+    }
+    c.dispose();
+  });
+
   it('wygląd jest deterministyczny i zależy od seeda (paleta materiału: skóra, włosy, góra, dół)', () => {
     const palette = (seed: string): number[] => {
       const c = factory.create(seed);

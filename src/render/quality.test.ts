@@ -3,9 +3,9 @@ import { QUALITY, pickInitialPreset, resolveStartPreset } from './quality';
 
 describe('QUALITY', () => {
   it('ma wartości z wymagań dla trzech presetów', () => {
-    expect(QUALITY.niska).toEqual({ maxPixelRatio: 1, shadowMapSize: 1024, ao: 'off', bloom: false, smaa: true });
-    expect(QUALITY.srednia).toEqual({ maxPixelRatio: 1.5, shadowMapSize: 2048, ao: 'half', bloom: true, smaa: true });
-    expect(QUALITY.wysoka).toEqual({ maxPixelRatio: 2, shadowMapSize: 4096, ao: 'full', bloom: true, smaa: true });
+    expect(QUALITY.niska).toEqual({ maxPixelRatio: 1, shadowMapSize: 1024, ao: 'off', bloom: false, smaa: true, characterShadows: false });
+    expect(QUALITY.srednia).toEqual({ maxPixelRatio: 1.5, shadowMapSize: 2048, ao: 'half', bloom: true, smaa: true, characterShadows: false });
+    expect(QUALITY.wysoka).toEqual({ maxPixelRatio: 2, shadowMapSize: 4096, ao: 'full', bloom: true, smaa: true, characterShadows: true });
   });
 
   it('pixelRatio nigdy nie przekracza 2', () => {

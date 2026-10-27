@@ -136,6 +136,13 @@ class MeshAccumulator {
 const HEAD_RE = /^head$/i;
 const HAND_RE = /^(hand|wrist)_?[lr]$/i;
 const CHEST_RE = /^(spine_03|chest)$/i;
+/** Tułów stroju modular (miednica, brzuch, klatka): rośnie o `torsoScale`. */
+const TORSO_RE = /^(hips|abdomen|torso|chest)$/i;
+/**
+ * Szyja i barki wracają do skali 1, żeby głowa i ręce nie rosły razem z tułowiem (rosną tylko o własne mnożniki).
+ * GLTFLoader usuwa kropki z nazw węzłów (`Shoulder.L` → `ShoulderL`), więc kropka jest opcjonalna.
+ */
+const TORSO_END_RE = /^(neck|shoulder\.?_?[lr])$/i;
 
 /** Szkielet wspólny dla wariantów jednej bryły: szablon węzłów bez siatek i dane skórowania. */
 interface Rig {
@@ -189,11 +196,31 @@ function bonesByName(root: Object3D): Map<string, Object3D> {
   return m;
 }
 
-/** Przesada proporcji Two Point: głowa i dłonie (z palcami) większe. Animacje nie mają ścieżek skali, więc to zostaje. */
+/** Docelowa skala kości względem modelu bazowego (nie względem rodzica) albo undefined: kość dziedziczy skalę rodzica. */
+function proportionScale(name: string): number | undefined {
+  if (HEAD_RE.test(name)) return CHARACTER_STYLE.headScale;
+  if (HAND_RE.test(name)) return CHARACTER_STYLE.handScale;
+  if (TORSO_RE.test(name)) return CHARACTER_STYLE.torsoScale;
+  if (TORSO_END_RE.test(name)) return 1;
+  return undefined;
+}
+
+/**
+ * Przesada proporcji Two Point: większa głowa, dłonie i tułów. Skale są jednorodne, więc skala lokalna kości to jej skala
+ * docelowa podzielona przez docelową skalę najbliższego przodka z tabeli (bez ścinania przy obrotach animacji). Nogi
+ * zostają (stopy modular to kości IK przypięte do korzenia, więc skala uda oderwałaby stopę), a wzrost i tak wyrównuje
+ * skala całej postaci, więc dłuższy tułów i większa głowa dają krótsze nogi w proporcji. Animacje nie mają ścieżek skali.
+ */
 function applyProportions(byName: Map<string, Object3D>): void {
   for (const [name, bone] of byName) {
-    if (HEAD_RE.test(name)) bone.scale.setScalar(CHARACTER_STYLE.headScale);
-    else if (HAND_RE.test(name)) bone.scale.setScalar(CHARACTER_STYLE.handScale);
+    const target = proportionScale(name);
+    if (target === undefined) continue;
+    let parent = 1;
+    for (let p = bone.parent; p; p = p.parent) {
+      const s = (p as { isBone?: boolean }).isBone ? proportionScale(p.name) : undefined;
+      if (s !== undefined) { parent = s; break; }
+    }
+    bone.scale.setScalar(target / parent);
   }
 }
 
@@ -390,19 +417,21 @@ async function buildUbc(load: Loader): Promise<Source | null> {
 
 /**
  * Które materiały stroju przejmują kolory z `Appearance`: „część:materiał=region”, część to koniec nazwy węzła
- * (body, legs, pants, feet, head). Skóra (`Skin*`) zawsze jest skórą. Materiały spoza tabeli (kask, kamizelka,
+ * (body, legs, pants, feet, head). Skóra (`Skin*`) zawsze jest skórą. Białe części (kołnierz koszuli, podeszwy) idą do
+ * `eyeWhite` (ciepła biel `wall[0]`): przyciągnięte do PALETTE dawały szaroniebieski kołnierz, który pod brodą czytał się
+ * jak zarost. Materiały spoza tabeli (kask, kamizelka,
  * krawat, podeszwy, kolczyki) zostają w oryginalnym kolorze. Część `pistol` (broń w stroju Suit) jest pomijana.
  */
 const OUTFIT_PAINT: Record<string, string> = {
-  'men-casual-hoodie': 'body:Purple=top feet:Purple=shoes legs:LightBlue=bottom head:Eyebrows=brow head:Eye=eyeDark head:Hair=hair',
-  'men-casual-2': 'body:LightBrown=top feet:Red_Dark=shoes legs:LightBlue=bottom head:Skin_Darker=skin head:Eyebrows=brow head:Eye=eyeDark head:Hair=hair',
-  'men-suit': 'body:Suit=top body:Tie=bottom legs:Suit=bottom feet:Black=shoes head:Eyebrows=brow head:Eye=eyeDark head:Hair=hair',
+  'men-casual-hoodie': 'body:Purple=top feet:Purple=shoes feet:White=eyeWhite legs:LightBlue=bottom head:Eyebrows=brow head:Eye=eyeDark head:Hair=hair',
+  'men-casual-2': 'body:LightBrown=top feet:Red_Dark=shoes feet:White=eyeWhite legs:LightBlue=bottom head:Skin_Darker=skin head:Eyebrows=brow head:Eye=eyeDark head:Hair=hair',
+  'men-suit': 'body:Suit=top body:White=eyeWhite body:Tie=bottom legs:Suit=bottom feet:Black=shoes head:Eyebrows=brow head:Eye=eyeDark head:Hair=hair',
   'men-worker': 'body:LightBrown=top legs:Brown=bottom feet:Black=shoes head:Eyebrows=brow head:Moustache=brow head:Eye=eyeDark',
   'men-farmer': 'body:Brown=top body:LightBlue=bottom pants:LightBlue=bottom feet:Brown=shoes head:Eyebrows=brow head:Eye=eyeDark',
-  'men-beach': 'body:LightBrown=top legs:Red_Dark=bottom feet:Red_Dark=shoes head:Eyebrows=brow head:Eye=eyeDark head:Hair=hair',
+  'men-beach': 'body:LightBrown=top legs:Red_Dark=bottom legs:White=eyeWhite feet:Red_Dark=shoes head:Eyebrows=brow head:Eye=eyeDark head:Hair=hair',
   'men-punk': 'body:White=top legs:LightBlue=bottom feet:Black=shoes head:Red=hair head:Red_Dark=brow head:Eyebrows=brow head:Eye=eyeDark',
   'women-casual': 'body:White=top legs:Orange=bottom feet:Grey=shoes head:Hair_Blond=hair head:Hair_Brown=brow head:Brown=eyeDark',
-  'women-suit': 'body:Black=top legs:Black=bottom feet:Black=shoes head:Hair_Blond=hair head:Hair_Brown=brow head:Brown=eyeDark',
+  'women-suit': 'body:Black=top body:White=eyeWhite legs:Black=bottom feet:Black=shoes head:Hair_Blond=hair head:Hair_Brown=brow head:Brown=eyeDark',
   'women-formal': 'body:LimeGreen=top legs:LimeGreen=top feet:Red=shoes head:Red=hair head:Brown=brow',
   'women-worker': 'body:White=top legs:Brown2=bottom feet:Black=shoes head:DarkBrown=hair head:Brown=eyeDark',
   'women-punk': 'body:Pink=top legs:Black=bottom feet:Black=shoes head:Pink=hair head:Hair_Brown=brow head:Brown=eyeDark',

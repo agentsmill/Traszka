@@ -9,12 +9,17 @@ export interface QualitySettings {
   ao: 'off' | 'half' | 'full';
   bloom: boolean;
   smaa: boolean;
+  /**
+   * Postacie rzucają cień z mapy cieni (+1 draw call na postać w przebiegu cienia). Plamę cienia pod postacią
+   * (1 draw call na cały tłum) mają wszystkie presety; polityka z zadania 16, docs/style-guide.md §5.
+   */
+  characterShadows: boolean;
 }
 
 export const QUALITY: Record<QualityPresetId, QualitySettings> = {
-  niska: { maxPixelRatio: 1, shadowMapSize: 1024, ao: 'off', bloom: false, smaa: true },
-  srednia: { maxPixelRatio: 1.5, shadowMapSize: 2048, ao: 'half', bloom: true, smaa: true },
-  wysoka: { maxPixelRatio: 2, shadowMapSize: 4096, ao: 'full', bloom: true, smaa: true },
+  niska: { maxPixelRatio: 1, shadowMapSize: 1024, ao: 'off', bloom: false, smaa: true, characterShadows: false },
+  srednia: { maxPixelRatio: 1.5, shadowMapSize: 2048, ao: 'half', bloom: true, smaa: true, characterShadows: false },
+  wysoka: { maxPixelRatio: 2, shadowMapSize: 4096, ao: 'full', bloom: true, smaa: true, characterShadows: true },
 };
 
 export interface DeviceCaps { webgl2: boolean; isMobile: boolean }

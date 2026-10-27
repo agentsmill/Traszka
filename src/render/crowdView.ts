@@ -2,6 +2,7 @@ import { MathUtils, type Object3D } from 'three';
 import { SIM_STEP, type Agent, type Crowd } from '@/sim/crowd/crowd';
 import { CELL_SIZE_M } from '@/sim/grid';
 import type { StoreLayout } from '@/sim/store/types';
+import { BLOB_RADIUS, type BlobShadows } from './characters/blobShadows';
 import type { CharacterFactory, CharacterInstance, CharacterPack } from './characters/characterFactory';
 import { walkTimeScale } from './characters/walkSpeed';
 import { cellToWorld } from './coords';
@@ -11,6 +12,11 @@ export const TURN_RATE_MAX = 10;
 const TURN_SMOOTHING = 12;          // 1/s
 /** Tyle sekund agent musi stać, zanim postać przejdzie z chodu w postój (pojedynczy krok bez ruchu nie miga animacją). */
 const IDLE_DELAY_S = 0.15;
+/**
+ * Najszybsze tempo animacji względem czasu rzeczywistego. Przy ×8 klip chodu migałby (stroboskop: ~2 kroki na klatkę przy
+ * 60 FPS), więc powyżej ×4 nogi chodzą w tempie ×4, a postać przesuwa się dalej z prędkością gry (lekki poślizg stóp).
+ */
+export const ANIM_SPEED_CAP = 4;
 
 type Anim = 'idle' | 'walk';
 
@@ -51,13 +57,27 @@ export class CrowdView {
   private warm: CharacterInstance | null = null;
   private lastTime = 0;
   private disposed = false;
+  private castShadows = true;
 
+  /** `shadows`: wspólne plamy cienia pod postaciami (main.ts trzyma je w grupie tłumu); bez nich postacie są bez plam. */
   constructor(
     private readonly factory: CharacterFactory,
     private readonly layout: StoreLayout,
     private readonly parent: Object3D,
     private readonly pack: CharacterPack = 'modular',
+    private readonly shadows: BlobShadows | null = null,
   ) {}
+
+  /**
+   * Czy postacie rzucają cień z mapy cieni (polityka cieni z presetu jakości, `QualitySettings.characterShadows`).
+   * Działa na istniejące postacie (także „ciepłą”) i na nowe. Wołane co klatkę: bez zmiany nic nie robi.
+   */
+  setCharacterShadows(on: boolean): void {
+    if (on === this.castShadows) return;
+    this.castShadows = on;
+    for (const t of this.tracked.values()) this.applyShadow(t.character);
+    if (this.warm) this.applyShadow(this.warm);
+  }
 
   /** Liczba postaci w scenie (do diagnostyki i testów). */
   get size(): number { return this.tracked.size; }
@@ -67,10 +87,10 @@ export class CrowdView {
 
   /**
    * Dopasowuje postacie do `crowd` i ustawia je w pozycji dla `alpha` ∈ [0, 1] (ułamek kroku po ostatnim kroku).
-   * `frameDt` to czas ramki w sekundach symulacji (rzeczywisty dt × prędkość gry; 0 przy pauzie): napędza animacje
-   * i obrót.
+   * `frameDt` to czas ramki w sekundach symulacji (rzeczywisty dt × prędkość gry; 0 przy pauzie): napędza obrót i,
+   * gdy nie podano `animDt`, animacje. `animDt` to czas ramki dla animacji (np. przycięty do `ANIM_SPEED_CAP` × dt).
    */
-  sync(crowd: Crowd, alpha: number, frameDt: number): void {
+  sync(crowd: Crowd, alpha: number, frameDt: number, animDt: number = frameDt): void {
     if (this.disposed) return;
     const advanced = crowd.time - this.lastTime;
     if (advanced < 0) this.clear();   // inny tłum niż poprzednio: zaczynamy od zera
@@ -83,7 +103,7 @@ export class CrowdView {
       live.add(agent.id);
       const t = this.tracked.get(agent.id) ?? this.spawn(agent);
       if (steps > 0) this.advance(t, agent, steps);
-      this.animate(t, agent, frameDt);
+      this.animate(t, agent, frameDt, animDt);
       this.place(t, alpha);
     }
     const left: Tracked[] = [];
@@ -93,16 +113,36 @@ export class CrowdView {
       this.tracked.delete(id);
     }
     this.retire(left);
+    this.placeShadows();
   }
 
   /** Zwalnia wszystkie postacie. Po `dispose` kolejne `sync` nic nie robi. */
   dispose(): void {
     this.disposed = true;
     this.clear();
+    this.shadows?.commit(0);
+  }
+
+  /** Plama pod każdą widoczną postacią, elipsa wg jej szerokości (skala x/z obiektu). */
+  private placeShadows(): void {
+    if (!this.shadows) return;
+    let i = 0;
+    for (const t of this.tracked.values()) {
+      const o = t.character.object;
+      const k = BLOB_RADIUS / Math.max(1e-6, o.scale.y);
+      this.shadows.set(i++, o.position.x, o.position.z, o.scale.x * k, o.scale.z * k);
+    }
+    this.shadows.commit(i);
+  }
+
+  private applyShadow(character: CharacterInstance): void {
+    const on = this.castShadows;
+    character.object.traverse((o) => { if ((o as { isMesh?: boolean }).isMesh) o.castShadow = on; });
   }
 
   private spawn(agent: Agent): Tracked {
     const character = this.factory.create(agent.appearanceSeed);
+    if (!this.castShadows) this.applyShadow(character);
     this.parent.add(character.object);
     const t: Tracked = {
       character,
@@ -128,7 +168,7 @@ export class CrowdView {
     t.currY = agent.y;
   }
 
-  private animate(t: Tracked, agent: Agent, frameDt: number): void {
+  private animate(t: Tracked, agent: Agent, frameDt: number, animDt: number): void {
     if (agent.moving) {
       t.stillFor = 0;
       if (t.anim !== 'walk') { t.anim = 'walk'; t.character.setAnim('walk'); }
@@ -136,7 +176,7 @@ export class CrowdView {
       t.stillFor += frameDt;
       if (t.anim === 'walk' && t.stillFor >= IDLE_DELAY_S) { t.anim = 'idle'; t.character.setAnim('idle'); }
     }
-    t.character.update(t.anim === 'walk' ? frameDt * t.walkScale : frameDt);
+    t.character.update(t.anim === 'walk' ? animDt * t.walkScale : animDt);
 
     const diff = wrapAngle(headingToYaw(agent.heading) - t.yaw);
     const limit = TURN_RATE_MAX * frameDt;
