@@ -1,20 +1,20 @@
 # Przewodnik stylu Traszki
 
-Wzorzec: **Two Point Hospital**, czyli ciepło, nasycenie i czytelność z daleka. Wartości bierz z `src/render/style.ts`, tone mapping **Neutral** (AgX szarzy paletę). Każdy punkt to kryterium odbioru zadań 8–12 i 16.
+Wzorzec: **Two Point Hospital**: ciepło, nasycenie, czytelność z daleka. Wartości z `src/render/style.ts`, tone mapping **Neutral** (AgX szarzy paletę). Każdy punkt to kryterium odbioru zadań 8–12 i 16.
 
 ## 1. Bryła
-- Prostopadłościany w kadrze to `RoundedBoxGeometry`: `BEVEL.medium` (3 segmenty) od 10 cm najmniejszego wymiaru, `BEVEL.small` (2) dla cieńszych, poniżej 3 cm `min(BEVEL.small, 0,4 × wymiar)`, drobiazgi < 5 cm: 1 segment.
+- Prostopadłościany w kadrze to `RoundedBoxGeometry`: `BEVEL.medium` (3 segmenty) od 10 cm najmniejszego wymiaru, `BEVEL.small` (2) dla cieńszych, poniżej 3 cm `min(BEVEL.small, 0,4 × wymiar)`, drobiazgi < 5 cm w każdym wymiarze: 1 segment.
 - Blat ≥ 6 cm z nawisem 3–5 cm, półka ≥ 4 cm, cokół 10–12 cm cofnięty o 3 cm, słupki ≥ 6 cm. Gondola ≤ 1,6 m, regał ścienny i lodówka 2,0 m, lada 0,95 m.
 - Sylwetka ma ≥ 2 uskoki (cokół → korpus → nadstawka lub blat).
 - Builder mebla, przed scaleniem geometrii: ≥ 3 siatki (gondola i lodówka ≥ 8), ≥ 1 element w kolorze marki, ≤ 10 tys. trójkątów bez towaru.
-- Obowiązkowe części. Gondola i regał: cokół, plecy, ≥ 4 półki z listwą cenową, nadstawka z kategorią. Lodówka: rama, szklane drzwi z uchwytem, półki, listwa LED. Kasa: blat z nawisem, ekran, terminal. Papierosy: fronty, podświetlenie. Hot-dogi: ≥ 4 rolki, szyba. Ekspres: tacka, kubki. Kasa samoobsługowa: słupek, ekran, skaner.
-- Lampy sufitowe wiszą na pręcie lub lince i nie rzucają cienia.
+- Obowiązkowe części. Gondola i regał: cokół, plecy, ≥ 4 półki z listwą cenową, nadstawka z kategorią. Lodówka: rama, szklane drzwi z uchwytem, półki, listwa LED. Kasa: blat z nawisem, ekran, terminal, koszyk ze zdrapkami. Papierosy: fronty, podświetlenie. Hot-dogi: ≥ 4 rolki, szyba. Ekspres: tacka, kubki. Kasa samoobsługowa: słupek, ekran, półkę, skaner. Sloty: półprzezroczysty znacznik z ikoną „+”.
+- Lampy sufitowe na pręcie lub lince; nie rzucają cienia.
 
 ## 2. Kolor
 - Tylko `PALETTE`. Wyjątki: `'#ffffff'` jako baza pod `setColorAt` i światła z §4. Bez czystej szarości, bieli i czerni.
 - Tło spokojne, S ≤ 0,35: `floor`, `wall` poza cokołem `wall[2]`, `asphalt`, `sidewalk`, `curb`. Elewacje S ≤ 0,5. Kolor niosą towar (w każdej kategorii ≥ 3 kolory z S ≥ 0,5) i marka (zieleń i pomarańcz, S ≥ 0,6). Pilnuje tego `style.test.ts`.
 - Gondole i regały ścienne: korpus `fixture.shelf`, cokół i nadstawka `brand.green`, listwy cenowe `brand.orange`, cenówki `brand.cream`. Lada `fixture.counter`, rama lodówki `fixture.fridgeFrame`.
-- Indeksy `floor`, `wall` i `street.*` mają znaczenie opisane w JSDoc `style.ts`. Płyty chodnika i elewacje losuj z list per obiekt.
+- Indeksy `floor`, `wall` i `street.*`: znaczenie w JSDoc `style.ts`. Płyty chodnika losuj z list per płyta, elewacje per obiekt.
 
 ## 3. Materiały
 `plasticMatte`: korpusy, ściany, plakaty; `plasticGloss`: opakowania, listwy; `metalPainted`: ramy, słupki, latarnie; `wood`: blaty, palety; `fabric`: ubrania, wycieraczki; `glass`: szyby; `emissive`: tylko to, co świeci. Szkło i emissive bez cieni. Materiałów z cache nie zmieniaj i nie zwalniaj.
