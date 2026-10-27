@@ -1,7 +1,7 @@
 # Benchmark etapu 1
 
-**Status: szablon.** Liczby wpisuje się po uruchomieniu na sprzęcie docelowym (Mac gracza). Pola `—` są puste celowo:
-tu nie ma ani jednej wartości z biegu próbnego.
+**Status: pierwszy bieg 2026-10-27 na Macu użytkownika (Apple M5).** To sprzęt dużo mocniejszy niż docelowe minimum
+ze specu (M1 / Iris Xe), więc FPS mówi tu tylko „mieści się z zapasem”; o kosztach mówią wywołania, trójkąty i `JS ms`.
 
 Kryterium z planu: preset **Średnia** daje średnio **≥ 55 FPS** przy 60 postaciach. Jeśli tak nie jest, ta strona ma
 mówić, co zjada czas (AO, cienie, skórkowanie), i oddać sprawę do zadania 16.
@@ -47,15 +47,15 @@ mówią i nie wchodzą do tej strony.
 
 | Pole | Wartość |
 |---|---|
-| Data | — |
-| Commit | — |
-| Maszyna (model, pamięć) | — |
-| GPU (`__benchExtra.env.gpu`) | — |
-| System | — |
-| Przeglądarka i wersja | — |
-| Okno (px) i `devicePixelRatio` | — |
-| Odświeżanie ekranu (Hz) | — |
-| Zasilanie | — |
+| Data | 2026-10-27 22:27 UTC |
+| Commit | 4a963be |
+| Maszyna (model, pamięć) | Mac17,2 (Apple M5), 32 GB |
+| GPU (`__benchExtra.env.gpu`) | ANGLE (Apple, ANGLE Metal Renderer: Apple M5) |
+| System | macOS 26.5 |
+| Przeglądarka i wersja | Chrome 156 (Playwright, okno widoczne) |
+| Okno (px) i `devicePixelRatio` | 1200 × 672, DPR 2 |
+| Odświeżanie ekranu (Hz) | 120 |
+| Zasilanie | zasilacz (bateria 100%) |
 
 ## Wyniki
 
@@ -64,23 +64,23 @@ Oczekiwanie z kodu: każda postać to jeden `SkinnedMesh`, czyli 1 wywołanie w 
 
 | Preset | avgFps | p95FrameMs | calls | tris |
 |---|---|---|---|---|
-| niska | — | — | — | — |
-| srednia | — | — | — | — |
-| wysoka | — | — | — | — |
+| niska | 120,0 | 8,9 | 287 | 912 418 |
+| srednia | 120,0 | 8,8 | 316 | 915 095 |
+| wysoka | 116,9 | 9,2 | 315 | 914 383 |
 
-**Kryterium `srednia.avgFps ≥ 55`:** — (spełnione / niespełnione)
+**Kryterium `srednia.avgFps ≥ 55`:** spełnione (120 FPS, limit ekranu). Na M5 nie mówi to nic o M1 / Iris Xe.
 
-Ostrzeżenia z biegu (`__benchExtra.warnings`): —
+Ostrzeżenia z biegu (`__benchExtra.warnings`): brak. Każdy preset mierzony przy 60 postaciach.
 
 ## Próby
 
 | Preset | Próba | avgFps | p95FrameMs | calls | tris | JS ms |
 |---|---|---|---|---|---|---|
-| niska | charShadowsOff | — | — | — | — | — |
-| srednia | charShadowsOff | — | — | — | — | — |
-| srednia | crowdHidden | — | — | — | — | — |
-| srednia | aoOff | — | — | — | — | — |
-| wysoka | charShadowsOff | — | — | — | — | — |
+| niska | charShadowsOff | 120,0 | 8,9 | 227 | 740 174 | 2,3 |
+| srednia | charShadowsOff | 120,0 | 8,8 | 256 | 742 303 | 3,5 |
+| srednia | crowdHidden | 120,0 | 8,7 | 196 | 570 223 | 2,6 |
+| srednia | aoOff | 120,0 | 8,9 | 303 | 912 106 | 2,5 |
+| wysoka | charShadowsOff | 117,5 | 9,2 | 255 | 742 206 | 4,2 |
 
 ## Co zjada czas
 
@@ -88,11 +88,21 @@ Wypełnić po biegu. Różnice liczy się względem wiersza głównego tego same
 
 | Składnik | Jak liczony | Δ wywołań | Δ trójkątów | Δ FPS | Δ JS ms |
 |---|---|---|---|---|---|
-| Cienie postaci | `srednia` − `srednia/charShadowsOff` | — | — | — | — |
-| Postacie razem (skórkowanie, przebieg główny, cień) | `srednia` − `srednia/crowdHidden` | — | — | — | — |
-| AO | `srednia` − `srednia/aoOff` | — | — | — | — |
+| Cienie postaci | `srednia` − `srednia/charShadowsOff` | +60 | +172 792 | 0 (limit) | +0,1 |
+| Postacie razem (skórkowanie, przebieg główny, cień) | `srednia` − `srednia/crowdHidden` | +120 | +344 872 | 0 (limit) | +1,0 |
+| AO | `srednia` − `srednia/aoOff` | +13 | +2 989 | 0 (limit) | +1,1 |
 
-Wniosek (jedno zdanie na składnik: AO, cienie, skórkowanie, reszta sceny): —
+Wniosek:
+- **Cienie postaci** kosztują dokładnie 1 wywołanie na postać (+60) i ~173 tys. trójkątów; to one wypychają `srednia` i
+  `wysoka` ponad 300 wywołań (316 / 315). Bez nich jest 256 / 255.
+- **Postacie razem** to +120 wywołań i ~345 tys. trójkątów (2 przebiegi × ~2,9 tys. trójkątów × 60), a po stronie CPU
+  tylko ~1 ms na klatkę (animacje 60 mikserów).
+- **AO** to tylko +13 wywołań, ale +1,1 ms JS na klatkę (przygotowanie przebiegów N8AO); na GPU koszt jest pewnie większy,
+  czego `JS ms` nie widzi.
+- **Reszta sceny** (sklep, towar, ulica): 196 wywołań i ~570 tys. trójkątów na `srednia`; z tego towar to ~140 tys.
+- `JS ms` 2,4 / 3,6 / 4,3 ms na `niska` / `srednia` / `wysoka`: duży zapas do budżetu 16,7 ms przy 60 FPS.
 
-Gdy `srednia.avgFps < 55`: największy składnik i propozycja dla zadania 16 (np. mniej wywołań przez scalenie postaci,
-tańszy cień postaci, AO w niższej jakości): —
+Dla zadania 16 (FPS spełniony, limit 300 wywołań nie przy 60 postaciach na `srednia`/`wysoka`): największy składnik to
+cienie postaci. Najtańsza zmiana to jedna instancjonowana plama cienia pod wszystkimi postaciami (1 wywołanie zamiast 60),
+co daje ~257 wywołań przy 60 postaciach; prawdziwe cienie mogą zostać tylko na `wysoka`. W zwykłej grze (12 klientów)
+wywołań jest ~230, więc to dotyczy tylko ciasnego sklepu.
