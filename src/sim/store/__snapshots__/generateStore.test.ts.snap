@@ -1,0 +1,29 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`generateStore > złoty seed: snapshot ASCII 1`] = `
+",,,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,,,,,
+#WWWWWWWWWWWWWDDWWWWW#
+#......EE..XX........#
+#......EE.........C.T#
+#S................C.T#
+#S..GGG..GGGG....qC.T#
+#S..GGG..GGGG....qC.T#
+#S...............qK.T#
+#S...............qH.T#
+#S..GGG...GGGG...qH.T#
+#S..GGG...GGGG...q...#
+#S.................EE#
+#..................EE#
+#....................#
+#FFFFFFFFFFFFEE......#
+#FFFFFFFFFFFFEE......#
+################BB####
+#bbbbbbbbbbbbbbbbbbbb#
+#bbbbbbbbbbbbbbbbbbbb#
+#bbbbbbbbbbbbbbbbbbbb#
+#bbbbbbbbbbbbbbbbbbbb#
+######################"
+`;
