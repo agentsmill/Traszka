@@ -34,7 +34,7 @@
 
 ## Kamień 1: ekonomia i zapis
 
-### Zadanie 1: Stan tycoona w `EconomyState`, zaufanie Centrali, nowe liczniki i migracja zapisu
+### Task 1: Stan tycoona w `EconomyState`, zaufanie Centrali, nowe liczniki i migracja zapisu
 
 **Pliki:**
 - Zmień: `src/sim/economy/economy.ts`, `src/sim/economy/sanitize.ts`, `src/sim/economy/tycoon/state.ts` (usuń `TycoonState.lastReport`, bo raport idzie do `MonthReport.detail` w zadaniu 6), `src/game/session.ts` (wywołanie `sanitizeEconomy`), `src/ui/game/panels.tsx` (`s.trust` → `s.tycoon.trust.value`)
@@ -73,7 +73,7 @@
 - [ ] **Krok 4:** `npx vitest run`, `npm run typecheck`. Oczekiwane: PASS.
 - [ ] **Krok 5:** commit `feat(tycoon): stan tycoona w EconomyState, zaufanie Centrali z przyczynami i migracja zapisu`.
 
-### Zadanie 2: Pula ludzi zamiast priorytetu, automatyka w osobominutach, `staffOnShift`
+### Task 2: Pula ludzi zamiast priorytetu, automatyka w osobominutach, `staffOnShift`
 
 **Pliki:**
 - Utwórz: `src/sim/economy/tycoon/shift.ts`, `src/sim/economy/tycoon/shift.test.ts`
@@ -127,7 +127,7 @@
 - [ ] **Krok 6:** `npx vitest run`, `npm run typecheck`, `npm run build`. Oczekiwane: PASS, łącznie z odtworzeniem w `run.test.ts`.
 - [ ] **Krok 7:** commit `feat(tycoon): pula ludzi z profilami i przypięciem zamiast priorytetu, automatyka w osobominutach, staffOnShift`.
 
-### Zadanie 3: Śmieci, czystość sali, pogoda, niedziela i prasa do kartonów
+### Task 3: Śmieci, czystość sali, pogoda, niedziela i prasa do kartonów
 
 **Pliki:** zmień `src/sim/economy/economy.ts`, `src/sim/economy/upgrades.ts`, `src/sim/economy/sanitize.ts`; testy `economy.test.ts`, `sanitize.test.ts`.
 
@@ -159,7 +159,7 @@
 - [ ] **Krok 4:** `npx vitest run`, `npm run typecheck`. Oczekiwane: PASS.
 - [ ] **Krok 5:** commit `feat(tycoon): śmieci z palet, czystość sali, pogoda, ruch niedzielny i prasa do kartonów`.
 
-### Zadanie 4: Siły franczyzobiorcy przy stuknięciach; paczka od Centrali znika
+### Task 4: Siły franczyzobiorcy przy stuknięciach; paczka od Centrali znika
 
 **Pliki:**
 - Zmień: `economy.ts`, `catalog.ts` (usuń `GIFT_*`), `progress.ts` (usuń `XP.gift`, jeśli nikt go nie używa), `commands.ts` (usuń `claimGift` i strażnika okna paczki), `sanitize.ts`, `src/game/actions.ts` (usuń `AFTER.claimGift`), `src/ui/game/overlays.tsx` (usuń `GiftDrop` i `lateGift`), `src/ui/App.tsx` (usuń montowanie `GiftDrop`)
@@ -185,7 +185,7 @@
 - [ ] **Krok 4:** `npx vitest run`, `npm run typecheck`, `npm run build`. Oczekiwane: PASS.
 - [ ] **Krok 5:** commit `feat(tycoon): stuknięcia zużywają siły franczyzobiorcy, paczka od Centrali znika`.
 
-### Zadanie 5: Karty dnia i okólniki z pauzą i odpowiedzią domyślną
+### Task 5: Karty dnia i okólniki z pauzą i odpowiedzią domyślną
 
 **Pliki:**
 - Zmień: `economy.ts`, `commands.ts`, `src/sim/economy/clock.ts`, `src/sim/run.ts`, `src/game/actions.ts` (`AFTER.answerCard`, `skip` staje na karcie, `EVENT_SFX`: `card` → `'pop'`)
@@ -231,7 +231,7 @@
 - [ ] **Krok 4:** `npx vitest run`, `npm run typecheck`, `npm run build`. Oczekiwane: PASS.
 - [ ] **Krok 5:** commit `feat(tycoon): karty dnia i okólniki zatrzymują grę do odpowiedzi; odtworzenie zatwierdza domyślne`.
 
-### Zadanie 6: WUT, KPI tygodnia zamiast zleceń, raport miesięczny
+### Task 6: WUT, KPI tygodnia zamiast zleceń, raport miesięczny
 
 **Pliki:**
 - Zmień: `economy.ts`, `commands.ts` (usuń `claimQuest`), `sanitize.ts`, `src/game/session.ts` (usuń `econForSave` z tytułami zleceń i `fillQuests`), `src/game/actions.ts` (usuń `AFTER.claimQuest`), `src/ui/game/panels.tsx` (`GoalsPanel` pokazuje na razie tytuł KPI tygodnia i postęp; pełny panel to zadanie 11), `src/ui/game/overlays.tsx` (`ReportModal` czyta dalej `MonthReport` i się kompiluje)
@@ -266,7 +266,7 @@
 - [ ] **Krok 4:** `npx vitest run`, `npm run typecheck`, `npm run build`. Oczekiwane: PASS.
 - [ ] **Krok 5:** commit `feat(tycoon): WUT, KPI tygodnia zamiast zleceń i raport miesięczny z zaufaniem, komentarzem i wskazówką`.
 
-### Zadanie 7: Boty na prawdziwej ekonomii (pomiar przed wyważeniem)
+### Task 7: Boty na prawdziwej ekonomii (pomiar przed wyważeniem)
 
 **Pliki:** utwórz `src/sim/economy/tycoon/economyEnv.ts` i `src/sim/economy/tycoon/economyEnv.test.ts`.
 
@@ -286,7 +286,7 @@
 
 Zasada dla wszystkich zadań: komponenty dostają stan z `ui.econ` i wysyłają polecenia przez `game.dispatch`. Testy idą w stylu `panels.test.tsx` i `overlays.test.tsx` (`vnodeTree`). Kontroler po kamieniu sprawdza całość w przeglądarce przy szerokości 390 px.
 
-### Zadanie 8: Panel „Ludzie”: profile, przypięcia, kto co robi
+### Task 8: Panel „Ludzie”: profile, przypięcia, kto co robi
 
 **Pliki:** zmień `src/ui/game/panels.tsx` (`PeoplePanel`) i `src/ui/ui.css`; test w `panels.test.tsx`.
 - Sekcje panelu:
@@ -301,7 +301,7 @@ Zasada dla wszystkich zadań: komponenty dostają stan z `ui.econ` i wysyłają 
   - liczby osób zgadzają się ze `staffOnShift`.
 - Commit `feat(ui): panel Ludzie z profilami pracy, przypięciem i podglądem zadań`.
 
-### Zadanie 9: Pasek sił, zaufanie w HUD, sklep (WUT, czystość), toasty bez migania
+### Task 9: Pasek sił, zaufanie w HUD, sklep (WUT, czystość), toasty bez migania
 
 **Pliki:** `src/ui/game/Hud.tsx`, `src/ui/game/overlays.tsx` (`ClickerBar`), `src/ui/game/panels.tsx` (`StorePanel`), `src/ui/state.ts` (`pushToast`), `src/ui/ui.css`; testy w `overlays.test.tsx`, `panels.test.tsx` i `src/ui/state.test.ts`.
 - `ClickerBar`:
@@ -321,7 +321,7 @@ Zasada dla wszystkich zadań: komponenty dostają stan z `ui.econ` i wysyłają 
   - wiersz WUT pokazuje próg.
 - Commit `feat(ui): pasek sił, zaufanie Centrali w HUD, WUT i czystość w panelu sklepu, toasty bez migania`.
 
-### Zadanie 10: Karta dnia: okno decyzji
+### Task 10: Karta dnia: okno decyzji
 
 **Pliki:**
 - Utwórz: `src/ui/game/cards.tsx` (`CardDesk`), `src/ui/game/cardText.ts` (`deltaLines`), `src/ui/game/cards.test.tsx`, `src/ui/game/cardText.test.ts`
@@ -343,7 +343,7 @@ Zasada dla wszystkich zadań: komponenty dostają stan z `ui.econ` i wysyłają 
   - `deltaLines` dla `{ fine: -300 }` zawiera „−300 zł”, a dla ryzyka `chance 0.3` zawiera „30%”.
 - Commit `feat(ui): karta dnia z odpowiedziami, skutkami i odpowiedzią zaznaczoną z góry`.
 
-### Zadanie 11: Raport miesięczny i KPI tygodnia w zakładce „Cele”
+### Task 11: Raport miesięczny i KPI tygodnia w zakładce „Cele”
 
 **Pliki:** `src/ui/game/overlays.tsx` (`ReportBody`, `ReportModal`), `src/ui/game/panels.tsx` (`GoalsPanel`); testy w `overlays.test.tsx` i `panels.test.tsx`.
 - `ReportBody` dla `detail !== null`:
@@ -362,7 +362,7 @@ Zasada dla wszystkich zadań: komponenty dostają stan z `ui.econ` i wysyłają 
   - `GoalsPanel` pokazuje tytuł KPI.
 - Commit `feat(ui): raport miesięczny z pozycjami, zaufaniem i wskazówką; KPI tygodnia w Celach`.
 
-### Zadanie 12: Pauza fabularna: zdarzenia, które czekają na „OK”
+### Task 12: Pauza fabularna: zdarzenia, które czekają na „OK”
 
 **Pliki:** `src/ui/state.ts` (`story`), `src/game/actions.ts` (`handleEvents`), `src/game/frame.ts` (`isModalOpen`), `src/ui/game/overlays.tsx` (`StoryModal`), `src/ui/App.tsx`; testy w `actions.test.ts`, `frame.test.ts` i `overlays.test.tsx`.
 - `export const story: Signal<{ id: number; title: string; text: string }[]>` w `state.ts`, plus `pushStory(title, text)` i `dismissStory()`.
@@ -381,7 +381,7 @@ Zasada dla wszystkich zadań: komponenty dostają stan z `ui.econ` i wysyłają 
   - „OK” zdejmuje wpis.
 - Commit `feat(ui): ważne zdarzenia zatrzymują grę do OK (zaufanie, remont, odblokowania)`.
 
-### Zadanie 13 (kontroler): sprawdzenie w przeglądarce i raport kamienia 2
+### Task 13 (kontroler): sprawdzenie w przeglądarce i raport kamienia 2
 
 - Podgląd na porcie 5194 (konfiguracja w `.claude/launch.json`). Sprawdź:
   - nowa gra: karta dnia o swojej godzinie zatrzymuje grę;
@@ -397,7 +397,7 @@ Zasada dla wszystkich zadań: komponenty dostają stan z `ui.econ` i wysyłają 
 
 ## Kamień 3: balans i instrukcja
 
-### Zadanie 14: Wyważenie na prawdziwej ekonomii i test balansu
+### Task 14: Wyważenie na prawdziwej ekonomii i test balansu
 
 **Pliki:** liczby w `catalog.ts`, `tycoon/*.ts` (stałe `FATIGUE`, `TRUST`, `WUT`, `KPI`, `CARDS`, skale talii), test `src/sim/economy/tycoon/balance.test.ts` na `measureBots`.
 
@@ -410,7 +410,7 @@ Zasada dla wszystkich zadań: komponenty dostają stan z `ui.econ` i wysyłają 
 Przed strojeniem kontroler zapisuje w rejestrze, jak mierzy „2–4×”, gdy bierny ≈ 0 (np. wobec typowej marży miesiąca). Jeśli kryterium zmienia grę, pyta właściciela.
 - Commit `balance(tycoon): ...` z tabelą przed i po w raporcie.
 
-### Zadanie 15: Okno „Jak grać”
+### Task 15: Okno „Jak grać”
 
 **Pliki:**
 - Utwórz: `src/ui/howto/howto.ts` (treść jako dane: sekcje z tekstem, liczby wstawiane ze stałych: `FATIGUE.pool`, `FATIGUE.tapCost`, `FATIGUE.nightRecovery`, `TRUST.start`, `WUT.threshold`, `SUNDAY_TRAFFIC`, `OPEN_FROM/OPEN_TO`, `KPI.trustHit`…), `src/ui/howto/HowTo.tsx`, testy
@@ -422,7 +422,7 @@ Przed strojeniem kontroler zapisuje w rejestrze, jak mierzy „2–4×”, gdy b
   - przycisk w ⚙ ustawia `howTo` na `true`.
 - Commit `feat(ui): okno Jak grać po ekranie startowym i w ustawieniach, liczby ze stałych gry`.
 
-### Zadanie 16 (kontroler): spec i raport kamienia 3
+### Task 16 (kontroler): spec i raport kamienia 3
 
 - Dopisz do §6.5, §7.1a i §7.5 decyzje właściciela z `INTEGRATION.md`:
   - niedziela bez placówki pocztowej (ruch ×1,35);
