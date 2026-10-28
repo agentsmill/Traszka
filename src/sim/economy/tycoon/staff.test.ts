@@ -3,7 +3,7 @@ import { SCO_ACCEPT, SCO_RATE, TILL_RATE, UNLOAD_RATE } from '../catalog';
 import { rand01 } from '../rand';
 import {
   NO_ROBOTS, ROBOT_RATE, STAFF_TASKS, addChores, allocateStaff, closeStaffDay, createStaffPool, normalizePins, pinStaff,
-  restockDemand, sanitizeStaffPool, setStaffOrder, setStaffProfile, stepStaff, tillDemand, tillServed, unloadDemand,
+  SCO_AGE, restockDemand, sanitizeStaffPool, serveTill, setStaffOrder, setStaffProfile, stepStaff, tillDemand, unloadDemand,
   type StaffPoolState, type TaskMinutes,
 } from './staff';
 
@@ -67,14 +67,17 @@ describe('pula czasu ludzi: kolejność i profile', () => {
 });
 
 describe('ręczny przydział', () => {
-  it('przypięta osoba stoi przy swoim zadaniu, nawet gdy nie ma pracy (nadmiar to bezczynność)', () => {
+  it('przypięta osoba bierze najpierw swoje zadanie (nawet wbrew profilowi), a bez pracy wraca do puli', () => {
     const pool = createStaffPool();
     setStaffProfile(pool, 'dostawa');
     expect(pinStaff(pool, 'kasa', 1, 2).ok).toBe(true);
-    const a = allocateStaff(pool, { staff: 2, demand: demand({ kasa: 0.3, rozladunek: 4 }) });
-    expect(a.human.kasa).toBeCloseTo(0.3);
-    expect(a.idle).toBeCloseTo(0.7);
-    expect(a.human.rozladunek).toBe(1);
+    const quiet = allocateStaff(pool, { staff: 2, demand: demand({ kasa: 0.3, rozladunek: 4 }) });
+    expect(quiet.human.kasa).toBeCloseTo(0.3);
+    expect(quiet.human.rozladunek).toBeCloseTo(1.7);
+    expect(quiet.idle).toBe(0);
+    const busy = allocateStaff(pool, { staff: 2, demand: demand({ kasa: 0.9, rozladunek: 4 }) });
+    expect(busy.human.kasa).toBeCloseTo(0.9);
+    expect(busy.human.rozladunek).toBeCloseTo(1.1);
   });
 
   it('przydział z bzdurą zamiast liczby jest odrzucany (NaN nie wchodzi do stanu)', () => {
@@ -102,7 +105,8 @@ describe('ręczny przydział', () => {
     const a = allocateStaff(pool, { staff: 1, demand: BUSY });
     expect(a.human.kasa).toBeCloseTo(0.9);
     expect(a.human.rozladunek).toBe(0);
-    expect(a.idle).toBeCloseTo(0.1);
+    expect(a.human.wykladanie).toBeCloseTo(0.1);
+    expect(a.idle).toBe(0);
   });
 });
 
@@ -128,7 +132,7 @@ describe('czas ludzi z kart', () => {
     addChores(pool, 30);
     const a = stepStaff(pool, { staff: 2, demand: BUSY });
     expect(a.chores).toBe(1);
-    expect(a.human.kasa + a.human.rozladunek + a.chores + a.idle).toBeCloseTo(2);
+    expect(STAFF_TASKS.reduce((n, t) => n + a.human[t], 0) + a.chores + a.idle).toBeCloseTo(2);
     for (let i = 0; i < 40; i++) stepStaff(pool, { staff: 2, demand: BUSY });
     expect(pool.chores).toBe(0);
   });
@@ -178,18 +182,37 @@ describe('kasa samoobsługowa', () => {
   it('klienci obsłużeni przez SCO nie zabierają minut kasjera: zapotrzebowanie kasy spada, puli wraca czas', () => {
     const none = tillDemand({ ...till, queue: 0.6, sco: 0 });
     const two = tillDemand({ ...till, queue: 0.6, sco: 2 });
+    const atSco = 0.6 * SCO_ACCEPT;
     expect(none.demand).toBeCloseTo(0.6 / TILL_RATE);
-    expect(two.scoServed).toBeCloseTo(0.6 * SCO_ACCEPT);
-    expect(two.demand).toBeCloseTo((0.6 - 0.6 * SCO_ACCEPT) / TILL_RATE);
-    expect(two.freed).toBeCloseTo(two.scoServed / TILL_RATE);
+    expect(two.scoServed + two.ageChecks).toBeCloseTo(atSco);
+    expect(two.demand).toBeCloseTo((0.6 - atSco) / TILL_RATE + atSco * SCO_AGE.share * SCO_AGE.minutes);
+    expect(two.freed).toBeCloseTo(atSco / TILL_RATE - atSco * SCO_AGE.share * SCO_AGE.minutes);
     expect(none.demand - two.demand).toBeCloseTo(two.freed);
   });
 
-  it('SCO nie zastępuje ludzi: bez kasjera zostaje kolejka do człowieka', () => {
+  it('SCO nie zastępuje ludzi: bez kasjera zostaje kolejka do człowieka, a klient z alkoholem czeka przy SCO', () => {
     const t = tillDemand({ ...till, queue: 5, sco: 3 });
     expect(t.humanQueue).toBeGreaterThan(3);
-    expect(tillServed(t, 0, TILL_RATE)).toBe(0);
-    expect(tillServed(t, 1, TILL_RATE)).toBeCloseTo(TILL_RATE);
+    expect(t.ageChecks).toBeCloseTo(3 * SCO_RATE * SCO_AGE.share);
+    const nobody = serveTill(t, 0, TILL_RATE);
+    expect(nobody.human).toBe(0);
+    expect(nobody.sco).toBeCloseTo(t.scoServed);
+    expect(nobody.total).toBeCloseTo(3 * SCO_RATE * (1 - SCO_AGE.share));
+  });
+
+  it('potwierdzenie wieku (18+) bierze minuty z kasy przed kolejką i nie zajmuje stanowiska', () => {
+    const t = tillDemand({ ...till, queue: 5, sco: 3 });
+    const checks = t.ageChecks * SCO_AGE.minutes;
+    expect(t.demand).toBeCloseTo(1 + checks);
+    const short = serveTill(t, checks / 2, TILL_RATE);
+    expect(short.sco - t.scoServed).toBeCloseTo(t.ageChecks / 2);
+    expect(short.human).toBe(0);
+    const full = serveTill(t, 1, TILL_RATE);
+    expect(full.sco).toBeCloseTo(t.scoServed + t.ageChecks);
+    expect(full.human).toBeCloseTo((1 - checks) * TILL_RATE);
+    const noAlcohol = tillDemand({ ...till, queue: 5, sco: 3, ageShare: 0 });
+    expect(noAlcohol.ageChecks).toBe(0);
+    expect(serveTill(noAlcohol, 0, TILL_RATE).total).toBeCloseTo(3 * SCO_RATE);
   });
 
   it('oddany czas idzie na palety (w tej samej minucie)', () => {

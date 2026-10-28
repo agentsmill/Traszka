@@ -18,11 +18,11 @@ import { closeFatigueMonth, fatigueNight, tap, tapCost, tapItems } from './fatig
 import { closeKpiMonth, closeKpiWeek, type KpiMetrics, type KpiScale } from './kpi';
 import { buildMonthReport, type TycoonMonthReport } from './report';
 import {
-  NO_ROBOTS, closeStaffDay, closeStaffMonth, restockDemand, setStaffProfile, stepStaff, tillDemand, tillServed, unloadDemand,
+  NO_ROBOTS, closeStaffDay, closeStaffMonth, restockDemand, serveTill, setStaffProfile, stepStaff, tillDemand, unloadDemand,
   zeroTasks, type RobotFleet,
 } from './staff';
 import { applyCardOutcome, createTycoon, type TycoonState } from './state';
-import { TRUST, addTrust, closeTrustMonth, turnoverBonusShare } from './trust';
+import { TRUST, addTrust, closeTrustMonth, trustTerminates, turnoverBonusShare } from './trust';
 import {
   dateOfGameDay, dayOfMinute, daysLeftInMonth, isMonthEnd, isOpenMinute, minuteInDay, monthIndexOf, weekdayOf,
 } from './time';
@@ -104,6 +104,8 @@ export interface SandboxState {
   outcomes: CardOutcome[];
   /** XP z kart i KPI (makieta nie ma poziomów, tylko liczy). */
   xp: number;
+  /** Centrala wypowiedziała umowę (zaufanie na zerze przy zamknięciu miesiąca). */
+  terminated: boolean;
 }
 
 const repFactor = (rep: number): number => 0.6 + 0.8 * (rep / 100);
@@ -125,7 +127,7 @@ export function createSandbox(cfg: Partial<SandboxConfig> = {}): SandboxState {
       day: 0, seedHash, weather: rollWeather(seedHash, 0, dateOfGameDay(0).month),
       metrics: { ...total, cleanSum: 0, cleanMinutes: 0 }, scale,
     }),
-    reports: [], outcomes: [], xp: 0,
+    reports: [], outcomes: [], xp: 0, terminated: false,
   };
   deliver(s, 2);
   drawCards(s);
@@ -299,9 +301,10 @@ export function stepSandbox(s: SandboxState): boolean {
   const staff = shift ? Math.max(0, s.cfg.staff + mods.staff) : 0;
   const alloc = stepStaff(t.staff, { staff, demand, robots: s.cfg.robots, scoFreed: till.freed });
 
-  const served = till.scoServed + tillServed(till, alloc.total.kasa, TILL_RATE);
-  s.queue = Math.max(0, s.queue - served);
-  sell(s, served, served > 0 ? till.scoServed / served : 0);
+  // potwierdzenia wieku na SCO biorą minuty z kasy; klient bez potwierdzenia zostaje w kolejce
+  const served = serveTill(till, alloc.total.kasa, TILL_RATE);
+  s.queue = Math.max(0, s.queue - served.total);
+  sell(s, served.total, served.total > 0 ? served.sco / served.total : 0);
 
   let unloadMin = alloc.total.rozladunek;
   for (const p of unloadOrder(s)) {
@@ -383,6 +386,8 @@ function closeMonth(s: SandboxState, day: number): void {
   book(s, 'wut', wut.charge);
   const result = m.margin + m.bonuses + m.other - m.wages - m.media - m.fee - m.fines - m.wut - m.logistics;
   addTrust(t.trust, 'wynik', result > 0 ? TRUST.monthProfit : TRUST.monthLoss);
+  // wypowiedzenie dopiero przy zamknięciu miesiąca, po wyniku (decyzja użytkownika): w trakcie miesiąca da się odbić
+  if (trustTerminates(t.trust.value)) s.terminated = true;
   const report = buildMonthReport({
     monthIndex: monthIndexOf(day),
     figures: { ...m },

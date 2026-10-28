@@ -16,6 +16,11 @@ Wzorcem kolejności wywołań jest `sandbox.ts` (`stepSandbox`): to ta sama minu
 - **XP:** trafiony KPI tygodnia (40 + 10 × poziom, jak dawne zlecenie) i każda odpowiedź na kartę (10, okólnik 15).
 - **Zaufanie:** miękkie granice zostają (zyski powyżej 75 i straty poniżej 30 liczą się w połowie).
 - **Kasy samoobsługowe:** „zapomniane” skany to ubytek w WUT (kradzieże), jak w prawdziwym sklepie, a nie obcięta marża.
+  Klient z alkoholem (albo innym towarem od 18 lat) czeka przy SCO, aż człowiek z kasy potwierdzi wiek (`SCO_AGE`).
+- **Ręczny przydział:** przypięta osoba bierze najpierw swoje zadanie, a gdy nie ma w nim pracy, wraca do puli.
+- **Wypowiedzenie umowy:** zaufanie na zerze kończy grę dopiero przy zamknięciu miesiąca (po zmianie z wyniku), nie od razu.
+- **Co zatrzymuje grę:** lista z `notices.ts` zaakceptowana (karta decyzji; raport miesięczny, koniec remontu, nowy próg
+  zaufania, koniec gry i nowy poziom, który coś odblokowuje).
 
 ## Zasady wspólne
 
@@ -51,7 +56,8 @@ Wzorcem kolejności wywołań jest `sandbox.ts` (`stepSandbox`): to ta sama minu
                           − hallObstacle(waste) (worki w sali liczą się jak palety w sali, także w ruchu)
  6. pula ludzi:           till = tillDemand(...); demand = { kasa, rozladunek, wykladanie, sprzatanie };
                           alloc = stepStaff(staffPool, { staff: s.staff + mods.staff (w godzinach pracy), demand, robots })
- 7. obsługa:              obsłużeni = till.scoServed + tillServed(till, alloc.total.kasa, rate); sell(...) z marżą × mods.margin,
+ 7. obsługa:              obsłużeni = serveTill(till, alloc.total.kasa, rate) (najpierw potwierdzenia wieku na SCO, potem kolejka);
+                          sell(...) z marżą × mods.margin,
                           wutFromSales(revenue), wutFromSco(revenue × udział SCO, mnożnik kamer),
                           reputacja += obsłużeni × cleanlinessEffects(c).repPerCustomer
  8. praca:                rozładunek z alloc.total.rozladunek (rozładowana paleta → addWaste), wykładanie z alloc.total.wykladanie,
@@ -68,10 +74,14 @@ Wzorcem kolejności wywołań jest `sandbox.ts` (`stepSandbox`): to ta sama minu
 ### 1. Pula czasu ludzi (`staff.ts`)
 
 - **Stan:** `tycoon.staff: StaffPoolState` (profil albo własna kolejność, przypięci ludzie, czas winny kartom,
-  statystyki dnia i miesiąca). Zastępuje `EconomyState.priority`; `lastCashiers` i `lastWorkers` interfejs może brać
+  statystyki dnia i miesiąca). Przypięta osoba bierze najpierw swoje zadanie (także wbrew profilowi), a bez pracy wraca
+  do puli. Zastępuje `EconomyState.priority`; `lastCashiers` i `lastWorkers` interfejs może brać
   z ostatniego przydziału (`StaffAllocation`) albo ze statystyk dnia.
 - **Zaczep:** w `stepMinute` zamiast `allocateCashiers` i `doWork`:
   - kasa: `tillDemand({ queue, tills: fx.tills, tillRate: TILL_RATE * fx.tillSpeed, sco: fx.sco, scoRate: SCO_RATE * fx.scoSpeed, scoAccept: fx.scoAccept })`;
+    zapotrzebowanie kasy obejmuje potwierdzenia wieku na SCO (0,25 osobominuty na klienta z alkoholem, 30% klientów SCO;
+    nie zajmują stanowiska kasowego), a obsługę liczy `serveTill` (potwierdzenia przed kolejką; klient bez
+    potwierdzenia zostaje w kolejce przy SCO);
   - rozładunek: `unloadDemand(pallets.map((p) => ({ items: p.total, rate: UNLOAD_RATE * fx.unloadMult * UNLOAD_AT[p.loc] })))`,
     przycięte do miejsca na zapleczu i półkach (jak w makiecie);
   - wykładanie: `restockDemand(Σ min(shelfCap − shelf, backroom), RESTOCK_RATE)`;
@@ -88,9 +98,8 @@ Wzorcem kolejności wywołań jest `sandbox.ts` (`stepSandbox`): to ta sama minu
   - `{ type: 'staff.pin', task: 'kasa', count: 1 }` → `pinStaff(pool, task, count, s.staff)`;
   - istniejące `fire` woła potem `normalizePins(pool, s.staff)`; `setPriority` znika (mapa dla starych zapisów:
     `klienci` → `kolejka`, `palety` → `dostawa`, `rowno` → `kolejka`).
-- **Pytania:** czy przypięta osoba bez pracy ma stać na posterunku (dziś tak: to koszt ręcznego przydziału), czy wracać
-  do puli? Czy kasa ma brać całe osoby (dziś ułamki, jak w modelu zbiorczym)? Czy kasa samoobsługowa potrzebuje opieki
-  (np. 0,1 osoby na stanowisko)?
+- **Pytania:** czy kasa ma brać całe osoby (dziś ułamki, jak w modelu zbiorczym)? Czy udział klientów SCO z towarem od
+  18 lat ma zależeć od pory (wieczorem więcej alkoholu)? `tillDemand` przyjmuje `ageShare`, więc to tylko liczba.
 
 ### 2. Śmieci z rozładunku (`waste.ts`)
 
@@ -161,12 +170,13 @@ Wzorcem kolejności wywołań jest `sandbox.ts` (`stepSandbox`): to ta sama minu
 - **Zaczep:** każda dzisiejsza zmiana `s.trust` przez `addTrust` z przyczyną: kierowca zabrał palety
   (`'palety', TRUST.driverReturned`), odesłana paleta (`'palety', TRUST.returnedPallet`), mandat (`'mandaty', TRUST.fine`),
   wynik miesiąca (`'wynik', TRUST.monthProfit / monthLoss`). Premia od obrotu: `turnoverBonusShare(value) × obrót`
-  (zamiast „≥ 70 to 1%”). Zaufanie 0 to wypowiedzenie umowy (`trustTerminates`, spec §10): nowy warunek końca gry.
+  (zamiast „≥ 70 to 1%”). Wypowiedzenie umowy (spec §10, nowy warunek końca gry): w `closeMonth` po
+  `addTrust('wynik')`, gdy `trustTerminates(value)`, tak jak dziś przy bankructwie. Zero w środku miesiąca to tylko
+  ostrzeżenie (decyzja użytkownika).
 - **Polecenia:** brak.
 - **Miękkie granice** (zyski powyżej 75 i straty poniżej 30 liczą się w połowie) zaakceptowane przez użytkownika.
   Zmiana progu (`trustTier`) to komunikat `story` (`'trust-tier'`).
-- **Pytania:** czy wypowiedzenie przy zerze ma być od razu, czy na koniec miesiąca? `viralShare` czeka na produkty
-  wiralowe (etap 3.4); karta „Drop: lody BANDY XL” już go używa.
+- **Uwagi:** `viralShare` czeka na produkty wiralowe (etap 3.4); karta „Drop: lody BANDY XL” już go używa.
 
 ### 7. WUT (`wut.ts`)
 

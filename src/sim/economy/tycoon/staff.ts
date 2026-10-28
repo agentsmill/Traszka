@@ -5,7 +5,9 @@ import type { CommandResult } from '../economy';
 /**
  * Praca ludzi (spec §6.5). Czas personelu to wspólna pula osobominut: każda minuta zmiany każdej osoby idzie na jedno
  * z czterech zadań (kasa, rozładunek palet, wykładanie towaru, sprzątanie i śmieci). Gracz ustawia kolejność albo wybiera
- * profil („Kolejka”, „Dostawa”, „Porządek”) i może przypiąć osobę do zadania. Zadanie, na które nie starcza ludzi, czeka.
+ * profil („Kolejka”, „Dostawa”, „Porządek”) i może przypiąć osobę do zadania: przypięta osoba bierze najpierw swoje
+ * zadanie, a gdy nie ma w nim pracy, wraca do puli (decyzja użytkownika z 28.10.2026). Zadanie, na które nie starcza
+ * ludzi, czeka.
  *
  * Moduł nie zna stanu sklepu: wywołujący liczy zapotrzebowanie zadań w osobominutach na tę minutę (funkcje pomocnicze
  * na dole pliku), a dostaje przydział, który sam zamienia na obsłużonych klientów, sztuki i czystość. Ludzie mogą dzielić
@@ -67,7 +69,7 @@ export interface StaffPoolState {
   profile: StaffProfile | 'wlasny';
   /** Własna kolejność zadań (permutacja STAFF_TASKS); liczy się tylko przy profilu 'wlasny'. */
   order: StaffTask[];
-  /** Ile osób gracz przypiął ręcznie do zadania (całe osoby, razem nie więcej niż personel). */
+  /** Ile osób gracz przypiął ręcznie do zadania (całe osoby, razem nie więcej niż personel). Bez pracy wracają do puli. */
   pinned: TaskMinutes;
   /** Osobominuty winne kartom decyzji („czas ludzi”). Odrabia je jedna osoba naraz, zanim reszta weźmie zadania. */
   chores: number;
@@ -128,9 +130,9 @@ export const effectiveOrder = (pool: StaffPoolState): readonly StaffTask[] =>
   (pool.profile === 'wlasny' ? pool.order : PROFILE_ORDER[pool.profile]);
 
 /**
- * Przydział jednej minuty. Kolejność: (1) automatyka przy swoim zadaniu, (2) ludzie przypięci ręcznie (nadmiar stoi na
- * posterunku), (3) jedna osoba na pracę z kart (z posterunku tylko wtedy, gdy nikt inny nie jest wolny), (4) eDward
- * według kolejności, (5) reszta ludzi według kolejności.
+ * Przydział jednej minuty. Kolejność: (1) automatyka przy swoim zadaniu, (2) ludzie przypięci ręcznie przy swoim
+ * zadaniu (ile tam jest pracy; reszta ich czasu wraca do puli), (3) jedna osoba na pracę z kart (przypięta tylko wtedy,
+ * gdy nikt inny nie jest wolny), (4) eDward według kolejności, (5) reszta ludzi według kolejności.
  * Robot idzie przed ludźmi, bo zastępuje ich minuty. Funkcja nie zmienia stanu (zob. `stepStaff`).
  */
 export function allocateStaff(pool: StaffPoolState, input: StaffInput): StaffAllocation {
@@ -149,25 +151,26 @@ export function allocateStaff(pool: StaffPoolState, input: StaffInput): StaffAll
   give('wykladanie', robot, fleet.wykladacz * ROBOT_RATE.wykladacz);
 
   let people = Math.max(0, input.staff);
-  let idle = 0;
   // praca z karty bierze najpierw kogoś nieprzypiętego; gdy wszyscy są przypięci, schodzi ktoś z posterunku
   // (inaczej przypięcie wszystkich pozwalałoby nie odrabiać czasu z kart)
   const chores = Math.min(people, CHORE_PEOPLE, Math.max(0, pool.chores));
   const pinnedWanted = STAFF_TASKS.reduce((n, t) => n + pool.pinned[t], 0);
   const fromPinned = Math.max(0, chores - Math.max(0, people - pinnedWanted));
   people -= fromPinned;
+  let spare = 0;
   for (const t of STAFF_TASKS) {
     const p = Math.min(pool.pinned[t], people);
     people -= p;
-    idle += p - give(t, human, p);
+    spare += p - give(t, human, p);
   }
-  people -= chores - fromPinned;
+  // przypięci, dla których przy ich zadaniu nie ma pracy, wracają do puli
+  people += spare - (chores - fromPinned);
 
   const order = effectiveOrder(pool);
   let ed = fleet.edward * ROBOT_RATE.edward;
   for (const t of order) ed -= give(t, robot, ed);
   for (const t of order) people -= give(t, human, people);
-  idle += people;
+  const idle = people;
 
   const total = zeroTasks();
   for (const t of STAFF_TASKS) total[t] = human[t] + robot[t];
@@ -269,6 +272,13 @@ export function addChores(pool: StaffPoolState, minutes: number): void {
 
 // --- Zapotrzebowanie zadań -------------------------------------------------------------------------
 
+/**
+ * Potwierdzenie wieku na kasie samoobsługowej (decyzja użytkownika z 28.10.2026): klient z alkoholem albo innym towarem
+ * od 18 lat czeka przy SCO, aż człowiek z kasy potwierdzi wiek. `share` to udział takich klientów SCO, `minutes` to
+ * osobominuty na jedno potwierdzenie (podejść, spojrzeć na dowód, zatwierdzić). Liczby to decyzja balansu [C].
+ */
+export const SCO_AGE = { share: 0.3, minutes: 0.25 } as const;
+
 export interface TillInput {
   queue: number;
   /** Stanowiska kasowe (kasa nie przyjmie więcej kasjerów). */
@@ -279,34 +289,63 @@ export interface TillInput {
   scoRate: number;
   /** Udział klientów, którzy w ogóle podejdą do kasy samoobsługowej. */
   scoAccept: number;
+  /** Udział klientów SCO, którym trzeba potwierdzić wiek (domyślnie `SCO_AGE.share`). */
+  ageShare?: number;
 }
 
 export interface TillSplit {
-  /** Klienci obsłużeni w tej minucie przez kasy samoobsługowe. */
+  /** Klienci SCO obsłużeni w tej minucie bez udziału człowieka. */
   scoServed: number;
-  /** Kolejka, która czeka na człowieka. */
+  /** Klienci SCO, którzy czekają, aż człowiek potwierdzi wiek. */
+  ageChecks: number;
+  /** Kolejka, która czeka na kasjera. */
   humanQueue: number;
-  /** Osobominuty, które kasa przyjmie w tej minucie. */
+  /** Osobominuty, które kasa przyjmie w tej minucie: potwierdzenia wieku i stanowiska kasowe. */
   demand: number;
-  /** Minuty kasjera, których klienci SCO nie zabrali: wracają do puli. */
+  /** Minuty kasjera, których klienci SCO nie zabrali (po odjęciu potwierdzeń wieku): wracają do puli. */
   freed: number;
 }
 
 /**
  * Kasa samoobsługowa odciąża kasę, ale nie zastępuje ludzi: klient obsłużony przez nią nie zabiera minut kasjera, więc
- * zapotrzebowanie kasy liczy się tylko z kolejki do człowieka, a puli wraca tyle minut, ilu klientów SCO przejęła.
+ * zapotrzebowanie kasy liczy się z kolejki do człowieka i z potwierdzeń wieku, a puli wraca tyle minut, ilu klientów SCO
+ * przejęła, minus czas potwierdzeń. Potwierdzenie nie zajmuje stanowiska kasowego.
  */
 export function tillDemand(t: TillInput): TillSplit {
   const queue = Math.max(0, t.queue);
-  const scoServed = Math.min(Math.max(0, t.sco) * t.scoRate, queue * t.scoAccept);
-  const humanQueue = Math.max(0, queue - scoServed);
+  const atSco = Math.min(Math.max(0, t.sco) * t.scoRate, queue * t.scoAccept);
+  const ageChecks = atSco * Math.min(1, Math.max(0, t.ageShare ?? SCO_AGE.share));
+  const humanQueue = Math.max(0, queue - atSco);
   const rate = Math.max(1e-9, t.tillRate);
-  return { scoServed, humanQueue, demand: Math.min(Math.max(0, t.tills), humanQueue / rate), freed: scoServed / rate };
+  const ageMinutes = ageChecks * SCO_AGE.minutes;
+  return {
+    scoServed: atSco - ageChecks,
+    ageChecks,
+    humanQueue,
+    demand: ageMinutes + Math.min(Math.max(0, t.tills), humanQueue / rate),
+    freed: Math.max(0, atSco / rate - ageMinutes),
+  };
 }
 
-/** Klienci obsłużeni przez ludzi, gdy kasa dostała `minutes` osobominut. */
-export const tillServed = (split: TillSplit, minutes: number, tillRate: number): number =>
-  Math.min(split.humanQueue, Math.max(0, minutes) * tillRate);
+export interface TillServed {
+  /** Klienci SCO: bez potwierdzenia i z potwierdzonym wiekiem. */
+  sco: number;
+  /** Klienci obsłużeni przy kasie przez kasjera. */
+  human: number;
+  total: number;
+}
+
+/**
+ * Obsługa, gdy kasa dostała `minutes` osobominut: najpierw potwierdzenia wieku (krótkie, a SCO stoi), resztą czasu
+ * kasjer obsługuje kolejkę. Klient SCO bez potwierdzenia zostaje w kolejce.
+ */
+export function serveTill(split: TillSplit, minutes: number, tillRate: number): TillServed {
+  const m = Math.max(0, minutes);
+  const approved = Math.min(split.ageChecks, m / SCO_AGE.minutes);
+  const human = Math.min(split.humanQueue, (m - approved * SCO_AGE.minutes) * tillRate);
+  const sco = split.scoServed + approved;
+  return { sco, human, total: sco + human };
+}
 
 /** Przy jednej palecie mieszczą się najwyżej dwie osoby. */
 export const PEOPLE_PER_PALLET = 2;

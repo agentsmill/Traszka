@@ -128,6 +128,36 @@ describe('decyzje użytkownika z 28.10.2026 w makiecie', () => {
   });
 });
 
+describe('decyzje użytkownika z 28.10.2026, druga tura', () => {
+  // od 6:00 dnia 0 do 22:00 dnia 29 (30 września): godzinę przed zamknięciem miesiąca
+  const BEFORE_CLOSE = 29 * MINUTES_PER_DAY + 22 * 60 - 6 * 60;
+
+  it('zaufanie na zerze w środku miesiąca to jeszcze nie koniec umowy', () => {
+    const s = createSandbox();
+    runBot(BOTS.bierny, sandboxEnv(s), 10 * MINUTES_PER_DAY);
+    s.tycoon.trust.value = 0;
+    runBot(BOTS.bierny, sandboxEnv(s), 5 * MINUTES_PER_DAY);
+    expect(s.terminated).toBe(false);
+  });
+
+  it('wypowiedzenie przy zamknięciu miesiąca, gdy zaufanie dalej jest na zerze; dobry wynik miesiąca je ratuje', () => {
+    const lost = createSandbox();
+    runBot(BOTS.bierny, sandboxEnv(lost), BEFORE_CLOSE);
+    lost.tycoon.trust.value = 0;
+    lost.month.margin -= 1e6;   // miesiąc na minusie: wynik nie podniesie zaufania
+    runBot(BOTS.bierny, sandboxEnv(lost), 120);
+    expect(lost.reports).toHaveLength(1);
+    expect(lost.terminated).toBe(true);
+
+    const saved = createSandbox();
+    runBot(BOTS.bierny, sandboxEnv(saved), BEFORE_CLOSE);
+    saved.tycoon.trust.value = 0;
+    runBot(BOTS.bierny, sandboxEnv(saved), 120);
+    expect(saved.reports[0].result).toBeGreaterThan(0);
+    expect(saved.terminated).toBe(false);
+  });
+});
+
 describe('boty i balans na poziomie modułów (spec §7.5)', () => {
   it('bot „decyzje bez stukania” wygrywa z botem „stukanie bez decyzji” na każdym seedzie', () => {
     for (const seed of SEEDS) {

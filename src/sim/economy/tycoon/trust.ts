@@ -5,7 +5,7 @@ import { clamp } from './time';
  * Zaufanie Centrali (spec §7.5, §6.4, §7.3): miernik 0–100 widoczny od pierwszego dnia. Rośnie z KPI tygodnia, audytów,
  * odpowiedzi na okólniki i dobrego wyniku miesiąca; spada z mandatów, odesłanych palet, nietrafionych KPI i straty.
  * Od niego zależy przydział produktów wiralowych, premia od obrotu i to, jak często Centrala przysyła audyt.
- * Zaufanie spadające do zera to wypowiedzenie umowy (spec §10).
+ * Zaufanie na zerze przy zamknięciu miesiąca to wypowiedzenie umowy (spec §10).
  */
 
 export type TrustReason = 'kpi' | 'karty' | 'okolnik' | 'audyt' | 'mandaty' | 'palety' | 'wynik' | 'inne';
@@ -89,7 +89,10 @@ export const turnoverBonusShare = (value: number): number => (value >= 85 ? 0.01
 /** Mnożnik szansy na zapowiedź audytu: przy niskim zaufaniu Centrala przyjeżdża częściej (do ×3 przy zerze). */
 export const auditWeight = (value: number): number => 1 + Math.max(0, 60 - value) / 30;
 
-/** Zaufanie na zerze: Centrala wypowiada umowę. */
+/**
+ * Zaufanie na zerze: Centrala wypowiada umowę. Sprawdzane tylko przy zamknięciu miesiąca, po zmianie z wyniku miesiąca
+ * (decyzja użytkownika z 28.10.2026): zero w środku miesiąca to ostrzeżenie, a nie koniec gry.
+ */
 export const trustTerminates = (value: number): boolean => value <= 0;
 
 export interface TrustMonth {
