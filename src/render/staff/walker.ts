@@ -43,8 +43,9 @@ export class StaffWalker {
     this.speed = Number.isFinite(speed) && speed > 0 ? speed : STAFF_WALK_SPEED;
   }
 
+  /** Cel marszu (kopia: zmiana zwróconego obiektu nie przestawia postaci). */
   get goal(): Cell | null {
-    return this.goalCell;
+    return this.goalCell ? { x: this.goalCell.x, y: this.goalCell.y } : null;
   }
 
   /** Czy stoi na celu (i nie idzie). */

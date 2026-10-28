@@ -1,4 +1,4 @@
-import { STAFF_TASKS, type StaffAssignment, type StaffDuty } from './types';
+import type { StaffAssignment, StaffDuty } from './types';
 
 // Histereza zadań pracowników na ekranie. Gra płynie ok. 20 minut gry na sekundę rzeczywistą, a ekonomia przydziela zadania
 // od nowa co minutę gry (czyli co ~0,05 s), więc „co ekonomia chce teraz” przerzucałoby postać między kasą a półką kilkanaście
@@ -15,7 +15,7 @@ export const QUARTER_MIN = 15;
 export const TASK_DWELL_S = 6;
 
 /** Kolejność rozstrzygania remisów, gdy trzymanego zadania nie ma wśród remisujących. */
-const DUTY_ORDER: readonly StaffDuty[] = [...STAFF_TASKS, 'wolny'];
+const DUTY_ORDER: readonly StaffDuty[] = ['kasa', 'rozladunek', 'wykladanie', 'sprzatanie', 'wolny'];
 
 interface Held {
   /** Zadanie pokazywane teraz. */
