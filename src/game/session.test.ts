@@ -16,9 +16,11 @@ const text = (name: string): string => readFileSync(new URL(`./fixtures/${name}`
 const gameVersion = (JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as { version: string }).version;
 
 let storage: MemoryStorage;
+let errorLog: ReturnType<typeof vi.spyOn>;
 beforeEach(() => {
   storage = new MemoryStorage();
   vi.stubGlobal('localStorage', storage);
+  errorLog = vi.spyOn(console, 'error').mockImplementation(() => {});   // wczytanie uszkodzonego zapisu loguje przyczynę
 });
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -244,6 +246,16 @@ describe('uszkodzone zapisy', () => {
       expectPlayable(s);
     });
   }
+
+  it('przyczyna uszkodzenia trafia do konsoli (ucięty JSON), a poprawny zapis niczego nie loguje', () => {
+    put('{"ucięty');
+    createSession(BLOK);
+    expect(errorLog).toHaveBeenCalledTimes(1);
+    errorLog.mockClear();
+    put(v2());
+    createSession(BLOK);
+    expect(errorLog).not.toHaveBeenCalled();
+  });
 
   it('kolejna awaria nie kasuje wcześniejszej kopii bez śladu: :broken trzyma ostatni uszkodzony zapis', () => {
     put('{"pierwszy":');
