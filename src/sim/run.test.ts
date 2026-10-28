@@ -1,0 +1,341 @@
+import { describe, expect, it } from 'vitest';
+import { createSession } from '@/game/session';
+import { isOpenAt, minuteOfDay } from '@/sim/economy/calendar';
+import { MINUTES_PER_DAY, OPEN_FROM } from '@/sim/economy/catalog';
+import { applyCommand, COMMAND_TYPES, type Command } from '@/sim/economy/commands';
+import {
+  giftOpen, isClosedForRemont, nextRemont, PRIORITY_LABEL, stepMinute, type EconEvent, type EconomyState, type Priority,
+} from '@/sim/economy/economy';
+import { rand01 } from '@/sim/economy/rand';
+import { questDone } from '@/sim/economy/quests';
+import type { StoreInfo } from '@/sim/economy/storeInfo';
+import { EQUIPMENT, UPGRADES } from '@/sim/economy/upgrades';
+import { hashString } from '@/sim/rng';
+import { GENERATOR_VERSION } from '@/sim/store/generateStore';
+import { freshRun, replayRun, type LogEntry, type RunRecord } from './run';
+
+// --- Żywa gra: to, co przyszłe actions.ts robi z poleceniami gracza ----------------------------------------------
+
+/** Minuta gry, w której wydawane są polecenia bota (stan stoi, `stepMinute` jeszcze nie ruszył). */
+interface Play {
+  state: EconomyState;
+  /** k-te losowanie bota w tej minucie, z [0, 1). Z hasza `seed:bot`, więc bieg zależy tylko od seeda. */
+  roll(k: number): number;
+  /** Wpis do dziennika (minuta, kolejne `seq`), `applyCommand` i podmiana `info` po remoncie, jak w żywej grze. */
+  issue(cmd: unknown): void;
+}
+type Policy = (play: Play) => void;
+
+interface Live {
+  state: EconomyState;
+  record: RunRecord;
+  /** JSON stanu w zadanych minutach: po poleceniach tej minuty, przed `stepMinute`. */
+  snapshots: Map<number, string>;
+}
+
+/** Polecenia zepsute na kilka sposobów; gra je odrzuca, a dziennik je pamięta (klient mógł je wysłać). */
+const BROKEN: unknown[] = [
+  { type: 'buyUpgrade', id: 'nope' },
+  { type: 'buyEquipment', id: 'toString' },
+  { type: 'setOrder', auto: 'yes' },
+  { type: 'setOrder', auto: true, manual: NaN },
+  { type: 'claimQuest', questId: '1' },
+  { type: 'movePallet', palletId: 1, loc: 'roof' },
+  { type: 'setPriority', priority: '__proto__' },
+  { type: 'nuke' },
+];
+
+const UPGRADE_IDS = UPGRADES.map((u) => u.id);
+const EQUIPMENT_IDS = EQUIPMENT.map((e) => e.id);
+const PRIORITIES = Object.keys(PRIORITY_LABEL) as Priority[];
+
+/** Gracz-bot: stuka, odbiera, kupuje, zatrudnia, robi remonty i co jakiś czas wysyła śmieci. Każda decyzja z `roll`. */
+const bot: Policy = ({ state: s, roll, issue }) => {
+  if (isOpenAt(minuteOfDay(s.minute))) {
+    const r = roll(0);
+    if (s.queue >= 1 && r < 0.45) issue({ type: 'tapTill' });
+    else if (s.pallets.length > 0 && r < 0.8) {
+      const p = s.pallets[Math.floor(roll(1) * s.pallets.length)]!;
+      issue(roll(2) < 0.5 ? { type: 'tapPallet', palletId: p.id } : { type: 'tapPallet' });
+    }
+    if (s.pallets.length > 0 && roll(3) < 0.15) issue({ type: 'tapPallet' });   // drugie stuknięcie w tej samej minucie
+  }
+  if (s.minute % 5 === 0) for (const q of s.quests) if (questDone(s, q)) issue({ type: 'claimQuest', questId: q.id });
+  if (giftOpen(s) ? roll(4) < 0.02 : roll(4) < 0.001) issue({ type: 'claimGift' });   // także próba poza oknem
+  if (s.minute % 60 === 0 && roll(5) < 0.6) {
+    if (roll(6) < 0.7) issue({ type: 'buyUpgrade', id: UPGRADE_IDS[Math.floor(roll(7) * UPGRADE_IDS.length)] });
+    else issue({ type: 'buyEquipment', id: EQUIPMENT_IDS[Math.floor(roll(7) * EQUIPMENT_IDS.length)] });
+  }
+  if (s.queue > 6) issue({ type: 'hire' });
+  const next = nextRemont(s);
+  if (next && s.level >= next.minLevel && s.cash >= next.cost) issue({ type: 'startRemont' });
+  if (isClosedForRemont(s) && roll(8) < 0.002) issue({ type: 'rushRemont' });
+  if (roll(9) < 0.0005) issue({ type: 'campaign' });
+  const onSidewalk = s.pallets.find((p) => p.loc === 'sidewalk');
+  if (onSidewalk && roll(10) < 0.3) issue({ type: 'movePallet', palletId: onSidewalk.id, loc: 'backroom' });
+  if (s.pallets.length > 0 && roll(11) < 0.0003) issue({ type: 'returnPallet', palletId: s.pallets[Math.floor(roll(12) * s.pallets.length)]!.id });
+  if (roll(13) < 0.001) issue({ type: 'setOrder', auto: roll(14) < 0.8, manual: Math.floor(roll(15) * 10) });
+  if (roll(16) < 0.001) issue({ type: 'setPriority', priority: PRIORITIES[Math.floor(roll(17) * PRIORITIES.length)] });
+  if (s.staff > 3 && roll(18) < 0.0005) issue({ type: 'fire' });
+  if (roll(19) < 1 / 500) issue(BROKEN[Math.floor(roll(20) * BROKEN.length)]);
+};
+
+/** Bez stuknięć i sprzedaży: co godzinę zatrudnia (do limitu), a pensje robią resztę. Kończy się bankructwem. */
+const hireEveryHour: Policy = ({ state: s, issue }) => {
+  if (s.minute % 60 === 0) issue({ type: 'hire' });
+};
+
+/**
+ * „Żywa gra”: `freshRun`, w każdej minucie polecenia polityki, potem `stepMinute`. To samo robi przyszłe `actions.ts`:
+ * wpis do dziennika z bieżącą minutą i kolejnym `seq`, `applyCommand`, podmiana `info` przy `layoutChanged`.
+ * Zapamiętuje JSON stanu w `snapshotAt` oraz w minucie remontu i tuż po niej (tam odtworzenie liczy już na nowym układzie).
+ */
+function playLive(seed: string, days: number, opts: { policy?: Policy; snapshotAt?: readonly number[] } = {}): Live {
+  const { state, info: start } = freshRun(seed);
+  let info: StoreInfo = start;
+  const policy = opts.policy ?? bot;
+  const botHash = hashString(`${seed}:bot`);
+  const log: LogEntry[] = [];
+  let seq = 0;
+  const snapAt = new Set(opts.snapshotAt);
+  const snapshots = new Map<number, string>();
+  const events: EconEvent[] = [];
+  const play: Play = {
+    state,
+    roll: (k) => rand01(botHash, state.minute, k),
+    issue: (cmd) => {
+      log.push({ minute: state.minute, seq: seq++, cmd: cmd as Command });
+      const out = applyCommand(state, info, cmd as Command);
+      if (out.layoutChanged) {
+        info = out.info!;
+        snapAt.add(state.minute).add(state.minute + 1);
+      }
+    },
+  };
+  const end = state.minute + days * MINUTES_PER_DAY;
+  while (state.minute < end && !state.gameOver) {
+    policy(play);
+    if (snapAt.has(state.minute)) snapshots.set(state.minute, JSON.stringify(state));
+    events.length = 0;
+    stepMinute(state, info, events);
+  }
+  return { state, record: { seed, gameVersion: 'test', generatorVersion: GENERATOR_VERSION, mode: 'ranked', log }, snapshots };
+}
+
+// --- Pomocniki testów --------------------------------------------------------------------------------------------
+
+const clone = <T>(x: T): T => JSON.parse(JSON.stringify(x)) as T;
+
+/** Bajt w bajt (z kolejnością kluczy); przy różnicy najpierw pokazuje strukturalny diff, bo dwa długie teksty nic nie mówią. */
+function expectSameJson(actual: unknown, expected: unknown, label = ''): void {
+  const a = JSON.stringify(actual);
+  const e = JSON.stringify(expected);
+  if (a !== e) expect(JSON.parse(a), label).toEqual(JSON.parse(e));
+  expect(a, label).toBe(e);
+}
+
+function allFinite(x: unknown): boolean {
+  if (typeof x === 'number') return Number.isFinite(x);
+  if (typeof x !== 'object' || x === null) return true;
+  return Object.values(x).every(allFinite);
+}
+
+const recordOf = (seed: string, log: unknown[]): RunRecord => ({ seed, gameVersion: 'test', generatorVersion: GENERATOR_VERSION, mode: 'ranked', log: log as LogEntry[] });
+
+const SEEDS = Array.from({ length: 12 }, (_, i) => `traszka-${i + 1}`);
+const START = OPEN_FROM;
+/** Wiele dób gry na seedach: ok. 4 s na wolnym rdzeniu, a przy obciążonej maszynie (cały zestaw równolegle) dłużej niż domyślne 5 s. */
+const TIMEOUT = 60_000;
+
+describe('odtwarzanie biegu', () => {
+  it('odtworzenie z (seed, dziennik) daje bajt w bajt ten sam stan: 12 seedów × 90 dni', () => {
+    const seen = new Set<string>();
+    const remonts: number[] = [];
+    for (const seed of SEEDS) {
+      const live = playLive(seed, 90);
+      const replayed = replayRun(clone(live.record), live.state.minute);
+      expectSameJson(replayed, live.state, seed);
+      for (const e of live.record.log) seen.add((e.cmd as { type: string } | null)?.type ?? 'null');
+      remonts.push(live.state.remontLevel);
+    }
+    // dowód ma dotyczyć całej gry, nie samych stuknięć: remonty (nowy układ w trakcie), wszystkie typy poleceń i śmieci
+    expect(remonts.filter((n) => n >= 1).length).toBeGreaterThanOrEqual(3);
+    expect(Math.max(...remonts)).toBeGreaterThanOrEqual(2);
+    expect(COMMAND_TYPES.filter((t) => !seen.has(t))).toEqual([]);
+    expect(seen.has('nuke')).toBe(true);
+  }, TIMEOUT);
+
+  it('odtworzenie do minuty pośredniej = stan żywej gry w tej minucie', () => {
+    // południe dni 10, 30 i 60: pełna godzina, więc bot często kupuje właśnie w tej minucie (polecenia minuty M wchodzą przed stopem w M)
+    const at = [10, 30, 60].map((d) => d * MINUTES_PER_DAY + 12 * 60);
+    let checked = 0;
+    let withCommands = 0;
+    for (const seed of SEEDS.slice(0, 3)) {
+      const live = playLive(seed, 90, { snapshotAt: [START, ...at] });
+      const record = clone(live.record);   // cały dziennik, także wpisy po sprawdzanej minucie: replayRun ma je pominąć
+      expect([...live.snapshots.keys()].length).toBeGreaterThanOrEqual(at.length + 1);
+      for (const [minute, json] of live.snapshots) {
+        expectSameJson(replayRun(record, minute), JSON.parse(json), `${seed} @${minute}`);
+        checked++;
+        if (record.log.some((e) => e.minute === minute)) withCommands++;
+      }
+    }
+    expect(checked).toBeGreaterThanOrEqual(12);
+    expect(withCommands).toBeGreaterThanOrEqual(3);
+  }, TIMEOUT);
+
+  it('stan nie zależy od toLocaleString ani Intl', () => {
+    const seed = SEEDS[3]!;
+    const normal = playLive(seed, 35);   // ponad miesiąc: raport miesięczny też przechodzi przez formatowanie liczb
+    const toLocaleString = Number.prototype.toLocaleString;
+    const { NumberFormat, DateTimeFormat } = Intl;
+    let live!: Live;
+    let replayed!: EconomyState;
+    let calls = 0;
+    try {
+      Number.prototype.toLocaleString = () => { calls++; return 'X'; };
+      Intl.NumberFormat = (() => { throw new Error('Intl.NumberFormat w symulacji'); }) as unknown as typeof Intl.NumberFormat;
+      Intl.DateTimeFormat = (() => { throw new Error('Intl.DateTimeFormat w symulacji'); }) as unknown as typeof Intl.DateTimeFormat;
+      live = playLive(seed, 35);
+      replayed = replayRun(clone(live.record), live.state.minute);
+    } finally {
+      Number.prototype.toLocaleString = toLocaleString;
+      Intl.NumberFormat = NumberFormat;
+      Intl.DateTimeFormat = DateTimeFormat;
+    }
+    expect(calls).toBeGreaterThan(100);   // podmiana działa: teksty zdarzeń i wyników poleceń przechodzą przez toLocaleString
+    expect(normal.record.log.length).toBeGreaterThan(500);
+    expectSameJson(live.state, normal.state);
+    expectSameJson(live.record, normal.record);
+    expectSameJson(replayed, normal.state);
+  });
+
+  it('zepsuty dziennik nie rzuca i nie psuje stanu', () => {
+    const seed = SEEDS[4]!;
+    const live = playLive(seed, 8);
+    const until = live.state.minute;
+    const legit = live.record.log;
+
+    // wpisy, które replayRun ma zignorować: polecenia z Review Focus 2 przy poprawnej minucie i numerze
+    const hostile: unknown[] = [
+      { type: 'nuke' }, { type: 'buyUpgrade', id: 'toString' }, { type: 'buyUpgrade', id: '__proto__' }, { type: 'buyEquipment', id: 'x' },
+      { type: 'movePallet', palletId: 1, loc: 'roof' }, { type: 'setPriority', priority: 'all' }, { type: 'setOrder', auto: 'yes' },
+      { type: 'setOrder', auto: true, manual: NaN }, { type: 'setOrder', auto: true, manual: Infinity }, { type: 'claimQuest', questId: '1' },
+      { type: 'tapPallet', palletId: 1.5 }, { type: 'returnPallet', palletId: NaN }, { type: 'constructor' }, null, 'tapTill', [], 7, undefined,
+    ].map((cmd, i) => ({ minute: START + 50 + i * 311, seq: 1_000_000 + i, cmd }));
+    // wpisy bez minuty albo numeru, jakich nie da się uporządkować: pomijane w całości
+    const cmd = { type: 'setPriority', priority: 'palety' };
+    const malformed: unknown[] = [
+      null, 7, 'tapTill', [], {}, { cmd }, { minute: START + 10, seq: 1 }, { minute: NaN, seq: 1, cmd }, { minute: Infinity, seq: 1, cmd },
+      { minute: -Infinity, seq: 1, cmd }, { minute: '400', seq: 1, cmd }, { minute: START + 10, seq: NaN, cmd }, { minute: START + 10, seq: '1', cmd },
+      { minute: START + 10, seq: undefined, cmd },
+    ];
+    // po końcu: gdyby zadziałały, stan by się zmienił (priorytet z 'rowno' na 'palety', a zlecenia i dostawy poszłyby inaczej)
+    const late = [until + 1, until + 5, until + MINUTES_PER_DAY, 1e9, Number.MAX_VALUE].map((minute, i) => ({ minute, seq: 2_000_000 + i, cmd }));
+    // te działają: sprzed startu (lądują na starcie, w kolejności seq) i ze zdublowanym numerem (kolejność wpisów rozstrzyga remis)
+    const early = [{ minute: -10, seq: 5, cmd: { type: 'setOrder', auto: false, manual: 9 } }, { minute: -1e9, seq: 0, cmd: { type: 'hire' } }];
+    const dupes = legit.slice(100, 140).map((e) => ({ ...e, cmd: { type: 'setPriority', priority: 'klienci' } }));
+
+    const inert = new Set<unknown>([...hostile, ...malformed, ...late]);
+    const all = [...legit, ...dupes, ...early, ...hostile, ...malformed, ...late];
+    const messy = all
+      .map((entry, i) => ({ entry, key: rand01(hashString('shuffle'), i, 0) }))
+      .sort((a, b) => a.key - b.key)
+      .map(({ entry }) => entry);
+    const before = JSON.stringify(messy);
+
+    let state!: EconomyState;
+    expect(() => { state = replayRun(recordOf(seed, messy), until); }).not.toThrow();
+    expect(state.minute).toBe(until);
+    expect(allFinite(state)).toBe(true);
+    expect(JSON.stringify(messy)).toBe(before);   // dziennik klienta zostaje nietknięty (sortowanie na kopii)
+
+    // posortowany po (minute, seq) i, przy remisie, według kolejności w dzienniku; zepsute na końcu, bo nie mają miejsca w porządku
+    const isOrderable = (e: unknown): e is LogEntry =>
+      typeof e === 'object' && e !== null && Number.isFinite((e as LogEntry).minute) && Number.isFinite((e as LogEntry).seq);
+    const orderable = messy.map((entry, i) => ({ entry, i })).filter(({ entry }) => isOrderable(entry));
+    const sorted = [
+      ...orderable.sort((a, b) => (a.entry as LogEntry).minute - (b.entry as LogEntry).minute || (a.entry as LogEntry).seq - (b.entry as LogEntry).seq || a.i - b.i)
+        .map(({ entry }) => entry),
+      ...messy.filter((e) => !isOrderable(e)),
+    ];
+    expectSameJson(replayRun(recordOf(seed, sorted), until), state, 'posortowany');
+    // śmieci i wpisy po końcu są bez znaczenia: ten sam stan bez nich
+    expectSameJson(replayRun(recordOf(seed, messy.filter((e) => !inert.has(e))), until), state, 'bez śmieci');
+    // a wpisy sprzed startu i zdublowane naprawdę coś robią (inaczej test niczego by nie dowodził)
+    expect(JSON.stringify(replayRun(live.record, until))).not.toBe(JSON.stringify(state));
+  });
+
+  it('wpis sprzed startu trafia na start, wpis po untilMinute jest pomijany', () => {
+    const seed = SEEDS[5]!;
+    const cmd: Command = { type: 'setOrder', auto: false, manual: 7 };
+    const until = START + 3 * MINUTES_PER_DAY;
+    const run = (minute: number | null): EconomyState => replayRun(recordOf(seed, minute === null ? [] : [{ minute, seq: 0, cmd }]), until);
+    const atStart = run(START);
+    expect(atStart.order).toEqual({ auto: false, manual: 7 });
+    expectSameJson(run(-5), atStart);
+    expectSameJson(run(START - 1e6), atStart);
+    // wpis w minucie, na której stoimy, wchodzi przed zatrzymaniem; wpis o minutę dalej już nie
+    expect(run(until).order).toEqual({ auto: false, manual: 7 });
+    expectSameJson(run(until + 1), run(null));
+    expect(run(until + 1).order.auto).toBe(true);
+    // bez poleceń i bez kroków: stan startowy
+    expectSameJson(replayRun(recordOf(seed, []), START), freshRun(seed).state);
+  });
+
+  it('untilMinute, które nie jest liczbą skończoną, jest odrzucane zamiast zawisnąć', () => {
+    const record = recordOf(SEEDS[0]!, []);
+    for (const until of [NaN, Infinity, -Infinity]) expect(() => replayRun(record, until)).toThrow(RangeError);
+  });
+
+  it('bankructwo w środku biegu: odtworzenie się kończy, polecenia po końcu nie zmieniają stanu', () => {
+    const limit = START + 400 * MINUTES_PER_DAY;
+    // 'kiełbasa-42' kończy po ok. 90 dniach, 'traszka-1' po ok. 120, 'traszka-3' po ok. 150: różne miesiące i różne raporty
+    for (const seed of ['kiełbasa-42', 'traszka-1', 'traszka-3']) {
+      const live = playLive(seed, 400, { policy: hireEveryHour });
+      const end = live.state.minute;
+      expect(live.state.gameOver, seed).toBe(true);
+      expect(end, seed).toBeLessThan(limit - 100 * MINUTES_PER_DAY);
+
+      const record = clone(live.record);
+      const replayed = replayRun(record, limit);
+      expectSameJson(replayed, live.state, seed);
+      expect(replayed.minute).toBe(end);   // stoi na minucie końca, nie dojechało do untilMinute
+
+      // gra skończona: żadne polecenie nie przechodzi, także to z minuty końca i z kolejnych dni
+      const seq = record.log.length;
+      const tail: LogEntry[] = [end, end + 1, end + 60, end + 10 * MINUTES_PER_DAY].flatMap((minute, i) => [
+        { minute, seq: seq + 2 * i, cmd: { type: 'setPriority', priority: 'palety' } },
+        { minute, seq: seq + 2 * i + 1, cmd: { type: 'setOrder', auto: false, manual: 30 } },
+      ] as LogEntry[]);
+      const longer = { ...record, log: [...record.log, ...tail] };
+      expectSameJson(replayRun(longer, limit), live.state, `${seed} + polecenia po końcu`);
+      expectSameJson(replayRun(longer, end + 5), live.state, `${seed}, untilMinute tuż po końcu`);
+      expectSameJson(replayRun(longer, end), live.state, `${seed}, untilMinute w minucie końca`);
+    }
+  }, TIMEOUT);
+
+  it('inna wersja generatora: odtworzenie odmawia', () => {
+    const record = recordOf(SEEDS[0]!, []);
+    expect(() => replayRun(record, START + 10)).not.toThrow();
+    expect(() => replayRun({ ...record, generatorVersion: GENERATOR_VERSION + 1 }, START + 10)).toThrow(/generator/);
+    expect(() => replayRun({ ...record, generatorVersion: GENERATOR_VERSION - 1 }, START + 10)).toThrow(Error);
+  });
+
+  it('gameVersion i mode są tylko przenoszone', () => {
+    const live = playLive(SEEDS[1]!, 5);
+    const base = replayRun(clone(live.record), live.state.minute);
+    expectSameJson(replayRun({ ...clone(live.record), gameVersion: 'inna', mode: 'casual' }, live.state.minute), base);
+  });
+
+  it('freshRun to ten sam stan co createSession dla nowej gry bez premii', () => {
+    for (const seed of ['kiełbasa-42', 'traszka-1', ...SEEDS.slice(0, 3)]) {
+      const run = freshRun(seed);
+      const session = createSession(seed, true);
+      expectSameJson(run.state, session.econ, seed);
+      expectSameJson(run.layout, session.layout, seed);
+      expectSameJson(run.info, session.info, seed);
+      expect(run.state.minute).toBe(START);
+    }
+  });
+});
