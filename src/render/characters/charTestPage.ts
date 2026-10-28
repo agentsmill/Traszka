@@ -157,8 +157,9 @@ export function startCharTestPage(canvas: HTMLCanvasElement, preset: QualityPres
   });
   window.addEventListener('wheel', (e) => zoomBy(e.deltaY < 0 ? 1.1 : 1 / 1.1), { passive: true });
 
-  void createCharacterFactory().then((created) => {
+  void createCharacterFactory().then(async (created) => {
     factory = created;
+    if (outfits) await Promise.all(outfits.map((outfit) => created.ensureOutfit(outfit)));   // stroje specjalne dochodzą na żądanie (R40)
     for (let index = 0; index < count; index++) {
       const character = outfits
         ? created.createWithOutfit(look ?? `kasjer-${index}`, outfits[index])

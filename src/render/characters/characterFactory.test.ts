@@ -1,41 +1,15 @@
-import { readFileSync } from 'node:fs';
-import { basename, join } from 'node:path';
-import { NodeIO } from '@gltf-transform/core';
-import { EXTMeshoptCompression } from '@gltf-transform/extensions';
-import { MeshoptDecoder } from 'meshoptimizer';
-import { AnimationClip, Box3, Color, Mesh, ShaderLib, SkinnedMesh, type Bone, type Material, type MeshStandardMaterial, type Object3D } from 'three';
-import { GLTFLoader, type GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { basename } from 'node:path';
+import { AnimationClip, Box3, Color, Group, Mesh, ShaderLib, SkinnedMesh, type Bone, type Material, type MeshStandardMaterial, type Object3D } from 'three';
+import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { ASSETS } from '@/render/assets';
 import { CHARACTER_STYLE, PALETTE } from '@/render/style';
 import { pickAppearance } from './appearance';
 import { CHARACTER_PROGRAM_KEY, FIXED_BASE, PALETTE_SIZE, REGION, type RegionName } from './characterMaterial';
 import { createCharacterFactory, type CharacterFactory } from './characterFactory';
-import { OUTFIT_PAINT, buildModularPack, findClip, outfitPart, type OutfitFile } from './modularPack';
+import { OUTFIT_PAINT, buildModularPack, buildVariant, findClip, outfitPart, type OutfitFile } from './modularPack';
+import { loadFromDisk } from './testAssets';
 import { WALK_SPEED_MPS } from './walkSpeed';
-
-/**
- * Loader testowy: czyta prawdziwe GLB z public/, usuwa tekstury (Node nie ma obrazów) i parsuje GLTFLoaderem,
- * więc fabryka dostaje te same siatki, szkielety i klipy co w przeglądarce.
- */
-const io = new NodeIO().registerExtensions([EXTMeshoptCompression]).registerDependencies({ 'meshopt.decoder': MeshoptDecoder });
-const cache = new Map<string, Promise<GLTF>>();
-function loadFromDisk(url: string): Promise<GLTF> {
-  let hit = cache.get(url);
-  if (!hit) {
-    hit = (async () => {
-      const bytes = readFileSync(join('public', url));
-      const doc = await io.readBinary(new Uint8Array(bytes));
-      for (const t of doc.getRoot().listTextures()) t.dispose();
-      for (const ext of doc.getRoot().listExtensionsUsed()) ext.dispose();
-      const out = await io.writeBinary(doc);
-      const buffer = out.buffer.slice(out.byteOffset, out.byteOffset + out.byteLength) as ArrayBuffer;
-      return new GLTFLoader().parseAsync(buffer, '');
-    })();
-    cache.set(url, hit);
-  }
-  return hit;
-}
 
 function skinnedMeshes(root: Object3D): SkinnedMesh[] {
   const out: SkinnedMesh[] = [];
@@ -96,9 +70,24 @@ describe('createCharacterFactory: postać zastępcza', () => {
     expect(cashier.outfit).toBeNull();
     cashier.dispose();
     expect(factory.walkSpeedMps).toBe(WALK_SPEED_MPS);
+    await expect(factory.ensureOutfit('special-men-king')).resolves.toBeUndefined();   // nie ma czego wczytywać, ale kontrakt trzyma
     expect(() => factory.dispose()).not.toThrow();
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();
+  });
+
+  it('kasjer w mundurze z postaci zastępczej: nadpisana góra jest zielenią marki, reszta wyglądu z seeda', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const factory = await createCharacterFactory(() => Promise.reject(new Error('404')));
+    const a = pickAppearance('seed-mundur');
+    const paletteOf = (c: { object: Object3D }): Color[] => paletteUniform((c.object.children[0] as Mesh).material as Material);
+    const hex = (c: string): string => new Color(c).getHexString();
+    const plain = paletteOf(factory.createWithOutfit('seed-mundur', 'men-suit'));
+    const uniform = paletteOf(factory.createWithOutfit('seed-mundur', 'men-suit', { top: PALETTE.brand.green }));
+    expect(plain[REGION.top].getHexString()).toBe(hex(a.top));
+    expect(uniform[REGION.top].getHexString()).toBe(hex(PALETTE.brand.green));
+    for (const region of [REGION.skin, REGION.bottom, REGION.hair]) expect(uniform[region].getHexString()).toBe(plain[region].getHexString());
+    vi.restoreAllMocks();
   });
 
   it('postać zastępcza ma kolory z Appearance, wzrost z Appearance i kiwa się w chodzie', async () => {
@@ -367,6 +356,7 @@ describe('createCharacterFactory: częściowe awarie', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const factory = await createCharacterFactory((url) => (ASSETS.characters.special.includes(url) ? Promise.reject(new Error('404')) : loadFromDisk(url)));
     for (const outfit of ['special-men-king', 'special-women-witch'] as OutfitFile[]) {
+      await expect(factory.ensureOutfit(outfit)).resolves.toBeUndefined();   // błąd wczytania nie odrzuca obietnicy
       for (const seed of ['a', 'b', 'c', 'd']) {
         const c = factory.createWithOutfit(seed, outfit);
         expect(c.isFallback, `${outfit} ${seed}`).toBe(false);
@@ -384,7 +374,9 @@ describe('createCharacterFactory: częściowe awarie', () => {
     const loadWithoutSpecial = (url: string): Promise<GLTF> => (ASSETS.characters.special.includes(url) ? Promise.reject(new Error('404')) : loadFromDisk(url));
     const factory = await createCharacterFactory(loadWithoutSpecial);
     const missingOutfitWarnings = (): string[] => warn.mock.calls.map((call) => String(call[0])).filter((message) => message.includes('brak stroju'));
-    warn.mockClear(); // ostrzeżenie o niewczytanych plikach przy budowie fabryki to osobna sprawa
+    await factory.ensureOutfit('special-men-king');
+    await factory.ensureOutfit('special-women-witch');
+    warn.mockClear(); // ostrzeżenie o niewczytanym pliku to osobna sprawa
 
     for (const seed of ['a', 'b', 'c', 'd', 'e']) factory.createWithOutfit(seed, 'special-men-king').dispose();
     expect(missingOutfitWarnings()).toHaveLength(1);
@@ -398,6 +390,7 @@ describe('createCharacterFactory: częściowe awarie', () => {
 
     // licznik należy do fabryki: druga fabryka (np. podgląd na ekranie startowym) ostrzega o tym samym stroju jeszcze raz
     const second = await createCharacterFactory(loadWithoutSpecial);
+    await second.ensureOutfit('special-men-king');
     warn.mockClear();
     second.createWithOutfit('a', 'special-men-king').dispose();
     second.createWithOutfit('b', 'special-men-king').dispose();
@@ -440,6 +433,7 @@ describe('stroje specjalne i createWithOutfit (kasjer gracza)', () => {
   let factory: CharacterFactory;
   beforeAll(async () => {
     factory = await createCharacterFactory(loadFromDisk);
+    await Promise.all(SPECIAL.map((outfit) => factory.ensureOutfit(outfit)));   // specjalne dochodzą na żądanie (R40)
   }, 60_000);
 
   it('PAINTABLE opisuje dokładnie stroje specjalne z ASSETS', () => {
@@ -448,6 +442,7 @@ describe('stroje specjalne i createWithOutfit (kasjer gracza)', () => {
 
   it('wczytują się wszystkie stroje, a stałe kolory każdego mieszczą się w wolnych miejscach palety (nadmiar zlałby się w ostatnim)', async () => {
     const pack = await buildModularPack(loadFromDisk);
+    await Promise.all(SPECIAL.map((outfit) => pack!.ensure(outfit)));
     expect(pack!.variants.map((v) => v.outfit).sort()).toEqual([...REGULAR, ...SPECIAL].sort());
     for (const v of pack!.variants) expect(v.shared.fixed.length, v.outfit).toBeLessThanOrEqual(PALETTE_SIZE - FIXED_BASE);
   }, 60_000);
@@ -587,6 +582,7 @@ describe('stroje specjalne i createWithOutfit (kasjer gracza)', () => {
 
   it('dispose fabryki zwalnia też geometrie strojów specjalnych', async () => {
     const own = await createCharacterFactory(loadFromDisk);
+    await Promise.all(SPECIAL.map((outfit) => own.ensureOutfit(outfit)));
     const chars = SPECIAL.map((outfit) => own.createWithOutfit('kasjer-dispose', outfit));
     const geometries = new Set(chars.map((c) => skinnedMeshes(c.object)[0].geometry));
     expect(geometries.size).toBe(SPECIAL.length);
@@ -596,4 +592,168 @@ describe('stroje specjalne i createWithOutfit (kasjer gracza)', () => {
     own.dispose();
     expect(freed).toHaveBeenCalledTimes(geometries.size);
   }, 60_000);
+});
+
+describe('stroje specjalne na żądanie (ruling R40) i mundur kasjera', () => {
+  /** Loader-szpieg: zapisuje pobrane adresy; `fail` wskazuje adresy, które mają się nie wczytać. */
+  function spyLoader(fail: (url: string) => boolean = () => false): { load: (url: string) => Promise<GLTF>; urls: string[] } {
+    const urls: string[] = [];
+    return { urls, load: (url) => { urls.push(url); return fail(url) ? Promise.reject(new Error('404')) : loadFromDisk(url); } };
+  }
+  const specialUrls = (urls: string[]): string[] => urls.filter((u) => u.includes('special-'));
+  const hex = (c: string): string => new Color(c).getHexString();
+  const topOf = (c: { object: Object3D }): string => (materialOf(skinnedMeshes(c.object)[0]).userData.palette as Color[])[REGION.top].getHexString();
+
+  it('start pobiera tylko stroje zwykłe: żaden adres special- nie jest pobrany przed ensureOutfit, także przez createWithOutfit', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const spy = spyLoader();
+    const factory = await createCharacterFactory(spy.load);
+    expect([...spy.urls].sort()).toEqual([...ASSETS.characters.modular].sort());
+    factory.createWithOutfit('a', 'special-men-king').dispose();   // zły porządek wołania niczego nie dociąga po cichu
+    factory.create('b').dispose();
+    expect(specialUrls(spy.urls)).toEqual([]);
+    warn.mockRestore();
+  });
+
+  it('ensureOutfit(specjalny) pobiera tylko ten strój, raz; równoległe wywołania dzielą jedną obietnicę; potem createWithOutfit daje ten strój', async () => {
+    const spy = spyLoader();
+    const factory = await createCharacterFactory(spy.load);
+    const first = factory.ensureOutfit('special-men-king');
+    const second = factory.ensureOutfit('special-men-king');
+    expect(second).toBe(first);
+    await first;
+    expect(specialUrls(spy.urls)).toEqual(['/assets/characters/special-men-king.glb']);
+    await factory.ensureOutfit('special-men-king');
+    expect(specialUrls(spy.urls)).toHaveLength(1);
+    for (const seed of ['a', 'b']) {
+      const c = factory.createWithOutfit(seed, 'special-men-king');
+      expect(c.outfit).toBe('special-men-king');
+      expect(c.isFallback).toBe(false);
+      c.dispose();
+    }
+    await factory.ensureOutfit('special-women-witch');
+    expect(specialUrls(spy.urls)).toHaveLength(2);
+  }, 60_000);
+
+  it('ensureOutfit(zwykły) wraca od razu i niczego nie pobiera', async () => {
+    const spy = spyLoader();
+    const factory = await createCharacterFactory(spy.load);
+    const before = spy.urls.length;
+    await Promise.all(REGULAR.map((outfit) => factory.ensureOutfit(outfit)));
+    expect(spy.urls).toHaveLength(before);
+  });
+
+  it('createWithOutfit przed ensureOutfit: strój zwykły tej samej płci, bez wyjątku i bez cichego dociągania', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const factory = await createCharacterFactory(spyLoader().load);
+    for (const outfit of SPECIAL) {
+      const c = factory.createWithOutfit('przed-ensure', outfit);
+      expect(c.isFallback, outfit).toBe(false);
+      expect(REGULAR, outfit).toContain(c.outfit);
+      expect(c.outfit!.includes('women-'), outfit).toBe(outfit.includes('women-'));
+      c.dispose();
+    }
+    warn.mockRestore();
+  });
+
+  it('błąd wczytania nie odrzuca obietnicy, kasjer dostaje strój zwykły (jedno ostrzeżenie), a kolejne ensureOutfit próbuje jeszcze raz', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let down = true;
+    const spy = spyLoader((url) => down && url.includes('special-men-king'));
+    const factory = await createCharacterFactory(spy.load);
+    await expect(factory.ensureOutfit('special-men-king')).resolves.toBeUndefined();
+    const fallback = factory.createWithOutfit('a', 'special-men-king');
+    expect(REGULAR).toContain(fallback.outfit);
+    expect(fallback.outfit!.includes('women-')).toBe(false);
+    fallback.dispose();
+    expect(warn.mock.calls.map((c) => String(c[0])).filter((m) => m.includes('brak stroju special-men-king'))).toHaveLength(1);
+
+    down = false;                                              // sieć wróciła: gracz wybiera ten strój jeszcze raz
+    await factory.ensureOutfit('special-men-king');
+    expect(specialUrls(spy.urls)).toHaveLength(2);
+    expect(factory.createWithOutfit('a', 'special-men-king').outfit).toBe('special-men-king');
+    warn.mockRestore();
+  }, 60_000);
+
+  it('plik, którego nie da się zbudować w wariant (bez klipów), też nie odrzuca obietnicy', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const empty = { scene: new Group(), animations: [] } as unknown as GLTF;
+    const factory = await createCharacterFactory((url) => (url.includes('special-men-king') ? Promise.resolve(empty) : loadFromDisk(url)));
+    await expect(factory.ensureOutfit('special-men-king')).resolves.toBeUndefined();
+    expect(REGULAR).toContain(factory.createWithOutfit('a', 'special-men-king').outfit);
+    warn.mockRestore();
+  });
+
+  it('buildVariant składa wariant z wczytanego pliku, a z pustego zwraca null', async () => {
+    const gltf = await loadFromDisk('/assets/characters/men-suit.glb');
+    const variant = buildVariant('men-suit', gltf)!;
+    expect(variant.outfit).toBe('men-suit');
+    expect(variant.shared.count).toBeGreaterThan(1000);
+    expect(variant.height).toBeGreaterThan(1);
+    expect(buildVariant('men-suit', { scene: new Group(), animations: [] } as unknown as GLTF)).toBeNull();
+  });
+
+  it('ModularPack.variants jest żywym widokiem: stroje dobudowane później też są na liście (dispose fabryki je zwolni)', async () => {
+    const pack = (await buildModularPack(loadFromDisk))!;
+    expect(pack.variants.map((v) => v.outfit).sort()).toEqual([...REGULAR].sort());
+    expect(pack.variantOf('special-men-swat')).toBeUndefined();
+    await pack.ensure('special-men-swat');
+    expect(pack.variants.map((v) => v.outfit).sort()).toEqual([...REGULAR, 'special-men-swat'].sort());
+    expect(pack.variantOf('special-men-swat')).toBeDefined();
+  });
+
+  it('dispose fabryki zwalnia geometrię stroju dociągniętego później', async () => {
+    const own = await createCharacterFactory(loadFromDisk);
+    await own.ensureOutfit('special-women-scifi');
+    const c = own.createWithOutfit('dispose-lazy', 'special-women-scifi');
+    const geometry = skinnedMeshes(c.object)[0].geometry;
+    const freed = vi.fn();
+    geometry.addEventListener('dispose', freed);
+    c.dispose();
+    own.dispose();
+    expect(freed).toHaveBeenCalledTimes(1);
+  }, 60_000);
+
+  describe('mundur kasjera (nadpisanie góry)', () => {
+    let factory: CharacterFactory;
+    beforeAll(async () => {
+      factory = await createCharacterFactory(loadFromDisk);
+      await factory.ensureOutfit('special-men-king');
+    }, 60_000);
+
+    it('strój zwykły z nadpisaną górą ma kolor zieleni marki w regionie top, a reszta wyglądu zostaje z seeda', () => {
+      const seed = 'kasjer-mundur';
+      const a = pickAppearance(seed);
+      for (const outfit of ['men-suit', 'women-casual', 'men-farmer'] as OutfitFile[]) {
+        const c = factory.createWithOutfit(seed, outfit, { top: PALETTE.brand.green });
+        const palette = materialOf(skinnedMeshes(c.object)[0]).userData.palette as Color[];
+        expect(palette[REGION.top].getHexString(), outfit).toBe(hex(PALETTE.brand.green));
+        expect([REGION.skin, REGION.bottom, REGION.hair].map((r) => palette[r].getHexString()), outfit).toEqual([a.skin, a.bottom, a.hair].map(hex));
+        expect(c.outfit).toBe(outfit);
+        c.dispose();
+      }
+    });
+
+    it('bez nadpisania góra jest z seeda (także w stroju specjalnym), a nadpisanie dotyczy tylko tego wywołania', () => {
+      const seed = 'kasjer-mundur-2';
+      const green = factory.createWithOutfit(seed, 'men-suit', { top: PALETTE.brand.green });
+      const plain = factory.createWithOutfit(seed, 'men-suit');
+      const king = factory.createWithOutfit(seed, 'special-men-king');
+      expect(topOf(green)).toBe(hex(PALETTE.brand.green));
+      expect(topOf(plain)).toBe(hex(pickAppearance(seed).top));
+      expect(topOf(king)).toBe(hex(pickAppearance(seed).top));
+      expect(topOf(king)).not.toBe(hex(PALETTE.brand.green));
+      for (const c of [green, plain, king]) c.dispose();
+    });
+
+    it('klient nigdy nie dostaje zieleni marki w górze (personel nosi brand.green, klient nie): wygląd z seeda i postać z create', () => {
+      expect(PALETTE.clothes.map(hex)).not.toContain(hex(PALETTE.brand.green));
+      for (let i = 0; i < 500; i++) expect(hex(pickAppearance(`klient-zielen-${i}`).top), `klient-zielen-${i}`).not.toBe(hex(PALETTE.brand.green));
+      for (let i = 0; i < 120; i++) {
+        const c = factory.create(`klient-zielen-${i}`);
+        expect(topOf(c), `klient-zielen-${i}`).not.toBe(hex(PALETTE.brand.green));
+        c.dispose();
+      }
+    });
+  });
 });

@@ -2,7 +2,7 @@ import { MathUtils, type Object3D } from 'three';
 import { SIM_STEP, type Agent, type Crowd } from '@/sim/crowd/crowd';
 import { CELL_SIZE_M } from '@/sim/grid';
 import type { StoreLayout } from '@/sim/store/types';
-import { BLOB_RADIUS, type BlobShadows } from './characters/blobShadows';
+import { characterBlobRadii, type BlobShadows } from './characters/blobShadows';
 import type { CharacterFactory, CharacterInstance } from './characters/characterFactory';
 import { walkTimeScale } from './characters/walkSpeed';
 import { cellToWorld } from './coords';
@@ -33,9 +33,19 @@ interface Tracked {
 }
 
 /** Obrót obiektu (przód postaci to +z), żeby patrzyła w kierunku `heading` agenta (0 = +x siatki = +x świata). */
-const headingToYaw = (heading: number): number => Math.PI / 2 - heading;
+export const headingToYaw = (heading: number): number => Math.PI / 2 - heading;
 
 const wrapAngle = (a: number): number => MathUtils.euclideanModulo(a + Math.PI, Math.PI * 2) - Math.PI;
+
+/**
+ * Jeden krok wygładzonego obrotu: nowy obrót (rad) bliżej `targetYaw`, najkrótszą drogą, wykładniczo (TURN_SMOOTHING), ale nie
+ * szybciej niż TURN_RATE_MAX. `dt` to czas ramki w sekundach gry (0 przy pauzie: bez obrotu). Wspólne dla tłumu i kasjera.
+ */
+export function turnTowards(yaw: number, targetYaw: number, dt: number): number {
+  const diff = wrapAngle(targetYaw - yaw);
+  const limit = TURN_RATE_MAX * dt;
+  return yaw + MathUtils.clamp(diff * (1 - Math.exp(-TURN_SMOOTHING * dt)), -limit, limit);
+}
 
 /**
  * Rysuje tłum z symulacji: jedna postać (`CharacterFactory`) na agenta, tworzona przy pojawieniu się `agent.id`
@@ -128,8 +138,8 @@ export class CrowdView {
     let i = 0;
     for (const t of this.tracked.values()) {
       const o = t.character.object;
-      const k = BLOB_RADIUS / Math.max(1e-6, o.scale.y);
-      this.shadows.set(i++, o.position.x, o.position.z, o.scale.x * k, o.scale.z * k);
+      const [rx, rz] = characterBlobRadii(o);
+      this.shadows.set(i++, o.position.x, o.position.z, rx, rz);
     }
     this.shadows.commit(i);
   }
@@ -177,9 +187,7 @@ export class CrowdView {
     }
     t.character.update(t.anim === 'walk' ? animDt * t.walkScale : animDt);
 
-    const diff = wrapAngle(headingToYaw(agent.heading) - t.yaw);
-    const limit = TURN_RATE_MAX * frameDt;
-    t.yaw += MathUtils.clamp(diff * (1 - Math.exp(-TURN_SMOOTHING * frameDt)), -limit, limit);
+    t.yaw = turnTowards(t.yaw, headingToYaw(agent.heading), frameDt);
   }
 
   private place(t: Tracked, alpha: number): void {

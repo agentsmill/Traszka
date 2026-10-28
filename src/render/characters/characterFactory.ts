@@ -23,16 +23,27 @@ export interface CharacterInstance {
   readonly isFallback: boolean;
 }
 
+/** Co kasjer może mieć inaczej niż w wyglądzie z seeda: mundur (kolor góry). */
+export type OutfitOverrides = Partial<Pick<Appearance, 'top'>>;
+
 export interface CharacterFactory {
   /** Klient: wygląd i strój zwykły (nigdy specjalny) z seeda. */
   create(appearanceSeed: string): CharacterInstance;
   /**
    * Kasjer gracza: wygląd (skóra, włosy, ubranie, wzrost, szerokość) z seeda jak w `create`, ale w wybranym stroju, zwykłym albo
-   * specjalnym (`OutfitFile`). Ten sam seed daje tę samą twarz i kolory w każdym stroju. Kasjer nie nosi akcesoriów klientów
-   * (plecak, torba, telefon): zasłaniałyby strój, a męski strój Adventurer ma własny plecak. Gdy plik stroju się nie wczytał, kasjer
-   * dostaje strój zwykły tej samej płci (z ostrzeżeniem, jednym na strój), a gdy nie wczytało się nic, postać zastępczą.
+   * specjalnym (`OutfitFile`). Ten sam seed daje tę samą twarz i kolory w każdym stroju. `overrides` nadpisuje część wyglądu
+   * (mundur: kolor góry), np. strój zwykły kasjera w zieleni marki, której klient nigdy nie dostaje. Kasjer nie nosi akcesoriów
+   * klientów (plecak, torba, telefon): zasłaniałyby strój, a męski strój Adventurer ma własny plecak. Synchroniczne: strój
+   * specjalny musi być już gotowy (`ensureOutfit`), inaczej kasjer dostaje strój zwykły tej samej płci (bez wyjątku). Tak samo,
+   * gdy plik stroju się nie wczytał (z ostrzeżeniem, jednym na strój); gdy nie wczytało się nic, daje postać zastępczą.
    */
-  createWithOutfit(appearanceSeed: string, outfit: OutfitFile): CharacterInstance;
+  createWithOutfit(appearanceSeed: string, outfit: OutfitFile, overrides?: OutfitOverrides): CharacterInstance;
+  /**
+   * Przygotowuje strój dla `createWithOutfit`: zwykły jest gotowy od razu, specjalny (ruling R40) wczytuje się i buduje dopiero
+   * tutaj, raz na strój (równoległe wywołania dzielą jedną obietnicę). Nigdy nie odrzuca: gdy pliku nie ma, jest ostrzeżenie,
+   * a `createWithOutfit` daje strój zwykły; kolejne wywołanie próbuje jeszcze raz.
+   */
+  ensureOutfit(outfit: OutfitFile): Promise<void>;
   /**
    * Prędkość stopy podporowej w klipie chodu, m/s dla modelu bazowego (postać skalowana w poziomie o `s` ma na podłodze
    * `walkSpeedMps · s`). Jedyne źródło tej liczby: tłum (CrowdView) dobiera po niej tempo klipu do prędkości agenta.
@@ -129,7 +140,8 @@ function assemble(variant: Variant, a: Appearance, seed: string): CharacterInsta
 }
 
 /**
- * Fabryka postaci. Wczytuje (i buduje warianty) z góry, więc `create` jest synchroniczne i tanie.
+ * Fabryka postaci. Wczytuje (i buduje warianty) strojów zwykłych z góry, więc `create` jest synchroniczne i tanie; stroje
+ * specjalne kasjera dochodzą na żądanie przez `ensureOutfit`.
  * Gdy modele się nie wczytają (404, uszkodzone pliki), zwraca fabrykę postaci zastępczych (kapsuła + kula) i nie rzuca;
  * pojedyncze brakujące pliki (jeden strój) są pomijane z ostrzeżeniem.
  */
@@ -140,10 +152,16 @@ export async function createCharacterFactory(load: typeof loadGLB = loadGLB): Pr
   } catch (error) {
     console.warn('Postacie: nie udało się zbudować modeli.', error);
   }
-  const fallback = (seed: string): CharacterInstance => createFallbackCharacter(pickAppearance(seed));
+  const fallback = (seed: string, overrides?: OutfitOverrides): CharacterInstance => createFallbackCharacter({ ...pickAppearance(seed), ...overrides });
   if (!pack) {
     console.warn('Postacie: używam postaci zastępczych.');
-    return { create: fallback, createWithOutfit: fallback, walkSpeedMps: WALK_SPEED_MPS, dispose() {} };
+    return {
+      create: (seed) => fallback(seed),
+      createWithOutfit: (seed, _outfit, overrides) => fallback(seed, overrides),
+      ensureOutfit: async () => {},
+      walkSpeedMps: WALK_SPEED_MPS,
+      dispose() {},
+    };
   }
   const loaded = pack;
   // Kasjer powstaje od nowa przy każdej zmianie wyglądu, więc brak pliku stroju ostrzega raz na strój, nie przy każdym wywołaniu.
@@ -159,9 +177,10 @@ export async function createCharacterFactory(load: typeof loadGLB = loadGLB): Pr
         return fallback(seed);
       }
     },
-    createWithOutfit(seed, outfit) {
+    ensureOutfit: (outfit) => loaded.ensure(outfit),
+    createWithOutfit(seed, outfit, overrides) {
       try {
-        const a: Appearance = { ...pickAppearance(seed), accessory: 'none' };
+        const a: Appearance = { ...pickAppearance(seed), accessory: 'none', ...overrides };
         let variant = loaded.variantOf(outfit);
         if (!variant) {
           if (!warnedMissing.has(outfit)) {
@@ -173,7 +192,7 @@ export async function createCharacterFactory(load: typeof loadGLB = loadGLB): Pr
         return assemble(variant, a, seed);
       } catch (error) {
         console.warn('Postacie: nie udało się zbudować postaci, używam zastępczej.', error);
-        return fallback(seed);
+        return fallback(seed, overrides);
       }
     },
     dispose() {

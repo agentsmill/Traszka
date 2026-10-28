@@ -6,7 +6,7 @@ import { generateStore } from '@/sim/store/generateStore';
 import type { CharacterFactory, CharacterInstance } from './characters/characterFactory';
 import { cellToWorld } from './coords';
 import { BLOB_RADIUS, createBlobShadows } from './characters/blobShadows';
-import { ANIM_SPEED_CAP, CrowdView, TURN_RATE_MAX } from './crowdView';
+import { ANIM_SPEED_CAP, CrowdView, TURN_RATE_MAX, headingToYaw, turnTowards } from './crowdView';
 
 /** Fabryka-atrapa: postać to pusta grupa, a wywołania zapisujemy. `walkSpeedMps` to prędkość stopy w klipie (jedyne źródło dla tłumu). */
 function fakeFactory(scale = 1, walkSpeedMps = 1.15) {
@@ -25,6 +25,7 @@ function fakeFactory(scale = 1, walkSpeedMps = 1.15) {
       return character;
     },
     createWithOutfit() { throw new Error('tłum nie tworzy kasjera'); },
+    ensureOutfit: () => Promise.resolve(),
   };
   return { factory, made };
 }
@@ -293,6 +294,7 @@ describe('CrowdView: plamy cienia i polityka cieni (zadanie 16)', () => {
         return { object, outfit: null, setAnim: vi.fn(), update: vi.fn(), dispose: vi.fn(() => object.removeFromParent()), isFallback: false };
       },
       createWithOutfit() { throw new Error('tłum nie tworzy kasjera'); },
+      ensureOutfit: () => Promise.resolve(),
     };
   }
   const castOf = (parent: Object3D): boolean[] => {
@@ -347,3 +349,28 @@ describe('CrowdView: plamy cienia i polityka cieni (zadanie 16)', () => {
   });
 });
 
+describe('turnTowards (obrót wspólny dla tłumu i kasjera)', () => {
+  const dt = SIM_STEP;
+
+  it('zbliża obrót do celu, ale nie szybciej niż TURN_RATE_MAX rad/s, i nie przestrzeliwuje', () => {
+    const next = turnTowards(0, 3, dt);   // blisko zawrócenia (π to rozstrzygnięcie remisu, nie wartość testowa)
+    expect(next).toBeGreaterThan(0);
+    expect(next).toBeLessThanOrEqual(TURN_RATE_MAX * dt + 1e-12);
+    expect(turnTowards(0, 0.001, dt)).toBeGreaterThan(0);
+    expect(turnTowards(0, 0.001, dt)).toBeLessThanOrEqual(0.001);
+    let yaw = 0;
+    for (let i = 0; i < 300; i++) yaw = turnTowards(yaw, 1.3, dt);
+    expect(yaw).toBeCloseTo(1.3, 6);
+  });
+
+  it('idzie najkrótszą drogą przez szew ±π i nie rusza się, gdy czas stoi (pauza)', () => {
+    expect(turnTowards(3, -3, dt)).toBeGreaterThan(3);      // przez π, a nie przez 0
+    expect(turnTowards(-3, 3, dt)).toBeLessThan(-3);
+    expect(turnTowards(1, 2, 0)).toBe(1);
+  });
+
+  it('headingToYaw: heading 0 (+x siatki) to obrót π/2, a π/2 (+z) to obrót 0', () => {
+    expect(headingToYaw(0)).toBeCloseTo(Math.PI / 2, 12);
+    expect(headingToYaw(Math.PI / 2)).toBeCloseTo(0, 12);
+  });
+});

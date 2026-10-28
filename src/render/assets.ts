@@ -26,7 +26,7 @@ export const ASSETS: {
       '/assets/characters/women-worker.glb',
       '/assets/characters/women-punk.glb',
     ],
-    /** Stroje specjalne: tylko dla kasjera gracza (`factory.createWithOutfit`), klienci ich nie dostają. */
+    /** Stroje specjalne: tylko dla kasjera gracza (`factory.createWithOutfit`), klienci ich nie dostają. Wczytują się na żądanie (`factory.ensureOutfit`), nie na starcie. */
     special: [
       '/assets/characters/special-men-spacesuit.glb',
       '/assets/characters/special-men-king.glb',

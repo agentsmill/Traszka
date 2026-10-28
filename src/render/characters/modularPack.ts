@@ -19,7 +19,8 @@ import { FIXED_BASE, PALETTE_SIZE, REGION, type RegionName } from './characterMa
  *
  * Stroje dzielą się na zwykłe (`ASSETS.characters.modular`: dostają je klienci, losowo spośród strojów swojej płci) i specjalne
  * (`ASSETS.characters.special`: kosmonauta, król, SWAT itd., tylko dla kasjera gracza przez `variantOf`). `variantFor` nigdy
- * nie zwraca stroju specjalnego.
+ * nie zwraca stroju specjalnego. Zwykłe wczytują się na starcie, specjalne dopiero na żądanie (`ensure`, ruling R40: pliki
+ * specjalne to ~1,9 MB, a większość graczy ma strój zwykły), więc gra pobiera tylko strój wybranego kasjera.
  */
 
 export type Loader = typeof loadGLB;
@@ -372,16 +373,45 @@ export function outfitPart(mesh: Object3D): OutfitPart | 'pistol' | undefined {
 
 // --- Budowa paczki ------------------------------------------------------------------------------------------------
 
+/**
+ * Buduje wariant stroju `file` z wczytanego pliku: siatki scalone w jedną geometrię z regionami wg `OUTFIT_PAINT`, szkielet i klipy.
+ * Null, gdy plik nie ma klipów `Idle` i `Walk` albo żadnej siatki postaci.
+ */
+export function buildVariant(file: OutfitFile, gltf: GLTF): Variant | null {
+  const idle = findClip(gltf.animations, 'Idle'), walk = findClip(gltf.animations, 'Walk');
+  const meshes = skinnedMeshesOf(gltf.scene).filter((m) => outfitPart(m) !== 'pistol');
+  if (!idle || !walk || meshes.length === 0) return null;
+  const rig = extractRig(gltf.scene, meshes[0]);
+  const rules: Partial<Record<PaintKey, RegionName>> = OUTFIT_PAINT[file] ?? {};
+  const acc = new MeshAccumulator();
+  for (const mesh of meshes) {
+    const mat = (Array.isArray(mesh.material) ? mesh.material[0] : mesh.material) as MeshStandardMaterial;
+    const rule = rules[`${outfitPart(mesh)}:${mat.name}` as PaintKey];
+    const region = /^skin/i.test(mat.name) ? REGION.skin : rule !== undefined ? REGION[rule] : acc.fixedRegion(mat.color);
+    acc.add(mesh, jointMapFor(mesh, rig), region);
+  }
+  return finishVariant(acc, rig, idle, walk, file);
+}
+
 export interface ModularPack {
-  /** Wszystkie wczytane stroje, także specjalne (do zwalniania pamięci podręcznej geometrii). */
-  variants: readonly Variant[];
+  /**
+   * Wszystkie dotąd zbudowane stroje, także specjalne (do zwalniania pamięci podręcznej geometrii). To żywy widok: stroje
+   * dobudowane później przez `ensure` pojawiają się na liście, więc `dispose` fabryki zwolni i ich geometrie.
+   */
+  readonly variants: readonly Variant[];
   /**
    * Strój klienta dla wyglądu: losowy spośród strojów ZWYKŁYCH danej płci (gdy żadnego nie wczytano, spośród wszystkich zwykłych).
    * Nigdy nie zwraca stroju specjalnego.
    */
   variantFor(a: Appearance, rng: Rng): Variant;
-  /** Strój o danej nazwie, zwykły albo specjalny (kasjer); undefined, gdy jego plik się nie wczytał. */
+  /** Strój o danej nazwie, zwykły albo specjalny (kasjer); undefined, gdy go nie ma: nie wczytał się albo specjalny nie był jeszcze żądany (`ensure`). */
   variantOf(outfit: OutfitFile): Variant | undefined;
+  /**
+   * Wczytuje i buduje strój specjalny (zwykłe i nieznane wracają od razu). Raz na strój: równoległe wywołania dostają tę samą
+   * obietnicę, a gotowy strój nie jest pobierany ponownie. Nigdy nie odrzuca: gdy pliku nie ma albo nie da się go zbudować, jest
+   * jedno ostrzeżenie, strój zostaje nieobecny (`variantOf` daje undefined), a kolejne `ensure` próbuje jeszcze raz.
+   */
+  ensure(outfit: OutfitFile): Promise<void>;
 }
 
 /** Wczytuje pliki; nieudane dają null (i jedno ostrzeżenie na całość), bez rzucania. */
@@ -395,40 +425,49 @@ async function loadAll(load: Loader, urls: string[]): Promise<(GLTF | null)[]> {
 }
 
 /**
- * Wczytuje stroje z `ASSETS.characters.modular` (klienci) i `ASSETS.characters.special` (kasjer). Zwraca null, gdy żaden strój
- * zwykły się nie wczytał (wtedy fabryka daje postacie zastępcze: bez strojów klientów pack nie ma po co istnieć).
+ * Wczytuje stroje z `ASSETS.characters.modular` (klienci i kasjer). Stroje specjalne (`ASSETS.characters.special`) dochodzą dopiero
+ * przez `ModularPack.ensure`. Zwraca null, gdy żaden strój zwykły się nie wczytał (wtedy fabryka daje postacie zastępcze: bez
+ * strojów klientów pack nie ma po co istnieć).
  */
 export async function buildModularPack(load: Loader): Promise<ModularPack | null> {
   const regular = ASSETS.characters.modular;
-  const files = [...regular, ...ASSETS.characters.special];
-  const gltfs = await loadAll(load, files);
+  const gltfs = await loadAll(load, regular);
   const byBody: Record<Appearance['body'], Variant[]> = { male: [], female: [] };
   const byOutfit = new Map<OutfitFile, Variant>();
-  files.forEach((url, i) => {
+  regular.forEach((url, i) => {
     const gltf = gltfs[i];
-    if (!gltf) return;
     const file = outfitOfPath(url);
-    const idle = findClip(gltf.animations, 'Idle'), walk = findClip(gltf.animations, 'Walk');
-    const meshes = skinnedMeshesOf(gltf.scene).filter((m) => outfitPart(m) !== 'pistol');
-    if (!idle || !walk || meshes.length === 0) return;
-    const rig = extractRig(gltf.scene, meshes[0]);
-    const rules: Partial<Record<PaintKey, RegionName>> = OUTFIT_PAINT[file] ?? {};
-    const acc = new MeshAccumulator();
-    for (const mesh of meshes) {
-      const mat = (Array.isArray(mesh.material) ? mesh.material[0] : mesh.material) as MeshStandardMaterial;
-      const rule = rules[`${outfitPart(mesh)}:${mat.name}` as PaintKey];
-      const region = /^skin/i.test(mat.name) ? REGION.skin : rule !== undefined ? REGION[rule] : acc.fixedRegion(mat.color);
-      acc.add(mesh, jointMapFor(mesh, rig), region);
-    }
-    const variant = finishVariant(acc, rig, idle, walk, file);
+    const variant = gltf ? buildVariant(file, gltf) : null;
+    if (!variant) return;
     byOutfit.set(file, variant);
-    if (i < regular.length) byBody[outfitBody(file)].push(variant);   // klienci dostają tylko stroje zwykłe
+    byBody[outfitBody(file)].push(variant);   // klienci dostają tylko stroje zwykłe
   });
   const customers = [...byBody.male, ...byBody.female];
   if (customers.length === 0) return null;
+
+  const specialUrl = new Map(ASSETS.characters.special.map((url) => [outfitOfPath(url), url]));
+  const pending = new Map<OutfitFile, Promise<void>>();
+  const ensure = (outfit: OutfitFile): Promise<void> => {
+    const url = specialUrl.get(outfit);
+    if (!url || byOutfit.has(outfit)) return Promise.resolve();
+    let started = pending.get(outfit);
+    if (!started) {
+      started = loadAll(load, [url])
+        .then(([gltf]) => {
+          const variant = gltf ? buildVariant(outfit, gltf) : null;
+          if (variant) byOutfit.set(outfit, variant);
+          else if (gltf) console.warn(`Postacie: plik stroju ${outfit} nie ma klipów Idle i Walk albo siatki postaci.`);
+        })
+        .catch((error: unknown) => console.warn(`Postacie: nie udało się zbudować stroju ${outfit}.`, error))
+        .finally(() => pending.delete(outfit));
+      pending.set(outfit, started);
+    }
+    return started;
+  };
   return {
-    variants: [...byOutfit.values()],
+    get variants() { return [...byOutfit.values()]; },
     variantFor: (a, rng) => rng.pick(byBody[a.body].length ? byBody[a.body] : customers),
     variantOf: (outfit) => byOutfit.get(outfit),
+    ensure,
   };
 }
