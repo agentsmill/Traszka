@@ -14,9 +14,9 @@ import { createBlobShadows } from '@/render/characters/blobShadows';
 import { MAX_FRAME_DT, advanceClock, clockAlpha } from '@/game/loop';
 import { randomSeed } from '@/game/seedWords';
 import {
-  BROKEN_SAVE_NOTICE, BROKEN_SAVE_NOTICE_NO_COPY, NEWER_SAVE_NOTICE, createSession, discardSave, lastSavedSeed, quarantineSave, retireSession,
-  reviveSession, saveSession, syncLayout, type GameSession,
+  NEWER_SAVE_NOTICE, createSession, discardSave, lastSavedSeed, retireSession, reviveSession, saveSession, syncLayout, type GameSession,
 } from '@/game/session';
+import { openStore } from '@/game/openStore';
 import { addToNetwork, claimDaily, loadMeta, partnerOf, saveMeta, startupWindow, type Meta } from '@/game/meta';
 import { rankFor } from '@/sim/economy/progress';
 import { play, buzz, setSound, setVibration, type Sfx } from '@/ui/sfx';
@@ -274,20 +274,9 @@ function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: st
   setSound(meta.sound);
   setVibration(meta.vibration);
   if (meta.readOnly) postNotice(NEWER_SAVE_NOTICE);   // meta z nowszej wersji gry: nic jej nie nadpisze w tej karcie
-  // createSession nie rzuca z powodu zapisu: uszkodzony trafia do kopii, a gra startuje od zera z komunikatem (loadNotice).
-  // Gdyby rzuciła z powodu samego seeda (generator nie dał sklepu), zaczynamy w sklepie o losowym seedzie.
+  // Sesja powstaje dopiero przy otwieraniu świata (openStore niżej): dopiero wtedy wiadomo, czy zapis dało się użyć i czy świat
+  // z niego stanął. Benchmark nie ma sesji.
   let session: GameSession | null = null;
-  if (!benchMode) {
-    try {
-      session = createSession(initialSeed, params.get('new') === '1', partnerOf(meta));
-    } catch (error) {
-      console.error(`Nie udało się otworzyć sklepu „${initialSeed}”.`, error);
-      session = createSession(randomSeed(), true, partnerOf(meta));
-      session.loadNotice = `Nie udało się otworzyć sklepu „${initialSeed}”. Zaczynamy w nowym.`;
-    }
-  }
-  const startSeed = session?.seed ?? initialSeed;
-  if (session?.loadNotice) postNotice(session.loadNotice);
   const persist = (): void => {
     if (!session) return;
     saveSession(session);   // sklep tymczasowy się nie zapisuje
@@ -648,7 +637,7 @@ function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: st
   });
 
   // stan startowy dla nakładki (świat startuje z prędkością ×1)
-  ui.seed.value = startSeed;
+  ui.seed.value = initialSeed;
   ui.speed.value = 1;
   ui.timeOfDay.value = tod;
   ui.preset.value = ctx.preset;
@@ -676,29 +665,23 @@ function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: st
     randomize: () => setSeed(randomSeed()),
   };
 
-  try {
-    load(startSeed);
-  } catch (error) {
-    // Świat się nie zbudował. Bez wyjścia awaryjnego odświeżenie powtarzałoby ten sam wyjątek w nieskończoność.
-    if (!session) throw error;
-    console.error('Nie udało się zbudować sklepu.', error);
-    if (session.fromSave) {
-      // zapis przeszedł walidację, a świat i tak się z niego nie zbudował (nietypowy układ): kopia, gra od zera
-      const backedUp = quarantineSave(session.seed);
-      session = createSession(session.seed, true, partnerOf(meta));
-      session.loadNotice = backedUp ? BROKEN_SAVE_NOTICE : BROKEN_SAVE_NOTICE_NO_COPY;
-    } else {
-      // problem w samym seedzie (nowa gra): sklep o losowym seedzie
-      const failed = session.seed;
-      session = createSession(randomSeed(), true, partnerOf(meta));
-      session.loadNotice = `Nie udało się otworzyć sklepu „${failed}”. Zaczynamy w nowym.`;
-    }
-    postNotice(session.loadNotice);
+  if (benchMode) {
+    load(initialSeed);   // benchmark nie ma sesji ani zapisu: wyjątek idzie dalej
+  } else {
+    // Zapis, który przeszedł walidację, nie przepada z powodu świata, który się nie zbudował (openStore: druga próba z układem
+    // z seeda, potem sklep tymczasowy); do kopii idzie tylko zapis, którego nie da się przeczytać. Każda nieudana próba budowy
+    // sprząta po sobie scenę (loadStore), więc kolejna zaczyna od czystej.
+    session = openStore({
+      seed: initialSeed, fresh: params.get('new') === '1', partner: partnerOf(meta), randomSeed,
+      build: (opening) => { session = opening; load(opening.seed); },
+    });
     ui.seed.value = session.seed;
-    load(session.seed);
+    if (session.loadNotice) postNotice(session.loadNotice);
   }
   if (session) {
-    writeSeedToUrl(session.seed);   // adres dopiero po tym, jak świat stoi
+    // Adres dopiero po tym, jak świat stoi. Sklep tymczasowy o innym seedzie niż ten, o który prosił adres, go nie przepisuje:
+    // odświeżenie ma wrócić do sklepu gracza (jego zapis jest cały), a nie utknąć w zastępczym.
+    if (!session.ephemeral || session.seed === initialSeed) writeSeedToUrl(session.seed);
     publish();
     // nic się nie zapisuje, dopóki gracz nie kliknie „Odbierz!”; po wypowiedzeniu umowy wstaje samo okno końca gry
     const start = startupWindow(meta, session.econ, session.ephemeral, new Date());

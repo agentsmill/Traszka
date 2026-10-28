@@ -1,16 +1,45 @@
 import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CAT_INFO, CATS, CREDIT_LIMIT, MINUTES_PER_DAY, OPEN_FROM, PALLET_ITEMS } from '@/sim/economy/catalog';
-import { buyEquipment, buyUpgrade, startRemont, stepMinute, tapPallet, type EconEvent, type EconomyState } from '@/sim/economy/economy';
+import { buyEquipment, buyUpgrade, effects, startRemont, stepMinute, tapPallet, type EconEvent, type EconomyState } from '@/sim/economy/economy';
 import { LIMITS } from '@/sim/economy/sanitize';
 import { computeStoreInfo } from '@/sim/economy/storeInfo';
 import { REMONTS } from '@/sim/economy/upgrades';
 import { GENERATOR_VERSION, generateStore } from '@/sim/store/generateStore';
 import { MemoryStorage } from './memoryStorage';
 import {
-  BROKEN_SAVE_NOTICE, NEWER_SAVE_NOTICE, SAVE_SCHEMA, createSession, deleteSave, discardSave, lastSavedSeed, layoutFor, quarantineSave,
-  retireSession, reviveSession, saveSession, syncLayout, type GameSession,
+  BROKEN_SAVE_NOTICE, NEWER_SAVE_NOTICE, SAVE_SCHEMA, UNBUILDABLE_SAVE_NOTICE, createSession, deleteSave, discardSave, hasStoredSave,
+  lastSavedSeed, layoutFor, retireSession, reviveSession, saveSession, syncLayout, withLayoutFromSeed, type GameSession,
 } from './session';
+
+/**
+ * Awarie świata do testów: układ, z którego `computeStoreInfo` się wywraca, i seedy, dla których generator nie daje sklepu.
+ * Poza tymi dwoma miejscami moduły są prawdziwe.
+ */
+const faults = vi.hoisted(() => ({
+  infoThrows: null as ((layout: { generatorVersion: number; width: number }) => boolean) | null,
+  generatorThrowsFor: new Set<string>(),
+}));
+vi.mock('@/sim/economy/storeInfo', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/sim/economy/storeInfo')>();
+  return {
+    ...actual,
+    computeStoreInfo: (layout: Parameters<typeof actual.computeStoreInfo>[0]) => {
+      if (faults.infoThrows?.(layout)) throw new Error('computeStoreInfo: układ nie do użycia');
+      return actual.computeStoreInfo(layout);
+    },
+  };
+});
+vi.mock('@/sim/store/generateStore', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/sim/store/generateStore')>();
+  return {
+    ...actual,
+    generateStore: (seed: string, ...rest: Parameters<typeof actual.generateStore> extends [string, ...infer R] ? R : never) => {
+      if (faults.generatorThrowsFor.has(seed)) throw new Error(`generateStore: brak układu dla ${seed}`);
+      return actual.generateStore(seed, ...rest);
+    },
+  };
+});
 
 const BLOK = 'kiełbasa-42';
 const PAWILON = 'traszka-1';
@@ -18,9 +47,13 @@ const key = (seed: string): string => `traszka:save:${seed}`;
 const text = (name: string): string => readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8');
 const gameVersion = (JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as { version: string }).version;
 
+const effectsBackroomCap = (s: GameSession): number => effects(s.econ, s.info).backroomCap;
+
 let storage: MemoryStorage;
 let errorLog: ReturnType<typeof vi.spyOn>;
 beforeEach(() => {
+  faults.infoThrows = null;
+  faults.generatorThrowsFor.clear();
   storage = new MemoryStorage();
   vi.stubGlobal('localStorage', storage);
   errorLog = vi.spyOn(console, 'error').mockImplementation(() => {});   // wczytanie uszkodzonego zapisu loguje przyczynę
@@ -178,6 +211,9 @@ describe('migracja zapisu v1 (sam stan ekonomii, bez układu)', () => {
       for (const e of s.econ.equipment) expect(s.info.slots.some((x) => x.id === e.slot), String(e.slot)).toBe(true);
       expect(s.econ.pallets.length).toBeGreaterThan(0);
 
+      // samo wczytanie niczego nie zapisuje (zapis dobry zostaje, jakim był, dopóki świat nie stanie); pierwszy zapis robi v2
+      expect(storage.getItem(key(seed))).toBe(text(file));
+      saveSession(s);
       const saved = JSON.parse(storage.getItem(key(seed))!) as { schema: number; seed: string; layout: unknown; econ: unknown };
       expect(saved.schema).toBe(2);
       expect(saved.seed).toBe(seed);
@@ -310,14 +346,6 @@ describe('uszkodzone zapisy', () => {
     const loaded = createSession(BLOK);
     expect(loaded.loadNotice).toBeNull();
     expectPlayable(loaded);
-  });
-
-  it('quarantineSave: kopiuje zapis do :broken i zwalnia miejsce; bez zapisu nie ma czego kopiować', () => {
-    expect(quarantineSave(BLOK)).toBe(false);
-    storage.setItem(key(BLOK), 'x');
-    expect(quarantineSave(BLOK)).toBe(true);
-    expect(storage.getItem(`${key(BLOK)}:broken`)).toBe('x');
-    expect(storage.getItem(key(BLOK))).toBeNull();
   });
 
   it('gdy kopii nie da się zapisać, komunikat nie obiecuje kopii', () => {
@@ -473,5 +501,168 @@ describe('zapis z nowszej wersji gry (schemat wyższy niż obsługiwany)', () =>
     expect(restarted.fromSave).toBe(false);
     saveSession(restarted);
     expect(storage.getItem(key(BLOK))).toBe(raw);
+  });
+});
+
+describe('zapis, który przeszedł walidację, ale z którego nie da się zbudować świata, nigdy nie idzie do :broken', () => {
+  /** Zagrany sklep na poziomie remontu 1, zapisany w kopercie v2; zwraca surowy zapis. */
+  const savedRemont = (): { raw: string; session: GameSession } => {
+    const s = createSession(BLOK, true);
+    s.econ.cash = 400_000;
+    s.econ.level = 12;
+    expect(startRemont(s.econ).ok).toBe(true);
+    syncLayout(s);
+    play(s, 5);
+    saveSession(s);
+    return { raw: storage.getItem(key(BLOK))!, session: s };
+  };
+  /** Ten sam zapis z oznaczonym układem (generatorVersion 777), który mock `computeStoreInfo` potrafi odrzucić. */
+  const markStoredLayout = (raw: string): string => {
+    const blob = JSON.parse(raw) as { layout: { generatorVersion: number } };
+    blob.layout.generatorVersion = 777;
+    const marked = JSON.stringify(blob);
+    storage.setItem(key(BLOK), marked);
+    return marked;
+  };
+  const baseWidth = layoutFor(BLOK, 0).width;
+
+  it('zapisany układ się nie buduje, układ z seeda tak: gra wraca na układzie z seeda z całym postępem, bez kopii', () => {
+    const { raw, session: played } = savedRemont();
+    markStoredLayout(raw);
+    faults.infoThrows = (l) => l.generatorVersion === 777;
+    const s = createSession(BLOK);
+    expect(s.fromSave).toBe(true);
+    expect(s.ephemeral).toBe(false);
+    expect(s.loadNotice).toBeNull();
+    expect(s.layout).toEqual(layoutFor(BLOK, 1));
+    expect(s.econ.cash).toBe(played.econ.cash);
+    expect(s.econ.level).toBe(played.econ.level);
+    expect(s.econ.remontLevel).toBe(1);
+    expect(storage.getItem(`${key(BLOK)}:broken`)).toBeNull();
+    // układ z seeda zastępuje w zapisie ten, który się nie budował, ale dopiero przy pierwszym zapisie (po zbudowaniu świata)
+    expect((JSON.parse(storage.getItem(key(BLOK))!) as { layout: { generatorVersion: number } }).layout.generatorVersion).toBe(777);
+    saveSession(s);
+    expect((JSON.parse(storage.getItem(key(BLOK))!) as { layout: { generatorVersion: number } }).layout.generatorVersion).toBe(GENERATOR_VERSION);
+    expectPlayable(s);
+  });
+
+  it('ani zapisany układ, ani układ z seeda się nie budują: sklep tymczasowy z komunikatem, a zapis zostaje bajt w bajt na swoim miejscu', () => {
+    const { raw } = savedRemont();
+    const marked = markStoredLayout(raw);
+    storage.setItem('traszka:last', BLOK);
+    faults.infoThrows = (l) => l.generatorVersion === 777 || l.width > baseWidth;   // sklep po remoncie nie wstaje, nowa gra tak
+    const s = createSession(BLOK);
+    expect(UNBUILDABLE_SAVE_NOTICE).toBe('Nie udało się zbudować Twojego sklepu — zapis jest bezpieczny, spróbuj odświeżyć stronę');
+    expect(s.loadNotice).toBe(UNBUILDABLE_SAVE_NOTICE);
+    expect(s.ephemeral).toBe(true);
+    expect(s.fromSave).toBe(false);
+    expect(s.seed).toBe(BLOK);
+    expect(s.layout.width).toBe(baseWidth);
+    expect(s.econ.minute).toBe(OPEN_FROM);
+    expect(storage.getItem(key(BLOK))).toBe(marked);
+    expect(storage.getItem(`${key(BLOK)}:broken`)).toBeNull();
+    saveSession(s);
+    discardSave(s);
+    expect(storage.getItem(key(BLOK))).toBe(marked);
+    expect(lastSavedSeed()).toBe(BLOK);
+    expectPlayable(s);
+  });
+
+  it('zapis v1 (bez układu), którego układ po remoncie się nie buduje: to samo, zapis nietknięty', () => {
+    const v1 = JSON.parse(text('save-v1-remont1.json')) as EconomyState;
+    const raw = JSON.stringify(v1);
+    storage.setItem(key(PAWILON), raw);
+    const base = layoutFor(PAWILON, 0).width;
+    faults.infoThrows = (l) => l.width > base;
+    const s = createSession(PAWILON);
+    expect(s.ephemeral).toBe(true);
+    expect(s.loadNotice).toBe(UNBUILDABLE_SAVE_NOTICE);
+    expect(storage.getItem(key(PAWILON))).toBe(raw);
+    expect(storage.getItem(`${key(PAWILON)}:broken`)).toBeNull();
+  });
+
+  it('generator nie daje sklepu dla tego seeda w ogóle: createSession rzuca, a zapis zostaje nietknięty', () => {
+    const raw = text('save-v1-blok-dzien40.json');
+    storage.setItem(key(BLOK), raw);
+    faults.generatorThrowsFor.add(BLOK);
+    expect(() => createSession(BLOK)).toThrow('generateStore');
+    expect(storage.getItem(key(BLOK))).toBe(raw);
+    expect(storage.getItem(`${key(BLOK)}:broken`)).toBeNull();
+    expect(hasStoredSave(BLOK)).toBe(true);
+    expect(hasStoredSave(PAWILON)).toBe(false);
+  });
+
+  it('nadal do :broken idzie to, co nie przeszło parsowania albo walidacji (zachowanie z poprzedniej rundy)', () => {
+    storage.setItem(key(BLOK), '{"ucięty');
+    const s = createSession(BLOK);
+    expect(s.loadNotice).toBe(BROKEN_SAVE_NOTICE);
+    expect(s.ephemeral).toBe(false);
+    expect(storage.getItem(`${key(BLOK)}:broken`)).toBe('{"ucięty');
+    expect(storage.getItem(key(BLOK))).toBeNull();
+  });
+});
+
+describe('withLayoutFromSeed (druga próba po nieudanej budowie świata w scenie)', () => {
+  /** Świeży sklep z dwiema paletami pod drzwiami i kasą samoobsługową w slocie. */
+  const withStock = (): GameSession => {
+    const s = createSession(BLOK, true);
+    s.econ.cash = 100_000;
+    s.econ.level = 9;
+    buyEquipment(s.econ, s.info, 'sco');
+    expect(s.econ.pallets.length).toBeGreaterThan(0);
+    expect(s.econ.equipment.some((e) => e.slot !== null)).toBe(true);
+    return s;
+  };
+
+  it('daje tę samą grę na układzie z seeda; gdy układ jest ten sam, palety i sprzęt stoją tam, gdzie stały', () => {
+    const played = withStock();
+    const before = JSON.stringify(played.econ);
+    const again = withLayoutFromSeed(played);
+    expect(again).not.toBe(played);
+    expect(again.layout).toEqual(layoutFor(BLOK, played.econ.remontLevel));
+    expect(JSON.stringify(again.econ)).toBe(before);
+    expect(again.fromSave).toBe(played.fromSave);
+    expect(again.ephemeral).toBe(false);
+    expect(again.econ).not.toBe(played.econ);
+    expect(JSON.stringify(played.econ)).toBe(before);   // sesja, która się nie udała, nie została zmieniona
+  });
+
+  it('gdy nowy układ nie ma miejsc, w których stały palety i sprzęt, ustawia je na istniejących', () => {
+    const played = withStock();
+    played.econ.pallets[0] = { ...played.econ.pallets[0]!, loc: 'sidewalk', spot: 40 };
+    played.econ.equipment.push({ id: 'bankomat', slot: 'slot-którego-nie-ma' });
+    const again = withLayoutFromSeed(played);
+    expect(again.econ.pallets.length).toBeGreaterThan(0);
+    for (const p of again.econ.pallets) expect(again.info.spots[p.loc][p.spot], `${p.loc}#${p.spot}`).toBeDefined();
+    for (const e of again.econ.equipment) expect(e.slot === null || again.info.slots.some((x) => x.id === e.slot), String(e.slot)).toBe(true);
+    expectPlayable(again);
+  });
+});
+
+describe('stan z zapisu pasuje do układu sklepu (palety, sprzęt i zapasy po ręcznej zmianie)', () => {
+  it('paleta w miejscu, którego nie ma, sprzęt w nieistniejącym slocie i zapas ponad pojemność: gra naprawia je przy wczytaniu', () => {
+    const played = playedSession(BLOK);
+    const blob = JSON.parse(storage.getItem(key(BLOK))!) as { econ: EconomyState };
+    blob.econ.pallets[0] = { ...blob.econ.pallets[0]!, loc: 'sidewalk', spot: 40 };
+    blob.econ.equipment.push({ id: 'bankomat', slot: 'nie-ma-takiego-slotu' });
+    blob.econ.shelf.napoje = 90_000;
+    blob.econ.backroom.nabial = 90_000;
+    storage.setItem(key(BLOK), JSON.stringify(blob));
+    const s = createSession(BLOK);
+    expect(s.loadNotice).toBeNull();
+    expect(s.econ.cash).toBe(played.econ.cash);
+    for (const p of s.econ.pallets) expect(s.info.spots[p.loc][p.spot], `${p.loc}#${p.spot}`).toBeDefined();
+    for (const e of s.econ.equipment) expect(e.slot === null || s.info.slots.some((x) => x.id === e.slot), String(e.slot)).toBe(true);
+    expect(s.econ.shelf.napoje).toBeLessThanOrEqual(s.info.shelfCap.napoje);
+    expect(CATS.reduce((n, c) => n + s.econ.backroom[c], 0)).toBeLessThanOrEqual(effectsBackroomCap(s));
+    expectPlayable(s);
+  });
+
+  it('prawdziwy zapis jest w porządku sam z siebie: wczytanie niczego nie przestawia (zapis i wczytanie dają ten sam stan)', () => {
+    for (const seed of [BLOK, PAWILON]) {
+      const s = playedSession(seed);
+      s.econ.cash += 1;   // coś zmienionego po zapisie nie ma znaczenia, liczy się zapisane
+      expect(JSON.stringify(createSession(seed).econ)).toBe(JSON.stringify(JSON.parse(storage.getItem(key(seed))!).econ));
+    }
   });
 });

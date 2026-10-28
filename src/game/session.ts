@@ -1,4 +1,5 @@
-import { createEconomy, fillQuests, relayout, type EconomyState } from '@/sim/economy/economy';
+import { CATS } from '@/sim/economy/catalog';
+import { createEconomy, effects, fillQuests, relayout, type EconomyState } from '@/sim/economy/economy';
 import { sanitizeEconomy } from '@/sim/economy/sanitize';
 import { computeStoreInfo, type StoreInfo } from '@/sim/economy/storeInfo';
 import { REMONTS } from '@/sim/economy/upgrades';
@@ -82,6 +83,7 @@ export interface SaveEnvelope {
 export const BROKEN_SAVE_NOTICE = 'Zapis sklepu był uszkodzony — zaczynamy od nowa. Kopia została w przeglądarce.';
 export const BROKEN_SAVE_NOTICE_NO_COPY = 'Zapis sklepu był uszkodzony — zaczynamy od nowa.';
 export const NEWER_SAVE_NOTICE = 'Zapis pochodzi z nowszej wersji gry — odśwież stronę';
+export const UNBUILDABLE_SAVE_NOTICE = 'Nie udało się zbudować Twojego sklepu — zapis jest bezpieczny, spróbuj odświeżyć stronę';
 
 /** Zapis w przeglądarce (localStorage). Błędy (tryb prywatny, brak miejsca) są ciche: gra działa dalej bez zapisu. */
 export function saveSession(s: GameSession): void {
@@ -146,11 +148,10 @@ function moveToBroken(seed: string, raw: string): boolean {
   return backedUp;
 }
 
-/** Odkłada obecny zapis sklepu do kopii (np. gdy po wczytaniu nie dało się zbudować świata). Zwraca, czy kopia powstała. */
-export function quarantineSave(seed: string): boolean {
+/** Czy pod seedem leży jakikolwiek zapis (poprawny, z nowszej wersji, uszkodzony). Gdy sklepu nie da się otworzyć, mówi, czy jest co chronić. */
+export function hasStoredSave(seed: string): boolean {
   try {
-    const raw = localStorage.getItem(SAVE_PREFIX + seed);
-    return raw === null ? false : moveToBroken(seed, raw);
+    return localStorage.getItem(SAVE_PREFIX + seed) !== null;
   } catch {
     return false;
   }
@@ -158,14 +159,19 @@ export function quarantineSave(seed: string): boolean {
 
 type ReadResult =
   | { status: 'none' }
-  | { status: 'ok'; session: GameSession; migrated: boolean }
+  | { status: 'ok'; session: GameSession }
   | { status: 'broken'; backedUp: boolean }
-  | { status: 'newer' };
+  | { status: 'newer' }
+  | { status: 'unbuildable' };
 
 /** Zapis z nowszej wersji gry: schemat wyższy niż ten, który umiemy czytać. Nie wiemy, co w nim jest, więc go nie ruszamy. */
 const isNewerSchema = (data: unknown): boolean => isRec(data) && typeof data.schema === 'number' && data.schema > SAVE_SCHEMA;
 
-/** Czyta zapis sklepu. Uszkodzonego nie naprawia na siłę: ląduje w kopii, a wołający zaczyna nową grę. */
+/**
+ * Czyta zapis sklepu. Do kopii (`:broken`) idzie tylko to, co nie przeszło parsowania albo walidacji: takiego zapisu nie
+ * naprawiamy na siłę, a wołający zaczyna nową grę. Zapis, który walidację przeszedł, a świat z niego się nie złożył
+ * (generator, układ), jest dobry: zostaje na miejscu, a wołający dostaje `unbuildable`.
+ */
 function readSave(seed: string, partner?: EconomyState['partner']): ReadResult {
   let raw: string | null;
   try {
@@ -178,53 +184,100 @@ function readSave(seed: string, partner?: EconomyState['partner']): ReadResult {
     const data = JSON.parse(raw) as unknown;
     if (isNewerSchema(data)) return { status: 'newer' };
     const opened = openSave(data, seed, partner);
-    if (opened) return { status: 'ok', ...opened };
+    if (opened.ok) return { status: 'ok', session: opened.session };
+    if (opened.reason === 'unbuildable') return { status: 'unbuildable' };
   } catch (error) {
     console.error(`Zapis sklepu „${seed}” nie dał się wczytać.`, error);
   }
   return { status: 'broken', backedUp: moveToBroken(seed, raw) };
 }
 
+type Opened = { ok: true; session: GameSession } | { ok: false; reason: 'invalid' | 'unbuildable' };
+
 /**
- * Sesja z zapisu w schemacie 2 albo 1, albo null, gdy zapisu nie da się użyć. Zapisany układ zostaje; schemat 1 i uszkodzony
- * układ dostają układ z seeda i poziomu remontu, dokładnie jak przed kopertą (`migrated`: warto zapisać od nowa).
+ * Czy stan ekonomii pasuje do układu: palety i sprzęt stoją w miejscach, które istnieją, a zapas mieści się na półkach i
+ * zapleczu. Prawdziwy zapis zawsze pasuje do swojego układu; nie pasuje po ręcznej zmianie albo po przejściu na inny
+ * układ (druga próba z seeda), i wtedy `relayout` ustawia wszystko od nowa.
  */
-function openSave(data: unknown, seed: string, partner?: EconomyState['partner']): { session: GameSession; migrated: boolean } | null {
-  if (!isRec(data)) return null;
+function fitsStore(econ: EconomyState, info: StoreInfo): boolean {
+  const eps = 1e-6;
+  return econ.pallets.every((p) => info.spots[p.loc][p.spot] !== undefined)
+    && econ.equipment.every((e) => e.slot === null || info.slots.some((slot) => slot.id === e.slot))
+    && CATS.every((c) => econ.shelf[c] <= info.shelfCap[c] + eps)
+    && CATS.reduce((n, c) => n + econ.backroom[c], 0) <= effects(econ, info).backroomCap + eps;
+}
+
+/**
+ * Sesja z zapisu w schemacie 2 albo 1. Zapisany układ zostaje; schemat 1 i uszkodzony układ dostają układ z seeda i poziomu
+ * remontu, dokładnie jak przed kopertą. Niczego nie zapisuje: nowy format (schemat 2, nowy układ) trafia do przeglądarki
+ * dopiero przy pierwszym `saveSession` po zbudowaniu świata, więc zapis zostaje, jakim był, gdyby świat nie stanął.
+ * Dwa rodzaje porażki:
+ * - `invalid`: zapis nie przeszedł walidacji (zła koperta, cudzy seed, lista tam, gdzie ma być obiekt…);
+ * - `unbuildable`: zapis jest poprawny, ale świata z niego nie dało się złożyć (generator, opis układu). Zapisany układ ma
+ *   wtedy jedną dodatkową próbę z układem z seeda; gdy i ta zawiedzie, zapis nie jest winny i nikt go nie rusza.
+ */
+function openSave(data: unknown, seed: string, partner?: EconomyState['partner']): Opened {
+  const invalid: Opened = { ok: false, reason: 'invalid' };
+  const unbuildable: Opened = { ok: false, reason: 'unbuildable' };
+  if (!isRec(data)) return invalid;
   let storedEcon: unknown;
   let storedLayout: unknown = null;
   if (data.schema === SAVE_SCHEMA) {
-    if (data.seed !== seed) return null;
+    if (data.seed !== seed) return invalid;
     storedEcon = data.econ;
     storedLayout = data.layout;
   } else if (data.schema === undefined && data.version === 1) {
     storedEcon = data;
   } else {
-    return null;
+    return invalid;
   }
-  if (!isRec(storedEcon)) return null;
+  if (!isRec(storedEcon)) return invalid;
 
-  let layout = sanitizeLayout(storedLayout);
-  const migrated = layout === null;
-  layout ??= layoutFor(seed, whole(storedEcon.remontLevel, 0, 0, REMONTS.length));
-  const info = computeStoreInfo(layout);
-  const econ = sanitizeEconomy(storedEcon, createEconomy(seed, info, partner));
-  if (!econ) return null;
-  if (partner) econ.partner = { ...partner };
-  fillQuests(econ, info);
+  const level = whole(storedEcon.remontLevel, 0, 0, REMONTS.length);
+  const stored = sanitizeLayout(storedLayout);
+  const parts = (known: StoreLayout | null): { layout: StoreLayout; info: StoreInfo; defaults: EconomyState } => {
+    const layout = known ?? layoutFor(seed, level);
+    const info = computeStoreInfo(layout);
+    return { layout, info, defaults: createEconomy(seed, info, partner) };
+  };
+  let world: ReturnType<typeof parts>;
+  try {
+    world = parts(stored);
+  } catch (error) {
+    console.error(`Układ sklepu „${seed}” nie dał się zbudować.`, error);
+    if (stored === null) return unbuildable;   // układ z seeda to już była druga próba
+    try {
+      world = parts(null);
+    } catch (again) {
+      console.error(`Układ sklepu „${seed}” z seeda też się nie zbudował.`, again);
+      return unbuildable;
+    }
+  }
+
+  const econ = sanitizeEconomy(storedEcon, world.defaults);
+  if (!econ) return invalid;
+  try {
+    if (partner) econ.partner = { ...partner };
+    fillQuests(econ, world.info);
+    if (!fitsStore(econ, world.info)) relayout(econ, world.info);
+  } catch (error) {
+    console.error(`Stan sklepu „${seed}” nie dał się dopasować do układu.`, error);
+    return unbuildable;
+  }
   return {
+    ok: true,
     session: {
-      seed, econ, layout, info, clock: { acc: 0 }, layoutLevel: econ.remontLevel, fromSave: true, loadNotice: null, retired: false,
-      ephemeral: false,
+      seed, econ, layout: world.layout, info: world.info, clock: { acc: 0 }, layoutLevel: econ.remontLevel, fromSave: true,
+      loadNotice: null, retired: false, ephemeral: false,
     },
-    migrated,
   };
 }
 
 /**
- * Nowa gra albo wczytana z zapisu (`fresh` pomija zapis). Nie rzuca z powodu zapisu: uszkodzony trafia do kopii, a sesja
- * jest nowa z `loadNotice` dla gracza; zapis z nowszej wersji gry zostaje na miejscu, a gracz dostaje sklep tymczasowy
- * (`ephemeral`). `partner` to premia z sieci sklepów (meta.ts): aktualna przy każdym wczytaniu. `options.ephemeral` zaczyna
+ * Nowa gra albo wczytana z zapisu (`fresh` pomija zapis). Nie rzuca z powodu zapisu: uszkodzony trafia do kopii, a sesja jest
+ * nowa z `loadNotice` dla gracza. Poprawny zapis, którego nie da się użyć (z nowszej wersji gry albo świat się z niego nie
+ * składa), zostaje na miejscu, a gracz dostaje sklep tymczasowy (`ephemeral`). Rzuca tylko wtedy, gdy generator nie daje
+ * sklepu dla seeda. `partner` to premia z sieci sklepów (meta.ts): aktualna przy każdym wczytaniu. `options.ephemeral` zaczyna
  * świeżą grę jako tymczasową („zacznij od nowa” w sklepie tymczasowym), bez zaglądania do zapisu.
  */
 export function createSession(seed: string, fresh = false, partner?: EconomyState['partner'], options: { ephemeral?: boolean } = {}): GameSession {
@@ -232,13 +285,14 @@ export function createSession(seed: string, fresh = false, partner?: EconomyStat
   let ephemeral = options.ephemeral === true;
   if (!fresh && !ephemeral) {
     const read = readSave(seed, partner);
-    if (read.status === 'ok') {
-      if (read.migrated) saveSession(read.session);
-      return read.session;
-    }
+    if (read.status === 'ok') return read.session;
     if (read.status === 'broken') loadNotice = read.backedUp ? BROKEN_SAVE_NOTICE : BROKEN_SAVE_NOTICE_NO_COPY;
     if (read.status === 'newer') {
       loadNotice = NEWER_SAVE_NOTICE;
+      ephemeral = true;
+    }
+    if (read.status === 'unbuildable') {
+      loadNotice = UNBUILDABLE_SAVE_NOTICE;
       ephemeral = true;
     }
   }
@@ -256,4 +310,17 @@ export function syncLayout(s: GameSession): boolean {
   s.layoutLevel = s.econ.remontLevel;
   relayout(s.econ, s.info);
   return true;
+}
+
+/**
+ * Ta sama gra na układzie zrobionym od nowa z seeda i poziomu remontu. Druga próba, gdy zapisany układ nie dał się zbudować w
+ * scenie: układ da się wyliczyć z seeda, a stan gry (pieniądze, zapasy, ulepszenia) zostaje. Co nie pasuje do nowego układu
+ * (palety, sprzęt, zapasy), ustawia `relayout`. Nie zmienia `s`; rzuca, gdy generator nie da układu.
+ */
+export function withLayoutFromSeed(s: GameSession): GameSession {
+  const layout = layoutFor(s.seed, s.econ.remontLevel);
+  const info = computeStoreInfo(layout);
+  const econ = structuredClone(s.econ);
+  if (!fitsStore(econ, info)) relayout(econ, info);
+  return { ...s, econ, layout, info, layoutLevel: econ.remontLevel, clock: { acc: 0 } };
 }
