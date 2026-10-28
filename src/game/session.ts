@@ -6,11 +6,26 @@ import { computeStoreInfo, type StoreInfo } from '@/sim/economy/storeInfo';
 import { REMONTS } from '@/sim/economy/upgrades';
 import type { EconClock } from '@/sim/economy/clock';
 import { isRec, whole } from '@/sim/guards';
+import type { RunRecord } from '@/sim/run';
 import { GENERATOR_VERSION } from '@/sim/store/generateStore';
 import { layoutFor } from '@/sim/store/layoutFor';
 import { sanitizeLayout } from '@/sim/store/sanitize';
 import type { StoreLayout } from '@/sim/store/types';
 import { GAME_VERSION } from './version';
+
+/**
+ * Dziennik poleceń sesji: `RunRecord` z wpisami `{minute, seq, cmd}` i numer następnego wpisu. `replayRun(record, minute)`
+ * odtwarza z niego stan gry, ale tylko dla sesji, która zaczęła od świeżego sklepu i której stan zmieniały wyłącznie
+ * polecenia i upływ minut (patrz `GameSession.run`). Odtwarzanie startuje bez premii partnera (`freshRun`), więc dla gry z
+ * `partner` w sieci sklepów dziennik nie odtworzy stanu co do bajtu.
+ */
+export interface RunLog {
+  record: RunRecord;
+  seq: number;
+}
+
+/** Ile wpisów dziennik trzyma najwyżej. Dłuższa gra zwykła (`casual`) traci dziennik (`run` = null): rósłby bez końca, a gracz nic z niego nie ma. */
+export const RUN_LOG_MAX = 100_000;
 
 /** Rozgrywka jednego sklepu: stan ekonomii i układ, w którym się toczy (po remoncie układ się zmienia). */
 export interface GameSession {
@@ -32,7 +47,19 @@ export interface GameSession {
    * pod tym seedem jest cudzy (z nowszej wersji gry) i nie wolno go ruszyć, a gracz i tak ma dostać działającą grę.
    */
   ephemeral: boolean;
+  /**
+   * Dziennik poleceń tej rozgrywki (zapisuje go `dispatchCommand`) albo null, gdy nie da się go prowadzić wiernie: stan nie
+   * zaczął się od świeżego sklepu (sesja z zapisu), został przestawiony `relayout` (`withLayoutFromSeed`), zmieniło go coś
+   * spoza dziennika (nagroda powitalna, `skip`: `markOffLog`) albo dziennik przekroczył `RUN_LOG_MAX`.
+   */
+  run: RunLog | null;
 }
+
+/** Pusty dziennik nowej gry: bieg zwykły (`casual`) od świeżego sklepu z seeda, z wersjami gry i generatora, którymi go prowadzimy. */
+const newRunLog = (seed: string): RunLog => ({
+  record: { seed, gameVersion: GAME_VERSION, generatorVersion: GENERATOR_VERSION, mode: 'casual', log: [] },
+  seq: 0,
+});
 
 // --- Zapis w przeglądarce ----------------------------------------------------------------------------------------
 
@@ -255,7 +282,7 @@ function openSave(data: unknown, seed: string, partner?: EconomyState['partner']
     ok: true,
     session: {
       seed, econ, layout: world.layout, info: world.info, clock: { acc: 0 }, layoutLevel: econ.remontLevel, fromSave: true,
-      loadNotice: null, retired: false, ephemeral: false,
+      loadNotice: null, retired: false, ephemeral: false, run: null,   // stan z zapisu nie zaczyna się od świeżego sklepu
     },
   };
 }
@@ -265,7 +292,8 @@ function openSave(data: unknown, seed: string, partner?: EconomyState['partner']
  * nowa z `loadNotice` dla gracza. Poprawny zapis, którego nie da się użyć (z nowszej wersji gry albo świat się z niego nie
  * składa), zostaje na miejscu, a gracz dostaje sklep tymczasowy (`ephemeral`). Rzuca tylko wtedy, gdy generator nie daje
  * sklepu dla seeda. `partner` to premia z sieci sklepów (meta.ts): aktualna przy każdym wczytaniu. `options.ephemeral` zaczyna
- * świeżą grę jako tymczasową („zacznij od nowa” w sklepie tymczasowym), bez zaglądania do zapisu.
+ * świeżą grę jako tymczasową („zacznij od nowa” w sklepie tymczasowym), bez zaglądania do zapisu. Każda nowa gra (także
+ * tymczasowa) dostaje pusty dziennik poleceń (`run`); sesja z zapisu go nie ma.
  */
 export function createSession(seed: string, fresh = false, partner?: EconomyState['partner'], options: { ephemeral?: boolean } = {}): GameSession {
   let loadNotice: string | null = null;
@@ -286,7 +314,9 @@ export function createSession(seed: string, fresh = false, partner?: EconomyStat
   const layout = layoutFor(seed, 0);
   const info = computeStoreInfo(layout);
   const econ = createEconomy(seed, info, partner);
-  return { seed, econ, layout, info, clock: { acc: 0 }, layoutLevel: 0, fromSave: false, loadNotice, retired: false, ephemeral };
+  return {
+    seed, econ, layout, info, clock: { acc: 0 }, layoutLevel: 0, fromSave: false, loadNotice, retired: false, ephemeral, run: newRunLog(seed),
+  };
 }
 
 /** Po remoncie: nowy układ i przeniesienie palet oraz sprzętu. Zwraca true, gdy układ się zmienił. */
@@ -302,12 +332,13 @@ export function syncLayout(s: GameSession): boolean {
 /**
  * Ta sama gra na układzie zrobionym od nowa z seeda i poziomu remontu. Druga próba, gdy zapisany układ nie dał się zbudować w
  * scenie: układ da się wyliczyć z seeda, a stan gry (pieniądze, zapasy, ulepszenia) zostaje. Co nie pasuje do nowego układu
- * (palety, sprzęt, zapasy), ustawia `relayout`. Nie zmienia `s`; rzuca, gdy generator nie da układu.
+ * (palety, sprzęt, zapasy), ustawia `relayout`, więc dziennik poleceń nie opisuje już tego stanu (`run` = null). Nie zmienia `s`; rzuca,
+ * gdy generator nie da układu.
  */
 export function withLayoutFromSeed(s: GameSession): GameSession {
   const layout = layoutFor(s.seed, s.econ.remontLevel);
   const info = computeStoreInfo(layout);
   const econ = structuredClone(s.econ);
   if (!fitsStore(econ, info)) relayout(econ, info);
-  return { ...s, econ, layout, info, layoutLevel: econ.remontLevel, clock: { acc: 0 } };
+  return { ...s, econ, layout, info, layoutLevel: econ.remontLevel, clock: { acc: 0 }, run: null };   // układ z seeda i ewentualny `relayout` są poza dziennikiem
 }

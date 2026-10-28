@@ -911,6 +911,41 @@ describe('withLayoutFromSeed (druga próba po nieudanej budowie świata w scenie
   });
 });
 
+describe('dziennik poleceń sesji (run)', () => {
+  it('nowa gra ma pusty bieg „casual” od świeżego sklepu, z wersjami gry i generatora', () => {
+    const s = createSession(BLOK, true);
+    expect(s.run).toEqual({ record: { seed: BLOK, gameVersion, generatorVersion: GENERATOR_VERSION, mode: 'casual', log: [] }, seq: 0 });
+    expect(createSession(BLOK, true).run).not.toBe(s.run);   // każda sesja ma własny dziennik
+  });
+
+  it('gra bez zapisu, uszkodzony zapis i sklep tymczasowy zaczynają nowy dziennik', () => {
+    expect(createSession(PAWILON).run?.record.log).toEqual([]);
+    storage.setItem(key(BLOK), '{"ucięty');
+    const afterBroken = createSession(BLOK);
+    expect(afterBroken.fromSave).toBe(false);
+    expect(afterBroken.run?.record.seed).toBe(BLOK);
+    const temporary = createSession(PAWILON, true, undefined, { ephemeral: true });
+    expect(temporary.ephemeral).toBe(true);
+    expect(temporary.run?.record.mode).toBe('casual');
+  });
+
+  it('sesja z zapisu (schemat 2 i 1) nie ma dziennika: jej stan nie zaczął się od świeżego sklepu', () => {
+    saveSession(createSession(BLOK, true));
+    expect(createSession(BLOK).run).toBeNull();
+    storage.setItem(key(BLOK), text('save-v1-blok-dzien40.json'));
+    const fromV1 = createSession(BLOK);
+    expect(fromV1.fromSave).toBe(true);
+    expect(fromV1.run).toBeNull();
+  });
+
+  it('withLayoutFromSeed zwraca sesję bez dziennika (stan przestawiony `relayout`) i nie rusza dziennika oryginału', () => {
+    const played = createSession(BLOK, true);
+    const run = played.run;
+    expect(withLayoutFromSeed(played).run).toBeNull();
+    expect(played.run).toBe(run);
+  });
+});
+
 describe('stan z zapisu pasuje do układu sklepu (palety, sprzęt i zapasy po ręcznej zmianie)', () => {
   it('paleta w miejscu, którego nie ma, sprzęt w nieistniejącym slocie i zapas ponad pojemność: gra naprawia je przy wczytaniu', () => {
     const played = playedSession(BLOK);
