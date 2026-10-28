@@ -16,6 +16,8 @@ export function loadFromDisk(url: string): Promise<GLTF> {
   let hit = cache.get(url);
   if (!hit) {
     hit = (async () => {
+      // WASM dekodera kompiluje się asynchronicznie; bez czekania pod obciążeniem readBinary trafia na dekoder bez instancji.
+      await MeshoptDecoder.ready;
       const bytes = readFileSync(join('public', url));
       const doc = await io.readBinary(new Uint8Array(bytes));
       for (const t of doc.getRoot().listTextures()) t.dispose();
