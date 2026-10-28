@@ -110,7 +110,7 @@ export function buildStaffNav(layout: StoreLayout, obstacles: readonly Cell[]): 
  * Gdzie ma stanąć każda z osób, żeby jej zadanie było widać. `crew`: osoby z zadaniami (kolejność dowolna, funkcja sortuje po id).
  * Zwraca spot dla każdego id. Czysta funkcja: zero losowości poza `createRng(subSeed(layout.seed, …))`, bez mutowania argumentów.
  */
-export function pickStaffSpots(layout: StoreLayout, nav: StaffNav, pallets: readonly PalletRef[], crew: readonly StaffAssignment[]): Map<number, StaffSpot>;
+export function pickStaffSpots(layout: StoreLayout, nav: StaffNav, pallets: readonly PalletRef[], crew: readonly StaffAssignment[], previous?: ReadonlyMap<number, StaffSpot>): Map<number, StaffSpot>;
 ```
 
 **Reguły `pickStaffSpots`:**
@@ -236,7 +236,7 @@ export class StaffCrew {
 **Reguły:**
 - `sync`: ignoruj duplikaty id (pierwszy wygrywa) i wartości nie będące skończonymi liczbami całkowitymi ≥ 0; posortuj po id i weź najwyżej `STAFF_VIEW_MAX` pierwszych. Następnie `TaskHold.update(minute, clock, people)`. Osoba, której nie było w załodze, pojawia się: **przy pierwszym `sync` w ogóle** od razu na swoim miejscu (`teleport` do jej spotu), w kolejnych `sync` na chodniku, na punkcie `layout.spawnPoints` najbliższym wejścia (`layout.entrance[0]`), i idzie do środka. Osoba, której nie ma już w `people`, dostaje `leaving = true`, a jej cel to ten sam punkt na chodniku; po dojściu (albo po 20 s czasu widoku marszu) znika z `members`.
 - `isCashier`: ciało kasjera dostaje osoba o najmniejszym id spośród osób, które pojawiły się w danym `sync`, o ile nikt nie jest teraz kasjerem. Przypisanie trzyma się do zniknięcia tej osoby z `members` (wtedy znów nikt nie jest kasjerem, aż pojawi się ktoś nowy). Nie przechodzi na inną osobę w trakcie marszu.
-- Cele: gdy zmieni się „podpis” (zadania trzymane osób nie wychodzących, zbiór id, lista palet: loc, miejsce, `since` nieistotne) policz `pickStaffSpots` dla osób nie wychodzących i ustaw `walker.setGoal(spot.cell, spot.heading, nav)`. Podpis palet bez `since`. Gdy zmienia się zbiór kratek palet, przebuduj `nav` (`buildStaffNav` z kratkami wszystkich palet) i wywołaj `walker.repath()` u wszystkich.
+- Cele: gdy zmieni się „podpis” (zadania trzymane osób nie wychodzących, zbiór id, lista palet: loc, miejsce, `since` nieistotne) policz `pickStaffSpots` dla osób nie wychodzących i ustaw `walker.setGoal(spot.cell, spot.heading, nav)`. Stabilność: jako piąty argument (`previous`) podaj poprzednie spoty osób, których zadanie trzymane się nie zmieniło od ostatniego liczenia (funkcja zachowuje je dla wykładania, sprzątania i wolnego, jeśli kratka jest nadal wolna i osiągalna), żeby zmiana składu załogi albo pojawienie się palety nie przeganiały ludzi bez powodu. Podpis palet bez `since`. Gdy zmienia się zbiór kratek palet, przebuduj `nav` (`buildStaffNav` z kratkami wszystkich palet) i wywołaj `walker.repath()` u wszystkich.
 - `step(dt)`: dopisz `dt` (skończone, ≥ 0) do zegara i przesuń marsz każdego (`walker.step`), usuń tych, którzy skończyli wychodzenie.
 - Wejście tylko do odczytu: nic z `input`, `layout` ani palet nie jest mutowane ani przechowywane po referencji (kopiuj to, co trzeba).
 
