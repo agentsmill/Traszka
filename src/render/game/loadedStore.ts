@@ -4,8 +4,10 @@ import { buildStore, type StoreView } from '@/render/store/buildStore';
 import { createGoods, type Goods } from '@/render/store/products';
 import type { BlobShadows } from '@/render/characters/blobShadows';
 import type { CharacterFactory } from '@/render/characters/characterFactory';
+import { CashierView } from '@/render/cashierView';
 import { CrowdView } from '@/render/crowdView';
 import type { StreetView } from '@/render/street/buildStreet';
+import type { CashierLook } from '@/game/cashier';
 import { createWorld, type World } from '@/game/world';
 import type { Speed } from '@/game/loop';
 import type { CrowdOptions } from '@/sim/crowd/crowd';
@@ -26,6 +28,7 @@ export interface Loaded {
   tillTop: Vector3 | null;          // punkt nad kasą dla dymka kolejki
   street: StreetView | null;        // dochodzi asynchronicznie (modele GLB)
   crowdView: CrowdView | null;      // dochodzi, gdy fabryka postaci jest gotowa
+  cashierView: CashierView | null;  // razem z widokiem tłumu; stoi za kasą
 }
 
 /** Z czego i do czego budować sklep. */
@@ -42,12 +45,28 @@ export interface StoreSource {
   /** Grupa tłumu w scenie i wspólne plamy cienia pod postaciami. */
   crowdParent: Object3D;
   blobs: BlobShadows | null;
-  /** Fabryka postaci, jeśli już gotowa; bez niej tłum dochodzi później (main.ts). */
+  /** Fabryka postaci, jeśli już gotowa; bez niej tłum i kasjer dochodzą później (main.ts, `attachCharacters`). */
   factory: CharacterFactory | null;
+  /** Wygląd kasjera za ladą. Jedno miejsce, z którego gra bierze go dla każdego sklepu (wygląd z meta gracza). */
+  cashierLook: CashierLook;
+}
+
+/** Skąd sklep bierze swoje postacie: fabryka, grupa w scenie, wspólne plamy cienia i wygląd kasjera. */
+export type CharacterSource = Pick<StoreSource, 'crowdParent' | 'blobs' | 'cashierLook'> & { factory: CharacterFactory };
+
+/**
+ * Dokłada sklepowi postacie: widok tłumu i kasjera za ladą (oba w grupie tłumu, ze wspólnymi plamami cienia). Wołane przy budowie
+ * sklepu, gdy fabryka jest już gotowa, a w przeciwnym razie przez main.ts, gdy fabryka dojdzie. Części, które już stoją, zostają
+ * (nic się nie dubluje). Gdy któraś się wywróci, wyjątek idzie dalej, a to, co już stoi, zwalnia `unloadStore`.
+ */
+export function attachCharacters(loaded: Loaded, src: CharacterSource): void {
+  const { layout } = loaded.world;
+  loaded.crowdView ??= new CrowdView(src.factory, layout, src.crowdParent, src.blobs);
+  loaded.cashierView ??= new CashierView(src.factory, layout, src.crowdParent, src.blobs, src.cashierLook);
 }
 
 /**
- * Buduje sklep w scenie: świat symulacji, bryłę z towarem, palety, sprzęt, kasę do stukania i widok tłumu. Gdy któraś część
+ * Buduje sklep w scenie: świat symulacji, bryłę z towarem, palety, sprzęt, kasę do stukania, widok tłumu i kasjera. Gdy któraś część
  * się wywróci, wszystko już zbudowane jest zdjęte ze sceny i zwolnione, zanim wyjątek pójdzie dalej: odzyskiwanie po błędzie
  * (poprzedni sklep w `setSeed`, sklep awaryjny przy starcie) zaczyna od czystej sceny, a nie od pół-zbudowanego sklepu,
  * którego nikt by już nie znalazł.
@@ -68,7 +87,7 @@ export function loadStore(src: StoreSource): Loaded {
   src.scene.add(view.root);
 
   // Od tej chwili sklep jest w scenie: pola wypełniamy po kolei, a przy wyjątku `unloadStore` zwalnia te, które już stoją.
-  const loaded: Loaded = { world, view, goods, pallets: null, equipment: null, till: null, tillTop: null, street: null, crowdView: null };
+  const loaded: Loaded = { world, view, goods, pallets: null, equipment: null, till: null, tillTop: null, street: null, crowdView: null, cashierView: null };
   try {
     if (info) {
       loaded.pallets = createPalletsView(layout, info);
@@ -87,7 +106,7 @@ export function loadStore(src: StoreSource): Loaded {
         loaded.tillTop = new Vector3((a.x + b.x) / 2, 1.9, (a.z + b.z) / 2);
       }
     }
-    if (src.factory) loaded.crowdView = new CrowdView(src.factory, layout, src.crowdParent, src.blobs);
+    if (src.factory) attachCharacters(loaded, { factory: src.factory, crowdParent: src.crowdParent, blobs: src.blobs, cashierLook: src.cashierLook });
     return loaded;
   } catch (error) {
     try {
@@ -102,6 +121,7 @@ export function loadStore(src: StoreSource): Loaded {
 /** Zdejmuje sklep ze sceny i zwalnia wszystko, co dla niego zbudowano (pola puste, bo budowa przerwana, są pomijane). */
 export function unloadStore(loaded: Loaded): void {
   loaded.crowdView?.dispose();
+  loaded.cashierView?.dispose();
   loaded.street?.dispose();
   loaded.pallets?.dispose();
   loaded.equipment?.dispose();

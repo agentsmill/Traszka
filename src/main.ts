@@ -6,11 +6,12 @@ import { QUALITY, detectDeviceCaps, pickInitialPreset, type QualityPresetId } fr
 import type { TimeOfDay } from '@/render/lighting';
 import { BEVEL, PALETTE, material } from '@/render/style';
 import { cellToWorld } from '@/render/coords';
-import { loadStore, unloadStore, type Loaded } from '@/render/game/loadedStore';
+import { attachCharacters, loadStore, unloadStore, type Loaded } from '@/render/game/loadedStore';
 import { buildStreet, type StreetView } from '@/render/street/buildStreet';
 import { createCharacterFactory, type CharacterFactory } from '@/render/characters/characterFactory';
-import { ANIM_SPEED_CAP, CrowdView } from '@/render/crowdView';
+import { ANIM_SPEED_CAP } from '@/render/crowdView';
 import { createBlobShadows } from '@/render/characters/blobShadows';
+import { DEFAULT_CASHIER_LOOK, cashierCues } from '@/game/cashier';
 import { MAX_FRAME_DT, advanceClock, clockAlpha } from '@/game/loop';
 import { randomSeed } from '@/game/seedWords';
 import {
@@ -262,6 +263,8 @@ function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: st
   // plamy cienia pod postaciami: jedna siatka na całą grę, w grupie tłumu (benchmark ukrywa je razem z tłumem)
   const blobs = createBlobShadows();
   crowdRoot.add(blobs.mesh);
+  // wygląd kasjera za ladą: jedno miejsce, z którego idzie do każdego sklepu (ekran startowy podstawi tu wygląd z meta gracza)
+  const cashierLook = DEFAULT_CASHIER_LOOK;
 
   const benchMode = benchKit !== null;
   const forcedNight = !benchMode && params.get('night') === '1';
@@ -270,6 +273,7 @@ function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: st
   let factory: CharacterFactory | null = null;
   let loaded: Loaded | null = null;
   let generation = 0;               // odrzuca wyniki asynchroniczne, które wróciły po zmianie seeda
+  let payingId: number | null = null;   // klient obsługiwany przy kasie w poprzedniej klatce (kasjer: gest przy sprzedaży)
   const clock = { acc: 0 };
   let meta: Meta = loadMeta();
   setSound(meta.sound);
@@ -314,11 +318,12 @@ function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: st
     const layout = session ? session.layout : generateStore(seed);
     const current = loadStore({
       scene: ctx.scene, seed, layout, info: session ? session.info : null, crowd: benchKit?.BENCH_CROWD, speed,
-      crowdParent: crowdRoot, blobs, factory,
+      crowdParent: crowdRoot, blobs, factory, cashierLook,
     });
     loaded = current;
     try {
       clock.acc = 0;
+      payingId = null;   // nowy tłum liczy id agentów od początku
       lastVisual = -1;
 
       const lo = cellToWorld(layout, 0, 0);
@@ -719,7 +724,7 @@ function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: st
 
   void createCharacterFactory().then((created) => {
     factory = created;
-    if (loaded && !loaded.crowdView) loaded.crowdView = new CrowdView(created, loaded.world.layout, crowdRoot, blobs);
+    if (loaded) attachCharacters(loaded, { factory: created, crowdParent: crowdRoot, blobs, cashierLook });   // tłum i kasjer
   }).catch((error: unknown) => console.error('Nie udało się wczytać postaci.', error));
 
   const bench = benchKit
@@ -781,13 +786,20 @@ function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: st
     }
 
     if (loaded?.crowdView) {
-      const { world, crowdView } = loaded;
+      const { world, crowdView, cashierView } = loaded;
       const paused = modal;
       const steps = paused ? 0 : advanceClock(clock, frameDt, world.speed);
       for (let i = 0; i < steps; i++) stepCrowd(world.crowd, world.layout, SIM_STEP);
       crowdView.setCharacterShadows(QUALITY[ctx.preset].characterShadows);
       const speed = paused ? 0 : world.speed;
-      crowdView.sync(world.crowd, clockAlpha(clock), realDt * speed, realDt * Math.min(speed, ANIM_SPEED_CAP));
+      const animDt = realDt * Math.min(speed, ANIM_SPEED_CAP);
+      crowdView.sync(world.crowd, clockAlpha(clock), realDt * speed, animDt);
+      if (cashierView) {
+        const cues = cashierCues(payingId, world.crowd.agents, world.layout);
+        payingId = cues.payingId;
+        cashierView.setCharacterShadows(QUALITY[ctx.preset].characterShadows);
+        cashierView.update(realDt * speed, cues.serving, cues.sale, animDt);
+      }
     }
     bench?.beforeRender();
     ctx.render();
@@ -821,6 +833,7 @@ function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: st
       get view() { return loaded?.view ?? null; },
       get street() { return loaded?.street ?? null; },
       get crowdView() { return loaded?.crowdView ?? null; },
+      get cashierView() { return loaded?.cashierView ?? null; },
       get factory() { return factory; },
     },
   });
