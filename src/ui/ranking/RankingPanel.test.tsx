@@ -103,6 +103,16 @@ describe('ranking: model', () => {
     expect(model.view.value.rows.map((r) => model.isMine(r))).toEqual([false, true]);
   });
 
+  it('ten sam nick w dwóch wierszach (stare wyniki poprzedniego właściciela): podświetlony tylko ten z moim miejscem i wynikiem', async () => {
+    const { client } = fakeClient(
+      { global: { ok: true, board: 'global', week: WEEK, rows: rows(['Mateusz', 90], ['Ala', 50], ['Mateusz', 10]) } },
+      { ok: true, nicks: ['Mateusz'], nick: { nick: 'Mateusz', status: 'mine' }, ranks: { global: { rank: 3, score: 10 }, seed: null, week: null } },
+    );
+    const model = createRankingModel(deps(client));
+    await model.select('global');
+    expect(model.view.value.rows.map((r) => model.isMine(r))).toEqual([false, false, true]);
+  });
+
   it('błąd serwera albo sieci: widok błędu z komunikatem; „Ten seed” bez otwartego sklepu nie pyta serwera', async () => {
     const { client, calls } = fakeClient({ global: { ok: false, error: 'network', message: 'Brak połączenia' } });
     const model = createRankingModel(deps(client, { seed: () => null }));
@@ -161,7 +171,7 @@ describe('ranking: panel', () => {
     expect(textOf(items[0])).toContain('Ala');
     expect(textOf(items[0])).toContain('bigos-100');
     expect(textOf(items[0])).toMatch(/\+123\s456 zł/);
-    expect(textOf(items[1])).toContain('seed utajniony');
+    expect(textOf(items[1])).toContain('seed nieznany');
     expect(textOf(items[1])).toMatch(/−50\s000 zł/);
     expect(items.map((i) => String(i.props.class).includes('me'))).toEqual([false, true]);
     expect(items[1]!.props['aria-current']).toBe('true');

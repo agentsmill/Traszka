@@ -65,20 +65,21 @@ describe('POST /api/runs: zgłoszenie biegu', () => {
     expect(redis.keys().filter((k) => !k.startsWith('tr:rl:') && !k.startsWith('tr:salt:'))).toEqual([]);
   });
 
-  it('odrzucenia sędziego: niepełny sezon 422, nieudane odtworzenie 422', async () => {
-    expect((await submit(setup({ ok: false, reason: 'season-incomplete' }).deps, KEY_A, 'Ala')).status).toBe(422);
+  it('nieudane odtworzenie: 422 i nic w rankingu', async () => {
     const failed = await submit(setup({ ok: false, reason: 'replay-failed' }).deps, KEY_A, 'Ala');
     expect(failed.status).toBe(422);
     expect((await body(failed)).error).toBe('replay-failed');
   });
 
-  it('seed tygodnia trafia też do rankingu tygodnia; seed z zakazanym słowem do globalnego bez seeda', async () => {
+  it('seed tygodnia trafia też do rankingu tygodnia; wulgarny seed i nick przechodzą jak każde inne (filtra słów nie ma)', async () => {
     const week = weekOf(NOW);
     const { deps } = setup((r) => ({ ok: true, score: r.seed === week.seed ? 30_000 : 20_000 }));
     expect((await body(await submit(deps, KEY_A, 'Ala', week.seed))).ranks).toEqual({ global: 1, seed: 1, week: 1 });
-    expect((await body(await submit(deps, KEY_B, 'Ola', 'kurwa-mać'))).ranks).toEqual({ global: 2, seed: null, week: null });
+    expect((await body(await submit(deps, KEY_B, 'Kurwiszon', 'kurwa-mać'))).ranks).toEqual({ global: 2, seed: 1, week: null });
     const rows = (await body(await handleLeaderboard(get('/api/leaderboard'), deps))).rows as { nick: string; seed: unknown }[];
-    expect(rows.map((r) => [r.nick, r.seed])).toEqual([['Ala', week.seed], ['Ola', null]]);
+    expect(rows.map((r) => [r.nick, r.seed])).toEqual([['Ala', week.seed], ['Kurwiszon', 'kurwa-mać']]);
+    const seedRows = (await body(await handleLeaderboard(get(`/api/leaderboard?board=seed&seed=${encodeURIComponent('kurwa-mać')}`), deps))).rows;
+    expect(seedRows).toEqual([{ rank: 1, nick: 'Kurwiszon', score: 20_000 }]);
   });
 
   it('złe zgłoszenia: 400 z kodem i komunikatem (zły nick dostaje komunikat z reguł nicka), 413 za duże, 405 nie POST', async () => {
@@ -164,12 +165,12 @@ describe('POST /api/player: moje nicki i miejsca (po wpisaniu kodu, przed sezone
     expect(await body(await handlePlayer(post('/api/player', { key: KEY_B }), deps))).toEqual({ ok: true, nicks: [] });
   });
 
-  it('zły i zakazany nick: status z komunikatem; zły klucz: 400', async () => {
+  it('nick spoza reguł gry: status invalid z komunikatem (wulgarny, ale poprawny nick jest wolny); zły klucz: 400', async () => {
     const { deps } = setup();
     expect((await body(await handlePlayer(post('/api/player', { key: KEY_A, nick: 'Admin' }), deps))).nick)
       .toEqual({ nick: 'Admin', status: 'invalid', message: 'Ta nazwa jest zarezerwowana' });
     expect((await body(await handlePlayer(post('/api/player', { key: KEY_A, nick: 'Kurwiszon' }), deps))).nick)
-      .toEqual({ nick: 'Kurwiszon', status: 'banned', message: API_ERRORS['banned-nick'].message });
+      .toEqual({ nick: 'Kurwiszon', status: 'free' });
     expect((await handlePlayer(post('/api/player', { key: 'abc' }), deps)).status).toBe(400);
     expect((await handlePlayer(post('/api/player', { nick: 'Ala' }), deps)).status).toBe(400);
   });

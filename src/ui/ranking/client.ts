@@ -13,7 +13,7 @@ export interface Place { rank: number; score: number }
 export interface BoardResponse { board: RankingTab; seed?: string; week: WeekInfo; rows: BoardRow[] }
 export interface PlayerResponse {
   nicks: string[];
-  nick?: { nick: string; status: NickStatus | 'invalid' | 'banned'; message?: string };
+  nick?: { nick: string; status: NickStatus | 'invalid'; message?: string };
   ranks?: Record<RankingTab, Place | null>;
 }
 export interface SaveUploaded { bytes: number; savedAt: number }

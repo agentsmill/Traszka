@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createEconomy, stepMinute, type EconomyState } from '@/sim/economy/economy';
 import { computeStoreInfo } from '@/sim/economy/storeInfo';
-import { RANKED_SEASON_END_MINUTE, seasonComplete, seasonScore } from '@/sim/ranked';
+import { RANKED_SEASON_END_MINUTE, seasonScore } from '@/sim/ranked';
 import { generateStore } from '@/sim/store/generateStore';
 import type { RunRecord } from './runs';
 import { makeReplayVerifier, replayNotAvailable } from './verify';
@@ -11,7 +11,7 @@ const state = (...profits: number[]): Pick<EconomyState, 'history'> => ({
   history: profits.map((profit, i) => ({ label: `m${i}`, profit, revenue: 0 })),
 });
 const judge = (replay: (run: RunRecord, until: number) => Pick<EconomyState, 'history'>) =>
-  makeReplayVerifier({ replay, endMinute: RANKED_SEASON_END_MINUTE, complete: seasonComplete, score: seasonScore });
+  makeReplayVerifier({ replay, endMinute: RANKED_SEASON_END_MINUTE, score: seasonScore });
 
 describe('sędzia biegu (verifyRun)', () => {
   it('domyślny sędzia do czasu scalenia strumienia A: „odtwarzanie jeszcze niedostępne”, dla każdego biegu', async () => {
@@ -28,8 +28,8 @@ describe('sędzia biegu (verifyRun)', () => {
     expect(calls).toEqual([[RUN, RANKED_SEASON_END_MINUTE]]);
   });
 
-  it('bieg bez trzech raportów (np. wypowiedzenie umowy w październiku): season-incomplete', async () => {
-    expect(await judge(() => state(1, 2))(RUN)).toEqual({ ok: false, reason: 'season-incomplete' });
+  it('bieg zakończony wypowiedzeniem umowy przed końcem listopada liczy się z raportami, które powstały', async () => {
+    expect(await judge(() => state(-20_000, -30_000))(RUN)).toEqual({ ok: true, score: -50_000 });
   });
 
   it('odtworzenie, które rzuca albo daje wynik nieliczbowy: replay-failed', async () => {

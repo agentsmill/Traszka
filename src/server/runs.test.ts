@@ -54,9 +54,10 @@ describe('zgłoszenie biegu: kształt i granice', () => {
     expect(parseSubmission(body({ nick: 7 }))).toMatchObject({ ok: false, error: 'bad-request' });
   });
 
-  it('nick z zakazanym słowem: banned-nick', () => {
-    expect(parseSubmission(body({ nick: 'Kurwa_Mać' }))).toMatchObject({ ok: false, error: 'banned-nick' });
-    expect(parseSubmission(body({ nick: 'admin2' }))).toMatchObject({ ok: false, error: 'banned-nick' });
+  it('filtra słów nie ma (decyzja z 2026-10-28): wulgarny nick i „Traszka” w środku nicka przechodzą, jeśli spełniają reguły gry', () => {
+    for (const nick of ['Kurwa_Mać', 'admin2', 'TraszkaFan', 'Centrala_Oficjalnie']) {
+      expect(parseSubmission(body({ nick })), nick).toMatchObject({ ok: true, value: { nick } });
+    }
   });
 
   it('nieznana wersja gry albo generatora: old-version; tryb zwykły: not-ranked', () => {

@@ -76,7 +76,7 @@ export function RankingPanel({ model, onClose, now = Date.now }: RankingPanelPro
                 <li key={`${r.rank}:${r.nick}`} class={`tt-rank-row${me ? ' me' : ''}`} aria-current={me ? 'true' : undefined}>
                   <span class="tt-rank-pos">{r.rank}.</span>
                   <span class="tt-rank-nick">{r.nick}{me ? ' (Ty)' : ''}</span>
-                  {tab === 'global' && <span class="tt-rank-seed">{r.seed ?? 'seed utajniony'}</span>}
+                  {tab === 'global' && <span class="tt-rank-seed">{r.seed ?? 'seed nieznany'}</span>}
                   <span class="tt-rank-score">{signedZl(r.score)}</span>
                 </li>
               );

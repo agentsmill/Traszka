@@ -6,12 +6,13 @@ import { sha256Hex } from './hash.js';
  * - `tr:nick:{nickKey}` → JSON `{ nick, owner, since, lastScoreAt }`: rezerwacja nicka, żyje rok od ostatniego wyniku;
  * - `tr:owner:{owner}` → zbiór kluczy nicków gracza (do „Twoje nicki” po wpisaniu kodu na nowym urządzeniu);
  * - `tr:lb:global`, `tr:lb:seed:{seedId}`, `tr:lb:week:{rrrr-Wtt}` → zbiory sortowane, członek `{tag}:{nickKey}`, wynik w zł;
- * - `tr:best:{tag}:{nickKey}` → JSON `{ seed, at }`: seed i chwila najlepszego wyniku w rankingu globalnym;
+ * - `tr:entry:{tag}:{nickKey}` → JSON `{ nick, seed, at }`: nick do wyświetlania oraz seed i chwila najlepszego wyniku w rankingu
+ *   globalnym; bez czasu życia, bo wyniki zostają w rankingu także po wygaśnięciu rezerwacji nicka;
  * - `tr:save:{owner}` → JSON `{ savedAt, save }`: jeden zapis gry na klucz;
  * - `tr:salt:{okno}:{nr}` i `tr:rl:{akcja}:{nr}:{k|a}:{skrót}` → sól i liczniki limitu zgłoszeń, giną z końcem okna.
  *
  * `owner` to SHA-256 klucza gracza (samego klucza serwer nie przechowuje), `tag` to jego pierwsze 16 znaków: członek rankingu
- * pamięta, czyj był wynik, więc po wygaśnięciu nicka i przejęciu go przez kogoś innego stare wyniki nie przechodzą na nowego właściciela.
+ * pamięta, czyj był wynik, więc gdy wygasły nick zarezerwuje ktoś inny, stare wyniki zostają osobnym wpisem i nie łączą się z jego.
  */
 const P = 'tr:';
 
@@ -21,7 +22,7 @@ export const KEYS = {
   global: `${P}lb:global`,
   seed: (seedId: string): string => `${P}lb:seed:${seedId}`,
   week: (weekId: string): string => `${P}lb:week:${weekId}`,
-  best: (member: string): string => `${P}best:${member}`,
+  entry: (member: string): string => `${P}entry:${member}`,
   save: (owner: string): string => `${P}save:${owner}`,
   salt: (window: number, index: number): string => `${P}salt:${window}:${index}`,
   rate: (action: string, index: number, who: string): string => `${P}rl:${action}:${index}:${who}`,

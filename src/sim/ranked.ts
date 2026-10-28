@@ -18,13 +18,10 @@ const LAST_DAY = 30 + 31 + 30 - 1;
  */
 export const RANKED_SEASON_END_MINUTE = LAST_DAY * MINUTES_PER_DAY + OPEN_TO + 1;
 
-/** Czy stan ma wszystkie raporty sezonu (bieg dograny do końca listopada). */
-export const seasonComplete = (state: Pick<EconomyState, 'history'>): boolean => state.history.length >= RANKED_SEASON_MONTHS;
-
 /**
  * Wynik sezonu: suma zysków trzech pierwszych raportów z `history`, zaokrąglona do pełnych złotych (wynik trafia do rankingu
- * jako liczba całkowita). Raporty po sezonie nic nie zmieniają; przy niepełnym sezonie suma tego, co jest (`seasonComplete` mówi,
- * czy to wynik do rankingu).
+ * jako liczba całkowita). Raporty po sezonie nic nie zmieniają. Bieg zakończony wypowiedzeniem umowy przed końcem listopada ma
+ * mniej raportów i liczy się suma tych, które powstały.
  */
 export function seasonScore(state: Pick<EconomyState, 'history'>): number {
   const sum = state.history.slice(0, RANKED_SEASON_MONTHS).reduce((acc, h) => acc + h.profit, 0);

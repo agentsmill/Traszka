@@ -5,7 +5,6 @@ import {
   KNOWN_GAME_VERSIONS, KNOWN_GENERATOR_VERSIONS, RUN_MAX_COMMAND_BYTES, RUN_MAX_LOG_ENTRIES, RUN_MAX_SEED_CHARS, SEASON_END_MINUTE,
 } from './config.js';
 import { fail, type Checked } from './errors.js';
-import { isBanned } from './moderation.js';
 
 /**
  * Bieg zgłoszony do rankingu. Typy to kopia kontraktu z dokumentu etapu 2 (§2, `src/sim/run.ts` dostarcza strumień A): po
@@ -35,7 +34,6 @@ export function parseKeyAndNick(key: unknown, nick: unknown): Checked<{ key: str
   if (parsedKey === null) return fail('bad-key');
   const n = normalizeNick(nick);
   if ('error' in n) return fail('bad-nick', n.error);
-  if (isBanned(n.nick)) return fail('banned-nick');
   return { ok: true, value: { key: parsedKey, nick: n.nick, nickKey: nickKey(n.nick) } };
 }
 
@@ -64,8 +62,8 @@ function parseLog(raw: unknown[]): Checked<LogEntry[]> {
 }
 
 /**
- * Ciało `POST /api/runs` (`{ key, nick, run }`) bez zaufania → zgłoszenie albo błąd. Kolejność: kształt, klucz, nick (reguły gry,
- * potem zakazane słowa), wersja gry i generatora, tryb rankingowy, seed, dziennik. Bieg dostaje tylko pola kontraktu (obce
+ * Ciało `POST /api/runs` (`{ key, nick, run }`) bez zaufania → zgłoszenie albo błąd. Kolejność: kształt, klucz, nick (reguły gry;
+ * filtra słów nie ma, decyzja właściciela gry z 2026-10-28), wersja gry i generatora, tryb rankingowy, seed, dziennik. Bieg dostaje tylko pola kontraktu (obce
  * odpadają), a polecenia są kopiami. Sam wynik liczy dopiero odtworzenie (`verify.ts`).
  */
 export function parseSubmission(body: unknown): Checked<Submission> {

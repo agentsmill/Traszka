@@ -4,7 +4,7 @@ import { dateOfDay, dayOf, isLastDayOfMonth, minuteOfDay } from './economy/calen
 import { createEconomy, stepMinute, type EconEvent, type EconomyState } from './economy/economy';
 import { computeStoreInfo } from './economy/storeInfo';
 import { generateStore } from './store/generateStore';
-import { RANKED_SEASON_END_MINUTE, RANKED_SEASON_MONTHS, seasonComplete, seasonScore } from './ranked';
+import { RANKED_SEASON_END_MINUTE, RANKED_SEASON_MONTHS, seasonScore } from './ranked';
 
 const history = (...profits: number[]): Pick<EconomyState, 'history'> => ({
   history: profits.map((profit, i) => ({ label: `miesiąc ${i + 1}`, profit, revenue: 100_000 })),
@@ -33,11 +33,9 @@ describe('sezon rankingowy: wrzesień–listopad', () => {
     const events: EconEvent[] = [];
     while (s.minute < RANKED_SEASON_END_MINUTE - 1 && !s.gameOver) stepMinute(s, info, events);
     expect(s.history).toHaveLength(2);
-    expect(seasonComplete(s)).toBe(false);
     stepMinute(s, info, events);
     expect(s.minute).toBe(RANKED_SEASON_END_MINUTE);
     expect(s.history.map((h) => h.label)).toEqual(['wrzesień 2026', 'październik 2026', 'listopad 2026']);
-    expect(seasonComplete(s)).toBe(true);
     expect(seasonScore(s)).toBe(Math.round(s.history[0]!.profit + s.history[1]!.profit + s.history[2]!.profit));
   });
 });
@@ -53,11 +51,9 @@ describe('wynik sezonu', () => {
     expect(seasonScore(history(1, 2, 3, 1_000_000))).toBe(6);
   });
 
-  it('niedokończony sezon: wynik z tego, co jest, ale seasonComplete mówi „nie”, więc serwer go nie przyjmie', () => {
+  it('wypowiedzenie umowy przed końcem sezonu: suma raportów, które powstały', () => {
     expect(seasonScore(history(1, 2))).toBe(3);
-    expect(seasonComplete(history(1, 2))).toBe(false);
-    expect(seasonComplete(history())).toBe(false);
-    expect(seasonComplete(history(1, 2, 3))).toBe(true);
+    expect(seasonScore(history(-40_000))).toBe(-40_000);
   });
 
   it('-0 i liczby ujemne zaokrąglone do zera dają zwykłe 0 (wynik idzie do JSON i do Redisa)', () => {

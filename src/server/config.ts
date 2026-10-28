@@ -28,8 +28,6 @@ export const SAVE_TTL = 365 * DAY;
 /** Ranking seeda żyje ponad rok od ostatniego wyniku, a ranking tygodnia dziewięć tygodni (bieżący i dwa miesiące wstecz). */
 export const SEED_BOARD_TTL = 400 * DAY;
 export const WEEK_BOARD_TTL = 63 * DAY;
-/** Najlepszy bieg gracza w rankingu globalnym (seed i data) żyje tyle, co nick. */
-export const BEST_TTL = NICK_TTL;
 
 /** Ile miejsc trzyma każdy ranking (reszta wypada przy kolejnym wpisie) i ile wierszy oddaje jedno zapytanie. */
 export const BOARD_KEEP = 10_000;

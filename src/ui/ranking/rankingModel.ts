@@ -82,6 +82,10 @@ export function createRankingModel(deps: RankingDeps): RankingModel {
       return load();
     },
     refresh: load,
-    isMine: (row) => me.value !== null && nickKey(row.nick) === nickKey(me.value.nick),
+    // ten sam nick może mieć dwa wiersze (wyniki poprzedniego właściciela zostają po wygaśnięciu rezerwacji), więc liczy się też miejsce i wynik
+    isMine(row) {
+      const place = me.value?.places[tab.value];
+      return place != null && row.rank === place.rank && row.score === place.score && nickKey(row.nick) === nickKey(me.value!.nick);
+    },
   };
 }

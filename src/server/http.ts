@@ -8,7 +8,6 @@ import { API_ERRORS, fail, type ApiErrorCode, type ApiFailure, type Checked } fr
 import type { RandomBytes } from './hash.js';
 import { KEYS, memberOf, ownerOf, seedIdOf } from './keys.js';
 import { rankOf, readBoard, recordScore, type BoardRef } from './leaderboard.js';
-import { isBanned } from './moderation.js';
 import { claimNick, nickStatus, ownedNicks } from './nicks.js';
 import { checkRate } from './rateLimit.js';
 import type { RedisExec } from './redis.js';
@@ -92,7 +91,7 @@ function boardLimit(raw: string | null): number {
 }
 
 /** Seed z parametru albo z ciała, który wolno pokazać w rankingu (inaczej null). */
-const showableSeed = (seed: unknown): string | null => (typeof seed === 'string' && isShowableSeed(seed) && !isBanned(seed) ? seed : null);
+const showableSeed = (seed: unknown): string | null => (typeof seed === 'string' && isShowableSeed(seed) ? seed : null);
 
 /**
  * `GET /api/leaderboard?board=global|seed|week&seed=…&limit=…`: wiersze rankingu (miejsce, nick, wynik; w globalnym też seed
@@ -113,7 +112,7 @@ export const handleLeaderboard: Handler = async (request, deps) => {
     if (seed === null) return apiError('bad-seed');
     ref = { board, seed };
   } else return apiError('bad-board');
-  const rows = await readBoard(deps.readRedis, { ...ref, limit: boardLimit(url.searchParams.get('limit')), now });
+  const rows = await readBoard(deps.readRedis, { ...ref, limit: boardLimit(url.searchParams.get('limit')) });
   const seed = ref.board === 'seed' ? { seed: ref.seed } : ref.board === 'week' ? { seed: week.seed } : {};
   return json({ ok: true, board, ...seed, week: { id: week.id, seed: week.seed, endsAt: week.endsAt }, rows }, 200, { 'cache-control': BOARD_CACHE });
 };
@@ -142,7 +141,7 @@ export const handleRuns: Handler = async (request, deps) => {
   if (await claimNick(deps.redis, nick, nickKey, owner, now) === 'taken') return apiError('nick-taken');
   const week = weekOf(now);
   const result = await recordScore(deps.redis, {
-    owner, nickKey, seed: run.seed, seedVisible: !isBanned(run.seed), weekId: isWeekSeed(run.seed, week) ? week.id : null,
+    owner, nick, nickKey, seed: run.seed, weekId: isWeekSeed(run.seed, week) ? week.id : null,
     score: verdict.score, now,
   });
   return json({ ok: true, nick, score: verdict.score, best: result.best, improved: result.improved, ranks: result.ranks });
@@ -150,7 +149,7 @@ export const handleRuns: Handler = async (request, deps) => {
 
 /**
  * `POST /api/player` z `{ key, nick?, seed? }`: nicki tego klucza (np. po wpisaniu kodu na nowym urządzeniu), status wpisanego
- * nicka (`free`, `mine`, `taken`, `invalid`, `banned`), a gdy nick jest mój, moje miejsca w globalnym, w rankingu seeda i tygodnia.
+ * nicka (`free`, `mine`, `taken`, `invalid`), a gdy nick jest mój, moje miejsca w globalnym, w rankingu seeda i tygodnia.
  */
 export const handlePlayer: Handler = async (request, deps) => {
   const bad = wrongMethod(request, 'POST');
@@ -170,7 +169,6 @@ export const handlePlayer: Handler = async (request, deps) => {
   if (raw === undefined) return json({ ok: true, nicks });
   const n = normalizeNick(raw);
   if ('error' in n) return json({ ok: true, nicks, nick: { nick: raw, status: 'invalid', message: n.error } });
-  if (isBanned(n.nick)) return json({ ok: true, nicks, nick: { nick: n.nick, status: 'banned', message: API_ERRORS['banned-nick'].message } });
   const nickKey = keyOfNick(n.nick);
   const status = await nickStatus(deps.redis, nickKey, owner, now);
   if (status === 'taken') return json({ ok: true, nicks, nick: { nick: n.nick, status, message: API_ERRORS['nick-taken'].message } });
