@@ -14,16 +14,16 @@ import { createBlobShadows } from '@/render/characters/blobShadows';
 import { MAX_FRAME_DT, advanceClock, clockAlpha } from '@/game/loop';
 import { randomSeed } from '@/game/seedWords';
 import {
-  BROKEN_SAVE_NOTICE, BROKEN_SAVE_NOTICE_NO_COPY, createSession, deleteSave, lastSavedSeed, quarantineSave, retireSession, reviveSession,
-  saveSession, syncLayout, type GameSession,
+  BROKEN_SAVE_NOTICE, BROKEN_SAVE_NOTICE_NO_COPY, NEWER_SAVE_NOTICE, createSession, discardSave, lastSavedSeed, quarantineSave, retireSession,
+  reviveSession, saveSession, syncLayout, type GameSession,
 } from '@/game/session';
-import { addToNetwork, claimDaily, loadMeta, partnerOf, saveMeta, welcomeOffer, type Meta } from '@/game/meta';
+import { addToNetwork, claimDaily, loadMeta, partnerOf, saveMeta, startupWindow, type Meta } from '@/game/meta';
 import { rankFor } from '@/sim/economy/progress';
 import { play, buzz, setSound, setVibration, type Sfx } from '@/ui/sfx';
 import { confetti } from '@/ui/fx';
 import { LINES, missingLine, pick } from '@/ui/game/lines';
 import { SIM_STEP, payLook, setCrowdExtras, setCrowdRate, stepCrowd } from '@/sim/crowd/crowd';
-import { CATS, HOUR_CURVE, OPEN_FROM } from '@/sim/economy/catalog';
+import { CATS, HOUR_CURVE } from '@/sim/economy/catalog';
 import { minuteOfDay } from '@/sim/economy/calendar';
 import { advanceEconomy } from '@/sim/economy/clock';
 import {
@@ -273,6 +273,7 @@ function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: st
   let meta: Meta = loadMeta();
   setSound(meta.sound);
   setVibration(meta.vibration);
+  if (meta.readOnly) postNotice(NEWER_SAVE_NOTICE);   // meta z nowszej wersji gry: nic jej nie nadpisze w tej karcie
   // createSession nie rzuca z powodu zapisu: uszkodzony trafia do kopii, a gra startuje od zera z komunikatem (loadNotice).
   // Gdyby rzuciła z powodu samego seeda (generator nie dał sklepu), zaczynamy w sklepie o losowym seedzie.
   let session: GameSession | null = null;
@@ -289,8 +290,9 @@ function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: st
   if (session?.loadNotice) postNotice(session.loadNotice);
   const persist = (): void => {
     if (!session) return;
-    saveSession(session);
-    if (!ui.welcome.value) meta.lastSeen = Date.now();   // zarobek z nieobecności czeka na „Odbierz!”, więc czas wyjścia zostaje stary
+    saveSession(session);   // sklep tymczasowy się nie zapisuje
+    // zarobek z nieobecności czeka na „Odbierz!”, więc czas wyjścia zostaje stary; sklep tymczasowy nie jest prawdziwą grą
+    if (!ui.welcome.value && !session.ephemeral) meta.lastSeen = Date.now();
     saveMeta(meta);
   };
   const publishMeta = (): void => {
@@ -363,13 +365,14 @@ function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: st
   /**
    * Przechodzi do sklepu `next`: zapisuje obecny, buduje świat nowego i dopiero wtedy zmienia adres. Gdy coś po drodze
    * rzuci, zostaje poprzedni sklep (świat budowany od nowa z jego sesji), a gracz dostaje komunikat. Zwraca, czy się udało.
+   * `ephemeral`: świeża gra ma być tymczasowa (nic jej nie zapisze), np. „zacznij od nowa” w sklepie tymczasowym.
    */
-  function setSeed(next: string, fresh = false): boolean {
+  function setSeed(next: string, fresh = false, ephemeral = false): boolean {
     persist();
     const previous = session;
     const previousSeed = loaded?.world.seed ?? ui.seed.value;
     try {
-      if (!benchMode) session = createSession(next, fresh, partnerOf(meta));
+      if (!benchMode) session = createSession(next, fresh, partnerOf(meta), { ephemeral });
       ui.selection.value = null;
       load(next);
     } catch (error) {
@@ -553,6 +556,10 @@ function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: st
     },
     openNextStore: () => {
       if (!session) return;
+      if (session.ephemeral || meta.readOnly) {   // sieć sklepów trzeba zapisać, a ta karta nie może: sklep zniknąłby bez śladu
+        postNotice('Kolejną Traszkę otworzysz po odświeżeniu strony: ta karta nie może teraz zapisać sieci sklepów.');
+        return;
+      }
       const closed = session;
       const before = meta;
       meta = addToNetwork(meta, closed.econ);   // nowy sklep dostaje już premię z tego; ten sam seed drugi raz niczego nie daje
@@ -588,9 +595,10 @@ function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: st
     rushRemont: () => act(session ? rushRemont(session.econ) : { ok: false, text: '' }),
     restart: () => {
       if (!session) return;
-      deleteSave(session.seed);
+      const ephemeral = session.ephemeral;   // zapis pod seedem sklepu tymczasowego jest cudzy: zostaje, a świeża gra też jest tymczasowa
+      discardSave(session);
       ui.report.value = null;
-      setSeed(session.seed, true);
+      setSeed(session.seed, true, ephemeral);
     },
   };
 
@@ -692,12 +700,10 @@ function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: st
   if (session) {
     writeSeedToUrl(session.seed);   // adres dopiero po tym, jak świat stoi
     publish();
-    const fresh = session.econ.minute === OPEN_FROM && session.econ.total.customers === 0;
-    if (fresh) {
-      ui.showIntro.value = true;
-    } else if (!session.econ.gameOver) {   // po wypowiedzeniu umowy wstaje samo okno końca gry, bez premii na powitanie
-      ui.welcome.value = welcomeOffer(meta, session.econ, new Date());   // nic się nie zapisuje, dopóki gracz nie kliknie „Odbierz!”
-    }
+    // nic się nie zapisuje, dopóki gracz nie kliknie „Odbierz!”; po wypowiedzeniu umowy wstaje samo okno końca gry
+    const start = startupWindow(meta, session.econ, session.ephemeral, new Date());
+    ui.showIntro.value = start.intro;
+    ui.welcome.value = start.welcome;
     persist();
   }
 

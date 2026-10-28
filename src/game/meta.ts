@@ -1,4 +1,4 @@
-import { MINUTES_PER_DAY } from '@/sim/economy/catalog';
+import { MINUTES_PER_DAY, OPEN_FROM } from '@/sim/economy/catalog';
 import type { EconomyState } from '@/sim/economy/economy';
 import { LIMITS } from '@/sim/economy/sanitize';
 import { isRec, num, whole } from '@/sim/guards';
@@ -11,6 +11,7 @@ import { isRec, num, whole } from '@/sim/guards';
 export interface NetworkStore { seed: string; income: number; level: number; margin: number }
 
 export interface Meta {
+  /** Wersja formatu mety: znacznik schematu. Wyższa niż ta, którą umiemy czytać, znaczy „zapisała nowsza wersja gry”. */
   version: 1;
   partnerPoints: number;
   network: NetworkStore[];
@@ -18,9 +19,15 @@ export interface Meta {
   lastSeen: number;
   sound: boolean;
   vibration: boolean;
+  /**
+   * Meta zapisana przez nowszą wersję gry: w tej karcie działają wartości domyślne, a pod kluczem mety nic się nie zapisuje,
+   * żeby nie zjeść cudzej sieci sklepów i punktów. Zwykła meta nie ma tego pola w ogóle.
+   */
+  readOnly?: true;
 }
 
 const KEY = 'traszka:meta';
+const META_VERSION = 1;
 
 const defaults = (): Meta => ({
   version: 1, partnerPoints: 0, network: [], daily: { date: '', streak: 0 }, lastSeen: 0, sound: true, vibration: true,
@@ -44,7 +51,9 @@ const MAX_TIME_MS = 8.64e15;
  */
 export function sanitizeMeta(data: unknown): Meta {
   const d = defaults();
-  if (!isRec(data) || data.version !== 1) return d;
+  // znacznik schematu to `version`; `schema` (jak w kopercie zapisu sklepu) też uznajemy, gdyby nowsza wersja go dopisała
+  if (isRec(data) && [data.version, data.schema].some((v) => typeof v === 'number' && v > META_VERSION)) return { ...d, readOnly: true };
+  if (!isRec(data) || data.version !== META_VERSION) return d;
   const daily = isRec(data.daily) && typeof data.daily.date === 'string'
     ? { date: data.daily.date, streak: whole(data.daily.streak, 0, 0, LIMITS.minute / MINUTES_PER_DAY) } : d.daily;
   const network = Array.isArray(data.network) ? data.network.flatMap((n): NetworkStore[] => (
@@ -68,6 +77,7 @@ export function sanitizeMeta(data: unknown): Meta {
 }
 
 export function saveMeta(meta: Meta): void {
+  if (meta.readOnly) return;
   try {
     localStorage.setItem(KEY, JSON.stringify(meta));
   } catch {
@@ -147,4 +157,20 @@ export function welcomeOffer(meta: Meta, s: EconomyState, now: Date): WelcomeOff
   const streak = pendingDaily(meta, now);
   const daily = streak !== null ? dailyReward(streak, s.level) : null;
   return offline > 0 || daily ? { hours, offline, streak, daily } : null;
+}
+
+/** Co pokazać po otwarciu sklepu: ekran powitalny nowej gry albo okno „Witaj z powrotem”. */
+export interface StartupWindow { intro: boolean; welcome: WelcomeOffer | null }
+
+/**
+ * Nowa gra (sklep na kreskę) dostaje ekran powitalny i niczego nie odbiera. Istniejąca gra dostaje okno powitalne, o ile
+ * ma co oddać. Nic nie dostaje: koniec gry (wstaje okno wypowiedzenia umowy), sklep tymczasowy (to nie pierwsza gra
+ * gracza, a nagrody miałyby wylądować w sklepie, którego nikt nie zapisze) i gra z metą z nowszej wersji (seria dni
+ * i czas wyjścia są domyślne, więc nagroda wracałaby przy każdym odświeżeniu).
+ */
+export function startupWindow(meta: Meta, s: EconomyState, ephemeral: boolean, now: Date): StartupWindow {
+  const none = { intro: false, welcome: null };
+  if (ephemeral || s.gameOver) return none;
+  if (s.minute === OPEN_FROM && s.total.customers === 0) return { intro: true, welcome: null };
+  return meta.readOnly ? none : { intro: false, welcome: welcomeOffer(meta, s, now) };
 }

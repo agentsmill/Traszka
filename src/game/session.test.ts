@@ -8,8 +8,8 @@ import { REMONTS } from '@/sim/economy/upgrades';
 import { GENERATOR_VERSION, generateStore } from '@/sim/store/generateStore';
 import { MemoryStorage } from './memoryStorage';
 import {
-  BROKEN_SAVE_NOTICE, SAVE_SCHEMA, createSession, deleteSave, lastSavedSeed, layoutFor, quarantineSave, retireSession, reviveSession,
-  saveSession, syncLayout, type GameSession,
+  BROKEN_SAVE_NOTICE, NEWER_SAVE_NOTICE, SAVE_SCHEMA, createSession, deleteSave, discardSave, lastSavedSeed, layoutFor, quarantineSave,
+  retireSession, reviveSession, saveSession, syncLayout, type GameSession,
 } from './session';
 
 const BLOK = 'kiełbasa-42';
@@ -231,8 +231,9 @@ describe('uszkodzone zapisy', () => {
     ['v2: econ: null', () => v2(null)],
     ['v2: econ.shelf: tekst', () => v2({ ...v1(), shelf: 'pełna' })],
     ['v2: cudzy seed w kopercie', () => ({ ...v2(), seed: 'inny' })],
-    ['przyszły schemat 3', () => ({ ...v2(), schema: 3 })],
     ['schemat jako tekst', () => ({ ...v2(), schema: '2' })],
+    ['schemat jako tekst z przyszłości', () => ({ ...v2(), schema: '3' })],
+    ['schemat 1 w kopercie (żadna wersja gry go nie pisała)', () => ({ ...v2(), schema: 1 })],
   ];
   for (const [name, blob] of unrepairable) {
     it(`nie do naprawienia (${name}): kopia w :broken, komunikat, nowa gra, bez wyjątku`, () => {
@@ -394,5 +395,83 @@ describe('granice wartości z zapisu (LIMITS) nie schodzą poniżej tego, co pot
     expect(most.queue * 4).toBeLessThanOrEqual(LIMITS.queue);
     expect(most.deliveries * 2).toBeLessThanOrEqual(LIMITS.deliveries);
     expect(most.pallets * 2).toBeLessThanOrEqual(LIMITS.pallets);
+  });
+});
+
+describe('zapis z nowszej wersji gry (schemat wyższy niż obsługiwany)', () => {
+  const futureBlob = (schema: unknown): string => JSON.stringify({
+    schema, seed: BLOK, gameVersion: '9.9.9', generatorVersion: 99, layout: { zupełnie: 'inny kształt' },
+    econ: { nowePole: [1, 2, 3], cash: 'tysiąc' }, tylkoPrzyszłość: true,
+  });
+  const put = (raw: string): string => { storage.setItem(key(BLOK), raw); return raw; };
+  const versions: [string, string][] = [
+    ['schema: 3', futureBlob(3)],
+    ['schema: 4', futureBlob(4)],
+    ['schema: 99', futureBlob(99)],
+    ['schema: 2.5', futureBlob(2.5)],
+    ['schema: 1e999 (JSON.parse daje Infinity)', '{"schema":1e999,"seed":"kiełbasa-42","econ":{}}'],
+  ];
+
+  for (const [name, raw] of versions) {
+    it(`${name}: zapis zostaje nietknięty, bez :broken, gra rusza w sklepie tymczasowym z komunikatem`, () => {
+      put(raw);
+      storage.setItem('traszka:last', 'inny-sklep');
+      const s = createSession(BLOK);
+      expect(NEWER_SAVE_NOTICE).toBe('Zapis pochodzi z nowszej wersji gry — odśwież stronę');
+      expect(s.loadNotice).toBe(NEWER_SAVE_NOTICE);
+      expect(s.ephemeral).toBe(true);
+      expect(s.fromSave).toBe(false);
+      expect(s.seed).toBe(BLOK);
+      expect(s.econ.minute).toBe(OPEN_FROM);
+      expect(storage.getItem(key(BLOK))).toBe(raw);
+      expect(storage.getItem(`${key(BLOK)}:broken`)).toBeNull();
+      expectPlayable(s);
+
+      // nic, co tab robi w trakcie gry, nie rusza cudzego zapisu: zapis, zamknięcie w sieci, odświeżenie, wczytanie
+      saveSession(s);
+      play(s, 2);
+      saveSession(s);
+      retireSession(s);
+      reviveSession(s);
+      discardSave(s);
+      expect(storage.getItem(key(BLOK))).toBe(raw);
+      expect(lastSavedSeed()).toBe('inny-sklep');   // „ostatni sklep” też stoi tam, gdzie stał
+      const again = createSession(BLOK);
+      expect(again.ephemeral).toBe(true);
+      expect(again.loadNotice).toBe(NEWER_SAVE_NOTICE);
+      expect(storage.getItem(key(BLOK))).toBe(raw);
+    });
+  }
+
+  it('zwykły zapis (schemat 2) i nowa gra nie są tymczasowe, a ich komunikaty się nie zmieniły', () => {
+    const played = playedSession(BLOK);
+    expect(played.ephemeral).toBe(false);
+    const loaded = createSession(BLOK);
+    expect(loaded.ephemeral).toBe(false);
+    expect(loaded.loadNotice).toBeNull();
+    expect(createSession(PAWILON).ephemeral).toBe(false);
+    storage.setItem(key(PAWILON), '{"ucięty');
+    const broken = createSession(PAWILON);
+    expect(broken.ephemeral).toBe(false);
+    expect(broken.loadNotice).toBe(BROKEN_SAVE_NOTICE);
+  });
+
+  it('discardSave („zacznij od nowa”) kasuje zapis zwykłego sklepu, ale nie ruszy zapisu pod sklepem tymczasowym', () => {
+    const normal = playedSession(BLOK);
+    discardSave(normal);
+    expect(storage.getItem(key(BLOK))).toBeNull();
+    const raw = put(futureBlob(3));
+    discardSave(createSession(BLOK));
+    expect(storage.getItem(key(BLOK))).toBe(raw);
+  });
+
+  it('po „zacznij od nowa” w sklepie tymczasowym świeża gra też jest tymczasowa (createSession z fresh nie zna cudzego zapisu)', () => {
+    const raw = put(futureBlob(3));
+    const first = createSession(BLOK);
+    const restarted = createSession(BLOK, true, undefined, { ephemeral: first.ephemeral });
+    expect(restarted.ephemeral).toBe(true);
+    expect(restarted.fromSave).toBe(false);
+    saveSession(restarted);
+    expect(storage.getItem(key(BLOK))).toBe(raw);
   });
 });

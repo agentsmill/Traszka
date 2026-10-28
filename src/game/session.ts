@@ -25,6 +25,11 @@ export interface GameSession {
   loadNotice: string | null;
   /** Sklep zamknięty w sieci: jego zapis skasowano i nic go już nie zapisze (patrz `retireSession`). */
   retired: boolean;
+  /**
+   * Sklep tymczasowy: nic go nie zapisze ani nie skasuje zapisu pod jego seedem. Taką sesją gra otwiera się wtedy, gdy zapis
+   * pod tym seedem jest cudzy (z nowszej wersji gry) i nie wolno go ruszyć, a gracz i tak ma dostać działającą grę.
+   */
+  ephemeral: boolean;
 }
 
 /**
@@ -76,10 +81,11 @@ export interface SaveEnvelope {
 
 export const BROKEN_SAVE_NOTICE = 'Zapis sklepu był uszkodzony — zaczynamy od nowa. Kopia została w przeglądarce.';
 export const BROKEN_SAVE_NOTICE_NO_COPY = 'Zapis sklepu był uszkodzony — zaczynamy od nowa.';
+export const NEWER_SAVE_NOTICE = 'Zapis pochodzi z nowszej wersji gry — odśwież stronę';
 
 /** Zapis w przeglądarce (localStorage). Błędy (tryb prywatny, brak miejsca) są ciche: gra działa dalej bez zapisu. */
 export function saveSession(s: GameSession): void {
-  if (s.retired) return;
+  if (s.retired || s.ephemeral) return;
   const envelope: SaveEnvelope = {
     schema: SAVE_SCHEMA, gameVersion: GAME_VERSION, generatorVersion: GENERATOR_VERSION, seed: s.seed, layout: s.layout, econ: s.econ,
   };
@@ -114,7 +120,12 @@ export function deleteSave(seed: string): void {
  */
 export function retireSession(s: GameSession): void {
   s.retired = true;
-  deleteSave(s.seed);
+  discardSave(s);
+}
+
+/** Kasuje zapis sklepu sesji („zacznij od nowa”, zamknięcie w sieci). Sklep tymczasowy nie ma własnego zapisu, więc cudzego nie rusza. */
+export function discardSave(s: GameSession): void {
+  if (!s.ephemeral) deleteSave(s.seed);
 }
 
 export function reviveSession(s: GameSession): void {
@@ -148,7 +159,11 @@ export function quarantineSave(seed: string): boolean {
 type ReadResult =
   | { status: 'none' }
   | { status: 'ok'; session: GameSession; migrated: boolean }
-  | { status: 'broken'; backedUp: boolean };
+  | { status: 'broken'; backedUp: boolean }
+  | { status: 'newer' };
+
+/** Zapis z nowszej wersji gry: schemat wyższy niż ten, który umiemy czytać. Nie wiemy, co w nim jest, więc go nie ruszamy. */
+const isNewerSchema = (data: unknown): boolean => isRec(data) && typeof data.schema === 'number' && data.schema > SAVE_SCHEMA;
 
 /** Czyta zapis sklepu. Uszkodzonego nie naprawia na siłę: ląduje w kopii, a wołający zaczyna nową grę. */
 function readSave(seed: string, partner?: EconomyState['partner']): ReadResult {
@@ -160,7 +175,9 @@ function readSave(seed: string, partner?: EconomyState['partner']): ReadResult {
   }
   if (raw === null) return { status: 'none' };
   try {
-    const opened = openSave(JSON.parse(raw) as unknown, seed, partner);
+    const data = JSON.parse(raw) as unknown;
+    if (isNewerSchema(data)) return { status: 'newer' };
+    const opened = openSave(data, seed, partner);
     if (opened) return { status: 'ok', ...opened };
   } catch (error) {
     console.error(`Zapis sklepu „${seed}” nie dał się wczytać.`, error);
@@ -196,29 +213,39 @@ function openSave(data: unknown, seed: string, partner?: EconomyState['partner']
   if (partner) econ.partner = { ...partner };
   fillQuests(econ, info);
   return {
-    session: { seed, econ, layout, info, clock: { acc: 0 }, layoutLevel: econ.remontLevel, fromSave: true, loadNotice: null, retired: false },
+    session: {
+      seed, econ, layout, info, clock: { acc: 0 }, layoutLevel: econ.remontLevel, fromSave: true, loadNotice: null, retired: false,
+      ephemeral: false,
+    },
     migrated,
   };
 }
 
 /**
  * Nowa gra albo wczytana z zapisu (`fresh` pomija zapis). Nie rzuca z powodu zapisu: uszkodzony trafia do kopii, a sesja
- * jest nowa z `loadNotice` dla gracza. `partner` to premia z sieci sklepów (meta.ts): aktualna przy każdym wczytaniu.
+ * jest nowa z `loadNotice` dla gracza; zapis z nowszej wersji gry zostaje na miejscu, a gracz dostaje sklep tymczasowy
+ * (`ephemeral`). `partner` to premia z sieci sklepów (meta.ts): aktualna przy każdym wczytaniu. `options.ephemeral` zaczyna
+ * świeżą grę jako tymczasową („zacznij od nowa” w sklepie tymczasowym), bez zaglądania do zapisu.
  */
-export function createSession(seed: string, fresh = false, partner?: EconomyState['partner']): GameSession {
+export function createSession(seed: string, fresh = false, partner?: EconomyState['partner'], options: { ephemeral?: boolean } = {}): GameSession {
   let loadNotice: string | null = null;
-  if (!fresh) {
+  let ephemeral = options.ephemeral === true;
+  if (!fresh && !ephemeral) {
     const read = readSave(seed, partner);
     if (read.status === 'ok') {
       if (read.migrated) saveSession(read.session);
       return read.session;
     }
     if (read.status === 'broken') loadNotice = read.backedUp ? BROKEN_SAVE_NOTICE : BROKEN_SAVE_NOTICE_NO_COPY;
+    if (read.status === 'newer') {
+      loadNotice = NEWER_SAVE_NOTICE;
+      ephemeral = true;
+    }
   }
   const layout = layoutFor(seed, 0);
   const info = computeStoreInfo(layout);
   const econ = createEconomy(seed, info, partner);
-  return { seed, econ, layout, info, clock: { acc: 0 }, layoutLevel: 0, fromSave: false, loadNotice, retired: false };
+  return { seed, econ, layout, info, clock: { acc: 0 }, layoutLevel: 0, fromSave: false, loadNotice, retired: false, ephemeral };
 }
 
 /** Po remoncie: nowy układ i przeniesienie palet oraz sprzętu. Zwraca true, gdy układ się zmienił. */

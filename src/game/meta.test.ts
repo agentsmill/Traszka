@@ -5,7 +5,7 @@ import { createEconomy, stepMinute, type EconEvent } from '@/sim/economy/economy
 import { computeStoreInfo } from '@/sim/economy/storeInfo';
 import { MemoryStorage } from './memoryStorage';
 import {
-  addToNetwork, claimDaily, loadMeta, partnerOf, pendingDaily, prestigePoints, saveMeta, welcomeOffer, type Meta,
+  addToNetwork, claimDaily, loadMeta, partnerOf, pendingDaily, prestigePoints, saveMeta, startupWindow, welcomeOffer, type Meta,
 } from './meta';
 import { createSession, retireSession, saveSession } from './session';
 
@@ -156,7 +156,7 @@ describe('meta z uszkodzonego zapisu', () => {
   });
 
   it('nie-JSON, zła wersja i nie-obiekty dają metę domyślną', () => {
-    for (const blob of ['{"ucięty', 'null', '[]', '7', '"x"', { version: 2 }, {}]) {
+    for (const blob of ['{"ucięty', 'null', '[]', '7', '"x"', { version: 0 }, { version: '1' }, { version: -1 }, {}]) {
       const m = load(blob);
       ok(m);
       expect(m).toEqual({ version: 1, partnerPoints: 0, network: [], daily: { date: '', streak: 0 }, lastSeen: 0, sound: true, vibration: true });
@@ -215,5 +215,93 @@ describe('meta ze skrajnymi liczbami', () => {
       lastSeen: Date.UTC(2026, 9, 27), sound: true, vibration: false,
     };
     expect(load(good)).toEqual(good);
+  });
+});
+
+describe('meta z nowszej wersji gry', () => {
+  const GOOD = { version: 1, partnerPoints: 4, network: [{ seed: 'a', income: 300, level: 12, margin: 90_000 }], daily: { date: '2026-10-27', streak: 3 }, lastSeen: 5, sound: false, vibration: true };
+  const put = (blob: unknown): string => {
+    const raw = typeof blob === 'string' ? blob : JSON.stringify(blob);
+    storage.setItem(META_KEY, raw);
+    return raw;
+  };
+  const newer: [string, unknown][] = [
+    ['version: 2', { ...GOOD, version: 2, sieć: { nowy: 'kształt' } }],
+    ['version: 9', { version: 9 }],
+    ['schema: 2 (znacznik w stylu koperty zapisu)', { ...GOOD, schema: 2 }],
+    ['schema: 7, version: 1', { ...GOOD, schema: 7 }],
+    ['version: 1.5', { ...GOOD, version: 1.5 }],
+  ];
+
+  for (const [name, blob] of newer) {
+    it(`${name}: meta zostaje nietknięta, gra dostaje wartości domyślne i nie zapisze niczego pod tym kluczem`, () => {
+      const raw = put(blob);
+      const meta = loadMeta();
+      expect(meta.readOnly).toBe(true);
+      expect(meta).toMatchObject({ version: 1, partnerPoints: 0, network: [], sound: true, vibration: true });
+      expect(() => partnerOf(meta)).not.toThrow();
+      saveMeta(meta);
+      saveMeta({ ...meta, sound: false });            // przełącznik dźwięku w tej karcie
+      saveMeta(addToNetwork(meta, richStore('x')));   // kopia mety niesie znacznik dalej
+      expect(addToNetwork(meta, richStore('x')).readOnly).toBe(true);
+      expect(storage.getItem(META_KEY)).toBe(raw);
+    });
+  }
+
+  it('meta uszkodzona (zła wersja, nie-obiekt) nie jest „z przyszłości”: zostaje do nadpisania jak dotąd', () => {
+    for (const blob of ['{"ucięty', 'null', { version: 0 }, { version: '2' }, {}]) {
+      put(blob);
+      const meta = loadMeta();
+      expect(meta.readOnly).toBeUndefined();
+      saveMeta({ ...meta, partnerPoints: 3 });
+      expect(JSON.parse(storage.getItem(META_KEY)!)).toMatchObject({ partnerPoints: 3 });
+    }
+  });
+
+  it('zwykła meta nie ma znacznika w ogóle, więc zapis i odczyt wyglądają jak dotąd', () => {
+    put(GOOD);
+    const meta = loadMeta();
+    expect('readOnly' in meta).toBe(false);
+    saveMeta(meta);
+    expect(JSON.parse(storage.getItem(META_KEY)!)).toEqual(GOOD);
+  });
+});
+
+describe('okno po otwarciu sklepu (startupWindow)', () => {
+  const now = new Date(2026, 9, 28, 12, 0);
+  const plainMeta = (): Meta => loadMeta();
+  const played = (): ReturnType<typeof richStore> => {
+    const s = richStore('sklep');
+    s.minute = 8 * 60 + 1440 * 3;
+    s.total.customers = 800;
+    s.lastDayProfit = 8000;
+    return s;
+  };
+
+  it('nowa gra pokazuje ekran powitalny i niczego nie odbiera', () => {
+    const fresh = createEconomy('nowy', computeStoreInfo(generateStore('nowy')));
+    expect(startupWindow(plainMeta(), fresh, false, now)).toEqual({ intro: true, welcome: null });
+  });
+
+  it('istniejąca gra: okno „Witaj z powrotem” z zarobkiem i premią dzienną', () => {
+    const meta = plainMeta();
+    meta.lastSeen = now.getTime() - 3 * 3_600_000;
+    const w = startupWindow(meta, played(), false, now);
+    expect(w.intro).toBe(false);
+    expect(w.welcome).toEqual(welcomeOffer(meta, played(), now));
+    expect(w.welcome!.offline).toBeGreaterThan(0);
+  });
+
+  it('po końcu gry, w sklepie tymczasowym i przy mecie z nowszej wersji nie ma ani ekranu powitalnego, ani premii', () => {
+    const none = { intro: false, welcome: null };
+    const meta = plainMeta();
+    meta.lastSeen = now.getTime() - 3 * 3_600_000;
+    const over = played();
+    over.gameOver = true;
+    expect(startupWindow(meta, over, false, now)).toEqual(none);
+    expect(startupWindow(meta, played(), true, now)).toEqual(none);
+    expect(startupWindow({ ...meta, readOnly: true }, played(), false, now)).toEqual(none);
+    const fresh = createEconomy('nowy', computeStoreInfo(generateStore('nowy')));
+    expect(startupWindow(meta, fresh, true, now)).toEqual(none);   // awaryjny świat nie jest pierwszą grą gracza
   });
 });
