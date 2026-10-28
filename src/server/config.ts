@@ -46,10 +46,15 @@ export const BUDGET_TTL = DAY;
 export const SEED_BOARD_TTL = 400 * DAY;
 export const WEEK_BOARD_TTL = 63 * DAY;
 
-/** Ile miejsc trzyma każdy ranking (reszta wypada przy kolejnym wpisie) i ile wierszy oddaje jedno zapytanie. */
+/**
+ * Ile miejsc trzyma każdy ranking (reszta wypada przy kolejnym wpisie) i ile wierszy oddaje jedno zapytanie. `limit` w zapytaniu
+ * to dokładnie jedna z `BOARD_LIMITS`: pamięć podręczna Vercela kluczuje adresem z zapytaniem, więc każda inna liczba byłaby
+ * osobnym wpisem, a atakujący miałby ich nieskończenie wiele i każdy szedłby do bazy.
+ */
 export const BOARD_KEEP = 10_000;
+export const BOARD_LIMITS: readonly number[] = [10, 20, 50, 100];
 export const BOARD_LIMIT_DEFAULT = 20;
-export const BOARD_LIMIT_MAX = 100;
+export const BOARD_LIMIT_MAX = Math.max(...BOARD_LIMITS);
 
 /** Granice zgłoszenia biegu: ciało żądania (Vercel i tak tnie przy 4,5 MB), liczba poleceń w dzienniku i rozmiar jednego polecenia. */
 export const RUN_MAX_BODY_BYTES = 4_000_000;

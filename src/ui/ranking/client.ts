@@ -23,6 +23,7 @@ export interface ApiError { ok: false; error: string; message: string }
 export type ApiResult<T> = ({ ok: true } & T) | ApiError;
 
 export interface RankingClient {
+  /** `limit` to 10, 20, 50 albo 100 wierszy (domyślnie 20): serwer odrzuca inne wartości, żeby pamięć podręczna Vercela miała mało kluczy. */
   board(tab: RankingTab, seed?: string, limit?: number): Promise<ApiResult<BoardResponse>>;
   player(key: string, nick?: string, seed?: string): Promise<ApiResult<PlayerResponse>>;
   uploadSave(key: string, save: string): Promise<ApiResult<SaveUploaded>>;

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { BUDGET_TTL, RATE_LIMITS } from './config';
 import { KEYS } from './keys';
 import { MemoryRedis } from './memoryRedis';
-import { checkBudget, checkRate, utcDay } from './rateLimit';
+import { addressBucket, checkBudget, checkRate, utcDay } from './rateLimit';
 import { run } from './redis';
 
 const OWNER = 'a'.repeat(64);
@@ -128,5 +128,68 @@ describe('globalny budżet dzienny (jeden licznik na dobę UTC, niezależny od k
   it('odpowiedź bazy bez liczby to odmowa, a nie przepuszczenie', async () => {
     const broken = { exec: async () => [null, null] };
     expect(await checkBudget(broken, 'save', 100, NOON)).toMatchObject({ ok: false });
+  });
+});
+
+describe('adres IPv6 liczony po prefiksie /64', () => {
+  const owner = (i: number): string => i.toString(16).padStart(8, '0').padEnd(64, 'f');
+
+  it('IPv4 i tekst, który nie jest adresem, bez zmian; IPv6 to pierwsze 4 z 8 grup po rozwinięciu ::, zapisane jednolicie', () => {
+    expect(addressBucket('203.0.113.7')).toBe('203.0.113.7');
+    expect(addressBucket('nieznany')).toBe('nieznany');
+    expect(addressBucket('2001:db8:85a3:8d3:1319:8a2e:370:7348')).toBe('2001:db8:85a3:8d3/64');
+    expect(addressBucket('2001:db8::1')).toBe('2001:db8:0:0/64');
+    expect(addressBucket('2001:0DB8:0000:0000:ABCD:0000:0000:0001')).toBe('2001:db8:0:0/64');
+    expect(addressBucket('2001:db8:1:2::')).toBe('2001:db8:1:2/64');
+    expect(addressBucket('1:2:3:4:5:6:7::')).toBe('1:2:3:4/64');   // :: za siódmą grupą to jedna grupa zer
+    expect(addressBucket('::1')).toBe('0:0:0:0/64');
+    expect(addressBucket('::')).toBe('0:0:0:0/64');
+    expect(addressBucket('fe80::1%eth0')).toBe('fe80:0:0:0/64');
+    expect(addressBucket('[2001:db8::1]')).toBe('2001:db8:0:0/64');
+    expect(addressBucket('  2001:db8::1 ')).toBe('2001:db8:0:0/64');
+  });
+
+  it('ten sam prefiks to jeden kubełek niezależnie od końcówki i zapisu, inny prefiks to inny kubełek', () => {
+    const same = ['2001:db8:aaaa:bbbb::1', '2001:db8:aaaa:bbbb:ffff:ffff:ffff:ffff', '2001:DB8:AAAA:BBBB:1:2:3:4', '2001:db8:aaaa:bbbb:0:0:0:0', '2001:db8:aaaa:bbbb::'];
+    expect(new Set(same.map(addressBucket)).size).toBe(1);
+    expect(addressBucket('2001:db8:aaaa:bbbc::1')).not.toBe(addressBucket(same[0]!));
+    expect(addressBucket('2001:db8:aaab:bbbb::1')).not.toBe(addressBucket(same[0]!));
+  });
+
+  it('IPv4 zapisany jako IPv6 to ten sam kubełek co zwykły IPv4 (nie wspólny dla wszystkich takich klientów)', () => {
+    for (const mapped of ['::ffff:203.0.113.7', '::FFFF:cb00:7107', '0:0:0:0:0:ffff:203.0.113.7', '::ffff:203.0.113.007']) {
+      expect(addressBucket(mapped), mapped).toBe('203.0.113.7');
+    }
+    expect(addressBucket('::ffff:203.0.113.8')).not.toBe(addressBucket('::ffff:203.0.113.7'));
+  });
+
+  it('tekst, którego nie da się rozebrać na osiem grup szesnastkowych, zostaje bez zmian', () => {
+    for (const odd of ['1:2:3', '1:2:3:4:5:6:7:8:9', '1::2::3', '12345::1', 'g::1', ':::', '1:2:3:4:5:6:7:8::', '::ffff:300.1.1.1', 'a:b', '1.2.3.4:80']) {
+      expect(addressBucket(odd), odd).toBe(odd);
+    }
+  });
+
+  it('limit na adres: wszystkie adresy z jednego prefiksu /64 dzielą jeden licznik, inny prefiks, IPv4 i adres bez prefiksu mają osobne', async () => {
+    const { redis, clock } = setup();
+    const { perAddress } = RATE_LIMITS.runs;
+    for (let i = 0; i < perAddress; i++) {
+      const address = `2001:db8:aaaa:bbbb:${i.toString(16)}:${i}::${i + 1}`;   // inna końcówka za każdym razem
+      expect((await checkRate(redis, 'runs', { owner: owner(i), address }, clock.now)).ok, address).toBe(true);
+    }
+    const sameNet = { owner: owner(500), address: '2001:db8:aaaa:bbbb:dead:beef:0:1' };
+    expect((await checkRate(redis, 'runs', sameNet, clock.now)).ok).toBe(false);
+    expect((await checkRate(redis, 'runs', { owner: null, address: '2001:db8:aaaa:bbbb::9' }, clock.now)).ok).toBe(false);
+    expect((await checkRate(redis, 'runs', { owner: owner(501), address: '2001:db8:aaaa:bbbc::1' }, clock.now)).ok).toBe(true);
+    expect((await checkRate(redis, 'runs', { owner: owner(502), address: '203.0.113.7' }, clock.now)).ok).toBe(true);
+    expect((await checkRate(redis, 'runs', { owner: owner(503), address: '::ffff:203.0.113.7' }, clock.now)).ok).toBe(true);
+    expect((await checkRate(redis, 'runs', { owner: owner(504), address: '203.0.113.7' }, clock.now)).ok).toBe(true);
+  });
+
+  it('w bazie leży tylko skrót z solą, nie prefiks ani adres', async () => {
+    const { redis, clock } = setup();
+    await checkRate(redis, 'runs', { owner: owner(7), address: '2001:db8:aaaa:bbbb::1' }, clock.now);
+    const keys = redis.keys().join(' ');
+    for (const leak of ['2001:db8', 'db8:aaaa', ':bbbb', '/64']) expect(keys).not.toContain(leak);   // skrót jest szesnastkowy, bez dwukropków
+    expect(keys).toContain(':a:');
   });
 });

@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import { formatRecoveryCode } from '@/game/playerKey';
 import { API_ERRORS } from './errors';
-import { KNOWN_GAME_VERSIONS, KNOWN_GENERATOR_VERSIONS, RATE_LIMITS, SAVE_BUNDLE_FORMAT, SAVE_DAILY_BUDGET, SAVE_MAX_BYTES } from './config';
+import {
+  BOARD_LIMIT_DEFAULT, BOARD_LIMIT_MAX, BOARD_LIMITS, KNOWN_GAME_VERSIONS, KNOWN_GENERATOR_VERSIONS, RATE_LIMITS, SAVE_BUNDLE_FORMAT,
+  SAVE_DAILY_BUDGET, SAVE_MAX_BYTES,
+} from './config';
 import {
   clientAddress, handleLeaderboard, handlePlayer, handleRuns, handleSaveDownload, handleSaveUpload, type ServerDeps,
 } from './http';
@@ -119,7 +122,7 @@ describe('GET /api/leaderboard', () => {
   it('ranking globalny z seedem tygodnia w odpowiedzi i krótką pamięcią podręczną Vercela', async () => {
     const { deps, clock } = setup();
     await submit(deps, KEY_A, 'Ala');
-    const res = await handleLeaderboard(get('/api/leaderboard?board=global&limit=5'), deps);
+    const res = await handleLeaderboard(get('/api/leaderboard?board=global&limit=10'), deps);
     expect(res.status).toBe(200);
     expect(res.headers.get('cache-control')).toContain('s-maxage=');
     const week = weekOf(clock.now);
@@ -144,11 +147,67 @@ describe('GET /api/leaderboard', () => {
     expect((await handleLeaderboard(post('/api/leaderboard', {}), deps)).status).toBe(405);
   });
 
-  it('limit wierszy przycięty do 1…100, a śmieci w parametrze to domyślne 20', async () => {
+  it('limit to dokładnie 10, 20, 50 albo 100 wierszy; bez limitu domyślne 20', async () => {
     const { deps } = setup();
-    for (const q of ['limit=0', 'limit=1000', 'limit=abc', 'limit=-5']) {
-      expect((await handleLeaderboard(get(`/api/leaderboard?${q}`), deps)).status, q).toBe(200);
+    const key = (i: number): string => `A${String(i).padStart(2, '0')}`.padEnd(20, '7');
+    for (let i = 0; i < 25; i++) await submit(deps, key(i), `Gracz${i}`, undefined, { 'x-real-ip': `10.0.0.${i}` });
+    const rows = async (query: string): Promise<number> => ((await body(await handleLeaderboard(get(`/api/leaderboard${query}`), deps))).rows as unknown[]).length;
+    expect(BOARD_LIMITS).toEqual([10, 20, 50, 100]);
+    expect(BOARD_LIMIT_DEFAULT).toBe(20);
+    expect(BOARD_LIMIT_MAX).toBe(100);
+    expect(await rows('')).toBe(20);
+    expect(await rows('?limit=10')).toBe(10);
+    expect(await rows('?board=global&limit=20')).toBe(20);
+    expect(await rows('?limit=50')).toBe(25);
+    expect(await rows('?limit=100')).toBe(25);
+  });
+
+  it('inny limit niż 10, 20, 50, 100 to 400 bad-request, bez zapytania do bazy i bez pamięci podręcznej (mało kluczy w cache Vercela)', async () => {
+    const { deps, redis } = setup();
+    const odd = ['0', '1', '5', '15', '101', '1000', 'abc', '-5', '', '010', '1e1', '10.0', '+10', '%2010', '10%20', '０１０', '١٠', 'NaN', 'Infinity'];
+    for (const value of odd) {
+      const res = await handleLeaderboard(get(`/api/leaderboard?board=global&limit=${value}`), deps);
+      expect(res.status, `limit=${value}`).toBe(400);
+      expect((await body(res)).error, `limit=${value}`).toBe('bad-request');
+      expect(res.headers.get('cache-control')).toBe('no-store');
     }
+    expect(redis.calls).toBe(0);
+  });
+
+  it('nieznany albo powtórzony parametr to 400 bad-request, a seed tylko przy rankingu seeda (inaczej to klucz cache z niczego)', async () => {
+    const { deps, redis } = setup();
+    const bad = [
+      '?x=1', '?board=global&x=1', '?board=week&x=1', '?board=seed&seed=bigos-111&x=1', '?board=global&x=', '?board=global&x', '?X=1', '?Board=global',
+      '?board=global&seed=bigos-111', '?board=week&seed=bigos-111', '?seed=bigos-111',
+      '?board=global&board=week', '?board=global&limit=10&limit=10', '?board=global&limit=10&limit=20', '?board=seed&seed=a&seed=b',
+      '?board=global&limit=10&fbclid=abc', '?%62oard=global&x=1', '?board=global&&x=1',
+    ];
+    for (const q of bad) {
+      const res = await handleLeaderboard(get(`/api/leaderboard${q}`), deps);
+      expect(res.status, q).toBe(400);
+      expect((await body(res)).error, q).toBe('bad-request');
+    }
+    expect(redis.calls).toBe(0);
+  });
+
+  it('znane parametry w dowolnej kolejności przechodzą; pusty znak zapytania i nazwa kodowana procentowo też', async () => {
+    const { deps } = setup();
+    for (const q of [
+      '', '?', '?board=global', '?limit=50&board=week', '?board=week&limit=10', '?limit=100&seed=bigos-111&board=seed', '?board=seed&seed=bigos-111&limit=50',
+      '?%62oard=global', '?board=global&',
+    ]) {
+      expect((await handleLeaderboard(get(`/api/leaderboard${q}`), deps)).status, q).toBe(200);
+    }
+  });
+
+  it('nieznany ranking to 400 bad-board także dla nazw z prototypu obiektu (bez wyjątku i bez bazy)', async () => {
+    const { deps, redis } = setup();
+    for (const board of ['miasto', '', 'constructor', '__proto__', 'toString', 'hasOwnProperty', 'GLOBAL']) {
+      const res = await handleLeaderboard(get(`/api/leaderboard?board=${board}`), deps);
+      expect(res.status, board).toBe(400);
+      expect((await body(res)).error, board).toBe('bad-board');
+    }
+    expect(redis.calls).toBe(0);
   });
 });
 

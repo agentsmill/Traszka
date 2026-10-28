@@ -1,4 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { BOARD_LIMITS } from '@/server/config';
+import { handleLeaderboard, type ServerDeps } from '@/server/http';
+import { MemoryRedis } from '@/server/memoryRedis';
+import { replayNotAvailable } from '@/server/verify';
 import { NETWORK_ERROR, UNAVAILABLE_ERROR, createRankingClient } from './client';
 
 /** Atrapa fetch: zapisuje zapytania, oddaje przygotowaną odpowiedź. */
@@ -24,6 +28,21 @@ describe('klient API rankingu w grze', () => {
     expect(calls[0]!.init.method ?? 'GET').toBe('GET');
     await client.board('global');
     expect(calls[1]!.url).toBe('/api/leaderboard?board=global&limit=20');
+  });
+
+  it('zapytania klienta przechodzą przez prawdziwą obsługę rankingu na serwerze: nazwy parametrów i limity się zgadzają', async () => {
+    const redis = new MemoryRedis();
+    const deps: ServerDeps = { redis, readRedis: redis, verifyRun: replayNotAvailable, now: () => Date.UTC(2026, 9, 28, 12) };
+    const toServer = (async (input: RequestInfo | URL, init?: RequestInit) =>
+      handleLeaderboard(new Request(`https://traszka.test${String(input)}`, init), deps)) as typeof fetch;
+    const client = createRankingClient(toServer);
+    expect(await client.board('global')).toMatchObject({ ok: true, board: 'global', rows: [] });
+    expect(await client.board('week')).toMatchObject({ ok: true, board: 'week', rows: [] });
+    for (const seed of ['pierogi-731', 'żurek 🥣', 'seed·2']) {
+      expect(await client.board('seed', seed), seed).toMatchObject({ ok: true, board: 'seed', seed, rows: [] });
+    }
+    for (const limit of BOARD_LIMITS) expect(await client.board('global', undefined, limit), String(limit)).toMatchObject({ ok: true });
+    expect(await client.board('global', undefined, 7)).toMatchObject({ ok: false, error: 'bad-request' });
   });
 
   it('klucz gracza jedzie w ciele POST, nigdy w adresie', async () => {

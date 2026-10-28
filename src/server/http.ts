@@ -2,7 +2,7 @@ import { nickKey as keyOfNick, normalizeNick } from '../game/nick.js';
 import { parseRecoveryCode } from '../game/playerKey.js';
 import { isRec } from '../sim/guards.js';
 import {
-  BOARD_CACHE, BOARD_LIMIT_DEFAULT, BOARD_LIMIT_MAX, RUN_MAX_BODY_BYTES, SAVE_BODY_BYTES, SAVE_DAILY_BUDGET, SMALL_BODY_BYTES, type RateAction,
+  BOARD_CACHE, BOARD_LIMIT_DEFAULT, BOARD_LIMITS, RUN_MAX_BODY_BYTES, SAVE_BODY_BYTES, SAVE_DAILY_BUDGET, SMALL_BODY_BYTES, type RateAction,
 } from './config.js';
 import { API_ERRORS, fail, type ApiErrorCode, type ApiFailure, type Checked } from './errors.js';
 import type { RandomBytes } from './hash.js';
@@ -85,10 +85,17 @@ async function ownerFrom(body: unknown): Promise<Checked<{ body: Record<string, 
   return { ok: true, value: { body, key, owner: await ownerOf(key) } };
 }
 
-function boardLimit(raw: string | null): number {
-  const n = raw === null ? NaN : Math.floor(Number(raw));
-  return Number.isFinite(n) ? Math.min(BOARD_LIMIT_MAX, Math.max(1, n)) : BOARD_LIMIT_DEFAULT;
+/** `limit` z zapytania: bez niego domyślne 20, inaczej dokładnie 10, 20, 50 albo 100 (zapis „010” czy „1e1” już nie), a reszta to null. */
+function boardLimit(raw: string | null): number | null {
+  return raw === null ? BOARD_LIMIT_DEFAULT : BOARD_LIMITS.find((l) => String(l) === raw) ?? null;
 }
+
+/** Parametry zapytania, jakie zna każdy ranking. `seed` ma sens tylko przy rankingu seeda (przy innych byłby kluczem pamięci podręcznej z niczego). */
+const BOARD_PARAMS = new Map<string, readonly string[]>([
+  ['global', ['board', 'limit']],
+  ['week', ['board', 'limit']],
+  ['seed', ['board', 'seed', 'limit']],
+]);
 
 /** Seed z parametru albo z ciała, który wolno pokazać w rankingu (inaczej null). */
 const showableSeed = (seed: unknown): string | null => (typeof seed === 'string' && isShowableSeed(seed) ? seed : null);
@@ -96,23 +103,33 @@ const showableSeed = (seed: unknown): string | null => (typeof seed === 'string'
 /**
  * `GET /api/leaderboard?board=global|seed|week&seed=…&limit=…`: wiersze rankingu (miejsce, nick, wynik; w globalnym też seed
  * i data) i bieżący seed tygodnia. Publiczne i jednakowe dla wszystkich, więc odpowiedź leży chwilę w pamięci podręcznej Vercela.
+ * Ta pamięć kluczuje adresem z zapytaniem, więc każdy nowy adres to osobny wpis i osobny odczyt z bazy. Dlatego nieznany albo
+ * powtórzony parametr to 400 `bad-request`, `seed` jest tylko przy rankingu seeda, a `limit` to jedna z czterech wartości
+ * (inna: 400). Odrzucenie nie sięga do bazy. Zostają warianty zapisu tego samego zapytania (kolejność, kodowanie procentowe,
+ * puste segmenty `&&`), które domyka dopiero reguła w Vercel Firewall.
  */
 export const handleLeaderboard: Handler = async (request, deps) => {
   const bad = wrongMethod(request, 'GET');
   if (bad) return bad;
   const url = new URL(request.url);
   const board = url.searchParams.get('board') ?? 'global';
+  const allowed = BOARD_PARAMS.get(board);
+  if (allowed === undefined) return apiError('bad-board');
+  const names = [...url.searchParams.keys()];
+  if (names.some((name) => !allowed.includes(name)) || new Set(names).size !== names.length) return apiError('bad-request');
+  const limit = boardLimit(url.searchParams.get('limit'));
+  if (limit === null) return apiError('bad-request');
   const now = deps.now();
   const week = weekOf(now);
   let ref: BoardRef;
   if (board === 'global') ref = { board };
   else if (board === 'week') ref = { board, weekId: week.id };
-  else if (board === 'seed') {
+  else {
     const seed = showableSeed(url.searchParams.get('seed'));
     if (seed === null) return apiError('bad-seed');
-    ref = { board, seed };
-  } else return apiError('bad-board');
-  const rows = await readBoard(deps.readRedis, { ...ref, limit: boardLimit(url.searchParams.get('limit')) });
+    ref = { board: 'seed', seed };
+  }
+  const rows = await readBoard(deps.readRedis, { ...ref, limit });
   const seed = ref.board === 'seed' ? { seed: ref.seed } : ref.board === 'week' ? { seed: week.seed } : {};
   return json({ ok: true, board, ...seed, week: { id: week.id, seed: week.seed, endsAt: week.endsAt }, rows }, 200, { 'cache-control': BOARD_CACHE });
 };
