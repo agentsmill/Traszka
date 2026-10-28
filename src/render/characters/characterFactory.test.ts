@@ -7,11 +7,11 @@ import { AnimationClip, Box3, Color, Mesh, ShaderLib, SkinnedMesh, type Bone, ty
 import { GLTFLoader, type GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { ASSETS } from '@/render/assets';
-import { CHARACTER_STYLE } from '@/render/style';
+import { CHARACTER_STYLE, PALETTE } from '@/render/style';
 import { pickAppearance } from './appearance';
-import { CHARACTER_PROGRAM_KEY, REGION } from './characterMaterial';
+import { CHARACTER_PROGRAM_KEY, FIXED_BASE, PALETTE_SIZE, REGION, type RegionName } from './characterMaterial';
 import { createCharacterFactory, type CharacterFactory } from './characterFactory';
-import { OUTFIT_PAINT, findClip, outfitPart, type OutfitFile } from './modularPack';
+import { OUTFIT_PAINT, buildModularPack, findClip, outfitPart, type OutfitFile } from './modularPack';
 import { WALK_SPEED_MPS } from './walkSpeed';
 
 /**
@@ -57,6 +57,20 @@ function paletteUniform(material: Material): Color[] {
   (material as MeshStandardMaterial).onBeforeCompile(shader as never, undefined as never);
   return shader.uniforms.uPalette.value;
 }
+/** Wszystkie kolory z PALETTE jako #rrggbb (sRGB): kolory stałych części stroju mają pochodzić stąd. */
+const paletteHex = new Set<string>();
+const collectHex = (v: unknown): void => {
+  if (typeof v === 'string') paletteHex.add(new Color(v).getHexString());
+  else if (Array.isArray(v)) v.forEach(collectHex);
+  else if (v && typeof v === 'object') Object.values(v).forEach(collectHex);
+};
+collectHex(PALETTE);
+
+const outfitName = (url: string): OutfitFile => basename(url, '.glb') as OutfitFile;
+/** Stroje klientów i stroje specjalne (tylko kasjer): nazwy plików bez rozszerzenia. */
+const REGULAR = ASSETS.characters.modular.map(outfitName);
+const SPECIAL = ASSETS.characters.special.map(outfitName);
+
 function bone(root: Object3D, pattern: RegExp): Bone {
   let found: Bone | undefined;
   root.traverse((o) => { if (!found && (o as Bone).isBone && pattern.test(o.name)) found = o as Bone; });
@@ -76,6 +90,11 @@ describe('createCharacterFactory: postać zastępcza', () => {
     c.setAnim('idle', 0);
     c.update(0.1);
     c.dispose();
+    expect(c.outfit).toBeNull();
+    const cashier = factory.createWithOutfit('x', 'special-men-king');
+    expect(cashier.isFallback).toBe(true);
+    expect(cashier.outfit).toBeNull();
+    cashier.dispose();
     expect(factory.walkSpeedMps).toBe(WALK_SPEED_MPS);
     expect(() => factory.dispose()).not.toThrow();
     expect(warn).toHaveBeenCalled();
@@ -290,15 +309,17 @@ describe('createCharacterFactory na prawdziwych assetach', () => {
 });
 
 describe('paczka modular: stroje, klipy, tabela OUTFIT_PAINT', () => {
-  const files = ASSETS.characters.modular.map((url) => basename(url, '.glb'));
+  const urls = [...ASSETS.characters.modular, ...ASSETS.characters.special];
+  const files = urls.map(outfitName);
 
-  it('każdy strój z ASSETS ma wpis w OUTFIT_PAINT i odwrotnie', () => {
+  it('każdy strój z ASSETS (zwykły i specjalny) ma wpis w OUTFIT_PAINT i odwrotnie', () => {
+    expect(SPECIAL).toHaveLength(9);
     expect(Object.keys(OUTFIT_PAINT).sort()).toEqual([...files].sort());
   });
 
   it('każda reguła OUTFIT_PAINT trafia w istniejący materiał części stroju (literówka w nazwie materiału się nie ukryje)', async () => {
-    for (const url of ASSETS.characters.modular) {
-      const file = basename(url, '.glb') as OutfitFile;
+    for (const url of urls) {
+      const file = outfitName(url);
       const present = new Set<string>();
       for (const mesh of skinnedMeshes((await loadFromDisk(url)).scene)) {
         const mat = (Array.isArray(mesh.material) ? mesh.material[0] : mesh.material) as MeshStandardMaterial;
@@ -309,7 +330,7 @@ describe('paczka modular: stroje, klipy, tabela OUTFIT_PAINT', () => {
   }, 60_000);
 
   it('plik każdego stroju niesie dokładnie dwa klipy: Idle i Walk (pipeline usuwa pozostałe)', async () => {
-    for (const url of ASSETS.characters.modular) {
+    for (const url of urls) {
       const names = (await loadFromDisk(url)).animations.map((a) => a.name).sort();
       expect(names, url).toEqual(['Idle', 'Walk']);
     }
@@ -327,6 +348,22 @@ describe('paczka modular: stroje, klipy, tabela OUTFIT_PAINT', () => {
 });
 
 describe('createCharacterFactory: częściowe awarie', () => {
+  it('brakujący strój specjalny: kasjer dostaje strój zwykły tej samej płci, bez rzucania, z ostrzeżeniem', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const factory = await createCharacterFactory((url) => (ASSETS.characters.special.includes(url) ? Promise.reject(new Error('404')) : loadFromDisk(url)));
+    for (const outfit of ['special-men-king', 'special-women-witch'] as OutfitFile[]) {
+      for (const seed of ['a', 'b', 'c', 'd']) {
+        const c = factory.createWithOutfit(seed, outfit);
+        expect(c.isFallback, `${outfit} ${seed}`).toBe(false);
+        expect(REGULAR, `${outfit} ${seed}: ${c.outfit}`).toContain(c.outfit);
+        expect(c.outfit!.startsWith('women-'), `${outfit} ${seed}: ${c.outfit}`).toBe(outfit.includes('women-'));
+        c.dispose();
+      }
+    }
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  }, 60_000);
+
   it('modular używa tych strojów, które się wczytały', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const only = ASSETS.characters.modular[0];
@@ -337,5 +374,185 @@ describe('createCharacterFactory: częściowe awarie', () => {
       c.dispose();
     }
     warn.mockRestore();
+  }, 60_000);
+});
+
+/**
+ * Regiony palety, które siatka stroju specjalnego MA zawierać: to, co gracz może przemalować swoim wyglądem (skóra, włosy,
+ * góra, dół, a gdzie są zwykłe buty, także buty). Skóra tylko tam, gdzie strój ją odsłania (kombinezon kosmonauty zakrywa
+ * wszystko), włosy tylko tam, gdzie widać czuprynę (hełm SWAT-u i kombinezon ją chowają). Stałe części (zbroja, hełm, korona,
+ * wizjer, kaptur) zostają przy kolorach z PALETTE.
+ */
+const PAINTABLE: Record<string, RegionName[]> = {
+  'special-men-spacesuit': ['top', 'bottom', 'shoes'],
+  'special-men-king': ['skin', 'hair', 'top', 'bottom', 'eyeDark'],
+  'special-men-swat': ['skin', 'top', 'bottom'],
+  'special-men-adventurer': ['skin', 'hair', 'brow', 'top', 'bottom', 'shoes', 'eyeDark'],
+  'special-women-scifi': ['skin', 'hair', 'top', 'bottom', 'shoes', 'eyeDark'],
+  'special-women-adventurer': ['skin', 'hair', 'top', 'bottom', 'shoes', 'eyeDark'],
+  'special-women-witch': ['skin', 'hair', 'top', 'bottom', 'shoes', 'eyeDark'],
+  'special-women-medieval': ['skin', 'hair', 'top', 'bottom', 'shoes', 'eyeDark'],
+  'special-women-soldier': ['skin', 'hair', 'top', 'bottom', 'shoes', 'eyeDark'],
+};
+
+describe('stroje specjalne i createWithOutfit (kasjer gracza)', () => {
+  let factory: CharacterFactory;
+  beforeAll(async () => {
+    factory = await createCharacterFactory(loadFromDisk);
+  }, 60_000);
+
+  it('PAINTABLE opisuje dokładnie stroje specjalne z ASSETS', () => {
+    expect(Object.keys(PAINTABLE).sort()).toEqual([...SPECIAL].sort());
+  });
+
+  it('wczytują się wszystkie stroje, a stałe kolory każdego mieszczą się w wolnych miejscach palety (nadmiar zlałby się w ostatnim)', async () => {
+    const pack = await buildModularPack(loadFromDisk);
+    expect(pack!.variants.map((v) => v.outfit).sort()).toEqual([...REGULAR, ...SPECIAL].sort());
+    for (const v of pack!.variants) expect(v.shared.fixed.length, v.outfit).toBeLessThanOrEqual(PALETTE_SIZE - FIXED_BASE);
+  }, 60_000);
+
+  it('create(seed) nigdy nie daje stroju specjalnego (200 seedów), a klienci noszą wszystkie stroje zwykłe', () => {
+    const special = new Set<string>(SPECIAL);
+    const seen = new Set<string>();
+    for (let i = 0; i < 200; i++) {
+      const c = factory.create(`klient-${i}`);
+      expect(c.outfit, `klient-${i}`).not.toBeNull();
+      expect(special.has(c.outfit!), `klient-${i}: ${c.outfit}`).toBe(false);
+      seen.add(c.outfit!);
+      c.dispose();
+    }
+    expect([...seen].sort()).toEqual([...REGULAR].sort());
+  });
+
+  describe.each(SPECIAL)('%s', (outfit) => {
+    it('składa się z prawdziwego GLB: jedna siatka i materiał, wzrost z Appearance w zakresie, podeszwy na y≈0', () => {
+      const [lo, hi] = CHARACTER_STYLE.heightRange;
+      for (const seed of ['kasjer-a', 'kasjer-b', 'kasjer-c', 'kasjer-d']) {
+        const a = pickAppearance(seed);
+        const c = factory.createWithOutfit(seed, outfit);
+        expect(c.isFallback, seed).toBe(false);
+        expect(c.outfit, seed).toBe(outfit);
+        expect(skinnedMeshes(c.object), seed).toHaveLength(1);
+        expect(meshCount(c.object), `${seed}: broń albo inna część poza siatką to dodatkowy draw call`).toBe(1);
+        expect(Array.isArray(skinnedMeshes(c.object)[0].material)).toBe(false);
+        c.object.updateMatrixWorld(true);
+        const box = new Box3().setFromObject(skinnedMeshes(c.object)[0], true);
+        const height = box.max.y - box.min.y;
+        expect(height, seed).toBeCloseTo(a.height, 1);
+        expect(height, `${seed}: wzrost w zakresie`).toBeGreaterThanOrEqual(lo - 0.05);
+        expect(height, `${seed}: wzrost w zakresie`).toBeLessThanOrEqual(hi + 0.05);
+        expect(box.min.y, `${seed}: podeszwy na podłodze`).toBeCloseTo(0, 1);
+        c.dispose();
+      }
+    });
+
+    it('w chodzie stopy nie wchodzą pod podłogę, a stopa podporowa jej dotyka', () => {
+      const c = factory.createWithOutfit('kasjer-chod', outfit);
+      c.setAnim('walk', 0);
+      const mesh = skinnedMeshes(c.object)[0];
+      let lowest = Infinity, floorTouches = 0;
+      for (let step = 0; step < 14; step++) {
+        c.update(0.1);
+        c.object.updateMatrixWorld(true);
+        const y = new Box3().setFromObject(mesh, true).min.y;
+        lowest = Math.min(lowest, y);
+        if (Math.abs(y) < 0.06) floorTouches++;
+      }
+      expect(lowest, 'najniższy punkt w cyklu chodu').toBeGreaterThan(-0.06);
+      expect(floorTouches, 'klatki, w których stopa jest na podłodze').toBeGreaterThan(3);
+      c.dispose();
+    });
+
+    it('kolory regionów pochodzą z palety, a skóra, włosy i główne części ubrania są przemalowywalne', () => {
+      const seed = 'kasjer-kolory';
+      const a = pickAppearance(seed);
+      const c = factory.createWithOutfit(seed, outfit);
+      const mesh = skinnedMeshes(c.object)[0];
+      const palette = materialOf(mesh).userData.palette as Color[];
+      const regions = mesh.geometry.getAttribute('region').array as Float32Array;
+      const used = new Set(Array.from(regions, Math.round));
+      for (const r of used) {
+        expect(r, 'region w palecie postaci').toBeGreaterThanOrEqual(0);
+        expect(r, 'region w palecie postaci').toBeLessThan(PALETTE_SIZE);
+        expect(palette[r], `kolor regionu ${r}`).toBeDefined();
+        if (r >= FIXED_BASE) expect(paletteHex.has(palette[r].getHexString()), `stały region ${r}: #${palette[r].getHexString()}`).toBe(true);
+      }
+      for (const name of PAINTABLE[outfit]) expect(used.has(REGION[name]), `region ${name} w siatce`).toBe(true);
+      // paleta niesie wygląd z seeda
+      expect([REGION.skin, REGION.top, REGION.bottom, REGION.hair].map((r) => palette[r].getHexString()))
+        .toEqual([a.skin, a.top, a.bottom, a.hair].map((hex) => new Color(hex).getHexString()));
+      c.dispose();
+    });
+  });
+
+  it('każdy materiał włosów, brwi i oczu stroju specjalnego ma regułę w OUTFIT_PAINT (nie zostaje na stałe przyciągnięty do palety)', async () => {
+    const wanted: [RegExp, RegionName][] = [[/^hair/i, 'hair'], [/^eyebrows$/i, 'brow'], [/^eye$/i, 'eyeDark']];
+    for (const url of ASSETS.characters.special) {
+      const file = outfitName(url);
+      for (const mesh of skinnedMeshes((await loadFromDisk(url)).scene)) {
+        const mat = (Array.isArray(mesh.material) ? mesh.material[0] : mesh.material) as MeshStandardMaterial;
+        const key = `${outfitPart(mesh)}:${mat.name}`;
+        for (const [re, region] of wanted) {
+          if (re.test(mat.name)) expect((OUTFIT_PAINT[file] as Record<string, RegionName>)[key], `${file}: ${key}`).toBe(region);
+        }
+      }
+    }
+  }, 60_000);
+
+  it('createWithOutfit: strój jest tym, o który poproszono (także zwykły), a wygląd zależy od seeda, nie od stroju', () => {
+    const seed = 'kasjer-wyglad';
+    const a = pickAppearance(seed);
+    const expected = [a.skin, a.top, a.bottom, a.hair].map((hex) => new Color(hex).getHexString());
+    for (const outfit of ['special-men-king', 'special-women-witch', 'men-suit', 'women-casual'] as OutfitFile[]) {
+      const c = factory.createWithOutfit(seed, outfit);
+      expect(c.outfit).toBe(outfit);
+      const palette = materialOf(skinnedMeshes(c.object)[0]).userData.palette as Color[];
+      expect([REGION.skin, REGION.top, REGION.bottom, REGION.hair].map((r) => palette[r].getHexString()), outfit).toEqual(expected);
+      c.dispose();
+    }
+  });
+
+  it('createWithOutfit jest deterministyczne: ta sama para (seed, strój) to ta sama geometria i paleta', () => {
+    const [x, y] = [0, 1].map(() => factory.createWithOutfit('kasjer-det', 'special-men-swat'));
+    expect(skinnedMeshes(x.object)[0].geometry).toBe(skinnedMeshes(y.object)[0].geometry);
+    expect(paletteUniform(materialOf(skinnedMeshes(x.object)[0])).map((c) => c.getHex()))
+      .toEqual(paletteUniform(materialOf(skinnedMeshes(y.object)[0])).map((c) => c.getHex()));
+    x.dispose();
+    y.dispose();
+  });
+
+  it('kasjer nie nosi akcesoriów klientów (plecak, torba, telefon), niezależnie od seeda', () => {
+    for (let i = 0; i < 40; i++) {
+      const seed = `kasjer-akcesorium-${i}`;
+      const c = factory.createWithOutfit(seed, i % 2 ? 'special-men-adventurer' : 'women-casual');
+      const regions = skinnedMeshes(c.object)[0].geometry.getAttribute('region').array as Float32Array;
+      expect(regions.some((r) => r === REGION.accent || r === REGION.accent2), `${seed} (${pickAppearance(seed).accessory})`).toBe(false);
+      c.dispose();
+    }
+  });
+
+  it('postać z createWithOutfit chodzi i staje (klipy Idle i Walk), a dispose odpina ją od sceny', () => {
+    const c = factory.createWithOutfit('kasjer-anim', 'special-women-medieval');
+    const thigh = bone(c.object, /^(thigh_l|upperleg_?l)$/i);
+    c.setAnim('idle', 0);
+    c.update(0.01);
+    const idleQ = thigh.quaternion.clone();
+    c.setAnim('walk', 0);
+    c.update(0.35);
+    expect(thigh.quaternion.angleTo(idleQ)).toBeGreaterThan(0.1);
+    c.dispose();
+    expect(c.object.parent).toBeNull();
+  });
+
+  it('dispose fabryki zwalnia też geometrie strojów specjalnych', async () => {
+    const own = await createCharacterFactory(loadFromDisk);
+    const chars = SPECIAL.map((outfit) => own.createWithOutfit('kasjer-dispose', outfit));
+    const geometries = new Set(chars.map((c) => skinnedMeshes(c.object)[0].geometry));
+    expect(geometries.size).toBe(SPECIAL.length);
+    const freed = vi.fn();
+    for (const g of geometries) g.addEventListener('dispose', freed);
+    for (const c of chars) c.dispose();
+    own.dispose();
+    expect(freed).toHaveBeenCalledTimes(geometries.size);
   }, 60_000);
 });

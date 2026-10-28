@@ -10,11 +10,13 @@ import { disposeVariantGeometries, variantGeometry } from './accessories';
 import { pickAppearance, type Appearance } from './appearance';
 import { REGION, characterPalette, createCharacterMaterial } from './characterMaterial';
 import { createFallbackCharacter } from './fallbackCharacter';
-import { applyProportions, bonesByName, buildModularPack, type ModularPack, type Variant } from './modularPack';
+import { applyProportions, bonesByName, buildModularPack, outfitBody, type ModularPack, type OutfitFile, type Variant } from './modularPack';
 import { WALK_SPEED_MPS } from './walkSpeed';
 
 export interface CharacterInstance {
   object: Object3D;
+  /** Strój, z którego zbudowano postać (nazwa pliku bez rozszerzenia); null dla postaci zastępczej. */
+  readonly outfit: OutfitFile | null;
   setAnim(name: 'idle' | 'walk', fadeS?: number): void;
   update(dt: number): void;
   dispose(): void;
@@ -22,7 +24,15 @@ export interface CharacterInstance {
 }
 
 export interface CharacterFactory {
+  /** Klient: wygląd i strój zwykły (nigdy specjalny) z seeda. */
   create(appearanceSeed: string): CharacterInstance;
+  /**
+   * Kasjer gracza: wygląd (skóra, włosy, ubranie, wzrost, szerokość) z seeda jak w `create`, ale w wybranym stroju, zwykłym albo
+   * specjalnym (`OutfitFile`). Ten sam seed daje tę samą twarz i kolory w każdym stroju. Kasjer nie nosi akcesoriów klientów
+   * (plecak, torba, telefon): zasłaniałyby strój, a męski strój Adventurer ma własny plecak. Gdy plik stroju się nie wczytał, kasjer
+   * dostaje strój zwykły tej samej płci (z ostrzeżeniem), a gdy nie wczytało się nic, postać zastępczą.
+   */
+  createWithOutfit(appearanceSeed: string, outfit: OutfitFile): CharacterInstance;
   /**
    * Prędkość stopy podporowej w klipie chodu, m/s dla modelu bazowego (postać skalowana w poziomie o `s` ma na podłodze
    * `walkSpeedMps · s`). Jedyne źródło tej liczby: tłum (CrowdView) dobiera po niej tempo klipu do prędkości agenta.
@@ -97,6 +107,7 @@ function assemble(variant: Variant, a: Appearance, seed: string): CharacterInsta
 
   return {
     object: root,
+    outfit: variant.outfit,
     isFallback: false,
     setAnim(name, fadeS = 0.25) {
       if (name === current) return;
@@ -132,7 +143,7 @@ export async function createCharacterFactory(load: typeof loadGLB = loadGLB): Pr
   const fallback = (seed: string): CharacterInstance => createFallbackCharacter(pickAppearance(seed));
   if (!pack) {
     console.warn('Postacie: używam postaci zastępczych.');
-    return { create: fallback, walkSpeedMps: WALK_SPEED_MPS, dispose() {} };
+    return { create: fallback, createWithOutfit: fallback, walkSpeedMps: WALK_SPEED_MPS, dispose() {} };
   }
   const loaded = pack;
   return {
@@ -141,6 +152,20 @@ export async function createCharacterFactory(load: typeof loadGLB = loadGLB): Pr
       try {
         const a = pickAppearance(seed);
         return assemble(loaded.variantFor(a, createRng(subSeed(seed, 'outfit'))), a, seed);
+      } catch (error) {
+        console.warn('Postacie: nie udało się zbudować postaci, używam zastępczej.', error);
+        return fallback(seed);
+      }
+    },
+    createWithOutfit(seed, outfit) {
+      try {
+        const a: Appearance = { ...pickAppearance(seed), accessory: 'none' };
+        let variant = loaded.variantOf(outfit);
+        if (!variant) {
+          console.warn(`Postacie: brak stroju ${outfit}, używam stroju zwykłego tej samej płci.`);
+          variant = loaded.variantFor({ ...a, body: outfitBody(outfit) }, createRng(subSeed(seed, 'outfit')));
+        }
+        return assemble(variant, a, seed);
       } catch (error) {
         console.warn('Postacie: nie udało się zbudować postaci, używam zastępczej.', error);
         return fallback(seed);

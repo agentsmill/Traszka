@@ -55,6 +55,7 @@ export function createFallbackCharacter(a: Appearance): CharacterInstance {
   let rate = 1 / 0.2;  // jednostki wagi na sekundę
   return {
     object,
+    outfit: null,
     isFallback: true,
     setAnim(name, fadeS = 0.2) {
       target = name === 'walk' ? 1 : 0;

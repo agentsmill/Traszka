@@ -4,11 +4,16 @@ import { ISO_PITCH_DEG, computeFrustum } from '@/render/cameraRig';
 import type { QualityPresetId } from '@/render/quality';
 import { createRenderContext, type RenderContext } from '@/render/renderer';
 import { BEVEL, PALETTE, material } from '@/render/style';
+import { ASSETS } from '@/render/assets';
 import { createCharacterFactory, type CharacterFactory, type CharacterInstance } from './characterFactory';
+import { outfitOfPath } from './modularPack';
 
 /**
  * Strona podglądu postaci `?charTest=1` (ładowana dynamicznie z main.ts, nie wchodzi do głównego pakietu gry): 12 postaci
- * z paczki modular, wszystkie w chodzie, kamera okrąża scenę. Parametry (do zrzutów): `layout=ring` (domyślnie: postacie
+ * z paczki modular (stroje klientów), wszystkie w chodzie, kamera okrąża scenę. Parametry (do zrzutów): `set=special` (zamiast
+ * klientów dziewięć strojów specjalnych kasjera, przez `createWithOutfit`) albo `set=all` (wszystkie 21 strojów, zwykłe
+ * i specjalne), `look=<seed>` (wszystkie postacie z jednym wyglądem: te same proporcje, skóra i kolory, więc strój widać
+ * bez zakłóceń; bez `set` strój i tak losuje się z seeda), `layout=ring` (domyślnie: postacie
  * chodzą po okręgu) albo `layout=row` (jeden rząd, chód w miejscu, twarzą do kamery; `turn` obraca o podane stopnie), `orbit`
  * (stopnie na sekundę, 0 zatrzymuje, domyślnie 12), `yaw` (początkowy kąt kamery), `zoom` (wysokość widoku w m), `close`
  * i `n` (numer postaci: kadr na jednej postaci, wymusza layout=row), `night=1`, `q` (preset jakości). Zoom i obrót są własne
@@ -16,7 +21,7 @@ import { createCharacterFactory, type CharacterFactory, type CharacterInstance }
  * Klawisze: +/− zoom, spacja zatrzymuje obrót, W chód, I postoje, N dzień/noc, 1/2/3 preset jakości.
  */
 
-const COUNT = 12;
+const CUSTOMER_COUNT = 12;
 const RING_RADIUS_M = 2.6;
 const CAMERA_DISTANCE_M = 60;
 /** Rząd: odstęp postaci (m). */
@@ -32,6 +37,12 @@ export function startCharTestPage(canvas: HTMLCanvasElement, preset: QualityPres
     console.error('Nie udało się uruchomić renderera.', error);
     return;
   }
+  const set = params.get('set');
+  /** Stroje do pokazania przez `createWithOutfit` (`set=special` albo `set=all`); null: klienci przez `create`. */
+  const outfits = set === 'special' ? ASSETS.characters.special.map(outfitOfPath)
+    : set === 'all' ? [...ASSETS.characters.modular, ...ASSETS.characters.special].map(outfitOfPath) : null;
+  const count = outfits ? outfits.length : CUSTOMER_COUNT;
+  const look = params.get('look');
   const close = params.has('close');
   const row = params.get('layout') === 'row' || close;
   const orbitParam = params.get('orbit');
@@ -47,13 +58,13 @@ export function startCharTestPage(canvas: HTMLCanvasElement, preset: QualityPres
     ctx.scene.add(mesh);
   };
   slab(18, 11, 0, 0, PALETTE.floor[2], 0);
-  if (row) slab((COUNT - 1) * ROW_STEP_M + 1.4, 2.6, 0, 0, PALETTE.floor[1], 0.01);
+  if (row) slab((count - 1) * ROW_STEP_M + 1.4, 2.6, 0, 0, PALETTE.floor[1], 0.01);
   else slab(7, 7, 0, 0, PALETTE.floor[1], 0.01);
   ctx.rig.setBounds(-9, -5.5, 9, 5.5);
   ctx.setTimeOfDay(night ? 'night' : 'day');
 
   const label = document.createElement('div');
-  label.textContent = 'Test postaci (modular)';
+  label.textContent = set === 'special' ? 'Test postaci (stroje specjalne)' : set === 'all' ? 'Test postaci (wszystkie stroje)' : 'Test postaci (modular)';
   label.style.cssText = 'position:fixed;left:12px;top:10px;font:600 14px system-ui,sans-serif;color:#4b3f3a;text-shadow:0 1px 0 #fff3df;pointer-events:none';
   document.body.appendChild(label);
 
@@ -145,12 +156,14 @@ export function startCharTestPage(canvas: HTMLCanvasElement, preset: QualityPres
 
   void createCharacterFactory().then((created) => {
     factory = created;
-    for (let index = 0; index < COUNT; index++) {
-      const character = created.create(`postac-modular-${index}`);
+    for (let index = 0; index < count; index++) {
+      const character = outfits
+        ? created.createWithOutfit(look ?? `kasjer-${index}`, outfits[index])
+        : created.create(look ?? `postac-modular-${index}`);
       character.setAnim('walk', 0);
       ctx.scene.add(character.object);
-      const w: Walker = { index, character, theta: (index / COUNT) * Math.PI * 2 };
-      if (row) character.object.position.set((index - (COUNT - 1) / 2) * ROW_STEP_M, 0, 0);
+      const w: Walker = { index, character, theta: (index / count) * Math.PI * 2 };
+      if (row) character.object.position.set((index - (count - 1) / 2) * ROW_STEP_M, 0, 0);
       walkers.push(w);
     }
     if (close) handle.setView({ focus: { n: params.has('n') ? Number(params.get('n')) : 4 } });

@@ -20,10 +20,11 @@ function fakeFactory(scale = 1, walkSpeedMps = 1.15) {
       const setAnim = vi.fn();
       const update = vi.fn();
       const dispose = vi.fn(() => object.removeFromParent());
-      const character: CharacterInstance = { object, setAnim, update, dispose, isFallback: false };
+      const character: CharacterInstance = { object, outfit: null, setAnim, update, dispose, isFallback: false };
       made.push({ seed, character, setAnim, update, dispose });
       return character;
     },
+    createWithOutfit() { throw new Error('tłum nie tworzy kasjera'); },
   };
   return { factory, made };
 }
@@ -289,8 +290,9 @@ describe('CrowdView: plamy cienia i polityka cieni (zadanie 16)', () => {
         const body = new Mesh();
         body.castShadow = true;
         object.add(body);
-        return { object, setAnim: vi.fn(), update: vi.fn(), dispose: vi.fn(() => object.removeFromParent()), isFallback: false };
+        return { object, outfit: null, setAnim: vi.fn(), update: vi.fn(), dispose: vi.fn(() => object.removeFromParent()), isFallback: false };
       },
+      createWithOutfit() { throw new Error('tłum nie tworzy kasjera'); },
     };
   }
   const castOf = (parent: Object3D): boolean[] => {

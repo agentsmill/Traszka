@@ -10,6 +10,10 @@
 // Postacie: z 24 wbudowanych klipów zostają tylko Idle i Walk (reszta nigdy nie jest odtwarzana), potem przycięcie
 // klatek animacji (resample) i uproszczenie do CHARACTER_TRIANGLES trójkątów (najpierw po topologii, a gdy siatka jest
 // pocięta na kawałki, metodą sloppy). Uproszczenie jest odrzucane, jeśli psuje skinning lub liczbę skinów/animacji/prymitywów.
+// Stroje specjalne (special-*.glb, tylko dla kasjera gracza) idą tą samą ścieżką, ale między uproszczeniem topologicznym
+// a „sloppy” próbują uproszczenia topologicznego z flagą Permissive (PERMISSIVE): ich cienkie płytki zbroi „sloppy” rwie
+// w dziury. Zadanie `drop` usuwa przed uproszczeniem węzły, których gra nie rysuje (pistolet, miecz): zjadałyby limit
+// trójkątów, a niezwiązane ze skórą wisiałyby na kości dłoni jako osobne siatki, czyli dodatkowe draw calle postaci.
 // Tekstury postaci (stroje modular ich nie mają) byłyby skalowane do TEXTURE_LIMIT i zapisywane jako JPEG.
 // Na końcu każdy plik dostaje bezstratną kompresję meshopt (EXT_meshopt_compression, bez kwantyzacji), a zapisany plik
 // jest wczytany z powrotem dekoderem meshopt i porównany ze źródłem (macierze inverseBindMatrices po nazwie kości).
@@ -43,6 +47,7 @@ const CHARACTER_TRIANGLES = 3000;
 // Mniejsze prymitywy (oczy, drobne detale) nie są upraszczane, bo uproszczenie mogłoby je usunąć.
 const SMALL_PRIMITIVE_TRIANGLES = 300;
 const SLOPPY_ERROR = 0.15;
+const PERMISSIVE_ERROR = 0.05;
 const TEXTURE_LIMIT = 512;
 const TRIANGLES_MODE = 4;
 /** Jedyne klipy, które gra odtwarza (characterFactory: idle i walk). Pozostałe 22 klipy stroju są usuwane. */
@@ -53,7 +58,14 @@ const WOMEN = join(SRC, 'quaternius-modular-women', 'files', 'Ultimate Modular W
 const CITY = join(SRC, 'kenney-city-kit-roads', 'files', 'Models', 'GLB format');
 const CAR = join(SRC, 'kenney-car-kit', 'files', 'Models', 'GLB format');
 
-/** Wejście -> wyjście względem public/assets. `character: true` włącza przycięcie klipów, uproszczenie i tekstury. */
+/** Wspólne ustawienia strojów specjalnych: postać, a do uproszczenia strategia permissive (patrz PERMISSIVE). */
+const SPECIAL = { character: true, permissive: true };
+
+/**
+ * Wejście -> wyjście względem public/assets. `character: true` włącza przycięcie klipów, uproszczenie i tekstury.
+ * `drop`: nazwy węzłów (z siatkami) usuwanych przed resztą potoku, każdy musi istnieć dokładnie raz.
+ * `permissive`: przed „sloppy” próbuje uproszczenia topologicznego z flagą Permissive (patrz PERMISSIVE).
+ */
 const JOBS = [
   { src: join(MEN, 'Casual_Hoodie.gltf'), out: 'characters/men-casual-hoodie.glb', character: true },
   { src: join(MEN, 'Casual_2.gltf'), out: 'characters/men-casual-2.glb', character: true },
@@ -67,6 +79,16 @@ const JOBS = [
   { src: join(WOMEN, 'Formal.gltf'), out: 'characters/women-formal.glb', character: true },
   { src: join(WOMEN, 'Worker.gltf'), out: 'characters/women-worker.glb', character: true },
   { src: join(WOMEN, 'Punk.gltf'), out: 'characters/women-punk.glb', character: true },
+  // Stroje specjalne (ASSETS.characters.special): tylko kasjer gracza, klienci ich nie dostają.
+  { src: join(MEN, 'Spacesuit.gltf'), out: 'characters/special-men-spacesuit.glb', ...SPECIAL },
+  { src: join(MEN, 'King.gltf'), out: 'characters/special-men-king.glb', ...SPECIAL },
+  { src: join(MEN, 'Swat.gltf'), out: 'characters/special-men-swat.glb', ...SPECIAL, drop: ['Pistol'] },
+  { src: join(MEN, 'Adventurer.gltf'), out: 'characters/special-men-adventurer.glb', ...SPECIAL },
+  { src: join(WOMEN, 'SciFi.gltf'), out: 'characters/special-women-scifi.glb', ...SPECIAL, drop: ['Pistol'] },
+  { src: join(WOMEN, 'Adventurer.gltf'), out: 'characters/special-women-adventurer.glb', ...SPECIAL },
+  { src: join(WOMEN, 'Witch.gltf'), out: 'characters/special-women-witch.glb', ...SPECIAL },
+  { src: join(WOMEN, 'Medieval.gltf'), out: 'characters/special-women-medieval.glb', ...SPECIAL, drop: ['Sword'] },
+  { src: join(WOMEN, 'Soldier.gltf'), out: 'characters/special-women-soldier.glb', ...SPECIAL },
   { src: join(CITY, 'light-curved.glb'), out: 'props/lamp-curved.glb' },
   { src: join(CAR, 'delivery.glb'), out: 'props/van-delivery.glb' },
 ];
@@ -91,6 +113,19 @@ const verifyIo = new NodeIO()
 const SLOPPY = {
   simplify: (indices, positions, stride, target, error) =>
     MeshoptSimplifier.simplifySloppy(indices, positions, stride, null, target, error),
+};
+
+/**
+ * Uproszczenie topologiczne z flagą `Permissive`: pozwala zwijać krawędzie przez szwy atrybutów. Siatki Quaterniusa są
+ * cieniowane płasko (każda ściana ma własne wierzchołki z własną normalną), więc zwykłe uproszczenie widzi sam szew i nie
+ * zwinie niczego (10558 trójkątów kosmonauty zostaje 10138 nawet przy błędzie 0,5), a „sloppy” rwie cienkie płytki zbroi
+ * w dziury. Z `Permissive` ta sama siatka schodzi do celu przy błędzie rzędu 0,01–0,04 i zachowuje kształty. Limit błędu
+ * (PERMISSIVE_ERROR) jest zapasowy: wszystkie stroje specjalne schodzą do celu, zanim go osiągną (inaczej wynik wyższy niż
+ * limit trójkątów jest odrzucany i zadanie spada na „sloppy”).
+ */
+const PERMISSIVE = {
+  simplify: (indices, positions, stride, target, error, flags) =>
+    MeshoptSimplifier.simplify(indices, positions, stride, target, error, [...flags, 'Permissive']),
 };
 
 const exists = (path) => access(path).then(() => true, () => false);
@@ -175,6 +210,23 @@ async function trySimplify(doc, before, simplifier, error, target) {
 }
 
 /**
+ * Usuwa z dokumentu węzły o podanych nazwach (`drop` zadania). Każdy musi istnieć dokładnie raz, nie może mieć dzieci ani być
+ * kością skina: inaczej zadanie by po cichu nic nie usunęło albo urwało szkielet. Siatki, materiały i akcesory usuniętych
+ * węzłów zbiera potem `prune()`.
+ */
+function dropNodes(doc, names, label) {
+  const joints = new Set(doc.getRoot().listSkins().flatMap((skin) => skin.listJoints()));
+  for (const name of names) {
+    const nodes = doc.getRoot().listNodes().filter((node) => node.getName() === name);
+    if (nodes.length !== 1) throw new Error(`${label}: do usunięcia oczekiwano jednego węzła "${name}", jest ${nodes.length}`);
+    const [node] = nodes;
+    if (joints.has(node)) throw new Error(`${label}: węzeł "${name}" jest kością skina, nie wolno go usunąć`);
+    if (node.listChildren().length) throw new Error(`${label}: węzeł "${name}" ma dzieci, nie wolno go usunąć`);
+    node.dispose();
+  }
+}
+
+/**
  * Zostawia w dokumencie tylko klipy `keep` (po dokładnej nazwie). Brak któregoś z nich to błąd: gra szuka ich po nazwie.
  * Kanały i samplery usuwanych klipów trzeba zwolnić osobno: `Animation.dispose()` ich nie rusza, a dopóki sampler
  * trzyma akcesor, `prune()` go nie usunie (plik niósłby wtedy tysiące nieużywanych akcesorów w JSON-ie).
@@ -221,6 +273,7 @@ function compareInverseBind(expected, actual) {
 async function prepare(job, simplifyTo) {
   const doc = await io.read(job.src);
   const sourceInverseBind = inverseBindByJoint(doc, job.out);
+  if (job.drop) dropNodes(doc, job.drop, job.out);
   if (job.character) keepClips(doc, CHARACTER_CLIPS, job.out);
   await doc.transform(dedup(), weld(), prune(), resample());
   const before = summarize(doc);
@@ -229,6 +282,10 @@ async function prepare(job, simplifyTo) {
 
   const topology = await trySimplify(doc, before, MeshoptSimplifier, 0.01, simplifyTo);
   if (topology) return result(topology, 'uproszczono');
+  if (job.permissive) {
+    const permissive = await trySimplify(doc, before, PERMISSIVE, PERMISSIVE_ERROR, simplifyTo);
+    if (permissive) return result(permissive, 'uproszczono (permissive)');
+  }
   const sloppy = await trySimplify(doc, before, SLOPPY, SLOPPY_ERROR, simplifyTo);
   if (sloppy) return result(sloppy, 'uproszczono (sloppy)');
   return result(doc, 'BEZ uproszczenia: uproszczenie psuje skinning lub animacje');

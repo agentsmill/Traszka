@@ -7,10 +7,11 @@ import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.j
  * (scripts/process-assets.mjs). Licencje: public/assets/LICENSES.md.
  */
 export const ASSETS: {
-  characters: { modular: string[] };
+  characters: { modular: string[]; special: string[] };
   props: Record<'lamp' | 'van', string>;
 } = {
   characters: {
+    /** Stroje klientów (`factory.create`): losowane z seeda. */
     modular: [
       '/assets/characters/men-casual-hoodie.glb',
       '/assets/characters/men-casual-2.glb',
@@ -24,6 +25,18 @@ export const ASSETS: {
       '/assets/characters/women-formal.glb',
       '/assets/characters/women-worker.glb',
       '/assets/characters/women-punk.glb',
+    ],
+    /** Stroje specjalne: tylko dla kasjera gracza (`factory.createWithOutfit`), klienci ich nie dostają. */
+    special: [
+      '/assets/characters/special-men-spacesuit.glb',
+      '/assets/characters/special-men-king.glb',
+      '/assets/characters/special-men-swat.glb',
+      '/assets/characters/special-men-adventurer.glb',
+      '/assets/characters/special-women-scifi.glb',
+      '/assets/characters/special-women-adventurer.glb',
+      '/assets/characters/special-women-witch.glb',
+      '/assets/characters/special-women-medieval.glb',
+      '/assets/characters/special-women-soldier.glb',
     ],
   },
   props: {

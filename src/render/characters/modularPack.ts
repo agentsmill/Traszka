@@ -16,6 +16,10 @@ import { FIXED_BASE, PALETTE_SIZE, REGION, type RegionName } from './characterMa
  * atrybutem `region` zamiast koloru (patrz characterMaterial.ts). Tabela `OUTFIT_PAINT` mówi, który materiał stroju
  * przejmuje kolor góry, dołu, butów, włosów i brwi; reszta (kask, kamizelka itp.) zostaje przy kolorze przyciągniętym do PALETTE.
  * Geometria wariantu jest wspólna dla wszystkich postaci; wygląd to paleta w materiale postaci.
+ *
+ * Stroje dzielą się na zwykłe (`ASSETS.characters.modular`: dostają je klienci, losowo spośród strojów swojej płci) i specjalne
+ * (`ASSETS.characters.special`: kosmonauta, król, SWAT itd., tylko dla kasjera gracza przez `variantOf`). `variantFor` nigdy
+ * nie zwraca stroju specjalnego.
  */
 
 export type Loader = typeof loadGLB;
@@ -128,6 +132,8 @@ export interface Rig {
 }
 
 export interface Variant {
+  /** Nazwa stroju (plik bez rozszerzenia). */
+  outfit: OutfitFile;
   shared: Shared;
   rig: Rig;
   idle: AnimationClip;
@@ -233,11 +239,11 @@ function measure(shared: Shared, rig: Rig, idle: AnimationClip): { height: numbe
   return { height: hi - lo, minY: lo };
 }
 
-function finishVariant(acc: MeshAccumulator, rig: Rig, idle: AnimationClip, walk: AnimationClip): Variant {
+function finishVariant(acc: MeshAccumulator, rig: Rig, idle: AnimationClip, walk: AnimationClip, outfit: OutfitFile): Variant {
   const shared = acc.finish();
   const find = (re: RegExp): number => rig.boneNames.findIndex((n) => re.test(n));
   return {
-    shared, rig, idle, walk, ...measure(shared, rig, idle),
+    outfit, shared, rig, idle, walk, ...measure(shared, rig, idle),
     chest: find(CHEST_RE),
     hands: { l: find(/^(hand|wrist)_?l$/i), r: find(/^(hand|wrist)_?r$/i) },
     geometries: new Map(),
@@ -246,10 +252,25 @@ function finishVariant(acc: MeshAccumulator, rig: Rig, idle: AnimationClip, walk
 
 // --- Tabela malowania strojów -------------------------------------------------------------------------------------
 
-/** Nazwa pliku stroju bez rozszerzenia (`public/assets/characters/<nazwa>.glb`). */
+/**
+ * Nazwa pliku stroju bez rozszerzenia (`public/assets/characters/<nazwa>.glb`). Pierwsze dwanaście to stroje klientów
+ * (`ASSETS.characters.modular`), ostatnie dziewięć to stroje specjalne kasjera (`ASSETS.characters.special`, przedrostek `special-`).
+ */
 export type OutfitFile =
   | 'men-casual-hoodie' | 'men-casual-2' | 'men-suit' | 'men-worker' | 'men-farmer' | 'men-beach' | 'men-punk'
-  | 'women-casual' | 'women-suit' | 'women-formal' | 'women-worker' | 'women-punk';
+  | 'women-casual' | 'women-suit' | 'women-formal' | 'women-worker' | 'women-punk'
+  | 'special-men-spacesuit' | 'special-men-king' | 'special-men-swat' | 'special-men-adventurer'
+  | 'special-women-scifi' | 'special-women-adventurer' | 'special-women-witch' | 'special-women-medieval' | 'special-women-soldier';
+
+/** Nazwa stroju ze ścieżki pliku z `ASSETS.characters` (`/assets/characters/men-suit.glb` → `men-suit`). */
+export function outfitOfPath(path: string): OutfitFile {
+  return path.slice(path.lastIndexOf('/') + 1).replace(/\.glb$/, '') as OutfitFile;
+}
+
+/** Płeć postaci stroju: z nazwy pliku (`men-…`, `women-…`, `special-men-…`, `special-women-…`). */
+export function outfitBody(outfit: OutfitFile): Appearance['body'] {
+  return outfit.includes('women-') ? 'female' : 'male';
+}
 
 /** Część stroju z nazwy węzła siatki (patrz `outfitPart`). */
 type OutfitPart = 'body' | 'legs' | 'pants' | 'feet' | 'head';
@@ -310,6 +331,34 @@ export const OUTFIT_PAINT: Record<OutfitFile, Record<PaintKey, RegionName>> = {
     'body:Pink': 'top', 'legs:Black': 'bottom', 'feet:Black': 'shoes', 'head:Pink': 'hair', 'head:Hair_Brown': 'brow',
     'head:Brown': 'eyeDark',
   },
+  'special-men-spacesuit': {
+    'body:SciFi_Main': 'top', 'legs:SciFi_MainDark': 'bottom', 'legs:SciFi_Main': 'bottom', 'feet:SciFi_Light_Accent': 'shoes',
+  },
+  'special-men-king': {
+    'body:Blue': 'top', 'legs:DarkBrown': 'bottom', 'head:Hair_White': 'hair', 'head:Eye': 'eyeDark',
+  },
+  'special-men-swat': {
+    'body:Swat': 'top', 'legs:Swat': 'bottom',
+  },
+  'special-men-adventurer': {
+    'body:Green': 'top', 'legs:Brown': 'bottom', 'feet:Grey': 'shoes', 'head:Hair': 'hair', 'head:Eyebrows': 'brow', 'head:Eye': 'eyeDark',
+  },
+  'special-women-scifi': {
+    'body:Blue': 'top', 'head:Blue': 'top', 'legs:LightBlue': 'bottom', 'feet:Metal': 'shoes', 'head:Hair_Black': 'hair', 'head:Brown': 'eyeDark',
+  },
+  'special-women-adventurer': {
+    'body:LightGreen': 'top', 'legs:Brown_02': 'bottom', 'feet:Brown_02': 'shoes', 'head:Hair_Brown': 'hair', 'head:Brown': 'eyeDark',
+  },
+  'special-women-witch': {
+    'body:Purple': 'top', 'legs:Purple': 'top', 'head:Purple': 'top', 'legs:Brown': 'bottom', 'feet:Brown2': 'shoes',
+    'head:Hair_Black': 'hair', 'head:Brown': 'eyeDark',
+  },
+  'special-women-medieval': {
+    'body:LightBrown': 'top', 'body:DarkBrown': 'top', 'legs:Black': 'bottom', 'feet:DarkBrown': 'shoes', 'head:White': 'hair', 'head:Brown': 'eyeDark',
+  },
+  'special-women-soldier': {
+    'body:Black': 'top', 'body:Swat': 'top', 'legs:Swat': 'bottom', 'feet:Grey': 'shoes', 'head:Hair_Brown': 'hair', 'head:Brown': 'eyeDark',
+  },
 };
 
 /** Część stroju z nazwy węzła (albo jego przodków), np. `Punk_Head_1` → `head`. `pistol` (broń w stroju Suit) jest pomijana. */
@@ -324,10 +373,15 @@ export function outfitPart(mesh: Object3D): OutfitPart | 'pistol' | undefined {
 // --- Budowa paczki ------------------------------------------------------------------------------------------------
 
 export interface ModularPack {
-  /** Wszystkie wczytane stroje (do zwalniania pamięci podręcznej geometrii). */
+  /** Wszystkie wczytane stroje, także specjalne (do zwalniania pamięci podręcznej geometrii). */
   variants: readonly Variant[];
-  /** Strój dla wyglądu: losowy spośród strojów danej płci (gdy żadnego nie wczytano, spośród wszystkich). */
+  /**
+   * Strój klienta dla wyglądu: losowy spośród strojów ZWYKŁYCH danej płci (gdy żadnego nie wczytano, spośród wszystkich zwykłych).
+   * Nigdy nie zwraca stroju specjalnego.
+   */
   variantFor(a: Appearance, rng: Rng): Variant;
+  /** Strój o danej nazwie, zwykły albo specjalny (kasjer); undefined, gdy jego plik się nie wczytał. */
+  variantOf(outfit: OutfitFile): Variant | undefined;
 }
 
 /** Wczytuje pliki; nieudane dają null (i jedno ostrzeżenie na całość), bez rzucania. */
@@ -340,20 +394,25 @@ async function loadAll(load: Loader, urls: string[]): Promise<(GLTF | null)[]> {
   return out;
 }
 
-/** Wczytuje stroje z `ASSETS.characters.modular`. Zwraca null, gdy żaden się nie wczytał (wtedy fabryka daje postacie zastępcze). */
+/**
+ * Wczytuje stroje z `ASSETS.characters.modular` (klienci) i `ASSETS.characters.special` (kasjer). Zwraca null, gdy żaden strój
+ * zwykły się nie wczytał (wtedy fabryka daje postacie zastępcze: bez strojów klientów pack nie ma po co istnieć).
+ */
 export async function buildModularPack(load: Loader): Promise<ModularPack | null> {
-  const files = ASSETS.characters.modular;
+  const regular = ASSETS.characters.modular;
+  const files = [...regular, ...ASSETS.characters.special];
   const gltfs = await loadAll(load, files);
   const byBody: Record<Appearance['body'], Variant[]> = { male: [], female: [] };
+  const byOutfit = new Map<OutfitFile, Variant>();
   files.forEach((url, i) => {
     const gltf = gltfs[i];
     if (!gltf) return;
-    const file = url.slice(url.lastIndexOf('/') + 1).replace(/\.glb$/, '');
+    const file = outfitOfPath(url);
     const idle = findClip(gltf.animations, 'Idle'), walk = findClip(gltf.animations, 'Walk');
     const meshes = skinnedMeshesOf(gltf.scene).filter((m) => outfitPart(m) !== 'pistol');
     if (!idle || !walk || meshes.length === 0) return;
     const rig = extractRig(gltf.scene, meshes[0]);
-    const rules: Partial<Record<PaintKey, RegionName>> = OUTFIT_PAINT[file as OutfitFile] ?? {};
+    const rules: Partial<Record<PaintKey, RegionName>> = OUTFIT_PAINT[file] ?? {};
     const acc = new MeshAccumulator();
     for (const mesh of meshes) {
       const mat = (Array.isArray(mesh.material) ? mesh.material[0] : mesh.material) as MeshStandardMaterial;
@@ -361,9 +420,15 @@ export async function buildModularPack(load: Loader): Promise<ModularPack | null
       const region = /^skin/i.test(mat.name) ? REGION.skin : rule !== undefined ? REGION[rule] : acc.fixedRegion(mat.color);
       acc.add(mesh, jointMapFor(mesh, rig), region);
     }
-    byBody[file.startsWith('women-') ? 'female' : 'male'].push(finishVariant(acc, rig, idle, walk));
+    const variant = finishVariant(acc, rig, idle, walk, file);
+    byOutfit.set(file, variant);
+    if (i < regular.length) byBody[outfitBody(file)].push(variant);   // klienci dostają tylko stroje zwykłe
   });
-  const all = [...byBody.male, ...byBody.female];
-  if (all.length === 0) return null;
-  return { variants: all, variantFor: (a, rng) => rng.pick(byBody[a.body].length ? byBody[a.body] : all) };
+  const customers = [...byBody.male, ...byBody.female];
+  if (customers.length === 0) return null;
+  return {
+    variants: [...byOutfit.values()],
+    variantFor: (a, rng) => rng.pick(byBody[a.body].length ? byBody[a.body] : customers),
+    variantOf: (outfit) => byOutfit.get(outfit),
+  };
 }

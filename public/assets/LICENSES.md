@@ -34,6 +34,22 @@ Uwaga: plik `License.txt` w paczce Ultimate Modular Women ma w nagłówku nazwę
 | `women-worker.glb` | Ultimate Modular Women | Individual Characters/glTF/Worker.gltf |
 | `women-punk.glb` | Ultimate Modular Women | Individual Characters/glTF/Punk.gltf |
 
+### Postacie: stroje specjalne (`characters/special-*.glb`, tylko kasjer gracza)
+
+| Plik | Paczka | Źródło w paczce |
+| --- | --- | --- |
+| `special-men-spacesuit.glb` | Ultimate Modular Men | Individual Characters/glTF/Spacesuit.gltf |
+| `special-men-king.glb` | Ultimate Modular Men | Individual Characters/glTF/King.gltf |
+| `special-men-swat.glb` | Ultimate Modular Men | Individual Characters/glTF/Swat.gltf |
+| `special-men-adventurer.glb` | Ultimate Modular Men | Individual Characters/glTF/Adventurer.gltf |
+| `special-women-scifi.glb` | Ultimate Modular Women | Individual Characters/glTF/SciFi.gltf |
+| `special-women-adventurer.glb` | Ultimate Modular Women | Individual Characters/glTF/Adventurer.gltf |
+| `special-women-witch.glb` | Ultimate Modular Women | Individual Characters/glTF/Witch.gltf |
+| `special-women-medieval.glb` | Ultimate Modular Women | Individual Characters/glTF/Medieval.gltf |
+| `special-women-soldier.glb` | Ultimate Modular Women | Individual Characters/glTF/Soldier.gltf |
+
+Stroje specjalne przechodzą przez ten sam potok co pozostałe postacie (klipy `Idle` i `Walk`, uproszczenie siatki). W strojach `special-men-swat`, `special-women-scifi` i `special-women-medieval` usunięto broń (pistolet, miecz), której gra nie rysuje.
+
 ### Rekwizyty (`props/`)
 
 | Plik | Paczka | Źródło w paczce |
