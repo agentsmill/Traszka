@@ -1,6 +1,6 @@
 # Traszka Tycoon: dokument projektu
 
-Status: do akceptacji (po researchu i recenzji budowniczego) · data: 2026-10-27
+Status: do akceptacji (po researchu i recenzji budowniczego) · data: 2026-10-27 · uzupełnienie 2026-10-28: §6.5, §7.5, §14.7 (zaakceptowane przez użytkownika 2026-10-28)
 
 Oznaczenia: **[U]** to decyzja użytkownika, **[C]** to decyzja Claude'a (do sprawdzenia przy czytaniu), **[R]** to wniosek z researchu (źródła w załączniku).
 
@@ -118,7 +118,7 @@ Generator działa w dwóch krokach: **szkielet** (strefy) → **wypełnienie** (
 - Zadania: obsługa kasy, rozładunek palet, wykładanie towaru, strefa hot, sprzątanie.
 - Pracownik bierze zadanie według priorytetów. Gracz ustawia priorytety globalnie (np. suwak „kasa ↔ palety”) i może ręcznie przydzielić osobę.
 - Kasa samoobsługowa zwalnia ludzi do palet, ale część archetypów jej unika, a inni „zapominają” coś zeskanować **[U]/[C]**.
-- Franczyzobiorca jest postacią w sklepie. Gracz może go wstawić na kasę albo do palet za darmo, ale kosztem „zmęczenia”, które obniża wydajność w kolejnych dniach (puszczamy oko do niedziel) **[C]**.
+- Franczyzobiorca jest postacią w sklepie. Gracz może go wstawić na kasę albo do palet za darmo, ale kosztem „zmęczenia”, które obniża wydajność w kolejnych dniach (puszczamy oko do niedziel) **[C]**. Mechanikę opisuje §7.5.
 
 ### 6.3 Zapasy i półki
 - Kategorie produktów (napoje, nabiał, pieczywo, słodycze, przekąski, alkohol, tytoń, chemia, hot food, gotowe dania, sezonowe, wiralowe). Każda ma zapas na półce i na zapleczu.
@@ -136,6 +136,13 @@ Generator działa w dwóch krokach: **szkielet** (strefy) → **wypełnienie** (
 - Palety same się nie rozładują. W nieoptymalnym sklepie się kumulują, następna dostawa dokłada kolejne i robi się kula śnieżna, która uderza po kieszeni.
 - Ostateczność: **odesłanie dostawy do hurtowni** **[C]**. Zawsze możliwe, ale bolesne: opłata logistyczna, brak towaru (puste półki) i spadek **zaufania Centrali**, który obniża szanse na przydział produktów wiralowych (§7.3). Dzięki temu palety, wiralowe produkty i relacja z Centralą łączą się w jedną pętlę.
 - Upgrade'y logistyczne: wózek paletowy, rampa i drzwi od zaplecza, regały magazynowe, dodatkowy pracownik na poranną zmianę, okno dostaw nocnych.
+
+### 6.5 Praca ludzi: kasa, palety, półki, porządek **[U]** (model, 2026-10-28) / **[C]** (liczby)
+- **Czas personelu to wspólna pula.** Każda minuta zmiany każdej osoby idzie na jedno z czterech zadań: **kasa**, **rozładunek palet**, **wykładanie towaru**, **sprzątanie i śmieci**. Gracz ustawia kolejność priorytetów albo wybiera profil („Kolejka”, „Dostawa”, „Porządek”) i w razie potrzeby przydziela osobę ręcznie (§6.2). Zadanie, na które nie starcza ludzi, czeka.
+- **Kasa samoobsługowa odciąża kasę i przyspiesza kasowanie, ale nie zastępuje ludzi** **[U]**. Klient obsłużony przez kasę samoobsługową nie zabiera minut kasjera, więc kasa oddaje puli tyle czasu, ilu klientów przejęła, a ten czas idzie na palety, półki i porządek. Dopóki nie ma robotów, rozładunek, wykładanie i sprzątanie robią ludzie.
+- **Śmieci z rozładunku** **[U]**: rozładowana paleta zostawia kartony i folię (np. jeden worek na paletę, dwa przy napojach w folii) **[C]**. Trzeba je złożyć i wynieść do wiaty śmietnikowej na podwórku. Niewyniesione śmieci zajmują miejsca na zapleczu (te same, co palety), a przy pełnym zapleczu lądują w sali jako przeszkoda i brud.
+- **Czystość sali** **[C]**: brud rośnie z ruchem klientów i pogodą, spada z minutami sprzątania. Niska czystość obniża cierpliwość i reputację oraz wynik audytu i tajemniczego klienta (§7.1a).
+- **Roboty później** (warsztat złotej rączki, §8): taśmociąg przejmuje rozładunek, wykładacz wykładanie, prasa do kartonów skraca wynoszenie śmieci, a humanoid eDward bierze każde zadanie. Robot zastępuje minuty ludzi, więc „etat czy maszyna” jest rachunkiem gracza **[C]**.
 
 ## 7. Ekonomia
 
@@ -171,6 +178,20 @@ Model wzorowany na realiach, uproszczony:
 - Ceny ustala Centrala. Gracz ma wpływ tylko na lokalne promocje z puli (np. „kawa + drożdżówka”) i na ekspozycję (co stoi przy kasie).
 - Obowiązkowe promocje Centrali są wymuszone i bywają nieopłacalne. To źródło humoru i decyzji typu „jak zminimalizować stratę”.
 
+### 7.5 Balans: kliker a tycoon **[U]** (kierunek, 2026-10-28) / **[C]** (mechaniki i liczby)
+Rdzeń gry to **tycoon franczyzy**: decyzje pod presją Centrali. Stukanie zostaje jako **ręce franczyzobiorcy**: pomaga przy paletach, kasie i porządku, ale kosztuje.
+- **Zmęczenie** (§6.2): franczyzobiorca ma dzienną pulę sił (np. 100). Każde stuknięcie ją zużywa, a przy pustej puli ręce odmawiają. Po ciężkim dniu noc odnawia pulę tylko częściowo, a zmęczenie przeniesione na kolejny dzień obniża wydajność ręcznych akcji. Niedziela „placówka pocztowa” zużywa siły szybciej. Combo zostaje jako odczucie, w granicach puli. Pula odbiera przewagę autoklikaczom, więc ranking (§14.7) jest uczciwy.
+- **Codzienne decyzje zamiast nagród co minutę.** Każdy dzień przynosi 1–3 karty z §7.1a (FEFO o 18:00, glitch kasowy, „chory” pracownik w dzień dostawy, zapowiedź audytu, obowiązkowa promocja). Każda karta ma 2–3 odpowiedzi z widocznym kosztem: pieniądze, zaufanie, WUT albo czas ludzi.
+- **Raport miesięczny to puls gry** (§7.1): wynik po pozycjach (marża, premie, płace, opłata franczyzowa, mandaty, WUT, logistyka), zmiana zaufania, komentarz Centrali i jedna wskazówka, co poprawić. W niedzielę krótkie podsumowanie tygodnia.
+- **Zaufanie Centrali i zrzuty wiralowe od początku**: pasek zaufania widać od pierwszego dnia, a pierwszy zrzut (§7.3) przychodzi już we wrześniu, żeby pętla palety, zaufanie i produkty wiralowe działała w pierwszych 20 minutach.
+- **Mechaniki z wersji grywalnej** (`docs/ekonomia.md`) zostają, ale w nowej roli:
+  - paczka od Centrali co 45–110 s staje się rzadkim **okólnikiem Centrali** (raz na 2–4 dni gry), zawsze z haczykiem;
+  - Zlecenia Centrali stają się **KPI tygodnia** (np. 150 kaw do niedzieli) z nagrodą w Ogonkach i zaufaniu;
+  - złota paleta zostaje małą premią Centrali;
+  - kierownik zmiany (zarobek offline) zostaje mały i z limitem, a seria dni daje tylko drobne Ogonki;
+  - „Otwórz kolejną Traszkę” i Punkty Partnera czekają na mapę miasta (§9): przycisk znika, punkty zostają w zapisie.
+- **Cel balansu** **[C]**: bierny gracz w pierwszych dwóch miesiącach kończy około zera. Stukanie w granicach puli dokłada najwyżej 15–20% wyniku, a dobre decyzje (wielkość zamówienia, miejsce palet, priorytety ludzi, odpowiedzi na karty) dają wynik 2–4 razy lepszy od biernego. Bot „decyzje bez stukania” wygrywa z botem „stukanie bez decyzji”. Pilnuje tego test balansu w `src/sim` (symulacja bez renderu).
+
 ## 8. Progresja i upgrade'y **[U]**
 
 - **Wyposażenie:** lodówki (pojemność, zużycie prądu), regały, druga kasa, kasa samoobsługowa, ekspres premium, piec, hot-dogi, paczkomat, bankomat, klimatyzacja, kamery (mniej kradzieży).
@@ -179,7 +200,7 @@ Model wzorowany na realiach, uproszczony:
 - **Asortyment:** nowe kategorie odblokowywane poziomem sklepu lub zaufaniem Centrali.
 - **Remont generalny:** sklep zamknięty na N dni (zero przychodu, koszty stałe zostają), po nim nowy układ z generatora z większym budżetem, nowymi strefami i lepszym wyglądem. Kilka poziomów (np. Standard → Premium → Flagowiec).
 - **Marketing:** ulotki, kampanie w aplikacji (za Ogonki), event pod sklepem.
-- Mechaniki klikerowe **[C]**: widoczne liczniki, „kamienie milowe” z nagrodą, szybkie mikro-ulepszenia z krótkim czasem zwrotu na start, żeby szybko poczuć postęp.
+- Mechaniki klikerowe **[C]**: widoczne liczniki, „kamienie milowe” z nagrodą, szybkie mikro-ulepszenia z krótkim czasem zwrotu na start, żeby szybko poczuć postęp. Ich miejsce i koszt w grze określa §7.5.
 
 ## 9. Ekspansja i miasto **[U]**
 
@@ -305,10 +326,23 @@ Black Friday (Czarny Kumak), Halloween (Hrabia Traszula, szczyt 31.10 po połudn
 ### 14.6 Do sprawdzenia przed startem etapu 1
 Zawartość paczek (GLB/glTF), czy bazy UBC mają ubrania, lista klipów UAL Standard, licencja N8AO, zgodność TS 7 z `@types/three`.
 
+### 14.7 Ranking **[U]** (nick, seed i wynik; jeden ranking ze wszystkich seedów; Vercel + Upstash) / **[C]** (forma)
+- **Tryb rankingowy** to osobny start: świeży sklep z wybranego seeda i sezon trzech miesięcy gry (wrzesień–listopad), bez Punktów Partnera, zarobku offline i serii dni. Wynik to suma trzech raportów miesięcznych.
+- Gra zapisuje **dziennik poleceń** (polecenie i minuta gry). Funkcja serwerowa na Vercelu odtwarza symulację z seeda i dziennika (`src/sim` jest deterministyczny, a 92 dni liczą się w ~0,2 s) i zapisuje tylko wynik, który sama policzyła.
+- **Nick ma właściciela, bez kont i haseł** **[U]**:
+  - przy pierwszym wejściu przeglądarka losuje tajny **klucz gracza** (100 bitów z `crypto.getRandomValues`) i trzyma go w meta gracza; gracz go nie widzi i nic nie wpisuje;
+  - pierwszy przyjęty wynik z danym nickiem rezerwuje na serwerze parę „nick → skrót klucza” (SHA-256; samego klucza serwer nie przechowuje). Kolejne wyniki z tym nickiem serwer przyjmuje tylko z tym samym kluczem, inny klucz dostaje komunikat „Ten nick jest zajęty”;
+  - nicki porównujemy po normalizacji (NFKC, małe litery, zwinięte spacje), a dozwolone znaki to litery łacińskie z polskimi, cyfry, spacja i `_-.`, więc „Mateusz” z cyrylickim „а” nie podszyje się pod oryginał **[C]**. „Centrala”, „Traszka”, „Admin” i podobne są zarezerwowane **[C]**. Te same reguły sprawdza już ekran startowy, a serwer używa tej samej funkcji;
+  - **kod odzyskiwania**: w ustawieniach gracz widzi klucz jako kod do zapisania (20 znaków base32 w pięciu grupach, np. `K7QX-9MBD-2HFA-P3WN-8RTE`) **[C]**. Wpisanie kodu na nowym urządzeniu przenosi nick;
+  - tym samym kodem przenosi się zapis gry **[U]**, ale tylko na wyraźne polecenie: „Wyślij zapis” trzyma na serwerze jedną kopię na klucz (do 64 KB), a „Pobierz zapis” na drugim urządzeniu pyta, zanim zastąpi tamtejszy zapis, bo zapis nigdy nie ginie po cichu **[C]**;
+  - rezerwacja nicka bez nowego wyniku przez 12 miesięcy wygasa **[C]**.
+- Upstash Redis (zbiory sortowane): ranking globalny, filtr po seedzie i „seed tygodnia”. Nick przechodzi też filtr zakazanych słów, a serwer ogranicza liczbę zgłoszeń na klucz i na adres (adresu nie przechowuje dłużej niż okno limitu).
+- Gra stoi na Vercelu (traszka.vercel.app), bo ranking potrzebuje funkcji serwerowej i bazy.
+
 ## 15. Etapy
 
 1. **Pionowy wycinek wyglądu.** Jeden wygenerowany sklep z ulicą, ładnie wyrenderowany, z chodzącymi ludźmi i kamerą, plus benchmark wydajności. **Twarda brama** **[C]**: po etapie 1 prace nad renderem stoją, dopóki użytkownik nie zaakceptuje wyglądu (prowadzi to sesja główna, budowniczy nie rozmawia z użytkownikiem). Rdzeń symulacji (`sim/`, bez renderu) może w tym czasie iść równolegle. Szkic `.superpowers/brainstorm/*/ekrany-gry.html` jest wzorcem tylko dla **układu interfejsu** (HUD, skrzynka zdarzeń, zakładki), a nie dla grafiki.
-2. **Pętla jednego sklepu.** Klienci, kasa, personel, zapasy, dostawy i palety, rachunek miesiąca, HUD, prędkości czasu, zapis gry.
+2. **Pętla jednego sklepu.** Klienci, kasa, personel, zapasy, dostawy i palety, rachunek miesiąca, HUD, prędkości czasu, zapis gry. Do tego czas ludzi i śmieci (§6.5), balans kliker–tycoon (§7.5) i ranking (§14.7).
 3. **Smak i treść.** Zdarzenia, Centrala, wiralowe produkty, Ogonki i giełda, upgrade'y, remont generalny.
 4. **Miasto i ekspansja.** Generator miasta, mapa ruchu, analizy, zakup lokali, przełączanie sklepów, AI konkurencji, wygrana i przegrana.
 5. **Szlif.** Balans ekonomii, onboarding (pierwsze 20 minut), efekty, dźwięki, wydajność.
