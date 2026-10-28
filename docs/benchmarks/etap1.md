@@ -148,3 +148,18 @@ Co się zmieniło względem biegu 1 (`srednia`):
 - **Otwarte (etap 5):** sześć świateł punktowych wnętrza jest teraz zawsze w shaderach (natężenie 0 w dzień), żeby
   przełączenie na noc nie kompilowało materiałów od nowa. Na M5 tego nie widać (limit ekranu); koszt na pikselu
   trzeba zmierzyć na M1 / Iris Xe (ruling R37).
+
+## Bieg 3: po scaleniu z gałęzią z chmury, 2026-10-28
+
+Commit `cc77e02` (scalona rozgrywka z sesji w chmurze; benchmark nie uruchamia ekonomii, więc mierzy ten sam render).
+Okno jak w biegu 1: **1200 × 672 przy DPR 2**. Ostrzeżeń brak; 2399 / 2399 / 1899 klatek w 20 s.
+
+| Preset | avgFps | p95FrameMs | calls | tris | JS ms |
+|---|---|---|---|---|---|
+| niska | 120,0 | 8,7 | 245 | 786 606 | 2,4 |
+| srednia | 120,0 | 8,6 | 274 | 788 141 | 3,7 |
+| wysoka | 95,0 | 16,9 | 333 | 960 651 | 5,1 |
+
+Wywołania i trójkąty są takie jak w biegu 2 (±1), więc scalenie nie zmieniło kosztu sceny. `wysoka` przy DPR 2 spadła
+z 116,9 FPS (bieg 1, przed art passem, to samo okno) do 95 FPS: renderuje w pełnej rozdzielczości Retiny z pełnym AO,
+mapą cieni 4096 i prawdziwymi cieniami postaci. Kryterium (`srednia ≥ 55`) i tak spełnione z dużym zapasem.
