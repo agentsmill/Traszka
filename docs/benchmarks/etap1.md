@@ -110,3 +110,41 @@ Dla zadania 16 (FPS spełniony, limit 300 wywołań nie przy 60 postaciach na `s
 cienie postaci. Najtańsza zmiana to jedna instancjonowana plama cienia pod wszystkimi postaciami (1 wywołanie zamiast 60),
 co daje ~257 wywołań przy 60 postaciach; prawdziwe cienie mogą zostać tylko na `wysoka`. W zwykłej grze (12 klientów)
 wywołań jest ~230, więc to dotyczy tylko ciasnego sklepu.
+
+## Bieg 2: po art passie (zadanie 16), 2026-10-28
+
+Ten sam Mac (Apple M5, macOS 26.5, Chrome 156 przez Playwright, zasilacz), commit `cd8fc25`. **Inne okno niż w biegu 1:
+1400 × 860 przy `devicePixelRatio` 1** (bieg 1: 1200 × 672 przy DPR 2), więc trójkąty i wywołania da się porównać,
+a FPS i czasy klatki tylko orientacyjnie. Ostrzeżeń brak; 2400 / 2399 / 2400 klatek w 20 s, najdłuższa klatka 10,3–10,4 ms.
+
+Polityka cieni po zadaniu 16: na `niska` i `srednia` postacie nie rzucają cienia z mapy cieni; pod każdą leży miękka
+plama, a wszystkie plamy to jedno instancjonowane wywołanie. Prawdziwe cienie postaci zostały tylko na `wysoka`
+(ruling R35). Dlatego próba `charShadowsOff` na `niska` i `srednia` niczego nie zmienia: tak ma być.
+
+| Preset | avgFps | p95FrameMs | calls | tris | JS ms |
+|---|---|---|---|---|---|
+| niska | 120,0 | 9,7 | 244 | 785 364 | 2,3 |
+| srednia | 120,0 | 9,8 | 273 | 787 848 | 3,0 |
+| wysoka | 120,0 | 9,8 | 332 | 959 572 | 2,9 |
+
+| Preset | Próba | avgFps | calls | tris | JS ms |
+|---|---|---|---|---|---|
+| niska | charShadowsOff | 120,0 | 244 | 785 364 | 2,4 |
+| srednia | charShadowsOff | 120,0 | 273 | 787 493 | 3,1 |
+| srednia | crowdHidden | 120,0 | 212 | 615 293 | 2,5 |
+| srednia | aoOff | 120,0 | 260 | 785 216 | 2,2 |
+| wysoka | charShadowsOff | 120,0 | 272 | 787 396 | 2,9 |
+
+**Kryterium `srednia.avgFps ≥ 55`:** spełnione (limit ekranu).
+**Budżet 300 wywołań przy 60 postaciach:** spełniony na `niska` (244) i `srednia` (273, wcześniej 316); przekroczony
+tylko na `wysoka` (332) z wyboru (prawdziwe cienie postaci, R35). W zwykłej grze (12 klientów) wszystkie presety < 300.
+
+Co się zmieniło względem biegu 1 (`srednia`):
+- **Postacie:** +61 wywołań (60 + 1 plama) zamiast +120 i ~173 tys. trójkątów mniej, bo nie ma przebiegu cieni postaci.
+- **Scena bez tłumu:** 212 wywołań zamiast 196 (+16: hasła na ścianach, tabliczka zaplecza, rekwizyty z napisami,
+  plama); trójkąty +45 tys. (podwórko, fazowane gzymsy, drzewa proceduralne, rekwizyty). Tu najpierw ciąć, gdyby
+  zabrakło budżetu: rekwizyty w wierszu 0 w jedną siatkę z atlasem i jeden atlas haseł zamiast tekstury na odcinek ściany.
+- **AO:** +13 wywołań, jak wcześniej.
+- **Otwarte (etap 5):** sześć świateł punktowych wnętrza jest teraz zawsze w shaderach (natężenie 0 w dzień), żeby
+  przełączenie na noc nie kompilowało materiałów od nowa. Na M5 tego nie widać (limit ekranu); koszt na pikselu
+  trzeba zmierzyć na M1 / Iris Xe (ruling R37).
