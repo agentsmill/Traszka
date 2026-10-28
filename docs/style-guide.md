@@ -68,3 +68,9 @@ Emissive (kolor, `emissiveIntensity`):
 - Za wierszem budynków jest podwórko (`street/courtyard.ts`): ścieżka, trawnik, trzepak, wiata śmietnikowa z koszami do segregacji, piaskownica, ławka, drzewa, podjazd i blaszaki. Reguła zasłaniania: rzecz o wysokości h stoi ≥ h metrów za tylną ścianą (w izometrii promień do kamery wznosi się o tyle, ile przebiega wzdłuż z), więc przy kamerze od podwórka nic nie wchodzi w kadr wnętrza. Pilnuje tego `courtyard.test.ts`.
 - Rekwizyty uliczne stoją wyłącznie w wierszu 0 chodnika (pas mebli ulicznych, zablokowany dla klientów, ruling R32). W sali nie stawiamy niczego na podłodze: symulacja nie zna rekwizytów, więc klient przeszedłby przez donicę.
 - Wysokie meble przy ścianach w przekroju (R22): zostają pełne, z wykończonymi plecami (§1). Rozdzielenie ich od scalonej siatki i przyciemnianie dokłada ~10–15 draw calli i ścieżkę przezroczystości z artefaktami; wrócimy do tego, gdy dojdzie zaznaczanie mebli (etap 2).
+
+## Akceptacja etapu 1
+- **Decyzja (2026-10-28): wygląd zaakceptowany** przez użytkownika na bramie z zadania 17, na żywej wersji https://traszka.vercel.app (commit `02f83b5`, scalona rozgrywka z sesji w chmurze, preset domyślny i wysoki).
+- Oglądane widoki: blok w dzień (`kiełbasa-42`), narożna kamienica nocą (`kiełbasa-12`), pawilon z zewnątrz (`traszka-1`), zbliżenie na klientów (`zoom=7`), preset `wysoka` z licznikiem wydajności.
+- Zaakceptowane świadomie, do późniejszych etapów: wysokie lodówki przy przeciętych ścianach zasłaniają klientów przy yaw 1/2 (R22, wraca z zaznaczaniem mebli w etapie 2); twarze często pod fryzurami; postacie smuklejsze niż w Two Point; dostawczak z paczki Kenney płasko cieniowany; mural przy yaw 1 częściowo pod paskiem UI.
+- Skutek: odblokowane zadania renderu i interfejsu etapu 2. Zmiany wyglądu od teraz idą przez ten przewodnik (właściciel jak w nagłówku).
