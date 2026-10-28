@@ -3,7 +3,9 @@ import {
   TRUST, addTrust, auditWeight, closeTrustMonth, createTrust, sanitizeTrust, trustTerminates, trustTier, turnoverBonusShare,
   viralShare, type TrustState,
 } from './trust';
-import { WUT, addWut, closeWutMonth, createWut, sanitizeWut, wutCharge, wutFromSales, wutSlack, wutTotal, type WutState } from './wut';
+import {
+  WUT, addWut, closeWutMonth, createWut, sanitizeWut, wutCharge, wutFromSales, wutFromSco, wutSlack, wutTotal, type WutState,
+} from './wut';
 import {
   KPI, closeKpiMonth, closeKpiWeek, kpiHit, kpiProgress, kpiTitle, kpiValue, newKpiWeek, sanitizeKpi, weekEnd, type KpiMetrics,
   type KpiState,
@@ -102,6 +104,18 @@ describe('WUT', () => {
     expect(wutCharge(w, 300_000)).toBeCloseTo(100);
   });
 
+  it('„zapomniane” skany na kasach samoobsługowych idą do WUT jako kradzieże, kamery je zmniejszają', () => {
+    const w = createWut();
+    wutFromSco(w, 10_000);
+    expect(w.month.kradziez).toBeCloseTo(10_000 * WUT.scoShrink);
+    const cams = createWut();
+    wutFromSco(cams, 10_000, 0.6);
+    expect(cams.month.kradziez).toBeCloseTo(0.6 * w.month.kradziez);
+    wutFromSco(cams, -5);
+    wutFromSco(cams, 100, 0);
+    expect(cams.month.kradziez).toBeCloseTo(0.6 * w.month.kradziez);
+  });
+
   it('odpis z okólnika obejmuje cały WUT, nie tylko ubytki z kart', () => {
     const w = createWut();
     addWut(w, 'termin', 500);
@@ -190,7 +204,7 @@ describe('KPI tygodnia', () => {
   it('zamknięcie tygodnia: zaufanie i premia za trafiony, kara za nietrafiony, nowy tydzień od poniedziałku', () => {
     const k: KpiState = { ...newKpiWeek(1, 1, 6, M0, SCALE), kind: 'klienci', target: 3000 };
     const hit = closeKpiWeek(k, { ...M0, customers: 3100 }, 1, 13, SCALE);
-    expect(hit).toEqual({ kind: 'klienci', target: 3000, value: 3100, hit: true, trust: KPI.trustHit, bonus: 600 });
+    expect(hit).toEqual({ kind: 'klienci', target: 3000, value: 3100, hit: true, trust: KPI.trustHit, bonus: 600, xp: KPI.xpBase + KPI.xpPerLevel });
     expect(k.seq).toBe(2);
     expect(k.fromDay).toBe(13);
     expect(k.toDay).toBe(19);
@@ -199,6 +213,8 @@ describe('KPI tygodnia', () => {
     const miss = closeKpiWeek({ ...k, kind: 'kawy', target: 1e6 }, { ...M0, customers: 3100 }, 1, 20, SCALE);
     expect(miss.trust).toBe(KPI.trustMiss);
     expect(miss.bonus).toBe(0);
+    expect(miss.xp).toBe(0);
+    expect(closeKpiWeek({ ...k, kind: 'kawy', target: 0 }, M0, 1, 27, { ...SCALE, level: 7 }).xp).toBe(KPI.xpBase + 7 * KPI.xpPerLevel);
     expect(closeKpiMonth(k)).toEqual({ hit: 1, miss: 0 });
   });
 

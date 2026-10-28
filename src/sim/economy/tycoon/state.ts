@@ -87,6 +87,8 @@ export interface EconomySide {
   logistics: number;
   reputation: number;
   ogonki: number;
+  /** XP za decyzję (poziom gracza). */
+  xp: number;
 }
 
 /**
@@ -101,6 +103,6 @@ export function applyCardOutcome(t: TycoonState, o: CardOutcome): EconomySide {
   if (d.energy) spendEnergy(t.fatigue, d.energy);
   return {
     other: d.cash ?? 0, bonus: d.bonus ?? 0, fine: d.fine ?? 0, logistics: d.logistics ?? 0,
-    reputation: d.reputation ?? 0, ogonki: d.ogonki ?? 0,
+    reputation: d.reputation ?? 0, ogonki: d.ogonki ?? 0, xp: o.xp,
   };
 }

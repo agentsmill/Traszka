@@ -2,6 +2,7 @@ import { isRec, num, whole, type Rec } from '@/sim/guards';
 import { HOT } from '../catalog';
 import { rand01 } from '../rand';
 import { CH } from './channels';
+import { SUNDAY_TRAFFIC } from './sunday';
 import { roundNice, weekdayOf } from './time';
 
 /**
@@ -38,7 +39,8 @@ export interface KpiState {
   month: { hit: number; miss: number };
 }
 
-export interface KpiScale { dailyCustomers: number; dailyMargin: number }
+/** Skala sklepu do celów i nagród; `level` to poziom gracza (XP za trafiony KPI, jak dawniej za zlecenie). */
+export interface KpiScale { dailyCustomers: number; dailyMargin: number; level?: number }
 
 export const KPI = {
   trustHit: 3,
@@ -50,6 +52,9 @@ export const KPI = {
   customersStretch: 1.08,
   lostShare: 0.02,
   cleanTarget: 75,
+  /** XP za trafiony KPI: jak za dawne zlecenie Centrali (40 + 10 × poziom). */
+  xpBase: 40,
+  xpPerLevel: 10,
 } as const;
 
 /** Najbliższa niedziela od dnia `day` (gdy `day` to niedziela, następna: tydzień ma co najmniej dwa dni). */
@@ -64,7 +69,8 @@ function pickKind(seedHash: number, seq: number, previous: KpiKind | null): KpiK
 }
 
 function targetFor(kind: KpiKind, days: number, scale: KpiScale): number {
-  const customers = Math.max(1, scale.dailyCustomers) * days;
+  // tydzień zawsze kończy się w niedzielę, a w niedzielę przychodzi więcej ludzi (sunday.ts)
+  const customers = Math.max(1, scale.dailyCustomers) * (days + SUNDAY_TRAFFIC - 1);
   switch (kind) {
     case 'kawy': return Math.max(10, roundNice(KPI.hotStretch * HOT.chance * customers));
     case 'klienci': return Math.max(10, roundNice(KPI.customersStretch * customers));
@@ -107,7 +113,7 @@ export function kpiProgress(k: KpiState, now: KpiMetrics): number {
   return Math.max(0, Math.min(1, v / Math.max(1e-9, k.target)));
 }
 
-export interface KpiWeekResult { kind: KpiKind; target: number; value: number; hit: boolean; trust: number; bonus: number }
+export interface KpiWeekResult { kind: KpiKind; target: number; value: number; hit: boolean; trust: number; bonus: number; xp: number }
 
 /**
  * Zamknięcie tygodnia (niedziela, zamknięcie dnia): wynik, zmiana zaufania i premia do zaksięgowania przez wywołującego,
@@ -120,6 +126,7 @@ export function closeKpiWeek(k: KpiState, now: KpiMetrics, seedHash: number, nex
     kind: k.kind, target: k.target, value, hit,
     trust: hit ? KPI.trustHit : KPI.trustMiss,
     bonus: hit ? roundNice(KPI.bonusShare * Math.max(0, scale.dailyMargin)) : 0,
+    xp: hit ? KPI.xpBase + KPI.xpPerLevel * Math.max(1, scale.level ?? 1) : 0,
   };
   const month = { hit: k.month.hit + (hit ? 1 : 0), miss: k.month.miss + (hit ? 0 : 1) };
   Object.assign(k, newKpiWeek(seedHash, k.seq + 1, nextDay, now, scale, k.kind, month));

@@ -55,7 +55,8 @@ export interface ReportInput {
   staffCount: number;
   exhaustedDays: number;
   kpi: { hit: number; miss: number };
-  cards: { answered: number; auto: number };
+  /** Karty: odpowiedzi w miesiącu, w tym zatwierdzone odpowiedzi domyślne. */
+  cards: { answered: number; defaults: number };
   /** Marża z jednego klienta (do wyceny klientów odstraszonych kolejką). */
   marginPerCustomer: number;
 }
@@ -149,7 +150,8 @@ export function hintCandidates(r: ReportInput): ReportHint[] {
     { id: 'braki', value: starved / 60, impact: starved * WAGE_PER_MINUTE * 0.25 },
     { id: 'zmeczenie', value: r.exhaustedDays, impact: r.exhaustedDays >= 5 ? r.exhaustedDays * 40 : 0 },
     { id: 'zaufanie', value: -r.trust.delta, impact: r.trust.delta < -3 ? -r.trust.delta * 150 : 0 },
-    { id: 'karty', value: r.cards.auto, impact: r.cards.auto > r.cards.answered ? r.cards.auto * 60 : 0 },
+    // odpowiedź zaznaczona z góry to zwykle „nic nie robię”: rzadko najlepsza
+    { id: 'karty', value: r.cards.defaults, impact: r.cards.defaults > r.cards.answered / 2 ? r.cards.defaults * 60 : 0 },
     { id: 'kpi', value: r.kpi.miss, impact: r.kpi.miss >= 2 && r.kpi.hit === 0 ? r.kpi.miss * 200 : 0 },
   ];
   return out;
@@ -205,7 +207,7 @@ export function hintText(h: Pick<ReportHint, 'id' | 'value'>, fmt: (n: number) =
     case 'braki': return `Zadania czekały na ludzi przez ${v} godz. Zatrudnij kogoś albo kup automatykę z warsztatu.`;
     case 'zmeczenie': return `Ręce odmówiły posłuszeństwa w ${v} dni. Noc odnawia tylko część sił: odpuść stukanie choć dzień w tygodniu.`;
     case 'zaufanie': return `Zaufanie Centrali spadło o ${v} pkt. KPI tygodnia i odpowiedzi na okólniki to najtańszy sposób, żeby je odbudować.`;
-    case 'karty': return `${v} kart rozstrzygnęło się samo. Odpowiedź domyślna rzadko jest najlepsza.`;
+    case 'karty': return `${v} razy zatwierdzona odpowiedź zaznaczona z góry. Rzadko jest najlepsza: przeczytaj kartę, zanim klikniesz.`;
     case 'kpi': return `Nietrafione KPI tygodnia: ${v}. Sprawdzaj cel w poniedziałek, zanim tydzień ucieknie.`;
     case 'brawo': return 'Wszystko gra. Centrala i tak podniesie KPI, ale to już jej problem.';
   }

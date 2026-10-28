@@ -1,18 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { OPEN_FROM, OPEN_TO } from '../catalog';
 import {
-  FATIGUE, closeFatigueMonth, createFatigue, dailyTapCeiling, fatigueEfficiency, fatigueMinute, fatigueNight, sanitizeFatigue,
+  FATIGUE, closeFatigueMonth, createFatigue, dailyTapCeiling, fatigueEfficiency, fatigueNight, sanitizeFatigue,
   spendEnergy, tap, tapCost, tapItems, type FatigueState,
 } from './fatigue';
 
-const WEEKDAY = { sundayPost: false };
-const SUNDAY = { sundayPost: true };
 
 /** Stuka do odmowy rąk i zwraca sumę mocy. */
 function tapAll(f: FatigueState, kind: 'kasa' | 'paleta', combo: number): number {
   let power = 0;
   for (let i = 0; i < 1000; i++) {
-    const r = tap(f, kind, combo, WEEKDAY);
+    const r = tap(f, kind, combo);
     if (!r.ok) break;
     power += r.power;
   }
@@ -22,9 +19,9 @@ function tapAll(f: FatigueState, kind: 'kasa' | 'paleta', combo: number): number
 describe('pula sił franczyzobiorcy', () => {
   it('stuknięcie zużywa siły; paleta męczy bardziej niż kasa', () => {
     const f = createFatigue();
-    const a = tap(f, 'kasa', 1, WEEKDAY);
+    const a = tap(f, 'kasa', 1);
     expect(a).toEqual({ ok: true, taps: 1, power: 1, cost: FATIGUE.tapCost.kasa });
-    const b = tap(f, 'paleta', 1, WEEKDAY);
+    const b = tap(f, 'paleta', 1);
     expect(b.cost).toBeGreaterThan(a.cost);
     expect(f.energy).toBe(FATIGUE.pool - a.cost - b.cost);
     expect(f.tapsToday).toBe(2);
@@ -32,8 +29,8 @@ describe('pula sił franczyzobiorcy', () => {
 
   it('polecenie bez combo (albo z bzdurą) to jedno stuknięcie, a stan zostaje liczbą', () => {
     const f = createFatigue();
-    expect(tap(f, 'kasa', Number.NaN, WEEKDAY).taps).toBe(1);
-    expect(tap(f, 'kasa', undefined as unknown as number, WEEKDAY).taps).toBe(1);
+    expect(tap(f, 'kasa', Number.NaN).taps).toBe(1);
+    expect(tap(f, 'kasa', undefined as unknown as number).taps).toBe(1);
     expect(f.energy).toBe(FATIGUE.pool - 2 * FATIGUE.tapCost.kasa);
     expect(Number.isFinite(f.spentToday) && Number.isFinite(f.tapsToday)).toBe(true);
   });
@@ -41,7 +38,7 @@ describe('pula sił franczyzobiorcy', () => {
   it('przy pustej puli ręce odmawiają', () => {
     const f = createFatigue();
     tapAll(f, 'kasa', 1);
-    const r = tap(f, 'kasa', 1, WEEKDAY);
+    const r = tap(f, 'kasa', 1);
     expect(r.ok).toBe(false);
     expect(r.text).toMatch(/Ręce odmawiają/);
     expect(f.refusedToday).toBeGreaterThan(0);
@@ -59,14 +56,14 @@ describe('pula sił franczyzobiorcy', () => {
   it('gdy sił brakuje na całe combo, przechodzi tylko część stuknięć', () => {
     const f = createFatigue();
     f.energy = 5;
-    const r = tap(f, 'kasa', 5, WEEKDAY);
+    const r = tap(f, 'kasa', 5);
     expect(r.taps).toBe(2);
     expect(f.energy).toBe(1);
   });
 
   it('noc po lekkim dniu odnawia całą pulę, po ciężkim tylko część; zmęczenie obniża wydajność', () => {
     const f = createFatigue();
-    tap(f, 'kasa', 5, WEEKDAY);
+    tap(f, 'kasa', 5);
     fatigueNight(f);
     expect(f.energy).toBe(FATIGUE.pool);
     expect(f.carried).toBe(0);
@@ -76,7 +73,7 @@ describe('pula sił franczyzobiorcy', () => {
     expect(fatigueNight(f)).toBe(FATIGUE.pool - FATIGUE.nightRecovery);
     expect(f.energy).toBe(FATIGUE.nightRecovery);
     expect(fatigueEfficiency(f)).toBeCloseTo(1 - FATIGUE.carryPenalty * 0.3);
-    expect(tap(f, 'kasa', 1, WEEKDAY).power).toBeCloseTo(fatigueEfficiency(f));
+    expect(tap(f, 'kasa', 1).power).toBeCloseTo(fatigueEfficiency(f));
     expect(f.exhaustedDays).toBe(1);
   });
 
@@ -88,7 +85,7 @@ describe('pula sił franczyzobiorcy', () => {
     for (let day = 0; day < 14; day++) {
       a += tapAll(always, 'kasa', 3);
       // rozsądnie: zużywa tyle, ile noc odda
-      for (let i = 0; i < FATIGUE.nightRecovery / FATIGUE.tapCost.kasa; i++) p += tap(paced, 'kasa', 1, WEEKDAY).power;
+      for (let i = 0; i < FATIGUE.nightRecovery / FATIGUE.tapCost.kasa; i++) p += tap(paced, 'kasa', 1).power;
       fatigueNight(always);
       fatigueNight(paced);
     }
@@ -97,22 +94,16 @@ describe('pula sił franczyzobiorcy', () => {
     expect(p).toBeGreaterThan(a);
   });
 
-  it('niedziela „placówka pocztowa”: stuknięcia droższe, a siły uciekają same przy otwartym sklepie', () => {
-    expect(tapCost('kasa', SUNDAY)).toBe(FATIGUE.tapCost.kasa * FATIGUE.sundayCostMult);
-    const f = createFatigue();
-    for (let m = OPEN_FROM; m < OPEN_TO; m++) fatigueMinute(f, SUNDAY, true);
-    expect(f.energy).toBeCloseTo(FATIGUE.pool - FATIGUE.sundayDrainPerHour * (OPEN_TO - OPEN_FROM) / 60);
-    const g = createFatigue();
-    for (let m = 0; m < 600; m++) fatigueMinute(g, WEEKDAY, true);
-    for (let m = 0; m < 600; m++) fatigueMinute(g, SUNDAY, false);
-    expect(g.energy).toBe(FATIGUE.pool);
-    expect(dailyTapCeiling('kasa', SUNDAY)).toBeLessThan(dailyTapCeiling('kasa', WEEKDAY));
+  it('niedziela bez osobnych zasad: stuknięcie kosztuje tyle samo każdego dnia (więcej klientów to sprawa ruchu)', () => {
+    expect(tapCost('kasa')).toBe(FATIGUE.tapCost.kasa);
+    expect(tapCost('paleta')).toBe(FATIGUE.tapCost.paleta);
+    expect(Object.keys(FATIGUE).some((k) => /sunday/i.test(k))).toBe(false);
   });
 
   it('sufit dnia: najwyżej 50 klientów albo 320 sztuk z palety (jedna paleta), mniej po ciężkiej nocy', () => {
-    expect(dailyTapCeiling('kasa', WEEKDAY)).toBe(50);
-    expect(tapItems(dailyTapCeiling('paleta', WEEKDAY))).toBe(320);
-    expect(dailyTapCeiling('kasa', WEEKDAY, 70, 30)).toBeCloseTo(35 * 0.82);
+    expect(dailyTapCeiling('kasa')).toBe(50);
+    expect(tapItems(dailyTapCeiling('paleta'))).toBe(320);
+    expect(dailyTapCeiling('kasa', 70, 30)).toBeCloseTo(35 * 0.82);
   });
 
   it('siły z kart: nie schodzą poniżej zera i nie rosną ponad pulę', () => {

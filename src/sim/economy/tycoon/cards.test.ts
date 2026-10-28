@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { MINUTES_PER_DAY } from '../catalog';
 import {
-  DELTA_KEYS, answerValue, bestAnswer, cardDef, cardModifiers, closeCardsMonth, createCards, drawDayCards, expireCards, fillText,
+  CARDS, DELTA_KEYS, answerValue, bestAnswer, cardDef, cardModifiers, cardsBlocking, closeCardsMonth, createCards, drawDayCards, fillText,
+  pruneCardMods,
   resolveCard, sanitizeCards, visibleCards, type CardContext, type CardInstance, type CardsState, type Valuation,
 } from './cards';
 import { CIRCULARS, DECK, type CardDef } from './deck';
@@ -45,12 +46,11 @@ function make(id: string, over: Partial<CardContext> = {}): CardInstance {
 const ALL: readonly CardDef[] = [...DECK, ...CIRCULARS];
 
 describe('talia: treść', () => {
-  it('identyfikatory są unikalne; każda karta ma 2–3 odpowiedzi i poprawną odpowiedź domyślną', () => {
+  it('identyfikatory są unikalne; każda karta ma 2–3 odpowiedzi', () => {
     expect(new Set(ALL.map((d) => d.id)).size).toBe(ALL.length);
     for (const d of ALL) {
       expect(d.answers.length, d.id).toBeGreaterThanOrEqual(2);
       expect(d.answers.length, d.id).toBeLessThanOrEqual(3);
-      expect(d.fallback, d.id).toBeLessThan(d.answers.length);
       expect(d.title.length).toBeGreaterThan(3);
       for (const a of d.answers) {
         expect(a.label.length, d.id).toBeGreaterThan(3);
@@ -66,13 +66,11 @@ describe('talia: treść', () => {
     expect(cardDef('chory')!.when!(ctx(3))).toBe(true);
   });
 
-  it('każda odpowiedź ma widoczny koszt albo skutek; okólnik zawsze ma haczyk', () => {
+  it('każda odpowiedź ma widoczny koszt albo skutek (najwyżej jedna to „nic nie robię”); okólnik zawsze ma haczyk', () => {
     for (const d of ALL) {
       const card = make(d.id);
-      for (const [i, a] of card.answers.entries()) {
-        const visible = Object.keys(a.delta).length + a.mods.length + (a.risk ? 1 : 0);
-        if (i !== d.fallback || d.kind === 'zdarzenie') expect(visible + (i === d.fallback ? 1 : 0), `${d.id}/${i}`).toBeGreaterThan(0);
-      }
+      const empty = card.answers.filter((a) => Object.keys(a.delta).length + a.mods.length + (a.risk ? 1 : 0) === 0);
+      expect(empty.length, d.id).toBeLessThanOrEqual(1);
     }
     for (const d of CIRCULARS) {
       const card = make(d.id);
@@ -85,6 +83,11 @@ describe('talia: treść', () => {
         expect(catchCost, `${d.id}: haczyk`).toBe(true);
       }
     }
+    const circular = make('okolnik-ankieta');
+    const cs = createCards(circular.day);
+    cs.pending.push(circular);
+    const r = resolveCard(cs, circular.seq, 1, circular.showAt, SEED);
+    expect(r.ok && r.outcome.xp).toBe(CARDS.xp.okolnik);
   });
 
   it('teksty po polsku, bez dziur w miejscach na liczby i bez prawdziwych marek', () => {
@@ -174,13 +177,25 @@ describe('losowanie kart dnia', () => {
     expect(cards[0].id).toBe('memy');
   });
 
-  it('karta przychodzi o swojej porze; na starcie gry termin nie mija od razu', () => {
+  it('karta przychodzi o swojej porze; na starcie gry karta z wcześniejszą porą przychodzi od razu', () => {
     const c = make('fefo');
     expect(c.showAt).toBe(10 * MINUTES_PER_DAY + 18 * 60);
-    expect(c.deadline).toBe(c.showAt + 90);
     const late = make('glitch', { now: 10 * MINUTES_PER_DAY + 14 * 60 });
     expect(late.showAt).toBe(10 * MINUTES_PER_DAY + 14 * 60);
-    expect(late.deadline - late.showAt).toBeGreaterThanOrEqual(60);
+  });
+
+  it('pełne biurko: nowe karty nie przychodzą, a należny okólnik czeka na miejsce', () => {
+    const cs = createCards(10);
+    cs.nextCircularDay = 10;
+    for (let i = 0; i < CARDS.maxPending; i++) cs.pending.push({ ...make('fefo'), seq: 1000 + i });
+    expect(drawDayCards(cs, ctx(10), SEED)).toEqual([]);
+    expect(cs.nextCircularDay).toBe(10);
+    cs.pending.splice(0, 2);
+    const next = drawDayCards(cs, ctx(11), SEED);
+    expect(next.length).toBeGreaterThan(0);
+    expect(next.length).toBeLessThanOrEqual(2);
+    expect(next.some((c) => cardDef(c.id)!.kind === 'okolnik')).toBe(true);
+    expect(cs.pending.length).toBeLessThanOrEqual(CARDS.maxPending);
   });
 
   it('kwoty rosną z wielkością sklepu', () => {
@@ -211,11 +226,12 @@ describe('rozstrzyganie', () => {
     const r = resolveCard(cs, card.seq, 1, card.showAt + 5, SEED);
     if (!r.ok) throw new Error(r.text);
     expect(r.outcome.delta).toEqual(card.answers[1].delta);
-    expect(r.outcome.auto).toBe(false);
+    expect(r.outcome.xp).toBe(CARDS.xp.zdarzenie);
     expect(r.outcome.text).toMatch(/jogurty/);
     expect(cs.pending).toEqual([]);
-    expect(cs.log).toEqual([{ seq: card.seq, id: 'lodowka', day: 10, answer: 1, auto: false, riskHit: false }]);
-    expect(closeCardsMonth(cs)).toEqual({ answered: 1, auto: 0, riskHits: 0 });
+    expect(cs.log).toEqual([{ seq: card.seq, id: 'lodowka', day: 10, answer: 1, riskHit: false }]);
+    expect(r.outcome.isDefault).toBe(false);
+    expect(closeCardsMonth(cs)).toEqual({ answered: 1, defaults: 0, riskHits: 0 });
     expect(resolveCard(cs, card.seq, 1, card.showAt + 6, SEED).ok).toBe(false);
   });
 
@@ -240,17 +256,47 @@ describe('rozstrzyganie', () => {
     expect(hits).toBeLessThan(170);
   });
 
-  it('karta bez odpowiedzi rozstrzyga się sama o terminie odpowiedzią domyślną', () => {
+  it('karta decyzji zatrzymuje grę i czeka bez terminu; odpowiedź zaznaczona z góry nie wybiera się sama', () => {
     const cs = createCards(10);
     const card = make('chory');
     cs.pending.push(card);
-    expect(expireCards(cs, card.deadline - 1, SEED)).toEqual([]);
-    const [o] = expireCards(cs, card.deadline, SEED);
-    expect(o.auto).toBe(true);
-    expect(o.answer).toBe(cardDef('chory')!.fallback);
-    expect(cs.month.auto).toBe(1);
-    expect(cardModifiers(cs, card.deadline).staff).toBe(-1);
-    expect(cardModifiers(cs, (card.day + 1) * MINUTES_PER_DAY + 8 * 60).staff).toBe(0);
+    expect(card.defaultAnswer).toBe(cardDef('chory')!.defaultAnswer);
+    expect(cardsBlocking(cs, card.showAt - 1)).toBe(false);
+    expect(cardsBlocking(cs, card.showAt)).toBe(true);
+    pruneCardMods(cs, card.showAt + 600);
+    expect(cardsBlocking(cs, card.showAt + 600)).toBe(true);
+    expect(cardModifiers(cs, card.showAt + 600)).toEqual({ traffic: 1, margin: 1, closed: false, staff: 0 });
+    const r = resolveCard(cs, card.seq, card.defaultAnswer, card.showAt, SEED);
+    if (!r.ok) throw new Error(r.text);
+    expect(r.outcome.isDefault).toBe(true);
+    expect(cardsBlocking(cs, card.showAt)).toBe(false);
+    expect(closeCardsMonth(cs)).toEqual({ answered: 1, defaults: 1, riskHits: 0 });
+  });
+
+  it('każda karta ma odpowiedź zaznaczoną z góry, zwykle „nic nie robię” (najtańszą od ręki, nie najlepszą)', () => {
+    for (const d of ALL) {
+      expect(d.defaultAnswer, d.id).toBeGreaterThanOrEqual(0);
+      expect(d.defaultAnswer, d.id).toBeLessThan(d.answers.length);
+    }
+    const fefo = make('fefo');
+    expect(bestAnswer(fefo, VAL)).not.toBe(fefo.defaultAnswer);
+  });
+
+  it('spóźniona odpowiedź: efekt z godziną dotyczy dnia karty, więc zostaje tylko to, co jeszcze trwa', () => {
+    const cs = createCards(10);
+    const sick = make('chory');
+    const match = make('mecz');
+    cs.pending.push(sick, match);
+    // „chory” o 15:00 tego samego dnia: brak osoby tylko do 23:00
+    resolveCard(cs, sick.seq, 2, 10 * MINUTES_PER_DAY + 15 * 60, SEED);
+    expect(cardModifiers(cs, 10 * MINUTES_PER_DAY + 15 * 60 + 30).staff).toBe(-1);
+    expect(cardModifiers(cs, 11 * MINUTES_PER_DAY + 8 * 60).staff).toBe(0);
+    // mecz dwa dni po fakcie: paleta piwa kosztuje, ale kibiców już nie ma
+    const r = resolveCard(cs, match.seq, 0, 12 * MINUTES_PER_DAY + 9 * 60, SEED);
+    if (!r.ok) throw new Error(r.text);
+    expect(r.outcome.mods).toEqual([]);
+    expect(r.outcome.delta.logistics).toBeLessThan(0);
+    expect(cardModifiers(cs, 12 * MINUTES_PER_DAY + 18 * 60).traffic).toBe(1);
   });
 
   it('efekty na czas: ruch, marża, zamknięcie; po czasie znikają', () => {
@@ -266,7 +312,7 @@ describe('rozstrzyganie', () => {
     expect(now.margin).toBeCloseTo(0.9);
     expect(now.closed).toBe(true);
     expect(cardModifiers(cs, t + 61).closed).toBe(false);
-    expireCards(cs, t + MINUTES_PER_DAY, SEED);
+    pruneCardMods(cs, t + MINUTES_PER_DAY);
     expect(cs.active).toEqual([]);
     expect(cardModifiers(cs, t + MINUTES_PER_DAY)).toEqual({ traffic: 1, margin: 1, closed: false, staff: 0 });
   });
@@ -284,8 +330,9 @@ describe('rozstrzyganie', () => {
 describe('ocena odpowiedzi', () => {
   it('FEFO: gdy WUT boli, opłaca się przecenić albo oddać w paczkach; gdy pod progiem jest luz, można zaryzykować', () => {
     const card = make('fefo');
-    expect(bestAnswer(card, VAL)).not.toBe(card.fallback);
-    expect(bestAnswer(card, { ...VAL, wut: 0 })).toBe(card.fallback);
+    const risky = card.defaultAnswer;   // „Zostaw, może ktoś się skusi”
+    expect(bestAnswer(card, VAL)).not.toBe(risky);
+    expect(bestAnswer(card, { ...VAL, wut: 0 })).toBe(risky);
   });
 
   it('glitch: mały rabat można przeczekać przy kasie, duży lepiej zamknąć', () => {
@@ -324,7 +371,7 @@ describe('zapis', () => {
       for (const c of [...cs.pending]) {
         if (c.seq % 2 === 0) resolveCard(cs, c.seq, 0, c.showAt, SEED);
       }
-      expireCards(cs, (d + 1) * MINUTES_PER_DAY - 600, SEED);
+      pruneCardMods(cs, (d + 1) * MINUTES_PER_DAY - 600);
     }
     const copy = JSON.parse(JSON.stringify(cs)) as CardsState;
     expect(sanitizeCards(copy, 12)).toEqual(cs);
@@ -333,7 +380,7 @@ describe('zapis', () => {
   it('zepsute dni w zapisie nie zatrzymują losowania na zawsze ani nie zostawiają efektu na lata', () => {
     const cs = createCards(10);
     const card = make('fefo');
-    cs.pending.push(card, { ...card, seq: card.seq + 1, day: 500 }, { ...card, seq: card.seq + 2, showAt: 1e12, deadline: 1e12 });
+    cs.pending.push(card, { ...card, seq: card.seq + 1, day: 500 }, { ...card, seq: card.seq + 2, showAt: 1e12 });
     cs.active.push({ kind: 'traffic', value: 0.5, from: 0, until: 1e12, seq: 1 });
     const raw = { ...JSON.parse(JSON.stringify(cs)), drawnDay: 999_999, nextCircularDay: 999_999, lastSeen: { fefo: 999_999 } };
     const s = sanitizeCards(raw, 10);
@@ -341,7 +388,7 @@ describe('zapis', () => {
     expect(s.nextCircularDay).toBeLessThanOrEqual(15);
     expect(s.lastSeen.fefo).toBe(10);
     expect(s.pending.map((c) => c.seq)).toEqual([card.seq, card.seq + 2]);
-    expect(s.pending[1].deadline).toBeLessThanOrEqual(12 * MINUTES_PER_DAY);
+    expect(s.pending[1].showAt).toBeLessThan(11 * MINUTES_PER_DAY);
     expect(s.active[0].until).toBeLessThanOrEqual(14 * MINUTES_PER_DAY);
     expect(drawDayCards(s, ctx(11), SEED).length).toBeGreaterThan(0);
   });
@@ -355,6 +402,8 @@ describe('zapis', () => {
     expect(s.pending.map((c) => c.id)).toEqual(['fefo']);
     expect(s.seq).toBeGreaterThan(good.seq);
     expect(sanitizeCards('śmieci', 4)).toEqual(createCards(4));
+    const bad = sanitizeCards(JSON.parse(JSON.stringify({ ...cs, pending: [{ ...good, defaultAnswer: 9 }] })), 10);
+    expect(bad.pending[0].defaultAnswer).toBeLessThan(good.answers.length);
     for (const k of DELTA_KEYS) expect(typeof k).toBe('string');
   });
 });

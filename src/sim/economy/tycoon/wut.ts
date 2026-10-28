@@ -20,6 +20,13 @@ export const WUT = {
   threshold: 0.012,
   /** Naturalne ubytki jako udział obrotu (razem 0,9%): zostaje ok. 0,3% obrotu luzu na decyzje. */
   baseline: { termin: 0.004, kradziez: 0.003, pomylki: 0.002 } as Record<Exclude<WutReason, 'karty'>, number>,
+  /**
+   * „Zapomniane” skany na kasach samoobsługowych jako udział obrotu przez SCO. Rząd wielkości z badań strat w handlu
+   * (kilka procent obrotu przez SCO); kamery zmniejszają go mnożnikiem z ulepszeń. Jak w prawdziwym sklepie to ubytek
+   * w inwentaryzacji, więc trafia do WUT (decyzja użytkownika z 28.10.2026: „jak najbliżej rzeczywistości”), a nie
+   * obcina marży od razu.
+   */
+  scoShrink: 0.04,
 } as const;
 
 export interface WutState {
@@ -55,6 +62,11 @@ export function addWut(w: WutState, reason: WutReason, zl: number): void {
 export function wutFromSales(w: WutState, revenue: number): void {
   if (!(revenue > 0)) return;
   for (const r of ['termin', 'kradziez', 'pomylki'] as const) w.month[r] += revenue * WUT.baseline[r];
+}
+
+/** Ubytek na kasach samoobsługowych od obrotu przez nie (`scoRevenue` w zł); `mult` to wpływ kamer (1 bez kamer). */
+export function wutFromSco(w: WutState, scoRevenue: number, mult = 1): void {
+  if (scoRevenue > 0 && mult > 0) w.month.kradziez += scoRevenue * WUT.scoShrink * mult;
 }
 
 export const wutTotal = (w: WutState): number => WUT_REASONS.reduce((n, r) => n + w.month[r], 0);

@@ -21,7 +21,7 @@ function input(over: Partial<ReportInput> = {}, fig: Partial<MonthFigures> = {})
     staffCount: 2,
     exhaustedDays: 0,
     kpi: { hit: 3, miss: 1 },
-    cards: { answered: 40, auto: 10 },
+    cards: { answered: 40, defaults: 10 },
     marginPerCustomer: 4.2,
     ...over,
   };
@@ -57,7 +57,7 @@ describe('raport miesięczny', () => {
     expect(pickHint(input({}, { fines: 1000, lost: 500 })).id).toBe('kolejka');
     expect(pickHint(input({ cleanlinessAvg: 30 })).id).toBe('czystosc');
     expect(pickHint(input({ trust: { start: 60, end: 48, delta: -12, reasons: [] } })).id).toBe('zaufanie');
-    expect(pickHint(input({ cards: { answered: 5, auto: 40 } })).id).toBe('karty');
+    expect(pickHint(input({ cards: { answered: 45, defaults: 40 } })).id).toBe('karty');
     expect(pickHint(input()).id).toBe('brawo');
   });
 

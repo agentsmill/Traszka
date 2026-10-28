@@ -6,12 +6,15 @@ import {
 } from '../catalog';
 import { rand01 } from '../rand';
 import type { BotCommand, BotEnv, BotView } from './bots';
-import { cardModifiers, drawDayCards, expireCards, resolveCard, visibleCards, type CardContext, type CardOutcome } from './cards';
+import {
+  cardsBlocking, closeCardsMonth, cardModifiers, drawDayCards, pruneCardMods, resolveCard, visibleCards, type CardContext,
+  type CardOutcome,
+} from './cards';
 import { CH } from './channels';
 import {
   cleanHall, cleaningDemand, cleanlinessEffects, closeHallMonth, rollWeather, sampleHall, soilHall,
 } from './cleanliness';
-import { closeFatigueMonth, fatigueMinute, fatigueNight, tap, tapCost, tapItems } from './fatigue';
+import { closeFatigueMonth, fatigueNight, tap, tapCost, tapItems } from './fatigue';
 import { closeKpiMonth, closeKpiWeek, type KpiMetrics, type KpiScale } from './kpi';
 import { buildMonthReport, type TycoonMonthReport } from './report';
 import {
@@ -21,10 +24,11 @@ import {
 import { applyCardOutcome, createTycoon, type TycoonState } from './state';
 import { TRUST, addTrust, closeTrustMonth, turnoverBonusShare } from './trust';
 import {
-  dateOfGameDay, dayOfMinute, daysLeftInMonth, isMonthEnd, isOpenMinute, isSunday, minuteInDay, monthIndexOf, weekdayOf,
+  dateOfGameDay, dayOfMinute, daysLeftInMonth, isMonthEnd, isOpenMinute, minuteInDay, monthIndexOf, weekdayOf,
 } from './time';
+import { dayTrafficMult } from './sunday';
 import { addWaste, closeWasteMonth, hallObstacle, palletBags, removeWaste, settleWaste, wasteDemand, wasteMinute, wasteSpots } from './waste';
-import { closeWutMonth, wutFromSales, wutSlack } from './wut';
+import { closeWutMonth, wutFromSales, wutFromSco, wutSlack } from './wut';
 
 /**
  * Makieta sklepu: najprostszy sklep, w którym da się puścić wszystkie moduły tycoona naraz i porównać boty, zanim
@@ -45,13 +49,11 @@ export interface SandboxConfig {
   /** Miejsca na palety na zapleczu (wspólne z workami śmieci). */
   backroomSpots: number;
   robots: RobotFleet;
-  /** Niedziele jako „placówka pocztowa” (siły uciekają szybciej). */
-  sundayPost: boolean;
 }
 
 export const SANDBOX_DEFAULT: SandboxConfig = {
   seed: 'makieta', baseTraffic: 30, staff: 2, tills: 1, sco: 0, shelfCap: 2250, backroomCap: 1500, backroomSpots: 3,
-  robots: NO_ROBOTS, sundayPost: false,
+  robots: NO_ROBOTS,
 };
 
 /** Średni koszyk z `catalog.ts`: marża i obrót na klienta (towar z półki i strefa hot). */
@@ -100,6 +102,8 @@ export interface SandboxState {
   reports: TycoonMonthReport[];
   /** Skutki kart do wglądu w testach (najnowsze na końcu, najwyżej 200). */
   outcomes: CardOutcome[];
+  /** XP z kart i KPI (makieta nie ma poziomów, tylko liczy). */
+  xp: number;
 }
 
 const repFactor = (rep: number): number => 0.6 + 0.8 * (rep / 100);
@@ -121,7 +125,7 @@ export function createSandbox(cfg: Partial<SandboxConfig> = {}): SandboxState {
       day: 0, seedHash, weather: rollWeather(seedHash, 0, dateOfGameDay(0).month),
       metrics: { ...total, cleanSum: 0, cleanMinutes: 0 }, scale,
     }),
-    reports: [], outcomes: [],
+    reports: [], outcomes: [], xp: 0,
   };
   deliver(s, 2);
   drawCards(s);
@@ -145,14 +149,18 @@ function applyOutcome(s: SandboxState, o: CardOutcome): void {
   if (e.fine < 0) s.total.fines++;
   s.reputation = Math.min(100, Math.max(0, s.reputation + e.reputation));
   s.ogonki += e.ogonki;
+  s.xp += e.xp;
   s.outcomes.push(o);
   if (s.outcomes.length > 200) s.outcomes.splice(0, s.outcomes.length - 200);
 }
 
 // --- Towar ------------------------------------------------------------------------------------------
 
-/** Sprzedaż `served` klientów: koszyk z półek (brak to niższa marża i reputacja), strefa hot, WUT od obrotu. */
-function sell(s: SandboxState, served: number): void {
+/**
+ * Sprzedaż `served` klientów: koszyk z półek (brak to niższa marża i reputacja), strefa hot, WUT od obrotu. `scoShare` to
+ * część klientów z kas samoobsługowych: ich „zapomniane” skany idą do WUT (kradzieże), nie obcinają marży od razu.
+ */
+function sell(s: SandboxState, served: number, scoShare = 0): void {
   if (served <= 0) return;
   const want = served * ITEMS_PER_CUSTOMER;
   const got = Math.min(want, s.shelf);
@@ -168,6 +176,7 @@ function sell(s: SandboxState, served: number): void {
   s.total.customers += served;
   s.total.hotSold += served * HOT.chance;
   wutFromSales(s.tycoon.wut, revenue);
+  wutFromSco(s.tycoon.wut, revenue * scoShare);
   const clean = cleanlinessEffects(s.tycoon.hall.cleanliness);
   s.reputation += served * (0.0025 * share - 0.02 * (1 - share) + clean.repPerCustomer);
   s.reputation = Math.min(100, Math.max(0, s.reputation));
@@ -237,28 +246,32 @@ function drawCards(s: SandboxState): void {
 const patienceOf = (s: SandboxState): number =>
   PATIENCE + cleanlinessEffects(s.tycoon.hall.cleanliness).patience - hallObstacle(s.tycoon.waste);
 
-/** Jedna minuta makiety: kolejność wywołań to wzorzec dla `stepMinute` w części 2 (INTEGRATION.md). */
-export function stepSandbox(s: SandboxState): void {
+/**
+ * Jedna minuta makiety: kolejność wywołań to wzorzec dla `stepMinute` w części 2 (INTEGRATION.md). Gdy na biurku leży
+ * widoczna karta decyzji, gra stoi: minuta nie mija i funkcja zwraca false (jak pętla gry w części 2).
+ */
+export function stepSandbox(s: SandboxState): boolean {
   const t = s.tycoon;
+  if (cardsBlocking(t.cards, s.minute)) return false;
   const mod = minuteInDay(s.minute);
   const day = dayOfMinute(s.minute);
-  const sundayPost = s.cfg.sundayPost && isSunday(day);
 
-  // 1. nowy dzień: pogoda i karty dnia; 2. karty po terminie rozstrzygają się same
+  // 1. nowy dzień: pogoda i karty dnia (karty czekają na odpowiedź gracza); 2. efekty kart po czasie znikają
   if (mod === 0) {
     t.hall.weather = rollWeather(s.seedHash, day, dateOfGameDay(day).month);
     drawCards(s);
   }
-  for (const o of expireCards(t.cards, s.minute, s.seedHash)) applyOutcome(s, o);
+  pruneCardMods(t.cards, s.minute);
   if (mod === DELIVERY_AT) morningDelivery(s);
 
-  // 3. klienci
+  // 3. klienci (w niedzielę więcej: duże sklepy zamknięte)
   const mods = cardModifiers(t.cards, s.minute);
   const shift = isOpenMinute(mod);
   const open = shift && !mods.closed;
   let arrivals = 0;
   if (open) {
-    const lambda = (s.cfg.baseTraffic * (HOUR_CURVE[Math.floor(mod / 60)] ?? 0) / 60) * repFactor(s.reputation) * mods.traffic;
+    const lambda = (s.cfg.baseTraffic * (HOUR_CURVE[Math.floor(mod / 60)] ?? 0) / 60) * repFactor(s.reputation) * mods.traffic
+      * dayTrafficMult(day);
     s.arrivalAcc += lambda * (0.75 + 0.5 * rand01(s.seedHash, s.minute, CH.sandboxArrivals));
     arrivals = Math.floor(s.arrivalAcc);
     s.arrivalAcc -= arrivals;
@@ -288,7 +301,7 @@ export function stepSandbox(s: SandboxState): void {
 
   const served = till.scoServed + tillServed(till, alloc.total.kasa, TILL_RATE);
   s.queue = Math.max(0, s.queue - served);
-  sell(s, served);
+  sell(s, served, served > 0 ? till.scoServed / served : 0);
 
   let unloadMin = alloc.total.rozladunek;
   for (const p of unloadOrder(s)) {
@@ -302,16 +315,27 @@ export function stepSandbox(s: SandboxState): void {
   const sweep = alloc.total.sprzatanie;
   cleanHall(t.hall, sweep - removeWaste(t.waste, sweep, press));
 
-  // 5. brud, śmieci w sali, siły w niedzielę, średnie
+  // 5. brud, śmieci w sali, średnie
   soilHall(t.hall, arrivals, t.waste.hall);
   wasteMinute(t.waste);
-  fatigueMinute(t.fatigue, { sundayPost }, open);
   if (open) sampleHall(t.hall);
 
   // 6. Straż Miejska: palety na chodniku po godzinie tolerancji
   if (mod >= 8 * 60 && mod < 20 * 60) checkFine(s);
   if (mod === OPEN_TO) closeDay(s, day);
   s.minute++;
+  return true;
+}
+
+/** Zatwierdza odpowiedzi zaznaczone z góry na wszystkich widocznych kartach (bierny gracz; do testów bez bota). */
+export function confirmDefaults(s: SandboxState): void {
+  for (const c of visibleCards(s.tycoon.cards, s.minute)) applySandboxCommand(s, { type: 'card.answer', seq: c.seq, answer: c.defaultAnswer });
+}
+
+/** Minuta makiety z biernym graczem przy kartach: najpierw zatwierdza domyślne, potem minuta mija. */
+export function stepPassive(s: SandboxState): void {
+  confirmDefaults(s);
+  stepSandbox(s);
 }
 
 function checkFine(s: SandboxState): void {
@@ -342,6 +366,7 @@ function closeDay(s: SandboxState, day: number): void {
     addTrust(t.trust, 'kpi', r.trust);
     s.cash += r.bonus;
     book(s, 'bonuses', r.bonus);
+    s.xp += r.xp;
   }
   if (isMonthEnd(day)) closeMonth(s, day);
 }
@@ -368,10 +393,9 @@ function closeMonth(s: SandboxState, day: number): void {
     staffCount: s.cfg.staff,
     exhaustedDays: closeFatigueMonth(t.fatigue).exhaustedDays,
     kpi: closeKpiMonth(t.kpi),
-    cards: (({ answered, auto }) => ({ answered, auto }))(t.cards.month),
+    cards: (({ answered, defaults }) => ({ answered, defaults }))(closeCardsMonth(t.cards)),
     marginPerCustomer: MARGIN_PER_CUSTOMER,
   }, s.seedHash);
-  t.cards.month = { answered: 0, auto: 0, riskHits: 0 };
   closeWasteMonth(t.waste);
   t.lastReport = report;
   s.reports.push(report);
@@ -382,7 +406,6 @@ function closeMonth(s: SandboxState, day: number): void {
 
 export function applySandboxCommand(s: SandboxState, cmd: BotCommand): boolean {
   const t = s.tycoon;
-  const ctx = { sundayPost: s.cfg.sundayPost && isSunday(dayOfMinute(s.minute)) };
   switch (cmd.type) {
     case 'card.answer': {
       const r = resolveCard(t.cards, cmd.seq, cmd.answer, s.minute, s.seedHash);
@@ -392,7 +415,7 @@ export function applySandboxCommand(s: SandboxState, cmd: BotCommand): boolean {
     case 'staff.profile': return setStaffProfile(t.staff, cmd.profile).ok;
     case 'tap.till': {
       if (!isOpenMinute(minuteInDay(s.minute)) || cardModifiers(t.cards, s.minute).closed || s.queue < 1) return false;
-      const r = tap(t.fatigue, 'kasa', cmd.combo, ctx);
+      const r = tap(t.fatigue, 'kasa', cmd.combo);
       if (!r.ok) return false;
       const n = Math.min(s.queue, r.power);
       s.queue -= n;
@@ -403,7 +426,7 @@ export function applySandboxCommand(s: SandboxState, cmd: BotCommand): boolean {
       const p = unloadOrder(s)[0];
       const room = Math.max(0, s.cfg.backroomCap - s.backroom) + Math.max(0, s.cfg.shelfCap - s.shelf);
       if (!p || room < 1) return false;
-      const r = tap(t.fatigue, 'paleta', cmd.combo, ctx);
+      const r = tap(t.fatigue, 'paleta', cmd.combo);
       if (!r.ok) return false;
       unload(s, p, tapItems(r.power));
       return true;
@@ -414,7 +437,6 @@ export function applySandboxCommand(s: SandboxState, cmd: BotCommand): boolean {
 export function sandboxView(s: SandboxState): BotView {
   const t = s.tycoon;
   const mod = minuteInDay(s.minute);
-  const ctx = { sundayPost: s.cfg.sundayPost && isSunday(dayOfMinute(s.minute)) };
   // obrót miesiąca do końca: dotychczasowy plus typowy dzień razy dni, które zostały
   const daysLeft = daysLeftInMonth(dayOfMinute(s.minute)) - mod / MINUTES_PER_DAY;
   const projected = s.month.revenue + sandboxScale(s.cfg).dailyRevenue * daysLeft;
@@ -431,7 +453,7 @@ export function sandboxView(s: SandboxState): BotView {
     backroomBags: t.waste.backroom,
     energy: t.fatigue.energy,
     spentToday: t.fatigue.spentToday,
-    tapCost: { kasa: tapCost('kasa', ctx), paleta: tapCost('paleta', ctx) },
+    tapCost: { kasa: tapCost('kasa'), paleta: tapCost('paleta') },
     profile: t.staff.profile,
     cards: visibleCards(t.cards, s.minute),
     wutSlack: wutSlack(t.wut, s.month.revenue, projected),

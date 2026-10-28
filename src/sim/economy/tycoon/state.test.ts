@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createCards, drawDayCards, resolveCard, type CardContext } from './cards';
 import { FATIGUE } from './fatigue';
-import { createSandbox, stepSandbox } from './sandbox';
+import { createSandbox, stepPassive } from './sandbox';
 import { applyCardOutcome, createTycoon, sanitizeTycoon, type TycoonInit, type TycoonState } from './state';
 import { TRUST } from './trust';
 import { wutTotal } from './wut';
@@ -25,7 +25,7 @@ describe('stan tycoona w jednym obiekcie', () => {
 
   it('zapis po 15 dniach makiety wraca bez zmian; brak pola tycoon (stary zapis) daje świeży stan z zaufaniem ze starego pola', () => {
     const s = createSandbox();
-    for (let i = 0; i < 15 * 1440; i++) stepSandbox(s);
+    for (let i = 0; i < 15 * 1440; i++) stepPassive(s);
     const t = s.tycoon;
     const restored = sanitizeTycoon(JSON.parse(JSON.stringify(t)), { ...INIT, day: 15, staff: 2 });
     expect(restored).toEqual(t);
@@ -37,7 +37,7 @@ describe('stan tycoona w jednym obiekcie', () => {
   it('zapis wraca bajt w bajt w wielu chwilach dwóch miesięcy gry (także w środku miesiąca)', () => {
     const s = createSandbox({ seed: 'bajt' });
     for (let i = 1; i <= 61 * 1440 - 360; i++) {
-      stepSandbox(s);
+      stepPassive(s);
       if (i % 2017 !== 0) continue;
       const day = Math.floor(s.minute / 1440);
       const json = JSON.stringify(s.tycoon);

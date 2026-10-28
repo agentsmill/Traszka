@@ -6,6 +6,17 @@ będzie już w `main`.
 
 Wzorcem kolejności wywołań jest `sandbox.ts` (`stepSandbox`): to ta sama minuta, tylko na makiecie sklepu.
 
+## Decyzje użytkownika z 28.10.2026 (wiążą część 2)
+
+- **Niedziela:** bez osobnego trybu („placówka pocztowa” ze specu odpada). Sklep działa jak co dzień, tylko przychodzi
+  więcej ludzi, bo duże sklepy są zamknięte: ruch × `SUNDAY_TRAFFIC` (`sunday.ts`, `dayTrafficMult(day)`).
+- **Komunikaty i pauza:** informacja bez decyzji zamyka się sama, ale nie miga, także przy ×8 (zostaje co najmniej
+  `readMs(tekst)` czasu rzeczywistego); ważne zdarzenie fabularne zatrzymuje grę i czeka na „OK”; karta decyzji zatrzymuje
+  grę, aż gracz wybierze. Podział: `notices.ts` (`noticeLevel`, `pausesGame`, `readMs`).
+- **XP:** trafiony KPI tygodnia (40 + 10 × poziom, jak dawne zlecenie) i każda odpowiedź na kartę (10, okólnik 15).
+- **Zaufanie:** miękkie granice zostają (zyski powyżej 75 i straty poniżej 30 liczą się w połowie).
+- **Kasy samoobsługowe:** „zapomniane” skany to ubytek w WUT (kradzieże), jak w prawdziwym sklepie, a nie obcięta marża.
+
 ## Zasady wspólne
 
 - **Stan.** Wszystkie kawałki siedzą w jednym obiekcie `TycoonState` (`state.ts`). Proponuję jedno nowe pole
@@ -21,29 +32,34 @@ Wzorcem kolejności wywołań jest `sandbox.ts` (`stepSandbox`): to ta sama minu
   z `calendar.ts`, co sprawdza test), bez logarytmów, trygonometrii i potęg.
 - **Teksty.** W stanie są liczby i identyfikatory. Teksty z liczbami (`fillText`, `kpiTitle`, `hintText`) przyjmują
   funkcję formatującą, więc interfejs podaje polskie formatowanie (`toLocaleString('pl-PL')`), a stan zostaje czysty.
+- **Pętla gry (`clock.ts`, `advanceEconomy`).** Przed każdą minutą: gdy `cardsBlocking(tycoon.cards, s.minute)`, gra
+  stoi (minuta nie mija, ułamek zegara się nie zbiera), a interfejs pokazuje kartę; `{ type: 'card.answer' }` ją wznawia.
+  Tak samo stoi na komunikacie `story` do „OK” (stan pauzy fabularnej to sprawa warstwy gry, nie zapisu ekonomii).
+  Karta pokazuje się w minucie `showAt`, więc przy ×8 gra zatrzyma się dokładnie na niej.
 
 ## Minuta gry: proponowana kolejność w `stepMinute`
 
 ```
+ 0. pętla gry:            gdy cardsBlocking(cards, minute): stop (minuta nie mija, czekamy na card.answer)
  1. mod === 0 (północ):   hall.weather = rollWeather(seedHash, day, dateOfDay(day).month)
                           drawDayCards(cards, cardContext(s), seedHash)            // także w createEconomy dla dnia 0
- 2. co minutę:            for (o of expireCards(cards, minute, seedHash)) applyOutcome(s, o)
+ 2. co minutę:            pruneCardMods(cards, minute)   // efekty kart po czasie znikają; karty czekają na odpowiedź
  3. dostawy i remont:     jak dziś; paleta dostaje bags = palletBags(items); zaplecze liczy miejsca bez worków;
                           po postawieniu palet na zapleczu settleWaste(waste, room)
  4. mods = cardModifiers(cards, minute); sklep otwarty = isStoreOpen(s) && !mods.closed
- 5. klienci:              przyjścia × mods.traffic; cierpliwość = fx.patience + cleanlinessEffects(c).patience
+ 5. klienci:              przyjścia × mods.traffic × dayTrafficMult(day); cierpliwość = fx.patience + cleanlinessEffects(c).patience
                           − hallObstacle(waste) (worki w sali liczą się jak palety w sali, także w ruchu)
  6. pula ludzi:           till = tillDemand(...); demand = { kasa, rozladunek, wykladanie, sprzatanie };
                           alloc = stepStaff(staffPool, { staff: s.staff + mods.staff (w godzinach pracy), demand, robots })
  7. obsługa:              obsłużeni = till.scoServed + tillServed(till, alloc.total.kasa, rate); sell(...) z marżą × mods.margin,
-                          wutFromSales(revenue), reputacja += obsłużeni × cleanlinessEffects(c).repPerCustomer
+                          wutFromSales(revenue), wutFromSco(revenue × udział SCO, mnożnik kamer),
+                          reputacja += obsłużeni × cleanlinessEffects(c).repPerCustomer
  8. praca:                rozładunek z alloc.total.rozladunek (rozładowana paleta → addWaste), wykładanie z alloc.total.wykladanie,
                           sprzątanie: najpierw removeWaste, reszta minut na cleanHall
- 9. co minutę:            soilHall(hall, przyjścia, waste.hall); wasteMinute(waste); fatigueMinute(fatigue, ctx, otwarty);
-                          gdy otwarty: sampleHall(hall)
+ 9. co minutę:            soilHall(hall, przyjścia, waste.hall); wasteMinute(waste); gdy otwarty: sampleHall(hall)
 10. Straż Miejska:        jak dziś, zaufanie przez addTrust(trust, 'mandaty', TRUST.fine)
 11. 11:00:                zamówienie jak dziś
-12. 23:00 (closeDay):     fatigueNight, closeStaffDay; w niedzielę closeKpiWeek → addTrust('kpi'), premia; ostatni dzień
+12. 23:00 (closeDay):     fatigueNight, closeStaffDay; w niedzielę closeKpiWeek → addTrust('kpi'), premia, XP; ostatni dzień
                           miesiąca: closeMonth (niżej)
 ```
 
@@ -105,36 +121,38 @@ Wzorcem kolejności wywołań jest `sandbox.ts` (`stepSandbox`): to ta sama minu
 
 - **Stan:** `tycoon.fatigue: FatigueState`.
 - **Zaczep:**
-  - `tapTill`: po sprawdzeniu, że jest kogo obsłużyć, `r = tap(fatigue, 'kasa', combo, ctx)`; odmowa to
+  - `tapTill`: po sprawdzeniu, że jest kogo obsłużyć, `r = tap(fatigue, 'kasa', combo)`; odmowa to
     `{ ok: false, text: r.text }`; obsłużonych `min(queue, r.power)` zamiast `combo × tapBoost`;
-  - `tapPallet`: po sprawdzeniu palety i miejsca `r = tap(fatigue, 'paleta', combo, ctx)`;
+  - `tapPallet`: po sprawdzeniu palety i miejsca `r = tap(fatigue, 'paleta', combo)`;
     sztuki `tapItems(r.power) × (1 + 0.25 × level('wozek'))`;
-  - minuta: `fatigueMinute(fatigue, { sundayPost }, otwarty)`; `closeDay`: `fatigueNight`; raport: `closeFatigueMonth`.
+  - `closeDay`: `fatigueNight`; raport: `closeFatigueMonth`. Niedziela nie ma osobnych zasad sił: więcej klientów
+    oznacza po prostu więcej okazji do stukania.
 - **Polecenia:** bez zmian kształtu: `{ type: 'tap.till', combo: number }`, `{ type: 'tap.pallet', id?: number, combo: number }`;
   wynik może być odmową rąk. Brak `combo` albo bzdura w nim to jedno stuknięcie (jak dzisiejsze `combo = 1`).
-- **Pytania:** niedziela „placówka pocztowa”: dziś sklep działa codziennie tak samo; czy niedziela ma być osobnym
-  trybem (podwójna marża z §7.1a, sam na kasie), zamknięta, czy wybierana przez gracza? `tapBoost` (turbo rękawice
-  z paczki) znika razem z paczką. Zlecenie „pomóż osobiście: N stuknięć” traci sens.
+- **Uwagi:** `tapBoost` (turbo rękawice z paczki) znika razem z paczką. Zlecenie „pomóż osobiście: N stuknięć” traci sens.
 
 ### 5. Karty decyzji i okólniki (`cards.ts`, `deck.ts`)
 
-- **Stan:** `tycoon.cards: CardsState` (karty czekające z liczbami, efekty na czas, dziennik, liczniki miesiąca).
+- **Stan:** `tycoon.cards: CardsState` (karty dnia z liczbami i odpowiedzią zaznaczoną z góry, efekty na czas, dziennik,
+  liczniki miesiąca: odpowiedzi, w tym zatwierdzone domyślne).
 - **Zaczep:**
   - o północy `drawDayCards(cards, ctx, seedHash)`, gdzie `ctx` z ekonomii: `deliveryToday` (dostawa w `s.deliveries`
     na ten dzień), `palletsToday`, `staff`, `trust`, `cleanliness`, `sidewalkPallets`, `weather`,
     `dailyMargin = estimatedDailyMargin(s, info)`, `dailyRevenue` (oczekiwani klienci × średni obrót na klienta);
-  - co minutę `expireCards` i `cardModifiers` (ruch, marża, sklep zamknięty, ludzie na zmianie);
+  - karta nie ma terminu: gdy się pokaże (`showAt`), gra stoi, aż gracz wybierze (`cardsBlocking`); odpowiedź
+    zaznaczona z góry (`defaultAnswer`, zwykle „nic nie robię”) to tylko podpowiedź interfejsu;
+  - co minutę `pruneCardMods` i `cardModifiers` (ruch, marża, sklep zamknięty, ludzie na zmianie); efekt z godziną
+    („od 17:00”) dotyczy dnia karty;
   - skutek karty: `applyCardOutcome(tycoon, o)` księguje zaufanie, WUT, czas ludzi i siły; resztę księguje ekonomia:
     `other` (inne przychody/koszty), `bonus` (premia Centrali), `fine` (mandaty), `logistics` (logistyka),
-    `reputation`, `ogonki`. W `Counters` przyda się osobny licznik premii (dziś premia od obrotu idzie do `other`)
-    i licznik `wut`;
-  - zdarzenia dla interfejsu: nowy `EconEventKind` `'card'` przy pokazaniu karty (minuta `showAt`) i przy rozstrzygnięciu
-    (tekst `o.text` przez `fillText` z polskim formatowaniem).
+    `reputation`, `ogonki`, `xp` (do `s.xp`). W `Counters` przyda się osobny licznik premii (dziś premia od obrotu idzie
+    do `other`) i licznik `wut`;
+  - zdarzenia dla interfejsu: nowy `EconEventKind` `'card'` przy pokazaniu karty (`decision`) i wynik po odpowiedzi
+    (`'card-result'`, `info`, tekst `o.text` przez `fillText` z polskim formatowaniem).
 - **Polecenia:** `{ type: 'card.answer', seq: number, answer: number }` → `resolveCard`.
 - **Co znika:** paczka od Centrali co 45–110 s (`claimGift`, `giftSeq`, `tapBoostUntil`): jej rolę bierze okólnik.
-- **Pytania:** czy przy ×4 i ×8 gra ma się pauzować na nową kartę (karta trwa 50–600 minut gry, czyli przy ×8
-  kilka sekund)? Ile kart treści na start (dziś 17 zdarzeń i 6 okólników)? Karta audytu jest dziś skrótem audytu;
-  gdy powstanie moduł audytu (etap 3.3), jej odpowiedzi mogą ustawiać „przygotowanie” zamiast od razu zmieniać zaufanie.
+- **Pytania:** ile kart treści na start (dziś 17 zdarzeń i 6 okólników)? Karta audytu jest dziś skrótem audytu; gdy
+  powstanie moduł audytu (etap 3.3), jej odpowiedzi mogą ustawiać „przygotowanie” zamiast od razu zmieniać zaufanie.
 
 ### 6. Zaufanie Centrali (`trust.ts`)
 
@@ -145,34 +163,35 @@ Wzorcem kolejności wywołań jest `sandbox.ts` (`stepSandbox`): to ta sama minu
   wynik miesiąca (`'wynik', TRUST.monthProfit / monthLoss`). Premia od obrotu: `turnoverBonusShare(value) × obrót`
   (zamiast „≥ 70 to 1%”). Zaufanie 0 to wypowiedzenie umowy (`trustTerminates`, spec §10): nowy warunek końca gry.
 - **Polecenia:** brak.
-- **Pytania:** miękkie granice (zyski powyżej 75 i straty poniżej 30 liczą się w połowie) to moja decyzja balansu
-  [C]; czy wypowiedzenie przy zerze ma być od razu, czy na koniec miesiąca? `viralShare` czeka na produkty wiralowe
-  (etap 3.4); karta „Drop: lody BANDY XL” już go używa.
+- **Miękkie granice** (zyski powyżej 75 i straty poniżej 30 liczą się w połowie) zaakceptowane przez użytkownika.
+  Zmiana progu (`trustTier`) to komunikat `story` (`'trust-tier'`).
+- **Pytania:** czy wypowiedzenie przy zerze ma być od razu, czy na koniec miesiąca? `viralShare` czeka na produkty
+  wiralowe (etap 3.4); karta „Drop: lody BANDY XL” już go używa.
 
 ### 7. WUT (`wut.ts`)
 
 - **Stan:** `tycoon.wut: WutState` (ubytki miesiąca wg przyczyny).
-- **Zaczep:** `sell`: `wutFromSales(wut, revenue)`; koniec miesiąca: `closeWutMonth(wut, obrót)` i obciążenie
-  `charge` (nowa pozycja raportu „WUT ponad próg”).
-- **Pytania:** dzisiejszy ubytek na kasach samoobsługowych (`margin −= revenue × scoShare × fx.shrink`) proponuję
-  przenieść do WUT (`addWut(wut, 'kradziez', …)`), żeby kamery obniżały WUT, a nie marżę. Próg 1,2% i naturalne
-  0,9% obrotu to liczby do strojenia.
+- **Zaczep:** `sell`: `wutFromSales(wut, revenue)` i zamiast dzisiejszego `margin −= revenue × scoShare × fx.shrink`:
+  `wutFromSco(wut, revenue × scoShare, 1 − 0.4 × level('kamery'))` (decyzja użytkownika: jak w prawdziwym sklepie
+  to ubytek w inwentaryzacji); koniec miesiąca: `closeWutMonth(wut, obrót)` i obciążenie `charge` (pozycja raportu
+  „WUT ponad próg”). `fx.shrink` w `effects` przestaje być potrzebne.
+- **Liczby do strojenia:** próg 1,2% obrotu, naturalne ubytki 0,9%, „zapomniane” skany 4% obrotu przez SCO.
 
 ### 8. KPI tygodnia (`kpi.ts`)
 
 - **Stan:** `tycoon.kpi: KpiState` zastępuje zlecenia (`quests`, `questSeq`, `claimQuest`, `fillQuests`).
 - **Zaczep:** liczniki z `s.total` (`customers`, `hotSold`, `lost`), liczba mandatów (nowy licznik w `Counters` albo
   `cleanDays` odwrotnie) i sumy czystości z `tycoon.hall`. `closeDay` w dniu `kpi.toDay` (niedziela):
-  `closeKpiWeek` → `addTrust('kpi', r.trust)`, premia `r.bonus` do premii Centrali, zdarzenie dla gracza.
+  `closeKpiWeek` (z `level: s.level` w skali) → `addTrust('kpi', r.trust)`, premia `r.bonus` do premii Centrali,
+  `r.xp` do `s.xp`, komunikat `'kpi-week'` (`info`). Cel liczy niedzielny ruch (`SUNDAY_TRAFFIC`).
 - **Polecenia:** brak (cel jest automatyczny; dawne „Odbierz!” znika).
-- **Pytania:** zlecenia dawały XP i Ogonki; czy KPI i karty mają dawać XP (poziomy dalej odblokowują sprzęt)?
 
 ### 9. Raport miesięczny (`report.ts`)
 
 - **Stan:** `tycoon.lastReport: TycoonMonthReport | null` (obok albo zamiast `EconomyState.lastReport`).
 - **Zaczep:** `closeMonth`: `buildMonthReport({ monthIndex, figures, trust: closeTrustMonth(...), cleanlinessAvg:
   closeHallMonth(...), staff: closeStaffMonth(...), exhaustedDays: closeFatigueMonth(...).exhaustedDays,
-  kpi: closeKpiMonth(...), cards: cards.month, marginPerCustomer, ... }, seedHash)`. Kolejność: najpierw opłata, premia
+  kpi: closeKpiMonth(...), cards: closeCardsMonth(...), marginPerCustomer, ... }, seedHash)`. Kolejność: najpierw opłata, premia
   i WUT, potem `addTrust('wynik')`, potem `closeTrustMonth` (żeby zmiana z wyniku była w raporcie).
 - **Interfejs:** pozycje z `REPORT_LINE_LABEL`, komentarz `reportCommentText(commentId)`, wskazówka
   `hintText(hint, fmt)`, zaufanie `trust.reasons` z `TRUST_REASON_LABEL`.
@@ -180,15 +199,17 @@ Wzorcem kolejności wywołań jest `sandbox.ts` (`stepSandbox`): to ta sama minu
 ### 10. Boty (`bots.ts`) i makieta (`sandbox.ts`)
 
 - Boty widzą `BotView` i wydają `BotCommand` w kształcie poleceń warstwy komend. W części 2 wystarczy napisać
-  `EconomyEnv: BotEnv` (widok z `EconomyState`, polecenia przez warstwę komend strumienia A, krok `stepMinute`)
-  i puścić te same cztery boty na prawdziwej ekonomii, żeby sprawdzić cele balansu ze specu.
+  `EconomyEnv: BotEnv` (widok z `EconomyState`, polecenia przez warstwę komend strumienia A, krok `stepMinute`, który
+  zwraca false, gdy gra stoi na karcie) i puścić te same cztery boty na prawdziwej ekonomii, żeby sprawdzić cele
+  balansu ze specu. Bierny gracz i „stukanie bez decyzji” zatwierdzają odpowiedzi zaznaczone z góry; bot, który nie
+  odpowie na kartę, zatrzymałby grę, więc `runBot` rzuca wtedy wyjątek.
 - Makieta zostaje jako test modułów albo znika, gdy `EconomyEnv` ją zastąpi.
 
 ## Cele balansu do sprawdzenia w części 2 (spec §7.5)
 
 | Cel | Stan w makiecie (2 miesiące, 3 seedy) |
 |---|---|
-| bierny gracz w pierwszych dwóch miesiącach kończy około zera | **nie do sprawdzenia tutaj**: makieta nie ma zamówień, opłat za palety ani ulepszeń; bierny ma tu +38…+43 tys. zł |
-| stukanie w granicach puli dokłada najwyżej 15–20% wyniku | 2–15% (test: ≤ 20%) |
-| dobre decyzje dają wynik 2–4 razy lepszy od biernego | +50…+59% w makiecie; stosunek zależy od tego, gdzie część 2 ustawi biernego (≈ 0) |
-| „decyzje bez stukania” wygrywa ze „stukaniem bez decyzji” | tak, na każdym seedzie (+13…+22 tys. zł) |
+| bierny gracz w pierwszych dwóch miesiącach kończy około zera | **nie do sprawdzenia tutaj**: makieta nie ma zamówień, opłat za palety ani ulepszeń; bierny ma tu +34…+38 tys. zł |
+| stukanie w granicach puli dokłada najwyżej 15–20% wyniku | 12–14% (test: ≤ 20%) |
+| dobre decyzje dają wynik 2–4 razy lepszy od biernego | +49…+92% w makiecie; stosunek zależy od tego, gdzie część 2 ustawi biernego (≈ 0) |
+| „decyzje bez stukania” wygrywa ze „stukaniem bez decyzji” | tak, na każdym seedzie (+13…+26 tys. zł) |

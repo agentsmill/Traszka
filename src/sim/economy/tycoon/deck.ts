@@ -28,9 +28,8 @@ export interface CardDef {
   kind: 'zdarzenie' | 'okolnik';
   title: string;
   text: string;
-  /** Minuta dnia, od której karta jest widoczna, i ile minut gracz ma na decyzję. */
+  /** Minuta dnia, w której karta się pokazuje (gra staje i czeka na odpowiedź). */
   at: number;
-  span: number;
   weight: number | ((c: CardContext) => number);
   /** Ile dni musi minąć, zanim karta wypadnie znowu. */
   cooldown: number;
@@ -38,8 +37,11 @@ export interface CardDef {
   /** Liczby karty z kontekstu i losu 0–1 (`r`). */
   params?: (c: CardContext, r: number) => CardParams;
   answers: AnswerDef[];
-  /** Odpowiedź, gdy gracz nie zdecyduje do terminu. */
-  fallback: number;
+  /**
+   * Odpowiedź zaznaczona z góry: tę zatwierdza gracz, który nie czyta (zwykle „nic nie robię”). Gra stoi na karcie, aż
+   * gracz wybierze, więc domyślna nie wybiera się sama; to tylko podpowiedź interfejsu i wybór biernego gracza.
+   */
+  defaultAnswer: number;
   /** Do której pozycji raportu idzie zmiana zaufania (domyślnie „Decyzje dnia”). */
   trustReason?: TrustReason;
 }
@@ -56,7 +58,8 @@ export const DECK: readonly CardDef[] = [
     kind: 'zdarzenie',
     title: 'FEFO o 18:00',
     text: 'W lodówce leży {n} kanapek, którym dziś kończy się termin (razem {v} zł). System FEFO mruga na czerwono, a kanapki patrzą z wyrzutem.',
-    at: h(18), span: 90, weight: 3, cooldown: 2,
+    at: h(18), weight: 3, cooldown: 2,
+    defaultAnswer: 2,
     params: (c, r) => {
       const n = Math.max(4, Math.round((10 + 20 * r) * k(c)));
       return { n, v: zl(n * 9) };
@@ -78,14 +81,14 @@ export const DECK: readonly CardDef[] = [
         risk: { chance: () => 0.75, delta: (_, p) => ({ wut: p.v }), text: 'Nikt się nie skusił. Kanapki lądują w koszu, a ich wartość w WUT.' },
       },
     ],
-    fallback: 2,
   },
   {
     id: 'glitch',
     kind: 'zdarzenie',
     title: 'Glitch kasowy',
     text: 'System kasowy od rana daje {p}% rabatu na wszystko. Klienci już wiedzą: kolejka sięga przystanku, a ktoś dzwoni po kuzyna z busem.',
-    at: h(10), span: 60, weight: 1.5, cooldown: 5,
+    at: h(10), weight: 1.5, cooldown: 5,
+    defaultAnswer: 2,
     params: (_, r) => ({ p: 20 + 10 * Math.floor(r * 5) }),
     answers: [
       {
@@ -106,14 +109,14 @@ export const DECK: readonly CardDef[] = [
         delta: (c, p) => ({ cash: -(p.p / 100) * c.dailyRevenue * (90 / 1020), staffMinutes: 45 }),
       },
     ],
-    fallback: 2,
   },
   {
     id: 'chory',
     kind: 'zdarzenie',
     title: '„Chory” pracownik w dzień dostawy',
     text: '5:58. Zbyszek dzwoni, że wczoraj zjadł hot-doga z promocji Centrali i „coś go bierze”. Akurat dziś przyjeżdża {n} palet. Centrala nie wierzy w przypadki, tylko w KPI.',
-    at: h(6), span: 90, weight: 2, cooldown: 4,
+    at: h(6), weight: 2, cooldown: 4,
+    defaultAnswer: 2,
     when: (c) => c.deliveryToday && c.staff >= 2,
     params: (c) => ({ n: c.palletsToday }),
     answers: [
@@ -133,14 +136,14 @@ export const DECK: readonly CardDef[] = [
         mods: () => [{ kind: 'staff', value: -1, minutes: h(23) - h(6), from: h(6) }],
       },
     ],
-    fallback: 2,
   },
   {
     id: 'audyt',
     kind: 'zdarzenie',
     title: 'Zapowiedź audytu',
     text: 'Centrala zapowiada audyt na jutro. Sprawdzą planogram, czystość i to, czy uśmiech kasjera jest zgodny z procedurą 4.2.1. Przy obecnym stanie sali ryzyko wpadki to {p}%.',
-    at: h(9), span: 180, weight: (c) => 0.6 * auditWeight(c.trust), cooldown: 5,
+    at: h(9), weight: (c) => 0.6 * auditWeight(c.trust), cooldown: 5,
+    defaultAnswer: 2,
     when: (c) => c.day >= 3,
     trustReason: 'audyt',
     params: (c) => ({ p: Math.round(clamp(100 * (1 - cleanlinessEffects(c.cleanliness).score), 15, 85)) }),
@@ -168,14 +171,14 @@ export const DECK: readonly CardDef[] = [
         },
       },
     ],
-    fallback: 2,
   },
   {
     id: 'promocja',
     kind: 'zdarzenie',
     title: 'Obowiązkowa promocja Centrali',
     text: 'Centrala ogłasza akcję „Drugi Traszdog za 1 grosz”. Udział obowiązkowy. Dobrowolnie.',
-    at: h(7), span: 240, weight: 1.5, cooldown: 5,
+    at: h(7), weight: 1.5, cooldown: 5,
+    defaultAnswer: 2,
     answers: [
       {
         label: 'Wchodzę na całego: plakaty, wobler, uśmiech',
@@ -195,14 +198,14 @@ export const DECK: readonly CardDef[] = [
         delta: () => ({ trust: -2 }),
       },
     ],
-    fallback: 2,
   },
   {
     id: 'cenowki',
     kind: 'zdarzenie',
     title: 'Kontrola cenówek',
     text: 'Inspektor sprawdza czytelność cenówek. Ma lupę, linijkę i dużo czasu. Ty masz {n} cenówek z ceną sprzed ostatniej promocji.',
-    at: h(11), span: 120, weight: 1, cooldown: 8,
+    at: h(11), weight: 1, cooldown: 8,
+    defaultAnswer: 2,
     params: (_, r) => ({ n: 5 + Math.floor(r * 20) }),
     answers: [
       {
@@ -225,14 +228,14 @@ export const DECK: readonly CardDef[] = [
         },
       },
     ],
-    fallback: 2,
   },
   {
     id: 'memy',
     kind: 'zdarzenie',
     title: 'Traszkashoposting',
     text: 'Kasjer Krystian prowadzi konto z memami o sklepie. Ma więcej obserwujących niż profil Centrali i ani jednego mema o Centrali. Na razie.',
-    at: h(13), span: 240, weight: 0.8, cooldown: 10,
+    at: h(13), weight: 0.8, cooldown: 10,
+    defaultAnswer: 2,
     answers: [
       {
         label: 'Wspieram! Godzina dziennie na nagrania',
@@ -252,14 +255,14 @@ export const DECK: readonly CardDef[] = [
         risk: { chance: () => 0.3, delta: () => ({ trust: -1 }), text: 'Centrala znalazła konto i pyta, czemu nikt jej nie zgłosił.' },
       },
     ],
-    fallback: 2,
   },
   {
     id: 'mecz',
     kind: 'zdarzenie',
     title: 'Mecz reprezentacji',
     text: 'Wieczorem mecz reprezentacji. Osiedle szykuje się, jakby od wyniku zależało życie. Zależy od niego co najwyżej zapas piwa i chipsów.',
-    at: h(12), span: 240, weight: 0.8, cooldown: 7,
+    at: h(12), weight: 0.8, cooldown: 7,
+    defaultAnswer: 2,
     answers: [
       {
         label: 'Ekstra paleta piwa i chipsów',
@@ -278,14 +281,14 @@ export const DECK: readonly CardDef[] = [
         result: 'Mecz się odbył. Wynik jak zwykle. Kibice kupili piwo w Szopie 24h.',
       },
     ],
-    fallback: 2,
   },
   {
     id: 'widmo',
     kind: 'zdarzenie',
     title: 'Towar-widmo',
     text: 'Kierowca podsuwa WZ do podpisu i patrzy na zegarek. Na papierze jest o {n} zgrzewek więcej, niż widzisz na palecie (razem {v} zł).',
-    at: h(7, 10), span: 50, weight: 1.2, cooldown: 4,
+    at: h(7, 10), weight: 1.2, cooldown: 4,
+    defaultAnswer: 2,
     when: (c) => c.deliveryToday,
     params: (c, r) => {
       const n = 2 + Math.floor(r * 6);
@@ -309,14 +312,14 @@ export const DECK: readonly CardDef[] = [
         delta: (_, p) => ({ wut: p.v }),
       },
     ],
-    fallback: 2,
   },
   {
     id: 'sasiad',
     kind: 'zdarzenie',
     title: 'Skarga sąsiadki',
     text: 'Pani Halina z drugiego piętra dzwoni, że palety pod sklepem zasłaniają jej widok na życie. I na parking.',
-    at: h(8), span: 180, weight: 1.2, cooldown: 5,
+    at: h(8), weight: 1.2, cooldown: 5,
+    defaultAnswer: 2,
     when: (c) => c.sidewalkPallets > 0,
     answers: [
       {
@@ -338,14 +341,14 @@ export const DECK: readonly CardDef[] = [
         },
       },
     ],
-    fallback: 2,
   },
   {
     id: 'lodowka',
     kind: 'zdarzenie',
     title: 'Awaria lodówki',
     text: 'Lodówka z nabiałem buczy jak syrena i grzeje jak kaloryfer. W środku {n} jogurtów (razem {v} zł) patrzy z niepokojem.',
-    at: h(14), span: 120, weight: 0.8, cooldown: 8,
+    at: h(14), weight: 0.8, cooldown: 8,
+    defaultAnswer: 2,
     params: (c, r) => {
       const n = Math.round((20 + 30 * r) * k(c));
       return { n, v: zl(n * 3.5) };
@@ -367,14 +370,14 @@ export const DECK: readonly CardDef[] = [
         delta: (_, p) => ({ wut: p.v, reputation: -1 }),
       },
     ],
-    fallback: 2,
   },
   {
     id: 'influencer',
     kind: 'zdarzenie',
     title: 'Influencer chce nagrać unboxing',
     text: 'Lokalny influencer ({n} tys. obserwujących, w tym podobno ludzie) chce nagrać u Ciebie „unboxing Traszdoga”.',
-    at: h(15), span: 180, weight: 0.7, cooldown: 12,
+    at: h(15), weight: 0.7, cooldown: 12,
+    defaultAnswer: 2,
     params: (_, r) => ({ n: 5 + Math.floor(r * 40) }),
     answers: [
       {
@@ -394,14 +397,14 @@ export const DECK: readonly CardDef[] = [
         result: 'Influencer nagrał unboxing w Kawce Express. Twój hot-dog pozostał nieodpakowany.',
       },
     ],
-    fallback: 2,
   },
   {
     id: 'sejf',
     kind: 'zdarzenie',
     title: 'Utarg na weekend',
     text: 'Sobota wieczór. W sejfie utarg z całego tygodnia, a bank otwiera się w poniedziałek. Sejf ma zamek z 1998 roku i duże poczucie humoru.',
-    at: h(21), span: 110, weight: 2, cooldown: 6,
+    at: h(21), weight: 2, cooldown: 6,
+    defaultAnswer: 1,
     when: (c) => c.weekday === 6,
     answers: [
       {
@@ -415,14 +418,14 @@ export const DECK: readonly CardDef[] = [
         risk: { chance: () => 0.12, delta: (c) => ({ cash: -0.6 * c.dailyMargin }), text: 'Ktoś odwiedził sejf. Kamera nagrała tylko kota. Kot milczy.' },
       },
     ],
-    fallback: 1,
   },
   {
     id: 'ulewa',
     kind: 'zdarzenie',
     title: 'Błoto po ulewie',
     text: 'Za oknem leje, a klienci wnoszą na butach pół osiedla. Podłoga przy wejściu przypomina mapę rzeki.',
-    at: h(9), span: 240, weight: 2, cooldown: 3,
+    at: h(9), weight: 2, cooldown: 3,
+    defaultAnswer: 2,
     when: (c) => c.weather === 'deszcz' || c.weather === 'snieg',
     answers: [
       {
@@ -445,14 +448,14 @@ export const DECK: readonly CardDef[] = [
         },
       },
     ],
-    fallback: 2,
   },
   {
     id: 'wiek',
     kind: 'zdarzenie',
     title: 'Nastolatek po energetyka',
     text: 'Chłopak z wąsem namalowanym flamastrem chce kupić energetyka. Twierdzi, że ma 18 lat od wczoraj, a dowód zostawił w drugich spodniach.',
-    at: h(14, 30), span: 120, weight: 1, cooldown: 6,
+    at: h(14, 30), weight: 1, cooldown: 6,
+    defaultAnswer: 2,
     answers: [
       {
         label: 'Proszę o dowód osobisty',
@@ -473,14 +476,14 @@ export const DECK: readonly CardDef[] = [
         delta: () => ({ staffMinutes: 10, energy: -5 }),
       },
     ],
-    fallback: 2,
   },
   {
     id: 'ekspres',
     kind: 'zdarzenie',
     title: 'Bunt ekspresu do kawy',
     text: 'Ekspres wyświetla błąd E-404: „nie znaleziono kawy w kawie”. Kolejka po poranne flat white zaczyna szemrać.',
-    at: h(7, 30), span: 120, weight: 1, cooldown: 8,
+    at: h(7, 30), weight: 1, cooldown: 8,
+    defaultAnswer: 2,
     answers: [
       {
         label: 'Serwis, i to szybko',
@@ -499,14 +502,14 @@ export const DECK: readonly CardDef[] = [
         mods: () => [{ kind: 'margin', value: -0.06, minutes: DAY }],
       },
     ],
-    fallback: 2,
   },
   {
     id: 'wiralowy',
     kind: 'zdarzenie',
     title: 'Drop: lody BANDY XL',
     text: 'Centrala rozdziela lody BANDY XL. Przy Twoim zaufaniu ({t}) dostaniesz {s}% zamówienia. Dzieciaki już wiedzą, ich rodzice jeszcze nie.',
-    at: h(10), span: 300, weight: 0.7, cooldown: 10,
+    at: h(10), weight: 0.7, cooldown: 10,
+    defaultAnswer: 1,
     params: (c) => ({ t: Math.round(c.trust), s: Math.round(100 * viralShare(c.trust)) }),
     answers: [
       {
@@ -522,7 +525,6 @@ export const DECK: readonly CardDef[] = [
         delta: () => ({ trust: -1 }),
       },
     ],
-    fallback: 1,
   },
 ];
 
@@ -533,7 +535,8 @@ export const CIRCULARS: readonly CardDef[] = [
     kind: 'okolnik',
     title: 'Okólnik: premia za frekwencję',
     text: 'Centrala przyznaje premię {b} zł za frekwencję. Warunek: tydzień ekspozycji napoju „Kraftuś Zero Sensu” przy kasie. Napój ma smak „niebieski”.',
-    at: h(8), span: 600, weight: 1, cooldown: 8, trustReason: 'okolnik',
+    at: h(8), weight: 1, cooldown: 8, trustReason: 'okolnik',
+    defaultAnswer: 1,
     params: (c) => ({ b: zl(0.4 * c.dailyMargin) }),
     answers: [
       {
@@ -546,14 +549,14 @@ export const CIRCULARS: readonly CardDef[] = [
         result: 'Centrala przyjęła odmowę ze zrozumieniem i notatką w aktach. Na razie tylko notatką.',
       },
     ],
-    fallback: 1,
   },
   {
     id: 'okolnik-usmiech',
     kind: 'okolnik',
     title: 'Okólnik: KPI uśmiechu',
     text: 'Od poniedziałku kasjer, który wita klienta bez uśmiechu, obniża KPI sklepu. Centrala oferuje szkolenie online „Uśmiech w 4 krokach” (krok 5 płatny).',
-    at: h(8), span: 600, weight: 1, cooldown: 10, trustReason: 'okolnik',
+    at: h(8), weight: 1, cooldown: 10, trustReason: 'okolnik',
+    defaultAnswer: 2,
     answers: [
       {
         label: 'Zapisuję cały zespół',
@@ -571,14 +574,14 @@ export const CIRCULARS: readonly CardDef[] = [
         delta: () => ({ trust: -1 }),
       },
     ],
-    fallback: 2,
   },
   {
     id: 'okolnik-witryna',
     kind: 'okolnik',
     title: 'Okólnik: nowa naklejka na witrynę',
     text: 'Centrala dopłaci połowę do nowej naklejki „Zawsze pod ręką”. Druga połowa to {c} zł. Naklejka jest o 3 cm za szeroka na Twoją witrynę.',
-    at: h(8), span: 600, weight: 1, cooldown: 12, trustReason: 'okolnik',
+    at: h(8), weight: 1, cooldown: 12, trustReason: 'okolnik',
+    defaultAnswer: 1,
     params: (c) => ({ c: zl(0.1 * c.dailyMargin) }),
     answers: [
       {
@@ -591,14 +594,14 @@ export const CIRCULARS: readonly CardDef[] = [
         result: 'Stara naklejka trzyma się dzielnie. Głównie na taśmie.',
       },
     ],
-    fallback: 1,
   },
   {
     id: 'okolnik-refundacja',
     kind: 'okolnik',
     title: 'Okólnik: program refundacyjny WUT',
     text: 'Centrala odpisze {r} zł ubytków z WUT, jeśli wypełnisz formularz R-17 w trzech egzemplarzach. Egzemplarz trzeci trzeba wysłać faksem.',
-    at: h(8), span: 600, weight: 1, cooldown: 12, trustReason: 'okolnik',
+    at: h(8), weight: 1, cooldown: 12, trustReason: 'okolnik',
+    defaultAnswer: 1,
     params: (c) => ({ r: zl(0.2 * c.dailyMargin) }),
     answers: [
       {
@@ -611,14 +614,14 @@ export const CIRCULARS: readonly CardDef[] = [
         result: 'Formularz R-17 leży na zapleczu. Patrzy.',
       },
     ],
-    fallback: 1,
   },
   {
     id: 'okolnik-paleta',
     kind: 'okolnik',
     title: 'Okólnik: konkurs „Paleta miesiąca”',
     text: 'Centrala ogłasza konkurs na najładniej ułożoną paletę. Nagroda: {o} Ogonków i dyplom. Zdjęcie trzeba zrobić na chodniku, w świetle dziennym.',
-    at: h(8), span: 600, weight: 1, cooldown: 14, trustReason: 'okolnik',
+    at: h(8), weight: 1, cooldown: 14, trustReason: 'okolnik',
+    defaultAnswer: 1,
     params: () => ({ o: 15 }),
     answers: [
       {
@@ -632,14 +635,14 @@ export const CIRCULARS: readonly CardDef[] = [
         result: 'Paleta zostaje anonimowa. Tak jest bezpieczniej.',
       },
     ],
-    fallback: 1,
   },
   {
     id: 'okolnik-ankieta',
     kind: 'okolnik',
     title: 'Okólnik: ankieta satysfakcji',
     text: 'Centrala pyta, jak bardzo jesteś zadowolony ze współpracy (skala od 9 do 10). Wypełnienie zajmie 5 minut. Według Centrali.',
-    at: h(8), span: 600, weight: 1, cooldown: 14, trustReason: 'okolnik',
+    at: h(8), weight: 1, cooldown: 14, trustReason: 'okolnik',
+    defaultAnswer: 2,
     answers: [
       {
         label: 'Wypełniam szczerze',
@@ -656,6 +659,5 @@ export const CIRCULARS: readonly CardDef[] = [
         result: 'Ankieta zamknięta. Średnia ocena sieci: 9,8. Bez Ciebie.',
       },
     ],
-    fallback: 2,
   },
 ];

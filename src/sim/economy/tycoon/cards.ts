@@ -10,8 +10,12 @@ import { OPEN_MINUTES, clamp, roundNice } from './time';
 /**
  * Codzienne decyzje (spec §7.5): zamiast nagród co minutę każdy dzień przynosi 1–3 karty. Każda karta ma 2–3 odpowiedzi
  * z widocznym kosztem: pieniądze, zaufanie, WUT, czas ludzi (i siły franczyzobiorcy). Okólnik Centrali (dawniej paczka
- * co 45–110 s) przychodzi raz na 2–4 dni i zawsze ma haczyk. Karta bez odpowiedzi rozstrzyga się sama o terminie
- * odpowiedzią domyślną, która rzadko jest najlepsza.
+ * co 45–110 s) przychodzi raz na 2–4 dni i zawsze ma haczyk.
+ *
+ * Karta decyzji zatrzymuje grę i czeka na wybór (decyzja użytkownika z 28.10.2026): nie zamyka się sama i nie wybiera
+ * za gracza, także przy ×8. Pętla gry nie wykonuje minuty, dopóki `cardsBlocking` jest prawdą (`notices.ts` opisuje,
+ * co zatrzymuje grę, a co jest tylko informacją). Każda karta ma odpowiedź zaznaczoną z góry (`defaultAnswer`, zwykle
+ * „nic nie robię”): tę zatwierdza gracz, który nie czyta. Efekty na czas są przypięte do dnia karty. Odpowiedź daje XP.
  *
  * Moduł zmienia tylko swój stan: rozstrzygnięcie zwraca skutki (`CardOutcome`), które integracja księguje w ekonomii.
  * Liczby na karcie są wyliczane raz, przy losowaniu, ze skali sklepu, więc karta w stanie gry to same liczby (JSON).
@@ -67,17 +71,17 @@ export interface CardInstance {
   seq: number;
   id: string;
   day: number;
-  /** Minuta gry, od której karta jest widoczna, i minuta, o której rozstrzyga się sama. */
+  /** Minuta gry, od której karta jest widoczna (wcześniej nie da się na nią odpowiedzieć). */
   showAt: number;
-  deadline: number;
   params: CardParams;
   answers: AnswerInstance[];
-  fallback: number;
+  /** Odpowiedź zaznaczona z góry w interfejsie (wybór biernego gracza). */
+  defaultAnswer: number;
 }
 
 export interface ActiveMod { kind: ModKind; value: number; from: number; until: number; seq: number }
 
-export interface CardLogEntry { seq: number; id: string; day: number; answer: number; auto: boolean; riskHit: boolean }
+export interface CardLogEntry { seq: number; id: string; day: number; answer: number; riskHit: boolean }
 
 export interface CardsState {
   pending: CardInstance[];
@@ -90,7 +94,8 @@ export interface CardsState {
   seq: number;
   /** Ostatnie rozstrzygnięcia (najnowsze na końcu). */
   log: CardLogEntry[];
-  month: { answered: number; auto: number; riskHits: number };
+  /** Miesiąc: odpowiedzi, w tym zatwierdzone odpowiedzi domyślne, i ryzyka, które się spełniły. */
+  month: { answered: number; defaults: number; riskHits: number };
 }
 
 export const CARDS = {
@@ -101,8 +106,10 @@ export const CARDS = {
   circularGapMin: 2,
   circularGapSpan: 3,
   logMax: 40,
-  /** Najmniej minut na decyzję, nawet gdy karta przyszła późno (start gry). */
-  minSpan: 60,
+  /** Najwięcej kart naraz na biurku (karty dnia czekające na swoją godzinę i okólnik); straż przed zepsutym zapisem. */
+  maxPending: 8,
+  /** XP za odpowiedź na kartę (jak dawna paczka od Centrali: okólnik ją zastępuje). */
+  xp: { zdarzenie: 10, okolnik: 15 },
 } as const;
 
 /** Co karta wie o sklepie przy losowaniu (z tego liczy liczby i warunki). */
@@ -126,7 +133,7 @@ export interface CardContext {
 export function createCards(day: number): CardsState {
   return {
     pending: [], active: [], drawnDay: day - 1, lastSeen: {}, nextCircularDay: day + CARDS.circularGapMin, seq: 1, log: [],
-    month: { answered: 0, auto: 0, riskHits: 0 },
+    month: { answered: 0, defaults: 0, riskHits: 0 },
   };
 }
 
@@ -174,7 +181,6 @@ function modEstimate(kind: ModKind, value: number, start: number, minutes: numbe
 function instantiate(def: CardDef, c: CardContext, seq: number, seedHash: number): CardInstance {
   const dayStart = c.day * MINUTES_PER_DAY;
   const showAt = Math.max(c.now, dayStart + def.at);
-  const deadline = Math.max(showAt + CARDS.minSpan, dayStart + def.at + def.span);
   const params = def.params ? def.params(c, rand01(seedHash, seq, CH.cardParam)) : {};
   const answers = def.answers.map((a): AnswerInstance => ({
     delta: roundDelta(a.delta ? a.delta(c, params) : {}),
@@ -185,7 +191,7 @@ function instantiate(def: CardDef, c: CardContext, seq: number, seedHash: number
     }),
     risk: a.risk ? { chance: clamp(a.risk.chance(c, params), 0, 1), delta: roundDelta(a.risk.delta(c, params)) } : null,
   }));
-  return { seq, id: def.id, day: c.day, showAt, deadline, params, answers, fallback: def.fallback };
+  return { seq, id: def.id, day: c.day, showAt, params, answers, defaultAnswer: Math.min(def.defaultAnswer, answers.length - 1) };
 }
 
 const weightOf = (def: CardDef, c: CardContext): number =>
@@ -216,13 +222,14 @@ function pickWeighted(list: readonly CardDef[], c: CardContext, r: number): Card
 
 /**
  * Karty dnia (raz na dzień, zwykle o północy). Liczba 1–3 i wybór są deterministyczne z seeda i numeru dnia. Okólnik,
- * gdy przypada, zajmuje jedno z miejsc dnia. Zwraca nowe karty (widoczne od `showAt`).
+ * gdy przypada, zajmuje jedno z miejsc dnia; gdy biurko jest pełne (tylko po zepsutym zapisie), czeka na miejsce.
+ * Zwraca nowe karty (widoczne od `showAt`).
  */
 export function drawDayCards(cs: CardsState, c: CardContext, seedHash: number): CardInstance[] {
   if (c.day <= cs.drawnDay) return [];
   cs.drawnDay = c.day;
   const r = rand01(seedHash, c.day, CH.cardCount);
-  let count = r < CARDS.one ? 1 : r < CARDS.one + CARDS.two ? 2 : 3;
+  let count = Math.min(r < CARDS.one ? 1 : r < CARDS.one + CARDS.two ? 2 : 3, CARDS.maxPending - cs.pending.length);
   const out: CardInstance[] = [];
   const take = (def: CardDef): void => {
     const card = instantiate(def, c, cs.seq++, seedHash);
@@ -231,7 +238,7 @@ export function drawDayCards(cs: CardsState, c: CardContext, seedHash: number): 
     out.push(card);
     count--;
   };
-  if (c.day >= cs.nextCircularDay) {
+  if (c.day >= cs.nextCircularDay && count > 0) {
     const def = pickWeighted(eligible(cs, CIRCULARS, c), c, rand01(seedHash, c.day, CH.circularPick));
     if (def) take(def);
     cs.nextCircularDay = c.day + CARDS.circularGapMin + Math.floor(rand01(seedHash, c.day, CH.circularGap) * CARDS.circularGapSpan);
@@ -244,16 +251,20 @@ export function drawDayCards(cs: CardsState, c: CardContext, seedHash: number): 
   return out;
 }
 
-/** Karty widoczne dla gracza w minucie `minute` (kolejność: najwcześniejszy termin pierwszy). */
+/** Karty widoczne dla gracza w minucie `minute` (najstarsze pierwsze). */
 export function visibleCards(cs: CardsState, minute: number): CardInstance[] {
-  return cs.pending.filter((x) => x.showAt <= minute).sort((a, b) => a.deadline - b.deadline || a.seq - b.seq);
+  return cs.pending.filter((x) => x.showAt <= minute).sort((a, b) => a.showAt - b.showAt || a.seq - b.seq);
 }
+
+/** Czy karta decyzji zatrzymuje grę w minucie `minute`: pętla gry nie wykonuje tej minuty, dopóki gracz nie wybierze. */
+export const cardsBlocking = (cs: CardsState, minute: number): boolean => cs.pending.some((x) => x.showAt <= minute);
 
 export interface CardOutcome {
   seq: number;
   id: string;
   answer: number;
-  auto: boolean;
+  /** Gracz zatwierdził odpowiedź zaznaczoną z góry. */
+  isDefault: boolean;
   riskHit: boolean;
   /** Wszystko, co trzeba zaksięgować (z ryzykiem, jeśli się spełniło). */
   delta: CardDelta;
@@ -261,6 +272,8 @@ export interface CardOutcome {
   mods: ActiveMod[];
   /** Przyczyna zmiany zaufania do raportu (karta, okólnik albo audyt). */
   trustReason: TrustReason;
+  /** XP za decyzję (poziom gracza). */
+  xp: number;
   /** Komentarz do skrzynki zdarzeń (bez formatowania liczb; zob. `outcomeText`). */
   text: string;
   params: CardParams;
@@ -272,26 +285,29 @@ export function addDelta(a: CardDelta, b: CardDelta): CardDelta {
   return out;
 }
 
-function settle(cs: CardsState, card: CardInstance, answer: number, minute: number, auto: boolean, seedHash: number): CardOutcome {
+function settle(cs: CardsState, card: CardInstance, answer: number, minute: number, seedHash: number): CardOutcome {
   const def = cardDef(card.id);
   const a = card.answers[answer];
   const riskHit = a.risk !== null && rand01(seedHash, card.seq, CH.cardRisk) < a.risk.chance;
   const delta = riskHit && a.risk ? addDelta(a.delta, a.risk.delta) : { ...a.delta };
+  // efekt z godziną („od 17:00”) dotyczy dnia karty: po spóźnionej odpowiedzi zostaje z niego tylko to, co jeszcze trwa
   const mods = a.mods.map((m): ActiveMod => {
-    const from = m.from === null ? minute : Math.max(minute, card.day * MINUTES_PER_DAY + m.from);
+    const from = m.from === null ? minute : card.day * MINUTES_PER_DAY + m.from;
     return { kind: m.kind, value: m.value, from, until: from + m.minutes, seq: card.seq };
-  });
+  }).filter((m) => m.until > minute);
   cs.active.push(...mods);
   cs.pending = cs.pending.filter((x) => x !== card);
-  cs.log.push({ seq: card.seq, id: card.id, day: card.day, answer, auto, riskHit });
+  cs.log.push({ seq: card.seq, id: card.id, day: card.day, answer, riskHit });
   if (cs.log.length > CARDS.logMax) cs.log.splice(0, cs.log.length - CARDS.logMax);
-  if (auto) cs.month.auto++;
-  else cs.month.answered++;
+  const isDefault = answer === card.defaultAnswer;
+  cs.month.answered++;
+  if (isDefault) cs.month.defaults++;
   if (riskHit) cs.month.riskHits++;
   const ad = def?.answers[answer];
   const text = (riskHit ? ad?.risk?.text : ad?.result) ?? '';
   return {
-    seq: card.seq, id: card.id, answer, auto, riskHit, delta, mods, trustReason: def?.trustReason ?? 'karty', text, params: card.params,
+    seq: card.seq, id: card.id, answer, isDefault, riskHit, delta, mods, trustReason: def?.trustReason ?? 'karty',
+    xp: def?.kind === 'okolnik' ? CARDS.xp.okolnik : CARDS.xp.zdarzenie, text, params: card.params,
   };
 }
 
@@ -303,15 +319,12 @@ export function resolveCard(cs: CardsState, seq: number, answer: number, minute:
   if (!card) return { ok: false, text: 'Tej karty już nie ma na biurku.' };
   if (card.showAt > minute) return { ok: false, text: 'Na tę kartę jeszcze za wcześnie.' };
   if (!Number.isInteger(answer) || answer < 0 || answer >= card.answers.length) return { ok: false, text: 'Nie ma takiej odpowiedzi.' };
-  return { ok: true, outcome: settle(cs, card, answer, minute, false, seedHash) };
+  return { ok: true, outcome: settle(cs, card, answer, minute, seedHash) };
 }
 
-/** Karty po terminie rozstrzygają się same odpowiedzią domyślną; efekty po czasie znikają. */
-export function expireCards(cs: CardsState, minute: number, seedHash: number): CardOutcome[] {
-  const due = cs.pending.filter((x) => x.deadline <= minute).sort((a, b) => a.deadline - b.deadline || a.seq - b.seq);
-  const out = due.map((card) => settle(cs, card, card.fallback, minute, true, seedHash));
-  cs.active = cs.active.filter((m) => m.until > minute);
-  return out;
+/** Efekty kart po czasie znikają (karty nie: czekają na odpowiedź, a gra na nie). Wołane co minutę albo rzadziej. */
+export function pruneCardMods(cs: CardsState, minute: number): void {
+  if (cs.active.some((m) => m.until <= minute)) cs.active = cs.active.filter((m) => m.until > minute);
 }
 
 export interface CardModifiers {
@@ -337,9 +350,10 @@ export function cardModifiers(cs: CardsState, minute: number): CardModifiers {
   return out;
 }
 
+/** Koniec miesiąca: odpowiedzi, w tym zatwierdzone domyślne, i ryzyka, które się spełniły. */
 export function closeCardsMonth(cs: CardsState): CardsState['month'] {
   const out = cs.month;
-  cs.month = { answered: 0, auto: 0, riskHits: 0 };
+  cs.month = { answered: 0, defaults: 0, riskHits: 0 };
   return out;
 }
 
@@ -393,7 +407,7 @@ function answerInstance(v: unknown): AnswerInstance | null {
   return { delta: delta(v.delta), mods, risk };
 }
 
-/** Karta z zapisu; `today` to dzień wczytania (karta z przyszłości wypada, terminy mieszczą się w dniu karty i nocy po nim). */
+/** Karta z zapisu; `today` to dzień wczytania (karta z przyszłości wypada, chwila pokazania mieści się w dniu karty). */
 function cardInstance(v: unknown, today: number): CardInstance | null {
   if (!isRec(v) || typeof v.id !== 'string' || !cardDef(v.id) || !Array.isArray(v.answers)) return null;
   const answers = v.answers.map(answerInstance);
@@ -403,17 +417,14 @@ function cardInstance(v: unknown, today: number): CardInstance | null {
   const params: CardParams = {};
   if (isRec(v.params)) for (const [k, p] of Object.entries(v.params)) params[k] = num(p, 0, -1e12, 1e12);
   const start = day * MINUTES_PER_DAY;
-  const latest = start + 2 * MINUTES_PER_DAY;
-  const showAt = num(v.showAt, start, start, latest);
   return {
     seq: whole(v.seq, 0, 0, 1_073_741_824),
     id: v.id,
     day,
-    showAt,
-    deadline: num(v.deadline, showAt, showAt, latest),
+    showAt: num(v.showAt, start, start, start + MINUTES_PER_DAY - 1),
     params,
     answers: answers as AnswerInstance[],
-    fallback: whole(v.fallback, 0, 0, answers.length - 1),
+    defaultAnswer: whole(v.defaultAnswer, cardDef(v.id)!.defaultAnswer, 0, answers.length - 1),
   };
 }
 
@@ -426,7 +437,7 @@ export function sanitizeCards(raw: unknown, day: number): CardsState {
   const d = createCards(day);
   if (!isRec(raw)) return d;
   const pending = Array.isArray(raw.pending)
-    ? raw.pending.map((c) => cardInstance(c, day)).filter((x): x is CardInstance => x !== null).slice(0, 16) : [];
+    ? raw.pending.map((c) => cardInstance(c, day)).filter((x): x is CardInstance => x !== null).slice(0, CARDS.maxPending) : [];
   // najdłuższy efekt w talii trwa 3 doby; zapas do 4 dób od dnia wczytania
   const modEnd = (day + 4) * MINUTES_PER_DAY;
   const active = Array.isArray(raw.active) ? raw.active.filter(isRec).filter((m) => MOD_KINDS.includes(m.kind as ModKind)).map((m): ActiveMod => {
@@ -437,7 +448,7 @@ export function sanitizeCards(raw: unknown, day: number): CardsState {
   if (isRec(raw.lastSeen)) for (const [k, v] of Object.entries(raw.lastSeen)) if (cardDef(k)) lastSeen[k] = whole(v, 0, 0, day);
   const log = Array.isArray(raw.log) ? raw.log.filter(isRec).filter((e) => typeof e.id === 'string').map((e): CardLogEntry => ({
     seq: whole(e.seq, 0, 0, 1_073_741_824), id: e.id as string, day: whole(e.day, 0, 0, 1e7), answer: whole(e.answer, 0, 0, 2),
-    auto: e.auto === true, riskHit: e.riskHit === true,
+    riskHit: e.riskHit === true,
   })).slice(-CARDS.logMax) : [];
   const m: Rec = isRec(raw.month) ? raw.month : {};
   const seq = Math.max(whole(raw.seq, d.seq, 1, 1_073_741_824), 1 + Math.max(0, ...pending.map((c) => c.seq)));
@@ -449,6 +460,6 @@ export function sanitizeCards(raw: unknown, day: number): CardsState {
     nextCircularDay: whole(raw.nextCircularDay, d.nextCircularDay, 0, day + CARDS.circularGapMin + CARDS.circularGapSpan),
     seq,
     log,
-    month: { answered: whole(m.answered, 0, 0, 1e6), auto: whole(m.auto, 0, 0, 1e6), riskHits: whole(m.riskHits, 0, 0, 1e6) },
+    month: { answered: whole(m.answered, 0, 0, 1e6), defaults: whole(m.defaults, 0, 0, 1e6), riskHits: whole(m.riskHits, 0, 0, 1e6) },
   };
 }

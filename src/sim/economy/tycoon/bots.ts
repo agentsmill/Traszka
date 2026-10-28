@@ -29,7 +29,7 @@ export interface BotView {
   spentToday: number;
   tapCost: Record<TapKind, number>;
   profile: StaffProfile | 'wlasny';
-  /** Karty widoczne teraz. */
+  /** Karty widoczne teraz: gra stoi, dopóki bot na nie nie odpowie. */
   cards: CardInstance[];
   /** Luz pod progiem WUT do końca miesiąca (zł). */
   wutSlack: number;
@@ -48,8 +48,8 @@ export interface BotEnv {
   view(): BotView;
   /** Wykonuje polecenie; false, gdy się nie udało (jak `CommandResult.ok`). */
   apply(cmd: BotCommand): boolean;
-  /** Jedna minuta gry. */
-  step(): void;
+  /** Jedna minuta gry; false, gdy gra stoi na karcie decyzji (minuta nie mija). */
+  step(): boolean;
 }
 
 /** Wycena zasobów, którą boty porównują odpowiedzi na kartach (zł za punkt zaufania, złotówkę WUT, osobominutę…). */
@@ -60,7 +60,13 @@ export function valuationFor(v: BotView, energy: number): Valuation {
   return { ...BOT_VALUATION, wut: v.wutSlack > 300 ? 0.15 : 1, energy };
 }
 
-const answerAll = (v: BotView, val: Valuation): BotCommand[] =>
+/**
+ * Karta decyzji zatrzymuje grę, więc każdy bot musi na nią odpowiedzieć, zanim minie minuta. Bierny gracz zatwierdza
+ * odpowiedź zaznaczoną z góry (zwykle „nic nie robię”), rozsądny wybiera najlepszą według wyceny.
+ */
+const answerDefault = (v: BotView): BotCommand[] =>
+  v.cards.map((c): BotCommand => ({ type: 'card.answer', seq: c.seq, answer: c.defaultAnswer }));
+const answerBest = (v: BotView, val: Valuation): BotCommand[] =>
   v.cards.map((c): BotCommand => ({ type: 'card.answer', seq: c.seq, answer: bestAnswer(c, val) }));
 
 /** Profil ludzi na tę chwilę: kolejka, gdy klienci zaczynają odchodzić, palety z chodnika, gdy jest spokojnie, potem porządek. */
@@ -105,25 +111,28 @@ function smartTap(v: BotView): BotCommand[] {
 }
 
 export const BOTS: Record<BotName, Bot> = {
-  bierny: { name: 'bierny', label: 'Bierny gracz', act: () => [] },
-  stukacz: { name: 'stukacz', label: 'Stukanie bez decyzji', act: greedyTap },
+  bierny: { name: 'bierny', label: 'Bierny gracz', act: answerDefault },
+  stukacz: { name: 'stukacz', label: 'Stukanie bez decyzji', act: (v) => [...answerDefault(v), ...greedyTap(v)] },
   decydent: {
     name: 'decydent',
     label: 'Decyzje bez stukania',
     // nie stuka, więc siły ma tylko na karty („stanę za niego sam”)
-    act: (v) => [...answerAll(v, valuationFor(v, 0)), ...profileCmd(v)],
+    act: (v) => [...answerBest(v, valuationFor(v, 0)), ...profileCmd(v)],
   },
   mistrz: {
     name: 'mistrz',
     label: 'Decyzje i stukanie',
-    act: (v) => [...answerAll(v, valuationFor(v, BOT_VALUATION.energy)), ...profileCmd(v), ...smartTap(v)],
+    act: (v) => [...answerBest(v, valuationFor(v, BOT_VALUATION.energy)), ...profileCmd(v), ...smartTap(v)],
   },
 };
 
-/** Puszcza bota w środowisku na `minutes` minut gry: co minutę bot patrzy i wydaje polecenia, potem minuta mija. */
+/**
+ * Puszcza bota w środowisku na `minutes` minut gry: co minutę bot patrzy i wydaje polecenia, potem minuta mija. Bot,
+ * który zostawi kartę decyzji bez odpowiedzi, zatrzymałby grę na zawsze: to błąd bota, więc rzucamy wyjątek.
+ */
 export function runBot(bot: Bot, env: BotEnv, minutes: number): void {
   for (let i = 0; i < minutes; i++) {
     for (const cmd of bot.act(env.view())) env.apply(cmd);
-    env.step();
+    if (!env.step()) throw new Error(`Bot „${bot.label}” nie odpowiedział na kartę decyzji: gra stoi.`);
   }
 }

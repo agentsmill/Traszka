@@ -5,8 +5,12 @@ import { clamp } from './time';
 /**
  * Zmęczenie franczyzobiorcy (spec §7.5). Stukanie to „ręce franczyzobiorcy”: każde stuknięcie zużywa dzienną pulę sił,
  * a przy pustej puli ręce odmawiają. Noc odnawia pulę tylko częściowo, więc po ciężkim dniu zostaje zmęczenie, które
- * obniża wydajność ręcznych akcji następnego dnia. Niedziela „placówka pocztowa” zużywa siły szybciej (franczyzobiorca
- * stoi na kasie sam). Combo zostaje jako odczucie: mnoży stuknięcie i jego koszt po równo, więc nie wyciska z puli więcej.
+ * obniża wydajność ręcznych akcji następnego dnia. Combo zostaje jako odczucie: mnoży stuknięcie i jego koszt po równo,
+ * więc nie wyciska z puli więcej.
+ *
+ * Niedziela nie ma osobnych zasad (decyzja użytkownika z 28.10.2026, zamiast „placówki pocztowej” ze specu §7.5): sklep
+ * działa jak co dzień, tylko przychodzi więcej ludzi (`sunday.ts`), więc siły schodzą szybciej same z siebie, bo jest
+ * w co stukać.
  */
 
 export type TapKind = 'kasa' | 'paleta';
@@ -21,9 +25,6 @@ export const FATIGUE = {
   /** Wydajność ręcznych akcji = 1 − carryPenalty × (zmęczenie przeniesione / pula), nie mniej niż minEfficiency. */
   carryPenalty: 0.6,
   minEfficiency: 0.5,
-  /** Niedziela „placówka pocztowa”: stuknięcia droższe i siły uciekają same, gdy sklep jest otwarty. */
-  sundayCostMult: 1.5,
-  sundayDrainPerHour: 2,
   /** Combo z interfejsu: najwyżej tyle stuknięć naraz. */
   maxCombo: 5,
 } as const;
@@ -45,17 +46,11 @@ export function createFatigue(): FatigueState {
   return { energy: FATIGUE.pool, carried: 0, spentToday: 0, tapsToday: 0, refusedToday: 0, exhaustedDays: 0, refusedMonth: 0 };
 }
 
-export interface FatigueContext {
-  /** Niedziela w trybie „placówka pocztowa” (decyduje integracja: kalendarz i ustawienie sklepu). */
-  sundayPost: boolean;
-}
-
 /** Wydajność ręcznych akcji dziś (zmęczenie z wczoraj). */
 export const fatigueEfficiency = (f: FatigueState): number =>
   Math.max(FATIGUE.minEfficiency, 1 - FATIGUE.carryPenalty * f.carried / FATIGUE.pool);
 
-export const tapCost = (kind: TapKind, ctx: FatigueContext): number =>
-  FATIGUE.tapCost[kind] * (ctx.sundayPost ? FATIGUE.sundayCostMult : 1);
+export const tapCost = (kind: TapKind): number => FATIGUE.tapCost[kind];
 
 export interface TapResult {
   ok: boolean;
@@ -72,10 +67,10 @@ export interface TapResult {
  * Stuknięcie z combo `combo` (1–5, liczy je interfejs). Koszt rośnie z combo tak samo jak efekt, a gdy sił nie starcza
  * na całe combo, przechodzi tyle stuknięć, na ile starcza. Zero stuknięć to odmowa rąk.
  */
-export function tap(f: FatigueState, kind: TapKind, combo: number, ctx: FatigueContext): TapResult {
+export function tap(f: FatigueState, kind: TapKind, combo: number): TapResult {
   // polecenie bez combo (albo z bzdurą) to jedno stuknięcie, jak `combo = 1` w economy.ts
   const want = clamp(Number.isFinite(combo) ? Math.floor(combo) : 1, 1, FATIGUE.maxCombo);
-  const unit = tapCost(kind, ctx);
+  const unit = tapCost(kind);
   const taps = Math.min(want, Math.floor((f.energy + 1e-9) / unit));
   if (taps < 1) {
     f.refusedToday++;
@@ -98,14 +93,6 @@ export function spendEnergy(f: FatigueState, delta: number): number {
   f.energy = clamp(f.energy + delta, 0, FATIGUE.pool);
   if (delta < 0) f.spentToday += before - f.energy;
   return f.energy - before;
-}
-
-/** Minuta otwartego sklepu: w niedzielę „placówka pocztowa” siły uciekają same (stoisz na kasie sam). */
-export function fatigueMinute(f: FatigueState, ctx: FatigueContext, open: boolean): void {
-  if (!open || !ctx.sundayPost) return;
-  const d = Math.min(f.energy, FATIGUE.sundayDrainPerHour / 60);
-  f.energy -= d;
-  f.spentToday += d;
 }
 
 /**
@@ -133,8 +120,8 @@ export function closeFatigueMonth(f: FatigueState): { exhaustedDays: number; ref
  * Sufit stukania: ile mocy da się wycisnąć w jeden dzień, zaczynając od `energy` sił z wydajnością wynikającą z `carried`.
  * Do sprawdzeń balansu (stukanie ma dokładać najwyżej 15–20% wyniku).
  */
-export function dailyTapCeiling(kind: TapKind, ctx: FatigueContext, energy: number = FATIGUE.pool, carried = 0): number {
-  const taps = Math.floor((energy + 1e-9) / tapCost(kind, ctx));
+export function dailyTapCeiling(kind: TapKind, energy: number = FATIGUE.pool, carried = 0): number {
+  const taps = Math.floor((energy + 1e-9) / tapCost(kind));
   return taps * Math.max(FATIGUE.minEfficiency, 1 - FATIGUE.carryPenalty * carried / FATIGUE.pool);
 }
 
