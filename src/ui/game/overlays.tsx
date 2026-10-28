@@ -5,8 +5,8 @@ import { EQUIPMENT, EQUIPMENT_BY_ID, equipmentCost } from '@/sim/economy/upgrade
 import type { QualityPresetId } from '@/render/quality';
 import { networkIncomeOf, prestigePoints } from '@/game/meta';
 import {
-  celebration, combo, econ, metaView, preset, report, selection, seed, showIntro, showPerf, showPrestige, showSettings, tab,
-  toasts, welcome, type Controls, type GameActions,
+  celebration, combo, ephemeral, econ, hints, metaView, nextHint, preset, report, selection, seed, showPerf, showPrestige, showSettings,
+  start, tab, toasts, welcome, type Controls, type GameActions,
 } from '../state';
 import { int, plural, signedZl, zl } from './format';
 import { PalletItem } from './panels';
@@ -154,25 +154,53 @@ export function ReportModal({ game }: { game: GameActions }) {
   );
 }
 
-/** Ekran powitalny nowej gry: o co chodzi, sterowanie, zastrzeżenie. Pauzuje grę do „Otwieramy!”. */
-export function Intro() {
-  if (!showIntro.value) return null;
+/**
+ * Podpowiedzi pierwszego dnia nowej gry: krótkie dymki zamiast dawnego okna „Witaj w Traszce” (jego wskazówki, po jednej na
+ * dymek). Nie pauzują gry. Zastrzeżenie o fikcji zostało na ekranie startowym i w ⚙.
+ */
+export const FIRST_DAY_HINTS: readonly string[] = [
+  '🦎 Od dziś prowadzisz franczyzę Traszki. Cel: zbudować sieć Traszek i dojść do rangi Legendarnej Palety.',
+  '📦 Palety przyjeżdżają pod sklep. Stukaj w nie, żeby rozładować, zanim przyjdzie Straż Miejska. Złota paleta to premia.',
+  '🧾 Kolejka za długa? Klienci odchodzą. Stuknij w kasę, kup kasę samoobsługową albo zatrudnij pracownika.',
+  '🎯 Zlecenia Centrali (zakładka Cele) dają nagrody, a poziomy odblokowują sprzęt, remonty i warsztat.',
+  '🎁 Łap paczki od Centrali, gdy pojawią się nad sklepem.',
+  '👆 Przeciągnij, żeby przesunąć widok, a szczypnięciem albo kółkiem myszy przybliżysz. Gra zapisuje się sama.',
+];
+
+/** Dymek z bieżącą podpowiedzią pierwszego dnia; „Dalej” przeskakuje, a kolejna wchodzi sama (`state.ts`). */
+export function FirstDayHints() {
+  const list = hints.value;
+  if (list.length === 0) return null;
   return (
-    <div class="tt-modal-wrap">
-      <div class="tt-modal" role="dialog" aria-label="Witaj w Traszce">
-        <h2>Witaj w Traszce! 🦎</h2>
-        <p>Od dziś prowadzisz franczyzę Traszki. Sklep jest pełen towaru Centrali, a w kasie {zl(2000)}.
-          Cel: zbudować sieć Traszek i dojść do rangi <b>Legendarnej Palety</b>.</p>
-        <ul class="tt-list">
-          <li><b>Palety</b> przyjeżdżają co rano pod sklep. Stukaj w nie szybko (combo!), zanim przyjdzie Straż Miejska. Złota paleta to premia.</li>
-          <li><b>Kolejka</b> za długa? Klienci odchodzą. Stukaj w kasę, kupuj kasy samoobsługowe, zatrudniaj.</li>
-          <li><b>Zlecenia Centrali</b> (🎯 Cele) dają nagrody, a poziomy odblokowują sprzęt, remonty i warsztat złotej rączki z humanoidem eDwardem.</li>
-          <li>Łap <b>paczki od Centrali</b>, które czasem pojawiają się nad sklepem.</li>
-        </ul>
-        <p class="tt-hint">Przeciągnij, żeby przesunąć widok. Szczypnij albo kółkiem myszy, żeby przybliżyć. Gra zapisuje się sama.</p>
-        <p class="tt-disclaimer2">{DISCLAIMER}</p>
-        <button type="button" class="tt-btn tt-primary big" onClick={() => { showIntro.value = false; }}>Otwieramy sklep!</button>
-      </div>
+    <div class="tt-hintbubble" role="status">
+      <span class="tt-hintbubble-text">{list[0]}</span>
+      <button type="button" class="tt-btn tt-hintbubble-next" onClick={nextHint}>{list.length > 1 ? 'Dalej' : 'OK'}</button>
+    </div>
+  );
+}
+
+export const EPHEMERAL_BADGE = 'Sklep tymczasowy: postęp nie jest zapisywany';
+export const EPHEMERAL_NOTE = 'Ten sklep jest tymczasowy: nic się w nim nie zapisuje, a ewentualny zapis pod jego seedem zostaje nietknięty.';
+export const RESTART_CONFIRM = 'Zacząć od nowa w tym sklepie? Zapis zostanie usunięty.';
+
+/** Stała plakietka na ekranie gry, gdy sklep jest tymczasowy (zapis się nie zbudował albo jest z nowszej wersji gry). */
+export function StoreBadge() {
+  if (!ephemeral.value) return null;
+  return <div class="tt-ephemeral" role="status">{EPHEMERAL_BADGE}</div>;
+}
+
+/**
+ * Przyciski sklepu w ⚙: „Nowy sklep” (ekran startowy) zawsze, „Zacznij od nowa” (kasuje zapis tego sklepu) tylko w zwykłym.
+ * W sklepie tymczasowym nic nie jest zapisane ani kasowane, więc zamiast „Zacznij od nowa” jest wyjaśnienie, a zapis pod
+ * tym seedem zostaje nietknięty.
+ */
+export function StoreActions({ ephemeral: temporary, onNewStore, onRestart }: { ephemeral: boolean; onNewStore: () => void; onRestart: () => void }) {
+  return (
+    <div class="tt-store-actions">
+      <button type="button" class="tt-btn" onClick={onNewStore}>Nowy sklep</button>
+      {temporary
+        ? <p class="tt-hint">{EPHEMERAL_NOTE}</p>
+        : <button type="button" class="tt-btn" onClick={onRestart}>Zacznij od nowa</button>}
     </div>
   );
 }
@@ -183,7 +211,7 @@ const PRESETS: { value: QualityPresetId; label: string }[] = [
   { value: 'wysoka', label: 'Wysoka' },
 ];
 
-/** Ustawienia: seed sklepu, nowa gra, jakość grafiki, nakładka wydajności, zastrzeżenie. */
+/** Ustawienia: seed sklepu, nowy sklep i nowa gra, jakość grafiki, nakładka wydajności, zastrzeżenie. */
 export function Settings({ controls, game }: { controls: Controls; game: GameActions }) {
   const [draft, setDraft] = useState(seed.value);
   useEffect(() => { setDraft(seed.value); }, [seed.value, showSettings.value]);
@@ -202,7 +230,8 @@ export function Settings({ controls, game }: { controls: Controls; game: GameAct
           <button type="submit" class="tt-btn tt-primary">Otwórz</button>
           <button type="button" class="tt-btn" onClick={() => { controls.randomize(); close(); }}>Losuj</button>
         </form>
-        <button type="button" class="tt-btn" onClick={() => { if (confirm('Zacząć od nowa w tym sklepie? Zapis zostanie usunięty.')) { game.restart(); close(); } }}>Zacznij od nowa</button>
+        <StoreActions ephemeral={ephemeral.value} onNewStore={() => { close(); game.newStore(); }}
+          onRestart={() => { if (confirm(RESTART_CONFIRM)) { game.restart(); close(); } }} />
         <h3>Grafika</h3>
         <div class="tt-seg wide" role="group" aria-label="Jakość grafiki">
           {PRESETS.map((p) => (
@@ -296,7 +325,7 @@ export function GiftDrop({ game, onClaim }: { game: GameActions; onClaim: (x: nu
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
   useEffect(() => {
     let t = 0;
-    const blocked = (): boolean => !!report.value || showIntro.value || !!welcome.value || showSettings.value || !econ.value;
+    const blocked = (): boolean => !!report.value || !!start.value || !!welcome.value || showSettings.value || !econ.value;
     const schedule = (ms: number): void => {
       t = window.setTimeout(() => {
         if (blocked()) { schedule(5000); return; }

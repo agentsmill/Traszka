@@ -8,6 +8,10 @@ a na końcu humanoida eDwarda. Wszystkie firmy, postacie i zdarzenia są fikcyjn
 
 ## Jak grać
 
+Przy pierwszym wejściu ekran **Twój kasjer**: wybierasz wygląd kasjera (🎲 Losuj, strzałki ‹ › po strojach, czasem wypadnie
+dziwny strój specjalny, a przełącznik „Stroje specjalne w losowaniu” to wyłącza), wpisujesz nazwę gracza (1–20 znaków) i seed
+sklepu (dowolny tekst), i otwierasz sklep. Kasjer stoi potem za ladą. Nowy sklep (z innym seedem i kasjerem) otwierasz z ⚙.
+
 - **Palety** przyjeżdżają co rano pod sklep. Stukaj w nie (albo w pomarańczowy przycisk 📦), żeby rozładować.
   Paletę można przestawić na zaplecze (bezpiecznie, mało miejsca) albo do sali (korek, mniej klientów).
 - **Kolejka**: za długa odstrasza klientów. Stuknięcie w kasę (albo 🧾) obsługuje klienta.
@@ -38,7 +42,7 @@ npm test           # testy (Vitest)
 npm run typecheck  # tsc --noEmit
 ```
 
-Parametry adresu: `?seed=<tekst>` wybiera sklep, `new=1` zaczyna bez zapisu, `bench=1` uruchamia benchmark.
+Parametry adresu: `?seed=<tekst>` wybiera sklep (przy pierwszym wejściu wypełnia pole seeda na ekranie startowym), `new=1` zaczyna bez zapisu (tylko dla gracza, który ma już nazwę: ekran startowy nigdy nie zaczyna od nowa na seedzie z zapisem), `bench=1` uruchamia benchmark.
 
 ## Publikacja (GitHub Pages)
 

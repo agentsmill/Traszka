@@ -3,12 +3,13 @@ import { PALETTE } from '@/render/style';
 import { BenchOverlay } from './BenchOverlay';
 import { Hud } from './game/Hud';
 import {
-  CelebrationBanner, ClickerBar, ComboChip, GiftDrop, Intro, PrestigeModal, ReportModal, RotateButtons, SelectionCard, Settings,
-  Toasts, WelcomeModal,
+  CelebrationBanner, ClickerBar, ComboChip, FirstDayHints, GiftDrop, PrestigeModal, ReportModal, RotateButtons, SelectionCard, Settings,
+  StoreBadge, Toasts, WelcomeModal,
 } from './game/overlays';
 import { Sheet, TabBar } from './game/panels';
 import { Notice } from './Notice';
 import { PerfOverlay } from './PerfOverlay';
+import { StartHost } from './start/StartScreen';
 import { floatText } from './worldOverlay';
 import type { Controls, GameActions } from './state';
 import './ui.css';
@@ -22,8 +23,9 @@ const brandVars = {
 } as Record<string, string>;
 
 /**
- * Cała nakładka. Bez `controls` (renderer nie wstał albo benchmark) zostaje komunikat i wyniki benchmarku.
- * W grze: górny pasek, zakładki z arkuszami, karta zaznaczenia, przyciski klikera, komunikaty i okna.
+ * Cała nakładka. Bez `controls` (renderer nie wstał, benchmark albo gra jeszcze nie ruszyła) zostaje komunikat, wyniki benchmarku
+ * i ekran startowy „Twój kasjer”, który otwiera się przy pierwszym wejściu, zanim powstanie gra. W grze: górny pasek, zakładki
+ * z arkuszami, karta zaznaczenia, przyciski klikera, podpowiedzi pierwszego dnia, komunikaty i okna.
  */
 export function App({ controls, game }: { controls: Controls | null; game: GameActions | null }) {
   return (
@@ -33,9 +35,11 @@ export function App({ controls, game }: { controls: Controls | null; game: GameA
       <BenchOverlay />
       {controls && game && (
         <>
+          <StoreBadge />
           <div class="tt-topstack">
             <SelectionCard game={game} />
             <Toasts />
+            <FirstDayHints />
           </div>
           <ClickerBar game={game} onFloat={floatText} />
           <ComboChip />
@@ -47,11 +51,11 @@ export function App({ controls, game }: { controls: Controls | null; game: GameA
           <WelcomeModal game={game} />
           <PrestigeModal game={game} />
           <CelebrationBanner />
-          <Intro />
           <Settings controls={controls} game={game} />
         </>
       )}
       {controls && <PerfOverlay />}
+      <StartHost />
     </div>
   );
 }

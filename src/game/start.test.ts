@@ -1,11 +1,12 @@
+import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_CASHIER_LOOK } from './cashier';
 import { MemoryStorage } from './memoryStorage';
-import { loadMeta, type Meta, type Player } from './meta';
+import { loadMeta, needsStartScreen, type Meta, type Player } from './meta';
 import { NICK_ERRORS } from './nick';
 import type { OpenRequest } from './openStore';
-import { EXISTING_STORE_NOTICE, NEIGHBOUR_STORE_NOTICE } from './seeds';
-import { createSession, saveSession } from './session';
+import { EXISTING_STORE_NOTICE, NEIGHBOUR_STORE_NOTICE, entrySeed } from './seeds';
+import { createSession, lastSavedSeed, saveSession } from './session';
 import { initialStartForm, openRequestFor, playerOf, submitStart, type StartChoice, type StartForm } from './start';
 
 let storage: MemoryStorage;
@@ -125,5 +126,67 @@ describe('playerOf i openRequestFor', () => {
     const opened = createSession(openRequestFor(result.choice, { randomSeed: () => 'x', build: () => {} }).seed, false);
     expect(opened.fromSave).toBe(true);
     expect(opened.econ.cash).toBe(777_777);
+  });
+});
+
+describe('wejście na stronę (to samo złożenie, które robi main.ts): kto widzi ekran startowy i z jakim seedem', () => {
+  const v1 = (name: string): string => readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8');
+  const META_KEY = 'traszka:meta';
+  /** Co wchodzi w pola ekranu przy wejściu na stronę z danym adresem (`?seed=`) i zapisami w przeglądarce. */
+  const entry = (urlSeed: string | null) => {
+    const meta = loadMeta();
+    return { show: needsStartScreen(meta), form: initialStartForm(meta, entrySeed(urlSeed, lastSavedSeed())) };
+  };
+
+  it('pierwsze wejście bez zapisu i bez meta: ekran startowy, losowy seed, kasjer domyślny, pusty nick', () => {
+    const { show, form } = entry(null);
+    expect(show).toBe(true);
+    expect(form).toMatchObject({ nick: '', look: DEFAULT_CASHIER_LOOK, specialOutfits: true });
+    expect(form.seed).toMatch(/^[a-z]+-[1-9]\d{2}$/);
+  });
+
+  it('R53: stary gracz (zapisy z poprzedniej wersji, brak gracza w meta) dostaje ekran startowy z seedem ostatniego zapisu, a „Otwieramy sklep!” kontynuuje jego grę', () => {
+    storage.setItem('traszka:save:kiełbasa-42', v1('save-v1-blok-dzien40.json'));   // zapis v1: bez koperty, bez wyglądu kasjera i nicka
+    storage.setItem('traszka:last', 'kiełbasa-42');
+    storage.setItem(META_KEY, JSON.stringify({ version: 1, partnerPoints: 3, network: [], daily: { date: '', streak: 0 }, lastSeen: 0, sound: true, vibration: true }));
+    const { show, form } = entry(null);
+    expect(show).toBe(true);
+    expect(form.seed).toBe('kiełbasa-42');
+    expect(form.look).toEqual(DEFAULT_CASHIER_LOOK);
+    const result = submitStart({ ...form, nick: 'Stary Gracz' });
+    if (!result.ok) throw new Error('oczekiwano wyboru');
+    expect(result.choice).toMatchObject({ seed: 'kiełbasa-42', notice: EXISTING_STORE_NOTICE });
+    const opened = createSession(openRequestFor(result.choice, { randomSeed: () => 'x-100', build: () => {} }).seed, false);
+    expect(opened.fromSave).toBe(true);
+    expect(opened.ephemeral).toBe(false);
+    expect(opened.econ.level).toBe(15);
+    expect(Math.round(opened.econ.cash)).toBe(17_671);
+    expect(playerOf(result.choice).look).toEqual(DEFAULT_CASHIER_LOOK);   // wygląd domyślny trafia do meta, gra stawia domyślnego kasjera
+  });
+
+  it('?seed= w adresie wypełnia pole seeda i wygrywa z ostatnim zapisem; pusty ?seed= nie liczy się', () => {
+    storage.setItem('traszka:last', 'ostatni-sklep-1');
+    expect(entry('z-adresu-7').form.seed).toBe('z-adresu-7');
+    expect(entry('').form.seed).toBe('ostatni-sklep-1');
+    expect(entry(null).form.seed).toBe('ostatni-sklep-1');
+  });
+
+  it('?seed= z dziwnym tekstem wypełnia pole dosłownie, a sklep powstaje z seeda znormalizowanego (200 znaków, spacje, emoji)', () => {
+    for (const urlSeed of ['x'.repeat(200), '   ', '  Moja   PIZZA 🍕 ', '🍕'.repeat(120)]) {
+      const { form } = entry(urlSeed);
+      expect(form.seed).toBe(urlSeed);
+      const result = submitStart({ ...form, nick: 'Ala' });
+      if (!result.ok) throw new Error('oczekiwano wyboru');
+      expect(Array.from(result.choice.seed).length).toBeLessThanOrEqual(42);
+      expect(() => createSession(result.choice.seed, false)).not.toThrow();
+    }
+  });
+
+  it('gracz w meta: bez ekranu startowego; meta z nowszej wersji gry: też bez; sklep otwiera się wtedy z adresu albo ostatniego zapisu', () => {
+    storage.setItem(META_KEY, JSON.stringify({ version: 1, partnerPoints: 0, network: [], daily: { date: '', streak: 0 }, lastSeen: 0, sound: true, vibration: true, player: PLAYER }));
+    expect(entry(null).show).toBe(false);
+    expect(loadMeta().player).toEqual(PLAYER);
+    storage.setItem(META_KEY, JSON.stringify({ version: 2, player: { przyszlosc: true } }));
+    expect(entry(null).show).toBe(false);
   });
 });

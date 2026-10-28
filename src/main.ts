@@ -11,16 +11,17 @@ import { buildStreet, type StreetView } from '@/render/street/buildStreet';
 import { createCharacterFactory, type CharacterFactory } from '@/render/characters/characterFactory';
 import { ANIM_SPEED_CAP } from '@/render/crowdView';
 import { createBlobShadows } from '@/render/characters/blobShadows';
-import { DEFAULT_CASHIER_LOOK, cashierCues } from '@/game/cashier';
+import { DEFAULT_CASHIER_LOOK, cashierCues, type CashierLook } from '@/game/cashier';
 import { MAX_FRAME_DT, advanceClock, clockAlpha } from '@/game/loop';
 import { randomSeed } from '@/game/seedWords';
-import { freeSeed } from '@/game/seeds';
+import { chooseStore, entrySeed, freeSeed } from '@/game/seeds';
 import {
   NEWER_SAVE_NOTICE, UNBUILDABLE_SAVE_NOTICE, createSession, discardSave, hasStoredSave, lastSavedSeed, retireSession, reviveSession, saveSession,
   syncLayout, type GameSession,
 } from '@/game/session';
 import { openStore } from '@/game/openStore';
-import { addToNetwork, claimDaily, loadMeta, partnerOf, saveMeta, startupWindow, type Meta } from '@/game/meta';
+import { addToNetwork, claimDaily, loadMeta, needsStartScreen, partnerOf, saveMeta, startupWindow, type Meta } from '@/game/meta';
+import { initialStartForm, openRequestFor, playerOf, type StartChoice } from '@/game/start';
 import { rankFor } from '@/sim/economy/progress';
 import { play, buzz, setSound, setVibration, type Sfx } from '@/ui/sfx';
 import { confetti } from '@/ui/fx';
@@ -41,6 +42,7 @@ import { generateStore } from '@/sim/store/generateStore';
 import { CELL_SIZE_M } from '@/sim/grid';
 import { renderUi } from '@/ui/App';
 import { listenForNotices, postNotice } from '@/ui/Notice';
+import { FIRST_DAY_HINTS } from '@/ui/game/overlays';
 import { createWorldOverlay } from '@/ui/worldOverlay';
 import { FrameMeter } from '@/ui/perfMeter';
 import * as ui from '@/ui/state';
@@ -74,6 +76,8 @@ interface Bindings {
   setPreset?: (id: QualityPresetId) => void;
   /** Stuknięcie (klik bez przeciągania) w scenę, współrzędne ekranu w px. */
   onTap?: (x: number, y: number) => void;
+  /** Gdy zwraca true, klawisze nie działają (np. ekran startowy zasłania grę: spacja ma wciskać przycisk, a nie pauzować). */
+  blocked?: () => boolean;
 }
 
 /** Klawisze nie działają, gdy gracz pisze w polu (np. seed), bo litery są wtedy tekstem, a nie poleceniem. */
@@ -89,7 +93,7 @@ const TAP_SLOP = 8;
  * Mysz i dotyk na płótnie: przeciąganie (lewym albo prawym przyciskiem, jednym palcem) przesuwa widok, dwa palce
  * przybliżają (pinch), a krótkie stuknięcie bez ruchu woła `onTap`. `extra` dokłada klawisze sceny.
  */
-function bindControls(ctx: RenderContext, { extra = {}, setPreset = (id) => ctx.setPreset(id), onTap }: Bindings = {}): void {
+function bindControls(ctx: RenderContext, { extra = {}, setPreset = (id) => ctx.setPreset(id), onTap, blocked }: Bindings = {}): void {
   const keys: Record<string, () => void> = {
     q: () => ctx.rig.rotate(-1),
     e: () => ctx.rig.rotate(1),
@@ -106,7 +110,7 @@ function bindControls(ctx: RenderContext, { extra = {}, setPreset = (id) => ctx.
     ...extra,
   };
   window.addEventListener('keydown', (e) => {
-    if (e.ctrlKey || e.metaKey || e.altKey || isTyping(e.target)) return;   // np. Cmd+R to przeładowanie strony, nie nowy seed
+    if (e.ctrlKey || e.metaKey || e.altKey || isTyping(e.target) || blocked?.()) return;   // np. Cmd+R to przeładowanie strony, nie nowy seed
     const action = keys[e.key] ?? keys[e.key.toLowerCase()];
     if (!action) return;
     e.preventDefault();   // F3 nie otwiera wyszukiwania przeglądarki, strzałki nie przewijają strony
@@ -227,8 +231,12 @@ function writeSeedToUrl(seed: string): void {
 /** Najwięcej postaci w sklepie naraz: telefon i słabsza grafika dostają mniej. */
 const CROWD_MAX: Record<QualityPresetId, number> = { niska: 10, srednia: 16, wysoka: 22 };
 
+/** Wybór gracza z ekranu startowego (pierwsze wejście) i fabryka postaci, której używał podgląd: gra dostaje tę samą (patrz `startGame`). */
+interface StartEntry { choice: StartChoice; factory: Promise<CharacterFactory> }
+
 /**
- * Gra `?seed=<seed>` (bez seeda: ostatnio grany sklep z zapisu albo losowy): ekonomia sklepu (src/sim/economy) toczy się
+ * Gra `?seed=<seed>` (bez seeda: ostatnio grany sklep z zapisu albo losowy; przy pierwszym wejściu ten seed wypełnia pole na
+ * ekranie startowym „Twój kasjer”, a gracz, który już ma nick w meta, wchodzi prosto do sklepu): ekonomia sklepu (src/sim/economy) toczy się
  * w czasie gry, a scena ją pokazuje: palety pod sklepem, na zapleczu i w sali, sprzęt w slotach, pustoszejące półki,
  * tłum o gęstości zależnej od ruchu, dzień i noc według zegara. Stuknięcie w paletę rozładowuje kawałek (kliker),
  * w kasę obsługuje klienta, w slot otwiera kartę zakupu. Remont podmienia układ sklepu na większy.
@@ -242,12 +250,16 @@ const CROWD_MAX: Record<QualityPresetId, number> = { niska: 10, srednia: 16, wys
  *
  * Symulacja tłumu idzie stałym krokiem SIM_STEP (advanceClock), render interpoluje pozycje współczynnikiem acc / SIM_STEP.
  * Ekonomia ma własny zegar (advanceEconomy): minuta gry na krok, noc mija szybciej niż dzień.
+ *
+ * `entry` to wybór gracza z ekranu startowego (pierwsze wejście) wraz z fabryką postaci, której używał podgląd: nick i wygląd
+ * kasjera idą do meta, sklep otwiera się z wybranego seeda i nigdy jako nowa gra (nie nadpisze zapisu). Bez niego (gracz już jest
+ * w meta, meta z nowszej wersji gry, benchmark) sklep otwiera się z `initialSeed`, a kasjer ma wygląd z meta albo domyślny.
+ * Nakładka z komunikatami (`listenForNotices`, `renderUi`) wstaje przed tą funkcją, razem z ekranem startowym.
  */
-function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: string, preset: QualityPresetId, params: URLSearchParams, benchKit: BenchModule | null): void {
-  // Nakładka wstaje pierwsza: komunikat z createRenderContext musi trafić w działający nasłuch. Bez renderera nie ma czego sterować.
-  listenForNotices();
-  renderUi(root, null, null);
-
+function startGame(
+  canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: string, preset: QualityPresetId, params: URLSearchParams,
+  benchKit: BenchModule | null, entry: StartEntry | null,
+): void {
   let ctx: RenderContext;
   try {
     ctx = createRenderContext(canvas, preset);
@@ -264,19 +276,24 @@ function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: st
   // plamy cienia pod postaciami: jedna siatka na całą grę, w grupie tłumu (benchmark ukrywa je razem z tłumem)
   const blobs = createBlobShadows();
   crowdRoot.add(blobs.mesh);
-  // wygląd kasjera za ladą: jedno miejsce, z którego idzie do każdego sklepu (ekran startowy podstawi tu wygląd z meta gracza)
-  const cashierLook = DEFAULT_CASHIER_LOOK;
-
   const benchMode = benchKit !== null;
   const forcedNight = !benchMode && params.get('night') === '1';
   let tod: TimeOfDay = forcedNight ? 'night' : 'day';
   let exterior = !benchMode && params.get('ext') === '1';
   let factory: CharacterFactory | null = null;
+  /** Fabryka postaci: z ekranu startowego (podgląd i gra mają te same stroje) albo własna, startowana niżej. Ekran „Nowy sklep” też z niej korzysta. */
+  let factoryPromise: Promise<CharacterFactory> | null = entry?.factory ?? null;
   let loaded: Loaded | null = null;
   let generation = 0;               // odrzuca wyniki asynchroniczne, które wróciły po zmianie seeda
   let payingId: number | null = null;   // klient obsługiwany przy kasie w poprzedniej klatce (kasjer: gest przy sprzedaży)
   const clock = { acc: 0 };
   let meta: Meta = loadMeta();
+  if (entry) {
+    meta.player = playerOf(entry.choice);   // meta z nowszej wersji gry tego nie zapisze (saveMeta pomija ją), ale ta karta ma gracza
+    saveMeta(meta);
+  }
+  // wygląd kasjera za ladą: jedno miejsce, z którego idzie do każdego sklepu (load i późna fabryka); zmiana na żywo: `setLook`
+  let cashierLook: CashierLook = meta.player?.look ?? DEFAULT_CASHIER_LOOK;
   setSound(meta.sound);
   setVibration(meta.vibration);
   if (meta.readOnly) postNotice(NEWER_SAVE_NOTICE);   // meta z nowszej wersji gry: nic jej nie nadpisze w tej karcie
@@ -400,6 +417,7 @@ function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: st
   function publish(): void {
     if (!session) return;
     ui.econ.value = { s: session.econ, info: session.info, v: ++econVersion };
+    ui.ephemeral.value = session.ephemeral;
   }
 
   /** Scena według stanu gry: palety, sprzęt, półki, tłum, pora dnia. Co ~100 ms (albo od razu z `force`). */
@@ -601,7 +619,34 @@ function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: st
       ui.report.value = null;
       setSeed(session.seed, true, ephemeral);
     },
+    newStore: () => {
+      if (benchMode) return;
+      ui.showSettings.value = false;
+      ui.tab.value = null;
+      ui.selection.value = null;
+      // gra czeka pod ekranem (modal w pętli klatek); seed w polu to wolny, losowy: „Otwieramy sklep!” otwiera NOWY sklep
+      ui.start.value = {
+        mode: 'new',
+        form: initialStartForm(meta, freeSeed(randomSeed, hasStoredSave)),
+        factory: (factoryPromise ??= createCharacterFactory()),
+        onStart: openChosenStore,
+        onBack: () => {},
+      };
+    },
   };
+
+  /**
+   * Wybór gracza z ekranu „Nowy sklep”: nick i wygląd kasjera do meta (w pamięci także wtedy, gdy meta jest tylko do odczytu), a
+   * sklep otwiera `setSeed` bez `fresh`: seed z zapisem wczytuje ten zapis, a zapisu z nowszej wersji gry ani takiego, którego
+   * świata nie dało się zbudować, nic nie nadpisze. Wygląd idzie do `cashierLook` przed `setSeed`: każdy sklep (także poprzedni,
+   * odtworzony, gdy nowy się nie otworzył) stawia kasjera z tej zmiennej, więc `CashierView.setLook` na żywo nie jest tu potrzebne.
+   */
+  function openChosenStore(choice: StartChoice): void {
+    meta.player = playerOf(choice);
+    saveMeta(meta);
+    cashierLook = choice.look;
+    if (setSeed(choice.seed) && choice.notice) ui.pushToast(choice.notice, 'info');
+  }
 
   /** Stuknięcie w scenę: paleta (rozładunek), kasa (obsługa klienta), slot (karta zakupu) albo nic (zamyka kartę). */
   function onTap(x: number, y: number): void {
@@ -673,7 +718,10 @@ function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: st
       ctx.setPreset(next);
       ui.preset.value = ctx.preset;   // bez AO renderer schodzi niżej i sam o tym informuje (traszka:notice)
     },
-    generate: (text) => setSeed(text.trim() || randomSeed()),
+    generate: (text) => {
+      const choice = chooseStore(text);   // te same zasady co na ekranie startowym: zapis pod seedem wygrywa, dziwny tekst też daje sklep
+      if (setSeed(choice.seed) && choice.notice) ui.pushToast(choice.notice, 'info');
+    },
     randomize: () => setSeed(randomSeed()),
   };
 
@@ -684,10 +732,10 @@ function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: st
     // z seeda, potem sklep tymczasowy); do kopii idzie tylko zapis, którego nie da się przeczytać. Każda nieudana próba budowy
     // sprząta po sobie scenę (loadStore), więc kolejna zaczyna od czystej.
     try {
-      session = openStore({
-        seed: initialSeed, fresh: params.get('new') === '1', partner: partnerOf(meta), randomSeed,
-        build: (opening) => { session = opening; load(opening.seed); },
-      });
+      const build = (opening: GameSession): void => { session = opening; load(opening.seed); };
+      session = openStore(entry
+        ? openRequestFor(entry.choice, { partner: partnerOf(meta), randomSeed, build })   // ekran startowy: nigdy `fresh`
+        : { seed: initialSeed, fresh: params.get('new') === '1', partner: partnerOf(meta), randomSeed, build });
     } catch (error) {
       // żaden sklep się nie zbudował (renderer): zapis nietknięty, a gracz dostaje komunikat zamiast pustej strony
       console.error('Nie udało się zbudować żadnego sklepu.', error);
@@ -695,7 +743,8 @@ function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: st
       return;
     }
     ui.seed.value = session.seed;
-    if (session.loadNotice) postNotice(session.loadNotice);
+    if (entry?.choice.notice) ui.pushToast(entry.choice.notice, 'info');
+    if (session.loadNotice) postNotice(session.loadNotice);   // po komunikacie z ekranu: ten o zapisie zostaje na wierzchu
   }
   if (session) {
     // Adres dopiero po tym, jak świat stoi. Sklep tymczasowy o innym seedzie niż ten, o który prosił adres, go nie przepisuje:
@@ -704,7 +753,7 @@ function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: st
     publish();
     // nic się nie zapisuje, dopóki gracz nie kliknie „Odbierz!”; po wypowiedzeniu umowy wstaje samo okno końca gry
     const start = startupWindow(meta, session.econ, session.ephemeral, new Date());
-    ui.showIntro.value = start.intro;
+    ui.showHints(start.intro ? FIRST_DAY_HINTS : []);   // nowa gra: wskazówki pierwszego dnia w krótkich dymkach
     ui.welcome.value = start.welcome;
     persist();
   }
@@ -714,6 +763,7 @@ function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: st
     bindControls(ctx, {
       setPreset: (id) => controls.setPreset(id),
       onTap,
+      blocked: () => !!ui.start.value,
       extra: {
         x: () => {
           exterior = !exterior;
@@ -728,7 +778,7 @@ function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: st
     window.addEventListener('pagehide', persist);
   }
 
-  void createCharacterFactory().then((created) => {
+  void (factoryPromise ??= createCharacterFactory()).then((created) => {
     factory = created;
     if (loaded) attachCharacters(loaded, { factory: created, crowdParent: crowdRoot, blobs, cashierLook });   // tłum i kasjer
   }).catch((error: unknown) => console.error('Nie udało się wczytać postaci.', error));
@@ -777,7 +827,7 @@ function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: st
     last = now;
     const realDt = Math.min(frameDt, MAX_FRAME_DT);
 
-    const modal = !!ui.report.value || ui.showIntro.value || !!ui.welcome.value || ui.showPrestige.value || !!session?.econ.gameOver;
+    const modal = !!ui.report.value || !!ui.start.value || !!ui.welcome.value || ui.showPrestige.value || !!session?.econ.gameOver;
     if (session && loaded && loaded.world.speed > 0 && !modal) {
       const events: EconEvent[] = [];
       advanceEconomy(session.econ, session.info, session.clock, realDt * loaded.world.speed, events);
@@ -808,7 +858,7 @@ function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: st
       }
     }
     bench?.beforeRender();
-    ctx.render();
+    if (!ui.start.value) ctx.render();   // ekran „Nowy sklep” zasłania scenę: nie rysujemy jej pod nim (podgląd ma własny renderer, a telefon ma dość roboty)
     overlay?.update(ctx.rig.camera);
     const { calls, triangles } = ctx.renderer.info.render;
     const sample = meter.tick(now, calls, triangles);
@@ -847,6 +897,23 @@ function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: st
   if (!benchMode) renderUi(root, controls, game);   // sterowanie działa od tej chwili; benchmark zostaje z samą nakładką wyników
 }
 
+/**
+ * Ekran startowy „Twój kasjer” przy wejściu na stronę. Spełnia się wyborem gracza (nick, wygląd kasjera, seed sklepu) razem z
+ * fabryką postaci, której używał podgląd: gra dostanie tę samą, więc stroje nie ładują się drugi raz. `null`, gdy ekranu nie
+ * trzeba pokazywać (gracz jest już w meta albo meta pochodzi z nowszej wersji gry). Gry jeszcze nie ma: podgląd ma własny, lekki
+ * renderer i oddaje go, zanim ruszy `startGame`. `seed` wypełnia pole: `?seed=`, ostatnio grany sklep (gracz ze starymi zapisami
+ * kontynuuje swoją grę) albo losowy.
+ */
+async function startScreen(seed: string): Promise<StartEntry | null> {
+  const meta = loadMeta();
+  if (!needsStartScreen(meta)) return null;
+  const factory = createCharacterFactory();
+  const choice = await new Promise<StartChoice>((resolve) => {
+    ui.start.value = { mode: 'first', form: initialStartForm(meta, seed), factory, onStart: resolve };
+  });
+  return { choice, factory };
+}
+
 const params = new URLSearchParams(location.search);
 const canvas = document.getElementById('scene') as HTMLCanvasElement;
 const uiRoot = document.getElementById('ui') as HTMLElement;
@@ -867,6 +934,10 @@ if (params.get('charTest') === '1') {
   // benchmark też jest osobnym fragmentem: zwykła gra go nie pobiera
   const benchKit = params.get('bench') === '1' ? await import('@/bench/bench') : null;
   const requested = benchKit ? benchKit.BENCH_SEED : params.get('seed');
-  const seed = requested || lastSavedSeed() || randomSeed();
-  startGame(canvas, uiRoot, seed, presetFromUrl(), params, benchKit);   // adres wpisze sam, gdy świat już stoi
+  const seed = entrySeed(requested, lastSavedSeed());
+  // Nakładka wstaje pierwsza: komunikat z createRenderContext musi trafić w działający nasłuch, a ekran startowy ma gdzie się pokazać.
+  listenForNotices();
+  renderUi(uiRoot, null, null);
+  const entry = benchKit ? null : await startScreen(seed);
+  startGame(canvas, uiRoot, entry?.choice.seed ?? seed, presetFromUrl(), params, benchKit, entry);   // adres wpisze sam, gdy świat już stoi
 }

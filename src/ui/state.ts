@@ -1,5 +1,7 @@
 import { signal, type Signal } from '@preact/signals';
 import type { Speed } from '@/game/loop';
+import type { StartChoice, StartForm } from '@/game/start';
+import type { CharacterFactory } from '@/render/characters/characterFactory';
 import type { QualityPresetId } from '@/render/quality';
 import type { TimeOfDay } from '@/render/lighting';
 import type { BenchProgress } from '@/bench/bench';
@@ -53,7 +55,45 @@ export interface Toast { id: number; text: string; kind: ToastKind }
 export const toasts: Signal<Toast[]> = signal<Toast[]>([]);
 export const report: Signal<MonthReport | null> = signal<MonthReport | null>(null);
 export const showSettings: Signal<boolean> = signal(false);
-export const showIntro: Signal<boolean> = signal(false);
+/** Sklep tymczasowy (zapis się nie zbudował albo jest z nowszej wersji gry): nic się w nim nie zapisuje, więc ekran gry to pokazuje. */
+export const ephemeral: Signal<boolean> = signal(false);
+
+/**
+ * Ekran startowy „Twój kasjer”: otwarty z danymi, z którymi się pokazuje, albo null. Zastępuje dawne okno „Witaj w Traszce”;
+ * jego wskazówki przeszły do podpowiedzi pierwszego dnia (`hints`).
+ */
+export interface StartRequest {
+  /** `first`: wejście na stronę (gry jeszcze nie ma); `new`: „Nowy sklep” z ⚙ (gra stoi pod ekranem i czeka). */
+  mode: 'first' | 'new';
+  form: StartForm;
+  /** Fabryka postaci dla podglądu: ta sama, z której korzysta gra (strój specjalny dociąga się przy pokazaniu). */
+  factory: Promise<CharacterFactory>;
+  /** Gracz zatwierdził: ekran jest już zamknięty, a podgląd zwolniony (renderer i kontekst WebGL), gra może ruszać. */
+  onStart(choice: StartChoice): void;
+  /** „Wróć do gry”; tylko w trybie `new`. */
+  onBack?(): void;
+}
+export const start: Signal<StartRequest | null> = signal<StartRequest | null>(null);
+
+/** Ile (ms) widać jedną podpowiedź pierwszego dnia, zanim wejdzie następna. */
+export const HINT_MS = 9000;
+/** Podpowiedzi pierwszego dnia (krótkie dymki): pierwsza jest widoczna, kolejne wchodzą po kolei. */
+export const hints: Signal<string[]> = signal<string[]>([]);
+let hintTimer: ReturnType<typeof setTimeout> | undefined;
+function armHint(): void {
+  clearTimeout(hintTimer);
+  hintTimer = hints.value.length > 0 ? setTimeout(nextHint, HINT_MS) : undefined;
+}
+/** Pokazuje podpowiedzi po kolei (lista zastępuje poprzednią; pusta czyści). */
+export function showHints(list: readonly string[]): void {
+  hints.value = [...list];
+  armHint();
+}
+/** Następna podpowiedź („Dalej”); czas kolejnej liczy się od nowa. */
+export function nextHint(): void {
+  hints.value = hints.value.slice(1);
+  armHint();
+}
 
 let toastId = 0;
 /** Krótki komunikat u góry ekranu; znika sam po kilku sekundach. Najwyżej 2 naraz, ten sam tekst się nie dubluje. */
@@ -105,4 +145,6 @@ export interface GameActions {
   rushRemont(): CommandResult;
   /** Zaczyna od nowa w tym samym sklepie (kasuje zapis). */
   restart(): void;
+  /** „Nowy sklep” z ⚙: otwiera ekran startowy (nick, kasjer, seed). Obecny sklep zostaje zapisany pod swoim seedem. */
+  newStore(): void;
 }

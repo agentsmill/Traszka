@@ -19,7 +19,7 @@ export const GESTURE_BOW_RAD = 0.2;
 const UNIFORM: OutfitOverrides = Object.freeze({ top: PALETTE.brand.green });
 
 /** Zwalnia postać i zdejmuje ją ze sceny (jej własne `dispose` zwalnia materiał i szkielet, geometria jest wspólna w fabryce). */
-function releaseCharacter(character: CharacterInstance): void {
+export function releaseCharacter(character: CharacterInstance): void {
   character.dispose();
   character.object.removeFromParent();
 }
