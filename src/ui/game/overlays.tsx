@@ -129,18 +129,23 @@ function ReportBody({ r }: { r: MonthReport }) {
   );
 }
 
-/** Raport miesięczny (pauzuje grę). Przy wypowiedzeniu umowy: koniec gry i nowy start. */
+/**
+ * Raport miesięczny (pauzuje grę). Przy wypowiedzeniu umowy: koniec gry i nowy start. Okno końca gry wynika ze stanu
+ * (`gameOver` i ostatni raport w zapisie), więc wraca po przeładowaniu strony; zapis sprzed tej poprawki nie ma raportu
+ * i pokazuje samo wypowiedzenie.
+ */
 export function ReportModal({ game }: { game: GameActions }) {
-  const r = report.value;
   const view = econ.value;
-  if (!r) return null;
   const over = !!view?.s.gameOver;
+  const r = report.value ?? (over ? view?.s.lastReport ?? null : null);
+  if (!r && !over) return null;
+  const title = over ? 'Koniec współpracy' : `Raport: ${r!.label}`;
   return (
     <div class="tt-modal-wrap">
-      <div class="tt-modal" role="dialog" aria-label={`Raport: ${r.label}`}>
-        <h2>{over ? 'Koniec współpracy' : `Raport: ${r.label}`}</h2>
-        <ReportBody r={r} />
-        <p class="tt-quote">„{over ? 'Centrala dziękuje za współpracę. Rozliczenie końcowe: inwentaryzacja jutro o 6:00.' : r.comment}”<br /><span class="tt-muted">— Centrala</span></p>
+      <div class="tt-modal" role="dialog" aria-label={title}>
+        <h2>{title}</h2>
+        {r && <ReportBody r={r} />}
+        <p class="tt-quote">„{over ? 'Centrala dziękuje za współpracę. Rozliczenie końcowe: inwentaryzacja jutro o 6:00.' : r!.comment}”<br /><span class="tt-muted">— Centrala</span></p>
         {over
           ? <button type="button" class="tt-btn tt-primary big" onClick={() => game.restart()}>Zacznij od nowa</button>
           : <button type="button" class="tt-btn tt-primary big" onClick={() => { report.value = null; }}>Dalej</button>}

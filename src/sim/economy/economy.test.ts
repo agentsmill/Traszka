@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { generateStore } from '@/sim/store/generateStore';
-import { CATS, MINUTES_PER_DAY, OPEN_FROM, START_CASH, TILL_RATE, UNLOAD_AT, UNLOAD_RATE, WAGE_PER_DAY } from './catalog';
+import { BANKRUPTCY_AT, CATS, MINUTES_PER_DAY, OPEN_FROM, START_CASH, TILL_RATE, UNLOAD_AT, UNLOAD_RATE, WAGE_PER_DAY } from './catalog';
 import { dateOfDay, formatDate, isLastDayOfMonth } from './calendar';
 import { advanceEconomy } from './clock';
 import {
@@ -240,6 +240,28 @@ describe('personel w jednej minucie', () => {
     expect(s.lastCashiers).toBe(2);
     expect(s.lastWorkers).toBe(1);
     expect(s.lastCashiers + s.lastWorkers).toBe(s.staff);
+  });
+});
+
+describe('ostatni raport miesięczny w stanie', () => {
+  it('po zamknięciu miesiąca raport zostaje w stanie i przechodzi przez zapis JSON', () => {
+    const s = createEconomy(SEED, info);
+    expect(s.lastReport).toBeNull();
+    const events = run(s, info, 30 * MINUTES_PER_DAY);
+    const report = events.find((e) => e.kind === 'month')!.report!;
+    expect(s.lastReport).toEqual(report);
+    expect((JSON.parse(JSON.stringify(s)) as EconomyState).lastReport).toEqual(report);
+  });
+
+  it('bankructwo: stan z wypowiedzianą umową niesie raport, który okno końca gry pokaże po przeładowaniu', () => {
+    const s = createEconomy(SEED, info);
+    s.cash = -1e6;
+    run(s, info, 30 * MINUTES_PER_DAY);
+    expect(s.gameOver).toBe(true);
+    const restored = JSON.parse(JSON.stringify(s)) as EconomyState;
+    expect(restored.gameOver).toBe(true);
+    expect(restored.lastReport?.label).toBe('wrzesień 2026');
+    expect(restored.lastReport?.cash).toBeLessThan(BANKRUPTCY_AT);
   });
 });
 

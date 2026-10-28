@@ -99,6 +99,8 @@ export interface EconomyState {
   month: Counters;
   total: Counters;
   history: { label: string; profit: number; revenue: number }[];
+  /** Ostatni raport miesięczny: okno końca gry (wypowiedzenie umowy) wraca po przeładowaniu strony razem z nim. */
+  lastReport: MonthReport | null;
   milestones: string[];
   gameOver: boolean;
   /** Ostatni przydział ludzi (do interfejsu): ilu na kasie, ilu przy paletach. */
@@ -245,6 +247,7 @@ export function createEconomy(seed: string, info: StoreInfo, partner: EconomySta
     month: emptyCounters(),
     total: emptyCounters(),
     history: [],
+    lastReport: null,
     milestones: [],
     gameOver: false,
     lastCashiers: 1,
@@ -657,6 +660,7 @@ function closeMonth(s: EconomyState, day: number, out: EconEvent[]): void {
   const label = formatMonth(day);
   const report: MonthReport = { label, counters: { ...m }, profit, cash: s.cash, comment: centralaComment(s, profit) };
   s.history.push({ label, profit, revenue: m.revenue });
+  s.lastReport = report;
   out.push({ kind: 'month', text: `Raport za ${label}: wynik ${profit >= 0 ? '+' : ''}${fmt(profit)} zł.`, report });
   s.month = emptyCounters();
   if (s.cash < BANKRUPTCY_AT) {

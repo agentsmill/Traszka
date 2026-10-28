@@ -672,7 +672,7 @@ function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: st
     const streak = advanceDaily(meta, new Date());
     if (fresh) {
       ui.showIntro.value = true;
-    } else {
+    } else if (!session.econ.gameOver) {   // po wypowiedzeniu umowy wstaje samo okno końca gry, bez premii na powitanie
       const hours = meta.lastSeen > 0 ? (Date.now() - meta.lastSeen) / 3_600_000 : 0;
       const offline = offlineEarnings(session.econ, hours);
       const daily = streak !== null ? dailyReward(streak, session.econ.level) : null;
@@ -749,7 +749,7 @@ function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: st
     last = now;
     const realDt = Math.min(frameDt, MAX_FRAME_DT);
 
-    const modal = !!ui.report.value || ui.showIntro.value || !!ui.welcome.value || ui.showPrestige.value;
+    const modal = !!ui.report.value || ui.showIntro.value || !!ui.welcome.value || ui.showPrestige.value || !!session?.econ.gameOver;
     if (session && loaded && loaded.world.speed > 0 && !modal) {
       const events: EconEvent[] = [];
       advanceEconomy(session.econ, session.info, session.clock, realDt * loaded.world.speed, events);
