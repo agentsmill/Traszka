@@ -557,11 +557,11 @@ function routeToSco(s: CrowdInternals, a: Agent, b: Brain): boolean {
   return true;
 }
 
-function isFreeToPay(s: CrowdInternals, self: Brain, c: Cell): boolean {
+function isFreeToPay(s: CrowdInternals, brain: Brain, c: Cell): boolean {
   const holder = s.occ[cellAt(s, c)];
-  if (holder !== -1 && s.brains.get(holder!) !== self) return false;
+  if (holder !== -1 && s.brains.get(holder!) !== brain) return false;
   for (const other of s.brains.values()) {
-    if (other !== self && other.goal === 'sco' && other.goalCell !== null && sameCell(other.goalCell, c)) return false;
+    if (other !== brain && other.goal === 'sco' && other.goalCell !== null && sameCell(other.goalCell, c)) return false;
   }
   return true;
 }
@@ -578,10 +578,10 @@ function queueHasRoom(s: CrowdInternals): boolean {
 }
 
 /** Czy kratka jest wolna i nikt inny nie idzie tu oglądać mebla. */
-function isFreeToBrowse(s: CrowdInternals, self: Brain, c: Cell): boolean {
+function isFreeToBrowse(s: CrowdInternals, brain: Brain, c: Cell): boolean {
   if (s.occ[cellAt(s, c)] !== -1) return false;
   for (const other of s.brains.values()) {
-    if (other !== self && other.goal === 'fixture' && other.goalCell !== null && sameCell(other.goalCell, c)) return false;
+    if (other !== brain && other.goal === 'fixture' && other.goalCell !== null && sameCell(other.goalCell, c)) return false;
   }
   return true;
 }
