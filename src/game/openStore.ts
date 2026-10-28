@@ -1,4 +1,5 @@
 import type { EconomyState } from '@/sim/economy/economy';
+import { freeSeed } from './seeds';
 import { UNBUILDABLE_SAVE_NOTICE, createSession, hasStoredSave, withLayoutFromSeed, type GameSession } from './session';
 
 export interface OpenRequest {
@@ -60,7 +61,8 @@ export function openStore({ seed, fresh, partner, randomSeed, build }: OpenReque
   };
   const somewhereElse = (ephemeral: boolean, notice: string): GameSession => {
     for (let i = 0; i < RANDOM_TRIES; i++) {
-      const s = standIn(randomSeed(), ephemeral, notice);
+      // świeża gra nie czyta zapisu, a pierwszy persist() zastąpiłby cudzy: seed ma być wolny
+      const s = standIn(freeSeed(randomSeed, hasStoredSave), ephemeral, notice);
       if (s) return s;
     }
     throw lastError;

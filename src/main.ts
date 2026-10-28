@@ -14,9 +14,10 @@ import { createBlobShadows } from '@/render/characters/blobShadows';
 import { DEFAULT_CASHIER_LOOK, cashierCues } from '@/game/cashier';
 import { MAX_FRAME_DT, advanceClock, clockAlpha } from '@/game/loop';
 import { randomSeed } from '@/game/seedWords';
+import { freeSeed } from '@/game/seeds';
 import {
-  NEWER_SAVE_NOTICE, UNBUILDABLE_SAVE_NOTICE, createSession, discardSave, lastSavedSeed, retireSession, reviveSession, saveSession, syncLayout,
-  type GameSession,
+  NEWER_SAVE_NOTICE, UNBUILDABLE_SAVE_NOTICE, createSession, discardSave, hasStoredSave, lastSavedSeed, retireSession, reviveSession, saveSession,
+  syncLayout, type GameSession,
 } from '@/game/session';
 import { openStore } from '@/game/openStore';
 import { addToNetwork, claimDaily, loadMeta, partnerOf, saveMeta, startupWindow, type Meta } from '@/game/meta';
@@ -557,9 +558,12 @@ function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: st
       }
       const closed = session;
       const before = meta;
+      // nowa gra nie czyta zapisu, więc seed musi być wolny (inaczej pierwszy zapis zjadłby cudzą grę); losujemy przed
+      // zamknięciem, kiedy zapis zamykanego sklepu jeszcze leży, więc i jego seed nie wróci
+      const next = freeSeed(randomSeed, hasStoredSave);
       meta = addToNetwork(meta, closed.econ);   // nowy sklep dostaje już premię z tego; ten sam seed drugi raz niczego nie daje
       retireSession(closed);                    // zapis znika i nie wróci: setSeed zaraz zapisuje „bieżący” sklep
-      if (!setSeed(randomSeed(), true)) {       // nowy sklep się nie otworzył: wszystko wraca na miejsce
+      if (!setSeed(next, true)) {               // nowy sklep się nie otworzył: wszystko wraca na miejsce
         meta = before;
         reviveSession(closed);
         persist();

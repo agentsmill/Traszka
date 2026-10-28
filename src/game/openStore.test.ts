@@ -265,3 +265,45 @@ describe('openStore: nowa gra, której nie da się zbudować (zapisu do ochrony 
     expect(storage.getItem(key(BLOK))).toBe(raw);
   });
 });
+
+describe('openStore: sklep zastępczy nigdy nie siada na cudzym zapisie', () => {
+  it('wylosowany seed ma zapis: losuje jeszcze raz, a zapis leży bajt w bajt także po zapisie nowej gry', () => {
+    const other = savedGame('losowy-1');   // pierwsze losowanie trafia w cudzą grę
+    const { build, built } = builder((s) => s.seed === BLOK);
+    const s = open(build, { fresh: true });
+    expect(built.map((x) => x.seed)).toEqual([BLOK, 'losowy-2']);
+    expect(s.seed).toBe('losowy-2');
+    expect(s.ephemeral).toBe(false);
+    saveSession(s);   // persist() po otwarciu
+    expect(storage.getItem(key('losowy-1'))).toBe(other);
+    expect(storage.getItem(key('losowy-2'))).not.toBeNull();
+  });
+
+  it('generator nie daje sklepu dla seeda bez zapisu: zastępczy też omija seedy z zapisem', () => {
+    const other = savedGame('losowy-1');
+    faults.generatorThrowsFor.add(BLOK);
+    const s = open(builder().build);
+    expect(s.seed).toBe('losowy-2');
+    saveSession(s);
+    expect(storage.getItem(key('losowy-1'))).toBe(other);
+  });
+
+  it('każda kolejna próba losuje od nowa spośród wolnych: nieudany zastępczy nie zostawia losowania na zapisie', () => {
+    const other = savedGame('losowy-1');
+    const { build, built } = builder((s) => s.seed === BLOK || s.seed === 'losowy-2');
+    const s = open(build, { fresh: true });
+    expect(built.map((x) => x.seed)).toEqual([BLOK, 'losowy-2', 'losowy-3']);
+    expect(s.seed).toBe('losowy-3');
+    saveSession(s);
+    expect(storage.getItem(key('losowy-1'))).toBe(other);
+  });
+
+  it('sklep tymczasowy (zapis z nowszej wersji gry, jego seed się nie buduje) też losuje spośród seedów bez zapisu', () => {
+    storage.setItem(key(BLOK), JSON.stringify({ schema: 5, seed: BLOK, econ: { przyszłość: true } }));
+    const other = savedGame('losowy-1');
+    const s = open(builder((x) => x.seed === BLOK).build);
+    expect(s.seed).toBe('losowy-2');
+    expect(s.ephemeral).toBe(true);
+    expect(storage.getItem(key('losowy-1'))).toBe(other);
+  });
+});
