@@ -1,4 +1,4 @@
-import { BoxGeometry, Group, MathUtils, Mesh, MeshBasicMaterial, Raycaster, Vector2, Vector3, type BufferGeometry, type Material, type Object3D } from 'three';
+import { Group, MathUtils, Mesh, Raycaster, Vector2, Vector3, type BufferGeometry, type Material, type Object3D } from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { createRenderContext, type RenderContext } from '@/render/renderer';
 import { ISO_PITCH_DEG } from '@/render/cameraRig';
@@ -6,17 +6,13 @@ import { QUALITY, detectDeviceCaps, pickInitialPreset, type QualityPresetId } fr
 import type { TimeOfDay } from '@/render/lighting';
 import { BEVEL, PALETTE, material } from '@/render/style';
 import { cellToWorld } from '@/render/coords';
-import { buildStore, type StoreView } from '@/render/store/buildStore';
-import { createGoods, type Goods } from '@/render/store/products';
-import { createPalletsView, type PalletsView } from '@/render/game/palletsView';
-import { createEquipmentView, type EquipmentView } from '@/render/game/equipmentView';
+import { loadStore, unloadStore, type Loaded } from '@/render/game/loadedStore';
 import { buildStreet, type StreetView } from '@/render/street/buildStreet';
 import { createCharacterFactory, type CharacterFactory } from '@/render/characters/characterFactory';
 import { ANIM_SPEED_CAP, CrowdView } from '@/render/crowdView';
 import { createBlobShadows } from '@/render/characters/blobShadows';
 import { MAX_FRAME_DT, advanceClock, clockAlpha } from '@/game/loop';
 import { randomSeed } from '@/game/seedWords';
-import { createWorld, type World } from '@/game/world';
 import {
   BROKEN_SAVE_NOTICE, BROKEN_SAVE_NOTICE_NO_COPY, createSession, deleteSave, lastSavedSeed, quarantineSave, retireSession, reviveSession,
   saveSession, syncLayout, type GameSession,
@@ -218,19 +214,6 @@ function startTestScene(canvas: HTMLCanvasElement, preset: QualityPresetId): voi
   Object.assign(window, { traszkaTest: ctx });
 }
 
-/** Wszystko, co zależy od układu sklepu. `unload` zwalnia to w całości, więc zmiana seeda albo remont niczego nie zostawia. */
-interface Loaded {
-  world: World;
-  view: StoreView;                  // razem z towarem na półkach (jest jego dzieckiem)
-  goods: Goods;
-  pallets: PalletsView | null;      // tylko w grze (bez benchmarku)
-  equipment: EquipmentView | null;
-  till: Mesh | null;                // niewidoczna bryła nad kasą do stukania
-  tillTop: Vector3 | null;          // punkt nad kasą dla dymka kolejki
-  street: StreetView | null;        // dochodzi asynchronicznie (modele GLB)
-  crowdView: CrowdView | null;      // dochodzi, gdy fabryka postaci jest gotowa
-}
-
 /** Wpisuje seed do adresu (zachowując pozostałe parametry), żeby odświeżenie albo link odtworzyły ten sam sklep. */
 function writeSeedToUrl(seed: string): void {
   const url = new URL(location.href);
@@ -323,73 +306,50 @@ function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: st
   function unload(): void {
     generation++;
     if (!loaded) return;
-    loaded.crowdView?.dispose();
-    loaded.street?.dispose();
-    loaded.pallets?.dispose();
-    loaded.equipment?.dispose();
-    loaded.view.dispose();
+    unloadStore(loaded);
     loaded = null;
   }
 
+  /**
+   * Buduje świat sklepu `seed` w scenie. Gdy się nie uda, w scenie nie zostaje nic (ani z tej próby, ani z poprzedniego
+   * sklepu), a wyjątek idzie dalej: wołający odtwarza poprzedni sklep albo otwiera awaryjny na czystej scenie.
+   */
   function load(seed: string): void {
     const speed = loaded?.world.speed ?? ui.speed.value;
     unload();
     const mine = generation;
 
     const layout = session ? session.layout : generateStore(seed);
-    const world = createWorld(seed, benchKit?.BENCH_CROWD, layout);
-    world.speed = speed;
-    const view = buildStore(layout);
-    const goods = createGoods(view, seed);
-    view.root.add(goods.root);   // view.dispose() zwalnia też bufory instancji towaru
-    ctx.scene.add(view.root);
-
-    let pallets: PalletsView | null = null;
-    let equipment: EquipmentView | null = null;
-    let till: Mesh | null = null;
-    let tillTop: Vector3 | null = null;
-    if (session) {
-      pallets = createPalletsView(layout, session.info);
-      view.root.add(pallets.root);
-      equipment = createEquipmentView(layout, session.info, view);
-      view.root.add(equipment.root);
-      const checkout = layout.fixtures.find((f) => f.kind === 'checkout');
-      if (checkout) {
-        const a = cellToWorld(layout, checkout.x, checkout.y);
-        const b = cellToWorld(layout, checkout.x + checkout.w - 1, checkout.y + checkout.d - 1);
-        till = new Mesh(new BoxGeometry(checkout.w * CELL_SIZE_M + 0.4, 1.6, checkout.d * CELL_SIZE_M + 0.4), new MeshBasicMaterial({ visible: false }));
-        till.position.set((a.x + b.x) / 2, 0.8, (a.z + b.z) / 2);
-        till.userData = { pick: { kind: 'till' } };
-        view.root.add(till);
-        tillTop = new Vector3((a.x + b.x) / 2, 1.9, (a.z + b.z) / 2);
-      }
-    }
-
-    const current: Loaded = {
-      world, view, goods, pallets, equipment, till, tillTop, street: null,
-      crowdView: factory ? new CrowdView(factory, layout, crowdRoot, blobs) : null,
-    };
+    const current = loadStore({
+      scene: ctx.scene, seed, layout, info: session ? session.info : null, crowd: benchKit?.BENCH_CROWD, speed,
+      crowdParent: crowdRoot, blobs, factory,
+    });
     loaded = current;
-    clock.acc = 0;
-    lastVisual = -1;
+    try {
+      clock.acc = 0;
+      lastVisual = -1;
 
-    const lo = cellToWorld(layout, 0, 0);
-    const hi = cellToWorld(layout, layout.width - 1, layout.depth - 1);
-    ctx.rig.setBounds(lo.x - CELL_SIZE_M / 2, lo.z - CELL_SIZE_M / 2, hi.x + CELL_SIZE_M / 2, hi.z + CELL_SIZE_M / 2);
-    // cel kamery: środek sali sprzedaży i zaplecza (bez chodnika); na pionowym ekranie z chodnikiem, bo tam stoją palety
-    const aspect = window.innerWidth / Math.max(1, window.innerHeight);
-    const portrait = aspect < 0.9;
-    // telefon: środek kadru bliżej frontu sklepu (chodnik z paletami, wejście, kasa), a zaplecze wypada u góry ekranu
-    ctx.rig.panBy(-ctx.rig.target.x, cellToWorld(layout, 0, portrait ? layout.midWallY * 0.55 : (5 + layout.depth) / 2).z - ctx.rig.target.z);
-    if (portrait && !(Number(params.get('zoom')) > 0)) {
-      // sala w kadrze: rzut izometryczny ma szerokość ~ (szerokość + głębokość sali) · cos 45°
-      const fit = ((layout.width + layout.midWallY) * CELL_SIZE_M * Math.SQRT1_2 * 0.8) / aspect;
-      ctx.rig.zoomBy(ctx.rig.viewSize / Math.min(28, Math.max(14, fit)));
+      const lo = cellToWorld(layout, 0, 0);
+      const hi = cellToWorld(layout, layout.width - 1, layout.depth - 1);
+      ctx.rig.setBounds(lo.x - CELL_SIZE_M / 2, lo.z - CELL_SIZE_M / 2, hi.x + CELL_SIZE_M / 2, hi.z + CELL_SIZE_M / 2);
+      // cel kamery: środek sali sprzedaży i zaplecza (bez chodnika); na pionowym ekranie z chodnikiem, bo tam stoją palety
+      const aspect = window.innerWidth / Math.max(1, window.innerHeight);
+      const portrait = aspect < 0.9;
+      // telefon: środek kadru bliżej frontu sklepu (chodnik z paletami, wejście, kasa), a zaplecze wypada u góry ekranu
+      ctx.rig.panBy(-ctx.rig.target.x, cellToWorld(layout, 0, portrait ? layout.midWallY * 0.55 : (5 + layout.depth) / 2).z - ctx.rig.target.z);
+      if (portrait && !(Number(params.get('zoom')) > 0)) {
+        // sala w kadrze: rzut izometryczny ma szerokość ~ (szerokość + głębokość sali) · cos 45°
+        const fit = ((layout.width + layout.midWallY) * CELL_SIZE_M * Math.SQRT1_2 * 0.8) / aspect;
+        ctx.rig.zoomBy(ctx.rig.viewSize / Math.min(28, Math.max(14, fit)));
+      }
+      current.view.setCutaway(ctx.rig.yawIndex);
+      current.view.setExteriorMode(exterior);
+      current.view.setTimeOfDay(tod);
+      syncVisuals(true);
+    } catch (error) {
+      unload();   // sklep jest już w `loaded`: zdejmujemy go ze sceny, żeby wyjątek nie zostawił pół-sklepu
+      throw error;
     }
-    view.setCutaway(ctx.rig.yawIndex);
-    view.setExteriorMode(exterior);
-    view.setTimeOfDay(tod);
-    syncVisuals(true);
 
     void buildStreet(layout, seed).then((built) => {
       if (mine !== generation) { built.dispose(); return; }
