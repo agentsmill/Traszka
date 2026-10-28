@@ -1,6 +1,7 @@
 import { applyCommand, type Command } from '@/sim/economy/commands';
-import { createEconomy, stepMinute, type EconEvent, type EconomyState } from '@/sim/economy/economy';
+import { awaitingDecision, createEconomy, stepMinute, type EconEvent, type EconomyState } from '@/sim/economy/economy';
 import { computeStoreInfo, type StoreInfo } from '@/sim/economy/storeInfo';
+import { visibleCards } from '@/sim/economy/tycoon/cards';
 import { GENERATOR_VERSION } from '@/sim/store/generateStore';
 import { layoutFor } from '@/sim/store/layoutFor';
 import type { StoreLayout } from '@/sim/store/types';
@@ -59,7 +60,12 @@ export function isRunRecord(x: unknown): x is RunRecord {
  * `stepMinute`. Dlatego:
  * - wpis sprzed startu (minuta mniejsza od minuty początkowej) wchodzi na starcie, zanim ruszy pierwszy krok;
  * - wpis późniejszy niż `untilMinute` jest pomijany, bo pętla zatrzymuje się, zanim dojdzie do jego minuty;
- * - po końcu gry (bankructwo) pętla się kończy, a pozostałe polecenia `applyCommand` i tak odrzuca.
+ * - po końcu gry (bankructwo) pętla się kończy, a pozostałe polecenia `applyCommand` i tak odrzuca;
+ * - karta bez odpowiedzi w dzienniku dostaje odpowiedź zaznaczoną z góry: żywa gra stoi na karcie do odpowiedzi gracza, a
+ *   `stepMinute` sam jej nie pilnuje, więc po poleceniach minuty (odpowiedź gracza, jeśli jest, wchodzi z dziennika) każda
+ *   widoczna karta, która nadal czeka, dostaje `answerCard` z `defaultAnswer` (poza dziennikiem, jak każdy krok symulacji).
+ *   Dzięki temu dziennik z samymi stuknięciami dochodzi do końca, zamiast zawisnąć na pierwszej karcie. Stan w minucie
+ *   `untilMinute` jest sprzed takiej odpowiedzi (pętla wraca wcześniej), czyli taki, jaki żywa gra miała przed kliknięciem.
  * Dziennik przychodzi od klienta, więc nie rzucamy z jego powodu: wpisy bez skończonej minuty albo `seq` odpadają, nieznane
  * i zepsute polecenia odrzuca `applyCommand`, a sortowanie na kopii jest stabilne (remis `(minute, seq)` rozstrzyga kolejność
  * w dzienniku). Rzuca tylko wtedy, gdy odtworzenie nie mogłoby być wierne: inna wersja generatora (to byłby inny sklep),
@@ -84,6 +90,11 @@ export function replayRun(run: RunRecord, untilMinute: number): EconomyState {
       if (out.layoutChanged && out.info) info = out.info;   // po remoncie dalsze kroki liczą na nowym układzie
     }
     if (state.minute >= untilMinute || state.gameOver) return state;
+    if (awaitingDecision(state)) {
+      for (const card of visibleCards(state.tycoon.cards, state.minute)) {
+        applyCommand(state, info, { type: 'answerCard', seq: card.seq, answer: card.defaultAnswer });
+      }
+    }
     events.length = 0;
     stepMinute(state, info, events);
   }

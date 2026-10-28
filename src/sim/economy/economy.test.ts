@@ -1,16 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import { generateStore } from '@/sim/store/generateStore';
-import { BANKRUPTCY_AT, CATS, CAT_INFO, MINUTES_PER_DAY, OPEN_FROM, START_CASH, TILL_RATE, UNLOAD_AT, UNLOAD_RATE, WAGE_PER_DAY } from './catalog';
+import {
+  BANKRUPTCY_AT, CATS, CAT_INFO, HOT, ITEMS_PER_CUSTOMER, MINUTES_PER_DAY, OPEN_FROM, START_CASH, TILL_RATE, UNLOAD_AT, UNLOAD_RATE,
+  WAGE_PER_DAY,
+} from './catalog';
 import { dateOfDay, formatDate, isLastDayOfMonth } from './calendar';
 import { advanceEconomy } from './clock';
 import {
-  arrivalRate, buyEquipment, buyUpgrade, changeTrust, claimQuest, createEconomy, effects, estimatedDailyMargin,
-  expectedDailyCustomers, fire, freeSpots, kpiMetricsOf, kpiScaleOf, movePallet, relayout, returnPallet, robotFleet, slotFree,
-  startRemont, stepMinute, tapPallet, tapTill, unlocksAt, upgradeBlocker, workshopUnlocked, type CommandResult, type EconEvent,
-  type EconomyState,
+  answerCard, arrivalRate, awaitingDecision, buyEquipment, buyUpgrade, cardContext, changeTrust, claimQuest, createEconomy, effects,
+  estimatedDailyMargin, expectedDailyCustomers, fire, freeSpots, isOpenForCustomers, kpiMetricsOf, kpiScaleOf, movePallet, relayout,
+  returnPallet, robotFleet, slotFree, startRemont, stepMinute, tapPallet, tapTill, unlocksAt, upgradeBlocker, workshopUnlocked,
+  type CommandResult, type EconEvent, type EconomyState,
 } from './economy';
 import { rand01 } from './rand';
 import { computeStoreInfo, type StoreInfo } from './storeInfo';
+import { cardDef, visibleCards, type CardDelta, type CardInstance } from './tycoon/cards';
 import { rollWeather } from './tycoon/cleanliness';
 import { pinStaff, setStaffProfile } from './tycoon/staff';
 import { dateOfGameDay, isSunday } from './tycoon/time';
@@ -196,6 +200,7 @@ describe('ekonomia', () => {
 
   it('zegar: dzień sklepu przy ×1 trwa ok. 51 s, noc ok. 5 s', () => {
     const s = createEconomy(SEED, info);
+    s.tycoon.cards.pending = [];   // zegar mierzymy bez kart: karta zatrzymuje grę, a reszta klatki przepada (clock.test.ts)
     const clock = { acc: 0 };
     let minutes = 0;
     for (let t = 0; t < 51; t++) minutes += advanceEconomy(s, info, clock, 1, []);
@@ -973,5 +978,367 @@ describe('śmieci z palet, czystość sali, pogoda, niedziela i prasa', () => {
     run(s, info, 2 * MINUTES_PER_DAY);
     run(restored, info, 2 * MINUTES_PER_DAY);
     expect(JSON.stringify(restored)).toBe(JSON.stringify(s));
+  });
+});
+
+describe('karty dnia i okólniki', () => {
+  /** Karta na biurku od tej minuty: odpowiedzi to same skutki z `deltas` (bez efektów na czas i ryzyka). */
+  function plant(s: EconomyState, id: string, deltas: CardDelta[], over: Partial<CardInstance> = {}): CardInstance {
+    const card: CardInstance = {
+      seq: s.tycoon.cards.seq++, id, day: Math.floor(s.minute / MINUTES_PER_DAY), showAt: s.minute, params: {},
+      answers: deltas.map((delta) => ({ delta, mods: [], risk: null })), defaultAnswer: 0, ...over,
+    };
+    s.tycoon.cards.pending.push(card);
+    return card;
+  }
+  /** Gra bez kart na biurku, żeby liczyły się tylko te wstawione przez test. */
+  const quiet = (): EconomyState => {
+    const s = createEconomy(SEED, info);
+    s.tycoon.cards.pending = [];
+    return s;
+  };
+  const answer = (s: EconomyState, card: CardInstance, n: number, out: EconEvent[] = []): CommandResult => answerCard(s, card.seq, n, out);
+
+  describe('losowanie i stan', () => {
+    it('nowa gra losuje karty dnia 0: 1–3 sztuki, wszystkie z godziną w tym dniu, żadna jeszcze nie czeka o 6:00', () => {
+      const s = createEconomy(SEED, info);
+      const { pending, drawnDay } = s.tycoon.cards;
+      expect(drawnDay).toBe(0);
+      expect(pending.length).toBeGreaterThanOrEqual(1);
+      expect(pending.length).toBeLessThanOrEqual(3);
+      for (const c of pending) {
+        expect(c.day).toBe(0);
+        expect(c.showAt).toBeGreaterThanOrEqual(OPEN_FROM);
+        expect(c.showAt).toBeLessThan(MINUTES_PER_DAY);
+      }
+      expect(awaitingDecision(s)).toBe(pending.some((c) => c.showAt <= s.minute));
+    });
+
+    it('o północy losują się karty nowego dnia, raz na dzień, tak samo przy tym samym seedzie', () => {
+      const a = createEconomy(SEED, info);
+      const b = createEconomy(SEED, info);
+      run(a, info, MINUTES_PER_DAY - OPEN_FROM);        // 0:00 dnia 1, przed pierwszą minutą nowego dnia
+      expect(a.tycoon.cards.drawnDay).toBe(0);
+      run(a, info, 1);                                  // minuta północy losuje karty dnia (jak pogodę)
+      expect(a.tycoon.cards.drawnDay).toBe(1);
+      const day1 = a.tycoon.cards.pending.filter((c) => c.day === 1);
+      expect(day1.length).toBeGreaterThanOrEqual(1);
+      for (const c of day1) expect(c.showAt).toBeGreaterThanOrEqual(MINUTES_PER_DAY + OPEN_FROM);
+      run(a, info, 100);
+      expect(a.tycoon.cards.pending.filter((c) => c.day === 1)).toEqual(day1);   // drugi raz tego samego dnia nie losuje
+      run(b, info, MINUTES_PER_DAY - OPEN_FROM + 100);
+      expect(JSON.stringify(b.tycoon.cards)).toBe(JSON.stringify(a.tycoon.cards));
+    });
+
+    it('stepMinute nie sprawdza karty: minuta mija mimo karty na biurku (pauza to sprawa wołających)', () => {
+      const s = quiet();
+      plant(s, 'fefo', [{}, {}, {}]);
+      expect(awaitingDecision(s)).toBe(true);
+      run(s, info, 5);
+      expect(s.minute).toBe(OPEN_FROM + 5);
+      expect(awaitingDecision(s)).toBe(true);
+    });
+
+    it('karta ze showAt w przyszłości nie zatrzymuje, a w showAt zatrzymuje', () => {
+      const s = quiet();
+      const c = plant(s, 'fefo', [{}, {}, {}], { showAt: s.minute + 3 });
+      expect(awaitingDecision(s)).toBe(false);
+      run(s, info, 2);
+      expect(awaitingDecision(s)).toBe(false);
+      const events = run(s, info, 1);
+      expect(awaitingDecision(s)).toBe(true);
+      expect(events.filter((e) => e.kind === 'card')).toEqual([{ kind: 'card', text: cardDef('fefo')!.title }]);
+      expect(visibleCards(s.tycoon.cards, s.minute).map((x) => x.seq)).toEqual([c.seq]);
+    });
+
+    it('zdarzenie card jest raz, w minucie showAt, i bez liczb w tekście', () => {
+      const s = quiet();
+      plant(s, 'glitch', [{}, {}, {}], { showAt: s.minute + 2, params: { p: 30 } });
+      const events = run(s, info, 10);
+      const cards = events.filter((e) => e.kind === 'card');
+      expect(cards).toHaveLength(1);
+      expect(cards[0]!.text).toBe(cardDef('glitch')!.title);
+      expect(cards[0]!.text).not.toMatch(/\d{2}/);
+    });
+
+    it('zapis JSON z kartą na biurku wznawia grę bez różnic', () => {
+      const s = createEconomy(SEED, info);
+      run(s, info, 2 * MINUTES_PER_DAY);
+      const restored = JSON.parse(JSON.stringify(s)) as EconomyState;
+      run(s, info, MINUTES_PER_DAY);
+      run(restored, info, MINUTES_PER_DAY);
+      expect(JSON.stringify(restored)).toBe(JSON.stringify(s));
+    });
+  });
+
+  describe('cardContext', () => {
+    it('dostawa dziś to dostawy w kolejce na ten dzień, palety dziś to ich suma', () => {
+      const s = createEconomy(SEED, info);
+      s.minute = MINUTES_PER_DAY;   // północ dnia 1 (środa)
+      s.deliveries = [{ at: MINUTES_PER_DAY + 360, count: 3 }, { at: MINUTES_PER_DAY + 900, count: 2 }, { at: 2 * MINUTES_PER_DAY + 360, count: 7 }];
+      const c = cardContext(s, info);
+      expect(c).toMatchObject({
+        day: 1, now: MINUTES_PER_DAY, weekday: 3, deliveryToday: true, palletsToday: 5, staff: s.staff, trust: s.tycoon.trust.value,
+        cleanliness: s.tycoon.hall.cleanliness, sidewalkPallets: 2, weather: s.tycoon.hall.weather,
+      });
+      s.deliveries = [{ at: 2 * MINUTES_PER_DAY + 360, count: 7 }];
+      expect(cardContext(s, info)).toMatchObject({ deliveryToday: false, palletsToday: 0 });
+    });
+
+    it('skala sklepu: marża dnia z estimatedDailyMargin, obrót dnia = oczekiwani klienci × średni obrót na klienta (z hot)', () => {
+      const s = createEconomy(SEED, info);
+      const perCustomer = CATS.reduce((n, c) => n + CAT_INFO[c].price * CAT_INFO[c].basket, 0) * ITEMS_PER_CUSTOMER + HOT.chance * HOT.price;
+      const c = cardContext(s, info);
+      expect(c.dailyMargin).toBe(estimatedDailyMargin(s, info));
+      expect(c.dailyRevenue).toBeCloseTo(expectedDailyCustomers(s, info) * perCustomer, 6);
+      expect(c.dailyRevenue).toBeGreaterThan(c.dailyMargin);
+      expect(c.dailyMargin).toBeGreaterThan(0);
+    });
+  });
+
+  describe('answerCard: skutki trafiają do liczników', () => {
+    it('mandat z karty: month.fines, fineCount i gotówka; zła odpowiedź nic nie księguje', () => {
+      const s = quiet();
+      const card = plant(s, 'fefo', [{ fine: -300 }, {}, {}]);
+      const cash = s.cash;
+      expect(answer(s, card, 0).ok).toBe(true);
+      for (const k of [s.today, s.month, s.total]) {
+        expect(k.fines).toBe(300);
+        expect(k.fineCount).toBe(1);
+      }
+      expect(s.cash).toBe(cash - 300);
+      expect(s.tycoon.cards.pending).toEqual([]);
+    });
+
+    it('premia Centrali z karty idzie do licznika bonus i do gotówki', () => {
+      const s = quiet();
+      const card = plant(s, 'okolnik-premia', [{ bonus: 500 }, {}]);
+      const cash = s.cash;
+      answer(s, card, 0);
+      for (const k of [s.today, s.month, s.total]) expect(k.bonus).toBe(500);
+      expect(s.cash).toBe(cash + 500);
+    });
+
+    it('inne przychody i koszty są ze znakiem: koszt z karty zmniejsza other, wpływ go zwiększa', () => {
+      const s = quiet();
+      const cost = plant(s, 'fefo', [{ cash: -200 }]);
+      const cash = s.cash;
+      answer(s, cost, 0);
+      expect(s.cash).toBe(cash - 200);
+      for (const k of [s.today, s.month, s.total]) expect(k.other).toBe(-200);
+      const gain = plant(s, 'fefo', [{ cash: 350 }]);
+      answer(s, gain, 0);
+      expect(s.cash).toBe(cash + 150);
+      for (const k of [s.today, s.month, s.total]) expect(k.other).toBe(150);
+    });
+
+    it('opłata logistyczna z karty idzie do logistics jako koszt', () => {
+      const s = quiet();
+      const card = plant(s, 'fefo', [{ logistics: -120 }]);
+      const cash = s.cash;
+      answer(s, card, 0);
+      for (const k of [s.today, s.month, s.total]) expect(k.logistics).toBe(120);
+      expect(s.cash).toBe(cash - 120);
+    });
+
+    it('reputacja przycięta do 0–100, Ogonki dopisane', () => {
+      const s = quiet();
+      s.reputation = 98;
+      answer(s, plant(s, 'fefo', [{ reputation: 5, ogonki: 3 }]), 0);
+      expect(s.reputation).toBe(100);
+      expect(s.ogonki).toBe(3);
+      s.reputation = 2;
+      answer(s, plant(s, 'fefo', [{ reputation: -5 }]), 0);
+      expect(s.reputation).toBe(0);
+    });
+
+    it('skutki karty tycoona (zaufanie z przyczyną, WUT, siły) idą przez applyCardOutcome', () => {
+      const s = quiet();
+      const energy = s.tycoon.fatigue.energy;
+      answer(s, plant(s, 'fefo', [{ trust: 2, wut: 80, energy: -10 }]), 0);
+      expect(s.tycoon.trust.value).toBe(62);
+      expect(s.tycoon.trust.month.karty).toBe(2);
+      expect(s.tycoon.wut.month.karty).toBe(80);
+      expect(s.tycoon.fatigue.energy).toBe(energy - 10);
+    });
+
+    it('XP za kartę: zdarzenie +10, okólnik +15', () => {
+      const s = quiet();
+      answer(s, plant(s, 'fefo', [{}]), 0);
+      expect(s.xp).toBe(10);
+      answer(s, plant(s, 'okolnik-paleta', [{}]), 0);
+      expect(s.xp).toBe(25);
+    });
+
+    it('zmiana progu zaufania daje trust-tier, drobna zmiana w progu nie', () => {
+      const s = quiet();
+      const out: EconEvent[] = [];
+      answer(s, plant(s, 'fefo', [{ trust: 1 }]), 0, out);   // 60 → 61: nadal próg „W porządku”
+      expect(out.filter((e) => e.kind === 'trust-tier')).toEqual([]);
+      answer(s, plant(s, 'fefo', [{ trust: -10 }]), 0, out);
+      const tier = trustTier(s.tycoon.trust.value);
+      expect(tier.id).not.toBe(trustTier(TRUST.start).id);
+      expect(out.filter((e) => e.kind === 'trust-tier')).toEqual([{ kind: 'trust-tier', text: `Zaufanie Centrali: ${tier.label}. ${tier.flavor}` }]);
+    });
+
+    it('wynik karty: zdarzenie card-result z komentarzem odpowiedzi; liczby formatuje polskie fmt, pusty komentarz nie daje zdarzenia', () => {
+      const s = quiet();
+      const out: EconEvent[] = [];
+      const fefo = plant(s, 'fefo', [{}, {}, {}], { params: { n: 12, v: 1234 } });
+      answer(s, fefo, 1, out);
+      expect(out).toEqual([{ kind: 'card-result', text: cardDef('fefo')!.answers[1]!.result }]);
+
+      // komentarz z liczbą: {v} przechodzi przez polskie formatowanie (tak jak liczby w reszcie zdarzeń)
+      const def = cardDef('fefo')!;
+      const original = def.answers[0]!.result;
+      def.answers[0]!.result = 'Zapłacono {v} zł.';
+      try {
+        const out2: EconEvent[] = [];
+        answer(s, plant(s, 'fefo', [{}, {}, {}], { params: { v: 1234567 } }), 0, out2);
+        expect(out2).toEqual([{ kind: 'card-result', text: `Zapłacono ${(1234567).toLocaleString('pl-PL')} zł.` }]);
+      } finally {
+        def.answers[0]!.result = original;
+      }
+
+      const out3: EconEvent[] = [];
+      answer(s, plant(s, 'nieznana-karta', [{ cash: 5 }]), 0, out3);   // karta z nowszej wersji bez definicji: bez komentarza
+      expect(out3).toEqual([]);
+    });
+
+    it('ryzyko odpowiedzi spełnia się albo nie: skutek ryzyka dochodzi do skutku odpowiedzi, a komentarz jest z ryzyka', () => {
+      const s = quiet();
+      const card = plant(s, 'fefo', [{}, {}, {}]);
+      card.answers[2] = { delta: {}, mods: [], risk: { chance: 1, delta: { fine: -500 } } };   // pewne
+      const out: EconEvent[] = [];
+      answer(s, card, 2, out);
+      expect(s.month.fines).toBe(500);
+      expect(out[0]).toEqual({ kind: 'card-result', text: cardDef('fefo')!.answers[2]!.risk!.text });
+    });
+
+    it('efekt na czas z odpowiedzi trafia do aktywnych i działa od chwili odpowiedzi', () => {
+      const s = quiet();
+      const card = plant(s, 'glitch', [{}]);
+      card.answers[0]!.mods = [{ kind: 'closed', value: 1, minutes: 60, from: null, estimate: 0 }];
+      answer(s, card, 0);
+      expect(s.tycoon.cards.active).toEqual([{ kind: 'closed', value: 1, from: s.minute, until: s.minute + 60, seq: card.seq }]);
+    });
+  });
+
+  describe('odrzucone odpowiedzi nie zmieniają stanu', () => {
+    const refused = (s: EconomyState, seq: number, n: number): void => {
+      const before = JSON.stringify(s);
+      const out: EconEvent[] = [];
+      const r = answerCard(s, seq, n, out);
+      expect(r.ok, `seq ${seq}, odpowiedź ${n}`).toBe(false);
+      expect(JSON.stringify(s)).toBe(before);
+      expect(out).toEqual([]);
+    };
+
+    it('nieznany seq i odpowiedź poza zakresem (ujemna, za duża, ułamek, NaN)', () => {
+      const s = quiet();
+      const card = plant(s, 'fefo', [{ cash: -10 }, { cash: -20 }, { cash: -30 }]);
+      refused(s, 9999, 0);
+      refused(s, card.seq, -1);
+      refused(s, card.seq, 3);
+      refused(s, card.seq, 1.5);
+      refused(s, card.seq, Number.NaN);
+      expect(answer(s, card, 2).ok).toBe(true);
+      refused(s, card.seq, 0);   // karta już rozstrzygnięta
+    });
+
+    it('karta, której godzina jeszcze nie nadeszła, nie przyjmuje odpowiedzi', () => {
+      const s = quiet();
+      const card = plant(s, 'fefo', [{}, {}, {}], { showAt: s.minute + 1 });
+      refused(s, card.seq, 0);
+    });
+  });
+
+  describe('efekty kart w symulacji', () => {
+    const effect = (s: EconomyState, kind: 'traffic' | 'margin' | 'closed' | 'staff', value: number, minutes = 600): void => {
+      s.tycoon.cards.active.push({ kind, value, from: s.minute, until: s.minute + minutes, seq: 1 });
+    };
+
+    it('ruch karty mnoży przyjścia w arrivalRate (jedynym miejscu lambdy), −100% daje zero', () => {
+      const s = quiet();
+      s.minute = 12 * 60;
+      const base = arrivalRate(s, info);
+      effect(s, 'traffic', 0.5);
+      expect(arrivalRate(s, info)).toBeCloseTo(1.5 * base, 9);
+      s.tycoon.cards.active = [];
+      effect(s, 'traffic', -1);
+      expect(arrivalRate(s, info)).toBe(0);
+    });
+
+    it('ruch karty działa tylko w jej oknie czasu', () => {
+      const s = quiet();
+      s.minute = 12 * 60;
+      const base = arrivalRate(s, info);
+      s.tycoon.cards.active.push({ kind: 'traffic', value: 1, from: s.minute + 10, until: s.minute + 20, seq: 1 });
+      expect(arrivalRate(s, info)).toBe(base);
+      s.minute += 10;
+      expect(arrivalRate(s, info)).toBeCloseTo(2 * base, 9);   // ta sama godzina, więc krzywa ruchu się nie zmienia
+      s.minute += 10;
+      expect(arrivalRate(s, info)).toBe(base);
+    });
+
+    it('stepMinute losuje przyjścia z uwzględnieniem ruchu karty: −100% to godzina bez klientów', () => {
+      const s = quiet();
+      s.minute = 12 * 60;
+      effect(s, 'traffic', -1, 60);
+      run(s, info, 60);
+      expect(s.total.customers).toBe(0);
+      expect(s.total.lost).toBe(0);
+      run(s, info, 120);
+      expect(s.total.customers).toBeGreaterThan(0);
+    });
+
+    it('marża karty mnoży marżę sprzedaży, także ze stuknięcia w kasę', () => {
+      const margin = (mult: number | null): number => {
+        const s = quiet();
+        s.queue = 3;
+        if (mult !== null) effect(s, 'margin', mult);
+        const r = tapTill(s, info);
+        expect(r.ok).toBe(true);
+        return (r as { value: number }).value;
+      };
+      const plain = margin(null);
+      expect(margin(0.5)).toBeCloseTo(1.5 * plain, 9);
+      expect(margin(-0.5)).toBeCloseTo(0.5 * plain, 9);
+    });
+
+    it('sklep zamknięty kartą: nikt nie przychodzi, kolejka znika, stuknięcie w kasę odmawia; po efekcie sklep wraca', () => {
+      const s = quiet();
+      s.minute = 12 * 60;
+      s.queue = 4;
+      effect(s, 'closed', 1, 60);
+      expect(isOpenForCustomers(s)).toBe(false);
+      s.queue = 4;
+      expect(tapTill(s, info)).toEqual({ ok: false, text: 'Sklep zamknięty.' });
+      run(s, info, 60);
+      expect(s.total.customers).toBe(0);
+      expect(s.queue).toBe(0);
+      expect(isOpenForCustomers(s)).toBe(true);
+      run(s, info, 30);
+      expect(s.total.customers).toBeGreaterThan(0);
+    });
+
+    it('sklep zamknięty z innego powodu (noc, remont) dalej jest zamknięty', () => {
+      const s = quiet();
+      s.minute = 2 * 60;
+      expect(isOpenForCustomers(s)).toBe(false);
+      s.minute = 12 * 60;
+      expect(isOpenForCustomers(s)).toBe(true);
+      s.remontUntil = s.minute + 100;
+      expect(isOpenForCustomers(s)).toBe(false);
+    });
+
+    it('efekty po czasie znikają ze stanu (pruneCardMods co minutę)', () => {
+      const s = quiet();
+      effect(s, 'margin', 0.2, 5);
+      run(s, info, 5);
+      expect(s.tycoon.cards.active).toHaveLength(1);
+      run(s, info, 1);
+      expect(s.tycoon.cards.active).toEqual([]);
+    });
   });
 });

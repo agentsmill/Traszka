@@ -1,7 +1,7 @@
 import type { CharacterFactory } from '@/render/characters/characterFactory';
 import { applyCommand, type Command } from '@/sim/economy/commands';
 import {
-  grantDaily, grantOffline, processLevels, stepMinute, tapCombo, type CommandResult, type EconEvent,
+  awaitingDecision, grantDaily, grantOffline, processLevels, stepMinute, tapCombo, type CommandResult, type EconEvent,
 } from '@/sim/economy/economy';
 import { rankFor } from '@/sim/economy/progress';
 import type { Sfx } from '@/ui/sfx';
@@ -73,6 +73,8 @@ export const AFTER: Record<Command['type'], AfterStep> = {
   startRemont: { okToast: true, persist: true, clearSelection: 'before' },
   campaign: { okToast: true },
   rushRemont: { okToast: true },
+  // wynik odpowiedzi przychodzi zdarzeniem `card-result` (toast z handleEvents), więc sam wynik polecenia nie ma tekstu
+  answerCard: { okToast: false, sfx: 'pop', persist: true },
 };
 
 /** Typ spoza tabeli (polecenie obejściem typów): bez kroków po poleceniu, a odmowę z komunikatem da `applyCommand`. */
@@ -248,7 +250,9 @@ export interface GameShell {
   game: ui.GameActions;
 }
 
-const EVENT_SFX: Partial<Record<EconEvent['kind'], Sfx>> = { delivery: 'delivery', fine: 'fine', golden: 'golden', milestone: 'coins', warning: 'error' };
+const EVENT_SFX: Partial<Record<EconEvent['kind'], Sfx>> = {
+  delivery: 'delivery', fine: 'fine', golden: 'golden', milestone: 'coins', warning: 'error', card: 'pop',
+};
 
 const money = (n: number): string => `+${n.toLocaleString('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} zł`;
 
@@ -530,7 +534,8 @@ export function createShell(deps: ShellDeps): GameShell {
       const { session } = shell;
       if (!session) return;
       const events: EconEvent[] = [];
-      for (let i = 0; i < minutes && !session.econ.gameOver; i++) stepMinute(session.econ, session.info, events);
+      // karta decyzji zatrzymuje także przewijanie: bez odpowiedzi gracza gra nie idzie dalej (jak pętla klatek)
+      for (let i = 0; i < minutes && !session.econ.gameOver && !awaitingDecision(session.econ); i++) stepMinute(session.econ, session.info, events);
       handleEvents(events);
       markOffLog(session);   // przewinięcie nie jest poleceniem: dziennik nie odtworzy takiego stanu
       settleOutsideCommand();

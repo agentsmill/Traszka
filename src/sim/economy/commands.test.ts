@@ -4,12 +4,13 @@ import { layoutFor } from '@/sim/store/layoutFor';
 import { HIRE_COST } from './catalog';
 import { applyCommand, COMMAND_TYPES, isCommand, type Command } from './commands';
 import {
-  buyEquipment, buyUpgrade, campaign, claimQuest, commitTap, createEconomy, fire, freeSpots, hire, movePallet,
+  answerCard, awaitingDecision, buyEquipment, buyUpgrade, campaign, claimQuest, commitTap, createEconomy, fire, freeSpots, hire, movePallet,
   processLevels, relayout, returnPallet, rushRemont, setOrder, startRemont, tapPallet, tapTill,
   type CommandResult, type EconomyState,
 } from './economy';
 import { questMetric } from './quests';
 import { computeStoreInfo, type StoreInfo } from './storeInfo';
+import { visibleCards } from './tycoon/cards';
 import { pinStaff, setStaffProfile } from './tycoon/staff';
 import { xpToNext } from './progress';
 
@@ -105,6 +106,13 @@ const CASES: Record<Command['type'], () => Prepared> = {
     const { s, info } = base();
     s.ogonki = 100;
     return { s, info, cmd: { type: 'campaign' }, legacy: (b) => campaign(b) };
+  },
+  answerCard: () => {
+    // karta czeka na odpowiedź od tej minuty; interfejs podaje odpowiedź zaznaczoną z góry
+    const { s, info } = base();
+    const card = s.tycoon.cards.pending[0]!;
+    card.showAt = s.minute;
+    return { s, info, cmd: { type: 'answerCard', seq: card.seq, answer: card.defaultAnswer }, legacy: (b) => answerCard(b, card.seq, card.defaultAnswer, []) };
   },
   rushRemont: () => {
     // remont w toku: sklep już ma układ po remoncie, tak jak po `startRemont` i przebudowie w sesji
@@ -493,6 +501,8 @@ describe('isCommand', () => {
       { type: 'startRemont' },
       { type: 'campaign' },
       { type: 'rushRemont' },
+      { type: 'answerCard', seq: 12, answer: 0 },
+      { type: 'answerCard', seq: 0, answer: 2 },
       { type: 'hire', note: 'zbędny klucz' },
     ];
     for (const cmd of valid) expect(isCommand(cmd), inspect(cmd)).toBe(true);
@@ -521,6 +531,11 @@ describe('isCommand', () => {
       { type: 'buyUpgrade' }, { type: 'buyUpgrade', id: 5 }, { type: 'buyUpgrade', id: 'constructor' },
       { type: 'buyUpgrade', id: 'sco' }, { type: 'buyEquipment', id: 'szkolenie' }, { type: 'buyEquipment', id: 'toString' },
       { type: 'buyEquipment', id: 'sco', slotId: 5 }, { type: 'buyEquipment', id: 'sco', slotId: null },
+      { type: 'answerCard' }, { type: 'answerCard', seq: 1 }, { type: 'answerCard', answer: 0 },
+      { type: 'answerCard', seq: '1', answer: 0 }, { type: 'answerCard', seq: 1, answer: '0' }, { type: 'answerCard', seq: 1.5, answer: 0 },
+      { type: 'answerCard', seq: 1, answer: 0.5 }, { type: 'answerCard', seq: NaN, answer: 0 }, { type: 'answerCard', seq: 1, answer: Infinity },
+      { type: 'answerCard', seq: null, answer: 0 }, { type: 'answerCard', seq: 1, answer: null },
+      { type: 'card.answer', seq: 1, answer: 0 },   // nazwa z INTEGRATION.md; w kodzie poleceń są w camelCase
     ];
     for (const cmd of invalid) expect(isCommand(cmd), inspect(cmd)).toBe(false);
   });
@@ -528,5 +543,78 @@ describe('isCommand', () => {
   it('odrzuca polecenie po przejściu przez JSON z nieskończoną liczbą (null)', () => {
     const roundTrip = JSON.parse(JSON.stringify({ type: 'setOrder', auto: true, manual: Infinity })) as unknown;
     expect(isCommand(roundTrip)).toBe(false);
+  });
+});
+
+describe('karta na biurku', () => {
+  /** Karta widoczna od tej minuty: gra czeka na odpowiedź. */
+  function withCard(): { s: EconomyState; info: StoreInfo; seq: number; answer: number } {
+    const { s, info } = base();
+    s.queue = 5;
+    const card = s.tycoon.cards.pending[0]!;
+    card.showAt = s.minute;
+    return { s, info, seq: card.seq, answer: card.defaultAnswer };
+  }
+
+  it.each(['tapPallet', 'tapTill'] as const)('%s: póki karta czeka, odmowa „Najpierw karta na biurku.” bez zmiany stanu', (type) => {
+    const { s, info } = withCard();
+    expect(awaitingDecision(s)).toBe(true);
+    const before = snapshot(s);
+    const out = applyCommand(s, info, { type });
+    expect(out.result).toEqual({ ok: false, text: 'Najpierw karta na biurku.' });
+    expect(out.events).toEqual([]);
+    expect(snapshot(s)).toBe(before);
+    expect(s.tapStreak).toBe(0);   // odmowa nie podtrzymuje serii
+  });
+
+  it('po odpowiedzi na wszystkie widoczne karty stuknięcia znów działają', () => {
+    const { s, info } = withCard();
+    for (const c of visibleCards(s.tycoon.cards, s.minute)) {
+      expect(applyCommand(s, info, { type: 'answerCard', seq: c.seq, answer: c.defaultAnswer }).result.ok).toBe(true);
+    }
+    expect(awaitingDecision(s)).toBe(false);
+    expect(applyCommand(s, info, { type: 'tapTill' }).result.ok).toBe(true);
+  });
+
+  it('pozostałe polecenia przechodzą mimo karty (kupowanie, ludzie, zamówienia)', () => {
+    const { s, info } = withCard();
+    s.cash = 1_000_000;
+    for (const cmd of [
+      { type: 'setOrder', auto: false, manual: 3 }, { type: 'setStaffProfile', profile: 'dostawa' }, { type: 'hire' },
+      { type: 'buyUpgrade', id: 'szkolenie' },
+    ] as Command[]) expect(applyCommand(s, info, cmd).result.ok, cmd.type).toBe(true);
+    expect(awaitingDecision(s)).toBe(true);
+  });
+
+  it('answerCard: odpowiedź księguje skutek i daje zdarzenie z wynikiem; poziom z XP karty liczy się od razu', () => {
+    const { s, info, seq, answer } = withCard();
+    s.xp = xpToNext(s.level) - 5;   // dziesięć XP za kartę przeskakuje poziom
+    const out = applyCommand(s, info, { type: 'answerCard', seq, answer });
+    expect(out.result).toEqual({ ok: true });
+    expect(s.level).toBe(2);
+    expect(out.events.some((e) => e.kind === 'levelup')).toBe(true);
+    expect(out.events.some((e) => e.kind === 'card-result')).toBe(true);
+  });
+
+  it('zła odpowiedź przez applyCommand: odmowa z tekstem karty, stan nietknięty', () => {
+    const { s, info, seq } = withCard();
+    const before = snapshot(s);
+    for (const cmd of [
+      { type: 'answerCard', seq: 123456, answer: 0 }, { type: 'answerCard', seq, answer: 99 }, { type: 'answerCard', seq, answer: -1 },
+      { type: 'answerCard', seq: 1.5, answer: 0 },
+    ] as Command[]) {
+      const out = applyCommand(s, info, cmd);
+      expect(out.result.ok, JSON.stringify(cmd)).toBe(false);
+      expect(snapshot(s)).toBe(before);
+    }
+  });
+
+  it('po końcu gry karta nie zatrzymuje i nie przyjmuje odpowiedzi', () => {
+    const { s, info, seq, answer } = withCard();
+    s.gameOver = true;
+    expect(awaitingDecision(s)).toBe(false);
+    const before = snapshot(s);
+    expect(applyCommand(s, info, { type: 'answerCard', seq, answer }).result.ok).toBe(false);
+    expect(snapshot(s)).toBe(before);
   });
 });

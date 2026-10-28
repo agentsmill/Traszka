@@ -37,8 +37,11 @@ Wzorcem kolejności wywołań jest `sandbox.ts` (`stepSandbox`): to ta sama minu
   z `calendar.ts`, co sprawdza test), bez logarytmów, trygonometrii i potęg.
 - **Teksty.** W stanie są liczby i identyfikatory. Teksty z liczbami (`fillText`, `kpiTitle`, `hintText`) przyjmują
   funkcję formatującą, więc interfejs podaje polskie formatowanie (`toLocaleString('pl-PL')`), a stan zostaje czysty.
-- **Pętla gry (`clock.ts`, `advanceEconomy`).** Przed każdą minutą: gdy `cardsBlocking(tycoon.cards, s.minute)`, gra
-  stoi (minuta nie mija, ułamek zegara się nie zbiera), a interfejs pokazuje kartę; `{ type: 'card.answer' }` ją wznawia.
+- **Pętla gry (`clock.ts`, `advanceEconomy`).** Przed każdą minutą: gdy `awaitingDecision(s)` (to `cardsBlocking` bez końca
+  gry), gra stoi (minuta nie mija, ułamek zegara się nie zbiera), a interfejs pokazuje kartę; `{ type: 'answerCard', seq,
+  answer }` ją wznawia. `stepMinute` **nie** sprawdza karty i zostaje całkowitą funkcją „minuta dalej” (pętle `while (minute <
+  do) stepMinute(...)` w testach nie mogą zawisnąć); pauzę wymuszają wołający: `advanceEconomy`, `replayRun` (karta bez
+  odpowiedzi w dzienniku dostaje odpowiedź zaznaczoną z góry), `skip` w debugu i boty. Do odpowiedzi stuknięcia są odrzucane.
   Tak samo stoi na komunikacie `story` do „OK” (stan pauzy fabularnej to sprawa warstwy gry, nie zapisu ekonomii).
   Karta pokazuje się w minucie `showAt`, więc przy ×8 gra zatrzyma się dokładnie na niej.
 
@@ -158,7 +161,8 @@ Wzorcem kolejności wywołań jest `sandbox.ts` (`stepSandbox`): to ta sama minu
     do `other`) i licznik `wut`;
   - zdarzenia dla interfejsu: nowy `EconEventKind` `'card'` przy pokazaniu karty (`decision`) i wynik po odpowiedzi
     (`'card-result'`, `info`, tekst `o.text` przez `fillText` z polskim formatowaniem).
-- **Polecenia:** `{ type: 'card.answer', seq: number, answer: number }` → `resolveCard`.
+- **Polecenia:** `{ type: 'answerCard', seq: number, answer: number }` → `answerCard` w `economy.ts` (`resolveCard`, potem
+  `applyCardOutcome` i księgowanie reszty).
 - **Co znika:** paczka od Centrali co 45–110 s (`claimGift`, `giftSeq`, `tapBoostUntil`): jej rolę bierze okólnik.
 - **Pytania:** ile kart treści na start (dziś 17 zdarzeń i 6 okólników)? Karta audytu jest dziś skrótem audytu; gdy
   powstanie moduł audytu (etap 3.3), jej odpowiedzi mogą ustawiać „przygotowanie” zamiast od razu zmieniać zaufanie.

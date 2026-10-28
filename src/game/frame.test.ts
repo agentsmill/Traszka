@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { OPEN_FROM } from '@/sim/economy/catalog';
 import { advanceEconomy } from '@/sim/economy/clock';
-import type { EconEvent, MonthReport } from '@/sim/economy/economy';
+import { applyCommand } from '@/sim/economy/commands';
+import { awaitingDecision, type EconEvent, type MonthReport } from '@/sim/economy/economy';
+import { visibleCards } from '@/sim/economy/tycoon/cards';
 import * as ui from '@/ui/state';
 import type { GameShell } from './actions';
 import { advanceSession, debugHandleEnabled, debugHandleOf, installDebugHandle, isModalOpen } from './frame';
@@ -89,8 +91,25 @@ describe('advanceSession', () => {
   it('zdarzenia trafiają do `out` (koniec dnia)', () => {
     const s = fresh();
     const out: EconEvent[] = [];
-    for (let i = 0; i < 200 && !out.some((e) => e.kind === 'day'); i++) advanceSession(s, 1, 1, false, out);
+    for (let i = 0; i < 200 && !out.some((e) => e.kind === 'day'); i++) {
+      // karta dnia zatrzymuje grę do odpowiedzi gracza: tu zatwierdzamy zaznaczoną z góry
+      for (const c of visibleCards(s.econ.tycoon.cards, s.econ.minute)) applyCommand(s.econ, s.info, { type: 'answerCard', seq: c.seq, answer: c.defaultAnswer });
+      advanceSession(s, 1, 1, false, out);
+    }
     expect(out.some((e) => e.kind === 'day')).toBe(true);
+    expect(out.some((e) => e.kind === 'card')).toBe(true);   // po drodze karty się pokazywały
+  });
+
+  it('karta decyzji zatrzymuje grę mimo prędkości ×8: staje na showAt, zdarzenie card, kolejne klatki dają 0 minut', () => {
+    const s = fresh();
+    const first = Math.min(...s.econ.tycoon.cards.pending.map((c) => c.showAt));
+    const out: EconEvent[] = [];
+    for (let i = 0; i < 200 && !awaitingDecision(s.econ); i++) advanceSession(s, 1, 8, false, out);
+    expect(s.econ.minute).toBe(first);
+    expect(out.filter((e) => e.kind === 'card').length).toBeGreaterThanOrEqual(1);
+    const stopped = JSON.stringify(s);
+    expect(advanceSession(s, 1, 8, false, out)).toBe(0);
+    expect(JSON.stringify(s)).toBe(stopped);
   });
 
   it('po końcu gry nie liczy minut', () => {

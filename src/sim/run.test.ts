@@ -4,10 +4,11 @@ import { createSession } from '@/game/session';
 import { isOpenAt, minuteOfDay } from '@/sim/economy/calendar';
 import { MINUTES_PER_DAY, OPEN_FROM } from '@/sim/economy/catalog';
 import { applyCommand, COMMAND_TYPES, type Command } from '@/sim/economy/commands';
-import { isClosedForRemont, nextRemont, stepMinute, type EconEvent, type EconomyState } from '@/sim/economy/economy';
+import { awaitingDecision, isClosedForRemont, nextRemont, stepMinute, type EconEvent, type EconomyState } from '@/sim/economy/economy';
 import { rand01 } from '@/sim/economy/rand';
 import { questDone } from '@/sim/economy/quests';
 import type { StoreInfo } from '@/sim/economy/storeInfo';
+import { visibleCards } from '@/sim/economy/tycoon/cards';
 import { STAFF_PROFILES, STAFF_TASKS } from '@/sim/economy/tycoon/staff';
 import { EQUIPMENT, UPGRADES } from '@/sim/economy/upgrades';
 import { hashString } from '@/sim/rng';
@@ -31,6 +32,8 @@ interface Live {
   record: RunRecord;
   /** JSON stanu w zadanych minutach: po poleceniach tej minuty, przed `stepMinute`. */
   snapshots: Map<number, string>;
+  /** JSON stanu w zadanych minutach, zanim polityka wydała pierwsze polecenie (np. przed odpowiedzią na kartę, która właśnie się pokazała). */
+  before: Map<number, string>;
 }
 
 /** Polecenia zepsute na kilka sposobów; gra je odrzuca, a dziennik je pamięta (klient mógł je wysłać). */
@@ -43,14 +46,22 @@ const BROKEN: unknown[] = [
   { type: 'movePallet', palletId: 1, loc: 'roof' },
   { type: 'setStaffProfile', profile: '__proto__' },
   { type: 'pinStaff', task: 'kasa', count: 1.5 },
+  { type: 'answerCard', seq: 1.5, answer: 0 },
+  { type: 'answerCard', seq: 999_999, answer: 0 },
   { type: 'nuke' },
 ];
 
 const UPGRADE_IDS = UPGRADES.map((u) => u.id);
 const EQUIPMENT_IDS = EQUIPMENT.map((e) => e.id);
 
-/** Gracz-bot: stuka, odbiera, kupuje, zatrudnia, robi remonty i co jakiś czas wysyła śmieci. Każda decyzja z `roll`. */
+/** Gracz-bot: odpowiada na karty, stuka, odbiera, kupuje, zatrudnia, robi remonty i co jakiś czas wysyła śmieci. Każda decyzja z `roll`. */
 const bot: Policy = ({ state: s, roll, issue }) => {
+  // gra stoi na karcie, dopóki gracz nie odpowie (pętla klatek nie wykona minuty): bot odpowiada na każdą widoczną, losowo,
+  // a co trzecią razą zatwierdza odpowiedź zaznaczoną z góry
+  for (const [i, card] of visibleCards(s.tycoon.cards, s.minute).entries()) {
+    const answer = roll(24 + 2 * i) < 0.35 ? card.defaultAnswer : Math.floor(roll(25 + 2 * i) * card.answers.length);
+    issue({ type: 'answerCard', seq: card.seq, answer });
+  }
   if (isOpenAt(minuteOfDay(s.minute))) {
     const r = roll(0);
     if (s.queue >= 1 && r < 0.45) issue({ type: 'tapTill' });
@@ -100,6 +111,7 @@ function playLive(seed: string, days: number, opts: { policy?: Policy; snapshotA
   let seq = 0;
   const snapAt = new Set(opts.snapshotAt);
   const snapshots = new Map<number, string>();
+  const before = new Map<number, string>();
   const events: EconEvent[] = [];
   const play: Play = {
     state,
@@ -115,12 +127,18 @@ function playLive(seed: string, days: number, opts: { policy?: Policy; snapshotA
   };
   const end = state.minute + days * MINUTES_PER_DAY;
   while (state.minute < end && !state.gameOver) {
+    if (snapAt.has(state.minute)) before.set(state.minute, JSON.stringify(state));
     policy(play);
+    // pętla klatek nie wykona minuty, póki karta czeka: polityka, która nie odpowiedziała, zatwierdza odpowiedzi zaznaczone z góry
+    if (awaitingDecision(state)) {
+      for (const card of visibleCards(state.tycoon.cards, state.minute)) play.issue({ type: 'answerCard', seq: card.seq, answer: card.defaultAnswer });
+    }
+    expect(awaitingDecision(state), 'minuta z kartą na biurku').toBe(false);
     if (snapAt.has(state.minute)) snapshots.set(state.minute, JSON.stringify(state));
     events.length = 0;
     stepMinute(state, info, events);
   }
-  return { state, record: { seed, gameVersion: 'test', generatorVersion: GENERATOR_VERSION, mode: 'ranked', log }, snapshots };
+  return { state, record: { seed, gameVersion: 'test', generatorVersion: GENERATOR_VERSION, mode: 'ranked', log }, snapshots, before };
 }
 
 // --- Pomocniki testów --------------------------------------------------------------------------------------------
@@ -229,6 +247,63 @@ describe('odtwarzanie biegu', () => {
     expect(checked).toBeGreaterThanOrEqual(12);
     expect(withCommands).toBeGreaterThanOrEqual(3);
   }, TIMEOUT);
+
+  it('dziennik bez odpowiedzi na kartę odtwarza się do końca: karty dostają odpowiedź zaznaczoną z góry', () => {
+    const seed = SEEDS[2]!;
+    const until = START + 3 * MINUTES_PER_DAY;
+    // żywa gra: stuknięcia w minutach, w których nic nie czeka; karta w minucie showAt dostaje odpowiedź domyślną POZA dziennikiem
+    const { state, info } = freshRun(seed);
+    const log: LogEntry[] = [];
+    const events: EconEvent[] = [];
+    let seq = 0;
+    let defaults = 0;
+    while (state.minute < until && !state.gameOver) {
+      if (awaitingDecision(state)) {
+        for (const c of visibleCards(state.tycoon.cards, state.minute)) {
+          applyCommand(state, info, { type: 'answerCard', seq: c.seq, answer: c.defaultAnswer });
+          defaults++;
+        }
+      } else if (isOpenAt(minuteOfDay(state.minute)) && state.minute % 3 === 0) {
+        const cmd: Command = state.minute % 2 === 0 ? { type: 'tapTill' } : { type: 'tapPallet' };
+        log.push({ minute: state.minute, seq: seq++, cmd });
+        applyCommand(state, info, cmd);
+      }
+      events.length = 0;
+      stepMinute(state, info, events);
+    }
+    expect(state.minute).toBe(until);
+    expect(defaults).toBeGreaterThanOrEqual(3);                    // co najmniej po karcie z każdej doby
+    expect(log.length).toBeGreaterThan(100);
+    expect(log.some((e) => e.cmd.type === 'answerCard')).toBe(false);
+
+    const replayed = replayRun(recordOf(seed, clone(log)), until);   // nie zawisło i doszło do końca
+    expect(replayed.minute).toBe(until);
+    expectSameJson(replayed, state);
+    expect(replayed.tycoon.cards.month.answered).toBe(defaults);
+    expect(replayed.tycoon.cards.month.defaults).toBe(defaults);   // każda odpowiedź to zaznaczona z góry
+  });
+
+  it('odtworzenie do minuty karty to stan przed odpowiedzią', () => {
+    const seed = SEEDS[1]!;
+    const first = Math.min(...freshRun(seed).state.tycoon.cards.pending.map((c) => c.showAt));
+    const live = playLive(seed, 2, { snapshotAt: [first] });
+    const before = live.before.get(first)!;
+    const after = live.snapshots.get(first)!;
+    expect(before).toBeDefined();
+    expect(after).not.toBe(before);   // w tej minucie bot odpowiedział na kartę
+
+    // dziennik bez wpisów od minuty karty: odtworzenie staje przed odpowiedzią, karta jeszcze czeka
+    const earlier = live.record.log.filter((e) => e.minute < first);
+    const atCard = replayRun(recordOf(seed, clone(earlier)), first);
+    expectSameJson(atCard, JSON.parse(before));
+    expect(awaitingDecision(atCard)).toBe(true);
+    // krok dalej odpowiedź zaznaczona z góry rozstrzyga kartę, a bieg rusza
+    const next = replayRun(recordOf(seed, clone(earlier)), first + 1);
+    expect(next.minute).toBe(first + 1);
+    expect(next.tycoon.cards.log.some((e) => e.day === 0)).toBe(true);
+    // pełny dziennik: wpisy tej minuty (odpowiedź gracza) wchodzą przed zatrzymaniem, jak przy każdym poleceniu
+    expectSameJson(replayRun(clone(live.record), first), JSON.parse(after));
+  });
 
   it('stan nie zależy od toLocaleString ani Intl', () => {
     const seed = SEEDS[3]!;

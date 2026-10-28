@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CharacterFactory } from '@/render/characters/characterFactory';
 import { MINUTES_PER_DAY, OPEN_FROM } from '@/sim/economy/catalog';
 import { applyCommand, COMMAND_TYPES, type Command } from '@/sim/economy/commands';
-import { stepMinute, type CommandResult, type EconEvent } from '@/sim/economy/economy';
+import { awaitingDecision, stepMinute, type CommandResult, type EconEvent } from '@/sim/economy/economy';
+import { cardDef, visibleCards } from '@/sim/economy/tycoon/cards';
 import { xpToNext } from '@/sim/economy/progress';
 import { questMetric } from '@/sim/economy/quests';
 import { UPGRADES } from '@/sim/economy/upgrades';
@@ -107,7 +108,15 @@ describe('dziennik biegu', () => {
     const results: CommandResult[] = [];
     const events: EconEvent[] = [];
     let issued = 0;
+    let answered = 0;
     for (let i = 0; i < 2 * MINUTES_PER_DAY; i++) {
+      // gra stoi na karcie, dopóki gracz nie odpowie: pętla klatek nie wykonałaby minuty (odpowiedź idzie do dziennika jak każde polecenie)
+      if (awaitingDecision(s.econ)) {
+        for (const card of visibleCards(s.econ.tycoon.cards, s.econ.minute)) {
+          expect(dispatchCommand(s, { type: 'answerCard', seq: card.seq, answer: card.defaultAnswer }, fx).ok).toBe(true);
+          answered++;
+        }
+      }
       if (i % 90 === 0) {
         // co 180. minutę dwa polecenia w jednej minucie: o ich kolejności decyduje `seq`
         const count = i % 180 === 0 ? 2 : 1;
@@ -119,7 +128,8 @@ describe('dziennik biegu', () => {
 
     expect(results.some((r) => r.ok)).toBe(true);
     expect(results.some((r) => !r.ok)).toBe(true);
-    expect(log(s)).toHaveLength(issued);
+    expect(answered).toBeGreaterThanOrEqual(2);   // dwie doby: co najmniej po karcie na dzień
+    expect(log(s)).toHaveLength(issued + answered);
     const replayed = replayRun(s.run!.record, s.econ.minute);
     expect(JSON.stringify(replayed)).toBe(JSON.stringify(s.econ));
   });
@@ -185,6 +195,53 @@ describe('kroki po poleceniu', () => {
     expect(rec.calls[1]).toEqual(['play', 'coins']);
     expect(rec.calls[2]).toEqual(['buzz', [15, 30, 15]]);
     expect(rec.calls[3]).toEqual(['confetti', 0.5, 0.6, 28]);
+  });
+
+  /** Karta widoczna od teraz; zwraca jej numer i odpowiedź zaznaczoną z góry. */
+  function cardNow(s: GameSession): { seq: number; answer: number } {
+    const card = s.econ.tycoon.cards.pending[0]!;
+    card.showAt = s.econ.minute;
+    return { seq: card.seq, answer: card.defaultAnswer };
+  }
+
+  it('answerCard ok: bez toastu (wynik idzie zdarzeniem card-result), dźwięk pop, zapis', () => {
+    const s = fresh();
+    const { seq, answer } = cardNow(s);
+    const rec = recorder();
+    const r = dispatchCommand(s, { type: 'answerCard', seq, answer }, rec.fx);
+
+    expect(r.ok).toBe(true);
+    expect(rec.names()).toEqual(['play', 'handleEvents', 'persist', 'refresh']);
+    expect(rec.calls[0]).toEqual(['play', 'pop']);
+    const events = rec.calls[1]![1] as EconEvent[];
+    expect(events.map((e) => e.kind)).toContain('card-result');
+    expect(log(s).at(-1)!.cmd).toEqual({ type: 'answerCard', seq, answer });
+  });
+
+  it('zła odpowiedź na kartę: toast error i dźwięk error, bez zapisu', () => {
+    const s = fresh();
+    const { seq } = cardNow(s);
+    const rec = recorder();
+    const r = dispatchCommand(s, { type: 'answerCard', seq, answer: 99 }, rec.fx);
+
+    expect(r.ok).toBe(false);
+    expect(rec.names()).toEqual(['toast', 'play', 'handleEvents', 'refresh']);
+    expect(rec.calls[0]).toEqual(['toast', 'Nie ma takiej odpowiedzi.', 'error']);
+    expect(rec.calls[1]).toEqual(['play', 'error']);
+  });
+
+  it('stuknięcie przy karcie na biurku: odmowa z toastem i dźwiękiem błędu, wpis do dziennika jest', () => {
+    const s = fresh();
+    cardNow(s);
+    s.econ.queue = 3;
+    const rec = recorder();
+    const r = dispatchCommand(s, { type: 'tapTill' }, rec.fx);
+
+    expect(r).toEqual({ ok: false, text: 'Najpierw karta na biurku.' });
+    expect(rec.calls[0]).toEqual(['toast', 'Najpierw karta na biurku.', 'error']);
+    expect(rec.calls[1]).toEqual(['play', 'error']);
+    expect(s.econ.queue).toBe(3);
+    expect(log(s)).toEqual([{ minute: OPEN_FROM, seq: 0, cmd: { type: 'tapTill' } }]);   // serwer odtwarzający zrobi to samo
   });
 
   it('tapTill ok: bez toastu, dźwięk cash', () => {
@@ -357,6 +414,7 @@ describe('tabela AFTER', () => {
       startRemont: { okToast: true, persist: true, clearSelection: 'before' },
       campaign: { okToast: true },
       rushRemont: { okToast: true },
+      answerCard: { okToast: false, sfx: 'pop', persist: true },
     });
   });
 });
@@ -917,6 +975,24 @@ describe('powłoka gry (createShell)', () => {
       expect(() => harness().shell.skip(10)).not.toThrow();   // bez sesji nic
     });
 
+    it('skip staje na karcie decyzji i nie przewija dalej, póki gracz nie odpowie', () => {
+      const h = harness();
+      const s = open(h);
+      const first = [...s.econ.tycoon.cards.pending].sort((a, b) => a.showAt - b.showAt)[0]!;
+      h.shell.skip(MINUTES_PER_DAY);
+      expect(awaitingDecision(s.econ)).toBe(true);
+      expect(s.econ.minute).toBe(first.showAt);
+      const stopped = JSON.stringify(s.econ);
+      h.shell.skip(60);
+      expect(JSON.stringify(s.econ)).toBe(stopped);   // nic się nie zmieniło: ani minuta, ani stan
+      expect(s.run).toBeNull();
+      expect(ui.toasts.value.some((t) => t.kind === 'card' && t.text === cardDef(first.id)!.title)).toBe(true);
+      // po odpowiedzi skip rusza dalej
+      for (const c of visibleCards(s.econ.tycoon.cards, s.econ.minute)) h.shell.game.dispatch({ type: 'answerCard', seq: c.seq, answer: c.defaultAnswer });
+      h.shell.skip(5);
+      expect(s.econ.minute).toBe(first.showAt + 5);
+    });
+
     it('restart: kasuje zapis i zaczyna ten sam seed od nowa, zamyka raport', () => {
       const h = harness();
       const s = open(h, 'traszka-1');
@@ -1083,6 +1159,18 @@ describe('powłoka gry (createShell)', () => {
       expect(ui.report.value).toBe(report);
       expect(h.calls).toEqual([['play', 'delivery'], ['play', 'error']]);   // 'info' i 'month' nie mają dźwięku
       expect(ui.toasts.value.map((t) => t.text)).toEqual(['Uwaga', 'Info']);   // najwyżej dwa naraz, najnowsze
+    });
+
+    it('handleEvents: karta decyzji gra pop i dostaje toast, wynik karty to sam toast', () => {
+      const h = harness();
+      open(h);
+      h.shell.handleEvents([{ kind: 'card', text: 'FEFO o 18:00' }]);
+      expect(h.calls).toEqual([['play', 'pop']]);
+      expect(ui.toasts.value.map((t) => [t.text, t.kind])).toEqual([['FEFO o 18:00', 'card']]);
+      h.calls.length = 0;
+      h.shell.handleEvents([{ kind: 'card-result', text: 'Naklejki przyklejone.' }]);
+      expect(h.calls).toEqual([]);
+      expect(ui.toasts.value.map((t) => t.text)).toContain('Naklejki przyklejone.');
     });
 
     it('handleEvents: nowy poziom to feta (tytuł, ranga, odblokowania), dźwięk, wibracja i konfetti, bez toastu', () => {

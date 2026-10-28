@@ -1,8 +1,8 @@
 import { layoutFor } from '@/sim/store/layoutFor';
 import type { StoreLayout } from '@/sim/store/types';
 import {
-  buyEquipment, buyUpgrade, campaign, claimQuest, commitTap, comboMult, fire, hire, movePallet, nextTapStreak,
-  processLevels, relayout, returnPallet, rushRemont, setOrder, startRemont, tapPallet, tapTill,
+  answerCard, awaitingDecision, buyEquipment, buyUpgrade, campaign, claimQuest, commitTap, comboMult, fire, hire, movePallet,
+  nextTapStreak, processLevels, relayout, returnPallet, rushRemont, setOrder, startRemont, tapPallet, tapTill,
   type CommandResult, type EconEvent, type EconomyState,
 } from './economy';
 import { computeStoreInfo, type PalletLoc, type StoreInfo } from './storeInfo';
@@ -45,7 +45,8 @@ export type Command =
   | { type: 'buyEquipment'; id: EquipmentId; slotId?: string }
   | { type: 'startRemont' }
   | { type: 'campaign' }
-  | { type: 'rushRemont' };
+  | { type: 'rushRemont' }
+  | { type: 'answerCard'; seq: number; answer: number };
 
 /** Wartość pola polecenia: tylko to, co kopia płytka (`{ ...cmd }`) naprawdę kopiuje. */
 type FieldValue = string | number | boolean | undefined;
@@ -63,7 +64,7 @@ export type FlatCommands = MustBeNever<NestedFields<Command>>;
 /** Wszystkie typy poleceń (do testów pokrycia i do walidacji). */
 export const COMMAND_TYPES: readonly Command['type'][] = [
   'tapPallet', 'tapTill', 'claimQuest', 'movePallet', 'returnPallet', 'setOrder', 'hire', 'fire', 'setStaffProfile', 'pinStaff',
-  'buyUpgrade', 'buyEquipment', 'startRemont', 'campaign', 'rushRemont',
+  'buyUpgrade', 'buyEquipment', 'startRemont', 'campaign', 'rushRemont', 'answerCard',
 ];
 
 const LOCS: readonly PalletLoc[] = ['sidewalk', 'backroom', 'floor'];
@@ -97,6 +98,7 @@ const VALID = {
   startRemont: noFields,
   campaign: noFields,
   rushRemont: noFields,
+  answerCard: (c) => isInt(c.seq) && isInt(c.answer),   // czy numer odpowiedzi mieści się w karcie, rozstrzyga `resolveCard`
 } satisfies Record<Command['type'], (c: Fields) => boolean>;
 
 /**
@@ -132,10 +134,13 @@ function tap(s: EconomyState, attempt: (combo: number) => CommandResult): Comman
   return r;
 }
 
+/** Stuknięcia czekają na kartę: ręce franczyzobiorcy zajmuje papier na biurku (gra i tak stoi do odpowiedzi). */
+const CARD_FIRST = 'Najpierw karta na biurku.';
+
 function run(s: EconomyState, info: StoreInfo, c: Command, events: EconEvent[]): CommandResult {
   switch (c.type) {
-    case 'tapPallet': return tap(s, (combo) => tapPallet(s, info, c.palletId, combo, events));
-    case 'tapTill': return tap(s, (combo) => tapTill(s, info, combo));
+    case 'tapPallet': return awaitingDecision(s) ? { ok: false, text: CARD_FIRST } : tap(s, (combo) => tapPallet(s, info, c.palletId, combo, events));
+    case 'tapTill': return awaitingDecision(s) ? { ok: false, text: CARD_FIRST } : tap(s, (combo) => tapTill(s, info, combo));
     case 'claimQuest': return claimQuest(s, info, c.questId);
     case 'movePallet': return movePallet(s, info, c.palletId, c.loc);
     case 'returnPallet': return returnPallet(s, c.palletId, events);
@@ -149,6 +154,7 @@ function run(s: EconomyState, info: StoreInfo, c: Command, events: EconEvent[]):
     case 'startRemont': return startRemont(s);
     case 'campaign': return campaign(s);
     case 'rushRemont': return rushRemont(s);
+    case 'answerCard': return answerCard(s, c.seq, c.answer, events);
     default: {
       // wyczerpanie sprawdza kompilator: nowy typ w `Command` bez gałęzi wyżej nie przejdzie `tsc`
       const unreachable: never = c;

@@ -19,6 +19,9 @@ import { MILESTONES } from './milestones';
 import { XP, levelReward, xpToNext } from './progress';
 import { QUESTS_ACTIVE, newQuest, questDone, type Quest, type QuestScale } from './quests';
 import {
+  cardDef, cardModifiers, cardsBlocking, drawDayCards, fillText, pruneCardMods, resolveCard, type CardContext,
+} from './tycoon/cards';
+import {
   cleaningDemand, cleanHall, cleanlinessEffects, closeHallMonth, rollWeather, sampleHall, soilHall, type HallState,
 } from './tycoon/cleanliness';
 import { fatigueEfficiency, fatigueNight, tap as fatigueTap, tapItems } from './tycoon/fatigue';
@@ -27,10 +30,12 @@ import { createShift, peopleOnShift, type ShiftState } from './tycoon/shift';
 import {
   PEOPLE_PER_PALLET, normalizePins, restockDemand, serveTill, stepStaff, tillDemand, unloadDemand, zeroTasks, type RobotFleet,
 } from './tycoon/staff';
-import { createTycoon, type TycoonState } from './tycoon/state';
+import { applyCardOutcome, createTycoon, type TycoonState } from './tycoon/state';
 import { dayTrafficMult } from './tycoon/sunday';
-import { dateOfGameDay } from './tycoon/time';
-import { TRUST, addTrust, closeTrustMonth, trustTerminates, trustTier, turnoverBonusShare, type TrustReason } from './tycoon/trust';
+import { dateOfGameDay, weekdayOf } from './tycoon/time';
+import {
+  TRUST, addTrust, closeTrustMonth, trustTerminates, trustTier, turnoverBonusShare, type TrustReason, type TrustTier,
+} from './tycoon/trust';
 import {
   addWaste, closeWasteMonth, hallObstacle, palletBags, removeWaste, settleWaste, wasteDemand, wasteSpots, wasteMinute,
 } from './tycoon/waste';
@@ -240,9 +245,14 @@ const NO_KPI_METRICS: KpiMetrics = { customers: 0, hotSold: 0, lost: 0, fines: 0
 export function changeTrust(s: EconomyState, reason: TrustReason, delta: number, out?: EconEvent[]): number {
   const before = trustTier(s.tycoon.trust.value);
   const applied = addTrust(s.tycoon.trust, reason, delta);
+  announceTrustTier(s, before, out);
+  return applied;
+}
+
+/** Komunikat `trust-tier`, gdy zaufanie przeszło do innego progu niż `before`. */
+function announceTrustTier(s: EconomyState, before: TrustTier, out?: EconEvent[]): void {
   const after = trustTier(s.tycoon.trust.value);
   if (after.id !== before.id) out?.push({ kind: 'trust-tier', text: `Zaufanie Centrali: ${after.label}. ${after.flavor}` });
-  return applied;
 }
 
 /** Liczniki narastające, od których KPI tygodnia liczy postęp: z liczników gry i z sumy czystości sali. */
@@ -319,6 +329,7 @@ export function createEconomy(seed: string, info: StoreInfo, partner: EconomySta
   const ev: EconEvent[] = [];
   deliver(s, info, 2, ev);
   fillQuests(s, info);
+  drawDayCards(s.tycoon.cards, cardContext(s, info), seedHash);   // karty dnia 0 (w stepMinute losują się o północy)
   return s;
 }
 
@@ -326,15 +337,29 @@ export function createEconomy(seed: string, info: StoreInfo, partner: EconomySta
 
 export const isClosedForRemont = (s: EconomyState): boolean => s.remontUntil !== null && s.minute < s.remontUntil;
 export const isStoreOpen = (s: EconomyState): boolean => isOpenAt(minuteOfDay(s.minute)) && !isClosedForRemont(s);
+/** Czy do sklepu wolno teraz wejść klientowi: godziny i remont (`isStoreOpen`) oraz karta „zamknij na godzinę”. To rozstrzyga `stepMinute` i `tapTill`. */
+export const isOpenForCustomers = (s: EconomyState): boolean => isStoreOpen(s) && !cardModifiers(s.tycoon.cards, s.minute).closed;
+
+/**
+ * Czy gra czeka na odpowiedź gracza: widoczna karta decyzji albo okólnik (decyzja użytkownika z 28.10.2026: gra stoi, aż
+ * gracz wybierze, także przy ×8). `stepMinute` tego NIE sprawdza i zostaje całkowitą funkcją „minuta dalej” (pętle w testach
+ * i narzędziach liczą nią minuty bez klikania w karty). Pauzę wymuszają wołający, każdy po swojemu: `advanceEconomy` (żywa
+ * gra), `replayRun` (serwer: karta bez odpowiedzi w dzienniku dostaje zaznaczoną z góry), `skip` (debug) i boty.
+ */
+export const awaitingDecision = (s: EconomyState): boolean => !s.gameOver && cardsBlocking(s.tycoon.cards, s.minute);
 
 /** Jedna minuta gry. Zdarzenia dla gracza (dostawa, mandat, raport…) trafiają do `out`. */
 export function stepMinute(s: EconomyState, info: StoreInfo, out: EconEvent[]): void {
   if (s.gameOver) return;
   const mod = minuteOfDay(s.minute);
-  // pogoda dnia losuje się o północy (zaczep: później ustawi ją system pogody); dzień 0 ma pogodę z `createEconomy`
-  if (mod === 0) s.tycoon.hall.weather = rollWeather(s.seedHash, dayOf(s.minute), dateOfGameDay(dayOf(s.minute)).month);
+  // o północy pogoda dnia (zaczep: później ustawi ją system pogody) i karty dnia z jej wynikiem; dzień 0 ma jedno i drugie z `createEconomy`
+  if (mod === 0) {
+    s.tycoon.hall.weather = rollWeather(s.seedHash, dayOf(s.minute), dateOfGameDay(dayOf(s.minute)).month);
+    drawDayCards(s.tycoon.cards, cardContext(s, info), s.seedHash);
+  }
+  pruneCardMods(s.tycoon.cards, s.minute);   // efekty kart po czasie znikają (ruch, marża i ludzie czytają je niżej)
   const fx = effects(s, info);
-  const open = isStoreOpen(s);
+  const open = isOpenForCustomers(s);
 
   if (s.remontUntil !== null && s.minute >= s.remontUntil) {
     s.remontUntil = null;
@@ -360,11 +385,14 @@ export function stepMinute(s: EconomyState, info: StoreInfo, out: EconEvent[]): 
   processLevels(s, out);
 
   s.minute++;
+  // karta, której godzina właśnie nadeszła: gra staje na niej (wołający sprawdzają `awaitingDecision`), a interfejs dostaje sygnał
+  for (const c of s.tycoon.cards.pending) if (c.showAt === s.minute) out.push({ kind: 'card', text: cardDef(c.id)?.title ?? '' });
 }
 
 /**
  * Oczekiwani klienci w tej minucie (lambda przed losowaniem): krzywa godzin, reputacja, marketing i remont, paczka „szał
- * zakupów”, przeszkody w sali (palety i worki śmieci) oraz niedziela, kiedy duże sklepy stoją zamknięte (tycoon/sunday.ts).
+ * zakupów”, przeszkody w sali (palety i worki śmieci), niedziela, kiedy duże sklepy stoją zamknięte (tycoon/sunday.ts), oraz
+ * ruch z efektów kart (np. +30% przez dwie godziny).
  * Jedyne miejsce, gdzie liczy się ten wzór: korzysta z niego `stepMinute`, a testy i karty pytają o to samo.
  */
 export function arrivalRate(s: EconomyState, info: StoreInfo, fx: Effects = effects(s, info)): number {
@@ -372,7 +400,8 @@ export function arrivalRate(s: EconomyState, info: StoreInfo, fx: Effects = effe
   const floorPallets = s.pallets.filter((p) => p.loc === 'floor').length;
   const boost = s.minute < s.boostUntil ? 1.3 : 1;
   return (baseTraffic(info) * (HOUR_CURVE[hour] ?? 0) / 60) * reputationFactor(s.reputation)
-    * fx.traffic * boost * Math.max(0.5, 1 - 0.08 * (floorPallets + hallObstacle(s.tycoon.waste))) * dayTrafficMult(dayOf(s.minute));
+    * fx.traffic * boost * Math.max(0.5, 1 - 0.08 * (floorPallets + hallObstacle(s.tycoon.waste))) * dayTrafficMult(dayOf(s.minute))
+    * cardModifiers(s.tycoon.cards, s.minute).traffic;
 }
 
 /**
@@ -416,7 +445,7 @@ function sell(s: EconomyState, fx: Effects, served: number, scoShare: number): n
   revenue += hot * HOT.price;
   margin += hot * HOT.price * HOT.margin;
   margin -= revenue * scoShare * fx.shrink;   // „zapomniane” skany na SCO
-  margin *= fx.marginMult;
+  margin *= fx.marginMult * cardModifiers(s.tycoon.cards, s.minute).margin;   // partner i efekt karty (rabat z glitcha, promocja)
   s.xp += served * XP.customer;
 
   const missing = want > 0 ? 1 - got / want : 0;
@@ -727,9 +756,11 @@ function checkFine(s: EconomyState, fx: Effects, out: EconEvent[]): void {
   out.push({ kind: 'fine', text: `Straż Miejska: mandat ${fine} zł za palety na chodniku. „Pan tu nie jest w hurtowni”.` });
 }
 
-function charge(s: EconomyState, field: 'wages' | 'media' | 'fee' | 'fines' | 'logistics' | 'investments', amount: number): void {
+function charge(s: EconomyState, field: 'wages' | 'media' | 'fee' | 'fines' | 'logistics' | 'investments' | 'other', amount: number): void {
   s.cash -= amount;
-  for (const k of [s.today, s.month, s.total]) k[field] += amount;
+  // `other` jest ze znakiem (przychody dodatnie, w wyniku dnia i miesiąca dodawane), więc koszt z karty zmniejsza licznik
+  const sign = field === 'other' ? -1 : 1;
+  for (const k of [s.today, s.month, s.total]) k[field] += sign * amount;
 }
 
 function income(s: EconomyState, amount: number): void {
@@ -896,7 +927,7 @@ export function tapPallet(s: EconomyState, info: StoreInfo, id?: number, combo =
  * Zwraca zarobioną marżę.
  */
 export function tapTill(s: EconomyState, info: StoreInfo, combo = 1): CommandResult {
-  if (!isStoreOpen(s)) return { ok: false, text: 'Sklep zamknięty.' };
+  if (!isOpenForCustomers(s)) return { ok: false, text: 'Sklep zamknięty.' };
   if (s.queue < 1) return { ok: false, text: 'Nikt nie czeka przy kasie.' };
   const needTaps = Math.max(1, Math.ceil(s.queue / fatigueEfficiency(s.tycoon.fatigue) - 1e-9));
   const r = fatigueTap(s.tycoon.fatigue, 'kasa', usableCombo(combo, needTaps));
@@ -1083,6 +1114,60 @@ export function rushRemont(s: EconomyState): CommandResult {
   s.ogonki -= cost;
   s.remontUntil = Math.max(s.minute + 1, s.remontUntil! - MINUTES_PER_DAY);
   return { ok: true, text: 'Ekipa remontowa dostała premię w Ogonkach. Pracują szybciej (podobno).' };
+}
+
+// --- Karty decyzji i okólniki ----------------------------------------------------------------------------
+
+/** Średni obrót na klienta: koszyk z półek i strefa hot (te same liczby co `REVENUE_PER_CUSTOMER` w makiecie, ale z katalogu). */
+const REVENUE_PER_CUSTOMER = CATS.reduce((n, c) => n + CAT_INFO[c].price * CAT_INFO[c].basket, 0) * ITEMS_PER_CUSTOMER + HOT.chance * HOT.price;
+
+/**
+ * Co karta wie o sklepie przy losowaniu (INTEGRATION.md, §5): dostawy w kolejce na dziś, personel, zaufanie, sala, pogoda i
+ * skala sklepu (marża i obrót typowego dnia), z której karta liczy swoje kwoty.
+ */
+export function cardContext(s: EconomyState, info: StoreInfo): CardContext {
+  const day = dayOf(s.minute);
+  const dayStart = day * MINUTES_PER_DAY;
+  const palletsToday = s.deliveries.filter((d) => d.at >= dayStart && d.at < dayStart + MINUTES_PER_DAY).reduce((n, d) => n + d.count, 0);
+  return {
+    day,
+    now: s.minute,
+    weekday: weekdayOf(day),
+    deliveryToday: palletsToday > 0,
+    palletsToday,
+    staff: s.staff,
+    trust: s.tycoon.trust.value,
+    cleanliness: s.tycoon.hall.cleanliness,
+    sidewalkPallets: s.pallets.filter((p) => p.loc === 'sidewalk').length,
+    weather: s.tycoon.hall.weather,
+    dailyMargin: estimatedDailyMargin(s, info),
+    dailyRevenue: expectedDailyCustomers(s, info) * REVENUE_PER_CUSTOMER,
+  };
+}
+
+/**
+ * Odpowiedź gracza na kartę. `resolveCard` sprawdza kartę, godzinę i numer odpowiedzi (odmowa nie rusza stanu), potem
+ * `applyCardOutcome` księguje to, co należy do tycoona (zaufanie, WUT, czas ludzi, siły), a tu reszta: gotówka w podziale na
+ * pozycje raportu, reputacja, Ogonki i XP. Poziom z tego XP liczy `applyCommand`. Wynik odpowiedzi to zdarzenie `card-result`.
+ */
+export function answerCard(s: EconomyState, seq: number, answer: number, out: EconEvent[]): CommandResult {
+  const r = resolveCard(s.tycoon.cards, seq, answer, s.minute, s.seedHash);
+  if (!r.ok) return { ok: false, text: r.text };
+  const o = r.outcome;
+  const tierBefore = trustTier(s.tycoon.trust.value);
+  const side = applyCardOutcome(s.tycoon, o);
+  if (side.other > 0) income(s, side.other);
+  else if (side.other < 0) charge(s, 'other', -side.other);   // koszt z karty obniża `other` (pozycja jest ze znakiem)
+  if (side.bonus !== 0) bonus(s, side.bonus);
+  if (side.fine !== 0) charge(s, 'fines', -side.fine);        // mandat z karty jest ujemny, licznik liczy kwotę dodatnią
+  if (side.fine < 0) for (const k of [s.today, s.month, s.total]) k.fineCount++;
+  if (side.logistics !== 0) charge(s, 'logistics', -side.logistics);
+  s.reputation = Math.min(100, Math.max(0, s.reputation + side.reputation));
+  s.ogonki = Math.max(0, s.ogonki + Math.round(side.ogonki));
+  s.xp += side.xp;
+  if (o.text) out.push({ kind: 'card-result', text: fillText(o.text, o.params, fmt) });
+  announceTrustTier(s, tierBefore, out);
+  return { ok: true };
 }
 
 // --- Poziomy, zlecenia, nagrody --------------------------------------------------------------------------
