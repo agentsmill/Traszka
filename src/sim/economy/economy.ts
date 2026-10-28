@@ -286,10 +286,12 @@ export function stepMinute(s: EconomyState, info: StoreInfo, out: EconEvent[]): 
   for (const d of s.deliveries.filter((x) => x.at <= s.minute)) deliver(s, info, d.count, out);
   s.deliveries = s.deliveries.filter((x) => x.at > s.minute);
 
-  if (open) serveCustomers(s, info, fx, mod);
+  // kto obsłużył kolejkę w tej minucie, ten w niej nie rozładowuje: podział na kasę i resztę robimy raz
+  let cashiers = 0;
+  if (open) cashiers = serveCustomers(s, info, fx, mod);
   else s.queue = 0;
   // personel pracuje w godzinach otwarcia, także w czasie remontu (wtedy nikt nie stoi na kasie)
-  doWork(s, info, fx, isOpenAt(mod), open, out);
+  doWork(s, info, fx, isOpenAt(mod), cashiers, out);
   if (mod >= 8 * 60 && mod < 20 * 60) checkFine(s, fx, out);
   if (mod === ORDER_DEADLINE) placeOrder(s, info, fx, out);
   if (mod === OPEN_TO) closeDay(s, info, out);
@@ -299,7 +301,8 @@ export function stepMinute(s: EconomyState, info: StoreInfo, out: EconEvent[]): 
   s.minute++;
 }
 
-function serveCustomers(s: EconomyState, info: StoreInfo, fx: Effects, mod: number): void {
+/** Przyjęcie i obsługa klientów w jednej minucie. Zwraca, ilu ludzi stało na kasie (reszta personelu pracuje przy towarze). */
+function serveCustomers(s: EconomyState, info: StoreInfo, fx: Effects, mod: number): number {
   const hour = Math.floor(mod / 60);
   const floorPallets = s.pallets.filter((p) => p.loc === 'floor').length;
   const boost = s.minute < s.boostUntil ? 1.3 : 1;
@@ -319,7 +322,7 @@ function serveCustomers(s: EconomyState, info: StoreInfo, fx: Effects, mod: numb
     for (const c of [s.today, s.month, s.total]) c.lost += lost;
   }
 
-  const cashiers = allocateCashiers(s, fx, true);
+  const cashiers = allocateCashiers(s, fx);
   const capTill = cashiers * TILL_RATE * fx.tillSpeed;
   const capSco = fx.sco * SCO_RATE * fx.scoSpeed;
   const scoServed = Math.min(capSco, s.queue * fx.scoAccept);
@@ -329,11 +332,11 @@ function serveCustomers(s: EconomyState, info: StoreInfo, fx: Effects, mod: numb
   if (served > 0) sell(s, fx, served, scoServed / served);
   if (s.queue > 4) s.reputation -= 0.002 * (s.queue - 4);
   s.reputation = Math.min(100, Math.max(0, s.reputation));
+  return cashiers;
 }
 
-/** Ilu ludzi stoi na kasie (reszta pracuje przy paletach i półkach). */
-function allocateCashiers(s: EconomyState, fx: Effects, open: boolean): number {
-  if (!open) return 0;
+/** Ilu ludzi stoi na kasie, gdy sklep jest otwarty (reszta pracuje przy paletach i półkach). */
+function allocateCashiers(s: EconomyState, fx: Effects): number {
   const staff = s.staff;
   let want: number;
   switch (s.priority) {
@@ -385,8 +388,7 @@ function sell(s: EconomyState, fx: Effects, served: number, scoShare: number): n
 
 const PALLET_ORDER: Record<PalletLoc, number> = { sidewalk: 0, floor: 1, backroom: 2 };
 
-function doWork(s: EconomyState, info: StoreInfo, fx: Effects, shift: boolean, open: boolean, out: EconEvent[]): void {
-  const cashiers = allocateCashiers(s, fx, open);
+function doWork(s: EconomyState, info: StoreInfo, fx: Effects, shift: boolean, cashiers: number, out: EconEvent[]): void {
   const workers = shift ? Math.max(0, s.staff - cashiers) : 0;
   s.lastCashiers = cashiers;
   s.lastWorkers = workers;
@@ -434,6 +436,7 @@ function restock(s: EconomyState, info: StoreInfo, fill: number, budget: number)
 /** Zdejmuje z palety do `maxItems` sztuk: na zaplecze, a gdy pełne, prosto na półki. Zwraca liczbę sztuk. */
 function unloadPallet(s: EconomyState, info: StoreInfo, fx: Effects, p: Pallet, maxItems: number, out?: EconEvent[]): number {
   if (p.total <= 0 || maxItems <= 0) return 0;
+  const before = p.total;
   const take = Math.min(maxItems, p.total);
   let backroomFree = Math.max(0, fx.backroomCap - sum(s.backroom));
   let moved = 0;
@@ -450,7 +453,9 @@ function unloadPallet(s: EconomyState, info: StoreInfo, fx: Effects, p: Pallet, 
     moved += n;
   }
   p.total = Math.max(0, sum(p.items));
-  if (p.total < 0.5 && moved > 0) {
+  // Liczy się tylko przejście poniżej progu. Paleta z ułamkiem sztuki zostaje do końca minuty (`removeEmptyPallets`), więc
+  // automatyka warsztatu odwiedza ją jeszcze raz i bez tego warunku premia, XP i zlecenia szłyby drugi raz.
+  if (before >= 0.5 && p.total < 0.5 && moved > 0) {
     for (const k of [s.today, s.month, s.total]) k.palletsUnloaded++;
     s.xp += XP.pallet;
     if (p.golden) {

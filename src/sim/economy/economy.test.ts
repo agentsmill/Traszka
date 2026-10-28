@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { generateStore } from '@/sim/store/generateStore';
-import { CATS, MINUTES_PER_DAY, OPEN_FROM, START_CASH, WAGE_PER_DAY } from './catalog';
+import { CATS, MINUTES_PER_DAY, OPEN_FROM, START_CASH, TILL_RATE, UNLOAD_AT, UNLOAD_RATE, WAGE_PER_DAY } from './catalog';
 import { dateOfDay, formatDate, isLastDayOfMonth } from './calendar';
 import { advanceEconomy } from './clock';
 import {
@@ -188,6 +188,58 @@ describe('ekonomia', () => {
     expect(Math.abs(minutes - 17 * 60)).toBeLessThanOrEqual(1);   // błąd zaokrągleń sumy ułamków minut
     for (let t = 0; t < 5; t++) minutes += advanceEconomy(s, info, clock, 1, []);
     expect(Math.abs(minutes - 24 * 60)).toBeLessThanOrEqual(2);
+  });
+});
+
+describe('rozładunek z automatyką warsztatu', () => {
+  const emptyItems = () => Object.fromEntries(CATS.map((c) => [c, 0])) as Record<(typeof CATS)[number], number>;
+
+  it('złota paleta, którą pracownik prawie rozładował, a taśmociąg dokończył, daje premię i licznik dokładnie raz', () => {
+    const s = createEconomy(SEED, info);
+    s.upgrades.tasmociag = 1;   // 4 szt./min, całą dobę
+    s.staff = 2;
+    s.priority = 'palety';      // jedna osoba na kasie, druga rozładowuje
+    s.order = { auto: false, manual: 0 };
+    // pracownik zdejmie UNLOAD_RATE × UNLOAD_AT.sidewalk sztuk i zostawi 0,2 szt., które w tej samej minucie dobierze taśmociąg
+    const total = UNLOAD_RATE * UNLOAD_AT.sidewalk + 0.2;
+    s.pallets = [{ id: 900, loc: 'sidewalk', spot: 0, items: { ...emptyItems(), napoje: total }, total, initial: total, since: s.minute, golden: true }];
+    const events: EconEvent[] = [];
+    stepMinute(s, info, events);
+    expect(s.pallets).toHaveLength(0);
+    expect(s.total.palletsUnloaded).toBe(1);
+    // jedna premia (komunikat powstaje razem z wypłatą), nie dwie
+    expect(events.filter((e) => e.kind === 'golden' && e.text.includes('rozładowana'))).toHaveLength(1);
+  });
+
+  it('przy długiej grze z taśmociągiem licznik rozładowanych palet zgadza się z liczbą palet, które zeszły ze sklepu', () => {
+    const pavilion = computeStoreInfo(generateStore('traszka-1'));
+    const s = createEconomy('traszka-1', pavilion);
+    s.cash = 1e6;
+    s.level = 12;
+    s.upgrades.tasmociag = 2;
+    s.order = { auto: false, manual: 6 };
+    run(s, pavilion, 40 * MINUTES_PER_DAY);
+    const created = s.nextPalletId - 1;
+    expect(created).toBeGreaterThan(100);
+    expect(s.total.palletsUnloaded).toBe(created - s.pallets.length);
+  });
+});
+
+describe('personel w jednej minucie', () => {
+  it('kasjerzy, którzy obsłużyli kolejkę, nie rozładowują palet w tej samej minucie', () => {
+    const s = createEconomy(SEED, info);
+    s.upgrades.drugaKasa = 1;
+    s.staff = 3;
+    s.priority = 'rowno';
+    s.order = { auto: false, manual: 0 };
+    s.queue = 4.3;   // przed obsługą: ceil(4,3 / 4) = 2 kasjerów; po niej zostaje ok. 2,9, czyli „1 kasjer”
+    const before = s.total.customers;
+    stepMinute(s, info, []);
+    const served = s.total.customers - before;
+    expect(served).toBeCloseTo(2 * TILL_RATE, 6);   // obsłużyło dwóch kasjerów
+    expect(s.lastCashiers).toBe(2);
+    expect(s.lastWorkers).toBe(1);
+    expect(s.lastCashiers + s.lastWorkers).toBe(s.staff);
   });
 });
 
