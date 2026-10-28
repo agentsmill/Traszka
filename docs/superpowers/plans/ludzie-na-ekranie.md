@@ -245,11 +245,11 @@ export class StaffCrew {
 
 ---
 
-### Task 5: Widok three: postacie załogi, most do `CashierView`, wpięcie w sklep
+### Task 5: `Gait` i most do `CashierView` (kasjer chodzi)
 
 **Model:** Sonnet
 
-**Pliki:** nowe `src/render/characters/gait.ts`, `src/render/staff/staffView.ts`, testy `gait.test.ts`, `staffView.test.ts`; zmiany: `src/render/cashierView.ts` (+ test), `src/render/crowdView.ts` (tylko eksport stałej `IDLE_DELAY_S`), `src/render/game/loadedStore.ts` (+ test).
+**Pliki:** nowe `src/render/characters/gait.ts`, `src/render/characters/gait.test.ts`; zmiany: `src/render/cashierView.ts` (+ `cashierView.test.ts`), `src/render/crowdView.ts` (tylko eksport stałej `IDLE_DELAY_S`).
 
 **Interfejsy:**
 
@@ -273,7 +273,20 @@ class CashierView {
   setVisible(visible: boolean): void;
 }
 ```
-W `update` z `pose != null`: pozycja = `cellToWorld(layout, pose.x − 0.5, pose.y − 0.5)` (y = 0), obrót `turnTowards(yaw, headingToYaw(pose.heading), dt)`, brak gestu i ukłonu (`rotation.x = 0`, `position.y = 0`, `gestureT = null`), plama podąża za postacią co klatkę, klip przez `Gait` (`pose.moving`, prędkość `STAFF_WALK_SPEED` z `@/render/staff/walker`). Bez pozy (`null`) kasjer jak dotąd stoi na `spot`, ale klip przechodzi przez ten sam `Gait` (po powrocie za ladę wraca do `Idle`), a plama wraca na `spot`. Zmiana wyglądu (`build`) tworzy nowy `Gait`. Nowa pozycja nie może przerwać `request`/`setLook` ani dubluć postaci.
+W `update` z `pose != null`: pozycja = `cellToWorld(layout, pose.x − 0.5, pose.y − 0.5)` (y = 0), obrót `turnTowards(yaw, headingToYaw(pose.heading), dt)`, brak gestu i ukłonu (`rotation.x = 0`, `position.y = 0`, `gestureT = null`), plama podąża za postacią co klatkę, klip przez `Gait` (`pose.moving`, prędkość `STAFF_WALK_SPEED` z `@/render/staff/walker`). Bez pozy (`null`) kasjer jak dotąd stoi na `spot`, ale klip przechodzi przez ten sam `Gait` (po powrocie za ladę wraca do `Idle`), a plama wraca na `spot`. Zmiana wyglądu (`build`) tworzy nowy `Gait`. Nowa pozycja nie może przerwać `request`/`setLook` ani dubluć postaci. `setVisible(false)` przed zbudowaniem postaci (strój specjalny jeszcze się wczytuje) ukrywa także postać, która dopiero powstanie; `true` ją pokazuje.
+
+- [ ] Testy: `gait.test.ts` (idle→walk od razu, walk→idle po `IDLE_DELAY_S`, tempo klipu = `walkTimeScale`, `update` zawsze woła `character.update`); `cashierView.test.ts` dopisz: `setPose` przesuwa postać, obrót doganiany przez `turnTowards` (≤ `TURN_RATE_MAX`), brak gestu w marszu, `setPose(null)` wraca za ladę i do `Idle`, `setVisible(false)` chowa postać i plamę, a `true` przywraca, ukrycie przed zbudowaniem postaci; istniejące testy bez zmian.
+- [ ] `npm test`, `npm run typecheck` zielone; commit.
+
+---
+
+### Task 6: `StaffView` (postacie załogi) i wpięcie w `Loaded`
+
+**Model:** Sonnet
+
+**Pliki:** nowy `src/render/staff/staffView.ts`, `src/render/staff/staffView.test.ts`; zmiany: `src/render/game/loadedStore.ts` (+ `loadedStore.test.ts`). Zależy od zadań 4 i 5.
+
+**Interfejsy:**
 
 ```ts
 // staffView.ts
@@ -290,23 +303,23 @@ export class StaffView {
 ```
 
 **Reguły `StaffView`:**
-- Każdy `CrewMember` bez `isCashier` ma ciało: `createCashierCharacter(factory, { outfit, appearanceSeed: 'pracownik-' + id })` z `@/render/cashierView` (to ten sam mundur `brand.green` co u kasjera), `outfit = id % 2 === 0 ? 'men-worker' : 'women-worker'`. Postać dodana do `parent`, z miejscem `blobs?.reserve()` (zwolnione razem z postacią), cieniem z mapy zgodnie z `setCharacterShadows` (jak `CrowdView`). Ciała powstają leniwie w `update` (gdy `member` jeszcze nie ma ciała) i są zwalniane (`releaseCharacter` + `slot.release()`), gdy członek zniknął z `crew.members`.
-- Co klatkę każde ciało: pozycja `cellToWorld(layout, walker.x − 0.5, walker.y − 0.5)`, obrót `turnTowards(yaw, headingToYaw(heading), dt)`, klip przez `Gait`, plama `slot.set(x, z, rx, rz)` z `characterBlobRadii`. Gdy osoba stoi na celu `cashierSpot(layout).cell` (zadanie kasa) i `serving != null`, patrzy na klienta (`atan2` jak w `CashierView.headingTo`), inaczej na `walker.heading`.
-- Ciało kasjera (`member.isCashier`) to `cashier` (jeśli nie `null`): gdy `walker.atGoal` i cel to `cashierSpot(layout).cell` → `cashier.setPose(null)`, inaczej `cashier.setPose({ x, y, heading, moving })` z walkera; `cashier.setVisible(true)`. Gdy w załodze nie ma kasjera → `cashier.setVisible(false)` i `setPose(null)`. `update` StaffView wołamy **przed** `CashierView.update` w tej samej klatce.
+- Każdy `CrewMember` bez `isCashier` ma ciało: `createCashierCharacter(factory, { outfit, appearanceSeed: 'pracownik-' + id })` z `@/render/cashierView` (ten sam mundur `brand.green` co u kasjera), `outfit = id % 2 === 0 ? 'men-worker' : 'women-worker'`. Postać dodana do `parent`, z miejscem `blobs?.reserve()` (zwolnione razem z postacią) i cieniem z mapy zgodnie z `setCharacterShadows` (jak `CrowdView`; `setCharacterShadowCasting` z `characters/blobShadows`). Ciała powstają leniwie w `update` (gdy członek nie ma jeszcze ciała) i są zwalniane (`releaseCharacter` + `slot.release()`), gdy członek zniknął z `crew.members`. `crew.members` nigdy nie ma więcej niż `STAFF_VIEW_MAX` osób, więc ciał też.
+- Co klatkę każde ciało: pozycja `cellToWorld(layout, walker.x − 0.5, walker.y − 0.5)`, obrót `turnTowards(yaw, headingToYaw(heading), dt)` (yaw zaczyna od `headingToYaw(walker.heading)`), klip przez `Gait` (`walker.moving`, `STAFF_WALK_SPEED`), plama `slot.set(x, z, rx, rz)` z `characterBlobRadii`. Gdy osoba stoi na celu `cashierSpot(layout).cell` (`walker.atGoal`) i `serving != null`, patrzy na klienta (`atan2` jak w `CashierView.headingTo`), inaczej na `walker.heading`.
+- Ciało kasjera (`member.isCashier`) to `cashier` (jeśli nie `null`): gdy `walker.atGoal` i cel to `cashierSpot(layout).cell` → `cashier.setPose(null)`, inaczej `cashier.setPose({ x, y, heading, moving })` z walkera; `cashier.setVisible(true)`. Gdy w załodze nie ma kasjera → `cashier.setVisible(false)` i `setPose(null)`. `StaffView.update` wołamy **przed** `CashierView.update` w tej samej klatce.
 - `dispose()` zwalnia wszystkie ciała i miejsca w plamach, jest idempotentne; po nim `sync`/`update` nic nie robią.
 
-**Wpięcie w `Loaded`** (`src/render/game/loadedStore.ts`): pole `staffView: StaffView | null`; `attachCharacters` dokłada je po `cashierView` (`??=`, `new StaffView(src.factory, layout, src.crowdParent, src.blobs, loaded.cashierView)`); `loadStore` inicjuje pole na `null`; `unloadStore` zwalnia `staffView` **przed** `cashierView` (osobny `attempt`).
+**Wpięcie w `Loaded`** (`src/render/game/loadedStore.ts`): pole `staffView: StaffView | null`; `attachCharacters` dokłada je po `cashierView` (`??=`, `new StaffView(src.factory, layout, src.crowdParent, src.blobs, loaded.cashierView)`); `loadStore` inicjuje pole na `null`; `unloadStore` zwalnia `staffView` **przed** `cashierView` (osobny `attempt`). Załoga trzyma kopię układu, więc nowy układ (remont) oznacza nowy `StaffView` (to zapewnia `loadStore` przy przebudowie sceny).
 
-- [ ] Testy: `gait.test.ts` (idle→walk od razu, walk→idle po `IDLE_DELAY_S`, tempo klipu = `walkTimeScale`); `cashierView.test.ts` dopisz: `setPose` przesuwa postać, obrót doganiany przez `turnTowards` (≤ `TURN_RATE_MAX`), brak gestu w marszu, `setPose(null)` wraca za ladę, `setVisible(false)` chowa postać i plamę, a `true` przywraca; istniejące testy bez zmian. `staffView.test.ts` z fabryką-atrapą jak w `cashierView.test.ts` i prawdziwą (`createCharacterFactory(loadFromDisk)`) dla jednego testu zliczania siatek: 1, 3, `STAFF_VIEW_MAX` osób → tyle ciał, każde z jedną `SkinnedMesh` (koszt jak klient); zatrudnienie dodaje ciało, zwolnienie i koniec zmiany zwalniają je i miejsce w plamach (`reserve`/`release` zbilansowane, pojemność tłumu wraca); `dispose` idempotentne; kasjer nie jest dublowany (dokładnie jedna postać na `CashierView`, pracownicy tylko dla reszty); kasjer w marszu dostaje `setPose`, a po dojściu `null`. `loadedStore.test.ts` dopisz: `attachCharacters` tworzy `staffView` raz (bez dublowania), `unloadStore` zwalnia go przed kasjerem, pola puste po nieudanej budowie.
+- [ ] Testy `staffView.test.ts` z fabryką-atrapą jak w `cashierView.test.ts` i prawdziwą (`createCharacterFactory(loadFromDisk)` z `characters/testAssets`) dla jednego testu zliczania siatek: 1, 3, `STAFF_VIEW_MAX` osób → tyle ciał, każde z jedną `SkinnedMesh` (koszt jak klient); zatrudnienie dodaje ciało, zwolnienie i koniec zmiany zwalniają je i miejsce w plamach (`reserve`/`release` zbilansowane, pojemność tłumu wraca); `dispose` idempotentne; kasjer nie jest dublowany (dokładnie jedna postać na `CashierView`, pracownicy tylko dla reszty); kasjer w marszu dostaje `setPose`, a po dojściu `null`; załoga bez kasjera ukrywa `CashierView`; plamy pracowników podążają za postaciami; stojący na kasie patrzy na obsługiwanego klienta. `loadedStore.test.ts` dopisz: `attachCharacters` tworzy `staffView` raz (bez dublowania), `unloadStore` zwalnia go przed kasjerem, pola puste po nieudanej budowie.
 - [ ] `npm test`, `npm run typecheck` zielone; commit.
 
 ---
 
-### Task 6: Wpięcie sceny gry i uchwyt debugowania
+### Task 7: Wpięcie sceny gry i uchwyt debugowania
 
 **Model:** Sonnet
 
-**Pliki:** `src/game/scene.ts` (tylko wpięcie), `src/game/frame.ts` (jeden getter), testy (`src/game/frame.test.ts` jeśli sprawdza listę pól uchwytu). Zależy od zadań 1 i 5.
+**Pliki:** `src/game/scene.ts` (tylko wpięcie), `src/game/frame.ts` (jeden getter), testy (`src/game/frame.test.ts` jeśli sprawdza listę pól uchwytu). Zależy od zadań 1 i 6.
 
 **Zmiany:**
 - `syncVisuals` (co ~100 ms, po bloku tłumu): `loaded.staffView?.sync({ people: staffFromEconomy(s, info), minute: s.minute, pallets: palletRefsOf(s, info) })`. Wymiana na etap 2C2 ma być jedną zmianą: wywołanie `staffFromEconomy(s, info)` zamienia się na `staffOnShift(s)`, nic więcej (dodaj o tym jednozdaniowy komentarz przy wywołaniu).
@@ -319,6 +332,6 @@ export class StaffView {
 
 ---
 
-### Task 7: Sprawdzenie w przeglądarce i raport
+### Task 8: Sprawdzenie w przeglądarce i raport
 
 **Wykonuje kontroler** (nie subagent). Podgląd Vite na porcie 5195 (albo 5197), telefon 390 px i pulpit; 1 osoba, 3 osoby, maksymalna liczba; zatrudnienie i zwolnienie w trakcie gry; remont (przebudowa sceny); brak błędów w konsoli; liczba draw calli z `renderer.info`; zrzuty ekranu w `.superpowers/sdd/ludzie-na-ekranie/zrzuty/`. Raport `.superpowers/sdd/ludzie-na-ekranie/raport.md`.
