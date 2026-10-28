@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { formatMonth, isLastDayOfMonth } from '@/sim/economy/calendar';
 import { CAT_INFO, CATS, CREDIT_LIMIT, GIFT_FIRST, MINUTES_PER_DAY, OPEN_FROM, PALLET_ITEMS } from '@/sim/economy/catalog';
 import {
-  buyEquipment, buyUpgrade, effects, emptyCounters, giftWindowFrom, startRemont, stepMinute, tapPallet, type Counters, type EconEvent,
+  buyEquipment, buyUpgrade, effects, emptyCounters, giftWindowFrom, stepMinute, tapPallet, type CommandResult, type Counters, type EconEvent,
   type EconomyState,
 } from '@/sim/economy/economy';
 import { questTitle, type Quest } from '@/sim/economy/quests';
@@ -12,11 +12,20 @@ import { computeStoreInfo } from '@/sim/economy/storeInfo';
 import { REMONTS } from '@/sim/economy/upgrades';
 import { GENERATOR_VERSION, generateStore } from '@/sim/store/generateStore';
 import { layoutFor } from '@/sim/store/layoutFor';
+import { dispatchCommand, type CommandEffects } from './actions';
 import { MemoryStorage } from './memoryStorage';
 import {
   BROKEN_SAVE_NOTICE, NEWER_SAVE_NOTICE, SAVE_SCHEMA, UNBUILDABLE_SAVE_NOTICE, createSession, deleteSave, discardSave, hasStoredSave,
-  lastSavedSeed, retireSession, reviveSession, saveSession, syncLayout, withLayoutFromSeed, type GameSession, type SaveEnvelope,
+  lastSavedSeed, retireSession, reviveSession, saveSession, withLayoutFromSeed, type GameSession, type SaveEnvelope,
 } from './session';
+
+/** Efekty poleceń bez skutków: remont w tych testach ma tylko zmienić sesję (stan i układ), bez dźwięku, sceny i zapisu. */
+const NO_EFFECTS: CommandEffects = {
+  play: () => {}, buzz: () => {}, toast: () => {}, confetti: () => {}, handleEvents: () => {}, persist: () => {}, clearSelection: () => {},
+  rebuildScene: () => {}, notice: () => {}, refresh: () => {},
+};
+/** Remont tak, jak robi to gra: polecenie `startRemont` przez `dispatchCommand`, który po zmianie poziomu podmienia układ i `info` w sesji. */
+const remont = (s: GameSession): CommandResult => dispatchCommand(s, { type: 'startRemont' }, NO_EFFECTS);
 
 /**
  * Awarie świata do testów: układ, z którego `computeStoreInfo` się wywraca, i seedy, dla których generator nie daje sklepu.
@@ -209,8 +218,8 @@ describe('koperta zapisu v2', () => {
     s.econ.level = 8;
     saveSession(s);
     const small = (JSON.parse(storage.getItem(key(PAWILON))!) as { layout: { width: number } }).layout.width;
-    expect(startRemont(s.econ).ok).toBe(true);
-    expect(syncLayout(s)).toBe(true);
+    expect(remont(s).ok).toBe(true);
+    expect(s.layoutLevel).toBe(1);
     saveSession(s);
     const after = JSON.parse(storage.getItem(key(PAWILON))!) as { layout: { width: number } };
     expect(after.layout.width).toBeGreaterThan(small);
@@ -218,7 +227,7 @@ describe('koperta zapisu v2', () => {
     expect(loaded.layout).toEqual(s.layout);
     expect(loaded.layout).toEqual(layoutFor(PAWILON, 1));
     expect(loaded.layoutLevel).toBe(1);
-    expect(syncLayout(loaded)).toBe(false);
+    expect(loaded.layoutLevel).toBe(loaded.econ.remontLevel);   // układ i poziom remontu się zgadzają, nic do przestawienia
   });
 
   it('seed ma własny zapis: inny sklep nie widzi cudzego', () => {
@@ -782,8 +791,7 @@ describe('zapis, który przeszedł walidację, ale z którego nie da się zbudow
     const s = createSession(BLOK, true);
     s.econ.cash = 400_000;
     s.econ.level = 12;
-    expect(startRemont(s.econ).ok).toBe(true);
-    syncLayout(s);
+    expect(remont(s).ok).toBe(true);
     play(s, 5);
     saveSession(s);
     return { raw: storage.getItem(key(BLOK))!, session: s };

@@ -155,7 +155,7 @@ function StorePanel({ s, info }: { s: EconomyState; info: StoreInfo; v: number }
 
 // --- Palety ------------------------------------------------------------------------------------------
 
-function PalletsPanel({ s, info, game }: { s: EconomyState; info: StoreInfo; game: GameActions; v: number }) {
+export function PalletsPanel({ s, info, game }: { s: EconomyState; info: StoreInfo; game: GameActions; v: number }) {
   const suggestion = assistantSuggestion(s, info);
   const mod = minuteOfDay(s.minute);
   const pending = s.deliveries.reduce((n, d) => n + d.count, 0);
@@ -165,16 +165,16 @@ function PalletsPanel({ s, info, game }: { s: EconomyState; info: StoreInfo; gam
     <>
       <Section title="Zamówienie na jutro">
         <div class="tt-seg wide" role="group" aria-label="Kto zamawia">
-          <button type="button" class={`tt-btn${s.order.auto ? ' on' : ''}`} onClick={() => game.setOrder(true)}>Asystent Traszki</button>
-          <button type="button" class={`tt-btn${!s.order.auto ? ' on' : ''}`} onClick={() => game.setOrder(false, s.order.manual)}>Ręcznie</button>
+          <button type="button" class={`tt-btn${s.order.auto ? ' on' : ''}`} onClick={() => game.dispatch({ type: 'setOrder', auto: true })}>Asystent Traszki</button>
+          <button type="button" class={`tt-btn${!s.order.auto ? ' on' : ''}`} onClick={() => game.dispatch({ type: 'setOrder', auto: false, manual: s.order.manual })}>Ręcznie</button>
         </div>
         {s.order.auto
           ? <p class="tt-hint">Asystent zamówi <b>{suggestion} {plPallets(suggestion)}</b>. {level(s, 'asystent') === 0 ? 'Zwykle trochę przesadza („klienci to kochają”).' : 'Po szkoleniu już mniej przesadza.'}</p>
           : (
             <div class="tt-stepper">
-              <button type="button" class="tt-btn" aria-label="Mniej" onClick={() => game.setOrder(false, s.order.manual - 1)}>−</button>
+              <button type="button" class="tt-btn" aria-label="Mniej" onClick={() => game.dispatch({ type: 'setOrder', auto: false, manual: s.order.manual - 1 })}>−</button>
               <b>{s.order.manual} {plPallets(s.order.manual)}</b>
-              <button type="button" class="tt-btn" aria-label="Więcej" onClick={() => game.setOrder(false, s.order.manual + 1)}>+</button>
+              <button type="button" class="tt-btn" aria-label="Więcej" onClick={() => game.dispatch({ type: 'setOrder', auto: false, manual: s.order.manual + 1 })}>+</button>
               <span class="tt-muted">asystent: {suggestion}</span>
             </div>
           )}
@@ -204,13 +204,13 @@ export function PalletItem({ s, info, id, game, compact = false }: { s: EconomyS
       </div>
       <Bar value={p.total / p.initial} />
       <div class="tt-actions">
-        <button type="button" class="tt-btn tt-primary" onClick={() => game.tapPallet(p.id)}>Rozładuj</button>
+        <button type="button" class="tt-btn tt-primary" onClick={() => game.dispatch({ type: 'tapPallet', palletId: p.id })}>Rozładuj</button>
         {moves.map((l) => (
-          <button key={l} type="button" class="tt-btn" disabled={freeSpots(s, info, l) === 0} onClick={() => game.movePallet(p.id, l)}>
+          <button key={l} type="button" class="tt-btn" disabled={freeSpots(s, info, l) === 0} onClick={() => game.dispatch({ type: 'movePallet', palletId: p.id, loc: l })}>
             {l === 'backroom' ? 'Na zaplecze' : l === 'floor' ? 'Do sali' : 'Pod sklep'}
           </button>
         ))}
-        {!compact && <button type="button" class="tt-btn" title={`Odesłanie kosztuje ${RETURN_FEE} zł i zaufanie Centrali`} onClick={() => game.returnPallet(p.id)}>Odeślij</button>}
+        {!compact && <button type="button" class="tt-btn" title={`Odesłanie kosztuje ${RETURN_FEE} zł i zaufanie Centrali`} onClick={() => game.dispatch({ type: 'returnPallet', palletId: p.id })}>Odeślij</button>}
       </div>
     </div>
   );
@@ -224,15 +224,15 @@ const PRIORITY_HINT: Record<Priority, string> = {
   palety: 'Na kasie ktoś staje dopiero przy długiej kolejce (albo gdy nie ma SCO). Reszta przy paletach.',
 };
 
-function PeoplePanel({ s, info, game }: { s: EconomyState; info: StoreInfo; game: GameActions; v: number }) {
+export function PeoplePanel({ s, info, game }: { s: EconomyState; info: StoreInfo; game: GameActions; v: number }) {
   const fx = effects(s, info);
   return (
     <>
       <Section title="Zespół na zmianie">
         <div class="tt-stepper">
-          <button type="button" class="tt-btn" aria-label="Zwolnij" onClick={() => game.fire()}>−</button>
+          <button type="button" class="tt-btn" aria-label="Zwolnij" onClick={() => game.dispatch({ type: 'fire' })}>−</button>
           <b>{s.staff} {plural(s.staff, 'osoba', 'osoby', 'osób')}</b>
-          <button type="button" class="tt-btn" aria-label="Zatrudnij" disabled={s.staff >= STAFF_MAX} onClick={() => game.hire()}>+</button>
+          <button type="button" class="tt-btn" aria-label="Zatrudnij" disabled={s.staff >= STAFF_MAX} onClick={() => game.dispatch({ type: 'hire' })}>+</button>
         </div>
         <Row label="Płace">{int(s.staff * WAGE_PER_DAY)} zł / dzień</Row>
         <p class="tt-hint">Rekrutacja: {HIRE_COST} zł. Każda osoba na zmianie to {WAGE_PER_DAY} zł dziennie (dwa etaty na 17-godzinny dzień).</p>
@@ -241,7 +241,7 @@ function PeoplePanel({ s, info, game }: { s: EconomyState; info: StoreInfo; game
       <Section title="Priorytet pracy">
         <div class="tt-seg wide" role="group" aria-label="Priorytet">
           {(['klienci', 'rowno', 'palety'] as Priority[]).map((p) => (
-            <button key={p} type="button" class={`tt-btn${s.priority === p ? ' on' : ''}`} onClick={() => game.setPriority(p)}>{PRIORITY_LABEL[p]}</button>
+            <button key={p} type="button" class={`tt-btn${s.priority === p ? ' on' : ''}`} onClick={() => game.dispatch({ type: 'setPriority', priority: p })}>{PRIORITY_LABEL[p]}</button>
           ))}
         </div>
         <p class="tt-hint">{PRIORITY_HINT[s.priority]}</p>
@@ -261,7 +261,7 @@ function PeoplePanel({ s, info, game }: { s: EconomyState; info: StoreInfo; game
 
 // --- Ulepszenia --------------------------------------------------------------------------------------
 
-function ShopPanel({ s, info, game }: { s: EconomyState; info: StoreInfo; game: GameActions; v: number }) {
+export function ShopPanel({ s, info, game }: { s: EconomyState; info: StoreInfo; game: GameActions; v: number }) {
   const remont = nextRemont(s);
   const closed = isClosedForRemont(s);
   const groups: UpgradeGroup[] = ['kasa', 'palety', 'klienci', 'warsztat'];
@@ -278,7 +278,7 @@ function ShopPanel({ s, info, game }: { s: EconomyState; info: StoreInfo; game: 
             <div key={e.id} class={`tt-item${locked ? ' locked' : ''}`}>
               <div><b>{locked ? '🔒 ' : ''}{e.name}</b>{owned > 0 ? <span class="tt-muted"> ×{owned}</span> : null}<div class="tt-muted">{e.effect}{e.size === 2 ? ' · zajmuje cały slot 2×2' : ''}</div>
                 {locked && <div class="tt-muted warn">Odblokujesz na {e.minLevel}. poziomie</div>}</div>
-              <button type="button" class="tt-btn tt-buy" disabled={locked || cost > s.cash} onClick={() => game.buyEquipment(e.id)}>{zl(cost)}</button>
+              <button type="button" class="tt-btn tt-buy" disabled={locked || cost > s.cash} onClick={() => game.dispatch({ type: 'buyEquipment', id: e.id })}>{zl(cost)}</button>
             </div>
           );
         })}
@@ -315,7 +315,7 @@ function ShopPanel({ s, info, game }: { s: EconomyState; info: StoreInfo; game: 
                   </div>
                   {maxed
                     ? <span class="tt-check">✓</span>
-                    : <button type="button" class="tt-btn tt-buy" disabled={!!blocker || cost > s.cash} onClick={() => game.buyUpgrade(u.id)}>{zl(cost)}</button>}
+                    : <button type="button" class="tt-btn tt-buy" disabled={!!blocker || cost > s.cash} onClick={() => game.dispatch({ type: 'buyUpgrade', id: u.id })}>{zl(cost)}</button>}
                 </div>
               );
             })}
@@ -327,7 +327,7 @@ function ShopPanel({ s, info, game }: { s: EconomyState; info: StoreInfo; game: 
           ? (
             <>
               <p class="tt-hint">Remont trwa jeszcze {duration((s.remontUntil ?? 0) - s.minute)}.</p>
-              <button type="button" class="tt-btn" disabled={s.ogonki < 40} onClick={() => game.rushRemont()}>Przyspiesz o dzień (40 🦎)</button>
+              <button type="button" class="tt-btn" disabled={s.ogonki < 40} onClick={() => game.dispatch({ type: 'rushRemont' })}>Przyspiesz o dzień (40 🦎)</button>
             </>
           )
           : remont
@@ -335,7 +335,7 @@ function ShopPanel({ s, info, game }: { s: EconomyState; info: StoreInfo; game: 
               <div class="tt-item">
                 <div><b>{s.level < remont.minLevel ? '🔒 ' : ''}{remont.name}</b><div class="tt-muted">Większy lokal: więcej półek, slotów ({remont.slots} × 2×2) i miejsc na palety, więcej klientów. Sklep zamknięty {remont.days} {plural(remont.days, 'dzień', 'dni', 'dni')}.</div>
                   {s.level < remont.minLevel && <div class="tt-muted warn">Odblokujesz na {remont.minLevel}. poziomie</div>}</div>
-                <button type="button" class="tt-btn tt-buy" disabled={s.level < remont.minLevel || remont.cost > s.cash} onClick={() => game.startRemont()}>{zl(remont.cost)}</button>
+                <button type="button" class="tt-btn tt-buy" disabled={s.level < remont.minLevel || remont.cost > s.cash} onClick={() => game.dispatch({ type: 'startRemont' })}>{zl(remont.cost)}</button>
               </div>
             )
             : <p class="tt-hint">To już Flagowiec. Większego sklepu nie będzie.</p>}
@@ -343,7 +343,7 @@ function ShopPanel({ s, info, game }: { s: EconomyState; info: StoreInfo; game: 
       <Section title="Za Ogonki">
         <div class="tt-item">
           <div><b>Kampania w Traszkapce</b><div class="tt-muted">+30% klientów przez dobę</div></div>
-          <button type="button" class="tt-btn tt-buy" disabled={s.ogonki < 30} onClick={() => game.campaign()}>30 🦎</button>
+          <button type="button" class="tt-btn tt-buy" disabled={s.ogonki < 30} onClick={() => game.dispatch({ type: 'campaign' })}>30 🦎</button>
         </div>
       </Section>
     </>
@@ -352,7 +352,7 @@ function ShopPanel({ s, info, game }: { s: EconomyState; info: StoreInfo; game: 
 
 // --- Cele i wyniki -------------------------------------------------------------------------------------
 
-function GoalsPanel({ s, game }: { s: EconomyState; game: GameActions; v: number }) {
+export function GoalsPanel({ s, game }: { s: EconomyState; game: GameActions; v: number }) {
   const t = s.today;
   const m = s.month;
   const profit = (k: typeof t): number => k.margin + k.other - k.wages - k.media - k.fee - k.fines - k.logistics;
@@ -372,7 +372,7 @@ function GoalsPanel({ s, game }: { s: EconomyState; game: GameActions; v: number
               <div class="tt-row">
                 <span class="tt-muted">+{zl(q.reward.cash)} · +{q.reward.ogonki} 🦎 · +{q.reward.xp} XP</span>
                 {done
-                  ? <button type="button" class="tt-btn tt-primary tt-claim" onClick={() => game.claimQuest(q.id)}>Odbierz!</button>
+                  ? <button type="button" class="tt-btn tt-primary tt-claim" onClick={() => game.dispatch({ type: 'claimQuest', questId: q.id })}>Odbierz!</button>
                   : <span class="tt-muted">{pct(questProgress(s, q))}</span>}
               </div>
             </div>

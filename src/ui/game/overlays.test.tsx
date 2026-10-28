@@ -1,38 +1,38 @@
-import type { ComponentChild, VNode } from 'preact';
+import type { VNode } from 'preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ephemeral, hints, showHints } from '../state';
-import { EPHEMERAL_BADGE, EPHEMERAL_NOTE, FIRST_DAY_HINTS, FirstDayHints, RESTART_CONFIRM, StoreActions, StoreBadge } from './overlays';
+import { GIFT_OPEN } from '@/sim/economy/catalog';
+import type { Command } from '@/sim/economy/commands';
+import { createEconomy, type CommandResult, type EconomyState } from '@/sim/economy/economy';
+import { EQUIPMENT } from '@/sim/economy/upgrades';
+import { computeStoreInfo, type StoreInfo } from '@/sim/economy/storeInfo';
+import { layoutFor } from '@/sim/store/layoutFor';
+import {
+  econ, ephemeral, hints, report, selection, showHints, showSettings, start, tab, welcome, type GameActions,
+} from '../state';
+import {
+  ClickerBar, ComboChip, EPHEMERAL_BADGE, EPHEMERAL_NOTE, FIRST_DAY_HINTS, FirstDayHints, GiftDrop, RESTART_CONFIRM, SelectionCard, StoreActions,
+  StoreBadge,
+} from './overlays';
+import { buttonsOf, click, labels, textOf, walk } from './vnodeTree';
 
-/** Wszystkie węzły drzewa vnode zwróconego przez komponent bez hooków (wołamy go jak zwykłą funkcję, bez DOM). */
-function walk(node: ComponentChild, out: VNode<Record<string, unknown>>[] = []): VNode<Record<string, unknown>>[] {
-  if (node === null || node === undefined || typeof node !== 'object') return out;
-  if (Array.isArray(node)) {
-    for (const child of node) walk(child, out);
-    return out;
-  }
-  const vnode = node as VNode<Record<string, unknown>>;
-  out.push(vnode);
-  walk(vnode.props?.children as ComponentChild, out);
-  return out;
-}
-/** Tekst widoczny w drzewie (łączy łańcuchy i liczby ze wszystkich węzłów). */
-function textOf(node: ComponentChild): string {
-  if (node === null || node === undefined || typeof node === 'boolean') return '';
-  if (typeof node === 'string' || typeof node === 'number') return String(node);
-  if (Array.isArray(node)) return node.map(textOf).join('');
-  return textOf((node as VNode<Record<string, unknown>>).props?.children as ComponentChild);
-}
-const buttonsOf = (tree: ComponentChild): VNode<Record<string, unknown>>[] => walk(tree).filter((v) => v.type === 'button');
-const labels = (tree: ComponentChild): string[] => buttonsOf(tree).map((b) => textOf(b));
-
-beforeEach(() => {
+/** Sygnały, które sterują widocznością nakładek, do stanu wyjściowego (nic nie otwarte, brak gry). */
+const resetSignals = (): void => {
   ephemeral.value = false;
+  econ.value = null;
+  selection.value = null;
+  tab.value = null;
+  report.value = null;
+  welcome.value = null;
+  start.value = null;
+  showSettings.value = false;
   showHints([]);
-});
+};
+beforeEach(resetSignals);
 afterEach(() => {
-  ephemeral.value = false;
-  showHints([]);
+  resetSignals();
   vi.useRealTimers();
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe('⚙: Nowy sklep zamiast „Zacznij od nowa” w sklepie tymczasowym (R46, Minor-4)', () => {
@@ -122,5 +122,189 @@ describe('podpowiedzi pierwszego dnia: dymki zamiast okna powitalnego', () => {
     (buttonsOf(last)[0]!.props.onClick as () => void)();
     expect(hints.value).toEqual([]);
     expect(FirstDayHints()).toBeNull();
+  });
+});
+
+
+// --- Polecenia z interfejsu, paczka i combo ze stanu symulacji ---------------------------------------------------
+
+/** Świeża gra na układzie `level` (remont 1 daje sloty na sprzęt), tak jak zaczyna ją sesja. */
+function base(level = 0, seed = 'nakladki'): { s: EconomyState; info: StoreInfo } {
+  const info = computeStoreInfo(layoutFor(seed, level));
+  return { s: createEconomy(seed, info), info };
+}
+const publishState = (s: EconomyState, info: StoreInfo): void => { econ.value = { s, info, v: 1 }; };
+
+/** Atrapa `GameActions`: tylko `dispatch` coś robi, resztę interfejs w tych testach nie woła. */
+function fakeGame(result: CommandResult = { ok: true }): GameActions & { dispatch: ReturnType<typeof vi.fn<(cmd: Command) => CommandResult>> } {
+  return {
+    dispatch: vi.fn<(cmd: Command) => CommandResult>(() => result),
+    claimWelcome: vi.fn(), openNextStore: vi.fn(), setSound: vi.fn(), setVibration: vi.fn(), restart: vi.fn(), newStore: vi.fn(),
+  };
+}
+
+describe('paczka od Centrali: okno z symulacji, a nie timer interfejsu (L1)', () => {
+  const GIFT_AT = 1000;
+  /** Stan z oknem paczki otwartym od `GIFT_AT`; `minute` ustawia, gdzie jest zegar gry. */
+  const at = (minute: number, giftAt = GIFT_AT): EconomyState => {
+    const { s, info } = base();
+    s.giftAt = giftAt;
+    s.minute = minute;
+    publishState(s, info);
+    return s;
+  };
+
+  it('paczka widoczna tylko w oknie z symulacji', () => {
+    const game = fakeGame();
+    const shown = (minute: number): boolean => { at(minute); return GiftDrop({ game, onClaim: vi.fn() }) !== null; };
+    expect(shown(GIFT_AT - 1)).toBe(false);          // przed oknem
+    expect(shown(GIFT_AT)).toBe(true);               // okno otwiera się w minucie giftAt
+    expect(shown(GIFT_AT + GIFT_OPEN - 1)).toBe(true);
+    expect(shown(GIFT_AT + GIFT_OPEN)).toBe(false);  // okno zamknięte (nieodebrana paczka wygasa)
+    econ.value = null;
+    expect(GiftDrop({ game, onClaim: vi.fn() })).toBeNull();   // bez gry
+    const s = at(GIFT_AT + 1);
+    s.gameOver = true;
+    expect(GiftDrop({ game, onClaim: vi.fn() })).toBeNull();   // po końcu gry paczek nie ma
+  });
+
+  it('nic nie zasłania paczki tylko wtedy, gdy nie ma raportu, ekranu startowego, powitania ani ustawień (jak dotąd)', () => {
+    const game = fakeGame();
+    at(GIFT_AT + 1);
+    expect(GiftDrop({ game, onClaim: vi.fn() })).not.toBeNull();
+    report.value = {} as never;
+    expect(GiftDrop({ game, onClaim: vi.fn() })).toBeNull();
+    report.value = null;
+    start.value = {} as never;
+    expect(GiftDrop({ game, onClaim: vi.fn() })).toBeNull();
+    start.value = null;
+    welcome.value = { hours: 1, offline: 0, streak: null, daily: null };
+    expect(GiftDrop({ game, onClaim: vi.fn() })).toBeNull();
+    welcome.value = null;
+    showSettings.value = true;
+    expect(GiftDrop({ game, onClaim: vi.fn() })).toBeNull();
+    showSettings.value = false;
+    expect(GiftDrop({ game, onClaim: vi.fn() })).not.toBeNull();
+  });
+
+  it('pozycja jest losowana raz na okno (klucz giftAt), a nowe okno losuje na nowo', () => {
+    const game = fakeGame();
+    const random = vi.spyOn(Math, 'random');
+    random.mockReturnValueOnce(0).mockReturnValueOnce(0);   // lewy górny róg dozwolonego pola: x 20%, y 30%
+    at(2000 + 1, 2000);
+    const first = GiftDrop({ game, onClaim: vi.fn() }) as VNode<Record<string, unknown>>;
+    expect(first.props.style).toEqual({ left: '20%', top: '30%' });
+    expect(random).toHaveBeenCalledTimes(2);
+    random.mockReturnValue(0.5);   // kolejne renderowanie tego samego okna nie losuje drugi raz
+    at(2000 + 50, 2000);
+    const again = GiftDrop({ game, onClaim: vi.fn() }) as VNode<Record<string, unknown>>;
+    expect(again.props.style).toEqual({ left: '20%', top: '30%' });
+    expect(random).toHaveBeenCalledTimes(2);
+    at(3000 + 1, 3000);   // następne okno
+    const next = GiftDrop({ game, onClaim: vi.fn() }) as VNode<Record<string, unknown>>;
+    expect(next.props.style).toEqual({ left: '50%', top: '45%' });
+    expect(random).toHaveBeenCalledTimes(4);
+  });
+
+  it('klik paczki wysyła claimGift, a onClaim dostaje tekst nagrody w miejscu paczki (w pikselach okna)', () => {
+    vi.stubGlobal('window', { innerWidth: 1000, innerHeight: 800 });
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);   // x 50%, y 45%
+    const game = fakeGame({ ok: true, text: 'Paczka od Centrali: +120 zł' });
+    const onClaim = vi.fn();
+    at(4000 + 1, 4000);
+    const drop = GiftDrop({ game, onClaim }) as VNode<Record<string, unknown>>;
+    expect(drop.type).toBe('button');
+    click(drop);
+    expect(game.dispatch).toHaveBeenCalledTimes(1);
+    expect(game.dispatch).toHaveBeenCalledWith({ type: 'claimGift' });
+    expect(onClaim).toHaveBeenCalledWith(500, 360, 'Paczka od Centrali: +120 zł');
+  });
+
+  it('odmowa przy odbiorze (okno już zamknięte) nie daje napisu z nagrodą', () => {
+    vi.stubGlobal('window', { innerWidth: 1000, innerHeight: 800 });
+    const game = fakeGame({ ok: false, text: 'Paczki od Centrali już nie ma.' });
+    const onClaim = vi.fn();
+    at(5000 + 1, 5000);
+    click(GiftDrop({ game, onClaim }) as VNode<Record<string, unknown>>);
+    expect(game.dispatch).toHaveBeenCalledWith({ type: 'claimGift' });
+    expect(onClaim).not.toHaveBeenCalled();
+  });
+});
+
+describe('combo stukania: z tapCombo stanu symulacji, nie z timera interfejsu (L3)', () => {
+  const withTaps = (streak: number, minutesAgo: number): void => {
+    const { s, info } = base();
+    s.minute = 1000;
+    s.lastTapAt = 1000 - minutesAgo;
+    s.tapStreak = streak;
+    publishState(s, info);
+  };
+
+  it('combo chip z tapCombo stanu', () => {
+    withTaps(8, 3);   // 8 stuknięć w serii: ×3 (co 4 stuknięcia o 1 wyżej)
+    const chip = ComboChip() as VNode<Record<string, unknown>>;
+    expect(chip.props.class).toBe('tt-combo m3');
+    expect(textOf(chip)).toContain('COMBO ×3');
+    expect(textOf(walk(chip).find((v) => v.type === 'small'))).toBe('8 stuknięć');
+    withTaps(20, 0);   // mnożnik ma sufit ×5
+    expect((ComboChip() as VNode<Record<string, unknown>>).props.class).toBe('tt-combo m5');
+  });
+
+  it('chip pokazuje się od 3 stuknięć w serii, przy dłuższej przerwie niż okno combo znika, a bez gry nie ma go wcale', () => {
+    withTaps(2, 0);
+    expect(ComboChip()).toBeNull();
+    withTaps(3, 0);
+    expect(ComboChip()).not.toBeNull();
+    withTaps(30, 16);   // od ostatniego stuknięcia minęło więcej niż COMBO_WINDOW (15 minut gry)
+    expect(ComboChip()).toBeNull();
+    econ.value = null;
+    expect(ComboChip()).toBeNull();
+  });
+});
+
+describe('przyciski nakładek wysyłają polecenia', () => {
+  it('przyciski klikera: paczka bez id (najpilniejsza) i kasa; pływający napis tylko po udanym poleceniu', () => {
+    const { s, info } = base();
+    s.queue = 3;
+    publishState(s, info);
+    const onFloat = vi.fn();
+    const game = fakeGame({ ok: true, value: 12 });
+    const bar = ClickerBar({ game, onFloat });
+    const [pallet, till] = buttonsOf(bar);
+    click(pallet!, { clientX: 10, clientY: 20 });
+    expect(game.dispatch).toHaveBeenLastCalledWith({ type: 'tapPallet' });
+    expect(onFloat).toHaveBeenLastCalledWith(10, 20, '+12 szt.', 'work');
+    click(till!, { clientX: 30, clientY: 40 });
+    expect(game.dispatch).toHaveBeenLastCalledWith({ type: 'tapTill' });
+    expect(onFloat).toHaveBeenLastCalledWith(30, 40, expect.stringContaining('zł'), 'money');
+    const refused = fakeGame({ ok: false, text: 'Brak palet.' });
+    onFloat.mockClear();
+    click(buttonsOf(ClickerBar({ game: refused, onFloat }))[0]!, { clientX: 1, clientY: 2 });
+    expect(refused.dispatch).toHaveBeenCalledWith({ type: 'tapPallet' });
+    expect(onFloat).not.toHaveBeenCalled();
+  });
+
+  it('karta kasy: „Obsłuż klienta” wysyła tapTill', () => {
+    const { s, info } = base();
+    publishState(s, info);
+    selection.value = { kind: 'till' };
+    const game = fakeGame();
+    click(buttonsOf(SelectionCard({ game })).find((b) => textOf(b) === 'Obsłuż klienta')!);
+    expect(game.dispatch).toHaveBeenCalledWith({ type: 'tapTill' });
+  });
+
+  it('karta slotu: zakup sprzętu wysyła buyEquipment z id slotu', () => {
+    const { s, info } = base(1);   // po pierwszym remoncie sklep ma sloty
+    expect(info.slots.length).toBeGreaterThan(0);
+    s.cash = 1e6;
+    publishState(s, info);
+    const slot = info.slots[0]!;
+    selection.value = { kind: 'slot', slotId: slot.id };
+    const game = fakeGame();
+    const buy = buttonsOf(SelectionCard({ game })).filter((b) => b.props.class === 'tt-btn tt-buy');
+    expect(buy.length).toBeGreaterThan(0);
+    click(buy[0]!);
+    const first = EQUIPMENT.find((e) => e.size <= 2)!;
+    expect(game.dispatch).toHaveBeenCalledWith({ type: 'buyEquipment', id: first.id, slotId: slot.id });
   });
 });

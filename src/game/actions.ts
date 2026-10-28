@@ -40,7 +40,7 @@ interface AfterStep {
   clearSelection?: 'before' | 'after';
 }
 
-/** Kroki po poleceniu, z dzisiejszego `game` w main.ts (`act` + `afterAction`). Kompilator pilnuje wpisu dla każdego typu. */
+/** Kroki po poleceniu, przeniesione z dawnego `game` w main.ts (`act` + `afterAction`). Kompilator pilnuje wpisu dla każdego typu. */
 export const AFTER: Record<Command['type'], AfterStep> = {
   tapPallet: { okToast: false, sfx: 'tap', buzz: 8 },
   tapTill: { okToast: false, sfx: 'cash', buzz: 8 },
@@ -73,7 +73,7 @@ export function markOffLog(session: GameSession): void {
 }
 
 /**
- * Polecenie gracza: kroki po kolei, jak w dzisiejszym `act` + `afterAction`.
+ * Polecenie gracza: kroki po kolei, jak w dawnym `act` + `afterAction` z main.ts.
  * 1. zaznaczenie zdjęte przed poleceniem (`clearSelection: 'before'`);
  * 2. wpis do dziennika, także polecenia, które się nie uda (serwer odtwarzający robi to samo);
  * 3. `applyCommand`;

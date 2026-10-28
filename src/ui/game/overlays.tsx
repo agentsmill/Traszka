@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'preact/hooks';
 import { RETURN_FEE } from '@/sim/economy/catalog';
-import { effects, isStoreOpen, slotFree, slotUsage, type MonthReport } from '@/sim/economy/economy';
+import { effects, giftOpen, isStoreOpen, slotFree, slotUsage, tapCombo, type MonthReport } from '@/sim/economy/economy';
 import { EQUIPMENT, EQUIPMENT_BY_ID, equipmentCost } from '@/sim/economy/upgrades';
 import type { QualityPresetId } from '@/render/quality';
 import { networkIncomeOf, prestigePoints } from '@/game/meta';
 import {
-  celebration, combo, ephemeral, econ, hints, metaView, nextHint, preset, report, selection, seed, showPerf, showPrestige, showSettings,
+  celebration, ephemeral, econ, hints, metaView, nextHint, preset, report, selection, seed, showPerf, showPrestige, showSettings,
   start, tab, toasts, welcome, type Controls, type GameActions,
 } from '../state';
 import { int, plural, signedZl, zl } from './format';
@@ -35,7 +35,7 @@ export function SelectionCard({ game }: { game: GameActions }) {
       <>
         <h3>Kasa</h3>
         <p>Kolejka: <b>{int(s.queue)}</b> · na kasie: {s.lastCashiers} {plural(s.lastCashiers, 'osoba', 'osoby', 'osób')} · SCO: {fx.sco}</p>
-        <button type="button" class="tt-btn tt-primary big" disabled={!isStoreOpen(s) || s.queue < 1} onClick={() => game.tapTill()}>Obsłuż klienta</button>
+        <button type="button" class="tt-btn tt-primary big" disabled={!isStoreOpen(s) || s.queue < 1} onClick={() => game.dispatch({ type: 'tapTill' })}>Obsłuż klienta</button>
         <p class="tt-hint">Stuknięcie w kasę w sklepie też obsługuje klienta. Ty też umiesz kasować.</p>
       </>
     );
@@ -54,7 +54,7 @@ export function SelectionCard({ game }: { game: GameActions }) {
             return (
               <div key={e.id} class="tt-item">
                 <div><b>{e.name}</b><div class="tt-muted">{e.effect}</div></div>
-                <button type="button" class="tt-btn tt-buy" disabled={cost > s.cash} onClick={() => game.buyEquipment(e.id, slot.id)}>{zl(cost)}</button>
+                <button type="button" class="tt-btn tt-buy" disabled={cost > s.cash} onClick={() => game.dispatch({ type: 'buyEquipment', id: e.id, slotId: slot.id })}>{zl(cost)}</button>
               </div>
             );
           })
@@ -81,11 +81,11 @@ export function ClickerBar({ game, onFloat }: { game: GameActions; onFloat: (x: 
   return (
     <div class="tt-clicker">
       <button type="button" class="tt-fab" disabled={pallets === 0} aria-label={`Rozładuj paletę (${pallets})`}
-        onClick={(e) => { const r = game.tapPallet(); if (r.ok) onFloat(...at(e), `+${Math.round(r.value ?? 0)} szt.`, 'work'); }}>
+        onClick={(e) => { const r = game.dispatch({ type: 'tapPallet' }); if (r.ok) onFloat(...at(e), `+${Math.round(r.value ?? 0)} szt.`, 'work'); }}>
         <span aria-hidden="true">📦</span>{pallets > 0 && <span class="tt-badge">{pallets}</span>}
       </button>
       <button type="button" class="tt-fab" disabled={q < 1 || !isStoreOpen(s)} aria-label={`Obsłuż klienta (${q} w kolejce)`}
-        onClick={(e) => { const r = game.tapTill(); if (r.ok) onFloat(...at(e), `+${(r.value ?? 0).toLocaleString('pl-PL', { maximumFractionDigits: 2 })} zł`, 'money'); }}>
+        onClick={(e) => { const r = game.dispatch({ type: 'tapTill' }); if (r.ok) onFloat(...at(e), `+${(r.value ?? 0).toLocaleString('pl-PL', { maximumFractionDigits: 2 })} zł`, 'money'); }}>
         <span aria-hidden="true">🧾</span>{q > 0 && <span class="tt-badge">{q}</span>}
       </button>
     </div>
@@ -317,39 +317,41 @@ export function PrestigeModal({ game }: { game: GameActions }) {
   );
 }
 
+/** Miejsce paczki w oknie z `giftAt`: ułamki okna w procentach, losowane raz na okno (kolejne renderowanie tego samego okna je zachowuje). */
+let giftSpot: { window: number; x: number; y: number } | null = null;
+function spotFor(giftAt: number): { x: number; y: number } {
+  if (giftSpot?.window === giftAt) return giftSpot;
+  giftSpot = { window: giftAt, x: 20 + Math.random() * 60, y: 30 + Math.random() * 30 };
+  return giftSpot;
+}
+
 /**
- * Paczka od Centrali: co 45–110 s gry pojawia się w losowym miejscu nad sceną na 9 s. Złapana daje losową nagrodę.
- * Nie pojawia się przy pauzie ani przy otwartych oknach.
+ * Paczka od Centrali. Okno paczki daje symulacja, nie timer interfejsu: `giftOpen` jest prawdą od minuty `giftAt` przez
+ * `GIFT_OPEN` minut gry (ok. 9 s przy ×1, krócej przy większej prędkości), więc paczka stoi w pauzie, a po wczytaniu zapisu
+ * wraca tam, gdzie była. Interfejs losuje tylko miejsce nad sceną, raz na okno (klucz `giftAt`; `Math.random` w `ui` jest
+ * dozwolony, bo to nie symulacja). Odbiór to polecenie `claimGift`: symulacja zamyka okno i planuje następne. Nie pokazuje się
+ * przy otwartym raporcie, ekranie startowym, powitaniu ani ustawieniach.
  */
 export function GiftDrop({ game, onClaim }: { game: GameActions; onClaim: (x: number, y: number, text: string) => void }) {
-  const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
-  useEffect(() => {
-    let t = 0;
-    const blocked = (): boolean => !!report.value || !!start.value || !!welcome.value || showSettings.value || !econ.value;
-    const schedule = (ms: number): void => {
-      t = window.setTimeout(() => {
-        if (blocked()) { schedule(5000); return; }
-        const w = window.innerWidth;
-        const h = window.innerHeight;
-        setPos({ x: w * (0.2 + Math.random() * 0.6), y: h * (0.3 + Math.random() * 0.3) });
-        t = window.setTimeout(() => { setPos(null); schedule(45_000 + Math.random() * 65_000); }, 9000);
-      }, ms);
-    };
-    schedule(25_000);
-    return () => clearTimeout(t);
-  }, []);
-  if (!pos) return null;
+  const view = econ.value;
+  if (!view || !giftOpen(view.s) || report.value || start.value || welcome.value || showSettings.value) return null;
+  const spot = spotFor(view.s.giftAt);
   return (
-    <button type="button" class="tt-gift" style={{ left: `${pos.x}px`, top: `${pos.y}px` }} aria-label="Paczka od Centrali"
-      onClick={() => { const r = game.claimGift(); setPos(null); if (r.ok) onClaim(pos.x, pos.y, r.text ?? ''); }}>
+    <button type="button" class="tt-gift" style={{ left: `${spot.x}%`, top: `${spot.y}%` }} aria-label="Paczka od Centrali"
+      onClick={() => {
+        const r = game.dispatch({ type: 'claimGift' });
+        if (r.ok) onClaim(window.innerWidth * spot.x / 100, window.innerHeight * spot.y / 100, r.text ?? '');
+      }}>
       🎁
     </button>
   );
 }
 
-/** Licznik combo nad przyciskami klikera. */
+/** Licznik combo nad przyciskami klikera: seria szybkich stuknięć ze stanu symulacji (`tapCombo`), widoczna od 3 stuknięć. */
 export function ComboChip() {
-  const c = combo.value;
+  const view = econ.value;
+  if (!view) return null;
+  const c = tapCombo(view.s);
   if (c.count < 3) return null;
   return <div class={`tt-combo m${Math.min(5, c.mult)}`} key={c.mult}>COMBO ×{c.mult}<small>{c.count} stuknięć</small></div>;
 }

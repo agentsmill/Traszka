@@ -17,8 +17,9 @@ import { randomSeed } from '@/game/seedWords';
 import { chooseStore, entrySeed, freeSeed } from '@/game/seeds';
 import {
   NEWER_SAVE_NOTICE, UNBUILDABLE_SAVE_NOTICE, createSession, discardSave, hasStoredSave, lastSavedSeed, retireSession, reviveSession, saveSession,
-  syncLayout, type GameSession,
+  type GameSession,
 } from '@/game/session';
+import { dispatchCommand, markOffLog, type CommandEffects } from '@/game/actions';
 import { openStore } from '@/game/openStore';
 import { addToNetwork, claimDaily, loadMeta, needsStartScreen, partnerOf, saveMeta, startupWindow, type Meta } from '@/game/meta';
 import { initialStartForm, noticeAfterOpen, openChosen, openRequestFor, playerOf, type StartChoice, type StoreSwitch } from '@/game/start';
@@ -31,9 +32,7 @@ import { CATS, HOUR_CURVE } from '@/sim/economy/catalog';
 import { minuteOfDay } from '@/sim/economy/calendar';
 import { advanceEconomy } from '@/sim/economy/clock';
 import {
-  buyEquipment, buyUpgrade, campaign, claimGift, claimQuest, effects, expectedDailyCustomers, fire, grantDaily, grantOffline, hire,
-  isClosedForRemont, isStoreOpen, movePallet, processLevels,
-  returnPallet, rushRemont, setOrder, setPriority, slotUsage, startRemont, stepMinute, tapPallet, tapTill, type CommandResult,
+  effects, expectedDailyCustomers, grantDaily, grantOffline, isClosedForRemont, isStoreOpen, processLevels, slotUsage, stepMinute, tapCombo,
   type EconEvent,
 } from '@/sim/economy/economy';
 import { slotUnits } from '@/sim/economy/slots';
@@ -493,68 +492,39 @@ function startGame(
     }
   }
 
-  // --- Combo: szybkie stukanie (odstęp < 0,65 s) zwiększa mnożnik co 4 stuknięcia, do ×5 ---
-  let comboCount = 0;
-  let lastTapAt = 0;
-  let comboTimer = 0;
-  function nextCombo(): number {
-    const now = performance.now();
-    comboCount = now - lastTapAt < 650 ? comboCount + 1 : 1;
-    lastTapAt = now;
-    const mult = Math.min(5, 1 + Math.floor(comboCount / 4));
-    ui.combo.value = { count: comboCount, mult };
-    clearTimeout(comboTimer);
-    comboTimer = window.setTimeout(() => { comboCount = 0; ui.combo.value = { count: 0, mult: 1 }; }, 900);
-    return mult;
-  }
-
-  /** Polecenie gracza: wynik, odświeżenie sceny i interfejsu, komunikat przy błędzie. */
-  const act = (r: CommandResult, okToast = true): CommandResult => {
-    if (!r.ok) { ui.pushToast(r.text, 'error'); play('error'); }
-    else if (okToast && r.text) ui.pushToast(r.text, 'ok');
-    afterAction();
-    return r;
-  };
-  function afterAction(): void {
+  /**
+   * Stan zmieniony poza poleceniami (nagroda powitalna, `skip`): poziomy z nagrody, ich zdarzenia i odświeżenie sceny oraz
+   * interfejsu. Polecenia gracza przechodzą przez `dispatchCommand`, który robi to sam.
+   */
+  function settleOutsideCommand(): void {
     if (!session) return;
     const events: EconEvent[] = [];
-    processLevels(session.econ, events);   // poziom z nagrody albo stuknięcia od razu, także w pauzie
+    processLevels(session.econ, events);
     handleEvents(events);
-    if (syncLayout(session)) load(session.seed);
     syncVisuals(true);
     publish();
   }
+
+  /**
+   * Efekty uboczne poleceń (`dispatchCommand`): dźwięk, wibracja, komunikaty, zapis i odświeżenie. Kolejność i warunki ich
+   * użycia (które polecenie gra jaki dźwięk, kiedy zapisuje, kiedy zdejmuje zaznaczenie) trzyma tabela `AFTER` w `actions.ts`.
+   */
+  const commandEffects: CommandEffects = {
+    play,
+    buzz,
+    toast: (text, kind) => ui.pushToast(text, kind),
+    confetti: (fx, fy, count) => confetti(window.innerWidth * fx, window.innerHeight * fy, count),
+    handleEvents,
+    persist,
+    clearSelection: () => { ui.selection.value = null; },
+    rebuildScene: () => { if (session) load(session.seed); },   // `load` rzuca przy błędzie; `dispatchCommand` to łapie i pokazuje komunikat
+    notice: postNotice,
+    refresh: () => { syncVisuals(true); publish(); },
+  };
   const money = (n: number): string => `+${n.toLocaleString('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} zł`;
 
   const game: ui.GameActions = {
-    tapPallet: (id) => {
-      if (!session) return { ok: false, text: '' };
-      const r = tapPallet(session.econ, session.info, id, nextCombo());
-      if (r.ok) {
-        play('tap');
-        buzz(8);
-        if (r.text) handleEvents([{ kind: 'golden', text: r.text }]);
-      }
-      return act(r.ok ? { ok: true, value: r.value } : r, false);
-    },
-    tapTill: () => {
-      if (!session) return { ok: false, text: '' };
-      const r = tapTill(session.econ, session.info, nextCombo());
-      if (r.ok) { play('cash'); buzz(8); }
-      return act(r, false);
-    },
-    claimQuest: (id) => {
-      if (!session) return { ok: false, text: '' };
-      const r = claimQuest(session.econ, session.info, id);
-      if (r.ok) { play('coins'); buzz([15, 30, 15]); confetti(window.innerWidth / 2, window.innerHeight * 0.6, 28); persist(); }
-      return act(r);
-    },
-    claimGift: () => {
-      if (!session) return { ok: false, text: '' };
-      const r = claimGift(session.econ, session.info);
-      if (r.ok) { play('gift'); buzz([10, 20, 10]); }
-      return act(r);
-    },
+    dispatch: (cmd) => (session ? dispatchCommand(session, cmd, commandEffects) : { ok: false, text: '' }),
     claimWelcome: () => {
       const w = ui.welcome.value;
       ui.welcome.value = null;
@@ -564,9 +534,10 @@ function startGame(
         grantDaily(session.econ, w.daily.cash, w.daily.ogonki);
         claimDaily(meta, w.streak, new Date());   // seria przesuwa się dopiero po odebraniu premii
       }
+      markOffLog(session);   // nagroda poza poleceniami: dziennika już nie prowadzimy
       play('coins');
       confetti();
-      afterAction();
+      settleOutsideCommand();
       persist();
     },
     openNextStore: () => {
@@ -601,17 +572,6 @@ function startGame(
     },
     setSound: (on) => { meta.sound = on; setSound(on); saveMeta(meta); publishMeta(); },
     setVibration: (on) => { meta.vibration = on; setVibration(on); saveMeta(meta); publishMeta(); },
-    movePallet: (id, loc) => act(session ? movePallet(session.econ, session.info, id, loc) : { ok: false, text: '' }),
-    returnPallet: (id) => { const r = act(session ? returnPallet(session.econ, id) : { ok: false, text: '' }); ui.selection.value = null; return r; },
-    setOrder: (auto, manual) => { if (session) setOrder(session.econ, auto, manual); afterAction(); },
-    hire: () => act(session ? hire(session.econ) : { ok: false, text: '' }, false),
-    fire: () => act(session ? fire(session.econ) : { ok: false, text: '' }, false),
-    setPriority: (p) => { if (session) setPriority(session.econ, p); afterAction(); },
-    buyUpgrade: (id) => { const r = act(session ? buyUpgrade(session.econ, id) : { ok: false, text: '' }); if (r.ok) { play('coins'); persist(); } return r; },
-    buyEquipment: (id, slot) => { const r = act(session ? buyEquipment(session.econ, session.info, id, slot) : { ok: false, text: '' }); if (r.ok) { play('coins'); persist(); } return r; },
-    startRemont: () => { ui.selection.value = null; const r = act(session ? startRemont(session.econ) : { ok: false, text: '' }); if (r.ok) persist(); return r; },
-    campaign: () => act(session ? campaign(session.econ) : { ok: false, text: '' }),
-    rushRemont: () => act(session ? rushRemont(session.econ) : { ok: false, text: '' }),
     restart: () => {
       if (!session) return;
       const ephemeral = session.ephemeral;   // zapis pod seedem sklepu tymczasowego jest cudzy: zostaje, a świeża gra też jest tymczasowa
@@ -667,8 +627,8 @@ function startGame(
       const pallet = loaded.pallets?.palletAt(hit.object, hit.instanceId) ?? null;
       if (pallet !== null) {
         ui.selection.value = { kind: 'pallet', id: pallet };
-        const r = game.tapPallet(pallet);
-        const mult = ui.combo.value.mult;
+        const r = game.dispatch({ type: 'tapPallet', palletId: pallet });
+        const mult = tapCombo(session.econ).mult;   // seria po tym stuknięciu, ze stanu gry
         if (r.ok) overlay?.floater(x, y, `+${Math.round(r.value ?? 0)} szt.${mult > 1 ? ` ×${mult}` : ''}`, 'work');
         return;
       }
@@ -678,7 +638,7 @@ function startGame(
       if (!pick) continue;
       if (pick.kind === 'till') {
         ui.selection.value = { kind: 'till' };
-        const r = game.tapTill();
+        const r = game.dispatch({ type: 'tapTill' });
         if (r.ok) overlay?.floater(x, y, money(r.value ?? 0), 'money');
         return;
       }
@@ -838,8 +798,7 @@ function startGame(
     if (session && loaded && loaded.world.speed > 0 && !modal) {
       const events: EconEvent[] = [];
       advanceEconomy(session.econ, session.info, session.clock, realDt * loaded.world.speed, events);
-      handleEvents(events);
-      if (syncLayout(session)) load(session.seed);
+      handleEvents(events);   // układ zmienia tylko polecenie (`dispatchCommand`), więc tu sceny nie przebudowujemy
     }
     syncVisuals();
     if (session && now - lastPublish > 200) { lastPublish = now; publish(); }
@@ -889,7 +848,8 @@ function startGame(
         const events: EconEvent[] = [];
         for (let i = 0; i < minutes && !session.econ.gameOver; i++) stepMinute(session.econ, session.info, events);
         handleEvents(events);
-        afterAction();
+        markOffLog(session);   // przewinięcie nie jest poleceniem: dziennik nie odtworzy takiego stanu
+        settleOutsideCommand();
       },
       get session() { return session; },
       get world() { return loaded?.world ?? null; },

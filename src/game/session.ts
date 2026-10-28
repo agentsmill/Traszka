@@ -331,16 +331,6 @@ export function createSession(seed: string, fresh = false, partner?: EconomyStat
   };
 }
 
-/** Po remoncie: nowy układ i przeniesienie palet oraz sprzętu. Zwraca true, gdy układ się zmienił. */
-export function syncLayout(s: GameSession): boolean {
-  if (s.econ.remontLevel === s.layoutLevel) return false;
-  s.layout = layoutFor(s.seed, s.econ.remontLevel);
-  s.info = computeStoreInfo(s.layout);
-  s.layoutLevel = s.econ.remontLevel;
-  relayout(s.econ, s.info);
-  return true;
-}
-
 /**
  * Ta sama gra na układzie zrobionym od nowa z seeda i poziomu remontu. Druga próba, gdy zapisany układ nie dał się zbudować w
  * scenie: układ da się wyliczyć z seeda, a stan gry (pieniądze, zapasy, ulepszenia) zostaje. Co nie pasuje do nowego układu

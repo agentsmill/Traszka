@@ -120,7 +120,7 @@ const CASES: Record<Command['type'], () => Prepared> = {
   },
 };
 
-/** To, co `main.ts` robi po każdym poleceniu: poziomy, a po remoncie nowy układ i przeniesienie palet (`syncLayout`). */
+/** To, co dawny `main.ts` robił po każdym poleceniu: poziomy, a po remoncie nowy układ i przeniesienie palet (`syncLayout`). */
 function legacyAfter(s: EconomyState, layoutLevel: number): void {
   processLevels(s, []);
   if (s.remontLevel === layoutLevel) return;

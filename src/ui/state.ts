@@ -6,9 +6,9 @@ import type { QualityPresetId } from '@/render/quality';
 import type { TimeOfDay } from '@/render/lighting';
 import type { BenchProgress } from '@/bench/bench';
 import type { PerfSnapshot } from './perfMeter';
-import type { CommandResult, EconEventKind, EconomyState, MonthReport, Priority } from '@/sim/economy/economy';
-import type { PalletLoc, StoreInfo } from '@/sim/economy/storeInfo';
-import type { EquipmentId, UpgradeId } from '@/sim/economy/upgrades';
+import type { Command } from '@/sim/economy/commands';
+import type { CommandResult, EconEventKind, EconomyState, MonthReport } from '@/sim/economy/economy';
+import type { StoreInfo } from '@/sim/economy/storeInfo';
 
 /*
  * Stan widoczny w interfejsie. Zmienia go i przycisk, i klawisz, a czyta interfejs. Sterowanie światem jest w main.ts
@@ -111,38 +111,25 @@ export const celebration: Signal<Celebration | null> = signal<Celebration | null
 export interface Welcome { hours: number; offline: number; streak: number | null; daily: { cash: number; ogonki: number } | null }
 export const welcome: Signal<Welcome | null> = signal<Welcome | null>(null);
 
-/** Combo stukania: mnożnik i liczba szybkich stuknięć z rzędu (0 = brak). */
-export const combo: Signal<{ count: number; mult: number }> = signal({ count: 0, mult: 1 });
-
 /** Sieć sklepów i ustawienia z mety (meta.ts) dla interfejsu. */
 export interface MetaView { points: number; stores: number; networkIncome: number; /** Seedy sklepów już w sieci. */ network: string[]; sound: boolean; vibration: boolean }
 export const metaView: Signal<MetaView> = signal<MetaView>({ points: 0, stores: 0, networkIncome: 0, network: [], sound: true, vibration: true });
 export const showPrestige: Signal<boolean> = signal(false);
 
-/** Polecenia gracza w grze. Implementuje je main.ts (zmienia stan ekonomii i odświeża scenę). */
+/**
+ * Gra widziana z interfejsu. Polecenia gracza (stuknięcie, zakup, remont, paczka…) to jedno `dispatch(Command)`: main.ts
+ * przepuszcza je przez `dispatchCommand` (dziennik, `applyCommand`, dźwięk, zapis, odświeżenie), a wynik wraca tutaj.
+ * Reszta to czynności spoza symulacji: powitanie, sieć sklepów, ustawienia, nowy sklep.
+ */
 export interface GameActions {
-  /** Stuknięcie w paletę (combo liczy main.ts z odstępów między stuknięciami). */
-  tapPallet(id?: number): CommandResult;
-  tapTill(): CommandResult;
-  claimQuest(id: number): CommandResult;
-  /** Złapana paczka od Centrali. */
-  claimGift(): CommandResult;
+  /** Polecenie gracza. Zawsze zwraca wynik; bez gry (sesji) to odmowa z pustym tekstem. */
+  dispatch(cmd: Command): CommandResult;
+  /** Odbiera nagrodę za nieobecność i premię dzienną z okna powitalnego (nie jest poleceniem: stan zmienia się poza dziennikiem). */
   claimWelcome(): void;
   /** Zamyka obecny sklep (dołącza do sieci) i otwiera nowy z premią. */
   openNextStore(): void;
   setSound(on: boolean): void;
   setVibration(on: boolean): void;
-  movePallet(id: number, loc: PalletLoc): CommandResult;
-  returnPallet(id: number): CommandResult;
-  setOrder(auto: boolean, manual?: number): void;
-  hire(): CommandResult;
-  fire(): CommandResult;
-  setPriority(p: Priority): void;
-  buyUpgrade(id: UpgradeId): CommandResult;
-  buyEquipment(id: EquipmentId, slotId?: string): CommandResult;
-  startRemont(): CommandResult;
-  campaign(): CommandResult;
-  rushRemont(): CommandResult;
   /** Zaczyna od nowa w tym samym sklepie (kasuje zapis). */
   restart(): void;
   /** „Nowy sklep” z ⚙: otwiera ekran startowy (nick, kasjer, seed). Obecny sklep zostaje zapisany pod swoim seedem. */
