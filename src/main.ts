@@ -560,8 +560,9 @@ function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: st
       const closed = session;
       const before = meta;
       // nowa gra nie czyta zapisu, więc seed musi być wolny (inaczej pierwszy zapis zjadłby cudzą grę); losujemy przed
-      // zamknięciem, kiedy zapis zamykanego sklepu jeszcze leży, więc i jego seed nie wróci
-      const next = freeSeed(randomSeed, hasStoredSave);
+      // zamknięciem, kiedy zapis zamykanego sklepu jeszcze leży, więc i jego seed nie wróci; seed z sieci też jest zajęty,
+      // bo addToNetwork przyjmuje każdy seed raz i drugi sklep pod nim nie dałby premii
+      const next = freeSeed(randomSeed, (s) => hasStoredSave(s) || meta.network.some((n) => n.seed === s));
       meta = addToNetwork(meta, closed.econ);   // nowy sklep dostaje już premię z tego; ten sam seed drugi raz niczego nie daje
       retireSession(closed);                    // zapis znika i nie wróci: setSeed zaraz zapisuje „bieżący” sklep
       if (!setSeed(next, true)) {               // nowy sklep się nie otworzył: wszystko wraca na miejsce
