@@ -2,7 +2,10 @@ import { render } from 'preact';
 import { PALETTE } from '@/render/style';
 import { BenchOverlay } from './BenchOverlay';
 import { Hud } from './game/Hud';
-import { ClickerBar, Intro, ReportModal, RotateButtons, SelectionCard, Settings, Toasts } from './game/overlays';
+import {
+  CelebrationBanner, ClickerBar, ComboChip, GiftDrop, Intro, PrestigeModal, ReportModal, RotateButtons, SelectionCard, Settings,
+  Toasts, WelcomeModal,
+} from './game/overlays';
 import { Sheet, TabBar } from './game/panels';
 import { Notice } from './Notice';
 import { PerfOverlay } from './PerfOverlay';
@@ -35,10 +38,15 @@ export function App({ controls, game }: { controls: Controls | null; game: GameA
             <Toasts />
           </div>
           <ClickerBar game={game} onFloat={floatText} />
+          <ComboChip />
+          <GiftDrop game={game} onClaim={(x, y, text) => floatText(x, y, text.split(':').pop()?.trim() ?? '', 'money')} />
           <RotateButtons controls={controls} />
           <Sheet game={game} />
           <TabBar />
           <ReportModal game={game} />
+          <WelcomeModal game={game} />
+          <PrestigeModal game={game} />
+          <CelebrationBanner />
           <Intro />
           <Settings controls={controls} game={game} />
         </>

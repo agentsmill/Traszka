@@ -45,7 +45,7 @@ export const econ: Signal<EconView | null> = signal<EconView | null>(null);
 export type Selection = { kind: 'pallet'; id: number } | { kind: 'slot'; slotId: string } | { kind: 'till' };
 export const selection: Signal<Selection | null> = signal<Selection | null>(null);
 
-export type TabId = 'sklep' | 'palety' | 'ludzie' | 'ulepszenia' | 'wyniki';
+export type TabId = 'sklep' | 'palety' | 'ludzie' | 'ulepszenia' | 'cele';
 export const tab: Signal<TabId | null> = signal<TabId | null>(null);
 
 export type ToastKind = EconEventKind | 'ok' | 'error';
@@ -63,10 +63,35 @@ export function pushToast(text: string, kind: ToastKind = 'info'): void {
   setTimeout(() => { toasts.value = toasts.value.filter((t) => t !== toast); }, kind === 'error' ? 2200 : 4000);
 }
 
+/** Wielki komunikat nagrody na środku ekranu (nowy poziom). Znika sam. */
+export interface Celebration { title: string; subtitle: string; lines: string[] }
+export const celebration: Signal<Celebration | null> = signal<Celebration | null>(null);
+
+/** Okno „Witaj z powrotem”: zarobek pod nieobecność i premia za serię dni (do odebrania jednym przyciskiem). */
+export interface Welcome { hours: number; offline: number; streak: number | null; daily: { cash: number; ogonki: number } | null }
+export const welcome: Signal<Welcome | null> = signal<Welcome | null>(null);
+
+/** Combo stukania: mnożnik i liczba szybkich stuknięć z rzędu (0 = brak). */
+export const combo: Signal<{ count: number; mult: number }> = signal({ count: 0, mult: 1 });
+
+/** Sieć sklepów i ustawienia z mety (meta.ts) dla interfejsu. */
+export interface MetaView { points: number; stores: number; networkIncome: number; sound: boolean; vibration: boolean }
+export const metaView: Signal<MetaView> = signal<MetaView>({ points: 0, stores: 0, networkIncome: 0, sound: true, vibration: true });
+export const showPrestige: Signal<boolean> = signal(false);
+
 /** Polecenia gracza w grze. Implementuje je main.ts (zmienia stan ekonomii i odświeża scenę). */
 export interface GameActions {
+  /** Stuknięcie w paletę (combo liczy main.ts z odstępów między stuknięciami). */
   tapPallet(id?: number): CommandResult;
   tapTill(): CommandResult;
+  claimQuest(id: number): CommandResult;
+  /** Złapana paczka od Centrali. */
+  claimGift(): CommandResult;
+  claimWelcome(): void;
+  /** Zamyka obecny sklep (dołącza do sieci) i otwiera nowy z premią. */
+  openNextStore(): void;
+  setSound(on: boolean): void;
+  setVibration(on: boolean): void;
   movePallet(id: number, loc: PalletLoc): CommandResult;
   returnPallet(id: number): CommandResult;
   setOrder(auto: boolean, manual?: number): void;

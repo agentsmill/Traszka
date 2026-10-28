@@ -1,7 +1,9 @@
+import { useEffect, useRef, useState } from 'preact/hooks';
 import type { Speed } from '@/game/loop';
 import { dayOf, formatClock, formatDate } from '@/sim/economy/calendar';
-import { isClosedForRemont } from '@/sim/economy/economy';
-import { econ, showSettings, speed, type Controls } from '../state';
+import { isClosedForRemont, tapBoost } from '@/sim/economy/economy';
+import { rankFor, xpToNext } from '@/sim/economy/progress';
+import { econ, showSettings, speed, tab, type Controls } from '../state';
 import { int, zl } from './format';
 
 const SPEEDS: { value: Speed; label: string; title: string }[] = [
@@ -12,19 +14,51 @@ const SPEEDS: { value: Speed; label: string; title: string }[] = [
   { value: 8, label: '×8', title: 'Czas ×8' },
 ];
 
-/** Górny pasek: gotówka, reputacja, Ogonki, data i godzina, prędkość czasu, ustawienia. */
+/** Liczba, która „dobiega” do wartości zamiast skakać, i informacja, czy właśnie rośnie (do pulsowania). */
+function useTweened(value: number): [number, boolean] {
+  const [shown, setShown] = useState(value);
+  const [rising, setRising] = useState(false);
+  const from = useRef(value);
+  useEffect(() => {
+    const start = from.current;
+    if (Math.abs(value - start) < 0.5) { setShown(value); from.current = value; return; }
+    setRising(value > start);
+    const t0 = performance.now();
+    let raf = 0;
+    const step = (t: number): void => {
+      const k = Math.min(1, (t - t0) / 350);
+      const v = start + (value - start) * (1 - (1 - k) ** 3);
+      from.current = v;
+      setShown(v);
+      if (k < 1) raf = requestAnimationFrame(step);
+      else setRising(false);
+    };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+  }, [value]);
+  return [shown, rising];
+}
+
+/** Górny pasek: poziom z pierścieniem XP, gotówka, reputacja, Ogonki, data i godzina, prędkość czasu, ustawienia. */
 export function Hud({ controls }: { controls: Controls }) {
   const view = econ.value;
+  const [cash, rising] = useTweened(view?.s.cash ?? 0);
   if (!view) return null;
   const { s } = view;
   const closed = isClosedForRemont(s);
+  const xpFrac = Math.min(1, s.xp / xpToNext(s.level));
   return (
     <header class="tt-hud2">
       <div class="tt-hud-row">
-        <span class="tt-brand2" aria-hidden="true">T</span>
-        <span class={`tt-cash${s.cash < 0 ? ' neg' : ''}`} title="Gotówka">{zl(s.cash)}</span>
+        <button type="button" class="tt-level" style={{ '--xp': `${Math.round(xpFrac * 360)}deg` }}
+          title={`${rankFor(s.level)} · ${int(s.xp)} / ${int(xpToNext(s.level))} XP`} aria-label={`Poziom ${s.level}`}
+          onClick={() => { tab.value = 'cele'; }}>
+          <span>{s.level}</span>
+        </button>
+        <span class={`tt-cash${s.cash < 0 ? ' neg' : ''}${rising ? ' up' : ''}`} title="Gotówka">{zl(cash)}</span>
         <span class="tt-stat" title="Reputacja sklepu (0–100): ściąga klientów">⭐ {int(s.reputation)}</span>
         <span class="tt-stat" title="Ogonki: nagrody za cele, wydajesz w Ulepszeniach">🦎 {int(s.ogonki)}</span>
+        {tapBoost(s) > 1 && <span class="tt-stat hot" title="Turbo rękawice: stuknięcia ×3">🧤×3</span>}
         <button type="button" class="tt-iconbtn tt-gear" aria-label="Ustawienia" onClick={() => { showSettings.value = true; }}>⚙</button>
       </div>
       <div class="tt-hud-row">

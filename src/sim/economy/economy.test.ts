@@ -4,8 +4,9 @@ import { CATS, MINUTES_PER_DAY, OPEN_FROM, START_CASH, WAGE_PER_DAY } from './ca
 import { dateOfDay, formatDate, isLastDayOfMonth } from './calendar';
 import { advanceEconomy } from './clock';
 import {
-  buyEquipment, buyUpgrade, createEconomy, effects, movePallet, relayout, slotFree, startRemont, stepMinute, tapPallet,
-  tapTill, upgradeBlocker, workshopUnlocked, type EconEvent, type EconomyState,
+  buyEquipment, buyUpgrade, claimGift, claimQuest, createEconomy, effects, movePallet, relayout, slotFree, startRemont,
+  stepMinute, tapPallet, tapTill, unlocksAt, upgradeBlocker, workshopUnlocked, type CommandResult, type EconEvent,
+  type EconomyState,
 } from './economy';
 import { computeStoreInfo, type StoreInfo } from './storeInfo';
 import { UPGRADE_BY_ID } from './upgrades';
@@ -129,10 +130,12 @@ describe('ekonomia', () => {
     expect(buyUpgrade(s, 'ulotki').ok).toBe(true);
     expect(s.upgrades.ulotki).toBe(1);
     expect(s.cash).toBe(100_000 - 800);
+    expect(upgradeBlocker(s, UPGRADE_BY_ID.rampa)).toMatch(/6\. poziomie/);
+    s.level = 6;
     expect(upgradeBlocker(s, UPGRADE_BY_ID.rampa)).toMatch(/Wymaga/);
     expect(workshopUnlocked(s)).toBe(false);
     expect(buyUpgrade(s, 'tasmociag').ok).toBe(false);
-    s.total.margin = 30_000;
+    s.level = 10;
     expect(buyUpgrade(s, 'tasmociag').ok).toBe(true);
     expect(effects(s, info).autoUnload).toBe(4);
   });
@@ -161,6 +164,8 @@ describe('ekonomia', () => {
     const s = createEconomy(SEED, info);
     s.cash = 1e6;
     buyEquipment(s, info, 'sco');
+    expect(startRemont(s).ok).toBe(false);   // remont od 8. poziomu
+    s.level = 8;
     expect(startRemont(s).ok).toBe(true);
     const lot = generateStore(SEED).lot;
     const bigger = computeStoreInfo(generateStore(`${SEED}:remont:1`, { ...lot, interiorWidth: lot.interiorWidth + 4, salesDepth: lot.salesDepth + 2, backroomDepth: lot.backroomDepth + 1 }, { equipmentSlots: 4 }));
@@ -199,5 +204,92 @@ describe('miejsca na palety', () => {
         for (const c of [{ x: s.x, y: s.y }, { x: s.x + 1, y: s.y + 1 }]) expect(layout.cells[c.y * layout.width + c.x]).toBe('floor');
       }
     }
+  });
+});
+
+describe('nagrody i postęp', () => {
+  it('XP z klientów i palet daje kolejne poziomy z nagrodą', () => {
+    const s = createEconomy(SEED, info);
+    const events = run(s, info, MINUTES_PER_DAY);
+    const ups = events.filter((e) => e.kind === 'levelup');
+    expect(s.level).toBeGreaterThan(1);
+    expect(ups.length).toBe(s.level - 1);
+    expect(ups[0]!.level).toBe(2);
+  });
+
+  it('trzy zlecenia; wykonane można odebrać, a na ich miejsce przychodzi nowe innego rodzaju', () => {
+    const s = createEconomy(SEED, info);
+    expect(s.quests).toHaveLength(3);
+    expect(new Set(s.quests.map((q) => q.kind)).size).toBe(3);
+    const q = s.quests[0]!;
+    expect(claimQuest(s, info, q.id).ok).toBe(false);
+    // wykonanie: podbijamy licznik zlecenia
+    const metric: Record<string, () => void> = {
+      serve: () => { s.total.customers += q.target; }, pallets: () => { s.total.palletsUnloaded += q.target; },
+      taps: () => { s.total.taps += q.target; }, margin: () => { s.total.margin += q.target; },
+      upgrade: () => { s.total.purchases += q.target; }, clean: () => { s.cleanDays += q.target; },
+      rep: () => { s.reputation = 100; }, hot: () => { s.total.hotSold += q.target; },
+    };
+    metric[q.kind]!();
+    const cash = s.cash;
+    const r = claimQuest(s, info, q.id);
+    expect(r.ok).toBe(true);
+    expect(s.cash).toBe(cash + q.reward.cash);
+    expect(s.quests).toHaveLength(3);
+    expect(s.quests.some((x) => x.id === q.id)).toBe(false);
+  });
+
+  it('combo i paczka „turbo” mnożą stuknięcia', () => {
+    const s = createEconomy(SEED, info);
+    for (const c of CATS) s.backroom[c] = 0;
+    const val = (r: CommandResult): number => (r.ok ? r.value ?? 0 : 0);
+    const one = val(tapPallet(s, info, undefined, 1));
+    const three = val(tapPallet(s, info, undefined, 3));
+    expect(three).toBeCloseTo(one * 3, 5);
+    s.tapBoostUntil = s.minute + 100;
+    expect(val(tapPallet(s, info, undefined, 1))).toBeCloseTo(one * 3, 5);
+    expect(s.total.taps).toBe(3);
+  });
+
+  it('paczka od Centrali zawsze coś daje, a kolejne paczki dają różne nagrody', () => {
+    const s = createEconomy(SEED, info);
+    const kinds = new Set<string>();
+    for (let i = 0; i < 30; i++) {
+      const r = claimGift(s, info);
+      expect(r.ok).toBe(true);
+      kinds.add(r.kind!);
+    }
+    expect(kinds.size).toBeGreaterThanOrEqual(3);
+  });
+
+  it('złota paleta po rozładunku daje premię i komunikat', () => {
+    const s = createEconomy(SEED, info);
+    for (const c of CATS) s.backroom[c] = 0;
+    const p = s.pallets[0]!;
+    p.golden = true;
+    const cash = s.cash;
+    let text: string | undefined;
+    for (let i = 0; i < 200 && s.pallets.some((x) => x.id === p.id); i++) text = tapPallet(s, info, p.id, 5).text ?? text;
+    expect(s.pallets.some((x) => x.id === p.id)).toBe(false);
+    expect(text).toMatch(/Złota paleta/);
+    expect(s.cash).toBeGreaterThan(cash + 300);
+  });
+
+  it('punkty partnera z sieci sklepów podnoszą marżę, a sieć daje dochód co dzień', () => {
+    const base = createEconomy(SEED, info);
+    const partner = createEconomy(SEED, info, { points: 5, networkIncome: 1000, stores: 1 });
+    run(base, info, MINUTES_PER_DAY);
+    run(partner, info, MINUTES_PER_DAY);
+    expect(partner.total.margin).toBeGreaterThan(base.total.margin * 1.2);
+    expect(partner.total.other - base.total.other).toBeGreaterThanOrEqual(1000);
+  });
+
+  it('poziom odblokowuje sprzęt', () => {
+    const s = createEconomy(SEED, info);
+    s.cash = 1e6;
+    expect(buyEquipment(s, info, 'piec').ok).toBe(false);
+    s.level = 4;
+    expect(buyEquipment(s, info, 'piec').ok).toBe(true);
+    expect(unlocksAt(4)).toContain('Piec do pizzy');
   });
 });

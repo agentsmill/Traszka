@@ -10,10 +10,12 @@ import { dayOf, formatMonth, isLastDayOfMonth, isOpenAt, minuteOfDay } from './c
 import { rand01 } from './rand';
 import type { PalletLoc, StoreInfo } from './storeInfo';
 import {
-  EQUIPMENT_BY_ID, REMONTS, UPGRADE_BY_ID, WORKSHOP_UNLOCK_EARNED, equipmentCost, upgradeCost,
+  EQUIPMENT_BY_ID, REMONTS, UPGRADE_BY_ID, WORKSHOP_LEVEL, equipmentCost, upgradeCost,
   type EquipmentId, type UpgradeDef, type UpgradeId,
 } from './upgrades';
 import { MILESTONES } from './milestones';
+import { XP, levelReward, xpToNext } from './progress';
+import { QUESTS_ACTIVE, newQuest, questDone, type Quest, type QuestScale } from './quests';
 
 // Ekonomia jednego sklepu (spec §6–§8) jako czysta symulacja z krokiem jednej minuty gry. Klienci są modelowani
 // zbiorczo (strumień przyjść, kolejka, przepustowość kas), a tłum w 3D to ich obraz, a nie źródło liczb.
@@ -33,6 +35,8 @@ export interface Pallet {
   initial: number;
   /** Minuta gry, od której paleta stoi w obecnym miejscu. */
   since: number;
+  /** Złota paleta: po rozładunku premia (losowa nagroda w dostawie). */
+  golden?: boolean;
 }
 
 export interface Counters {
@@ -49,6 +53,9 @@ export interface Counters {
   other: number;        // inne przychody (najem bankomatu, premia Centrali)
   missingItems: number;
   palletsUnloaded: number;
+  taps: number;         // stuknięcia gracza w palety i kasę
+  hotSold: number;      // hot-dogi i kawy
+  purchases: number;    // kupione ulepszenia i sprzęt
 }
 
 export interface Delivery { at: number; count: number }
@@ -97,14 +104,30 @@ export interface EconomyState {
   /** Ostatni przydział ludzi (do interfejsu): ilu na kasie, ilu przy paletach. */
   lastCashiers: number;
   lastWorkers: number;
+  /** Poziom gracza i XP zebrane na obecnym poziomie (progress.ts). */
+  level: number;
+  xp: number;
+  quests: Quest[];
+  questSeq: number;
+  /** Ile dni zamknięto bez mandatu (licznik do zleceń). */
+  cleanDays: number;
+  /** Numer kolejnej paczki od Centrali (losowa nagroda). */
+  giftSeq: number;
+  /** Do tej minuty stuknięcia działają ×3 (nagroda z paczki). */
+  tapBoostUntil: number;
+  lastDayProfit: number;
+  bestDayProfit: number;
+  /** Sieć sklepów z poprzednich rozgrywek: punkty partnera (trwała premia) i dochód z sieci na dzień. */
+  partner: { points: number; networkIncome: number; stores: number };
 }
 
-export type EconEventKind = 'delivery' | 'order' | 'fine' | 'milestone' | 'day' | 'month' | 'remont' | 'info' | 'warning' | 'gameover';
-export interface EconEvent { kind: EconEventKind; text: string; report?: MonthReport }
+export type EconEventKind = 'delivery' | 'order' | 'fine' | 'milestone' | 'day' | 'month' | 'remont' | 'info' | 'warning' | 'gameover'
+  | 'levelup' | 'golden' | 'quest';
+export interface EconEvent { kind: EconEventKind; text: string; report?: MonthReport; level?: number; unlocks?: string[] }
 
 export const emptyCounters = (): Counters => ({
   customers: 0, lost: 0, revenue: 0, margin: 0, wages: 0, media: 0, fee: 0, fines: 0, logistics: 0, investments: 0, other: 0,
-  missingItems: 0, palletsUnloaded: 0,
+  missingItems: 0, palletsUnloaded: 0, taps: 0, hotSold: 0, purchases: 0,
 });
 
 const perCat = (f: (c: Cat) => number): Record<Cat, number> => {
@@ -140,6 +163,8 @@ export interface Effects {
   autoRestock: number;
   humanoid: boolean;
   ogonkiMult: number;
+  /** Mnożnik marży (punkty partnera z sieci sklepów). */
+  marginMult: number;
 }
 
 export function activeEquipment(s: EconomyState, id: EquipmentId): number {
@@ -165,7 +190,7 @@ export function effects(s: EconomyState, info: StoreInfo): Effects {
     splitDelivery: level(s, 'dostawy2') > 0,
     rampa: level(s, 'rampa') > 0,
     traffic: (1 + 0.1 * level(s, 'ulotki') + 0.12 * level(s, 'traszkapka') + 0.04 * activeEquipment(s, 'bankomat')
-      + 0.07 * activeEquipment(s, 'paczkownik')) * (1 + 0.1 * s.remontLevel),
+      + 0.07 * activeEquipment(s, 'paczkownik')) * (1 + 0.1 * s.remontLevel) * (1 + 0.03 * s.partner.points),
     hotMult: 1 + 0.3 * level(s, 'kawa') + 0.4 * activeEquipment(s, 'piec'),
     shrink: 0.03 * (1 - 0.4 * level(s, 'kamery')),
     fineMult: 1 - 0.25 * level(s, 'kamery'),
@@ -173,6 +198,7 @@ export function effects(s: EconomyState, info: StoreInfo): Effects {
     autoRestock: 12 * level(s, 'wykladacz') + (humanoid ? RESTOCK_RATE : 0),
     humanoid,
     ogonkiMult: 1 + 0.5 * level(s, 'traszkapka'),
+    marginMult: 1 + 0.04 * s.partner.points,
   };
 }
 
@@ -187,7 +213,7 @@ export function baseTraffic(info: StoreInfo): number {
 // --- Tworzenie ---------------------------------------------------------------------------------------
 
 /** Nowa gra: sklep na kreskę (towar Centrali na półkach, 2 palety pod drzwiami), 1 września, 6:00. */
-export function createEconomy(seed: string, info: StoreInfo): EconomyState {
+export function createEconomy(seed: string, info: StoreInfo, partner: EconomyState['partner'] = { points: 0, networkIncome: 0, stores: 0 }): EconomyState {
   const backroomStart = info.backroomCap * 0.35;
   const s: EconomyState = {
     version: 1,
@@ -223,9 +249,20 @@ export function createEconomy(seed: string, info: StoreInfo): EconomyState {
     gameOver: false,
     lastCashiers: 1,
     lastWorkers: 1,
+    level: 1,
+    xp: 0,
+    quests: [],
+    questSeq: 1,
+    cleanDays: 0,
+    giftSeq: 1,
+    tapBoostUntil: 0,
+    lastDayProfit: 0,
+    bestDayProfit: 0,
+    partner: { ...partner },
   };
   const ev: EconEvent[] = [];
   deliver(s, info, 2, ev);
+  fillQuests(s, info);
   return s;
 }
 
@@ -252,11 +289,12 @@ export function stepMinute(s: EconomyState, info: StoreInfo, out: EconEvent[]): 
   if (open) serveCustomers(s, info, fx, mod);
   else s.queue = 0;
   // personel pracuje w godzinach otwarcia, także w czasie remontu (wtedy nikt nie stoi na kasie)
-  doWork(s, info, fx, isOpenAt(mod), open);
+  doWork(s, info, fx, isOpenAt(mod), open, out);
   if (mod >= 8 * 60 && mod < 20 * 60) checkFine(s, fx, out);
   if (mod === ORDER_DEADLINE) placeOrder(s, info, fx, out);
   if (mod === OPEN_TO) closeDay(s, info, out);
   if (mod % 60 === 0) checkMilestones(s, info, out);
+  processLevels(s, out);
 
   s.minute++;
 }
@@ -325,6 +363,8 @@ function sell(s: EconomyState, fx: Effects, served: number, scoShare: number): n
   revenue += hot * HOT.price;
   margin += hot * HOT.price * HOT.margin;
   margin -= revenue * scoShare * fx.shrink;   // „zapomniane” skany na SCO
+  margin *= fx.marginMult;
+  s.xp += served * XP.customer;
 
   const missing = want > 0 ? 1 - got / want : 0;
   s.reputation += served * (0.0025 * (1 - missing) - 0.02 * missing);
@@ -336,6 +376,7 @@ function sell(s: EconomyState, fx: Effects, served: number, scoShare: number): n
     k.revenue += revenue;
     k.margin += margin;
     k.missingItems += want - got;
+    k.hotSold += hot;
   }
   return margin;
 }
@@ -344,7 +385,7 @@ function sell(s: EconomyState, fx: Effects, served: number, scoShare: number): n
 
 const PALLET_ORDER: Record<PalletLoc, number> = { sidewalk: 0, floor: 1, backroom: 2 };
 
-function doWork(s: EconomyState, info: StoreInfo, fx: Effects, shift: boolean, open: boolean): void {
+function doWork(s: EconomyState, info: StoreInfo, fx: Effects, shift: boolean, open: boolean, out: EconEvent[]): void {
   const cashiers = allocateCashiers(s, fx, open);
   const workers = shift ? Math.max(0, s.staff - cashiers) : 0;
   s.lastCashiers = cashiers;
@@ -358,7 +399,7 @@ function doWork(s: EconomyState, info: StoreInfo, fx: Effects, shift: boolean, o
   for (const p of pallets) {
     if (time <= 1e-6) break;
     const rate = UNLOAD_RATE * fx.unloadMult * UNLOAD_AT[p.loc];
-    time -= unloadPallet(s, info, fx, p, time * rate) / rate;
+    time -= unloadPallet(s, info, fx, p, time * rate, out) / rate;
   }
   // 3. dokładanie do pełna
   if (time > 1e-6) restock(s, info, 1, time * RESTOCK_RATE);
@@ -368,7 +409,7 @@ function doWork(s: EconomyState, info: StoreInfo, fx: Effects, shift: boolean, o
     let budget = fx.autoUnload;
     for (const p of [...s.pallets].sort((a, b) => PALLET_ORDER[b.loc] - PALLET_ORDER[a.loc])) {
       if (budget <= 1e-6) break;
-      budget -= unloadPallet(s, info, fx, p, budget);
+      budget -= unloadPallet(s, info, fx, p, budget, out);
     }
   }
   if (fx.autoRestock > 0) restock(s, info, 1, fx.autoRestock);
@@ -391,7 +432,7 @@ function restock(s: EconomyState, info: StoreInfo, fill: number, budget: number)
 }
 
 /** Zdejmuje z palety do `maxItems` sztuk: na zaplecze, a gdy pełne, prosto na półki. Zwraca liczbę sztuk. */
-function unloadPallet(s: EconomyState, info: StoreInfo, fx: Effects, p: Pallet, maxItems: number): number {
+function unloadPallet(s: EconomyState, info: StoreInfo, fx: Effects, p: Pallet, maxItems: number, out?: EconEvent[]): number {
   if (p.total <= 0 || maxItems <= 0) return 0;
   const take = Math.min(maxItems, p.total);
   let backroomFree = Math.max(0, fx.backroomCap - sum(s.backroom));
@@ -409,8 +450,16 @@ function unloadPallet(s: EconomyState, info: StoreInfo, fx: Effects, p: Pallet, 
     moved += n;
   }
   p.total = Math.max(0, sum(p.items));
-  if (p.total < 0.5) {
+  if (p.total < 0.5 && moved > 0) {
     for (const k of [s.today, s.month, s.total]) k.palletsUnloaded++;
+    s.xp += XP.pallet;
+    if (p.golden) {
+      const bonus = Math.round(Math.max(400, estimatedDailyMargin(s, info) * 0.4));
+      income(s, bonus);
+      s.ogonki += 5;
+      s.xp += XP.golden;
+      out?.push({ kind: 'golden', text: `✨ Złota paleta rozładowana: +${fmt(bonus)} zł i +5 Ogonków!` });
+    }
   }
   return moved;
 }
@@ -460,12 +509,15 @@ function deliver(s: EconomyState, info: StoreInfo, count: number, out: EconEvent
     const loc = order.find((l) => freeSpot(s, info, l) >= 0);
     if (!loc) { returned++; continue; }
     const items = palletMix(s, info);
-    s.pallets.push({ id: s.nextPalletId++, loc, spot: freeSpot(s, info, loc), items, total: sum(items), initial: sum(items), since: s.minute });
+    const id = s.nextPalletId++;
+    const golden = s.total.customers > 0 && rand01(s.seedHash, id, 3) < GOLDEN_CHANCE;
+    s.pallets.push({ id, loc, spot: freeSpot(s, info, loc), items, total: sum(items), initial: sum(items), since: s.minute, golden });
     placed[loc]++;
   }
   const where = (['sidewalk', 'backroom', 'floor'] as const).filter((l) => placed[l] > 0)
     .map((l) => `${placed[l]} ${LOC_LABEL[l].toLowerCase()}`).join(', ');
   if (count - returned > 0) out.push({ kind: 'delivery', text: `Dostawa: ${count - returned} ${plPallets(count - returned)} (${where}).` });
+  if (s.pallets.some((p) => p.golden && p.since === s.minute)) out.push({ kind: 'golden', text: '✨ W dostawie jest ZŁOTA PALETA! Rozładuj ją po premię.' });
   if (returned > 0) {
     const fee = returned * RETURN_FEE;
     charge(s, 'logistics', fee);
@@ -473,6 +525,9 @@ function deliver(s: EconomyState, info: StoreInfo, count: number, out: EconEvent
     out.push({ kind: 'warning', text: `Kierowca nie miał gdzie postawić ${returned} ${plPallets(returned)} i ${returned > 1 ? 'je zabrał' : 'ją zabrał'}. Opłata ${fee} zł.` });
   }
 }
+
+/** Szansa, że paleta z dostawy jest złota. */
+export const GOLDEN_CHANCE = 0.08;
 
 export const LOC_LABEL: Record<PalletLoc, string> = { sidewalk: 'Pod sklepem', backroom: 'Na zapleczu', floor: 'W sali' };
 
@@ -572,8 +627,12 @@ function closeDay(s: EconomyState, info: StoreInfo, out: EconEvent[]): void {
   charge(s, 'media', Math.round(MEDIA_PER_DAY * Math.max(0.6, info.salesCells / 260)));
   const rent = 25 * activeEquipment(s, 'bankomat');
   if (rent > 0) income(s, rent);
+  if (s.partner.networkIncome > 0) income(s, s.partner.networkIncome);
   const t = s.today;
   const profit = t.margin + t.other - t.wages - t.media - t.fines - t.logistics;
+  s.lastDayProfit = profit;
+  s.bestDayProfit = Math.max(s.bestDayProfit, profit);
+  if (t.fines === 0) s.cleanDays++;
   out.push({ kind: 'day', text: `Dzień zamknięty: ${Math.round(t.customers)} klientów, obrót ${fmt(t.revenue)} zł, wynik dnia ${profit >= 0 ? '+' : ''}${fmt(profit)} zł.` });
   s.today = emptyCounters();
 
@@ -618,6 +677,7 @@ function checkMilestones(s: EconomyState, info: StoreInfo, out: EconEvent[]): vo
     if (s.milestones.includes(m.id) || !m.done(s, info)) continue;
     s.milestones.push(m.id);
     s.ogonki += m.reward;
+    s.xp += m.reward * XP.milestonePerOgonek;
     out.push({ kind: 'milestone', text: `🏆 ${m.label} (+${m.reward} Ogonków)` });
   }
 }
@@ -626,24 +686,34 @@ function checkMilestones(s: EconomyState, info: StoreInfo, out: EconEvent[]): vo
 
 export type CommandResult = { ok: true; text?: string; value?: number } | { ok: false; text: string };
 
-/** Gracz stuka w paletę: franczyzobiorca sam rozładowuje kawałek. Bez `id` bierze najpilniejszą. */
-export function tapPallet(s: EconomyState, info: StoreInfo, id?: number): CommandResult {
+/** Mnożnik stuknięć z paczki od Centrali („turbo rozładunek”). */
+export const tapBoost = (s: EconomyState): number => (s.minute < s.tapBoostUntil ? 3 : 1);
+
+/**
+ * Gracz stuka w paletę: franczyzobiorca sam rozładowuje kawałek. Bez `id` bierze najpilniejszą. `combo` to mnożnik
+ * za szybkie stukanie (liczy go interfejs). Wynik: rozładowane sztuki, a przy złotej palecie także komunikat.
+ */
+export function tapPallet(s: EconomyState, info: StoreInfo, id?: number, combo = 1): CommandResult {
   const fx = effects(s, info);
   const p = id !== undefined ? s.pallets.find((x) => x.id === id)
-    : [...s.pallets].sort((a, b) => PALLET_ORDER[a.loc] - PALLET_ORDER[b.loc] || a.since - b.since)[0];
+    : [...s.pallets].sort((a, b) => Number(!!b.golden) - Number(!!a.golden) || PALLET_ORDER[a.loc] - PALLET_ORDER[b.loc] || a.since - b.since)[0];
   if (!p) return { ok: false, text: 'Brak palet do rozładunku.' };
-  const moved = unloadPallet(s, info, fx, p, TAP_ITEMS * (1 + 0.25 * level(s, 'wozek')));
+  const out: EconEvent[] = [];
+  const moved = unloadPallet(s, info, fx, p, TAP_ITEMS * (1 + 0.25 * level(s, 'wozek')) * combo * tapBoost(s), out);
   removeEmptyPallets(s);
   if (moved <= 1e-6) return { ok: false, text: 'Zaplecze i półki pełne: nie ma gdzie wyłożyć towaru.' };
-  return { ok: true, value: moved };
+  for (const k of [s.today, s.month, s.total]) k.taps++;
+  return { ok: true, value: moved, text: out[0]?.text };
 }
 
-/** Gracz stuka w kasę: franczyzobiorca obsługuje jednego klienta z kolejki. Zwraca zarobioną marżę. */
-export function tapTill(s: EconomyState, info: StoreInfo): CommandResult {
+/** Gracz stuka w kasę: franczyzobiorca obsługuje klienta z kolejki (z combo kilku naraz). Zwraca zarobioną marżę. */
+export function tapTill(s: EconomyState, info: StoreInfo, combo = 1): CommandResult {
   if (!isStoreOpen(s)) return { ok: false, text: 'Sklep zamknięty.' };
   if (s.queue < 1) return { ok: false, text: 'Nikt nie czeka przy kasie.' };
-  s.queue -= 1;
-  const margin = sell(s, effects(s, info), 1, 0);
+  const n = Math.min(Math.floor(s.queue), Math.max(1, Math.floor(combo * tapBoost(s))));
+  s.queue -= n;
+  const margin = sell(s, effects(s, info), n, 0);
+  for (const k of [s.today, s.month, s.total]) k.taps++;
   return { ok: true, value: margin };
 }
 
@@ -692,14 +762,15 @@ export function setPriority(s: EconomyState, p: Priority): void {
 }
 
 export function workshopUnlocked(s: EconomyState): boolean {
-  return s.total.margin >= WORKSHOP_UNLOCK_EARNED || s.remontLevel >= 1;
+  return s.level >= WORKSHOP_LEVEL || s.remontLevel >= 1;
 }
 
 /** Czy ulepszenie wolno kupić teraz (pomijając gotówkę). Zwraca powód blokady albo null. */
 export function upgradeBlocker(s: EconomyState, def: UpgradeDef): string | null {
   if (level(s, def.id) >= def.maxLevel) return 'Maksymalny poziom';
-  if (def.group === 'warsztat' && !workshopUnlocked(s)) return `Odblokujesz po zarobieniu ${fmt(WORKSHOP_UNLOCK_EARNED)} zł`;
+  if (def.group === 'warsztat' && !workshopUnlocked(s)) return `Odblokujesz na ${WORKSHOP_LEVEL}. poziomie albo po remoncie`;
   const r = def.requires;
+  if (r?.level && s.level < r.level) return `Odblokujesz na ${r.level}. poziomie`;
   if (r?.remont && s.remontLevel < r.remont) return `Wymaga remontu (poziom ${r.remont})`;
   if (r?.sco && s.equipment.filter((e) => e.id === 'sco').length < r.sco) return 'Wymaga kasy samoobsługowej';
   for (const [id, lvl] of r?.upgrade ?? []) {
@@ -716,6 +787,7 @@ export function buyUpgrade(s: EconomyState, id: UpgradeId): CommandResult {
   if (s.cash < cost) return { ok: false, text: 'Za mało gotówki.' };
   charge(s, 'investments', cost);
   s.upgrades[id] = level(s, id) + 1;
+  countPurchase(s);
   const name = def.names[Math.min(level(s, id), def.names.length) - 1]!;
   return { ok: true, text: `Kupione: ${name}` };
 }
@@ -746,8 +818,14 @@ export function findSlot(s: EconomyState, info: StoreInfo, size: number): string
   return fits[0]?.id ?? null;
 }
 
+function countPurchase(s: EconomyState): void {
+  for (const k of [s.today, s.month, s.total]) k.purchases++;
+  s.xp += XP.purchase;
+}
+
 export function buyEquipment(s: EconomyState, info: StoreInfo, id: EquipmentId, slotId?: string): CommandResult {
   const def = EQUIPMENT_BY_ID[id];
+  if (s.level < def.minLevel) return { ok: false, text: `Odblokujesz na ${def.minLevel}. poziomie.` };
   const slot = slotId ?? findSlot(s, info, def.size);
   if (!slot || slotFree(s, info, slot) < def.size) {
     return { ok: false, text: def.size === 2 ? 'Brak wolnego slotu 2×2. Remont da więcej miejsca.' : 'Brak wolnego slotu. Remont da więcej miejsca.' };
@@ -756,6 +834,7 @@ export function buyEquipment(s: EconomyState, info: StoreInfo, id: EquipmentId, 
   if (s.cash < cost) return { ok: false, text: 'Za mało gotówki.' };
   charge(s, 'investments', cost);
   s.equipment.push({ id, slot });
+  countPurchase(s);
   return { ok: true, text: `Kupione: ${def.name}` };
 }
 
@@ -768,6 +847,7 @@ export function startRemont(s: EconomyState): CommandResult {
   const r = nextRemont(s);
   if (!r) return { ok: false, text: 'Większego sklepu już nie będzie. To jest Flagowiec.' };
   if (isClosedForRemont(s)) return { ok: false, text: 'Remont już trwa.' };
+  if (s.level < r.minLevel) return { ok: false, text: `Remont odblokujesz na ${r.minLevel}. poziomie.` };
   if (s.cash < r.cost) return { ok: false, text: 'Za mało gotówki na remont.' };
   charge(s, 'investments', r.cost);
   s.remontLevel = r.level;
@@ -813,4 +893,96 @@ export function rushRemont(s: EconomyState): CommandResult {
   s.ogonki -= cost;
   s.remontUntil = Math.max(s.minute + 1, s.remontUntil! - MINUTES_PER_DAY);
   return { ok: true, text: 'Ekipa remontowa dostała premię w Ogonkach. Pracują szybciej (podobno).' };
+}
+
+// --- Poziomy, zlecenia, nagrody --------------------------------------------------------------------------
+
+/** Marża, jakiej sklep spodziewa się w typowy dzień (do skali nagród). */
+export function estimatedDailyMargin(s: EconomyState, info: StoreInfo): number {
+  const avgMargin = CATS.reduce((n, c) => n + CAT_INFO[c].price * CAT_INFO[c].margin * CAT_INFO[c].basket, 0) * ITEMS_PER_CUSTOMER;
+  return expectedDailyCustomers(s, info) * avgMargin * effects(s, info).marginMult;
+}
+
+function questScale(s: EconomyState, info: StoreInfo): QuestScale {
+  return { dailyCustomers: expectedDailyCustomers(s, info), dailyMargin: estimatedDailyMargin(s, info) };
+}
+
+/** Dobiera zleceń do trzech. */
+export function fillQuests(s: EconomyState, info: StoreInfo): void {
+  while (s.quests.length < QUESTS_ACTIVE) s.quests.push(newQuest(s, questScale(s, info)));
+}
+
+/** Odbiór nagrody za wykonane zlecenie; na jego miejsce przychodzi nowe. */
+export function claimQuest(s: EconomyState, info: StoreInfo, id: number): CommandResult {
+  const q = s.quests.find((x) => x.id === id);
+  if (!q) return { ok: false, text: 'Nie ma takiego zlecenia.' };
+  if (!questDone(s, q)) return { ok: false, text: 'Zlecenie jeszcze niewykonane.' };
+  income(s, q.reward.cash);
+  s.ogonki += q.reward.ogonki;
+  s.xp += q.reward.xp;
+  s.quests = s.quests.filter((x) => x !== q);
+  fillQuests(s, info);
+  return { ok: true, value: q.reward.cash, text: `Zlecenie wykonane! +${fmt(q.reward.cash)} zł, +${q.reward.ogonki} Ogonków, +${q.reward.xp} XP` };
+}
+
+/** Wejście na kolejne poziomy: nagroda i odblokowania (komunikat `levelup` z listą). */
+export function processLevels(s: EconomyState, out: EconEvent[]): void {
+  while (s.xp >= xpToNext(s.level)) {
+    s.xp -= xpToNext(s.level);
+    s.level++;
+    const reward = levelReward(s.level);
+    income(s, reward.cash);
+    s.ogonki += reward.ogonki;
+    out.push({
+      kind: 'levelup',
+      level: s.level,
+      unlocks: unlocksAt(s.level),
+      text: `Poziom ${s.level}! Nagroda: +${fmt(reward.cash)} zł i +${reward.ogonki} Ogonków.`,
+    });
+  }
+}
+
+/** Co odblokowuje dany poziom (nazwy do komunikatu). */
+export function unlocksAt(lvl: number): string[] {
+  const out: string[] = [];
+  for (const e of Object.values(EQUIPMENT_BY_ID)) if (e.minLevel === lvl && lvl > 1) out.push(e.name);
+  for (const u of Object.values(UPGRADE_BY_ID)) if (u.requires?.level === lvl) out.push(u.names[0]!);
+  for (const r of REMONTS) if (r.minLevel === lvl) out.push(r.name);
+  if (lvl === WORKSHOP_LEVEL) out.push('Warsztat złotej rączki');
+  return out;
+}
+
+export type GiftKind = 'cash' | 'ogonki' | 'rush' | 'turbo';
+
+/** Paczka od Centrali (pojawia się w interfejsie na kilka sekund): losowa nagroda. */
+export function claimGift(s: EconomyState, info: StoreInfo): CommandResult & { kind?: GiftKind } {
+  const r = rand01(s.seedHash, s.giftSeq++, 11);
+  s.xp += XP.gift;
+  if (r < 0.4) {
+    const cash = Math.round(Math.max(300, estimatedDailyMargin(s, info) * (0.15 + 0.2 * rand01(s.seedHash, s.giftSeq, 12))));
+    income(s, cash);
+    return { ok: true, kind: 'cash', value: cash, text: `Paczka od Centrali: premia +${fmt(cash)} zł!` };
+  }
+  if (r < 0.65) {
+    const n = 3 + Math.floor(rand01(s.seedHash, s.giftSeq, 13) * 6);
+    s.ogonki += n;
+    return { ok: true, kind: 'ogonki', value: n, text: `Paczka od Centrali: +${n} Ogonków!` };
+  }
+  if (r < 0.85) {
+    s.boostUntil = Math.max(s.minute, s.boostUntil) + 180;
+    return { ok: true, kind: 'rush', text: 'Szał zakupów! +30% klientów przez 3 godziny.' };
+  }
+  s.tapBoostUntil = Math.max(s.minute, s.tapBoostUntil) + 240;
+  return { ok: true, kind: 'turbo', text: 'Turbo rękawice! Stuknięcia ×3 przez 4 godziny gry.' };
+}
+
+/** Zarobek kierownika zmiany pod nieobecność gracza (liczy go warstwa gry z czasu rzeczywistego). */
+export function grantOffline(s: EconomyState, amount: number): void {
+  if (amount > 0) income(s, Math.round(amount));
+}
+
+/** Dzienna premia za serię dni gry. */
+export function grantDaily(s: EconomyState, cash: number, ogonki: number): void {
+  income(s, cash);
+  s.ogonki += ogonki;
 }

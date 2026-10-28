@@ -3,8 +3,10 @@ import { RETURN_FEE } from '@/sim/economy/catalog';
 import { effects, isStoreOpen, slotFree, slotUsage, type MonthReport } from '@/sim/economy/economy';
 import { EQUIPMENT, EQUIPMENT_BY_ID, equipmentCost } from '@/sim/economy/upgrades';
 import type { QualityPresetId } from '@/render/quality';
+import { networkIncomeOf, prestigePoints } from '@/game/meta';
 import {
-  econ, preset, report, selection, seed, showIntro, showSettings, showPerf, tab, toasts, type Controls, type GameActions,
+  celebration, combo, econ, metaView, preset, report, selection, seed, showIntro, showPerf, showPrestige, showSettings, tab,
+  toasts, welcome, type Controls, type GameActions,
 } from '../state';
 import { int, plural, signedZl, zl } from './format';
 import { PalletItem } from './panels';
@@ -154,11 +156,13 @@ export function Intro() {
     <div class="tt-modal-wrap">
       <div class="tt-modal" role="dialog" aria-label="Witaj w Traszce">
         <h2>Witaj w Traszce! 🦎</h2>
-        <p>Od dziś prowadzisz franczyzę Traszki. Sklep jest pełen towaru Centrali, a w kasie {zl(2000)}. Cel: najwydajniejsza Traszka w mieście.</p>
+        <p>Od dziś prowadzisz franczyzę Traszki. Sklep jest pełen towaru Centrali, a w kasie {zl(2000)}.
+          Cel: zbudować sieć Traszek i dojść do rangi <b>Legendarnej Palety</b>.</p>
         <ul class="tt-list">
-          <li><b>Palety</b> przyjeżdżają co rano pod sklep. Stukaj w nie, żeby rozładować, zanim przyjdzie Straż Miejska.</li>
+          <li><b>Palety</b> przyjeżdżają co rano pod sklep. Stukaj w nie szybko (combo!), zanim przyjdzie Straż Miejska. Złota paleta to premia.</li>
           <li><b>Kolejka</b> za długa? Klienci odchodzą. Stukaj w kasę, kupuj kasy samoobsługowe, zatrudniaj.</li>
-          <li><b>Ulepszenia</b> kupujesz za zarobione pieniądze. Remont powiększa sklep, a warsztat złotej rączki da automatykę.</li>
+          <li><b>Zlecenia Centrali</b> (🎯 Cele) dają nagrody, a poziomy odblokowują sprzęt, remonty i warsztat złotej rączki z humanoidem eDwardem.</li>
+          <li>Łap <b>paczki od Centrali</b>, które czasem pojawiają się nad sklepem.</li>
         </ul>
         <p class="tt-hint">Przeciągnij, żeby przesunąć widok. Szczypnij albo kółkiem myszy, żeby przybliżyć. Gra zapisuje się sama.</p>
         <p class="tt-disclaimer2">{DISCLAIMER}</p>
@@ -200,10 +204,118 @@ export function Settings({ controls, game }: { controls: Controls; game: GameAct
             <button key={p.value} type="button" class={`tt-btn${preset.value === p.value ? ' on' : ''}`} onClick={() => controls.setPreset(p.value)}>{p.label}</button>
           ))}
         </div>
+        <h3>Dźwięk i wibracje</h3>
+        <label class="tt-check-row"><input type="checkbox" checked={metaView.value.sound} onChange={(e) => game.setSound(e.currentTarget.checked)} /> Dźwięki</label>
+        <label class="tt-check-row"><input type="checkbox" checked={metaView.value.vibration} onChange={(e) => game.setVibration(e.currentTarget.checked)} /> Wibracje (telefon)</label>
         <label class="tt-check-row"><input type="checkbox" checked={showPerf.value} onChange={(e) => { showPerf.value = e.currentTarget.checked; }} /> Licznik FPS (F3)</label>
         <p class="tt-hint">Klawisze: Q/E obrót, +/− zoom, strzałki przesuwanie, spacja pauza, X widok z zewnątrz.</p>
         <p class="tt-disclaimer2">{DISCLAIMER} Gra jest satyrą i nie ma związku z żadną prawdziwą siecią sklepów.</p>
       </div>
     </div>
   );
+}
+
+/** Wielki baner nagrody (nowy poziom): konfetti robi main.ts, baner znika sam albo po stuknięciu. */
+export function CelebrationBanner() {
+  const c = celebration.value;
+  useEffect(() => {
+    if (!c) return;
+    const t = setTimeout(() => { if (celebration.value === c) celebration.value = null; }, 3200);
+    return () => clearTimeout(t);
+  }, [c]);
+  if (!c) return null;
+  return (
+    <div class="tt-celebrate" role="status" onClick={() => { celebration.value = null; }}>
+      <div class="tt-celebrate-card">
+        <div class="tt-celebrate-title">{c.title}</div>
+        <div class="tt-celebrate-sub">{c.subtitle}</div>
+        {c.lines.map((l) => <div key={l} class="tt-celebrate-line">{l}</div>)}
+      </div>
+    </div>
+  );
+}
+
+/** „Witaj z powrotem”: zarobek kierownika zmiany pod nieobecność i premia za serię dni. */
+export function WelcomeModal({ game }: { game: GameActions }) {
+  const w = welcome.value;
+  if (!w) return null;
+  return (
+    <div class="tt-modal-wrap">
+      <div class="tt-modal tt-center" role="dialog" aria-label="Witaj z powrotem">
+        <h2>Witaj z powrotem! 👋</h2>
+        {w.offline > 0 && (
+          <p>Przez {w.hours >= 1 ? `${Math.floor(w.hours)} h` : `${Math.max(1, Math.round(w.hours * 60))} min`} Twojej nieobecności kierownik zmiany zarobił
+            <span class="tt-big-reward">+{zl(w.offline)}</span></p>
+        )}
+        {w.daily && w.streak !== null && (
+          <>
+            <p>Premia Centrali za {w.streak}. dzień z rzędu:</p>
+            <div class="tt-streak">{Array.from({ length: 7 }, (_, i) => <span key={i} class={i < Math.min(7, w.streak!) ? 'on' : ''}>{i + 1}</span>)}</div>
+            <span class="tt-big-reward">+{zl(w.daily.cash)} · +{w.daily.ogonki} 🦎</span>
+            <p class="tt-hint">Wróć jutro: premia rośnie do 7. dnia.</p>
+          </>
+        )}
+        <button type="button" class="tt-btn tt-primary big" onClick={() => game.claimWelcome()}>Odbierz!</button>
+      </div>
+    </div>
+  );
+}
+
+/** Potwierdzenie: obecny sklep dołącza do sieci, zaczynasz nowy z premią. */
+export function PrestigeModal({ game }: { game: GameActions }) {
+  const view = econ.value;
+  if (!showPrestige.value || !view) return null;
+  const { s } = view;
+  const meta = metaView.value;
+  const points = meta.points + prestigePoints(s);
+  return (
+    <div class="tt-modal-wrap">
+      <div class="tt-modal" role="dialog" aria-label="Otwórz kolejną Traszkę">
+        <h2>Otwórz kolejną Traszkę 🏪</h2>
+        <p>Ten sklep zostaje w Twojej sieci i od jutra zarabia na Ciebie <b>{zl(networkIncomeOf(s))} dziennie</b> w każdej kolejnej grze.</p>
+        <p>Dostajesz <b>+{prestigePoints(s)} Punktów Partnera</b> (razem {points}): każdy to trwale +4% marży i +3% klientów.</p>
+        <p>Nowy lokal startuje od zera: poziom 1, 2000 zł, nowe miasto z seeda. Tym razem pójdzie szybciej.</p>
+        <p class="tt-hint">Centrala z wyraźną niechęcią nadaje Ci status Partnera Strategicznego.</p>
+        <button type="button" class="tt-btn tt-primary big" onClick={() => { showPrestige.value = false; game.openNextStore(); }}>Otwieramy!</button>
+        <button type="button" class="tt-btn big" onClick={() => { showPrestige.value = false; }}>Jeszcze nie</button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Paczka od Centrali: co 45–110 s gry pojawia się w losowym miejscu nad sceną na 9 s. Złapana daje losową nagrodę.
+ * Nie pojawia się przy pauzie ani przy otwartych oknach.
+ */
+export function GiftDrop({ game, onClaim }: { game: GameActions; onClaim: (x: number, y: number, text: string) => void }) {
+  const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
+  useEffect(() => {
+    let t = 0;
+    const blocked = (): boolean => !!report.value || showIntro.value || !!welcome.value || showSettings.value || !econ.value;
+    const schedule = (ms: number): void => {
+      t = window.setTimeout(() => {
+        if (blocked()) { schedule(5000); return; }
+        const w = window.innerWidth;
+        const h = window.innerHeight;
+        setPos({ x: w * (0.2 + Math.random() * 0.6), y: h * (0.3 + Math.random() * 0.3) });
+        t = window.setTimeout(() => { setPos(null); schedule(45_000 + Math.random() * 65_000); }, 9000);
+      }, ms);
+    };
+    schedule(25_000);
+    return () => clearTimeout(t);
+  }, []);
+  if (!pos) return null;
+  return (
+    <button type="button" class="tt-gift" style={{ left: `${pos.x}px`, top: `${pos.y}px` }} aria-label="Paczka od Centrali"
+      onClick={() => { const r = game.claimGift(); setPos(null); if (r.ok) onClaim(pos.x, pos.y, r.text ?? ''); }}>
+      🎁
+    </button>
+  );
+}
+
+/** Licznik combo nad przyciskami klikera. */
+export function ComboChip() {
+  const c = combo.value;
+  if (c.count < 3) return null;
+  return <div class={`tt-combo m${Math.min(5, c.mult)}`} key={c.mult}>COMBO ×{c.mult}<small>{c.count} stuknięć</small></div>;
 }

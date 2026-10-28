@@ -1,4 +1,4 @@
-import { createEconomy, emptyCounters, relayout, type EconomyState } from '@/sim/economy/economy';
+import { createEconomy, emptyCounters, fillQuests, relayout, type EconomyState } from '@/sim/economy/economy';
 import { computeStoreInfo, type StoreInfo } from '@/sim/economy/storeInfo';
 import { REMONTS } from '@/sim/economy/upgrades';
 import type { EconClock } from '@/sim/economy/clock';
@@ -84,16 +84,21 @@ export function deleteSave(seed: string): void {
   }
 }
 
-/** Nowa gra albo wczytana z zapisu (`fresh` pomija zapis). Brakujące pola starszego zapisu uzupełnia stan domyślny. */
-export function createSession(seed: string, fresh = false): GameSession {
+/**
+ * Nowa gra albo wczytana z zapisu (`fresh` pomija zapis). Brakujące pola starszego zapisu uzupełnia stan domyślny.
+ * `partner` to premia z sieci sklepów (meta.ts): aktualna przy każdym wczytaniu.
+ */
+export function createSession(seed: string, fresh = false, partner?: EconomyState['partner']): GameSession {
   const saved = fresh ? null : loadSaved(seed);
   const level = saved?.remontLevel ?? 0;
   const layout = layoutFor(seed, level);
   const info = computeStoreInfo(layout);
-  const defaults = createEconomy(seed, info);
+  const defaults = createEconomy(seed, info, partner);
   const econ: EconomyState = saved
     ? { ...defaults, ...saved, today: { ...emptyCounters(), ...saved.today }, month: { ...emptyCounters(), ...saved.month }, total: { ...emptyCounters(), ...saved.total } }
     : defaults;
+  if (partner) econ.partner = { ...partner };
+  if (econ.quests.length === 0) fillQuests(econ, info);
   return { seed, econ, layout, info, clock: { acc: 0 }, layoutLevel: level };
 }
 

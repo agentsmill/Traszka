@@ -8,9 +8,12 @@ import {
 import { MILESTONES } from '@/sim/economy/milestones';
 import type { PalletLoc, StoreInfo } from '@/sim/economy/storeInfo';
 import {
-  EQUIPMENT, GROUP_LABEL, UPGRADES, WORKSHOP_UNLOCK_EARNED, equipmentCost, upgradeCost, type UpgradeGroup,
+  EQUIPMENT, GROUP_LABEL, UPGRADES, WORKSHOP_LEVEL, equipmentCost, upgradeCost, type UpgradeGroup,
 } from '@/sim/economy/upgrades';
-import { econ, selection, tab, type GameActions, type TabId } from '../state';
+import { nextRankAt, rankFor, xpToNext } from '@/sim/economy/progress';
+import { questDone, questProgress } from '@/sim/economy/quests';
+import { networkIncomeOf, prestigePoints, prestigeReady } from '@/game/meta';
+import { econ, metaView, selection, showPrestige, tab, type GameActions, type TabId } from '../state';
 import { duration, int, pct, plural, signedZl, zl } from './format';
 
 // --- Wspólne -----------------------------------------------------------------------------------------
@@ -36,7 +39,7 @@ const TABS: { id: TabId; icon: string; label: string }[] = [
   { id: 'palety', icon: '📦', label: 'Palety' },
   { id: 'ludzie', icon: '👥', label: 'Ludzie' },
   { id: 'ulepszenia', icon: '🛠️', label: 'Ulepszenia' },
-  { id: 'wyniki', icon: '📊', label: 'Wyniki' },
+  { id: 'cele', icon: '🎯', label: 'Cele' },
 ];
 
 /** Dolny pasek zakładek. Drugie stuknięcie w otwartą zakładkę ją zamyka. */
@@ -47,11 +50,12 @@ export function TabBar() {
     badge.palety = view.s.pallets.filter((p) => p.loc === 'sidewalk').length || undefined;
     const affordable = UPGRADES.filter((u) => !upgradeBlocker(view.s, u) && upgradeCost(u, level(view.s, u.id)) <= view.s.cash).length;
     badge.ulepszenia = affordable || undefined;
+    badge.cele = view.s.quests.filter((q) => questDone(view.s, q)).length || undefined;
   }
   return (
     <nav class="tt-tabs" aria-label="Zakładki">
       {TABS.map((t) => (
-        <button key={t.id} type="button" class={`tt-tab${tab.value === t.id ? ' on' : ''}`} aria-pressed={tab.value === t.id}
+        <button key={t.id} type="button" class={`tt-tab${tab.value === t.id ? ' on' : ''}${t.id === 'cele' && badge.cele ? ' ready' : ''}`} aria-pressed={tab.value === t.id}
           onClick={() => { tab.value = tab.value === t.id ? null : t.id; selection.value = null; }}>
           <span class="tt-tab-icon" aria-hidden="true">{t.icon}</span>
           <span class="tt-tab-label">{t.label}</span>
@@ -79,7 +83,7 @@ export function Sheet({ game }: { game: GameActions }) {
         {open === 'palety' && <PalletsPanel s={view.s} info={view.info} game={game} />}
         {open === 'ludzie' && <PeoplePanel s={view.s} info={view.info} game={game} />}
         {open === 'ulepszenia' && <ShopPanel s={view.s} info={view.info} game={game} />}
-        {open === 'wyniki' && <StatsPanel s={view.s} />}
+        {open === 'cele' && <GoalsPanel s={view.s} game={game} />}
       </div>
     </aside>
   );
@@ -245,7 +249,7 @@ function PeoplePanel({ s, info, game }: { s: EconomyState; info: StoreInfo; game
         <Section title="Automatyka (warsztat)">
           {level(s, 'tasmociag') > 0 && <Row label="Taśmociąg">poziom {level(s, 'tasmociag')}</Row>}
           {level(s, 'wykladacz') > 0 && <Row label="Wykładacz">poziom {level(s, 'wykladacz')}</Row>}
-          {fx.humanoid && <Row label="Humanoid Zenek">pracuje 24/7 🤖</Row>}
+          {fx.humanoid && <Row label="Humanoid eDward">pracuje 24/7 🤖</Row>}
           <p class="tt-hint">Automatyka pracuje także w nocy, gdy sklep jest zamknięty.</p>
         </Section>
       )}
@@ -267,10 +271,12 @@ function ShopPanel({ s, info, game }: { s: EconomyState; info: StoreInfo; game: 
         {EQUIPMENT.map((e) => {
           const cost = equipmentCost(e, s.equipment.filter((x) => x.id === e.id).length);
           const owned = s.equipment.filter((x) => x.id === e.id).length;
+          const locked = s.level < e.minLevel;
           return (
-            <div key={e.id} class="tt-item">
-              <div><b>{e.name}</b>{owned > 0 ? <span class="tt-muted"> ×{owned}</span> : null}<div class="tt-muted">{e.effect}{e.size === 2 ? ' · zajmuje cały slot 2×2' : ''}</div></div>
-              <button type="button" class="tt-btn tt-buy" disabled={cost > s.cash} onClick={() => game.buyEquipment(e.id)}>{zl(cost)}</button>
+            <div key={e.id} class={`tt-item${locked ? ' locked' : ''}`}>
+              <div><b>{locked ? '🔒 ' : ''}{e.name}</b>{owned > 0 ? <span class="tt-muted"> ×{owned}</span> : null}<div class="tt-muted">{e.effect}{e.size === 2 ? ' · zajmuje cały slot 2×2' : ''}</div>
+                {locked && <div class="tt-muted warn">Odblokujesz na {e.minLevel}. poziomie</div>}</div>
+              <button type="button" class="tt-btn tt-buy" disabled={locked || cost > s.cash} onClick={() => game.buyEquipment(e.id)}>{zl(cost)}</button>
             </div>
           );
         })}
@@ -279,13 +285,13 @@ function ShopPanel({ s, info, game }: { s: EconomyState; info: StoreInfo; game: 
         if (g === 'warsztat' && !workshopUnlocked(s)) {
           return (
             <Section key={g} title={`🔒 ${GROUP_LABEL[g]}`}>
-              <p class="tt-hint">Franczyzobiorca zakasuje rękawy: automatyka DIY, a na końcu humanoid. Odblokujesz po zarobieniu {zl(WORKSHOP_UNLOCK_EARNED)} marży albo po pierwszym remoncie (teraz: {zl(s.total.margin)}).</p>
+              <p class="tt-hint">Franczyzobiorca zakasuje rękawy: automatyka DIY, a na końcu humanoid eDward. Odblokujesz na {WORKSHOP_LEVEL}. poziomie albo po pierwszym remoncie (teraz: poziom {s.level}).</p>
             </Section>
           );
         }
         const items = UPGRADES.filter((u) => u.group === g).filter((u) => {
           const b = upgradeBlocker(s, u);
-          return b === null || b === 'Maksymalny poziom' || /^Wymaga remontu/.test(b) || u.id === 'humanoid';
+          return b === null || b === 'Maksymalny poziom' || /^Wymaga remontu|^Odblokujesz na/.test(b) || u.id === 'humanoid';
         });
         if (items.length === 0) return null;
         return (
@@ -297,7 +303,7 @@ function ShopPanel({ s, info, game }: { s: EconomyState; info: StoreInfo; game: 
               const cost = upgradeCost(u, lvl);
               const name = u.names[Math.min(lvl, u.names.length - 1)]!;
               return (
-                <div key={u.id} class={`tt-item${maxed ? ' done' : ''}`}>
+                <div key={u.id} class={`tt-item${maxed ? ' done' : ''}${blocker && !maxed ? ' locked' : ''}`}>
                   <div>
                     <b>{maxed ? u.names[u.names.length - 1] : name}</b>
                     {u.maxLevel > 1 && <span class="tt-muted"> {lvl}/{u.maxLevel}</span>}
@@ -325,8 +331,9 @@ function ShopPanel({ s, info, game }: { s: EconomyState; info: StoreInfo; game: 
           : remont
             ? (
               <div class="tt-item">
-                <div><b>{remont.name}</b><div class="tt-muted">Większy lokal: więcej półek, slotów ({remont.slots} × 2×2) i miejsc na palety, więcej klientów. Sklep zamknięty {remont.days} {plural(remont.days, 'dzień', 'dni', 'dni')}.</div></div>
-                <button type="button" class="tt-btn tt-buy" disabled={remont.cost > s.cash} onClick={() => game.startRemont()}>{zl(remont.cost)}</button>
+                <div><b>{s.level < remont.minLevel ? '🔒 ' : ''}{remont.name}</b><div class="tt-muted">Większy lokal: więcej półek, slotów ({remont.slots} × 2×2) i miejsc na palety, więcej klientów. Sklep zamknięty {remont.days} {plural(remont.days, 'dzień', 'dni', 'dni')}.</div>
+                  {s.level < remont.minLevel && <div class="tt-muted warn">Odblokujesz na {remont.minLevel}. poziomie</div>}</div>
+                <button type="button" class="tt-btn tt-buy" disabled={s.level < remont.minLevel || remont.cost > s.cash} onClick={() => game.startRemont()}>{zl(remont.cost)}</button>
               </div>
             )
             : <p class="tt-hint">To już Flagowiec. Większego sklepu nie będzie.</p>}
@@ -341,17 +348,54 @@ function ShopPanel({ s, info, game }: { s: EconomyState; info: StoreInfo; game: 
   );
 }
 
-// --- Wyniki ------------------------------------------------------------------------------------------
+// --- Cele i wyniki -------------------------------------------------------------------------------------
 
-function StatsPanel({ s }: { s: EconomyState }) {
+function GoalsPanel({ s, game }: { s: EconomyState; game: GameActions }) {
   const t = s.today;
   const m = s.month;
   const profit = (k: typeof t): number => k.margin + k.other - k.wages - k.media - k.fee - k.fines - k.logistics;
   const goals = MILESTONES.filter((x) => !s.milestones.includes(x.id)).slice(0, 3);
   const best = Math.max(1, ...s.history.map((h) => Math.abs(h.profit)));
+  const nextRank = nextRankAt(s.level);
+  const meta = metaView.value;
   return (
     <>
-      <Section title="Cele">
+      <Section title="Zlecenia Centrali">
+        {s.quests.map((q) => {
+          const done = questDone(s, q);
+          return (
+            <div key={q.id} class={`tt-quest${done ? ' done' : ''}`}>
+              <div class="tt-row"><b>{q.title}</b></div>
+              <Bar value={questProgress(s, q)} />
+              <div class="tt-row">
+                <span class="tt-muted">+{zl(q.reward.cash)} · +{q.reward.ogonki} 🦎 · +{q.reward.xp} XP</span>
+                {done
+                  ? <button type="button" class="tt-btn tt-primary tt-claim" onClick={() => game.claimQuest(q.id)}>Odbierz!</button>
+                  : <span class="tt-muted">{pct(questProgress(s, q))}</span>}
+              </div>
+            </div>
+          );
+        })}
+      </Section>
+      <Section title={`Poziom ${s.level}: ${rankFor(s.level)}`}>
+        <Bar value={s.xp / xpToNext(s.level)} />
+        <Row label="Doświadczenie">{int(s.xp)} / {int(xpToNext(s.level))} XP</Row>
+        {nextRank && <p class="tt-hint">Następna ranga ({rankFor(nextRank)}) na {nextRank}. poziomie. Każdy poziom to nagroda, a niektóre coś odblokowują.</p>}
+      </Section>
+      <Section title="Twoja sieć Traszek">
+        <Row label="Sklepy w sieci">{meta.stores}</Row>
+        <Row label="Dochód z sieci">{zl(meta.networkIncome)} / dzień</Row>
+        <Row label="Punkty Partnera">{meta.points} (+{4 * meta.points}% marży, +{3 * meta.points}% ruchu)</Row>
+        {prestigeReady(s)
+          ? (
+            <>
+              <p class="tt-hint">Ten sklep jest gotowy, by dołączyć do sieci: da <b>+{prestigePoints(s)} Punktów Partnera</b> i <b>{zl(networkIncomeOf(s))}</b> dziennie w każdej kolejnej grze.</p>
+              <button type="button" class="tt-btn tt-primary big" onClick={() => { showPrestige.value = true; }}>Otwórz kolejną Traszkę</button>
+            </>
+          )
+          : <p class="tt-hint">Po drugim remoncie albo na 20. poziomie otworzysz kolejną Traszkę. Ten sklep dołączy do sieci i będzie zarabiał na każdą następną.</p>}
+      </Section>
+      <Section title="Kamienie milowe">
         {goals.map((g) => <div key={g.id} class="tt-goal"><b>{g.label}</b> <span class="tt-muted">+{g.reward} 🦎</span><div class="tt-muted">{g.hint}</div></div>)}
         <p class="tt-hint">Zdobyte: {s.milestones.length} / {MILESTONES.length}</p>
       </Section>

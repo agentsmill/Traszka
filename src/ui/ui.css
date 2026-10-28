@@ -242,16 +242,28 @@
   min-width: 0;
 }
 
-.tt-brand2 {
+.tt-level {
+  position: relative;
   display: grid;
   place-items: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 8px;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: conic-gradient(var(--tt-orange) var(--xp, 0deg), rgba(255, 243, 223, 0.2) 0);
+  cursor: pointer;
+}
+
+.tt-level span {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
   background: var(--tt-cream);
   color: var(--tt-green-dark);
-  font-weight: 900;
-  font-size: 16px;
+  font: 900 13px/1 system-ui, -apple-system, 'Segoe UI', sans-serif;
 }
 
 .tt-cash {
@@ -263,6 +275,17 @@
 
 .tt-cash.neg {
   color: #ffb3a1;
+}
+
+.tt-cash.up {
+  color: #ffe08a;
+  text-shadow: 0 0 10px rgba(255, 209, 102, 0.55);
+}
+
+.tt-stat.hot {
+  background: var(--tt-orange);
+  color: #1a1a1a;
+  animation: tt-pulse 0.8s ease-in-out infinite alternate;
 }
 
 .tt-stat {
@@ -957,4 +980,205 @@
 @keyframes tt-float {
   from { opacity: 1; transform: translate(-50%, -50%); }
   to { opacity: 0; transform: translate(-50%, -150%); }
+}
+
+/* --- Nagrody --------------------------------------------------------------------------------------- */
+
+.tt-tab.ready .tt-badge {
+  animation: tt-pulse 0.7s ease-in-out infinite alternate;
+}
+
+@keyframes tt-pulse {
+  from { transform: scale(1); }
+  to { transform: scale(1.18); }
+}
+
+.tt-quest {
+  margin: 8px 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(29, 107, 58, 0.06);
+}
+
+.tt-quest.done {
+  background: rgba(255, 209, 102, 0.35);
+  box-shadow: 0 0 0 2px var(--tt-orange) inset;
+}
+
+.tt-btn.tt-claim {
+  min-width: 96px;
+  animation: tt-pulse 0.7s ease-in-out infinite alternate;
+}
+
+.tt-item.locked {
+  opacity: 0.75;
+}
+
+.tt-celebrate {
+  pointer-events: auto;
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  z-index: 30;
+}
+
+.tt-celebrate-card {
+  padding: 20px 28px;
+  border-radius: 22px;
+  background: radial-gradient(circle at 50% 0%, #ffe9a8, var(--tt-orange));
+  color: #2b1a00;
+  text-align: center;
+  box-shadow: 0 16px 50px rgba(0, 0, 0, 0.4), 0 0 0 4px var(--tt-cream);
+  animation: tt-pop 0.45s cubic-bezier(0.2, 1.6, 0.4, 1);
+  max-width: calc(100vw - 48px);
+}
+
+.tt-celebrate-title {
+  font-size: 34px;
+  font-weight: 900;
+  letter-spacing: 1px;
+}
+
+.tt-celebrate-sub {
+  margin-top: 2px;
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.tt-celebrate-line {
+  margin-top: 6px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+@keyframes tt-pop {
+  from { transform: scale(0.4); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+.tt-modal.tt-center {
+  text-align: center;
+}
+
+.tt-big-reward {
+  display: block;
+  margin: 8px 0;
+  font-size: 26px;
+  font-weight: 900;
+  color: var(--tt-green-dark);
+}
+
+.tt-streak {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  margin: 8px 0;
+}
+
+.tt-streak span {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: rgba(29, 107, 58, 0.12);
+  color: #6b766f;
+  font-weight: 800;
+}
+
+.tt-streak span.on {
+  background: var(--tt-orange);
+  color: #1a1a1a;
+}
+
+.tt-gift {
+  pointer-events: auto;
+  position: fixed;
+  z-index: 12;
+  width: 64px;
+  height: 64px;
+  margin: -32px 0 0 -32px;
+  border: 0;
+  border-radius: 50%;
+  background: radial-gradient(circle, #fff6c9 0%, rgba(255, 209, 102, 0.85) 45%, rgba(255, 138, 31, 0) 72%);
+  font-size: 38px;
+  cursor: pointer;
+  animation: tt-bob 0.9s ease-in-out infinite alternate, tt-pop 0.4s cubic-bezier(0.2, 1.6, 0.4, 1);
+  touch-action: manipulation;
+}
+
+@keyframes tt-bob {
+  from { transform: translateY(-6px) rotate(-8deg); }
+  to { transform: translateY(6px) rotate(8deg); }
+}
+
+.tt-combo {
+  position: fixed;
+  right: 84px;
+  bottom: calc(var(--tabs-h) + 100px);
+  padding: 6px 12px;
+  border-radius: 12px;
+  background: var(--tt-orange);
+  color: #1a1a1a;
+  font: 900 18px/1.1 system-ui, -apple-system, 'Segoe UI', sans-serif;
+  text-align: center;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
+  animation: tt-pop 0.25s cubic-bezier(0.2, 1.6, 0.4, 1);
+}
+
+.tt-combo small {
+  display: block;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.tt-combo.m3 { background: #ffb02e; }
+.tt-combo.m4 { background: #ff6b2e; color: #fff; }
+.tt-combo.m5 { background: #e23d3d; color: #fff; }
+
+.tt-confetti {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.tt-confetti i {
+  position: absolute;
+  width: 8px;
+  height: 12px;
+  border-radius: 2px;
+  animation: tt-confetti 1.2s cubic-bezier(0.1, 0.6, 0.3, 1) forwards;
+}
+
+@keyframes tt-confetti {
+  from { transform: translate(-50%, -50%) rotate(0); opacity: 1; }
+  to { transform: translate(calc(-50% + var(--dx)), calc(-50% + var(--dy) + 140px)) rotate(var(--rot)); opacity: 0; }
+}
+
+.tt-marker {
+  position: absolute;
+  left: 0;
+  top: 0;
+  font-size: 22px;
+  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.5));
+  animation: tt-bob 0.8s ease-in-out infinite alternate;
+}
+
+.tt-speech {
+  position: absolute;
+  left: 0;
+  top: 0;
+  max-width: 180px;
+  padding: 5px 9px;
+  border-radius: 12px 12px 12px 2px;
+  background: #fff;
+  color: #22302a;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.25;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+  animation: tt-in 0.2s ease-out;
 }

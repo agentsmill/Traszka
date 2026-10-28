@@ -23,6 +23,21 @@ To uproszczona wersja §6–§8 specu, zrobiona tak, żeby gra była grywalna na
 - **Koszty.** Płace 340 zł dziennie na osobę na zmianie, media, opłata franczyzowa 4500 zł + 3% obrotu, mandaty,
   opłaty logistyczne. Na koniec miesiąca z gotówką poniżej −30 000 zł Centrala wypowiada umowę.
 
+## Pętla nagród
+
+Cel: nagroda w każdej skali czasu, a gra bez końca.
+
+| Skala | Nagroda | Kod |
+|---|---|---|
+| sekunda | stuknięcie w paletę albo kasę: liczba nad palcem, dźwięk, wibracja; combo co 4 szybkie stuknięcia (do ×5) | `tapPallet`, `tapTill`, `main.ts` (`nextCombo`) |
+| minuta | Zlecenia Centrali (3 naraz, „Odbierz!”), złota paleta (8% palet), paczka od Centrali co 45–110 s | `quests.ts`, `claimQuest`, `claimGift` |
+| kilka minut | poziom gracza: XP z klientów, palet, zakupów i zleceń; nagroda i odblokowania na poziomach | `progress.ts`, `processLevels`, `unlocksAt` |
+| powrót | kierownik zmiany: 25% ostatniego dnia na godzinę nieobecności (do 8 h); seria dni do 7. dnia | `game/meta.ts` |
+| bez końca | „Otwórz kolejną Traszkę”: sklep dołącza do sieci (10% najlepszego dnia co dzień), Punkty Partnera (+4% marży, +3% ruchu każdy) | `game/meta.ts`, `partner` w stanie ekonomii |
+
+Rangi nie mają rodzaju gramatycznego (to palety): Drewniana, EURO, w Folii, Srebrna, Złota, Platynowa, Diamentowa,
+Legendarna, potem gwiazdki co 10 poziomów.
+
 ## Rozwój (bez drzewka badań)
 
 - **Ulepszenia** kupowane od razu, z rosnącą ceną kolejnych poziomów (kasa, palety i zaplecze, klienci).
@@ -30,8 +45,9 @@ To uproszczona wersja §6–§8 specu, zrobiona tak, żeby gra była grywalna na
 - **Sprzęt do slotów**: kasa samoobsługowa, bankomat, Paczkownik 24h, piec do pizzy. Slot 2×2 mieści dwie
   kompaktowe kasy samoobsługowe albo jeden duży sprzęt.
 - **Remont generalny** (3 poziomy): sklep zamknięty na kilka dni, potem większy lokal z generatora z większą liczbą slotów.
-- **Warsztat złotej rączki** odsłania się po 25 000 zł marży albo po pierwszym remoncie: taśmociąg i wykładacz pracują
-  całą dobę, a humanoid Zenek (po drugim remoncie) robi za trzech.
+- **Warsztat złotej rączki** odsłania się na 10. poziomie albo po pierwszym remoncie: taśmociąg i wykładacz pracują
+  całą dobę, a humanoid eDward (po drugim remoncie, od 25. poziomu) robi za trzech.
+- **Odblokowania poziomem**: bankomat 3, piec 4, druga kasa 5, Paczkownik 6, remonty 8 / 14 / 20.
 - **Ogonki** za cele i obsłużonych klientów: kampania w aplikacji (+30% ruchu przez dobę), przyspieszenie remontu.
 
 ## Balans (symulacja bez renderu, stan na 28.10.2026)
@@ -42,6 +58,6 @@ Wynik miesiąca po kosztach (przed inwestycjami), w tysiącach zł:
 |---|---|---|---|
 | blok (`kiełbasa-42`) | +11, +10 | +18, +19 | +21, +47, +59, +80 … (remont w 6. miesiącu) |
 | kamienica (`kiełbasa-12`) | +2, +2 | +4, +9 | +13, +29, +35, +49 … |
-| pawilon (`traszka-1`) | +9, +7 | +19, +20 | +38 … +221 (Zenek po ~7 miesiącach) |
+| pawilon (`traszka-1`) | +9, +7 | +19, +20 | +38 … +221 (eDward po ~7 miesiącach) |
 
 Bierny gracz traci głównie na mandatach (palety stoją na chodniku), więc stukanie i decyzje o paletach mają realną wagę.

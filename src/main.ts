@@ -20,12 +20,20 @@ import { MAX_FRAME_DT, advanceClock, clockAlpha } from '@/game/loop';
 import { randomSeed } from '@/game/seedWords';
 import { createWorld, type World } from '@/game/world';
 import { createSession, deleteSave, lastSavedSeed, saveSession, syncLayout, type GameSession } from '@/game/session';
+import {
+  addToNetwork, advanceDaily, dailyReward, loadMeta, offlineEarnings, partnerOf, saveMeta, type Meta,
+} from '@/game/meta';
+import { rankFor } from '@/sim/economy/progress';
+import { play, buzz, setSound, setVibration, type Sfx } from '@/ui/sfx';
+import { confetti } from '@/ui/fx';
+import { LINES, missingLine, pick } from '@/ui/game/lines';
 import { SIM_STEP, payLook, setCrowdExtras, setCrowdRate, stepCrowd } from '@/sim/crowd/crowd';
 import { CATS, HOUR_CURVE, OPEN_FROM } from '@/sim/economy/catalog';
 import { minuteOfDay } from '@/sim/economy/calendar';
 import { advanceEconomy } from '@/sim/economy/clock';
 import {
-  buyEquipment, buyUpgrade, campaign, effects, expectedDailyCustomers, fire, hire, isClosedForRemont, isStoreOpen, movePallet,
+  buyEquipment, buyUpgrade, campaign, claimGift, claimQuest, effects, expectedDailyCustomers, fire, grantDaily, grantOffline, hire,
+  isClosedForRemont, isStoreOpen, movePallet, processLevels,
   returnPallet, rushRemont, setOrder, setPriority, slotUsage, startRemont, stepMinute, tapPallet, tapTill, type CommandResult,
   type EconEvent,
 } from '@/sim/economy/economy';
@@ -273,7 +281,21 @@ function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: st
   let loaded: Loaded | null = null;
   let generation = 0;               // odrzuca wyniki asynchroniczne, które wróciły po zmianie seeda
   const clock = { acc: 0 };
-  let session: GameSession | null = benchMode ? null : createSession(initialSeed, params.get('new') === '1');
+  let meta: Meta = loadMeta();
+  setSound(meta.sound);
+  setVibration(meta.vibration);
+  let session: GameSession | null = benchMode ? null : createSession(initialSeed, params.get('new') === '1', partnerOf(meta));
+  const persist = (): void => {
+    if (!session) return;
+    saveSession(session);
+    meta.lastSeen = Date.now();
+    saveMeta(meta);
+  };
+  const publishMeta = (): void => {
+    const p = partnerOf(meta);
+    ui.metaView.value = { points: p.points, stores: p.stores, networkIncome: p.networkIncome, sound: meta.sound, vibration: meta.vibration };
+  };
+  publishMeta();
   const overlay = benchMode ? null : createWorldOverlay(document.body);
   const raycaster = new Raycaster();
 
@@ -358,14 +380,14 @@ function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: st
   }
 
   function setSeed(next: string, fresh = false): void {
-    if (session) saveSession(session);
+    persist();
     writeSeedToUrl(next);
-    if (!benchMode) session = createSession(next, fresh);
+    if (!benchMode) session = createSession(next, fresh, partnerOf(meta));
     ui.selection.value = null;
     load(next);
     ui.seed.value = next;
     publish();
-    if (session) saveSession(session);
+    persist();
   }
 
   // --- Ekonomia → scena i interfejs ---
@@ -413,28 +435,72 @@ function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: st
       const want: TimeOfDay = hour >= 20 || hour < 6 ? 'night' : 'day';
       if (want !== tod) controls.setTimeOfDay(want);
     }
+    // znaczniki nad paletami: złota (premia) i stojąca pod sklepem ponad godzinę (ryzyko mandatu)
+    const marks = [];
+    for (const p of s.pallets) {
+      const at = loaded.pallets?.worldPosition(p.id);
+      if (!at) continue;
+      at.y = 1.45;
+      if (p.golden) marks.push({ key: `g${p.id}`, world: at, text: '✨', kind: 'golden' as const });
+      else if (p.loc === 'sidewalk' && s.minute - p.since >= 60) marks.push({ key: `r${p.id}`, world: at, text: '⚠️', kind: 'risk' as const });
+    }
+    overlay?.setMarkers(marks);
     const closed = isClosedForRemont(s) ? 'REMONT' : !open ? 'ZAMKNIĘTE' : null;
     const q = Math.round(s.queue);
     overlay?.setTill(loaded.tillTop, closed ?? (q > 0 ? `👥 ${q}` : '🙂'), !closed && s.queue >= effects(s, info).patience);
   }
 
+  const EVENT_SFX: Partial<Record<EconEvent['kind'], Sfx>> = { delivery: 'delivery', fine: 'fine', golden: 'golden', milestone: 'coins', warning: 'error' };
+
   function handleEvents(events: EconEvent[]): void {
     for (const e of events) {
-      if (e.kind === 'day') { if (session) saveSession(session); continue; }
+      if (e.kind === 'day') { persist(); continue; }
       if (e.kind === 'month' && e.report) ui.report.value = e.report;
+      if (e.kind === 'levelup' && e.level) {
+        ui.celebration.value = {
+          title: `POZIOM ${e.level}`,
+          subtitle: rankFor(e.level),
+          lines: [e.text.replace(/^Poziom \d+! /, ''), ...(e.unlocks ?? []).map((u) => `🔓 ${u}`)],
+        };
+        play('levelup');
+        buzz([30, 40, 30]);
+        confetti();
+        continue;
+      }
+      const sfx = EVENT_SFX[e.kind];
+      if (sfx) play(sfx);
+      if (e.kind === 'golden' && e.text.startsWith('✨ Złota paleta rozładowana')) confetti(window.innerWidth / 2, window.innerHeight / 2, 24);
       ui.pushToast(e.text, e.kind);
     }
   }
 
+  // --- Combo: szybkie stukanie (odstęp < 0,65 s) zwiększa mnożnik co 4 stuknięcia, do ×5 ---
+  let comboCount = 0;
+  let lastTapAt = 0;
+  let comboTimer = 0;
+  function nextCombo(): number {
+    const now = performance.now();
+    comboCount = now - lastTapAt < 650 ? comboCount + 1 : 1;
+    lastTapAt = now;
+    const mult = Math.min(5, 1 + Math.floor(comboCount / 4));
+    ui.combo.value = { count: comboCount, mult };
+    clearTimeout(comboTimer);
+    comboTimer = window.setTimeout(() => { comboCount = 0; ui.combo.value = { count: 0, mult: 1 }; }, 900);
+    return mult;
+  }
+
   /** Polecenie gracza: wynik, odświeżenie sceny i interfejsu, komunikat przy błędzie. */
   const act = (r: CommandResult, okToast = true): CommandResult => {
-    if (!r.ok) ui.pushToast(r.text, 'error');
+    if (!r.ok) { ui.pushToast(r.text, 'error'); play('error'); }
     else if (okToast && r.text) ui.pushToast(r.text, 'ok');
     afterAction();
     return r;
   };
   function afterAction(): void {
     if (!session) return;
+    const events: EconEvent[] = [];
+    processLevels(session.econ, events);   // poziom z nagrody albo stuknięcia od razu, także w pauzie
+    handleEvents(events);
     if (syncLayout(session)) load(session.seed);
     syncVisuals(true);
     publish();
@@ -442,17 +508,73 @@ function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: st
   const money = (n: number): string => `+${n.toLocaleString('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} zł`;
 
   const game: ui.GameActions = {
-    tapPallet: (id) => act(session ? tapPallet(session.econ, session.info, id) : { ok: false, text: '' }, false),
-    tapTill: () => act(session ? tapTill(session.econ, session.info) : { ok: false, text: '' }, false),
+    tapPallet: (id) => {
+      if (!session) return { ok: false, text: '' };
+      const r = tapPallet(session.econ, session.info, id, nextCombo());
+      if (r.ok) {
+        play('tap');
+        buzz(8);
+        if (r.text) handleEvents([{ kind: 'golden', text: r.text }]);
+      }
+      return act(r.ok ? { ok: true, value: r.value } : r, false);
+    },
+    tapTill: () => {
+      if (!session) return { ok: false, text: '' };
+      const r = tapTill(session.econ, session.info, nextCombo());
+      if (r.ok) { play('cash'); buzz(8); }
+      return act(r, false);
+    },
+    claimQuest: (id) => {
+      if (!session) return { ok: false, text: '' };
+      const r = claimQuest(session.econ, session.info, id);
+      if (r.ok) { play('coins'); buzz([15, 30, 15]); confetti(window.innerWidth / 2, window.innerHeight * 0.6, 28); persist(); }
+      return act(r);
+    },
+    claimGift: () => {
+      if (!session) return { ok: false, text: '' };
+      const r = claimGift(session.econ, session.info);
+      if (r.ok) { play('gift'); buzz([10, 20, 10]); }
+      return act(r);
+    },
+    claimWelcome: () => {
+      const w = ui.welcome.value;
+      ui.welcome.value = null;
+      if (!session || !w) return;
+      grantOffline(session.econ, w.offline);
+      if (w.daily) grantDaily(session.econ, w.daily.cash, w.daily.ogonki);
+      play('coins');
+      confetti();
+      afterAction();
+      persist();
+    },
+    openNextStore: () => {
+      if (!session) return;
+      const old = session.econ;
+      meta = addToNetwork(meta, old);
+      saveMeta(meta);
+      deleteSave(old.seed);
+      publishMeta();
+      setSeed(randomSeed(), true);
+      ui.tab.value = null;
+      ui.celebration.value = {
+        title: 'NOWA TRASZKA!',
+        subtitle: `Sieć: ${meta.network.length} ${meta.network.length === 1 ? 'sklep' : 'sklepy'} · ${meta.partnerPoints} Punktów Partnera`,
+        lines: [`Dochód z sieci: ${partnerOf(meta).networkIncome.toLocaleString('pl-PL')} zł dziennie`],
+      };
+      play('levelup');
+      confetti();
+    },
+    setSound: (on) => { meta.sound = on; setSound(on); saveMeta(meta); publishMeta(); },
+    setVibration: (on) => { meta.vibration = on; setVibration(on); saveMeta(meta); publishMeta(); },
     movePallet: (id, loc) => act(session ? movePallet(session.econ, session.info, id, loc) : { ok: false, text: '' }),
     returnPallet: (id) => { const r = act(session ? returnPallet(session.econ, id) : { ok: false, text: '' }); ui.selection.value = null; return r; },
     setOrder: (auto, manual) => { if (session) setOrder(session.econ, auto, manual); afterAction(); },
     hire: () => act(session ? hire(session.econ) : { ok: false, text: '' }, false),
     fire: () => act(session ? fire(session.econ) : { ok: false, text: '' }, false),
     setPriority: (p) => { if (session) setPriority(session.econ, p); afterAction(); },
-    buyUpgrade: (id) => { const r = act(session ? buyUpgrade(session.econ, id) : { ok: false, text: '' }); if (session && r.ok) saveSession(session); return r; },
-    buyEquipment: (id, slot) => { const r = act(session ? buyEquipment(session.econ, session.info, id, slot) : { ok: false, text: '' }); if (session && r.ok) saveSession(session); return r; },
-    startRemont: () => { ui.selection.value = null; const r = act(session ? startRemont(session.econ) : { ok: false, text: '' }); if (session && r.ok) saveSession(session); return r; },
+    buyUpgrade: (id) => { const r = act(session ? buyUpgrade(session.econ, id) : { ok: false, text: '' }); if (r.ok) { play('coins'); persist(); } return r; },
+    buyEquipment: (id, slot) => { const r = act(session ? buyEquipment(session.econ, session.info, id, slot) : { ok: false, text: '' }); if (r.ok) { play('coins'); persist(); } return r; },
+    startRemont: () => { ui.selection.value = null; const r = act(session ? startRemont(session.econ) : { ok: false, text: '' }); if (r.ok) persist(); return r; },
     campaign: () => act(session ? campaign(session.econ) : { ok: false, text: '' }),
     rushRemont: () => act(session ? rushRemont(session.econ) : { ok: false, text: '' }),
     restart: () => {
@@ -475,7 +597,8 @@ function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: st
       if (pallet !== null) {
         ui.selection.value = { kind: 'pallet', id: pallet };
         const r = game.tapPallet(pallet);
-        if (r.ok) overlay?.floater(x, y, `+${Math.round(r.value ?? 0)} szt.`, 'work');
+        const mult = ui.combo.value.mult;
+        if (r.ok) overlay?.floater(x, y, `+${Math.round(r.value ?? 0)} szt.${mult > 1 ? ` ×${mult}` : ''}`, 'work');
         return;
       }
       let o: Object3D | null = hit.object;
@@ -540,8 +663,17 @@ function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: st
   if (session) {
     writeSeedToUrl(session.seed);
     publish();
-    saveSession(session);
-    if (session.econ.minute === OPEN_FROM && session.econ.total.customers === 0) ui.showIntro.value = true;
+    const fresh = session.econ.minute === OPEN_FROM && session.econ.total.customers === 0;
+    const streak = advanceDaily(meta, new Date());
+    if (fresh) {
+      ui.showIntro.value = true;
+    } else {
+      const hours = meta.lastSeen > 0 ? (Date.now() - meta.lastSeen) / 3_600_000 : 0;
+      const offline = offlineEarnings(session.econ, hours);
+      const daily = streak !== null ? dailyReward(streak, session.econ.level) : null;
+      if (offline > 0 || daily) ui.welcome.value = { hours, offline, streak, daily };
+    }
+    persist();
   }
 
   // W benchmarku nic nie steruje kamerą ani presetem: wynik zależy tylko od biegu.
@@ -559,8 +691,8 @@ function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: st
         F3: () => { ui.showPerf.value = !ui.showPerf.value; },
       },
     });
-    document.addEventListener('visibilitychange', () => { if (document.hidden && session) saveSession(session); });
-    window.addEventListener('pagehide', () => { if (session) saveSession(session); });
+    document.addEventListener('visibilitychange', () => { if (document.hidden) persist(); });
+    window.addEventListener('pagehide', persist);
   }
 
   void createCharacterFactory(pack).then((created) => {
@@ -575,6 +707,32 @@ function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: st
       onPreset: (id) => { ui.preset.value = id; },
     })
     : null;
+  /** Dymek z wypowiedzią losowego klienta, dobraną do sytuacji w sklepie (kolejka, puste półki, palety…). */
+  let nextSpeech = performance.now() + 6000;
+  function speak(sess: GameSession, current: Loaded): void {
+    const s = sess.econ;
+    if (!isStoreOpen(s)) return;
+    const agents = current.world.crowd.agents.filter((a) => a.state === 'browsing' || a.state === 'queueing' || a.state === 'paying' || a.state === 'toQueue');
+    if (agents.length === 0) return;
+    const agent = agents[Math.floor(Math.random() * agents.length)]!;
+    const fx = effects(s, sess.info);
+    const empty = CATS.filter((c) => sess.info.shelfCap[c] > 0 && s.shelf[c] / sess.info.shelfCap[c] < 0.15);
+    const hour = minuteOfDay(s.minute) / 60;
+    let text: string;
+    if (s.queue >= fx.patience * 0.8 && (agent.state === 'queueing' || agent.state === 'toQueue')) text = pick(LINES.queue);
+    else if (empty.length > 0 && Math.random() < 0.6) text = missingLine(pick(empty));
+    else if (s.pallets.some((p) => p.loc === 'floor') && Math.random() < 0.4) text = pick(LINES.pallets);
+    else if (fx.sco > 0 && agent.state === 'paying' && Math.random() < 0.4) text = pick(LINES.sco);
+    else if (s.minute < s.boostUntil && Math.random() < 0.5) text = pick(LINES.rush);
+    else if (hour >= 21 && Math.random() < 0.5) text = pick(LINES.night);
+    else text = pick(LINES.happy);
+    const { width, depth } = current.world.layout;
+    overlay?.say(() => {
+      const a = current.world.crowd.agents.find((x) => x.id === agent.id);
+      return a && loaded === current ? new Vector3((a.x - width / 2) * CELL_SIZE_M, 2.0, (a.y - depth / 2) * CELL_SIZE_M) : null;
+    }, text);
+  }
+
   const meter = new FrameMeter();
   let last: number | null = null;
   const frame = (now: number): void => {
@@ -586,7 +744,8 @@ function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: st
     last = now;
     const realDt = Math.min(frameDt, MAX_FRAME_DT);
 
-    if (session && loaded && loaded.world.speed > 0 && !ui.report.value && !ui.showIntro.value) {
+    const modal = !!ui.report.value || ui.showIntro.value || !!ui.welcome.value || ui.showPrestige.value;
+    if (session && loaded && loaded.world.speed > 0 && !modal) {
       const events: EconEvent[] = [];
       advanceEconomy(session.econ, session.info, session.clock, realDt * loaded.world.speed, events);
       handleEvents(events);
@@ -594,10 +753,14 @@ function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: st
     }
     syncVisuals();
     if (session && now - lastPublish > 200) { lastPublish = now; publish(); }
+    if (session && loaded && !modal && loaded.world.speed > 0 && now > nextSpeech) {
+      nextSpeech = now + 4000 + Math.random() * 5000;
+      speak(session, loaded);
+    }
 
     if (loaded?.crowdView) {
       const { world, crowdView } = loaded;
-      const paused = !!ui.report.value || ui.showIntro.value;
+      const paused = modal;
       const steps = paused ? 0 : advanceClock(clock, frameDt, world.speed);
       for (let i = 0; i < steps; i++) stepCrowd(world.crowd, world.layout, SIM_STEP);
       crowdView.setCharacterShadows(QUALITY[ctx.preset].characterShadows);

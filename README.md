@@ -4,7 +4,7 @@ Przeglądarkowa gra ekonomiczna w izometrycznym widoku. Three.js + TypeScript. D
 
 Prowadzisz franczyzę sklepu Traszka: rozładowujesz palety, zanim przyjdzie Straż Miejska, pilnujesz kolejki, kupujesz
 kasy samoobsługowe i ulepszenia, a remont powiększa sklep. Później warsztat złotej rączki daje automatykę DIY,
-a na końcu humanoida Zenka. Wszystkie firmy, postacie i zdarzenia są fikcyjne.
+a na końcu humanoida eDwarda. Wszystkie firmy, postacie i zdarzenia są fikcyjne.
 
 ## Jak grać
 
@@ -15,6 +15,12 @@ a na końcu humanoida Zenka. Wszystkie firmy, postacie i zdarzenia są fikcyjne.
 - **Ulepszenia** kupujesz za zarobione pieniądze. Sloty w sklepie przyjmują sprzęt; slot 2×2 mieści dwie kasy
   samoobsługowe. Remont generalny daje większy lokal i więcej slotów.
 - Koniec miesiąca to raport i opłata dla Centrali. Gra zapisuje się sama (osobno dla każdego seeda).
+
+Nagrody (🎯 Cele): szybkie stukanie daje combo do ×5, Zlecenia Centrali mają przycisk „Odbierz”, każdy poziom to
+premia (rangi od Drewnianej do Legendarnej Palety), a poziomy odblokowują sprzęt, remonty i warsztat. Złote palety
+i paczki od Centrali to losowe premie. Po powrocie czeka zarobek kierownika zmiany i premia za serię dni.
+Po drugim remoncie albo na 20. poziomie można otworzyć kolejną Traszkę: stary sklep zostaje w sieci i co dzień
+dokłada dochód, a Punkty Partnera trwale podnoszą marżę i ruch w każdym następnym sklepie.
 
 Sterowanie: przeciąganie przesuwa widok, szczypanie albo kółko myszy przybliża, ⟲ ⟳ albo Q/E obraca kamerę.
 Spacja pauzuje, F3 pokazuje licznik FPS. Model ekonomii i liczby: [docs/ekonomia.md](docs/ekonomia.md).

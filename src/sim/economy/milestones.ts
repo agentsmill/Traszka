@@ -25,9 +25,9 @@ export const MILESTONES: readonly Milestone[] = [
   { id: 'cust5k', label: '5 000 obsłużonych klientów', hint: 'Ulotki i reputacja ściągają ludzi', reward: 15, done: (s) => s.total.customers >= 5000 },
   { id: 'sco4', label: 'Armia SCO: 4 kasy samoobsługowe', hint: 'Slot 2×2 mieści dwie kasy', reward: 20, done: (s) => sco(s) >= 4 },
   { id: 'remont1', label: 'Pierwszy remont', hint: 'Remont powiększa sklep i daje sloty', reward: 25, done: (s) => s.remontLevel >= 1 },
-  { id: 'workshop', label: 'Złota rączka: pierwsza automatyka', hint: 'Warsztat odblokuje się po 25 000 zł marży', reward: 25, done: (s) => lvl(s, 'tasmociag') >= 1 },
+  { id: 'workshop', label: 'Złota rączka: pierwsza automatyka', hint: 'Warsztat odblokujesz na 10. poziomie', reward: 25, done: (s) => lvl(s, 'tasmociag') >= 1 },
   { id: 'earned250k', label: 'Ćwierć miliona marży', hint: 'Skaluj sklep i automatykę', reward: 40, done: (s) => s.total.margin >= 250_000 },
   { id: 'sco8', label: 'Osiem kas samoobsługowych', hint: 'Po remoncie jest więcej slotów', reward: 40, done: (s) => sco(s) >= 8 },
   { id: 'flagowiec', label: 'Flagowiec', hint: 'Trzeci remont', reward: 60, done: (s) => s.remontLevel >= 3 },
-  { id: 'zenek', label: 'Zenek przejmuje zmianę', hint: 'Humanoid z warsztatu', reward: 100, done: (s) => lvl(s, 'humanoid') >= 1 },
+  { id: 'edward', label: 'eDward przejmuje zmianę', hint: 'Humanoid z warsztatu', reward: 100, done: (s) => lvl(s, 'humanoid') >= 1 },
 ];

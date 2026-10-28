@@ -11,7 +11,9 @@ const MAX = 48;
 const LAYERS = 3;
 const LAYER_H = 0.36;
 const BASE_H = 0.14;
-const CARDBOARD = ['#c9a46a', '#d1ad74', '#bf9a5f', '#d8b783'];
+const CARDBOARD = ['#c9a46a', '#d1ad74', '#bf9a5f', '#d8b783'].map((c) => new Color(c));
+/** Złota paleta (premia): kartony w folii w kolorze złota, jaśniejsze piętro na przemian. */
+const GOLD = [new Color('#ffc93c'), new Color('#ffdb6e')];
 
 /** Paleta: drewniana podstawa (deski i klocki) jako jedna geometria. */
 function baseGeometry(): BufferGeometry {
@@ -54,7 +56,10 @@ export interface PalletsView {
   dispose(): void;
 }
 
-/** Palety w scenie: instancje podstaw i warstw kartonów; wysokość stosu pokazuje, ile zostało do rozładunku. */
+/**
+ * Palety w scenie: instancje podstaw i warstw kartonów; wysokość stosu pokazuje, ile zostało do rozładunku,
+ * a złota paleta ma złote kartony.
+ */
 export function createPalletsView(layout: StoreLayout, info: StoreInfo): PalletsView {
   const root = new Group();
   root.name = 'pallets';
@@ -65,7 +70,7 @@ export function createPalletsView(layout: StoreLayout, info: StoreInfo): Pallets
   bases.name = 'pallet bases';
   layers.name = 'pallet boxes';
   for (const m of [bases, layers]) { m.castShadow = true; m.receiveShadow = true; m.count = 0; m.frustumCulled = false; }
-  for (let i = 0; i < MAX * LAYERS; i++) layers.setColorAt(i, new Color(CARDBOARD[i % CARDBOARD.length]!));
+  for (let i = 0; i < MAX * LAYERS; i++) layers.setColorAt(i, CARDBOARD[i % CARDBOARD.length]!);
   const ring = new Mesh(new RingGeometry(0.62, 0.72, 32), new MeshBasicMaterial({ color: PALETTE.brand.orange, transparent: true, opacity: 0.9 }));
   ring.rotation.x = -Math.PI / 2;
   ring.position.y = 0.02;
@@ -109,6 +114,7 @@ export function createPalletsView(layout: StoreLayout, info: StoreInfo): Pallets
           const h = Math.min(1, full - k);
           m.compose(new Vector3(c.x, BASE_H + k * LAYER_H, c.z), q, new Vector3(1, Math.max(0.15, h), 1));
           layers.setMatrixAt(nl, m);
+          layers.setColorAt(nl, p.golden ? GOLD[k % 2]! : CARDBOARD[(p.id + k) % CARDBOARD.length]!);
           layerOwner[nl++] = p.id;
         }
         if (p.id === selected) { ring.visible = true; ring.position.set(c.x, 0.02, c.z); }
