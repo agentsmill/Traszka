@@ -140,14 +140,25 @@ function floorSpots(layout: StoreLayout): PalletSpot[] {
       if (squareCells(s).every((c) => layout.cells[key(c)] === 'floor' && !reserved.has(key(c)))) candidates.push(s);
     }
   }
-  // najpierw bliżej środka sali: tam paleta najbardziej rzuca się w oczy (i przeszkadza), ale nie stoi przy wejściu
-  const cx = width / 2;
-  const cy = (FRONT_WALL_Y + layout.midWallY) / 2;
-  candidates.sort((a, b) => Math.hypot(a.x - cx, a.y - cy) - Math.hypot(b.x - cx, b.y - cy));
+  // najpierw bliżej środka sali: tam paleta najbardziej rzuca się w oczy (i przeszkadza), ale nie stoi przy wejściu.
+  // Bez Math.hypot: norma nie musi być poprawnie zaokrąglona, więc silniki mogą się rozjechać w ostatnim bicie, a kolejność
+  // decyduje o liczbie miejsc i o `Pallet.spot` w zapisie. Środek sali ma połówki, więc liczymy z podwojonymi
+  // współrzędnymi: kwadrat odległości jest wtedy dokładną liczbą całkowitą (czterokrotnością prawdziwego), a ten sam
+  // porządek daje porównanie samych kwadratów. Dokładny remis rozstrzyga jawnie indeks kandydata, czyli kolejność
+  // skanowania (wiersz po wierszu), więc w każdym silniku tak samo; dawniej decydował o nim szum zaokrąglenia hypot.
+  const midX2 = width;
+  const midY2 = FRONT_WALL_Y + layout.midWallY;
+  const byCentre = candidates
+    .map((spot, index) => {
+      const dx = 2 * spot.x - midX2;
+      const dy = 2 * spot.y - midY2;
+      return { spot, index, dist2: dx * dx + dy * dy };
+    })
+    .sort((a, b) => a.dist2 - b.dist2 || a.index - b.index);
 
   const blocked = new Set<number>();
   const out: PalletSpot[] = [];
-  for (const s of candidates) {
+  for (const { spot: s } of byCentre) {
     const cells = squareCells(s);
     if (cells.some((c) => blocked.has(key(c)))) continue;
     // odstęp od innych palet, żeby dwie nie zlały się w jedną ścianę
