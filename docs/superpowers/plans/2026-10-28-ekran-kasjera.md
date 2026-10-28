@@ -48,7 +48,8 @@
 **Pliki:** `src/game/cashier.ts` (+ test), `src/render/cashierView.ts` (+ test), wpięcie w scenę gry (plik z pętlą/sceną gry po rundzie poprawek).
 
 **Interfejsy:**
-- `interface CashierLook { outfit: OutfitFile; appearanceSeed: string }`, `randomCashierLook(rng: Rng): CashierLook` (wszystkie stroje, specjalne z wagą ok. 40%), `DEFAULT_CASHIER_LOOK`, `isCashierLook(x: unknown): x is CashierLook`.
+- `interface CashierLook { outfit: OutfitFile; appearanceSeed: string }`, `randomCashierLook(rng: Rng, includeSpecial = true): CashierLook` (stroje specjalne jako okazja: ok. 20% losowań; z `includeSpecial = false` wyłącznie zwykłe), `DEFAULT_CASHIER_LOOK` (strój zwykły), `isCashierLook(x: unknown): x is CashierLook`. Klienci nigdy nie dostają strojów specjalnych.
+- Fabryka ładuje stroje specjalne na żądanie (ruling R40): `ensureOutfit(outfit): Promise<void>`, potem `createWithOutfit`; gra pobiera tylko strój wybranego kasjera.
 - `class CashierView { constructor(factory, layout, parent, blobs, look); setLook(look); update(dt, servingAgent | null, saleHappened: boolean); dispose() }`.
 
 - [ ] Testy: kasjer stoi na kratce pasa personelu za kasą (nie w alejce klientów) i patrzy na ladę; przy kliencie w kasie obraca się do niego (ograniczona prędkość obrotu jak w tłumie); przy sprzedaży wykonuje krótki gest (proceduralny ukłon / podskok, bez nowych klipów); `dispose` zwalnia postać i miejsce w plamach cienia; zmiana seeda i remont nie dublują kasjera.
@@ -63,7 +64,7 @@
 
 **Zakres:**
 - Pokazuje się przy pierwszym wejściu (brak gracza w meta) i przy „Nowy sklep” z ⚙. Zastępuje okno „Witaj w Traszce”; jego wskazówki przechodzą do podpowiedzi pierwszego dnia (krótkie dymki).
-- **Lewa strona:** kasjer w 3D (obrót jak na podeście, animacja `Idle`), 🎲 **Losuj** (`randomCashierLook`) i strzałki ‹ › przełączające strój. Podgląd zwalnia swój renderer przy starcie gry.
+- **Lewa strona:** kasjer w 3D (obrót jak na podeście, animacja `Idle`), 🎲 **Losuj** (`randomCashierLook`) i strzałki ‹ › przełączające strój (najpierw zwykłe, potem specjalne). Przełącznik „Stroje specjalne w losowaniu” (domyślnie włączony, zapamiętany): kto nie chce grać dziwnym strojem, wyłącza go i losuje tylko zwykłe. Strój specjalny dociąga się dopiero przy pokazaniu (R40). Podgląd zwalnia swój renderer przy starcie gry.
 - **Prawa strona:** u góry „Nazwa gracza” (1–20 znaków, przycięta, zapamiętana), niżej „Seed sklepu” (dowolny tekst) z 🎲 (słowo + liczba), duży przycisk „Otwieramy sklep!”.
 - Telefon (< 700 px): podgląd u góry, formularz pod spodem.
 - `normalizeSeed(raw: string): string`: przycięcie, małe litery, zwinięte spacje, maks. 40 znaków, pusty → losowy. `resolveStore(seed)`: gdy generator nie złoży sklepu, deterministycznie próbuje `seed·1` … `seed·5` i zwraca użyty seed + komunikat „Ten lokal się nie zmieścił, otwieramy sąsiedni”.
