@@ -20,6 +20,7 @@ export const API_ERRORS = {
   'no-save': { status: 404, message: 'Pod tym kodem nie ma zapisu w szufladzie Centrali.' },
   'bad-board': { status: 400, message: 'Nie ma takiego rankingu. Centrala prowadzi globalny, seeda i tygodnia.' },
   'method': { status: 405, message: 'Ta metoda tu nie działa.' },
+  'ranking-off': { status: 503, message: 'Ranking Centrali jeszcze nie ruszył.' },
   'not-configured': { status: 503, message: 'Ranking jeszcze nie działa: Centrala nie podłączyła bazy.' },
   'server': { status: 500, message: 'Coś poszło nie tak po stronie Centrali. Spróbuj za chwilę.' },
 } as const satisfies Record<string, { status: number; message: string }>;
