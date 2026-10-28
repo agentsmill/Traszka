@@ -98,7 +98,7 @@ export function noticeAfterOpen(choice: Pick<StartChoice, 'seed' | 'notice'>, se
   return choice.notice;
 }
 
-/** Co `openChosen` potrzebuje od gry: przejście na sklep (`setSeed` w main.ts), bieżąca sesja i krótki komunikat dla gracza. */
+/** Co `openChosen` potrzebuje od gry: przejście na sklep (`setSeed` powłoki gry, actions.ts), bieżąca sesja i krótki komunikat dla gracza. */
 export interface StoreSwitch {
   /** Przechodzi do sklepu `seed` (zapis obecnego, budowa świata nowego, powrót do poprzedniego, gdy nowy się nie otworzy); zwraca, czy się udało. */
   setSeed(seed: string, fresh: boolean): boolean;

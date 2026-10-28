@@ -117,7 +117,7 @@ export const metaView: Signal<MetaView> = signal<MetaView>({ points: 0, stores: 
 export const showPrestige: Signal<boolean> = signal(false);
 
 /**
- * Gra widziana z interfejsu. Polecenia gracza (stuknięcie, zakup, remont, paczka…) to jedno `dispatch(Command)`: main.ts
+ * Gra widziana z interfejsu. Polecenia gracza (stuknięcie, zakup, remont, paczka…) to jedno `dispatch(Command)`: powłoka gry (`createShell` w game/actions.ts)
  * przepuszcza je przez `dispatchCommand` (dziennik, `applyCommand`, dźwięk, zapis, odświeżenie), a wynik wraca tutaj.
  * Reszta to czynności spoza symulacji: powitanie, sieć sklepów, ustawienia, nowy sklep.
  */

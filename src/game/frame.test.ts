@@ -3,8 +3,10 @@ import { OPEN_FROM } from '@/sim/economy/catalog';
 import { advanceEconomy } from '@/sim/economy/clock';
 import type { EconEvent, MonthReport } from '@/sim/economy/economy';
 import * as ui from '@/ui/state';
-import { advanceSession, debugHandleEnabled, installDebugHandle, isModalOpen } from './frame';
+import type { GameShell } from './actions';
+import { advanceSession, debugHandleEnabled, debugHandleOf, installDebugHandle, isModalOpen } from './frame';
 import { MemoryStorage } from './memoryStorage';
+import type { SceneHost } from './scene';
 import { createSession, type GameSession } from './session';
 
 beforeEach(() => { vi.stubGlobal('localStorage', new MemoryStorage()); });
@@ -197,5 +199,57 @@ describe('installDebugHandle', () => {
     installDebugHandle(target, {}, false);
     expect(Object.keys(target)).toEqual([]);
     expect(() => installDebugHandle(Object.freeze({}), {}, false)).not.toThrow();
+  });
+});
+
+describe('debugHandleOf', () => {
+  type Loaded = NonNullable<SceneHost['loaded']>;
+  const loadedOf = (tag: string): Loaded => ({
+    world: { tag }, view: { tag }, street: { tag }, crowdView: { tag }, cashierView: { tag },
+  } as unknown as Loaded);
+
+  it('wystawia kontekst, czynności powłoki i `game`, a pola stanu czyta na bieżąco ze sceny i powłoki', () => {
+    const ctx = { name: 'ctx' };
+    const setSeed = (): boolean => true;
+    const skip = (): void => {};
+    const game = { name: 'game' };
+    const shell = { session: null as GameSession | null, setSeed, skip, game } as unknown as GameShell;
+    let loaded: Loaded | null = null;
+    let factory: SceneHost['factory'] = null;
+    const scene = { get loaded() { return loaded; }, get factory() { return factory; } };
+
+    const handle = debugHandleOf({ ctx: ctx as never, shell, scene }) as Record<string, unknown>;
+
+    expect(handle.ctx).toBe(ctx);
+    expect(handle.setSeed).toBe(setSeed);
+    expect(handle.skip).toBe(skip);
+    expect(handle.game).toBe(game);
+    // scena pusta: widoki to null (nie wyjątek)
+    for (const key of ['world', 'view', 'street', 'crowdView', 'cashierView', 'factory', 'session']) expect(handle[key]).toBeNull();
+
+    const session = fresh();
+    shell.session = session;
+    loaded = loadedOf('a');
+    factory = { tag: 'factory' } as unknown as SceneHost['factory'];
+    expect(handle.session).toBe(session);
+    expect(handle.world).toBe(loaded.world);
+    expect(handle.view).toBe(loaded.view);
+    expect(handle.street).toBe(loaded.street);
+    expect(handle.crowdView).toBe(loaded.crowdView);
+    expect(handle.cashierView).toBe(loaded.cashierView);
+    expect(handle.factory).toBe(factory);
+
+    loaded = loadedOf('b');   // po przebudowie sceny (remont) uchwyt pokazuje nowy świat
+    expect((handle.world as { tag: string }).tag).toBe('b');
+  });
+
+  it('razem z installDebugHandle trafia pod `traszkaGame` tylko, gdy włączony', () => {
+    const parts = { ctx: {} as never, shell: { session: null } as unknown as GameShell, scene: { loaded: null, factory: null } };
+    const on: Record<string, unknown> = {};
+    installDebugHandle(on, debugHandleOf(parts), true);
+    expect(on.traszkaGame).toBeDefined();
+    const off: Record<string, unknown> = {};
+    installDebugHandle(off, debugHandleOf(parts), false);
+    expect(off.traszkaGame).toBeUndefined();
   });
 });

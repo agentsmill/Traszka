@@ -1,12 +1,15 @@
+import type { RenderContext } from '@/render/renderer';
 import { advanceEconomy } from '@/sim/economy/clock';
 import type { EconEvent } from '@/sim/economy/economy';
 import * as ui from '@/ui/state';
+import type { GameShell } from './actions';
+import type { SceneHost } from './scene';
 import type { GameSession } from './session';
 
 /**
  * Logika pętli klatek, którą da się sprawdzić w node (bez `three` i renderera): kiedy gra stoi, ile minut ekonomii upływa
  * w klatce i kiedy wolno wystawić uchwyt do ręcznych testów. Sama pętla (`requestAnimationFrame`, scena, tłum, render) zostaje
- * w `main.ts`, bo korzysta z obiektów sceny.
+ * w `main.ts`, bo składa ze sobą scenę, powłokę i renderer.
  */
 
 /**
@@ -36,4 +39,32 @@ export const debugHandleEnabled = (isDev: boolean, params: URLSearchParams): boo
 export function installDebugHandle(target: object, handle: object, enabled: boolean): void {
   if (!enabled) return;
   Object.assign(target, { traszkaGame: handle });
+}
+
+/** Z czego składa się uchwyt debugowania: kontekst renderera, powłoka gry i scena (tylko pola, które uchwyt czyta). */
+export interface DebugParts {
+  ctx: RenderContext;
+  shell: Pick<GameShell, 'session' | 'setSeed' | 'skip' | 'game'>;
+  scene: Pick<SceneHost, 'loaded' | 'factory'>;
+}
+
+/**
+ * Uchwyt `window.traszkaGame` do ręcznych testów w konsoli i skryptów przeglądarkowych: kontekst renderera, `setSeed`, `game`
+ * (polecenia), `skip(minutes)` (przewija grę o minuty) i widoki bieżącego sklepu. Pola stanu to gettery: czytają sesję i scenę
+ * w chwili odczytu, więc po przebudowie sceny (remont, zmiana sklepu) uchwyt pokazuje nowy świat. Wystawia go `installDebugHandle`.
+ */
+export function debugHandleOf({ ctx, shell, scene }: DebugParts): object {
+  return {
+    ctx,
+    setSeed: shell.setSeed,
+    game: shell.game,
+    skip: shell.skip,
+    get session() { return shell.session; },
+    get world() { return scene.loaded?.world ?? null; },
+    get view() { return scene.loaded?.view ?? null; },
+    get street() { return scene.loaded?.street ?? null; },
+    get crowdView() { return scene.loaded?.crowdView ?? null; },
+    get cashierView() { return scene.loaded?.cashierView ?? null; },
+    get factory() { return scene.factory; },
+  };
 }
