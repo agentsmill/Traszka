@@ -58,11 +58,20 @@ const effectsBackroomCap = (s: GameSession): number => effects(s.econ, s.info).b
 
 /**
  * L9: tytuł zlecenia nie jest już częścią stanu. Zapisy z produkcji (fixtures) mają go jeszcze w `quests[]`,
- * a wczytane i zapisane ponownie wracają bez niego, więc oczekiwany stan to fixture bez tytułów zleceń.
+ * a po wczytaniu stanu bez niego oczekiwany stan to fixture bez tytułów zleceń.
  */
 const withoutQuestTitles = (e: EconomyState): EconomyState => ({
   ...e,
   quests: (e.quests as (Quest & { title?: string })[]).map(({ title: _, ...q }) => q),
+});
+
+/**
+ * Stan w kopercie zapisu: zlecenia znów z tytułem (`questTitle`), bo build sprzed L9 bez niego odrzuca zlecenia, a cofnięcie
+ * wdrożenia zjadłoby graczom aktywne zlecenia i nieodebrane nagrody (patrz `saveSession`). Stan w pamięci tytułu nie ma.
+ */
+const withQuestTitles = (e: EconomyState): EconomyState => ({
+  ...e,
+  quests: e.quests.map((q) => ({ ...q, title: questTitle(q) })),
 });
 
 /**
@@ -139,8 +148,28 @@ describe('koperta zapisu v2', () => {
     expect(saved.generatorVersion).toBe(GENERATOR_VERSION);
     expect(saved.seed).toBe(BLOK);
     expect(saved.layout).toEqual(JSON.parse(JSON.stringify(s.layout)));
-    expect(saved.econ).toEqual(JSON.parse(JSON.stringify(s.econ)));
+    expect(saved.econ).toEqual(JSON.parse(JSON.stringify(withQuestTitles(s.econ))));
     expect(lastSavedSeed()).toBe(BLOK);
+  });
+
+  it('zlecenia w zapisie mają tytuł (cofnięcie wdrożenia ich nie gubi), a stan w pamięci i po wczytaniu go nie ma', () => {
+    const s = playedSession(BLOK);
+    expect(s.econ.quests).toHaveLength(3);
+    const saved = JSON.parse(storage.getItem(key(BLOK))!) as { econ: { quests: (Quest & { title?: unknown })[] } };
+    expect(saved.econ.quests.map((q) => q.title)).toEqual(s.econ.quests.map((q) => questTitle(q)));
+    for (const q of saved.econ.quests) expect(typeof q.title === 'string' && q.title.length > 0, String(q.id)).toBe(true);
+    // zapis niczego nie dopisał do stanu w pamięci
+    for (const q of s.econ.quests) expect('title' in q).toBe(false);
+
+    const loaded = createSession(BLOK);
+    expect(loaded.fromSave).toBe(true);
+    for (const q of loaded.econ.quests) expect('title' in q).toBe(false);
+    expect(loaded.econ).toEqual(s.econ);
+    expect(JSON.stringify(loaded.econ)).not.toContain('"title"');
+    // ponowny zapis po wczytaniu daje tę samą kopertę: tytuły nie kumulują się ani nie znikają
+    const before = storage.getItem(key(BLOK));
+    saveSession(loaded);
+    expect(storage.getItem(key(BLOK))).toBe(before);
   });
 
   it('zapis i wczytanie dają ten sam stan ekonomii i ten sam układ, a gra toczy się dalej tak samo', () => {
@@ -247,7 +276,7 @@ describe('migracja zapisu v1 (sam stan ekonomii, bez układu)', () => {
       expect(saved.schema).toBe(2);
       expect(saved.seed).toBe(seed);
       expect(saved.layout).toEqual(JSON.parse(JSON.stringify(s.layout)));
-      expect(saved.econ).toEqual(JSON.parse(JSON.stringify(s.econ)));
+      expect(saved.econ).toEqual(JSON.parse(JSON.stringify(withQuestTitles(s.econ))));
       expect(storage.getItem(`${key(seed)}:broken`)).toBeNull();
 
       const again = createSession(seed);
@@ -370,12 +399,18 @@ describe('zapisy v2 z produkcji', () => {
         expect(saved.gameVersion).toBe(gameVersion);
         expect(saved.generatorVersion).toBe(GENERATOR_VERSION);
         expect(saved.layout).toEqual(f.layout);
-        expect(saved.econ).toEqual(asLoaded(f.econ));
-        expect(storage.getItem(key(seed))).not.toContain('"title"');
+        // w kopercie zlecenia mają tytuły jak w zapisie z produkcji (build sprzed L9 bez nich je gubi); stan z koperty ich nie ma
+        expect(saved.econ).toEqual(withQuestTitles(asLoaded(f.econ)));
+        const savedQuests = saved.econ.quests as (Quest & { title: string })[];
+        expect(savedQuests.map((q) => q.title)).toEqual(s.econ.quests.map((q) => questTitle(q)));
+        // te same napisy co w zapisie z produkcji; spacja w liczbie (NBSP albo wąska) zależy od ICU, więc porównujemy bez rozróżniania spacji
+        const plain = (title: string): string => title.replace(/\s/g, ' ');
+        expect(savedQuests.map((q) => plain(q.title))).toEqual((f.econ.quests as (Quest & { title: string })[]).map((q) => plain(q.title)));
         expect(storage.getItem(`${key(seed)}:broken`)).toBeNull();
 
         const again = createSession(seed, false, partner);
         expect(again.econ).toEqual(asLoaded(f.econ));
+        for (const q of again.econ.quests) expect('title' in q).toBe(false);
         expect(again.layout).toEqual(f.layout);
       });
     });
@@ -899,7 +934,9 @@ describe('stan z zapisu pasuje do układu sklepu (palety, sprzęt i zapasy po r�
     for (const seed of [BLOK, PAWILON]) {
       const s = playedSession(seed);
       s.econ.cash += 1;   // coś zmienionego po zapisie nie ma znaczenia, liczy się zapisane
-      expect(JSON.stringify(createSession(seed).econ)).toBe(JSON.stringify(JSON.parse(storage.getItem(key(seed))!).econ));
+      // zapis niesie tytuły zleceń dla starszego buildu; wczytany stan ich nie ma, reszta jest ta sama co do bajtu
+      const savedEcon = JSON.parse(storage.getItem(key(seed))!).econ as EconomyState;
+      expect(JSON.stringify(createSession(seed).econ)).toBe(JSON.stringify(withoutQuestTitles(savedEcon)));
     }
   });
 });

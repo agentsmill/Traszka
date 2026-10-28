@@ -1,5 +1,6 @@
 import { CATS } from '@/sim/economy/catalog';
 import { createEconomy, effects, fillQuests, relayout, type EconomyState } from '@/sim/economy/economy';
+import { questTitle } from '@/sim/economy/quests';
 import { sanitizeEconomy } from '@/sim/economy/sanitize';
 import { computeStoreInfo, type StoreInfo } from '@/sim/economy/storeInfo';
 import { REMONTS } from '@/sim/economy/upgrades';
@@ -59,11 +60,23 @@ export const BROKEN_SAVE_NOTICE_NO_COPY = 'Zapis sklepu był uszkodzony — zacz
 export const NEWER_SAVE_NOTICE = 'Zapis pochodzi z nowszej wersji gry — odśwież stronę';
 export const UNBUILDABLE_SAVE_NOTICE = 'Nie udało się zbudować Twojego sklepu — zapis jest bezpieczny, spróbuj odświeżyć stronę';
 
+/**
+ * Stan ekonomii do zapisu, ze zleceniami z tytułem (zgodność wstecz na czas wdrożenia). Build sprzed L9 wymaga `title` w
+ * każdym zleceniu i bez niego odrzuca zlecenie, więc cofnięcie wdrożenia zjadłoby aktywne zlecenia gracza i nieodebrane
+ * nagrody. `sanitizeEconomy` tytuł ignoruje, a stan w pamięci zostaje bez niego (L9: tekst z `toLocaleString` nie należy
+ * do stanu). Do usunięcia przy następnym schemacie zapisu, gdy zapisy sprzed L9 nie będą już potrzebne.
+ */
+const econForSave = (econ: EconomyState): EconomyState => ({
+  ...econ,
+  quests: econ.quests.map((q) => ({ ...q, title: questTitle(q) })),
+});
+
 /** Zapis w przeglądarce (localStorage). Błędy (tryb prywatny, brak miejsca) są ciche: gra działa dalej bez zapisu. */
 export function saveSession(s: GameSession): void {
   if (s.retired || s.ephemeral) return;
   const envelope: SaveEnvelope = {
-    schema: SAVE_SCHEMA, gameVersion: GAME_VERSION, generatorVersion: GENERATOR_VERSION, seed: s.seed, layout: s.layout, econ: s.econ,
+    schema: SAVE_SCHEMA, gameVersion: GAME_VERSION, generatorVersion: GENERATOR_VERSION, seed: s.seed, layout: s.layout,
+    econ: econForSave(s.econ),
   };
   try {
     localStorage.setItem(SAVE_PREFIX + s.seed, JSON.stringify(envelope));
