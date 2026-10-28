@@ -4,6 +4,9 @@ import type { QualityPresetId } from '@/render/quality';
 import type { TimeOfDay } from '@/render/lighting';
 import type { BenchProgress } from '@/bench/bench';
 import type { PerfSnapshot } from './perfMeter';
+import type { CommandResult, EconEventKind, EconomyState, MonthReport, Priority } from '@/sim/economy/economy';
+import type { PalletLoc, StoreInfo } from '@/sim/economy/storeInfo';
+import type { EquipmentId, UpgradeId } from '@/sim/economy/upgrades';
 
 /*
  * Stan widoczny w interfejsie. Zmienia go i przycisk, i klawisz, a czyta interfejs. Sterowanie światem jest w main.ts
@@ -31,4 +34,50 @@ export interface Controls {
   generate(text: string): void;
   /** Nowy losowy seed (klawisz R, przycisk „Losuj”). */
   randomize(): void;
+}
+
+// --- Gra (ekonomia sklepu) ---------------------------------------------------------------------------
+
+/** Stan ekonomii dla interfejsu. `v` rośnie przy każdej publikacji, więc komponenty odświeżają się kilka razy na sekundę. */
+export interface EconView { s: EconomyState; info: StoreInfo; v: number }
+export const econ: Signal<EconView | null> = signal<EconView | null>(null);
+
+export type Selection = { kind: 'pallet'; id: number } | { kind: 'slot'; slotId: string } | { kind: 'till' };
+export const selection: Signal<Selection | null> = signal<Selection | null>(null);
+
+export type TabId = 'sklep' | 'palety' | 'ludzie' | 'ulepszenia' | 'wyniki';
+export const tab: Signal<TabId | null> = signal<TabId | null>(null);
+
+export type ToastKind = EconEventKind | 'ok' | 'error';
+export interface Toast { id: number; text: string; kind: ToastKind }
+export const toasts: Signal<Toast[]> = signal<Toast[]>([]);
+export const report: Signal<MonthReport | null> = signal<MonthReport | null>(null);
+export const showSettings: Signal<boolean> = signal(false);
+export const showIntro: Signal<boolean> = signal(false);
+
+let toastId = 0;
+/** Krótki komunikat u góry ekranu; znika sam po kilku sekundach. Najwyżej 2 naraz, ten sam tekst się nie dubluje. */
+export function pushToast(text: string, kind: ToastKind = 'info'): void {
+  const toast: Toast = { id: ++toastId, text, kind };
+  toasts.value = [...toasts.value.filter((t) => t.text !== text).slice(-1), toast];
+  setTimeout(() => { toasts.value = toasts.value.filter((t) => t !== toast); }, kind === 'error' ? 2200 : 4000);
+}
+
+/** Polecenia gracza w grze. Implementuje je main.ts (zmienia stan ekonomii i odświeża scenę). */
+export interface GameActions {
+  tapPallet(id?: number): CommandResult;
+  tapTill(): CommandResult;
+  movePallet(id: number, loc: PalletLoc): CommandResult;
+  returnPallet(id: number): CommandResult;
+  setOrder(auto: boolean, manual?: number): void;
+  hire(): CommandResult;
+  fire(): CommandResult;
+  setPriority(p: Priority): void;
+  buyUpgrade(id: UpgradeId): CommandResult;
+  buyEquipment(id: EquipmentId, slotId?: string): CommandResult;
+  startRemont(): CommandResult;
+  campaign(): CommandResult;
+  rushRemont(): CommandResult;
+  /** Zaczyna od nowa w tym samym sklepie (kasuje zapis). */
+  restart(): void;
 }
