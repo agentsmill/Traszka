@@ -54,7 +54,7 @@ export function niceRound(n: number): number {
   return Math.round(m / step) * step * p;
 }
 
-const KINDS: readonly QuestKind[] = ['serve', 'pallets', 'taps', 'margin', 'upgrade', 'clean', 'rep', 'hot'];
+export const QUEST_KINDS: readonly QuestKind[] = ['serve', 'pallets', 'taps', 'margin', 'upgrade', 'clean', 'rep', 'hot'];
 
 const TITLE: Record<QuestKind, (n: number) => string> = {
   serve: (n) => `Obsłuż ${n.toLocaleString('pl-PL')} klientów`,
@@ -71,8 +71,8 @@ const TITLE: Record<QuestKind, (n: number) => string> = {
 export function newQuest(s: EconomyState, scale: QuestScale): Quest {
   const id = s.questSeq++;
   const active = new Set(s.quests.map((q) => q.kind));
-  let pool = KINDS.filter((k) => !active.has(k) && !(k === 'rep' && s.reputation >= 90));
-  if (pool.length === 0) pool = [...KINDS];
+  let pool = QUEST_KINDS.filter((k) => !active.has(k) && !(k === 'rep' && s.reputation >= 90));
+  if (pool.length === 0) pool = [...QUEST_KINDS];
   const kind = pool[Math.floor(rand01(s.seedHash, id, 21) * pool.length)]!;
   const lvl = s.level;
   let target: number;
