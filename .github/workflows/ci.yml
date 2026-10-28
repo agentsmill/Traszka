@@ -1,0 +1,28 @@
+# Testy, sprawdzenie typów i build na każdej gałęzi i w każdym PR (także z sesji w chmurze).
+# Publikację robi Vercel (projekt `traszka`, produkcja z `main`), więc tu nie ma kroku wdrożenia.
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24   # jak na Vercelu
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run build   # tsc --noEmit && vite build

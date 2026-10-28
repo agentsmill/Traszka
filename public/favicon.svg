@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Traszka: zielony znaczek z pomarańczową traszką (kolory z PALETTE.brand) -->
+  <rect width="64" height="64" rx="14" fill="#1d6b3a"/>
+  <rect x="4" y="4" width="56" height="56" rx="11" fill="#2faa4f"/>
+  <g fill="none" stroke="#ff8a1f" stroke-linecap="round">
+    <path d="M42 22l2-7M41 24l-3 6M23 38l-5-5M25 40l2 7" stroke-width="3.5"/>
+    <path d="M14 44c6-2 9-7 12-12s6-11 12-12c5-1 9 2 11 5" stroke-width="7"/>
+    <path d="M38 50c-5 0-8-3-8-6" stroke-width="5"/>
+  </g>
+  <circle cx="50" cy="23" r="5.5" fill="#ff8a1f"/>
+  <circle cx="51.5" cy="21.5" r="1.6" fill="#1d6b3a"/>
+</svg>
