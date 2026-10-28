@@ -73,7 +73,8 @@ export interface TapResult {
  * na całe combo, przechodzi tyle stuknięć, na ile starcza. Zero stuknięć to odmowa rąk.
  */
 export function tap(f: FatigueState, kind: TapKind, combo: number, ctx: FatigueContext): TapResult {
-  const want = clamp(Math.floor(combo), 1, FATIGUE.maxCombo);
+  // polecenie bez combo (albo z bzdurą) to jedno stuknięcie, jak `combo = 1` w economy.ts
+  const want = clamp(Number.isFinite(combo) ? Math.floor(combo) : 1, 1, FATIGUE.maxCombo);
   const unit = tapCost(kind, ctx);
   const taps = Math.min(want, Math.floor((f.energy + 1e-9) / unit));
   if (taps < 1) {

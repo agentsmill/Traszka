@@ -57,6 +57,22 @@ describe('zaufanie Centrali', () => {
     expect(trustTier(95).label).toBe('Ulubieniec Centrali');
   });
 
+  it('zapis bajt w bajt: kolejność przyczyn w miesiącu zostaje taka, jak w zapisie', () => {
+    const t = createTrust();
+    addTrust(t, 'wynik', 2);
+    addTrust(t, 'kpi', 3);
+    addTrust(t, 'mandaty', -1);
+    const json = JSON.stringify(t);
+    expect(JSON.stringify(sanitizeTrust(JSON.parse(json)))).toBe(json);
+  });
+
+  it('zaufanie ze starego zapisu też jest sprawdzane: null albo tekst to 60, a nie 0 (wypowiedzenie) ani NaN', () => {
+    expect(createTrust(null).value).toBe(TRUST.start);
+    expect(createTrust('abc').value).toBe(TRUST.start);
+    expect(createTrust(Number.NaN).value).toBe(TRUST.start);
+    expect(createTrust(140).value).toBe(100);
+  });
+
   it('zapis: JSON w obie strony; stary zapis bierze zaufanie z EconomyState.trust', () => {
     const t = createTrust(72);
     addTrust(t, 'karty', -3);
@@ -84,6 +100,19 @@ describe('WUT', () => {
     addWut(w, 'karty', slack + 100);
     wutFromSales(w, 200_000);
     expect(wutCharge(w, 300_000)).toBeCloseTo(100);
+  });
+
+  it('odpis z okólnika obejmuje cały WUT, nie tylko ubytki z kart', () => {
+    const w = createWut();
+    addWut(w, 'termin', 500);
+    addWut(w, 'kradziez', 300);
+    addWut(w, 'karty', 100);
+    addWut(w, 'karty', -400);
+    expect(wutTotal(w)).toBe(500);
+    expect(w.month.karty).toBe(0);
+    addWut(w, 'karty', -10_000);
+    expect(wutTotal(w)).toBe(0);
+    expect(Object.values(w.month).every((v) => v === 0)).toBe(true);
   });
 
   it('program refundacyjny odpisuje, ale nie poniżej zera; koniec miesiąca zeruje', () => {
@@ -175,9 +204,17 @@ describe('KPI tygodnia', () => {
 
   it('zapis: JSON w obie strony, uszkodzony KPI zaczyna tydzień od nowa', () => {
     const k = newKpiWeek(3, 4, 6, { ...M0, customers: 77 }, SCALE);
-    const fresh = newKpiWeek(3, 9, 20, M0, SCALE);
+    const fresh = newKpiWeek(3, 9, 8, M0, SCALE);
     expect(sanitizeKpi(JSON.parse(JSON.stringify(k)) as KpiState, fresh)).toEqual(k);
     expect(sanitizeKpi({ kind: 'nieznany' }, fresh)).toBe(fresh);
     expect(sanitizeKpi({ ...k, toDay: 1e9, target: -5 }, fresh).toDay).toBe(k.fromDay + 7);
+  });
+
+  it('tydzień, który już minął albo jeszcze się nie zaczął, startuje od nowa (inaczej niedziela zamknięcia nie nadejdzie)', () => {
+    const k = newKpiWeek(3, 4, 6, M0, SCALE);
+    const day100 = newKpiWeek(3, 9, 100, M0, SCALE);
+    expect(sanitizeKpi(JSON.parse(JSON.stringify(k)), day100)).toBe(day100);
+    const future = newKpiWeek(3, 9, 200, M0, SCALE);
+    expect(sanitizeKpi(JSON.parse(JSON.stringify(future)), day100)).toBe(day100);
   });
 });

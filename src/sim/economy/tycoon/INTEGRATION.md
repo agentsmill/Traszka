@@ -11,7 +11,8 @@ Wzorcem kolejności wywołań jest `sandbox.ts` (`stepSandbox`): to ta sama minu
 - **Stan.** Wszystkie kawałki siedzą w jednym obiekcie `TycoonState` (`state.ts`). Proponuję jedno nowe pole
   `EconomyState.tycoon: TycoonState`, `version: 2` w `EconomyState` i migrację w `sanitize.ts`:
   `tycoon: sanitizeTycoon(raw.tycoon, { day, seedHash, trust: raw.trust, staff, metrics, scale })`. Zapis z wersji 1 nie ma
-  pola `tycoon`, więc dostaje świeży stan, a zaufanie bierze ze starego `trust`. Test w `sanitize.test.ts` („wynik ma
+  pola `tycoon`, więc dostaje świeży stan, a zaufanie bierze ze starego `trust` (sprawdzane: `null` albo tekst daje 60,
+  nie 0). Dni w zapisie (KPI, karty, efekty kart) są przycinane do dnia wczytania. Test w `sanitize.test.ts` („wynik ma
   dokładnie pola `EconomyState`”) trzeba uzupełnić o nowe pole.
 - **Importy.** Moduły importują tylko `catalog.ts`, `rand.ts`, `@/sim/guards`, `@/sim/rng` i typy z `economy.ts`
   (`import type`), więc `economy.ts` może je importować bez cyklu. Pilnuje tego `purity.test.ts`.
@@ -110,7 +111,7 @@ Wzorcem kolejności wywołań jest `sandbox.ts` (`stepSandbox`): to ta sama minu
     sztuki `tapItems(r.power) × (1 + 0.25 × level('wozek'))`;
   - minuta: `fatigueMinute(fatigue, { sundayPost }, otwarty)`; `closeDay`: `fatigueNight`; raport: `closeFatigueMonth`.
 - **Polecenia:** bez zmian kształtu: `{ type: 'tap.till', combo: number }`, `{ type: 'tap.pallet', id?: number, combo: number }`;
-  wynik może być odmową rąk.
+  wynik może być odmową rąk. Brak `combo` albo bzdura w nim to jedno stuknięcie (jak dzisiejsze `combo = 1`).
 - **Pytania:** niedziela „placówka pocztowa”: dziś sklep działa codziennie tak samo; czy niedziela ma być osobnym
   trybem (podwójna marża z §7.1a, sam na kasie), zamknięta, czy wybierana przez gracza? `tapBoost` (turbo rękawice
   z paczki) znika razem z paczką. Zlecenie „pomóż osobiście: N stuknięć” traci sens.

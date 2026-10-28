@@ -34,6 +34,22 @@ describe('stan tycoona w jednym obiekcie', () => {
     expect(sanitizeTycoon({ version: 2 }, { ...INIT, staff: 2 })).toEqual(createTycoon(INIT));
   });
 
+  it('zapis wraca bajt w bajt w wielu chwilach dwóch miesięcy gry (także w środku miesiąca)', () => {
+    const s = createSandbox({ seed: 'bajt' });
+    for (let i = 1; i <= 61 * 1440 - 360; i++) {
+      stepSandbox(s);
+      if (i % 2017 !== 0) continue;
+      const day = Math.floor(s.minute / 1440);
+      const json = JSON.stringify(s.tycoon);
+      expect(JSON.stringify(sanitizeTycoon(JSON.parse(json), { ...INIT, day, staff: 2 }))).toBe(json);
+    }
+  });
+
+  it('stary zapis z zaufaniem null albo tekstem: 60, a nie wypowiedzenie umowy', () => {
+    expect(sanitizeTycoon(undefined, { ...INIT, trust: null as unknown as number, staff: 2 }).trust.value).toBe(TRUST.start);
+    expect(createTycoon({ ...INIT, trust: 'abc' as unknown as number }).trust.value).toBe(TRUST.start);
+  });
+
   it('uszkodzony kawałek naprawia się sam, reszta zostaje', () => {
     const t = createTycoon(INIT);
     t.fatigue.energy = 33;

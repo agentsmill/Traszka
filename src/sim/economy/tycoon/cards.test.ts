@@ -330,6 +330,22 @@ describe('zapis', () => {
     expect(sanitizeCards(copy, 12)).toEqual(cs);
   });
 
+  it('zepsute dni w zapisie nie zatrzymują losowania na zawsze ani nie zostawiają efektu na lata', () => {
+    const cs = createCards(10);
+    const card = make('fefo');
+    cs.pending.push(card, { ...card, seq: card.seq + 1, day: 500 }, { ...card, seq: card.seq + 2, showAt: 1e12, deadline: 1e12 });
+    cs.active.push({ kind: 'traffic', value: 0.5, from: 0, until: 1e12, seq: 1 });
+    const raw = { ...JSON.parse(JSON.stringify(cs)), drawnDay: 999_999, nextCircularDay: 999_999, lastSeen: { fefo: 999_999 } };
+    const s = sanitizeCards(raw, 10);
+    expect(s.drawnDay).toBe(10);
+    expect(s.nextCircularDay).toBeLessThanOrEqual(15);
+    expect(s.lastSeen.fefo).toBe(10);
+    expect(s.pending.map((c) => c.seq)).toEqual([card.seq, card.seq + 2]);
+    expect(s.pending[1].deadline).toBeLessThanOrEqual(12 * MINUTES_PER_DAY);
+    expect(s.active[0].until).toBeLessThanOrEqual(14 * MINUTES_PER_DAY);
+    expect(drawDayCards(s, ctx(11), SEED).length).toBeGreaterThan(0);
+  });
+
   it('uszkodzona albo nieznana karta wypada, reszta zostaje; numer następnej karty nie powtarza starych', () => {
     const cs = createCards(10);
     const good = make('fefo');

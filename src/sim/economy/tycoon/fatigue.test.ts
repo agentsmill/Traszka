@@ -30,6 +30,14 @@ describe('pula sił franczyzobiorcy', () => {
     expect(f.tapsToday).toBe(2);
   });
 
+  it('polecenie bez combo (albo z bzdurą) to jedno stuknięcie, a stan zostaje liczbą', () => {
+    const f = createFatigue();
+    expect(tap(f, 'kasa', Number.NaN, WEEKDAY).taps).toBe(1);
+    expect(tap(f, 'kasa', undefined as unknown as number, WEEKDAY).taps).toBe(1);
+    expect(f.energy).toBe(FATIGUE.pool - 2 * FATIGUE.tapCost.kasa);
+    expect(Number.isFinite(f.spentToday) && Number.isFinite(f.tapsToday)).toBe(true);
+  });
+
   it('przy pustej puli ręce odmawiają', () => {
     const f = createFatigue();
     tapAll(f, 'kasa', 1);

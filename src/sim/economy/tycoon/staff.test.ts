@@ -77,6 +77,15 @@ describe('ręczny przydział', () => {
     expect(a.human.rozladunek).toBe(1);
   });
 
+  it('przydział z bzdurą zamiast liczby jest odrzucany (NaN nie wchodzi do stanu)', () => {
+    const pool = createStaffPool();
+    expect(pinStaff(pool, 'kasa', Number.NaN, 2).ok).toBe(false);
+    expect(pinStaff(pool, 'kasa', Number.POSITIVE_INFINITY, 2).ok).toBe(false);
+    expect(pool.pinned.kasa).toBe(0);
+    const a = allocateStaff(pool, { staff: 2, demand: BUSY });
+    expect(Number.isFinite(a.idle)).toBe(true);
+  });
+
   it('przydziałów nie może być więcej niż ludzi; zwolnienie przycina przydziały', () => {
     const pool = createStaffPool();
     expect(pinStaff(pool, 'kasa', 2, 3).ok).toBe(true);
@@ -110,6 +119,18 @@ describe('czas ludzi z kart', () => {
     expect(pool.chores).toBe(0);
     const c = stepStaff(pool, { staff: 2, demand: BUSY });
     expect(c.chores).toBe(0);
+  });
+
+  it('wszyscy przypięci: czas z karty i tak się odrabia (ktoś schodzi z posterunku)', () => {
+    const pool = createStaffPool();
+    pinStaff(pool, 'kasa', 1, 2);
+    pinStaff(pool, 'rozladunek', 1, 2);
+    addChores(pool, 30);
+    const a = stepStaff(pool, { staff: 2, demand: BUSY });
+    expect(a.chores).toBe(1);
+    expect(a.human.kasa + a.human.rozladunek + a.chores + a.idle).toBeCloseTo(2);
+    for (let i = 0; i < 40; i++) stepStaff(pool, { staff: 2, demand: BUSY });
+    expect(pool.chores).toBe(0);
   });
 
   it('jedyna osoba na zmianie idzie do pracy z karty i kasa czeka', () => {

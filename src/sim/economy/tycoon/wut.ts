@@ -33,10 +33,22 @@ export function createWut(): WutState {
   return { month: zero() };
 }
 
-/** Dopisuje ubytek (ujemna kwota to odpis z programu refundacyjnego; przyczyna nie schodzi poniżej zera). */
+/**
+ * Dopisuje ubytek. Ujemna kwota to odpis z programu refundacyjnego: schodzi najpierw z podanej przyczyny, potem
+ * z pozostałych (odpis dotyczy całego WUT), żadna przyczyna nie spada poniżej zera.
+ */
 export function addWut(w: WutState, reason: WutReason, zl: number): void {
   if (!Number.isFinite(zl)) return;
-  w.month[reason] = Math.max(0, w.month[reason] + zl);
+  if (zl >= 0) {
+    w.month[reason] += zl;
+    return;
+  }
+  let left = -zl;
+  for (const r of [reason, ...WUT_REASONS.filter((x) => x !== reason)]) {
+    const cut = Math.min(left, w.month[r]);
+    w.month[r] -= cut;
+    left -= cut;
+  }
 }
 
 /** Naturalne ubytki od obrotu tej minuty (`revenue` w zł). */

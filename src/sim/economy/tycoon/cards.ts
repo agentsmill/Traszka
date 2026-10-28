@@ -393,36 +393,48 @@ function answerInstance(v: unknown): AnswerInstance | null {
   return { delta: delta(v.delta), mods, risk };
 }
 
-function cardInstance(v: unknown): CardInstance | null {
+/** Karta z zapisu; `today` to dzień wczytania (karta z przyszłości wypada, terminy mieszczą się w dniu karty i nocy po nim). */
+function cardInstance(v: unknown, today: number): CardInstance | null {
   if (!isRec(v) || typeof v.id !== 'string' || !cardDef(v.id) || !Array.isArray(v.answers)) return null;
   const answers = v.answers.map(answerInstance);
   if (answers.some((a) => a === null) || answers.length !== cardDef(v.id)!.answers.length) return null;
+  const day = whole(v.day, today, 0, 1e7);
+  if (day > today) return null;
   const params: CardParams = {};
   if (isRec(v.params)) for (const [k, p] of Object.entries(v.params)) params[k] = num(p, 0, -1e12, 1e12);
-  const showAt = num(v.showAt, 0, 0, 1e12);
+  const start = day * MINUTES_PER_DAY;
+  const latest = start + 2 * MINUTES_PER_DAY;
+  const showAt = num(v.showAt, start, start, latest);
   return {
     seq: whole(v.seq, 0, 0, 1_073_741_824),
     id: v.id,
-    day: whole(v.day, 0, 0, 1e7),
+    day,
     showAt,
-    deadline: num(v.deadline, showAt, showAt, 1e12),
+    deadline: num(v.deadline, showAt, showAt, latest),
     params,
     answers: answers as AnswerInstance[],
     fallback: whole(v.fallback, 0, 0, answers.length - 1),
   };
 }
 
-/** Wczytanie z zapisu: uszkodzona karta wypada (reszta zostaje), nieznana karta z nowszej wersji też. */
+/**
+ * Wczytanie z zapisu (`day` to dzień wczytania): uszkodzona karta wypada (reszta zostaje), nieznana karta z nowszej
+ * wersji też. Dni i minuty są przycinane do dnia wczytania, żeby zepsuty zapis nie zatrzymał losowania na zawsze
+ * (np. `drawnDay` z dalekiej przyszłości) ani nie zostawił efektu karty na lata.
+ */
 export function sanitizeCards(raw: unknown, day: number): CardsState {
   const d = createCards(day);
   if (!isRec(raw)) return d;
-  const pending = Array.isArray(raw.pending) ? raw.pending.map(cardInstance).filter((x): x is CardInstance => x !== null).slice(0, 16) : [];
-  const active = Array.isArray(raw.active) ? raw.active.filter(isRec).filter((m) => MOD_KINDS.includes(m.kind as ModKind)).map((m): ActiveMod => ({
-    kind: m.kind as ModKind, value: num(m.value, 0, -10, 10), from: num(m.from, 0, 0, 1e12), until: num(m.until, 0, 0, 1e12),
-    seq: whole(m.seq, 0, 0, 1_073_741_824),
-  })).slice(0, 64) : [];
+  const pending = Array.isArray(raw.pending)
+    ? raw.pending.map((c) => cardInstance(c, day)).filter((x): x is CardInstance => x !== null).slice(0, 16) : [];
+  // najdłuższy efekt w talii trwa 3 doby; zapas do 4 dób od dnia wczytania
+  const modEnd = (day + 4) * MINUTES_PER_DAY;
+  const active = Array.isArray(raw.active) ? raw.active.filter(isRec).filter((m) => MOD_KINDS.includes(m.kind as ModKind)).map((m): ActiveMod => {
+    const until = num(m.until, 0, 0, modEnd);
+    return { kind: m.kind as ModKind, value: num(m.value, 0, -10, 10), from: num(m.from, 0, 0, until), until, seq: whole(m.seq, 0, 0, 1_073_741_824) };
+  }).slice(0, 64) : [];
   const lastSeen: Record<string, number> = {};
-  if (isRec(raw.lastSeen)) for (const [k, v] of Object.entries(raw.lastSeen)) if (cardDef(k)) lastSeen[k] = whole(v, 0, 0, 1e7);
+  if (isRec(raw.lastSeen)) for (const [k, v] of Object.entries(raw.lastSeen)) if (cardDef(k)) lastSeen[k] = whole(v, 0, 0, day);
   const log = Array.isArray(raw.log) ? raw.log.filter(isRec).filter((e) => typeof e.id === 'string').map((e): CardLogEntry => ({
     seq: whole(e.seq, 0, 0, 1_073_741_824), id: e.id as string, day: whole(e.day, 0, 0, 1e7), answer: whole(e.answer, 0, 0, 2),
     auto: e.auto === true, riskHit: e.riskHit === true,
@@ -432,9 +444,9 @@ export function sanitizeCards(raw: unknown, day: number): CardsState {
   return {
     pending,
     active,
-    drawnDay: whole(raw.drawnDay, d.drawnDay, -1, 1e7),
+    drawnDay: whole(raw.drawnDay, d.drawnDay, -1, day),
     lastSeen,
-    nextCircularDay: whole(raw.nextCircularDay, d.nextCircularDay, 0, 1e7),
+    nextCircularDay: whole(raw.nextCircularDay, d.nextCircularDay, 0, day + CARDS.circularGapMin + CARDS.circularGapSpan),
     seq,
     log,
     month: { answered: whole(m.answered, 0, 0, 1e6), auto: whole(m.auto, 0, 0, 1e6), riskHits: whole(m.riskHits, 0, 0, 1e6) },

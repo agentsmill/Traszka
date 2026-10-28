@@ -42,8 +42,9 @@ export interface TrustState {
   month: Partial<Record<TrustReason, number>>;
 }
 
-export function createTrust(value: number = TRUST.start): TrustState {
-  const v = clamp(value, 0, 100);
+/** Nowy miernik. `value` przychodzi czasem ze starego zapisu (`EconomyState.trust`), więc też jest sprawdzane. */
+export function createTrust(value: unknown = TRUST.start): TrustState {
+  const v = num(value, TRUST.start, 0, 100);
   return { value: v, monthStart: v, month: {} };
 }
 
@@ -118,6 +119,7 @@ export function sanitizeTrust(raw: unknown, legacy?: number): TrustState {
   const value = num(raw.value, fallback.value, 0, 100);
   const m = isRec(raw.month) ? raw.month : {};
   const month: TrustState['month'] = {};
-  for (const r of TRUST_REASONS) if (m[r] !== undefined) month[r] = num(m[r], 0, -100, 100);
+  // kolejność kluczy z zapisu (kolejność zdarzeń w miesiącu): zapis ma wracać bajt w bajt
+  for (const r of Object.keys(m)) if (TRUST_REASONS.includes(r as TrustReason)) month[r as TrustReason] = num(m[r], 0, -100, 100);
   return { value, monthStart: num(raw.monthStart, value, 0, 100), month };
 }

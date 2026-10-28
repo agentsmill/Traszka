@@ -129,7 +129,8 @@ export const effectiveOrder = (pool: StaffPoolState): readonly StaffTask[] =>
 
 /**
  * Przydział jednej minuty. Kolejność: (1) automatyka przy swoim zadaniu, (2) ludzie przypięci ręcznie (nadmiar stoi na
- * posterunku), (3) jedna osoba na pracę z kart, (4) eDward według kolejności, (5) reszta ludzi według kolejności.
+ * posterunku), (3) jedna osoba na pracę z kart (z posterunku tylko wtedy, gdy nikt inny nie jest wolny), (4) eDward
+ * według kolejności, (5) reszta ludzi według kolejności.
  * Robot idzie przed ludźmi, bo zastępuje ich minuty. Funkcja nie zmienia stanu (zob. `stepStaff`).
  */
 export function allocateStaff(pool: StaffPoolState, input: StaffInput): StaffAllocation {
@@ -149,13 +150,18 @@ export function allocateStaff(pool: StaffPoolState, input: StaffInput): StaffAll
 
   let people = Math.max(0, input.staff);
   let idle = 0;
+  // praca z karty bierze najpierw kogoś nieprzypiętego; gdy wszyscy są przypięci, schodzi ktoś z posterunku
+  // (inaczej przypięcie wszystkich pozwalałoby nie odrabiać czasu z kart)
+  const chores = Math.min(people, CHORE_PEOPLE, Math.max(0, pool.chores));
+  const pinnedWanted = STAFF_TASKS.reduce((n, t) => n + pool.pinned[t], 0);
+  const fromPinned = Math.max(0, chores - Math.max(0, people - pinnedWanted));
+  people -= fromPinned;
   for (const t of STAFF_TASKS) {
     const p = Math.min(pool.pinned[t], people);
     people -= p;
     idle += p - give(t, human, p);
   }
-  const chores = Math.min(people, CHORE_PEOPLE, Math.max(0, pool.chores));
-  people -= chores;
+  people -= chores - fromPinned;
 
   const order = effectiveOrder(pool);
   let ed = fleet.edward * ROBOT_RATE.edward;
@@ -228,6 +234,7 @@ export function setStaffOrder(pool: StaffPoolState, order: readonly string[]): C
 /** Ręczny przydział: `count` osób na stałe przy zadaniu (0 zdejmuje przydział). */
 export function pinStaff(pool: StaffPoolState, task: StaffTask, count: number, staff: number): CommandResult {
   if (!STAFF_TASKS.includes(task)) return { ok: false, text: 'Nie ma takiego zadania.' };
+  if (!Number.isFinite(count)) return { ok: false, text: 'Podaj liczbę osób.' };
   const n = Math.max(0, Math.floor(count));
   const others = STAFF_TASKS.reduce((s, t) => s + (t === task ? 0 : pool.pinned[t]), 0);
   if (others + n > staff) return { ok: false, text: `Na zmianie ${plPeople(staff)}: więcej się nie przydzieli.` };
