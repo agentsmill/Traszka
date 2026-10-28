@@ -509,24 +509,31 @@ describe('StaffView: most do CashierView', () => {
 
   it('załoga bez kasjera ukrywa CashierView (postać, plama), a gdy kasjer jest, pokazuje go; widok nie jest zwalniany', () => {
     const r = rig();
-    const o = r.cashier!.character!.object;
-    frame(r);                                             // nikogo nie ma na zmianie
-    expect(o.visible).toBe(false);
+    const o = r.cashier!.character!;
+    const object = o.object;
+    frame(r);                                             // ekonomia jeszcze nic nie podała (benchmark, pierwsze ~100 ms): kasjer stoi jak dawniej
+    expect(object.visible).toBe(true);
+    expect(r.poses).toEqual([]);
+    expect(r.visibility).toEqual([]);
+
+    r.staff.sync(input([]));                              // ekonomia mówi, że nikogo nie ma na zmianie
+    frame(r);
+    expect(object.visible).toBe(false);
     expect(blobAt(r.blobs, 0).rx).toBe(0);
     expect(r.poses).toEqual([null]);
     expect(r.blobs.mesh.count).toBe(1);                   // miejsce zostaje
 
     r.staff.sync(input([{ id: 0, task: 'kasa' }]));
     frame(r);
-    expect(o.visible).toBe(true);
+    expect(object.visible).toBe(true);
     expect(blobAt(r.blobs, 0).rx).toBeGreaterThan(0);
 
     r.staff.sync(input([]));                              // koniec zmiany: kasjer wychodzi z ekranu i dopiero wtedy się chowa
     frame(r);
-    expect(o.visible).toBe(true);
+    expect(object.visible).toBe(true);
     expect(until(r, () => members(r).length === 0)).toBe(true);
     frame(r);
-    expect(o.visible).toBe(false);
+    expect(object.visible).toBe(false);
     expect(r.made[0]!.dispose).not.toHaveBeenCalled();
     expect(r.cashier!.character).toBe(r.made[0]!.character);
   });
@@ -641,7 +648,8 @@ describe('StaffView: dispose', () => {
     expect(o.position.z).toBeCloseTo(home.z, 12);
 
     const hidden = rig();
-    frame(hidden);                                        // pusta załoga: kasjer schowany
+    hidden.staff.sync(input([]));
+    frame(hidden);                                        // ekonomia podała pustą zmianę: kasjer schowany
     expect(hidden.cashier!.character!.object.visible).toBe(false);
     hidden.staff.dispose();
     expect(hidden.cashier!.character!.object.visible).toBe(true);

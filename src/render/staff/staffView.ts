@@ -60,6 +60,8 @@ export class StaffView {
   /** Poza przekazywana `CashierView`; `setPose` ją kopiuje, więc jeden obiekt na cały czas (bez alokacji co klatkę). */
   private readonly pose: CashierPose = { x: 0, y: 0, heading: 0, moving: false };
   private frameNo = 0;
+  /** Czy ekonomia już coś podała (`sync`): wcześniej załoga jest pusta tylko dlatego, że nikt jej jeszcze nie opisał (benchmark bez sesji, pierwsze ~100 ms), więc kasjera nie ruszamy. */
+  private synced = false;
   private castShadows = true;
   private disposed = false;
 
@@ -84,6 +86,7 @@ export class StaffView {
   /** Wołane co ~100 ms z ekonomii; ciała powstają dopiero w `update`, więc to jest tanie. Po `dispose` nic nie robi. */
   sync(input: CrewInput): void {
     if (this.disposed) return;
+    this.synced = true;
     this.crew.sync(input);
   }
 
@@ -166,7 +169,7 @@ export class StaffView {
   /** Most do `CashierView`: poza z marszu albo `null` na kratce za kasą; bez kasjera w załodze widok jest ukryty. */
   private driveCashier(member: CrewMember | null): void {
     const view = this.cashier;
-    if (!view) return;
+    if (!view || !this.synced) return;   // bez opisu zmiany kasjer stoi za ladą jak dawniej
     if (!member) {
       view.setVisible(false);
       view.setPose(null);
