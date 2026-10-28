@@ -43,6 +43,14 @@ export function characterBlobRadii(character: Object3D): [number, number] {
   return [character.scale.x * k, character.scale.z * k];
 }
 
+/**
+ * Czy siatki postaci rzucają cień z mapy cieni (polityka cieni z presetu jakości, `QualitySettings.characterShadows`): wspólne dla
+ * tłumu i kasjera. Plama pod stopami (ten plik) jest zawsze, cień z mapy tylko tam, gdzie preset go włącza.
+ */
+export function setCharacterShadowCasting(character: Object3D, on: boolean): void {
+  character.traverse((o) => { if ((o as { isMesh?: boolean }).isMesh) o.castShadow = on; });
+}
+
 /** Zarezerwowane miejsce w siatce plam (np. kasjer). */
 export interface BlobSlot {
   /** Plama pod punktem (x, z) świata, o promieniach `rx` i `rz` (m). Do pierwszego `set` miejsce niczego nie rysuje. */

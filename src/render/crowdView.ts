@@ -2,7 +2,7 @@ import { MathUtils, type Object3D } from 'three';
 import { SIM_STEP, type Agent, type Crowd } from '@/sim/crowd/crowd';
 import { CELL_SIZE_M } from '@/sim/grid';
 import type { StoreLayout } from '@/sim/store/types';
-import { characterBlobRadii, type BlobShadows } from './characters/blobShadows';
+import { characterBlobRadii, setCharacterShadowCasting, type BlobShadows } from './characters/blobShadows';
 import type { CharacterFactory, CharacterInstance } from './characters/characterFactory';
 import { walkTimeScale } from './characters/walkSpeed';
 import { cellToWorld } from './coords';
@@ -84,8 +84,8 @@ export class CrowdView {
   setCharacterShadows(on: boolean): void {
     if (on === this.castShadows) return;
     this.castShadows = on;
-    for (const t of this.tracked.values()) this.applyShadow(t.character);
-    if (this.warm) this.applyShadow(this.warm);
+    for (const t of this.tracked.values()) setCharacterShadowCasting(t.character.object, on);
+    if (this.warm) setCharacterShadowCasting(this.warm.object, on);
   }
 
   /** Liczba postaci w scenie (do diagnostyki i testów). */
@@ -144,14 +144,9 @@ export class CrowdView {
     this.shadows.commit(i);
   }
 
-  private applyShadow(character: CharacterInstance): void {
-    const on = this.castShadows;
-    character.object.traverse((o) => { if ((o as { isMesh?: boolean }).isMesh) o.castShadow = on; });
-  }
-
   private spawn(agent: Agent): Tracked {
     const character = this.factory.create(agent.appearanceSeed);
-    if (!this.castShadows) this.applyShadow(character);
+    if (!this.castShadows) setCharacterShadowCasting(character.object, false);
     this.parent.add(character.object);
     const t: Tracked = {
       character,

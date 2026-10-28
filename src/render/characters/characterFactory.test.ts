@@ -1,5 +1,5 @@
 import { basename } from 'node:path';
-import { AnimationClip, Box3, Color, Group, Mesh, ShaderLib, SkinnedMesh, type Bone, type Material, type MeshStandardMaterial, type Object3D } from 'three';
+import { AnimationClip, Box3, BufferGeometry, Color, Group, Mesh, ShaderLib, SkinnedMesh, type Bone, type Material, type MeshStandardMaterial, type Object3D } from 'three';
 import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { ASSETS } from '@/render/assets';
@@ -71,6 +71,7 @@ describe('createCharacterFactory: postać zastępcza', () => {
     cashier.dispose();
     expect(factory.walkSpeedMps).toBe(WALK_SPEED_MPS);
     await expect(factory.ensureOutfit('special-men-king')).resolves.toBeUndefined();   // nie ma czego wczytywać, ale kontrakt trzyma
+    expect(factory.hasOutfit?.('special-men-king')).toBe(true);                         // kapsuła powstaje od razu w każdym stroju
     expect(() => factory.dispose()).not.toThrow();
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();
@@ -683,6 +684,45 @@ describe('stroje specjalne na żądanie (ruling R40) i mundur kasjera', () => {
     expect(REGULAR).toContain(factory.createWithOutfit('a', 'special-men-king').outfit);
     warn.mockRestore();
   });
+
+  it('plik, którego budowa wariantu rzuca wyjątek (siatka bez szkieletu), też nie odrzuca obietnicy, ostrzega raz, a strój zostaje nieobecny', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const scene = new Group();
+    const skinless = new SkinnedMesh(new BufferGeometry());   // SkinnedMesh bez bind: extractRig sięga po skeleton.bones
+    skinless.name = 'Body';
+    scene.add(skinless);
+    const gltf = { scene, animations: [new AnimationClip('Idle', 1, []), new AnimationClip('Walk', 1, [])] } as unknown as GLTF;
+    expect(() => buildVariant('special-men-king', gltf)).toThrow(TypeError);   // to buildVariant rzuca; `.catch` w ensure musi to złapać
+    const factory = await createCharacterFactory((url) => (url.includes('special-men-king') ? Promise.resolve(gltf) : loadFromDisk(url)));
+    await expect(factory.ensureOutfit('special-men-king')).resolves.toBeUndefined();
+    const built = warn.mock.calls.filter((call) => String(call[0]).includes('nie udało się zbudować stroju special-men-king'));
+    expect(built).toHaveLength(1);
+    expect(built[0]![1]).toBeInstanceOf(TypeError);                              // przyczyna idzie do ostrzeżenia
+    expect(factory.hasOutfit?.('special-men-king')).toBe(false);
+    expect(REGULAR).toContain(factory.createWithOutfit('a', 'special-men-king').outfit);   // jak przy braku pliku
+    warn.mockRestore();
+  });
+
+  it('hasOutfit mówi, czy createWithOutfit zbuduje strój od razu: zwykłe tak, specjalne dopiero po udanym ensureOutfit (nieudany niczego nie zmienia)', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let down = true;
+    const spy = spyLoader((url) => down && url.includes('special-men-king'));
+    const factory = await createCharacterFactory(spy.load);
+    for (const outfit of REGULAR) expect(factory.hasOutfit?.(outfit), outfit).toBe(true);
+    for (const outfit of SPECIAL) expect(factory.hasOutfit?.(outfit), outfit).toBe(false);
+    await factory.ensureOutfit('special-women-witch');
+    expect(factory.hasOutfit?.('special-women-witch')).toBe(true);
+    expect(factory.hasOutfit?.('special-men-swat')).toBe(false);              // inne specjalne dalej czekają
+    await factory.ensureOutfit('special-men-king');                           // plik nie dochodzi
+    expect(factory.hasOutfit?.('special-men-king')).toBe(false);
+    down = false;
+    await factory.ensureOutfit('special-men-king');
+    expect(factory.hasOutfit?.('special-men-king')).toBe(true);
+    const before = spy.urls.length;
+    expect(factory.createWithOutfit('a', 'special-men-king').outfit).toBe('special-men-king');
+    expect(spy.urls).toHaveLength(before);                                    // pytanie i budowa nic nie pobierają
+    warn.mockRestore();
+  }, 60_000);
 
   it('buildVariant składa wariant z wczytanego pliku, a z pustego zwraca null', async () => {
     const gltf = await loadFromDisk('/assets/characters/men-suit.glb');

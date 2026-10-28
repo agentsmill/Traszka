@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { Box3, Group, Matrix4, Vector3 } from 'three';
+import { Box3, Group, Matrix4, Mesh, Vector3 } from 'three';
 import { N8AOPostPass } from 'n8ao';
 import { buildDoormat } from '@/render/store/props';
-import { BLOB_OPACITY, BLOB_RADIUS, BLOB_Y, characterBlobRadii, createBlobShadows, type BlobShadows } from './blobShadows';
+import { BLOB_OPACITY, BLOB_RADIUS, BLOB_Y, characterBlobRadii, createBlobShadows, setCharacterShadowCasting, type BlobShadows } from './blobShadows';
 
 describe('plamy cienia pod postaciami', () => {
   it('leżą nad matą przy drzwiach (3 cm) i tuż nad podłogą: nie wiszą i nie barwią podeszw bardziej, niż trzeba', () => {
@@ -156,5 +156,23 @@ describe('characterBlobRadii', () => {
     o.scale.set(1.1, 1, 0.8);
     expect(characterBlobRadii(o)[0]).toBeCloseTo(BLOB_RADIUS * 1.1, 9);
     expect(characterBlobRadii(o)[1]).toBeCloseTo(BLOB_RADIUS * 0.8, 9);
+  });
+});
+
+describe('setCharacterShadowCasting', () => {
+  it('ustawia rzucanie cienia z mapy cieni na wszystkich siatkach postaci (także zagnieżdżonych), a grup i reszty nie rusza', () => {
+    const root = new Group();
+    const armature = new Group();
+    const a = new Mesh(), b = new Mesh(), c = new Mesh();
+    armature.add(b);
+    armature.add(new Group().add(c));
+    root.add(a, armature);
+    for (const m of [a, b, c]) m.castShadow = true;
+    root.castShadow = armature.castShadow = true;
+    setCharacterShadowCasting(root, false);
+    expect([a, b, c].map((m) => m.castShadow)).toEqual([false, false, false]);
+    expect([root.castShadow, armature.castShadow]).toEqual([true, true]);     // grupy zostają, jak były
+    setCharacterShadowCasting(root, true);
+    expect([a, b, c].map((m) => m.castShadow)).toEqual([true, true, true]);
   });
 });
