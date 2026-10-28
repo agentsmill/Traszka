@@ -290,8 +290,19 @@ function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: st
   let meta: Meta = loadMeta();
   setSound(meta.sound);
   setVibration(meta.vibration);
-  // createSession nie rzuca z powodu zapisu: uszkodzony trafia do kopii, a gra startuje od zera z komunikatem (loadNotice)
-  let session: GameSession | null = benchMode ? null : createSession(initialSeed, params.get('new') === '1', partnerOf(meta));
+  // createSession nie rzuca z powodu zapisu: uszkodzony trafia do kopii, a gra startuje od zera z komunikatem (loadNotice).
+  // Gdyby rzuciła z powodu samego seeda (generator nie dał sklepu), zaczynamy w sklepie o losowym seedzie.
+  let session: GameSession | null = null;
+  if (!benchMode) {
+    try {
+      session = createSession(initialSeed, params.get('new') === '1', partnerOf(meta));
+    } catch (error) {
+      console.error(`Nie udało się otworzyć sklepu „${initialSeed}”.`, error);
+      session = createSession(randomSeed(), true, partnerOf(meta));
+      session.loadNotice = `Nie udało się otworzyć sklepu „${initialSeed}”. Zaczynamy w nowym.`;
+    }
+  }
+  const startSeed = session?.seed ?? initialSeed;
   if (session?.loadNotice) postNotice(session.loadNotice);
   const persist = (): void => {
     if (!session) return;
@@ -669,7 +680,7 @@ function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: st
   });
 
   // stan startowy dla nakładki (świat startuje z prędkością ×1)
-  ui.seed.value = initialSeed;
+  ui.seed.value = startSeed;
   ui.speed.value = 1;
   ui.timeOfDay.value = tod;
   ui.preset.value = ctx.preset;
@@ -698,16 +709,24 @@ function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: st
   };
 
   try {
-    load(initialSeed);
+    load(startSeed);
   } catch (error) {
-    // Zapis przeszedł walidację, a świat i tak się z niego nie zbudował (np. nietypowy układ): zapis idzie do kopii, a gra
-    // startuje od zera. Bez tego odświeżenie powtarzałoby ten sam wyjątek w nieskończoność.
-    if (!session?.fromSave) throw error;
-    console.error('Nie udało się zbudować sklepu z zapisu.', error);
-    const backedUp = quarantineSave(session.seed);
-    session = createSession(session.seed, true, partnerOf(meta));
-    session.loadNotice = backedUp ? BROKEN_SAVE_NOTICE : BROKEN_SAVE_NOTICE_NO_COPY;
+    // Świat się nie zbudował. Bez wyjścia awaryjnego odświeżenie powtarzałoby ten sam wyjątek w nieskończoność.
+    if (!session) throw error;
+    console.error('Nie udało się zbudować sklepu.', error);
+    if (session.fromSave) {
+      // zapis przeszedł walidację, a świat i tak się z niego nie zbudował (nietypowy układ): kopia, gra od zera
+      const backedUp = quarantineSave(session.seed);
+      session = createSession(session.seed, true, partnerOf(meta));
+      session.loadNotice = backedUp ? BROKEN_SAVE_NOTICE : BROKEN_SAVE_NOTICE_NO_COPY;
+    } else {
+      // problem w samym seedzie (nowa gra): sklep o losowym seedzie
+      const failed = session.seed;
+      session = createSession(randomSeed(), true, partnerOf(meta));
+      session.loadNotice = `Nie udało się otworzyć sklepu „${failed}”. Zaczynamy w nowym.`;
+    }
     postNotice(session.loadNotice);
+    ui.seed.value = session.seed;
     load(session.seed);
   }
   if (session) {
