@@ -1,7 +1,6 @@
-import { Group, MathUtils, Mesh, Raycaster, Vector2, Vector3, type BufferGeometry, type Material, type Object3D } from 'three';
+import { Group, Mesh, Raycaster, Vector2, Vector3, type BufferGeometry, type Material, type Object3D } from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { createRenderContext, type RenderContext } from '@/render/renderer';
-import { ISO_PITCH_DEG } from '@/render/cameraRig';
 import { QUALITY, detectDeviceCaps, pickInitialPreset, type QualityPresetId } from '@/render/quality';
 import type { TimeOfDay } from '@/render/lighting';
 import { BEVEL, PALETTE, material } from '@/render/style';
@@ -20,6 +19,8 @@ import {
   type GameSession,
 } from '@/game/session';
 import { dispatchCommand, markOffLog, type CommandEffects } from '@/game/actions';
+import { bindControls } from '@/game/controls';
+import { advanceSession, debugHandleEnabled, installDebugHandle, isModalOpen } from '@/game/frame';
 import { openStore } from '@/game/openStore';
 import { addToNetwork, claimDaily, loadMeta, needsStartScreen, partnerOf, saveMeta, startupWindow, type Meta } from '@/game/meta';
 import { initialStartForm, noticeAfterOpen, openChosen, openRequestFor, playerOf, type StartChoice, type StoreSwitch } from '@/game/start';
@@ -30,7 +31,6 @@ import { LINES, missingLine, pick } from '@/ui/game/lines';
 import { SIM_STEP, payLook, setCrowdExtras, setCrowdRate, stepCrowd } from '@/sim/crowd/crowd';
 import { CATS, HOUR_CURVE } from '@/sim/economy/catalog';
 import { minuteOfDay } from '@/sim/economy/calendar';
-import { advanceEconomy } from '@/sim/economy/clock';
 import {
   effects, expectedDailyCustomers, grantDaily, grantOffline, isClosedForRemont, isStoreOpen, processLevels, slotUsage, stepMinute, tapCombo,
   type EconEvent,
@@ -51,120 +51,6 @@ import * as ui from '@/ui/state';
  * Nakładka wyników (`ui/BenchOverlay`, kilkadziesiąt linii JSX, z samymi importami typów z modułu) zostaje w pakiecie statycznie.
  */
 type BenchModule = typeof import('@/bench/bench');
-
-/** Ile metrów na ekranie to jeden piksel (kamera ortograficzna: tyle samo w poziomie i w pionie). */
-const metersPerPixel = (ctx: RenderContext): number => ctx.rig.viewSize / Math.max(1, window.innerHeight);
-
-/**
- * Przesuwa cel kamery tak, żeby punkt podłogi pod kursorem został pod kursorem po przeciągnięciu o (dx, dy) pikseli.
- * W prawo na ekranie to prostopadła do kierunku patrzenia, w górę ekranu to kierunek patrzenia na podłodze, którego
- * odcinek jest na ekranie skrócony o sin(nachylenie), więc pion przeliczamy z tym dzieleniem.
- */
-function dragPan(ctx: RenderContext, dx: number, dy: number): void {
-  const yaw = MathUtils.degToRad(45 + 90 * ctx.rig.yawIndex);
-  const fx = Math.sin(yaw), fz = Math.cos(yaw);   // kierunek patrzenia na podłodze (x, z)
-  const right = dx * metersPerPixel(ctx);
-  const forward = (dy * metersPerPixel(ctx)) / Math.sin(MathUtils.degToRad(ISO_PITCH_DEG));
-  ctx.rig.panBy(fz * right + fx * forward, -fx * right + fz * forward);
-}
-
-interface Bindings {
-  /** Klawisze sceny (np. N dzień/noc). Nadpisują domyślne, jeśli mają tę samą nazwę. */
-  extra?: Record<string, () => void>;
-  /** Zmiana presetu klawiszami 1/2/3. Gra przekazuje wersję, która od razu aktualizuje sygnał UI. */
-  setPreset?: (id: QualityPresetId) => void;
-  /** Stuknięcie (klik bez przeciągania) w scenę, współrzędne ekranu w px. */
-  onTap?: (x: number, y: number) => void;
-  /** Gdy zwraca true, klawisze nie działają (np. ekran startowy zasłania grę: spacja ma wciskać przycisk, a nie pauzować). */
-  blocked?: () => boolean;
-}
-
-/** Klawisze nie działają, gdy gracz pisze w polu (np. seed), bo litery są wtedy tekstem, a nie poleceniem. */
-const isTyping = (target: EventTarget | null): boolean =>
-  target instanceof HTMLElement && (target.isContentEditable || target instanceof HTMLInputElement
-    || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement);
-
-/** Przesunięcie (px), powyżej którego dotknięcie jest przeciąganiem, a nie stuknięciem. */
-const TAP_SLOP = 8;
-
-/**
- * Sterowanie wspólne dla scen: Q/E obrót, +/− zoom, strzałki pan, kółko myszy zoom, 1/2/3 preset jakości.
- * Mysz i dotyk na płótnie: przeciąganie (lewym albo prawym przyciskiem, jednym palcem) przesuwa widok, dwa palce
- * przybliżają (pinch), a krótkie stuknięcie bez ruchu woła `onTap`. `extra` dokłada klawisze sceny.
- */
-function bindControls(ctx: RenderContext, { extra = {}, setPreset = (id) => ctx.setPreset(id), onTap, blocked }: Bindings = {}): void {
-  const keys: Record<string, () => void> = {
-    q: () => ctx.rig.rotate(-1),
-    e: () => ctx.rig.rotate(1),
-    '+': () => ctx.rig.zoomBy(1.15),
-    '=': () => ctx.rig.zoomBy(1.15),
-    '-': () => ctx.rig.zoomBy(1 / 1.15),
-    ArrowLeft: () => ctx.rig.panBy(-0.5, 0),
-    ArrowRight: () => ctx.rig.panBy(0.5, 0),
-    ArrowUp: () => ctx.rig.panBy(0, -0.5),
-    ArrowDown: () => ctx.rig.panBy(0, 0.5),
-    '1': () => setPreset('niska'),
-    '2': () => setPreset('srednia'),
-    '3': () => setPreset('wysoka'),
-    ...extra,
-  };
-  window.addEventListener('keydown', (e) => {
-    if (e.ctrlKey || e.metaKey || e.altKey || isTyping(e.target) || blocked?.()) return;   // np. Cmd+R to przeładowanie strony, nie nowy seed
-    const action = keys[e.key] ?? keys[e.key.toLowerCase()];
-    if (!action) return;
-    e.preventDefault();   // F3 nie otwiera wyszukiwania przeglądarki, strzałki nie przewijają strony
-    action();
-  });
-  const canvas = ctx.renderer.domElement;
-  canvas.addEventListener('wheel', (e) => { e.preventDefault(); ctx.rig.zoomBy(e.deltaY < 0 ? 1.1 : 1 / 1.1); }, { passive: false });
-  canvas.addEventListener('contextmenu', (e) => e.preventDefault());
-
-  const pointers = new Map<number, { x: number; y: number }>();
-  let tap: { id: number; x: number; y: number; t: number } | null = null;
-  let pinch: number | null = null;   // odległość między palcami w poprzedniej klatce
-  const mid = (): { x: number; y: number } => {
-    const ps = [...pointers.values()];
-    return { x: (ps[0]!.x + ps[1]!.x) / 2, y: (ps[0]!.y + ps[1]!.y) / 2 };
-  };
-  const spread = (): number => {
-    const ps = [...pointers.values()];
-    return Math.hypot(ps[0]!.x - ps[1]!.x, ps[0]!.y - ps[1]!.y);
-  };
-
-  canvas.addEventListener('pointerdown', (e) => {
-    canvas.setPointerCapture(e.pointerId);
-    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    tap = pointers.size === 1 && e.button === 0 ? { id: e.pointerId, x: e.clientX, y: e.clientY, t: performance.now() } : null;
-    pinch = pointers.size === 2 ? spread() : null;
-  });
-  canvas.addEventListener('pointermove', (e) => {
-    const prev = pointers.get(e.pointerId);
-    if (!prev) return;
-    if (pointers.size === 2) {
-      const before = mid();
-      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-      const after = mid();
-      const d = spread();
-      if (pinch && d > 0) ctx.rig.zoomBy(d / pinch);
-      pinch = d;
-      dragPan(ctx, after.x - before.x, after.y - before.y);
-      return;
-    }
-    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    if (tap && Math.hypot(e.clientX - tap.x, e.clientY - tap.y) < TAP_SLOP) return;   // jeszcze stuknięcie
-    tap = null;
-    dragPan(ctx, e.clientX - prev.x, e.clientY - prev.y);
-  });
-  const end = (e: PointerEvent): void => {
-    if (!pointers.has(e.pointerId)) return;
-    pointers.delete(e.pointerId);
-    if (e.type === 'pointerup' && tap && tap.id === e.pointerId && performance.now() - tap.t < 600) onTap?.(e.clientX, e.clientY);
-    tap = null;
-    pinch = pointers.size === 2 ? spread() : null;
-  };
-  canvas.addEventListener('pointerup', end);
-  canvas.addEventListener('pointercancel', end);
-}
 
 function startRenderLoop(ctx: RenderContext): void {
   const loop = (): void => {
@@ -794,10 +680,10 @@ function startGame(
     last = now;
     const realDt = Math.min(frameDt, MAX_FRAME_DT);
 
-    const modal = !!ui.report.value || !!ui.start.value || !!ui.welcome.value || ui.showPrestige.value || !!session?.econ.gameOver;
-    if (session && loaded && loaded.world.speed > 0 && !modal) {
+    const modal = isModalOpen(session);
+    if (session && loaded) {
       const events: EconEvent[] = [];
-      advanceEconomy(session.econ, session.info, session.clock, realDt * loaded.world.speed, events);
+      advanceSession(session, realDt, loaded.world.speed, modal, events);
       handleEvents(events);   // układ zmienia tylko polecenie (`dispatchCommand`), więc tu sceny nie przebudowujemy
     }
     syncVisuals();
@@ -836,30 +722,28 @@ function startGame(
   };
   requestAnimationFrame(frame);
 
-  // uchwyt do ręcznych testów w konsoli; pola odczytywane na bieżąco
-  Object.assign(window, {
-    traszkaGame: {
-      ctx,
-      setSeed,
-      game,
-      /** Przewija grę o `minutes` minut (testy ręczne i zrzuty). */
-      skip(minutes: number) {
-        if (!session) return;
-        const events: EconEvent[] = [];
-        for (let i = 0; i < minutes && !session.econ.gameOver; i++) stepMinute(session.econ, session.info, events);
-        handleEvents(events);
-        markOffLog(session);   // przewinięcie nie jest poleceniem: dziennik nie odtworzy takiego stanu
-        settleOutsideCommand();
-      },
-      get session() { return session; },
-      get world() { return loaded?.world ?? null; },
-      get view() { return loaded?.view ?? null; },
-      get street() { return loaded?.street ?? null; },
-      get crowdView() { return loaded?.crowdView ?? null; },
-      get cashierView() { return loaded?.cashierView ?? null; },
-      get factory() { return factory; },
+  // uchwyt do ręcznych testów w konsoli (pola odczytywane na bieżąco); tylko w buildzie deweloperskim albo pod adresem z `?debug=1` (M11)
+  installDebugHandle(window, {
+    ctx,
+    setSeed,
+    game,
+    /** Przewija grę o `minutes` minut (testy ręczne i zrzuty). */
+    skip(minutes: number) {
+      if (!session) return;
+      const events: EconEvent[] = [];
+      for (let i = 0; i < minutes && !session.econ.gameOver; i++) stepMinute(session.econ, session.info, events);
+      handleEvents(events);
+      markOffLog(session);   // przewinięcie nie jest poleceniem: dziennik nie odtworzy takiego stanu
+      settleOutsideCommand();
     },
-  });
+    get session() { return session; },
+    get world() { return loaded?.world ?? null; },
+    get view() { return loaded?.view ?? null; },
+    get street() { return loaded?.street ?? null; },
+    get crowdView() { return loaded?.crowdView ?? null; },
+    get cashierView() { return loaded?.cashierView ?? null; },
+    get factory() { return factory; },
+  }, debugHandleEnabled(import.meta.env.DEV, params));
 
   if (!benchMode) renderUi(root, controls, game);   // sterowanie działa od tej chwili; benchmark zostaje z samą nakładką wyników
 }
