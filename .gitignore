@@ -3,3 +3,5 @@ dist
 assets-src
 .superpowers
 .DS_Store
+.playwright-mcp/
+.claude/launch.json
