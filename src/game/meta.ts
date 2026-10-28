@@ -4,6 +4,7 @@ import { LIMITS } from '@/sim/economy/sanitize';
 import { isRec, num, whole } from '@/sim/guards';
 import { DEFAULT_CASHIER_LOOK, isCashierLook, type CashierLook } from './cashier';
 import { normalizeNick } from './nick';
+import { parseRecoveryCode } from './playerKey';
 
 /**
  * Postęp ponad pojedynczym sklepem (localStorage, wspólny dla wszystkich seedów): sieć sklepów z poprzednich rozgrywek,
@@ -23,6 +24,11 @@ export interface Player {
   look: CashierLook;
   /** „Stroje specjalne w losowaniu” (domyślnie włączone). */
   specialOutfits: boolean;
+  /**
+   * Tajny klucz gracza do rankingu (spec §14.7, `playerKey.ts`): 20 znaków base32 Crockforda w postaci kanonicznej. Brak pola to
+   * gracz sprzed rankingu albo klucz uszkodzony w zapisie: `ensurePlayerKey` doda nowy, a poprawnego nigdy nie zastępuje.
+   */
+  key?: string;
 }
 
 export interface Meta {
@@ -103,16 +109,19 @@ export function sanitizeMeta(data: unknown): Meta {
  * Gracz z zapisu bez zaufania, pole po polu (każde wraca do domyślnego osobno, jak reszta mety): nick przechodzi `normalizeNick`
  * (zły to null, a ekran startowy pokaże się jeszcze raz, bo bez nicka nie ma kogo zapisać; wygląd i przełącznik zostają, więc
  * gracz nie traci kasjera przez jeden zły nick), wygląd kasjera `isCashierLook` (zły to wygląd domyślny, własna kopia, bez obcych
- * pól), przełącznik strojów specjalnych musi być wartością logiczną (inaczej włączony). Wpis, który nie jest obiektem, to brak gracza.
+ * pól), przełącznik strojów specjalnych musi być wartością logiczną (inaczej włączony), a klucz gracza przechodzi `parseRecoveryCode`
+ * (zły znika i przy wejściu powstaje nowy, a nick i kasjer zostają). Wpis, który nie jest obiektem, to brak gracza.
  */
 function sanitizePlayer(raw: unknown): Player | undefined {
   if (!isRec(raw)) return undefined;
   const nick = typeof raw.nick === 'string' ? normalizeNick(raw.nick) : null;
   const look = isCashierLook(raw.look) ? raw.look : DEFAULT_CASHIER_LOOK;
+  const key = parseRecoveryCode(raw.key);
   return {
     nick: nick && 'nick' in nick ? nick.nick : null,
     look: { outfit: look.outfit, appearanceSeed: look.appearanceSeed },
     specialOutfits: typeof raw.specialOutfits === 'boolean' ? raw.specialOutfits : true,
+    ...(key !== null ? { key } : {}),
   };
 }
 
