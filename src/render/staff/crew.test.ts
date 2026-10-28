@@ -434,14 +434,101 @@ describe('StaffCrew: kasjer', () => {
     expect(cashiers(crew)).toEqual([8]);              // 8 < 9, choć 5 i 7 są w sklepie dłużej
   });
 
-  it('nowa osoba nie przejmuje ciała kasjera, dopóki ten jeszcze wychodzi', () => {
+  it('nowa osoba obejmuje ciało kasjera po wychodzącym kasjerze, który znika od razu (ciało ma najwyżej jedna osoba)', () => {
     const crew = new StaffCrew(layout);
     crew.sync(input(assign([2, 'kasa'], [5, 'wykladanie']), pallets));
+    const old = member(crew, 2);
     crew.sync(input(assign([5, 'wykladanie'], [9, 'kasa']), pallets));   // 2 wychodzi, 9 wchodzi w tym samym sync
-    expect(cashiers(crew)).toEqual([2]);
-    expect(member(crew, 9).isCashier).toBe(false);
-    until(crew, () => !idsOf(crew).includes(2), 20);
+    expect(crew.members).not.toContain(old);
+    expect(old.walker.atGoal).toBe(false);                               // zniknął w drodze, nie dlatego, że doszedł
+    expect(idsOf(crew)).toEqual([5, 9]);
+    expect(cashiers(crew)).toEqual([9]);
+    expect(member(crew, 9).leaving).toBe(false);
+  });
+
+  it('zwolniony kasjer, po którego ciało nikt nie przychodzi, wychodzi z nim do końca, także przy ciągłym sync', () => {
+    const crew = new StaffCrew(layout);
+    crew.sync(input(assign([0, 'kasa'], [1, 'wykladanie'], [2, 'sprzatanie']), pallets));
+    const fired = member(crew, 0);
+    const rest = assign([1, 'wykladanie'], [2, 'sprzatanie']);
+    crew.sync(input(rest, pallets));
+    expect(fired.leaving).toBe(true);
+    let t = 0;
+    while (crew.members.includes(fired) && t < 40) {
+      expect(fired.isCashier).toBe(true);
+      expect(cashiers(crew)).toEqual([0]);
+      crew.step(DT);
+      crew.step(DT);
+      crew.sync(input(rest, pallets));
+      t += 2 * DT;
+    }
+    expect(crew.members).not.toContain(fired);
+    expect(fired.walker.atGoal).toBe(true);                              // zniknął, bo doszedł na chodnik
     expect(cashiers(crew)).toEqual([]);
+  });
+
+  it('zatrudniony w ciągu dnia o mniejszym id nie odbiera ciała kasjerowi, który zostaje', () => {
+    const crew = new StaffCrew(layout);
+    crew.sync(input(assign([3, 'kasa'], [5, 'wolny']), pallets));
+    const cashier = member(crew, 3);
+    advance(crew, 3);
+    crew.sync(input(assign([1, 'kasa'], [3, 'kasa'], [5, 'wolny']), pallets));   // 1 < 3, ale 3 nie wychodzi
+    expect(member(crew, 3)).toBe(cashier);
+    expect(cashiers(crew)).toEqual([3]);
+    expect(member(crew, 1).isCashier).toBe(false);
+    advance(crew, 3);
+    crew.sync(input(assign([0, 'sprzatanie'], [1, 'kasa'], [3, 'kasa'], [5, 'wolny']), pallets));
+    expect(cashiers(crew)).toEqual([3]);
+  });
+
+  describe.each(SCENES)('noc w grze trwa ~5 s widoku, a wyjście z zaplecza dłużej: $seed', (sc) => {
+    // Rano poprzednia ekipa (z kasjerem) jeszcze wychodzi. Kasjerem jest najmniejsze id, tu z zadaniem „wolny” na zapleczu, więc
+    // idzie do wyjścia najdłużej (9-12 s), a inni z poprzedniego dnia zdążają wyjść wcześniej i rano wchodzą z chodnika.
+    const tasks: StaffDuty[] = ['wolny', 'rozladunek', 'kasa', 'sprzatanie', 'wykladanie'];
+    const day = tasks.map((task, id) => ({ id, task }));
+
+    it('wychodzący kasjer nie blokuje ciała: pierwszy przybysz je obejmuje, stary znika w drodze, a rano jest dokładnie jeden kasjer', () => {
+      const crew = new StaffCrew(sc.layout);
+      crew.sync(input(day, sc.pallets));
+      const old = member(crew, 0);
+      expect(old.isCashier).toBe(true);
+      crew.sync(input([], sc.pallets, 22 * 60));         // zamknięcie: lista pusta
+      advance(crew, 5);                                  // noc: ok. 5 s widoku
+      expect(crew.members).toContain(old);               // z zaplecza nie zdążył wyjść
+      expect(old.leaving && old.isCashier).toBe(true);
+
+      let oldVanished: 'w drodze' | 'po dojściu' | undefined;
+      let claimed = false;
+      const check = (): void => {
+        expect(crew.members.length).toBeLessThanOrEqual(STAFF_VIEW_MAX);
+        expect(cashiers(crew).length).toBeLessThanOrEqual(1);
+        if (oldVanished === undefined && !crew.members.includes(old)) oldVanished = old.walker.atGoal ? 'po dojściu' : 'w drodze';
+      };
+      const morning = 30 * 60;                           // następny dzień, 6:00
+      let t = 0;
+      const settled = (): boolean => crew.members.length === day.length && crew.members.every((m) => !m.leaving && m.walker.atGoal);
+      while (!settled() && t < 120) {
+        const here = new Set(idsOf(crew));
+        const fresh = day.map((p) => p.id).filter((id) => !here.has(id));   // id, których ciała już nie ma, więc wejdą w tym sync
+        crew.sync(input(day, sc.pallets, morning));
+        if (!claimed && fresh.length > 0) {
+          claimed = true;
+          expect(cashiers(crew)).toEqual([Math.min(...fresh)]);   // najmniejsze id spośród przybyłych w tym sync
+          expect(crew.members).not.toContain(old);                // a wychodzący kasjer znika od razu
+        }
+        check();
+        crew.step(DT);
+        crew.step(DT);
+        t += 2 * DT;
+        check();
+      }
+      expect(claimed).toBe(true);
+      expect(settled()).toBe(true);
+      expect(oldVanished).toBe('w drodze');              // znikł na rzecz nowego kasjera, zanim doszedł na chodnik
+      expect(idsOf(crew)).toEqual(day.map((p) => p.id));
+      expect(cashiers(crew)).toHaveLength(1);
+      expect(crew.members.filter((m) => m.isCashier).every((m) => !m.leaving)).toBe(true);
+    });
   });
 
   it('po nocy (lista pusta, ludzie wychodzą, potem znów pełna) kasjerem zostaje najmniejsze id nowego sync', () => {
@@ -552,7 +639,19 @@ describe('StaffCrew: twardy limit ciał na ekranie', () => {
     expect(idsOf(crew)).toEqual(range(0, 7));
     expect(olds.every((m) => m.leaving && !crew.members.includes(m))).toBe(true);
     for (const m of crew.members) expect(pos(m)).toEqual(centre(street));
-    expect(cashiers(crew)).toEqual([]);               // stary kasjer trzymał ciało w chwili przyjścia nowych, a potem zniknął
+    expect(cashiers(crew)).toEqual([0]);              // stary kasjer (8) oddał ciało najmniejszemu id spośród nowych
+  });
+
+  it('wymiana całej ekipy poniżej kompletu: stary kasjer znika od razu, pozostali starzy wychodzą, nowy kasjer to najmniejsze nowe id', () => {
+    const crew = crewOf([5, 6, 7]);
+    const [oldCashier, ...oldOthers] = crew.members;
+    expect(oldCashier!.isCashier).toBe(true);
+    crew.sync(input(team([0, 1, 2]), pallets));
+    expect(idsOf(crew)).toEqual([0, 1, 2, 6, 7]);
+    expect(crew.members).not.toContain(oldCashier);
+    expect(oldOthers.every((m) => m.leaving && crew.members.includes(m))).toBe(true);
+    expect(cashiers(crew)).toEqual([0]);
+    expect(member(crew, 0).leaving).toBe(false);
   });
 
   it('wychodzący, którego miejsce nie jest potrzebne, idzie dalej do wyjścia; usuwany jest ten, który wychodzi najdawniej', () => {
@@ -594,17 +693,17 @@ describe('StaffCrew: twardy limit ciał na ekranie', () => {
     expect(crew.members).not.toContain(four);
   });
 
-  it('gdy usunięty przez limit wychodzący był kasjerem, ciało kasjera jest znów wolne dla kolejnego przybysza', () => {
+  it('przy komplecie przybysz obejmuje ciało po wychodzącym kasjerze, a kolejny nie odbiera go temu, kto zostaje', () => {
     const crew = crewOf(range(0, 7));
     expect(cashiers(crew)).toEqual([0]);
     crew.sync(input(team(range(1, 7)), pallets));     // 0 wychodzi jako kasjer
     expect(cashiers(crew)).toEqual([0]);
-    crew.sync(input(team(range(1, 8)), pallets));     // 8 przychodzi; brakuje miejsca, więc 0 znika; 8 nie dostało ciała kasjera
+    crew.sync(input(team(range(1, 8)), pallets));     // 8 przychodzi, obejmuje ciało; 0 znika od razu, więc limit zostaje zachowany
     expect(idsOf(crew)).toEqual(range(1, 8));
-    expect(cashiers(crew)).toEqual([]);
-    crew.sync(input(team(range(2, 9)), pallets));     // 1 wychodzi, 9 przychodzi (znów komplet)
+    expect(cashiers(crew)).toEqual([8]);
+    crew.sync(input(team(range(2, 9)), pallets));     // 1 wychodzi, 9 przychodzi (znów komplet); 8 zostaje kasjerem
     expect(idsOf(crew)).toEqual(range(2, 9));
-    expect(cashiers(crew)).toEqual([9]);
+    expect(cashiers(crew)).toEqual([8]);
   });
 });
 

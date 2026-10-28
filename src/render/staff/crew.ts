@@ -31,7 +31,10 @@ export interface CrewMember {
   readonly walker: StaffWalker;
   /** Wychodzi ze sklepu (zwolniony albo koniec zmiany); znika po dojściu na chodnik albo po 20 s czasu widoku. */
   readonly leaving: boolean;
-  /** To ciało „kasjera z ekranu startowego” (wygląd gracza). */
+  /**
+   * To ciało „kasjera z ekranu startowego” (wygląd gracza). Najwyżej jedna osoba naraz. Kasjer trzyma je do zniknięcia ze
+   * sklepu (zwolniony wychodzi z nim), ale gdy ktoś nowy obejmuje ciało kasjera, wychodzący kasjer znika od razu.
+   */
   readonly isCashier: boolean;
 }
 
@@ -201,9 +204,13 @@ export class StaffCrew {
 
     this.placed = new Map();
     const arrivals: Person[] = [];
-    // Ciało kasjera dostaje najmniejsze id spośród nowych (`active` rośnie po id), o ile nikt go jeszcze nie ma. Wychodzący
-    // kasjer ma je do zniknięcia ze sklepu, więc ktoś nowy go nie przejmie w trakcie jego marszu do wyjścia.
-    let cashierTaken = this.list.some((p) => p.isCashier);
+    // Ciało kasjera dostaje najmniejsze id spośród nowych (`active` rośnie po id), o ile nikt, kto zostaje, go jeszcze nie ma.
+    // Wychodzący kasjer go nie blokuje: noc w grze trwa kilka sekund widoku, a wyjście z zaplecza kilka sekund dłużej, więc
+    // rano poprzednia ekipa (z kasjerem) często jeszcze wychodzi i gdyby jej kasjer zajmował ciało, nikt by go nie dostał.
+    // Skoro nowy kasjer obejmuje ciało, wychodzący kasjer znika od razu (jedno krótkie „puf” w rzadkim zbiegu okoliczności),
+    // żeby ciało miała najwyżej jedna osoba. Zwolniony kasjer, po którego ciało nikt nie przychodzi, wychodzi z nim do końca.
+    // Środkowy dzień: nowo zatrudniony nie odbiera ciała kasjerowi, który zostaje, nawet gdy ma mniejsze id.
+    let cashierTaken = this.list.some((p) => p.isCashier && !p.leaving);
     for (const { id, task } of active) {
       const spot = spots.get(id)!;   // `pickStaffSpots` daje miejsce każdemu id z ekipy
       this.placed.set(id, { task, spot });
@@ -216,15 +223,16 @@ export class StaffCrew {
       }
     }
     if (arrivals.length > 0) {
-      this.list = [...this.list, ...arrivals].sort((a, b) => a.id - b.id);
+      const claimed = arrivals.some((a) => a.isCashier);
+      const staying = claimed ? this.list.filter((p) => !(p.leaving && p.isCashier)) : this.list;
+      this.list = [...staying, ...arrivals].sort((a, b) => a.id - b.id);
       this.makeRoom();
     }
   }
 
   /**
    * Twardy limit ciał: dopóki jest ich więcej niż `STAFF_VIEW_MAX`, znika od razu wychodzący, który wychodzi najdawniej (remis:
-   * o wyższym id). Zostający mieszczą się w limicie (`normalise`), więc ktoś wychodzący zawsze się znajdzie. Jeśli zniknął
-   * wychodzący kasjer, ciało kasjera jest znów wolne dla kolejnego przybysza.
+   * o wyższym id). Zostający mieszczą się w limicie (`normalise`), więc ktoś wychodzący zawsze się znajdzie.
    */
   private makeRoom(): void {
     while (this.list.length > STAFF_VIEW_MAX) {
