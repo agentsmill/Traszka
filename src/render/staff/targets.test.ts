@@ -471,3 +471,160 @@ describe('pickStaffSpots: dokładne reguły na ręcznie złożonym układzie', (
     expect(spots.size).toBe(DUTIES.length);
   });
 });
+
+describe('pickStaffSpots: `previous` (stabilność miejsc po zmianie ekipy lub palet)', () => {
+  // Ten sam ręcznie złożony układ co wyżej: kasjer (2,8), zaplecze x=1..14, y=15..17, drzwi (2,14),(3,14), środek sali (8,9).
+  const layout = layoutFromParts(validParts());
+  const open = buildStaffNav(layout, []);
+  const call = (
+    crew: readonly StaffAssignment[],
+    previous?: ReadonlyMap<number, StaffSpot>,
+    nav: StaffNav = open,
+    pallets: readonly PalletRef[] = [],
+  ): Map<number, StaffSpot> => pickStaffSpots(layout, nav, pallets, crew, previous);
+  const person = (id: number, task: StaffDuty): StaffAssignment => ({ id, task });
+  const STICKY: StaffDuty[] = ['wykladanie', 'sprzatanie', 'wolny'];
+
+  it.each(STICKY)('%s: osoba zostaje na miejscu, gdy dochodzi ktoś o niższym id (bez `previous` by się przesunęła)', (task) => {
+    const alone = call([person(5, task)]);
+    const joined = [person(0, task), person(5, task)];
+    expect(call(joined).get(5)).not.toEqual(alone.get(5));
+    const withPrevious = call(joined, alone);
+    expect(withPrevious.get(5)).toEqual(alone.get(5));
+    expectSane(layout, open, joined, withPrevious);
+  });
+
+  it.each(STICKY)('%s: osoba zostaje na miejscu, gdy odchodzi ktoś o niższym id (bez `previous` by się przesunęła)', (task) => {
+    const pair = call([person(0, task), person(5, task)]);
+    expect(call([person(5, task)]).get(5)).not.toEqual(pair.get(5));
+    expect(call([person(5, task)], pair).get(5)).toEqual(pair.get(5));
+  });
+
+  it('zachowane miejsce ma dokładnie tę kratkę i ten kierunek, które podał caller', () => {
+    const wanted: StaffSpot = { cell: { x: 9, y: 16 }, heading: 1.234 };
+    expect(call([person(2, 'wolny')], new Map([[2, wanted]])).get(2)).toEqual(wanted);
+  });
+
+  it.each(STICKY)('%s: miejsce, którego kratka została zablokowana, jest porzucane i wybierane od nowa, reszta zostaje', (task) => {
+    const crew = [person(1, task), person(4, task), person(6, task)];
+    const first = call(crew);
+    const gone = first.get(4)!.cell;
+    const blocked = buildStaffNav(layout, [gone]);   // np. paleta wylądowała dokładnie tu
+    const again = call(crew, first, blocked);
+    expectSane(layout, blocked, crew, again);
+    expect(again.get(4)!.cell).not.toEqual(gone);
+    expect(again.get(1)).toEqual(first.get(1));
+    expect(again.get(6)).toEqual(first.get(6));
+  });
+
+  it.each<[string, StaffSpot]>([
+    ['ściana', { cell: { x: 0, y: 6 }, heading: 0 }],
+    ['wiersz 0 chodnika', { cell: { x: 3, y: 0 }, heading: 0 }],
+    ['mebel (gondola)', { cell: { x: 6, y: 7 }, heading: 0 }],
+    ['poza siatką', { cell: { x: -3, y: 2 }, heading: 0 }],
+    ['daleko poza siatką', { cell: { x: 999, y: 999 }, heading: 0 }],
+    ['ułamkowa kratka', { cell: { x: 2.5, y: 15 }, heading: 0 }],
+    ['kierunek NaN', { cell: { x: 4, y: 16 }, heading: Number.NaN }],
+    ['kierunek nieskończony', { cell: { x: 4, y: 16 }, heading: Number.POSITIVE_INFINITY }],
+  ])('niepoprawne poprzednie miejsce (%s) jest pomijane', (_, bad) => {
+    const crew = [person(2, 'wolny')];
+    expect(call(crew, new Map([[2, bad]]))).toEqual(call(crew));
+  });
+
+  it('dwie osoby z tą samą kratką w `previous`: zostaje niższe id, druga dostaje inną', () => {
+    const crew = [person(2, 'sprzatanie'), person(5, 'sprzatanie')];
+    const previous = new Map<number, StaffSpot>([
+      [5, { cell: { x: 8, y: 9 }, heading: 0 }],
+      [2, { cell: { x: 8, y: 9 }, heading: Math.PI }],
+    ]);
+    const spots = call(crew, previous);
+    expect(spots.get(2)).toEqual({ cell: { x: 8, y: 9 }, heading: Math.PI });
+    expect(spots.get(5)!.cell).not.toEqual({ x: 8, y: 9 });
+    expectSane(layout, open, crew, spots);
+  });
+
+  it('miejsce kasjera jest zarezerwowane przed zachowanymi miejscami, ale bez kasy nic go nie blokuje', () => {
+    const cs = cashierSpot(layout)!;
+    const previous = new Map<number, StaffSpot>([[1, { cell: cs.cell, heading: 0 }]]);
+    const withCashier = call([person(0, 'kasa'), person(1, 'wolny')], previous);
+    expect(withCashier.get(0)).toEqual({ cell: cs.cell, heading: cs.heading });
+    expect(withCashier.get(1)).toEqual(call([person(0, 'kasa'), person(1, 'wolny')]).get(1));
+    expect(call([person(1, 'wolny')], previous).get(1)).toEqual({ cell: cs.cell, heading: 0 });
+  });
+
+  it('kasa i rozładunek ignorują `previous` (i nie zajmują przez nie kratek innym)', () => {
+    const pallets: PalletRef[] = [{ loc: 'floor', spot: { x: 8, y: 8 }, since: 1 }, { loc: 'sidewalk', spot: { x: 9, y: 1 }, since: 1 }];
+    const nav = buildStaffNav(layout, pallets.flatMap((p) => spotCells(p.spot)));
+    const crew = [person(0, 'kasa'), person(1, 'kasa'), person(2, 'rozladunek'), person(3, 'rozladunek'), person(4, 'wolny')];
+    const base = call(crew, undefined, nav, pallets);
+    const bogus = new Map<number, StaffSpot>([0, 1, 2, 3].map((id) => [id, { cell: { x: 5 + id, y: 12 }, heading: 0.5 }]));
+    expect(call(crew, bogus, nav, pallets)).toEqual(base);
+    // kratka z `previous` kasjera jest wolna: stała osoba może ją zachować
+    const claimed = new Map<number, StaffSpot>([...bogus, [4, { cell: { x: 5, y: 12 }, heading: 0 }]]);
+    expect(call(crew, claimed, nav, pallets).get(4)).toEqual({ cell: { x: 5, y: 12 }, heading: 0 });
+  });
+
+  it('wpisy `previous` osób spoza ekipy nic nie zmieniają', () => {
+    const crew = [person(2, 'wolny'), person(3, 'sprzatanie')];
+    const previous = new Map<number, StaffSpot>([[99, { cell: { x: 8, y: 9 }, heading: 0 }], [3, call(crew).get(3)!]]);
+    expect(call(crew, previous)).toEqual(call(crew));
+  });
+
+  it('nie zmienia `previous` i zwraca własne kratki; wszystko zamrożone głęboko też działa', () => {
+    const crew = [person(0, 'kasa'), person(1, 'sprzatanie'), person(2, 'wolny'), person(3, 'wykladanie')];
+    const first = call(crew);
+    const snapshot = JSON.stringify([...first.entries()]);
+    const frozenPrevious = new Map([...first.entries()].map(([id, spot]) => [id, deepFreeze(structuredClone(spot))]));
+    const again = call(crew, frozenPrevious);
+    expect(again).toEqual(first);
+    expect(frozenPrevious.size).toBe(first.size);
+    for (const [id, spot] of again) expect(spot.cell).not.toBe(frozenPrevious.get(id)!.cell);
+    for (const spot of again.values()) { spot.cell.x += 100; spot.heading += 1; }
+    expect(JSON.stringify([...frozenPrevious.entries()])).toBe(snapshot);
+
+    const frozenLayout = deepFreeze(structuredClone(layout));
+    const frozenCrew = deepFreeze(structuredClone(crew));
+    const frozenNav = deepFreeze(buildStaffNav(frozenLayout, []));
+    expect(pickStaffSpots(frozenLayout, frozenNav, deepFreeze([] as PalletRef[]), frozenCrew, frozenPrevious)).toEqual(first);
+  });
+
+  it('zadanie spoza listy (uszkodzone dane) też dostaje miejsce: kolejne kratki sali od jej środka', () => {
+    const crew = [person(0, 'kasa'), person(1, 'nieznane' as StaffDuty), person(2, 'nieznane' as StaffDuty)];
+    const spots = call(crew);
+    expectSane(layout, open, crew, spots);
+    expect(spots.get(1)!.cell).toEqual({ x: 8, y: 9 });
+    expect(spots.get(2)!.cell).toEqual({ x: 8, y: 8 });
+    // `previous` takiej osoby jest pomijane jak dla kasy
+    expect(call(crew, new Map([[1, { cell: { x: 5, y: 12 }, heading: 0 }]]))).toEqual(spots);
+  });
+});
+
+describe.each(SETUPS)('pickStaffSpots z `previous`: $seed', ({ layout, nav, pallets }) => {
+  const A = crewOf(['wolny', 'kasa', 'rozladunek', 'wykladanie', 'sprzatanie', 'kasa', 'rozladunek', 'wykladanie']);
+  // ekipa po zmianie: odchodzą id 3 (wykładanie) i 5 (kasa), dochodzą id 9 (sprzątanie) i 10 (wolny)
+  const B: StaffAssignment[] = [...A.filter((p) => p.id !== 3 && p.id !== 5), { id: 9, task: 'sprzatanie' }, { id: 10, task: 'wolny' }];
+
+  it('mieszana ekipa po zmianie składu: kratki osiągalne i różne, stałe zadania zostają na miejscach', () => {
+    const first = pickStaffSpots(layout, nav, pallets, A);
+    const second = pickStaffSpots(layout, nav, pallets, B, first);
+    expectSane(layout, nav, B, second);
+    for (const id of [0, 4, 7]) expect(second.get(id), `id ${id}`).toEqual(first.get(id));   // wolny, sprzątanie, wykładanie
+    const third = pickStaffSpots(layout, nav, pallets, A, second);
+    expectSane(layout, nav, A, third);
+    for (const id of [0, 4, 7]) expect(third.get(id), `id ${id}`).toEqual(first.get(id));
+  });
+
+  it('bez `previous` wynik jest taki sam jak z pustym `previous`', () => {
+    expect(pickStaffSpots(layout, nav, pallets, A, new Map())).toEqual(pickStaffSpots(layout, nav, pallets, A));
+  });
+
+  it('nowa paleta na kratce zachowanego miejsca wypycha stamtąd osobę, reszta zostaje', () => {
+    const first = pickStaffSpots(layout, nav, pallets, A);
+    const gone = first.get(4)!.cell;   // sprzątająca
+    const moved = buildStaffNav(layout, [...pallets.flatMap((p) => spotCells(p.spot)), gone]);
+    const second = pickStaffSpots(layout, moved, pallets, A, first);
+    expectSane(layout, moved, A, second);
+    expect(second.get(4)!.cell).not.toEqual(gone);
+    for (const id of [0, 7]) expect(second.get(id), `id ${id}`).toEqual(first.get(id));
+  });
+});

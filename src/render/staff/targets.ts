@@ -87,8 +87,9 @@ function unique(cells: readonly Cell[]): Cell[] {
 // --- Osiągalność ----------------------------------------------------------------------------------------------------
 
 /**
- * Kratki, do których da się dojść z `start` po siatce (przeszukiwanie wszerz). Start może stać na zablokowanej kratce
- * (jak w `findPath`: z niej wolno wyjść), ale sam nie liczy się wtedy jako miejsce do stania.
+ * Zbiór kratek, do których da się dojść z `start` po siatce (przeszukiwanie ze stosem, więc w głąb; kolejność odwiedzin nie
+ * ma znaczenia, liczy się sam zbiór). Start może stać na zablokowanej kratce (jak w `findPath`: z niej wolno wyjść), ale sam
+ * nie liczy się wtedy jako miejsce do stania.
  */
 function reachableFrom(nav: StaffNav, start: Cell): Uint8Array {
   const { width, depth } = nav;
@@ -198,6 +199,11 @@ function unloadPlan(ctx: Ctx, order: readonly PalletRef[], k: number): Plan {
   return { spots: (from ? nearestFirst(sides, from) : sides.sort(byRowThenColumn)).map((cell) => ({ cell, heading: face(cell) })), face };
 }
 
+/** Plan bez własnych kratek: od razu lista zapasowa (sala od środka), twarzą do wejścia. */
+function sparePlan(ctx: Ctx): Plan {
+  return { spots: [], face: (c) => headingTo(c, ctx.entrance) };
+}
+
 /** Mebel do wykładania z kratkami dostępu, do których da się dojść. */
 interface Stocked { centre: Point; access: Cell[] }
 
@@ -216,7 +222,7 @@ function stockedFixtures(ctx: Ctx): Stocked[] {
  * (po ostatniej wraca się na początek listy kratek mebla), a gdy mebel nie ma wolnej kratki, osoba idzie do następnego.
  */
 function stockPlan(ctx: Ctx, stocked: readonly Stocked[], k: number): Plan {
-  if (stocked.length === 0) return { spots: [], face: (c) => headingTo(c, ctx.entrance) };
+  if (stocked.length === 0) return sparePlan(ctx);
   const spots: StaffSpot[] = [];
   for (let i = 0; i < stocked.length; i++) {
     const { centre, access } = stocked[(k + i) % stocked.length]!;
@@ -286,18 +292,55 @@ function place(ctx: Ctx, plan: Plan): StaffSpot {
 }
 
 /**
+ * Zadania, w których osoba nie ma jednego „swojego” miejsca narzuconego przez układ i ekipę, więc caller może chcieć je zachować:
+ * wykładanie (kratka zależy od numeru osoby wśród wykładających), sprzątanie (losowanie po zbiorze wolnych kratek) i wolny
+ * (odstępy od innych). Kasa idzie według rangi, a rozładunek według listy palet, więc dla nich poprzednie miejsce się nie liczy.
+ */
+const STICKY_TASKS: readonly StaffDuty[] = ['wykladanie', 'sprzatanie', 'wolny'];
+
+/**
+ * Wstępne obsadzenie: osoby z `STICKY_TASKS`, które mają w `previous` swoje poprzednie miejsce, zajmują je z góry, o ile kratka
+ * jest nadal osiągalna, niezablokowana i nikt jej jeszcze nie zajął (w kolejności id, więc przy tej samej kratce u dwóch osób
+ * zostaje ta o niższym id). Dzięki temu nikt obsadzany później nie zabierze zachowanej kratki, a kratki nadal są różne.
+ * Zachowane miejsce to kopia: ta sama kratka i ten sam kierunek.
+ */
+function keepPrevious(
+  ctx: Ctx,
+  people: readonly StaffAssignment[],
+  previous: ReadonlyMap<number, StaffSpot> | undefined,
+): Map<number, StaffSpot> {
+  const kept = new Map<number, StaffSpot>();
+  if (!previous) return kept;
+  for (const { id, task } of people) {
+    const before = previous.get(id);
+    if (!before?.cell || !STICKY_TASKS.includes(task)) continue;
+    const { cell, heading } = before;
+    if (!Number.isFinite(heading) || !isFree(ctx, cell)) continue;   // osiągalna znaczy też niezablokowana w `nav`
+    kept.set(id, claim(ctx, cell, heading));
+  }
+  return kept;
+}
+
+/**
  * Gdzie ma stanąć każda z osób, żeby jej zadanie było widać. `crew`: osoby z zadaniami (kolejność dowolna, funkcja sortuje po id).
  * Zwraca spot dla każdego id. Czysta funkcja: zero losowości poza `createRng(subSeed(layout.seed, …))`, bez mutowania argumentów.
  *
  * Kratki muszą być osiągalne ze `layout.spawnPoints[0]` po siatce `nav` (palety w `nav` są przeszkodami). Dwie osoby nie dostają
  * tej samej kratki, dopóki starcza innych; gdy kandydaci zadania się skończą, osoba staje na sali (od jej środka), a gdy sali
  * zabraknie, na wejściu. Funkcja nie rzuca, także dla układu bez kasy, zaplecza, mebli albo wejścia.
+ *
+ * `previous`: miejsca, które caller chce zachować, jeśli nadal są dobre (zwykle wynik poprzedniego wywołania). Liczą się tylko
+ * dla osób z zadaniem wykladanie, sprzatanie albo wolny: takie miejsce zostaje (ta sama kratka i ten sam kierunek), gdy jego kratka
+ * jest osiągalna, niezablokowana w `nav` i niezajęta przez rezerwację kasjera ani inną zachowaną osobę. Dla kasy i rozładunku
+ * `previous` jest pomijane (kasa idzie według rangi, rozładunek według palet), a bez `previous` wynik jest taki sam jak dawniej.
+ * Zachowane miejsca są obsadzane przed resztą, więc nikt inny nie zajmie ich kratek. `previous` nie jest zmieniane.
  */
 export function pickStaffSpots(
   layout: StoreLayout,
   nav: StaffNav,
   pallets: readonly PalletRef[],
   crew: readonly StaffAssignment[],
+  previous?: ReadonlyMap<number, StaffSpot>,
 ): Map<number, StaffSpot> {
   const spots = new Map<number, StaffSpot>();
   if (crew.length === 0) return spots;
@@ -315,9 +358,18 @@ export function pickStaffSpots(
   const holdsCashierSpot = firstCashier !== undefined && cashier !== null && isFree(ctx, cashier.cell);
   if (holdsCashierSpot) ctx.taken.add(cellKey(cashier.cell));
 
+  const kept = keepPrevious(ctx, people, previous);
+
   const served: Record<StaffDuty, number> = { kasa: 0, rozladunek: 0, wykladanie: 0, sprzatanie: 0, wolny: 0 };
   for (const { id, task } of people) {
-    const k = served[task]++;
+    // `?? 0`: zadanie spoza listy (uszkodzone dane w czasie działania) nie ma licznika, a osoba i tak dostaje miejsce
+    const k = served[task] ?? 0;
+    served[task] = k + 1;
+    const stays = kept.get(id);
+    if (stays) {
+      spots.set(id, stays);
+      continue;
+    }
     if (holdsCashierSpot && task === 'kasa' && k === 0) {
       spots.set(id, { cell: { x: cashier.cell.x, y: cashier.cell.y }, heading: cashier.heading });
       continue;
@@ -328,6 +380,7 @@ export function pickStaffSpots(
       case 'wykladanie': spots.set(id, place(ctx, stockPlan(ctx, stocked, k))); break;
       case 'sprzatanie': spots.set(id, place(ctx, cleanPlan(ctx, id, strip))); break;
       case 'wolny': spots.set(id, place(ctx, idlePlan(ctx))); break;
+      default: spots.set(id, place(ctx, sparePlan(ctx))); break;   // zadanie spoza listy: sala od środka
     }
   }
   return spots;
