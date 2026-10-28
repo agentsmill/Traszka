@@ -471,3 +471,39 @@ describe('gracz w meta: nick i wygląd kasjera (ekran startowy)', () => {
     expect(needsStartScreen({ ...none, readOnly: true, player: PLAYER })).toBe(false);
   });
 });
+
+describe('klucz gracza w meta (ranking, spec §14.7)', () => {
+  const BASE = {
+    version: 1, partnerPoints: 4, network: [], daily: { date: '2026-10-27', streak: 3 }, lastSeen: 5, sound: false, vibration: true,
+  };
+  const KEY = 'K7QX9MBD2HFAP3WN8RTE';
+  const PLAYER: Player = { nick: 'Mateusz', look: { outfit: 'special-women-witch', appearanceSeed: 'kasjer-abc' }, specialOutfits: false };
+  const withPlayer = (player: unknown): Meta => {
+    storage.setItem(META_KEY, JSON.stringify({ ...BASE, player }));
+    return loadMeta();
+  };
+
+  it('zapis i odczyt: klucz wraca bez zmian razem z resztą gracza', () => {
+    saveMeta({ ...withPlayer(PLAYER), player: { ...PLAYER, key: KEY } });
+    expect(JSON.parse(storage.getItem(META_KEY)!).player).toEqual({ ...PLAYER, key: KEY });
+    expect(loadMeta().player).toEqual({ ...PLAYER, key: KEY });
+  });
+
+  it('klucz zapisany ręcznie jako kod (małe litery, łączniki) wraca w postaci kanonicznej', () => {
+    expect(withPlayer({ ...PLAYER, key: 'k7qx-9mbd-2hfa-p3wn-8rte' }).player).toEqual({ ...PLAYER, key: KEY });
+  });
+
+  it('uszkodzony klucz znika sam: nick, kasjer i przełącznik zostają, a reszta mety jest cała', () => {
+    for (const key of ['', 'xyz', KEY.slice(1), KEY + 'A', 'U'.repeat(20), 5, null, [], {}, true]) {
+      const meta = withPlayer({ ...PLAYER, key });
+      expect(meta.player, JSON.stringify(key)).toEqual(PLAYER);
+      expect('key' in meta.player!, JSON.stringify(key)).toBe(false);
+      expect(needsStartScreen(meta)).toBe(false);
+      expect(meta.partnerPoints).toBe(4);
+    }
+  });
+
+  it('klucz zostaje także przy uszkodzonym nicku (ekran startowy zapyta o nick, a nicki w rankingu dalej należą do gracza)', () => {
+    expect(withPlayer({ ...PLAYER, nick: 'Centrala', key: KEY }).player).toEqual({ ...PLAYER, nick: null, key: KEY });
+  });
+});
