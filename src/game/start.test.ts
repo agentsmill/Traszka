@@ -36,6 +36,21 @@ describe('initialStartForm: co stoi w polach przy otwarciu ekranu', () => {
     expect(initialStartForm(meta, 'nowy-1')).toEqual({ nick: 'Mateusz', seed: 'nowy-1', look: PLAYER.look, specialOutfits: false });
   });
 
+  it('gracz z uszkodzonym nickiem w meta: ekran pyta o nick jeszcze raz (pole puste), ale kasjer i przełącznik są jego, nie domyślne', () => {
+    storage.setItem('traszka:meta', JSON.stringify({
+      version: 1, partnerPoints: 0, network: [], daily: { date: '', streak: 0 }, lastSeen: 0, sound: true, vibration: true,
+      player: { nick: 'Centrala', look: { outfit: 'special-women-witch', appearanceSeed: 'kasjer-w' }, specialOutfits: false },
+    }));
+    const meta = loadMeta();
+    expect(needsStartScreen(meta)).toBe(true);
+    expect(initialStartForm(meta, 'nowy-1')).toEqual({
+      nick: '', seed: 'nowy-1', look: { outfit: 'special-women-witch', appearanceSeed: 'kasjer-w' }, specialOutfits: false,
+    });
+    const result = submitStart({ ...initialStartForm(meta, 'nowy-1'), nick: 'Ola' });
+    if (!result.ok) throw new Error('oczekiwano wyboru');
+    expect(playerOf(result.choice)).toEqual({ nick: 'Ola', look: { outfit: 'special-women-witch', appearanceSeed: 'kasjer-w' }, specialOutfits: false });
+  });
+
   it('wygląd w formularzu to kopia: zmiana w ekranie nie rusza mety ani wspólnego wyglądu domyślnego', () => {
     const meta: Meta = { ...loadMeta(), player: PLAYER };
     const a = initialStartForm(meta, 's');

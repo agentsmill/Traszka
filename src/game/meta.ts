@@ -14,8 +14,12 @@ export interface NetworkStore { seed: string; income: number; level: number; mar
 
 /** Gracz z ekranu startowego „Twój kasjer”: nazwa, wygląd kasjera za ladą i przełącznik strojów specjalnych w losowaniu. */
 export interface Player {
-  /** Nazwa po `normalizeNick` (1–20 znaków). */
-  nick: string;
+  /**
+   * Nazwa po `normalizeNick` (1–20 znaków) albo null, gdy zapisana nazwa nie przeszła sprawdzenia (uszkodzona, a po rozszerzeniu
+   * listy nazw zarezerwowanych także taka, która wcześniej była dobra). Gracz bez nicka nie jest jeszcze graczem (`needsStartScreen`):
+   * ekran startowy zapyta o nick jeszcze raz, ale z jego kasjerem i przełącznikiem, a nie z domyślnymi.
+   */
+  nick: string | null;
   look: CashierLook;
   /** „Stroje specjalne w losowaniu” (domyślnie włączone). */
   specialOutfits: boolean;
@@ -32,7 +36,8 @@ export interface Meta {
   vibration: boolean;
   /**
    * Gracz z ekranu startowego. Brak pola to pierwsze wejście (albo meta sprzed ekranu startowego): wtedy ekran startowy się
-   * pokazuje. Stara meta bez tego pola działa jak dotąd, a gra używa wtedy domyślnego kasjera (`DEFAULT_CASHIER_LOOK`).
+   * pokazuje; tak samo, gdy `player.nick` jest null (nick się nie sprawdził, wygląd został). Stara meta bez tego pola działa
+   * jak dotąd, a gra używa wtedy domyślnego kasjera (`DEFAULT_CASHIER_LOOK`).
    */
   player?: Player;
   /**
@@ -95,17 +100,17 @@ export function sanitizeMeta(data: unknown): Meta {
 }
 
 /**
- * Gracz z zapisu bez zaufania: nick przechodzi `normalizeNick` (zły nick to brak gracza, a ekran startowy pokaże się jeszcze raz,
- * bo bez nicka nie ma kogo zapisać), wygląd kasjera `isCashierLook` (zły to wygląd domyślny, własna kopia, bez obcych pól),
- * przełącznik strojów specjalnych musi być wartością logiczną (inaczej włączony).
+ * Gracz z zapisu bez zaufania, pole po polu (każde wraca do domyślnego osobno, jak reszta mety): nick przechodzi `normalizeNick`
+ * (zły to null, a ekran startowy pokaże się jeszcze raz, bo bez nicka nie ma kogo zapisać; wygląd i przełącznik zostają, więc
+ * gracz nie traci kasjera przez jeden zły nick), wygląd kasjera `isCashierLook` (zły to wygląd domyślny, własna kopia, bez obcych
+ * pól), przełącznik strojów specjalnych musi być wartością logiczną (inaczej włączony). Wpis, który nie jest obiektem, to brak gracza.
  */
 function sanitizePlayer(raw: unknown): Player | undefined {
-  if (!isRec(raw) || typeof raw.nick !== 'string') return undefined;
-  const nick = normalizeNick(raw.nick);
-  if (!('nick' in nick)) return undefined;
+  if (!isRec(raw)) return undefined;
+  const nick = typeof raw.nick === 'string' ? normalizeNick(raw.nick) : null;
   const look = isCashierLook(raw.look) ? raw.look : DEFAULT_CASHIER_LOOK;
   return {
-    nick: nick.nick,
+    nick: nick && 'nick' in nick ? nick.nick : null,
     look: { outfit: look.outfit, appearanceSeed: look.appearanceSeed },
     specialOutfits: typeof raw.specialOutfits === 'boolean' ? raw.specialOutfits : true,
   };
@@ -195,11 +200,12 @@ export function welcomeOffer(meta: Meta, s: EconomyState, now: Date): WelcomeOff
 }
 
 /**
- * Czy przy wejściu na stronę pokazać ekran startowy „Twój kasjer”: gdy nie ma jeszcze gracza (pierwsze wejście albo meta sprzed
- * ekranu startowego). Meta z nowszej wersji gry go nie dostaje: tamta wersja miała już swojego gracza, a ta karta nie umie go
- * zapisać, więc ekran wracałby co wejście. Wciąż można go otworzyć z ⚙ („Nowy sklep”).
+ * Czy przy wejściu na stronę pokazać ekran startowy „Twój kasjer”: gdy nie ma jeszcze gracza z poprawnym nickiem (pierwsze wejście,
+ * meta sprzed ekranu startowego albo nick z mety, który nie przeszedł sprawdzenia: wtedy ekran ma jego kasjera). Meta z nowszej
+ * wersji gry go nie dostaje: tamta wersja miała już swojego gracza, a ta karta nie umie go zapisać, więc ekran wracałby co wejście.
+ * Wciąż można go otworzyć z ⚙ („Nowy sklep”).
  */
-export const needsStartScreen = (meta: Meta): boolean => !meta.readOnly && meta.player === undefined;
+export const needsStartScreen = (meta: Meta): boolean => !meta.readOnly && (meta.player === undefined || meta.player.nick === null);
 
 /** Co pokazać po otwarciu sklepu: ekran powitalny nowej gry albo okno „Witaj z powrotem”. */
 export interface StartupWindow { intro: boolean; welcome: WelcomeOffer | null }
