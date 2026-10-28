@@ -2,11 +2,24 @@ import type { Object3D } from 'three';
 import type { Fixture } from '@/sim/store/types';
 import { PALETTE } from '@/render/style';
 import { BRAND, box, fixtureFrame, glow, gloss, matte, painted, plateSign } from '../parts';
+import type { Cutaway } from '../cutaway';
+import { CAP_H } from '../shell';
+
+/**
+ * Wysokość cięcia regału, gdy ściana za nim jest w przekroju: styk dolnego i górnego rzędu frontów (szczelina ze świecącą
+ * listwą), czyli mniej więcej wysokość blatu kasy (0,95 m). Poniżej zostaje dolna szafka, powyżej nic: kasjera stojącego przed
+ * regałem widać z drugiej strony co najmniej od pasa w górę.
+ */
+export const TOBACCO_CUT_H = 0.95;
 
 /**
  * Szafka z papierosami przy ścianie (2,0 m): ciemny korpus `fixture.fridgeFrame`, dwa rzędy zamkniętych frontów
  * (rolety) z długimi pomarańczowymi uchwytami, podświetlenie (świecące listwy) i pomarańczowa nadstawka
  * z tabliczką „prosimy o dowód”. Front (+z) to strona klienta, tył przy ścianie.
+ *
+ * Tnie się ze ścianą, przy której stoi (`userData.cutaway`, cutaway.ts): w przekroju znika wszystko nad `TOBACCO_CUT_H`,
+ * a przekrój zamyka płyta w kolorze przekroju ścian (`wall[4]`) tej samej grubości co wierzch ściany, bez ściskania bryły.
+ * Płyta nie rzuca cienia (pod nią stoi korpus o tym samym obrysie), więc nie dokłada przebiegu cienia.
  */
 export function buildTobaccoShelf(f: Fixture): Object3D {
   const { root, inner, length: L, depth: D } = fixtureFrame(f);
@@ -48,5 +61,11 @@ export function buildTobaccoShelf(f: Fixture): Object3D {
   box(inner, [L, 0.2, D - 0.02], [0, BODY_TOP, back + (D - 0.02) / 2], matte(BRAND.orange), { name: 'header' });
   const plateW = Math.min(L - 0.2, 1.0);
   plateSign(inner, 'PROSIMY O DOWÓD\nI CIERPLIWOŚĆ', [plateW, plateW / 4], [0, BODY_TOP + 0.1, back + D - 0.02 + 0.001], 1);
+
+  // zamknięcie przekroju: od ściany (płyty pleców wystają 1,2 cm za korpus) po front korpusu; osobny obiekt, bo widać go tylko w przekroju
+  const capFrame = fixtureFrame(f);
+  const capDepth = D - 0.04;
+  box(capFrame.inner, [L, CAP_H, capDepth], [0, TOBACCO_CUT_H, back + capDepth / 2], matte(PALETTE.wall[4]), { name: 'cut', cast: false });
+  root.userData.cutaway = { height: TOBACCO_CUT_H, cap: capFrame.root } satisfies Cutaway;
   return root;
 }

@@ -4,6 +4,7 @@ import { cellToWorld } from '@/render/coords';
 import type { StoreLayout } from '@/sim/store/types';
 import { BRAND, M, glow, type Category, type ShelfSlotLocal, type Vec3 } from './parts';
 import { FIXTURE_BUILDERS, type FixtureBuilder } from './fixtures';
+import { loweredWalls, splitAtHeight, wallBehind, type Cutaway, type YawIndex } from './cutaway';
 import { LAMP_EMISSIVE, WALL_SIDES, buildShell, type WallSide } from './shell';
 
 export { FIXTURE_BUILDERS, type FixtureBuilder };
@@ -29,8 +30,11 @@ export interface ShelfSlot {
 export interface StoreView {
   root: Group;
   shelfSlots: ShelfSlot[];
-  /** Obniża do 0,5 m ściany od strony kamery o danym `yawIndex` (tabela w CameraRig). Ignorowane w trybie zewnętrznym. */
-  setCutaway(yawIndex: 0 | 1 | 2 | 3): void;
+  /**
+   * Obniża do 0,5 m ściany od strony kamery o danym `yawIndex` (tabela w CameraRig). Ignorowane w trybie zewnętrznym. Regał z
+   * papierosami tnie się razem ze ścianą, przy której stoi (cutaway.ts): kasjer przed nim jest widoczny z każdego kąta.
+   */
+  setCutaway(yawIndex: YawIndex): void;
   /** Widok z zewnątrz: pełne ściany, szyld i witryna niezależnie od przekroju. */
   setExteriorMode(on: boolean): void;
   /**
@@ -42,25 +46,34 @@ export interface StoreView {
   dispose(): void;
 }
 
-/** Które ściany są bliżej kamery dla danego `yawIndex`. Ściana działowa zaplecza idzie ze ścianą tylną. */
-const NEAR_WALLS: Record<0 | 1 | 2 | 3, readonly WallSide[]> = {
-  0: ['front', 'left'],
-  1: ['back', 'mid', 'left'],
-  2: ['back', 'mid', 'right'],
-  3: ['front', 'right'],
-};
-
 /** Ciepłe światło wnętrza nocą: kolor okien nocą z tabeli świateł (docs/style-guide.md §4), bez cieni. */
 const INTERIOR_LIGHT = { color: '#ffd28a', intensity: 9, distance: 9, decay: 2, max: 6 } as const;
 
-interface Bucket { material: Material; cast: boolean; receive: boolean; geometries: BufferGeometry[] }
+interface Bucket { material: Material; cast: boolean; receive: boolean; geometries: BufferGeometry[]; upper: BufferGeometry[] }
+
+/** Mebel (jedno ze `sources`), którego część nad `height` ma dać się wyłączyć bez dodatkowych siatek (patrz `Switchable`). */
+interface CutSource { source: Object3D; height: number }
+
+/**
+ * Siatka, której końcowy odcinek bufora to górna część mebla z przekrojem: wierzchołki [0, `head`) są zawsze, [`head`, `total`)
+ * tylko przy pełnej ścianie. Przełącza je sam zakres rysowania (bez kopii geometrii, bez dodatkowego draw calla), a siatka,
+ * w której zostałaby sama góra, jest wtedy ukryta (zerowy zakres też kosztuje wywołanie rysowania).
+ */
+interface Switchable { mesh: Mesh; head: number; total: number }
+
+function isUnder(o: Object3D, ancestor: Object3D): boolean {
+  for (let p: Object3D | null = o; p; p = p.parent) if (p === ancestor) return true;
+  return false;
+}
 
 /**
  * Scala siatki z `sources` w jedną siatkę na (materiał, rzucanie cienia, odbieranie cienia). Źródła przechodzą
  * do tymczasowego rodzica w początku świata, więc ich macierze są już w układzie świata. Geometrie źródeł są
  * współdzielone (cache w parts.ts) i zostają nietknięte; zwalnia się tylko wynik, zapisany w `owned`.
+ * Siatki `cut.source` są cięte na wysokości `cut.height` (cutaway.ts): dolne kawałki idą do bufora jak reszta, górne na jego
+ * koniec, a `switchable` opisuje, które siatki mają taki odcinek.
  */
-function mergeSources(name: string, sources: Object3D[], owned: BufferGeometry[]): Mesh[] {
+function mergeSources(name: string, sources: Object3D[], owned: BufferGeometry[], cut?: CutSource): { meshes: Mesh[]; switchable: Switchable[] } {
   const scratch = new Group();
   scratch.add(...sources);
   scratch.updateMatrixWorld(true);
@@ -71,31 +84,40 @@ function mergeSources(name: string, sources: Object3D[], owned: BufferGeometry[]
     const material = mesh.material as Material;
     const key = `${material.uuid}|${mesh.castShadow}|${mesh.receiveShadow}`;
     let b = buckets.get(key);
-    if (!b) { b = { material, cast: mesh.castShadow, receive: mesh.receiveShadow, geometries: [] }; buckets.set(key, b); }
+    if (!b) { b = { material, cast: mesh.castShadow, receive: mesh.receiveShadow, geometries: [], upper: [] }; buckets.set(key, b); }
     const g = mesh.geometry.index ? mesh.geometry.toNonIndexed() : mesh.geometry.clone();
     g.applyMatrix4(mesh.matrixWorld);
-    b.geometries.push(g);
+    if (cut && isUnder(mesh, cut.source)) {
+      const { below, above } = splitAtHeight(g, cut.height);
+      g.dispose();
+      if (below) b.geometries.push(below);
+      if (above) b.upper.push(above);
+    } else b.geometries.push(g);
   });
-  const out: Mesh[] = [];
+  const meshes: Mesh[] = [];
+  const switchable: Switchable[] = [];
   for (const b of buckets.values()) {
-    const merged = mergeGeometries(b.geometries, false);
-    for (const g of b.geometries) g.dispose();
+    const head = b.geometries.reduce((n, g) => n + g.getAttribute('position').count, 0);
+    const parts = [...b.geometries, ...b.upper];
+    const merged = mergeGeometries(parts, false);
+    for (const g of parts) g.dispose();
     if (!merged) throw new Error(`buildStore: nie udało się scalić geometrii "${name}"`);
     owned.push(merged);
     const mesh = new Mesh(merged, b.material);
     mesh.name = `${name}:${b.material.name || 'mat'}`;
     mesh.castShadow = b.cast;
     mesh.receiveShadow = b.receive;
-    out.push(mesh);
+    meshes.push(mesh);
+    if (b.upper.length > 0) switchable.push({ mesh, head, total: merged.getAttribute('position').count });
   }
-  return out;
+  return { meshes, switchable };
 }
 
 /** Scala `sources` w grupę z jedną siatką na materiał; geometrie wyniku trafiają do `owned` (do zwolnienia). */
 export function mergedGroup(name: string, sources: Object3D[], owned: BufferGeometry[]): Group {
   const g = new Group();
   g.name = name;
-  g.add(...mergeSources(name, sources, owned));
+  g.add(...mergeSources(name, sources, owned).meshes);
   return g;
 }
 
@@ -119,6 +141,10 @@ export function buildStore(layout: StoreLayout): StoreView {
   // meble: każdy do swojego rogu footprintu
   const staticSources: Object3D[] = [shell.floor, shell.ceiling];
   const midSources: Object3D[] = [shell.walls.mid.high];
+  // Mebel z przekrojem (`userData.cutaway`): jego górę da się wyłączyć w statycznej siatce, a płyta zamykająca przekrój to osobna,
+  // mała siatka widoczna tylko w przekroju. Zakres rysowania obsługuje jeden taki mebel (generator daje jeden regał z papierosami):
+  // kolejne zostają w całości.
+  let cut: (CutSource & { wall: WallSide; cap: Object3D; id: string }) | null = null;
   const shelfSlots: ShelfSlot[] = [];
   const anchors = new Group();
   anchors.name = 'fixtures';
@@ -135,6 +161,11 @@ export function buildStore(layout: StoreLayout): StoreView {
       });
     }
     if (obj.userData.separate) { anchors.add(obj); continue; }
+    const cutaway = obj.userData.cutaway as Cutaway | undefined;
+    if (cutaway && !cut) {
+      cutaway.cap.position.copy(obj.position);
+      cut = { source: obj, height: cutaway.height, wall: wallBehind(f.facing), cap: cutaway.cap, id: f.id };
+    }
     (f.kind === 'backroomDoor' ? midSources : staticSources).push(obj);
     const anchor = new Group();
     anchor.name = f.id;
@@ -144,7 +175,10 @@ export function buildStore(layout: StoreLayout): StoreView {
   }
 
   // scalanie statycznej geometrii
-  const staticGroup = mergedGroup('static', staticSources, owned);
+  const staticMerge = mergeSources('static', staticSources, owned, cut ?? undefined);
+  const staticGroup = new Group();
+  staticGroup.name = 'static';
+  staticGroup.add(...staticMerge.meshes);
   const lampsGroup = mergedGroup('lamps', [shell.lamps], owned);
   const lampMesh = lampsGroup.children[0] as Mesh | undefined;
   const lampDay = glow(BRAND.cream, LAMP_EMISSIVE.day);
@@ -169,6 +203,10 @@ export function buildStore(layout: StoreLayout): StoreView {
     group.add(walls[side].high);
   }
 
+  // płyta zamykająca przekrój mebla (widoczna tylko, gdy mebel jest ścięty razem ze ścianą)
+  const cutCap = cut ? mergedGroup(`${cut.id}:cap`, [cut.cap], owned) : null;
+  if (cutCap) cutCap.visible = false;
+
   // ciepłe światło wnętrza: kilka świateł punktowych przy lampach, bez cieni, tylko nocą
   const lights = new Group();
   lights.name = 'interior-lights';
@@ -179,16 +217,23 @@ export function buildStore(layout: StoreLayout): StoreView {
     lights.add(light);
   }
 
-  root.add(staticGroup, lampsGroup, windowGlow, ...WALL_SIDES.map((s) => walls[s].group), anchors, lights);
+  root.add(staticGroup, lampsGroup, windowGlow, ...WALL_SIDES.map((s) => walls[s].group), ...(cutCap ? [cutCap] : []), anchors, lights);
 
-  let yaw: 0 | 1 | 2 | 3 = 0;
+  let yaw: YawIndex = 0;
   let exterior = false;
   const applyWalls = (): void => {
-    const lowered = exterior ? [] : NEAR_WALLS[yaw];
+    const lowered = loweredWalls(yaw, exterior);
     for (const side of WALL_SIDES) {
       const w = walls[side];
       if (lowered.includes(side)) { w.group.remove(w.high); w.group.add(w.cap); } else { w.group.remove(w.cap); w.group.add(w.high); }
     }
+    // mebel z przekrojem tnie się razem ze ścianą za nim: ściana obniżona = góra mebla wyłączona, a przekrój zamknięty płytą
+    const full = !(cut && lowered.includes(cut.wall));
+    for (const s of staticMerge.switchable) {
+      s.mesh.geometry.setDrawRange(0, full ? s.total : s.head);
+      s.mesh.visible = full || s.head > 0;
+    }
+    if (cutCap) cutCap.visible = !full;
   };
   applyWalls();
 

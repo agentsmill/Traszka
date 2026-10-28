@@ -1,13 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { Box3, Mesh, PointLight, type BufferGeometry, type DataTexture, type Material, type Object3D } from 'three';
+import { Box3, Mesh, PointLight, Vector3, type BufferGeometry, type DataTexture, type Material, type Object3D } from 'three';
 import { generateStore } from '@/sim/store/generateStore';
+import { layoutFromParts, validParts } from '@/sim/store/testLayouts';
 import type { Facing, Fixture, FixtureKind, StoreLayout } from '@/sim/store/types';
 import { CELL_SIZE_M } from '@/sim/grid';
+import { cellToWorld } from '@/render/coords';
 import { PALETTE } from '@/render/style';
 import { cornerSide, SIDE_STREET, storeOuter } from '@/render/street/buildings';
 import { buildStore, FIXTURE_BUILDERS, type StoreView } from './buildStore';
-import { CURB_W_M, SIDEWALK_DEPTH } from './shell';
+import { wallBehind, type Cutaway, type YawIndex } from './cutaway';
+import { CAP_H, CURB_W_M, SIDEWALK_DEPTH, type WallSide } from './shell';
 import { buildSelfCheckout } from './fixtures';
+import { TOBACCO_CUT_H } from './fixtures/tobaccoShelf';
 import { makeSignTexture } from './signTexture';
 
 const SEED = 'kiełbasa-42';
@@ -245,5 +249,254 @@ describe('makeSignTexture', () => {
     expect(t.isDataTexture).toBe(true);
     expect(t.image.width).toBe(1);
     expect(t.image.height).toBe(1);
+  });
+});
+
+
+describe('regał z papierosami tnie się razem ze ścianą, przy której stoi (R49: kasjer widoczny z każdego kąta kamery)', () => {
+  const YAWS = [0, 1, 2, 3] as const;
+  /** Dwa sklepy: regał przy lewej ścianie (front E) i jego lustro przy prawej (front W). */
+  const CASES: { name: string; seed: string; wall: WallSide }[] = [
+    { name: 'przy lewej ścianie (E)', seed: 'bigos-101', wall: 'left' },
+    { name: 'przy prawej ścianie (W, sklep w lustrze)', seed: 'kiełbasa-42', wall: 'right' },
+  ];
+  const shelfOf = (l: StoreLayout): Fixture => l.fixtures.find((f) => f.kind === 'tobaccoShelf')!;
+  /** Ściana przy regale policzona z siatki, niezależnie od `wallBehind`: kratka za jego plecami to kolumna ściany bocznej. */
+  const wallFromGrid = (l: StoreLayout, f: Fixture): WallSide => (f.x === 1 ? 'left' : f.x + f.w === l.width - 1 ? 'right' : 'mid');
+
+  /**
+   * Prostokąt regału w świecie (x, z), zwężony o 5 mm do środka: lico ściany i sąsiednie meble leżą dokładnie na jego brzegu
+   * (poza prostokątem), a wierzchołki cienkiej płyty przekroju siedzą ≈ 8 mm od jej krawędzi (w środku).
+   */
+  function footprint(l: StoreLayout, f: Fixture): { x0: number; x1: number; z0: number; z1: number } {
+    const a = cellToWorld(l, f.x, f.y), b = cellToWorld(l, f.x + f.w - 1, f.y + f.d - 1);
+    const h = CELL_SIZE_M / 2 - 0.005;
+    return { x0: Math.min(a.x, b.x) - h, x1: Math.max(a.x, b.x) + h, z0: Math.min(a.z, b.z) - h, z1: Math.max(a.z, b.z) + h };
+  }
+  /** Wierzchołki tego, co się naprawdę rysuje (widoczne siatki, zakres rysowania), w prostokącie footprintu poniżej sufitu. */
+  function drawnInside(root: Object3D, r: ReturnType<typeof footprint>): { y: number; key: string; mesh: Mesh }[] {
+    root.updateMatrixWorld(true);
+    const out: { y: number; key: string; mesh: Mesh }[] = [];
+    const v = new Vector3();
+    root.traverseVisible((o) => {
+      const mesh = o as Mesh;
+      if (!mesh.isMesh) return;
+      const g = mesh.geometry;
+      const p = g.getAttribute('position');
+      const end = Math.min(p.count, g.drawRange.start + g.drawRange.count);
+      for (let i = g.drawRange.start; i < end; i++) {
+        v.fromBufferAttribute(p, i).applyMatrix4(mesh.matrixWorld);
+        if (v.x < r.x0 || v.x > r.x1 || v.z < r.z0 || v.z > r.z1 || v.y > 2.4) continue;   // sufit i lampy wiszą nad regałem
+        out.push({ y: v.y, key: `${v.x.toFixed(4)},${v.y.toFixed(4)},${v.z.toFixed(4)}`, mesh });
+      }
+    });
+    return out;
+  }
+  const topOfDrawn = (root: Object3D, r: ReturnType<typeof footprint>): number => Math.max(...drawnInside(root, r).map((d) => d.y));
+  /**
+   * Ile wywołań rysowania da ta scena: każda widoczna siatka to jedno, także z pustym zakresem (three 0.186 wywołuje wtedy
+   * `drawArrays` z zerem i liczy je w `info.render.calls`), więc siatka z samą górą regału musi być ukryta, a nie tylko opróżniona.
+   */
+  function drawCalls(root: Object3D): { calls: number; empty: number } {
+    let calls = 0, empty = 0;
+    root.traverseVisible((o) => {
+      const mesh = o as Mesh;
+      if (!mesh.isMesh) return;
+      calls++;
+      const g = mesh.geometry;
+      if (Math.min(g.getAttribute('position').count, g.drawRange.start + g.drawRange.count) <= g.drawRange.start) empty++;
+    });
+    return { calls, empty };
+  }
+  const wallIsCut = (view: StoreView, side: WallSide): boolean => topOf(view.root.getObjectByName(`wall:${side}`)!) <= 0.5 + 1e-6;
+
+  it('budowniczy opisuje przekrój: cięcie na styku rzędów frontów (≈ blat kasy), płyta zamykająca w kolorze przekroju ściany, w footprincie regału', () => {
+    const f = sample('tobaccoShelf', 'E');
+    const obj = FIXTURE_BUILDERS.tobaccoShelf(f);
+    const cutaway = obj.userData.cutaway as Cutaway;
+    expect(cutaway.height).toBe(TOBACCO_CUT_H);
+    expect(TOBACCO_CUT_H).toBeGreaterThanOrEqual(0.85);   // kasjer ma być widoczny co najmniej od pasa w górę (najwyżej ~1 m nad podłogą)
+    expect(TOBACCO_CUT_H).toBeLessThanOrEqual(1.0);
+    const meshes = meshesOf(cutaway.cap);
+    expect(meshes.length).toBeGreaterThan(0);
+    for (const m of meshes) {
+      expect(hex(m.material as Material), 'płyta ma kolor przekroju ścian').toBe(PALETTE.wall[4]);
+      expect(m.castShadow, 'płyta nie dokłada przebiegu cienia').toBe(false);
+    }
+    cutaway.cap.updateMatrixWorld(true);
+    const box = new Box3().setFromObject(cutaway.cap);
+    expect(box.min.y).toBeCloseTo(TOBACCO_CUT_H, 6);
+    expect(box.max.y).toBeCloseTo(TOBACCO_CUT_H + CAP_H, 6);
+    const eps = 0.01;
+    expect(box.min.x).toBeGreaterThanOrEqual(-eps);
+    expect(box.min.z).toBeGreaterThanOrEqual(-eps);
+    expect(box.max.x).toBeLessThanOrEqual(f.w * CELL_SIZE_M + eps);
+    expect(box.max.z).toBeLessThanOrEqual(f.d * CELL_SIZE_M + eps);
+    // pokrywa przekrój regału: prawie cały footprint (korpus z płytami pleców) bez wystawania
+    expect(box.max.x - box.min.x).toBeGreaterThan(f.w * CELL_SIZE_M * 0.9);
+    expect(box.max.z - box.min.z).toBeGreaterThan(f.d * CELL_SIZE_M * 0.9);
+  });
+
+  it('tylko regał z papierosami ma przekrój (pozostałe meble zostają pełne: R22)', () => {
+    for (const kind of KINDS) expect(!!FIXTURE_BUILDERS[kind](sample(kind)).userData.cutaway, kind).toBe(kind === 'tobaccoShelf');
+  });
+
+  for (const { name, seed, wall } of CASES) {
+    describe(`regał ${name}`, () => {
+      const l = generateStore(seed);
+      const f = shelfOf(l);
+      const rect = footprint(l, f);
+      const view = buildStore(l);
+
+      it('ściana za regałem wyliczona z siatki zgadza się z wallBehind(facing)', () => {
+        expect(wallFromGrid(l, f)).toBe(wall);
+        expect(wallBehind(f.facing)).toBe(wall);
+      });
+
+      it('regał jest ścięty dokładnie wtedy, gdy ściana za nim jest obniżona: dla każdego yaw, a widok z zewnątrz zostawia go w całości', () => {
+        let cutAtSomeYaw = false, fullAtSomeYaw = false;
+        for (const yaw of YAWS) {
+          view.setCutaway(yaw);
+          const cut = wallIsCut(view, wall);
+          const top = topOfDrawn(view.root, rect);
+          if (cut) {
+            cutAtSomeYaw = true;
+            expect(top, `yaw ${yaw}`).toBeCloseTo(TOBACCO_CUT_H + CAP_H, 4);                   // przekrój zamyka płyta, a nad nim nic nie zostało
+          } else {
+            fullAtSomeYaw = true;
+            expect(top, `yaw ${yaw}`).toBeGreaterThan(1.9);                                    // nadstawka z tabliczką ma 2,0 m
+          }
+        }
+        expect(cutAtSomeYaw && fullAtSomeYaw).toBe(true);
+        view.setExteriorMode(true);
+        for (const yaw of YAWS) {
+          view.setCutaway(yaw);
+          expect(topOfDrawn(view.root, rect), `zewnątrz, yaw ${yaw}`).toBeGreaterThan(1.9);
+        }
+        view.setExteriorMode(false);
+        for (const yaw of YAWS) {
+          view.setCutaway(yaw);
+          expect(topOfDrawn(view.root, rect) < 1.0, `po powrocie z zewnątrz, yaw ${yaw}`).toBe(wallIsCut(view, wall));
+        }
+      });
+
+      it('kasjer widoczny: z obu kątów po stronie regału po nim nic nie wystaje nad cięcie, a przy pozostałych dwóch regał stoi za nim w całości', () => {
+        const byYaw = YAWS.map((yaw) => { view.setCutaway(yaw); return topOfDrawn(view.root, rect) < 1.0; });
+        expect(byYaw.filter(Boolean)).toHaveLength(2);
+        expect(YAWS.filter((yaw) => byYaw[yaw]).map((yaw) => yaw)).toEqual(wall === 'left' ? [0, 1] : [2, 3]);
+      });
+
+      it('to cięcie, nie ściśnięcie: wszystko pod linią cięcia zostaje na swoich miejscach, a nad nią nic nie zostaje ani nie jest pomniejszone', () => {
+        const below = (yaw: YawIndex): Set<string> => {
+          view.setCutaway(yaw);
+          return new Set(drawnInside(view.root, rect).filter((d) => d.y < TOBACCO_CUT_H - 1e-3).map((d) => d.key));
+        };
+        const cutYaw = YAWS.find((yaw) => { view.setCutaway(yaw); return wallIsCut(view, wall); })!;
+        const fullYaw = YAWS.find((yaw) => { view.setCutaway(yaw); return !wallIsCut(view, wall); })!;
+        const full = below(fullYaw), cut = below(cutYaw);
+        expect(full.size).toBeGreaterThan(100);
+        expect([...cut].sort()).toEqual([...full].sort());
+        view.setCutaway(cutYaw);
+        expect(drawnInside(view.root, rect).filter((d) => d.y > TOBACCO_CUT_H + CAP_H + 1e-4)).toHaveLength(0);
+      });
+
+      it('przekrój zamyka płyta w kolorze przekroju ścian (wall[4]): jej wierzch to jedyne, co sięga powyżej cięcia', () => {
+        const cutYaw = YAWS.find((yaw) => { view.setCutaway(yaw); return wallIsCut(view, wall); })!;
+        view.setCutaway(cutYaw);
+        const drawn = drawnInside(view.root, rect);
+        const topY = Math.max(...drawn.map((d) => d.y));
+        const onTop = drawn.filter((d) => d.y > topY - 1e-4);
+        expect(onTop.length).toBeGreaterThan(8);
+        for (const d of onTop) expect(hex(d.mesh.material as Material)).toBe(PALETTE.wall[4]);
+      });
+
+      it('draw calle: pełny regał nie dokłada żadnego, a ścięty najwyżej jeden (płyta zamykająca; siatki opróżnione z góry regału znikają)', () => {
+        const statics = (): Mesh[] => meshesOf(view.root.getObjectByName('static')!);
+        const cap = view.root.getObjectByName(`${f.id}:cap`)!;
+        expect(meshesOf(cap)).toHaveLength(1);
+        for (const yaw of YAWS) {
+          view.setCutaway(yaw);
+          const cut = wallIsCut(view, wall);
+          expect(cap.visible, `yaw ${yaw}: płyta tylko w przekroju`).toBe(cut);
+          const now = drawCalls(view.root);
+          expect(now.empty, `yaw ${yaw}: siatka z pustym zakresem nadal kosztuje wywołanie rysowania`).toBe(0);
+          // stan sprzed R49: góra regału zawsze włączona i żadnej płyty
+          for (const m of statics()) { m.geometry.setDrawRange(0, Infinity); m.visible = true; }
+          cap.visible = false;
+          const before = drawCalls(view.root);
+          expect(now.calls, `yaw ${yaw}`).toBeLessThanOrEqual(before.calls + 1);
+          if (!cut) expect(now.calls, `yaw ${yaw}: pełny regał`).toBe(before.calls);
+          view.setCutaway(yaw);
+        }
+      });
+
+      it('wielokrotne przełączanie nie przecieka: te same geometrie i materiały, te same zakresy rysowania, a dispose zwalnia każdą scaloną geometrię raz', () => {
+        const own = buildStore(l);
+        const states: [YawIndex, boolean][] = [...YAWS.map((y): [YawIndex, boolean] => [y, false]), [0, true]];
+        const identities = (): { geometries: string[]; materials: string[]; meshes: number } => {
+          const geometries = new Set<string>(), materials = new Set<string>();
+          let meshes = 0;
+          for (const [yaw, exterior] of states) {          // wszystkie stany: ściany wymieniają `high` i `cap`, więc sumujemy
+            own.setExteriorMode(exterior);
+            own.setCutaway(yaw);
+            own.root.traverse((o) => {
+              const m = o as Mesh;
+              if (!m.isMesh) return;
+              meshes++;
+              geometries.add(m.geometry.uuid);
+              materials.add((m.material as Material).uuid);
+            });
+          }
+          own.setExteriorMode(false);
+          return { geometries: [...geometries].sort(), materials: [...materials].sort(), meshes };
+        };
+        const before = identities();
+        let seed = 7;
+        for (let i = 0; i < 600; i++) {
+          seed = (seed * 1103515245 + 12345) % 2147483648;
+          if (seed % 5 === 0) own.setExteriorMode(seed % 2 === 0);
+          else own.setCutaway((seed % 4) as YawIndex);
+        }
+        expect(identities()).toEqual(before);
+
+        const owned = new Map<string, number>();
+        for (const [yaw, exterior] of states) {
+          own.setExteriorMode(exterior);
+          own.setCutaway(yaw);
+          own.root.traverse((o) => {
+            const m = o as Mesh;
+            if (m.isMesh && /^(static|lamps|window-glow|wall:[a-z]+:(low|high|cap)):/.test(m.name) && !owned.has(m.geometry.uuid)) {
+              owned.set(m.geometry.uuid, 0);
+              m.geometry.addEventListener('dispose', () => owned.set(m.geometry.uuid, owned.get(m.geometry.uuid)! + 1));
+            }
+          });
+        }
+        expect(owned.size).toBeGreaterThan(10);
+        own.dispose();
+        expect([...owned.values()].every((n) => n === 1)).toBe(true);
+      });
+    });
+  }
+
+  it('sklep bez regału z papierosami buduje się i przełącza kąty bez wyjątków', () => {
+    const parts = validParts();
+    const noTobacco = layoutFromParts({ ...parts, fixtures: parts.fixtures.filter((f) => f.kind !== 'tobaccoShelf') });
+    const view = buildStore(noTobacco);
+    for (const yaw of YAWS) expect(() => view.setCutaway(yaw)).not.toThrow();
+    view.dispose();
+  });
+
+  it('gdy regałów z papierosami jest kilka (generator daje jeden), tnie się pierwszy; reszta zostaje w całości i nic się nie psuje', () => {
+    const parts = validParts();
+    const second: Fixture = { id: 'tobaccoShelf-2', kind: 'tobaccoShelf', x: parts.lot.interiorWidth, y: 6, w: 1, d: 3, facing: 'W' };
+    const two = layoutFromParts({ ...parts, fixtures: [...parts.fixtures.filter((f) => f.kind !== 'wallShelf'), second] });
+    const view = buildStore(two);
+    const first = shelfOf(two);
+    for (const yaw of YAWS) {
+      view.setCutaway(yaw);
+      expect(topOfDrawn(view.root, footprint(two, second)), `drugi regał, yaw ${yaw}`).toBeGreaterThan(1.9);
+      expect(topOfDrawn(view.root, footprint(two, first)) < 1.0, `pierwszy regał, yaw ${yaw}`).toBe(wallIsCut(view, wallBehind(first.facing)));
+    }
+    view.dispose();
   });
 });
