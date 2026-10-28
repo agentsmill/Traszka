@@ -1,10 +1,11 @@
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { resolveStore } from '@/game/seeds';
 import { GENERATOR_VERSION } from '@/sim/store/generateStore';
 import { RANKED_SEASON_END_MINUTE } from '@/sim/ranked';
 import { version as GAME_VERSION } from '../../package.json';
-import { KNOWN_GAME_VERSIONS, KNOWN_GENERATOR_VERSIONS, SEASON_END_MINUTE } from './config';
+import { KNOWN_GAME_VERSIONS, KNOWN_GENERATOR_VERSIONS, SEASON_END_MINUTE, SEED_NEIGHBOURS } from './config';
 
 const ROOT = resolve(__dirname, '../..');
 
@@ -57,5 +58,17 @@ describe('funkcje serwerowe: importy, które Vercel uruchomi', () => {
 
   it('koniec sezonu na serwerze to ta sama minuta co w symulacji', () => {
     expect(SEASON_END_MINUTE).toBe(RANKED_SEASON_END_MINUTE);
+  });
+
+  it('liczba sąsiednich lokali seeda tygodnia na serwerze to ta sama liczba, którą próbuje gra (resolveStore: seed·1 … seed·N)', () => {
+    // NEIGHBOURS w src/game/seeds.ts jest prywatne, więc mierzymy zachowanie: dla którego n gra otworzy sklep `seed·n`, gdy
+    // generator składa tylko ten jeden lokal (poza sąsiadami resolveStore oddaje losowy seed z `draw`)
+    const reached = (n: number): boolean => {
+      const only = `babka-834·${n}`;
+      const build = (seed: string): void => { if (seed !== only) throw new Error('lokal się nie składa'); };
+      return resolveStore('babka-834', { build, draw: () => 'losowy-1', hasSave: () => false }).seed === only;
+    };
+    const reachable = Array.from({ length: 20 }, (_, i) => i + 1).filter(reached);
+    expect(reachable).toEqual(Array.from({ length: SEED_NEIGHBOURS }, (_, i) => i + 1));
   });
 });

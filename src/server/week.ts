@@ -1,4 +1,5 @@
 import { SEED_WORDS } from '../game/seedWords.js';
+import { SEED_NEIGHBOURS } from './config.js';
 
 /**
  * „Seed tygodnia” (spec §14.7): co tydzień jeden wspólny seed i osobny ranking z wyników zgłoszonych w tym tygodniu. Tydzień ISO
@@ -54,5 +55,13 @@ export function weekOf(nowMs: number): Week {
   return { id, seed, startsAt: instantOf(monday), endsAt: instantOf(monday + WEEK_MS) };
 }
 
-/** Czy bieg grano na seedzie tygodnia: ten sam seed albo sąsiedni lokal (`seed·n`), gdyby generator nie złożył sklepu z samego seeda. */
-export const isWeekSeed = (runSeed: string, week: Week): boolean => runSeed === week.seed || runSeed.startsWith(`${week.seed}·`);
+/**
+ * Czy bieg grano na seedzie tygodnia: dokładnie ten seed albo sąsiedni lokal `seed·1` … `seed·5` (gdyby generator nie złożył
+ * sklepu z samego seeda). Żaden inny sufiks po „·” nie jest seedem tygodnia: każdy sufiks to inny sklep, więc dopuszczenie
+ * dowolnego pozwalałoby wypróbować dowolnie wiele układów lokalu offline i wysłać najlepszy do rankingu „wszyscy grają to samo”.
+ */
+export function isWeekSeed(runSeed: string, week: Week): boolean {
+  if (runSeed === week.seed) return true;
+  for (let n = 1; n <= SEED_NEIGHBOURS; n++) if (runSeed === `${week.seed}·${n}`) return true;
+  return false;
+}

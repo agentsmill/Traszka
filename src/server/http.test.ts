@@ -88,6 +88,18 @@ describe('POST /api/runs: zgłoszenie biegu', () => {
     expect(seedRows).toEqual([{ rank: 1, nick: 'Kurwiszon', score: 20_000 }]);
   });
 
+  it('do rankingu tygodnia wpada tylko seed tygodnia i jego sąsiednie lokale seed·1…5; inny sufiks po „·” liczy się tylko jako zwykły seed', async () => {
+    const week = weekOf(NOW);
+    const { deps } = setup();
+    expect((await body(await submit(deps, KEY_A, 'Ala', `${week.seed}·3`))).ranks).toEqual({ global: 1, seed: 1, week: 1 });
+    for (const [i, suffix] of ['·abc', '·6', '·10', '·', '·0'].entries()) {
+      const res = await body(await submit(deps, `B${i}`.padEnd(20, '7'), `Gracz${i}`, `${week.seed}${suffix}`, { 'x-real-ip': `10.0.0.${i}` }));
+      expect(res.ranks, suffix).toEqual({ global: 1, seed: 1, week: null });
+    }
+    const weekRows = (await body(await handleLeaderboard(get('/api/leaderboard?board=week'), deps))).rows as { nick: string }[];
+    expect(weekRows.map((r) => r.nick)).toEqual(['Ala']);
+  });
+
   it('złe zgłoszenia: 400 z kodem i komunikatem (zły nick dostaje komunikat z reguł nicka), 413 za duże, 405 nie POST', async () => {
     const { deps } = setup();
     const cases: [Request, number, string][] = [

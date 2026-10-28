@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { SEED_WORDS } from '@/game/seedWords';
 import { generateStore } from '@/sim/store/generateStore';
+import { SEED_NEIGHBOURS } from './config';
 import { isWeekSeed, weekOf } from './week';
 
 const at = (y: number, m: number, d: number, h = 12): number => Date.UTC(y, m - 1, d, h);
@@ -57,5 +58,19 @@ describe('tydzień rankingu (tydzień ISO w czasie polskim)', () => {
     expect(isWeekSeed(`${w.seed}·2`, w)).toBe(true);
     expect(isWeekSeed(`${w.seed}2`, w)).toBe(false);
     expect(isWeekSeed('inny-123', w)).toBe(false);
+  });
+
+  it('seed tygodnia to dokładnie seed albo seed·1 … seed·5; żaden inny sufiks po „·” nie wpuszcza do rankingu tygodnia', () => {
+    const w = weekOf(at(2026, 10, 28));
+    expect(SEED_NEIGHBOURS).toBe(5);
+    for (const n of [1, 2, 3, 4, 5]) expect(isWeekSeed(`${w.seed}·${n}`, w), `·${n}`).toBe(true);
+    const bad = [
+      '·0', '·6', '·abc', '·10', '·', '·11', '·15', '·01', '·00', '·1·1', '·1 ', '· 1', '·１', '·٣', '·🍕🍕🍕', `·${'x'.repeat(30)}`, '·-1', '·+1', '·1.0', '·1e0', '··1',
+      '-1', '2', '/1', '.1', ' ',
+    ];
+    for (const suffix of bad) expect(isWeekSeed(`${w.seed}${suffix}`, w), JSON.stringify(suffix)).toBe(false);
+    for (const seed of ['', ' ', `${w.seed} `, ` ${w.seed}`, w.seed.toUpperCase(), `x${w.seed}`, `${w.seed}·1·`, `·1${w.seed}`, 'inny-123·1']) {
+      expect(isWeekSeed(seed, w), JSON.stringify(seed)).toBe(false);
+    }
   });
 });

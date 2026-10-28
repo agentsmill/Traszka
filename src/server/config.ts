@@ -18,6 +18,13 @@ export const KNOWN_GENERATOR_VERSIONS: readonly number[] = [1];
  */
 export const SEASON_END_MINUTE = 130_981;
 
+/**
+ * Ile sąsiednich lokali (`seed·1` … `seed·5`) gra próbuje, gdy generator nie składa sklepu z samego seeda (`NEIGHBOURS` w
+ * `src/game/seeds.ts`, tam prywatne). Tylko takie seedy gra produkuje z seeda tygodnia, więc tylko one liczą się do rankingu tygodnia.
+ * Kopia, bo plik gry importuje się aliasem `@/`; test pilnuje równości z tym, co robi `resolveStore`.
+ */
+export const SEED_NEIGHBOURS = 5;
+
 const DAY = 86_400;
 
 /** Rezerwacja nicka bez nowego wyniku wygasa po 12 miesiącach (spec §14.7). */
