@@ -127,7 +127,11 @@ function scanCode(src: string): Scanned {
         i += 2;
       } else if ((c === '!' && value && next !== '=') || c === '#') {
         // `xs[i]! / 2`: asercja nie-null po wartości (nie `!=`) i `#` nazwy prywatnej (`this.#of`) zostawiają `value` i `member` jak były.
-        // Znana pomyłka w bezpieczną stronę: `if (x) !/Date/.test(s)` (negacja zaraz po nagłówku) traktuje regex jak kod i da fałszywy alarm.
+        // Znana pomyłka: negacja zaraz po nagłówku (`if (x) !/Date/.test(s)`) albo na początku linii po wyrażeniu bez średnika
+        // (`f(x)\n!/Date/.test(s)`) wygląda jak asercja po wartości, więc regex jest czytany jak dzielenie. Treść regexu staje się kodem
+        // (fałszywy alarm), ale też zdarza się odwrotnie: regex z apostrofem, cudzysłowem albo backtickiem (`!/'/.test(s)`) otwiera
+        // literał, który zjada resztę linii, i może schować prawdziwe naruszenie za nim (`!/'/.test(s); Date.now()` przechodzi).
+        // W src/sim nie ma takiego zapisu; gdyby się pojawił, wstaw średnik albo nawiasy: `if (x) { ... }`, `(!/'/.test(s))`.
         out += c;
         i++;
       } else {
@@ -157,14 +161,18 @@ function importSpecifiers({ code, literals }: Scanned): string[] {
   return found;
 }
 
-/** Czy specyfikator wchodzi w warstwę render/ui/game (alias `@/` albo ścieżka względna od pliku). */
-function reachesUpperLayer(path: string, specifier: string): boolean {
-  const target = specifier.startsWith('@/')
+/** Ścieżka od korzenia repozytorium (`src/…`), do której prowadzi specyfikator (alias `@/` albo ścieżka względna od pliku); '' dla pakietów. */
+function resolveTarget(path: string, specifier: string): string {
+  return specifier.startsWith('@/')
     ? 'src/' + specifier.slice(2)
     : specifier.startsWith('.')
       ? posix.normalize(posix.join(posix.dirname(path), specifier))
       : '';
-  return /^src\/(render|ui|game)(\/|$)/.test(target);
+}
+
+/** Czy specyfikator wchodzi w warstwę render/ui/game (alias `@/` albo ścieżka względna od pliku). */
+function reachesUpperLayer(path: string, specifier: string): boolean {
+  return /^src\/(render|ui|game)(\/|$)/.test(resolveTarget(path, specifier));
 }
 
 /** Moduł Node (`node:fs`, ale też `fs` i `fs/promises`): w przeglądarce go nie ma, a na serwerze odtwarzającym bieg nie ma czego szukać. */
@@ -238,6 +246,53 @@ function simViolations(path: string, source: string): string[] {
     for (const { name, test } of ENGINE_MATH) if (test(scanned.code)) found.push(name);
   }
   return found;
+}
+
+// --- Pliki gry testowane w node ------------------------------------------------------------------------------------
+
+/**
+ * Pliki warstwy gry, które testy puszczają w node (atrapy zamiast sceny i renderera): `dispatchCommand` i powłoka gry oraz
+ * decyzje pętli klatek. Import wartości z `three`, renderera albo sceny wciągnąłby WebGL do tych testów (i rozpadł je w node),
+ * więc z tych modułów wolno brać tylko typy (`import type`).
+ */
+const NODE_TESTABLE_FILES = ['src/game/actions.ts', 'src/game/frame.ts'];
+
+/** Czy cel to renderer (`src/render/…`) albo scena (`src/game/scene`, z rozszerzeniem lub bez). */
+const isRendererTarget = (target: string): boolean => /^src\/render(\/|$)/.test(target) || /^src\/game\/scene(\.[mc]?[jt]sx?)?$/.test(target);
+
+/** Czy klauzula `import … ` / `export … ` (bez `from '…'`) niesie same typy: `import type …`, `export type …` albo `{ type A, type B }`. */
+function isTypeOnlyClause(clause: string): boolean {
+  const c = clause.trim();
+  if (/^(?:import|export)\s+type(?:\s+[\w$]|\s*[{*])/.test(c)) return true;   // `import type from './x'` (nic po `type`) to domyślny import o nazwie `type`
+  const named = /^(?:import|export)\s*\{([^}]*)\}$/.exec(c);
+  const items = named ? named[1]!.split(',').map((x) => x.trim()).filter(Boolean) : [];
+  return items.length > 0 && items.every((item) => /^type\s/.test(item));
+}
+
+/**
+ * Specyfikatory, z których plik bierze wartości: `import x from`, `import { a, type B } from`, `export … from`, `import 'x'`,
+ * `import('x')` i `require('x')`. Pomija `import type …`, `export type …` i `{ type A }` oraz `typeof import('x')` (to tylko typ).
+ * Dynamiczny `import('x')` w pozycji typu (`x: import('./a').T`) liczy się jak wartość: zapisz to jako `import type`.
+ */
+function valueImportSpecifiers({ code, literals }: Scanned): string[] {
+  const found: string[] = [];
+  for (const m of code.matchAll(/\bfrom\s*"(\d+)"/g)) {
+    let start = 0;
+    for (const k of code.slice(0, m.index).matchAll(/\b(?:import|export)\b/g)) start = k.index;
+    if (!isTypeOnlyClause(code.slice(start, m.index))) found.push(literals[Number(m[1])]!);
+  }
+  for (const re of [/(?<!\btypeof\s*)\bimport\s*\(\s*"(\d+)"/g, /\bimport\s*"(\d+)"/g, /\brequire\s*\(\s*"(\d+)"/g]) {
+    for (const m of code.matchAll(re)) found.push(literals[Number(m[1])]!);
+  }
+  return found;
+}
+
+/** Specyfikatory (bez powtórzeń), którymi plik z `NODE_TESTABLE_FILES` bierze wartości z `three`, renderera albo sceny; dla innych plików pusto. */
+function nodeTestableViolations(path: string, source: string): string[] {
+  const file = path.replace(/\\/g, '/');
+  if (!NODE_TESTABLE_FILES.includes(file)) return [];
+  const bad = valueImportSpecifiers(scanCode(source)).filter((s) => s === 'three' || s.startsWith('three/') || isRendererTarget(resolveTarget(file, s)));
+  return [...new Set(bad)];
 }
 
 // --- Kanały rand01 (kontrakty §3) ----------------------------------------------------------------------------------
@@ -577,6 +632,74 @@ describe('simViolations: reguły na próbkach', () => {
   });
 });
 
+const ACTIONS_FILE = 'src/game/actions.ts';
+const FRAME_FILE = 'src/game/frame.ts';
+
+describe('nodeTestableViolations: actions.ts i frame.ts bez importów wartości z three, renderera i sceny (próbki)', () => {
+  it.each<[string, string, string[]]>([
+    [ACTIONS_FILE, "import * as THREE from 'three';", ['three']],
+    [ACTIONS_FILE, "import { Vector3 } from 'three/src/math/Vector3.js';", ['three/src/math/Vector3.js']],
+    [ACTIONS_FILE, "import { loadStore } from '@/render/game/loadedStore';", ['@/render/game/loadedStore']],
+    [ACTIONS_FILE, "import { renderer } from '../render/renderer';", ['../render/renderer']],
+    [ACTIONS_FILE, "import { SceneHost } from './scene';", ['./scene']],
+    [ACTIONS_FILE, "import { SceneHost } from './scene.ts';", ['./scene.ts']],
+    [ACTIONS_FILE, "import { SceneHost } from '@/game/scene';", ['@/game/scene']],
+    [FRAME_FILE, "import { createScene } from './scene';", ['./scene']],
+    [FRAME_FILE, "import * as THREE from 'three';", ['three']],
+    // mieszany import niesie wartość, choć część nazw to typy
+    [ACTIONS_FILE, "import { type SceneHost, createScene } from './scene';", ['./scene']],
+    [ACTIONS_FILE, "import Scene, { type SceneHost } from './scene';", ['./scene']],
+    [ACTIONS_FILE, "import {\n  type A,\n  b,\n} from '@/render/y';", ['@/render/y']],
+    // nazwy, które tylko zaczynają się od `type`, i domyślny import o nazwie `type`
+    [ACTIONS_FILE, "import typeOf from './scene';", ['./scene']],
+    [ACTIONS_FILE, "import { typeA } from './scene';", ['./scene']],
+    [ACTIONS_FILE, "import type from './scene';", ['./scene']],
+    [ACTIONS_FILE, "import {} from './scene';", ['./scene']],
+    // wejścia bez klauzuli i re-eksporty
+    [ACTIONS_FILE, "import './scene';", ['./scene']],
+    [ACTIONS_FILE, "const m = await import('./scene');", ['./scene']],
+    [ACTIONS_FILE, 'const m = await import(`@/render/y`);', ['@/render/y']],
+    [ACTIONS_FILE, "const T = require('three');", ['three']],
+    [ACTIONS_FILE, "export { SceneHost } from './scene';", ['./scene']],
+    [ACTIONS_FILE, "export * from '@/render/y';", ['@/render/y']],
+    // typ obok wartości: tylko wartość się liczy; ten sam specyfikator raz
+    [ACTIONS_FILE, "import type { A } from './scene';\nimport { b } from '@/render/y';\nimport { c } from '@/render/y';", ['@/render/y']],
+    [ACTIONS_FILE, "import * as T from 'three'; import { x } from './scene';", ['three', './scene']],
+  ])('%s: %s -> %j', (path, code, expected) => {
+    expect(nodeTestableViolations(path, code)).toEqual(expected);
+  });
+
+  it.each<[string, string]>([
+    [ACTIONS_FILE, "import type { SceneHost } from './scene';"],
+    [ACTIONS_FILE, "import type { ScenePick } from './scene';\nimport type { RenderContext } from '@/render/renderer';"],
+    [ACTIONS_FILE, "import type * as THREE from 'three';"],
+    [ACTIONS_FILE, "import type Scene from '@/game/scene';"],
+    [ACTIONS_FILE, "import { type SceneHost } from './scene';"],
+    [ACTIONS_FILE, "import { type A, type B } from '@/render/y';"],
+    [ACTIONS_FILE, "import {\n  type A,\n  type B,\n} from '@/render/y';"],
+    [ACTIONS_FILE, "export type { SceneHost } from './scene';"],
+    [ACTIONS_FILE, "export type * from '@/render/y';"],
+    [ACTIONS_FILE, "type Loader = typeof import('@/render/game/loadedStore');"],
+    [FRAME_FILE, "import type { SceneHost } from './scene';\nimport { advanceEconomy } from '@/sim/economy/clock';"],
+    // inne moduły: symulacja, interfejs, sąsiednie pliki gry, pakiety o podobnej nazwie
+    [ACTIONS_FILE, "import { applyCommand } from '@/sim/economy/commands';\nimport * as ui from '@/ui/state';"],
+    [ACTIONS_FILE, "import { openStore } from './openStore';\nimport { saveSession } from './session';"],
+    [ACTIONS_FILE, "import { x } from './scenery';\nimport { y } from './scene-pick';\nimport { z } from '@/game/scenes/y';"],
+    [ACTIONS_FILE, "import x from 'three-stdlib';\nimport y from 'threejs-thing';"],
+    [ACTIONS_FILE, "import { x } from '@/rendering/y';"],
+    // komentarze i literały nie są importami
+    [ACTIONS_FILE, "// import { SceneHost } from './scene';\nconst x = 1;"],
+    [ACTIONS_FILE, "const s = \"import { SceneHost } from './scene'\";"],
+    // pliki spoza listy mogą importować scenę i three (scene.ts, main.ts, ...)
+    ['src/game/scene.ts', "import * as THREE from 'three';\nimport { loadStore } from '@/render/game/loadedStore';"],
+    ['src/game/controls.ts', "import { MathUtils } from 'three';"],
+    ['src/main.ts', "import { createScene } from '@/game/scene';"],
+    ['src/game/actions.test.ts', "import { FakeScene } from './scene';"],
+  ])('%s: %s -> brak naruszeń', (path, code) => {
+    expect(nodeTestableViolations(path, code)).toEqual([]);
+  });
+});
+
 describe('channelViolations: kanały rand01 na próbkach', () => {
   it.each<[string, string]>([
     [SIM_FILE, 'rand01(h, a, 100)'],
@@ -644,6 +767,13 @@ describe('architektura', () => {
   it('src/sim: bez three, zegara, przeglądarki, node, warstw wyżej i matematyki zależnej od silnika', () => {
     const offenders = simProductionFiles().flatMap((f) =>
       simViolations(f, readFileSync(f, 'utf8')).map((rule) => `${f}: ${rule}`),
+    );
+    expect(offenders).toEqual([]);
+  });
+
+  it('src/game/actions.ts i frame.ts: bez importów wartości z three, renderera i sceny (zostają testowalne w node)', () => {
+    const offenders = NODE_TESTABLE_FILES.flatMap((f) =>
+      nodeTestableViolations(f, readFileSync(f, 'utf8')).map((specifier) => `${f}: import wartości z '${specifier}' (użyj \`import type\`)`),
     );
     expect(offenders).toEqual([]);
   });
