@@ -4,6 +4,7 @@ import { staffStripCells } from '@/sim/crowd/crowd';
 import type { Cell } from '@/sim/grid';
 import { FRONT_WALL_Y, type StoreLayout } from '@/sim/store/types';
 import { accessCells, isWalkable } from '@/sim/store/validate';
+import { FINE_PALLET_POW } from './exactMath';
 import { computeStoreInfo, type PalletSpot } from './storeInfo';
 
 /** Ile seedów sprawdza test (`SPOT_SEEDS=5000` przy jednorazowym, dłuższym przebiegu). */
@@ -124,4 +125,22 @@ describe('miejsca na palety w sali', () => {
       expect(computeStoreInfo(layoutFor(seed, 1)).spots.floor, seed).toEqual([{ x: 9, y: 11 }, { x: 9, y: 15 }, { x: 5, y: 11 }]);
     }
   });
+});
+
+describe('miejsca na palety na chodniku', () => {
+  /**
+   * `checkFine` czyta `n ** 1.4` z tablicy `FINE_PALLET_POW` (n = 0..40), a palet na chodniku nie ma więcej niż miejsc (`deliver`
+   * kładzie je tylko na wolnych). Najszerszy lokal (40 kratek, remont 3) ma 17 miejsc; w próbce 250 seedów × 4 poziomy remontu
+   * trafia się już szerokość 40, a liczba miejsc rośnie z szerokością, więc to jest największa możliwa.
+   */
+  it('największa liczba miejsc na chodniku mieści się w tablicy mandatu', () => {
+    let most = 0;
+    for (let i = 0; i < Math.min(SEEDS, 250); i++) {
+      for (let level = 0; level <= 3; level++) {
+        most = Math.max(most, computeStoreInfo(layoutFor(`spot-${i}`, level)).spots.sidewalk.length);
+      }
+    }
+    expect(most).toBeGreaterThan(0);
+    expect(most).toBeLessThan(FINE_PALLET_POW.length);
+  }, 60_000);
 });

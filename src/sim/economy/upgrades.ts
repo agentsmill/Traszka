@@ -1,3 +1,5 @@
+import { powInt } from './exactMath';
+
 /**
  * Sklep z ulepszeniami w stylu klikera: każdy zakup to kolejny poziom, a cena rośnie geometrycznie. Część rzeczy
  * odblokowuje poziom gracza (odblokowanie to też nagroda). Gałąź „Warsztat złotej rączki” (automatyka DIY, na końcu
@@ -96,7 +98,7 @@ export const WORKSHOP_LEVEL = 10;
 
 /** Cena następnego poziomu (zaokrąglona do 50 zł). */
 export function upgradeCost(def: UpgradeDef, level: number): number {
-  return Math.round((def.baseCost * def.costMult ** level) / 50) * 50;
+  return Math.round((def.baseCost * powInt(def.costMult, level)) / 50) * 50;
 }
 
 // --- Sprzęt do slotów ------------------------------------------------------------------------------
@@ -126,7 +128,7 @@ export const EQUIPMENT: readonly EquipmentDef[] = [
 export const EQUIPMENT_BY_ID: Record<EquipmentId, EquipmentDef> = Object.fromEntries(EQUIPMENT.map((e) => [e.id, e])) as Record<EquipmentId, EquipmentDef>;
 
 export function equipmentCost(def: EquipmentDef, owned: number): number {
-  return Math.round((def.baseCost * def.costMult ** owned) / 50) * 50;
+  return Math.round((def.baseCost * powInt(def.costMult, owned)) / 50) * 50;
 }
 
 // --- Remont generalny --------------------------------------------------------------------------------

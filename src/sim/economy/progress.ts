@@ -1,11 +1,16 @@
+import { xpCurve } from './exactMath';
+
 /**
  * Poziom gracza: doświadczenie (XP) z każdej czynności, nagroda za każdy poziom i rangi bez końca. Rangi to palety,
  * a nie osoby, więc nazwy nie mają rodzaju gramatycznego.
  */
 
-/** XP potrzebne, żeby z poziomu `level` wejść na następny. Rośnie wolniej niż wykładniczo: poziomy nie mają końca. */
+/**
+ * XP potrzebne, żeby z poziomu `level` wejść na następny. Rośnie wolniej niż wykładniczo: poziomy nie mają końca.
+ * To `Math.round(120 * level ** 1.55)` liczone dokładnie (`xpCurve`), bo wynik `**` z ułamkiem zależy od silnika JS.
+ */
 export function xpToNext(level: number): number {
-  return Math.round(120 * level ** 1.55);
+  return xpCurve(level);
 }
 
 /** Nagroda za wejście na poziom `level`. */

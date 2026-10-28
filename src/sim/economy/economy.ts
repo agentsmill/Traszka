@@ -7,6 +7,7 @@ import {
   TRAFFIC_RANGE, UNLOAD_AT, UNLOAD_RATE, WAGE_PER_DAY, type Cat,
 } from './catalog';
 import { dayOf, formatMonth, isLastDayOfMonth, isOpenAt, minuteOfDay } from './calendar';
+import { FINE_PALLET_POW } from './exactMath';
 import { rand01 } from './rand';
 import type { PalletLoc, StoreInfo } from './storeInfo';
 import {
@@ -607,7 +608,8 @@ function checkFine(s: EconomyState, fx: Effects, out: EconEvent[]): void {
   const oldest = Math.min(...outside.map((p) => p.since));
   const hours = (s.minute - oldest) / 60;
   if (hours < 1) return;   // godzina tolerancji po dostawie: „kierowca dopiero co odjechał”
-  const p = 0.0003 * outside.length ** 1.4 * (1 + 0.2 * (hours - 1)) * fx.fineMult;
+  // outside.length ** 1.4 z tablicy (wynik `**` bywa różny między silnikami); chodnik mieści najwyżej kilkanaście palet, tablica sięga 40
+  const p = 0.0003 * FINE_PALLET_POW[Math.min(outside.length, FINE_PALLET_POW.length - 1)] * (1 + 0.2 * (hours - 1)) * fx.fineMult;
   if (rand01(s.seedHash, s.minute, 7) >= p) return;
   const fine = FINE_BASE + FINE_PER_PALLET * (outside.length - 1);
   charge(s, 'fines', fine);

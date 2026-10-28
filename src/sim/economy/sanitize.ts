@@ -53,8 +53,8 @@ export const LIMITS = {
   queue: 1000,
   /** Poziom gracza: do 1000. poziomu potrzeba ok. 2 mld XP (`xpToNext`), czyli tysięcy lat gry. */
   level: 1000,
-  /** Numery palet i zleceń: 2^30; `rand01` liczy je jako int32. */
-  id: 2 ** 30,
+  /** Numery palet i zleceń: 2^30 (1 073 741 824); `rand01` liczy je jako int32. */
+  id: 1_073_741_824,
   /**
    * Punkty Partnera: sklep daje pierwiastek z marży / 20 000, a marża jednego sklepu jest mała (zmierzone 5094 punkty po 97
    * sklepach sieci); 1e7 mieści tysiąc sklepów po ok. 10 tys. punktów.

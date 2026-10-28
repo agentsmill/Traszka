@@ -1,4 +1,5 @@
 import type { EconomyState } from './economy';
+import { pow10Floor } from './exactMath';
 import { rand01 } from './rand';
 
 /**
@@ -48,7 +49,7 @@ export const questDone = (s: EconomyState, q: Quest): boolean => questProgress(s
 /** Zaokrąglenie do „ładnej” liczby (1, 2, 5 × 10^n), żeby cele brzmiały jak z maila Centrali. */
 export function niceRound(n: number): number {
   if (n <= 10) return Math.max(1, Math.round(n));
-  const p = 10 ** Math.floor(Math.log10(n));
+  const p = pow10Floor(n);
   const m = n / p;
   const step = m < 2 ? 0.2 : m < 5 ? 0.5 : 1;
   return Math.round(m / step) * step * p;
