@@ -2,11 +2,14 @@ import { describe, it, expect } from 'vitest';
 import { cellKey } from '@/sim/grid';
 import { generateStore } from '@/sim/store/generateStore';
 import type { StoreLayout } from '@/sim/store/types';
-import { isWalkable } from '@/sim/store/validate';
+import { accessCells, isWalkable } from '@/sim/store/validate';
 import {
   MAX_DT,
   SIM_STEP,
   createCrowd,
+  payLook,
+  setCrowdExtras,
+  setCrowdRate,
   staffStripCells,
   stepCrowd,
   type Agent,
@@ -385,5 +388,41 @@ describe('pas mebli ulicznych', () => {
       run(sim, 120, () => { for (const a of sim.crowd.agents) lowest = Math.min(lowest, Math.floor(a.y)); });
       expect(lowest, seed).toBeGreaterThanOrEqual(1);
     }
+  });
+});
+
+describe('gra: kasy samoobsługowe, palety, tempo', () => {
+  it('część klientów płaci przy kasie samoobsługowej', () => {
+    const sim = makeSim(MAIN_SEED, { targetCount: 12, spawnPerMinute: 90 });
+    const slot = sim.layout.fixtures.find((f) => f.kind === 'selfCheckoutSlot')!;
+    const cell = accessCells(sim.layout, slot).at(-1)!;
+    setCrowdExtras(sim.crowd, [], [{ cell, look: payLook(slot.facing) }]);
+    let paidThere = 0;
+    run(sim, 240, () => {
+      for (const a of sim.crowd.agents) {
+        if (a.state === 'paying' && cellOf(a) === `${cell.x},${cell.y}`) paidThere++;
+      }
+    });
+    expect(paidThere).toBeGreaterThan(0);
+  });
+
+  it('nikt nie staje na kratkach palety (poza przejściem „na ducha” z zakleszczenia)', () => {
+    const sim = makeSim(MAIN_SEED, { targetCount: 12, spawnPerMinute: 90 });
+    const pallet = [{ x: 3, y: 1 }, { x: 4, y: 1 }, { x: 3, y: 2 }, { x: 4, y: 2 }].filter((c) => isWalkable(sim.layout, c.x, c.y));
+    setCrowdExtras(sim.crowd, pallet, []);
+    const blocked = new Set(pallet.map((c) => `${c.x},${c.y}`));
+    let standing = 0;
+    run(sim, 120, () => {
+      for (const a of sim.crowd.agents) if (!a.ghost && !a.moving && blocked.has(cellOf(a))) standing++;
+    });
+    expect(standing).toBe(0);
+  });
+
+  it('tempo napływu daje się zmienić w trakcie: zero zatrzymuje nowych klientów', () => {
+    const sim = makeSim(MAIN_SEED, { targetCount: 12, spawnPerMinute: 90 });
+    run(sim, 20);
+    setCrowdRate(sim.crowd, { targetCount: 0, spawnPerMinute: 0 });
+    run(sim, 300);
+    expect(sim.crowd.agents.length).toBe(0);
   });
 });
