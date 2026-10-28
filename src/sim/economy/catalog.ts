@@ -83,6 +83,20 @@ export const RESTOCK_RATE = 20;
 export const UNLOAD_AT = { sidewalk: 0.75, floor: 1, backroom: 1.15 } as const;
 /** Sztuk na jedno stuknięcie gracza w paletę (franczyzobiorca pomaga). */
 export const TAP_ITEMS = 8;
+/**
+ * Combo stukania liczone w minutach gry, a nie zegarem przeglądarki (serwer odtwarzający bieg nie widzi zegara):
+ * odstęp między stuknięciami, który jeszcze podtrzymuje serię. 15 minut to ok. 0,75 s przy ×1 w godzinach otwarcia
+ * (20 minut gry na sekundę), czyli tyle co dawne 650 ms.
+ */
+export const COMBO_WINDOW = 15;
+/**
+ * Paczki od Centrali w czasie gry: pierwsze okno GIFT_FIRST minut od startu, kolejne GIFT_GAP_MIN plus losowe
+ * 0..GIFT_GAP_SPREAD minut po poprzednim, każde otwarte GIFT_OPEN minut (ok. 9 s przy ×1, jak dotąd).
+ */
+export const GIFT_FIRST = 480;
+export const GIFT_GAP_MIN = 900;
+export const GIFT_GAP_SPREAD = 1200;
+export const GIFT_OPEN = 180;
 
 export const WAGE_PER_DAY = 340;
 export const HIRE_COST = 300;

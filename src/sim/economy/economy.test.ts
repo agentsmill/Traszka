@@ -49,6 +49,19 @@ describe('ekonomia', () => {
     expect(JSON.stringify(restored)).toBe(JSON.stringify(a));
   });
 
+  it('okna paczek i combo nie zmieniają liczb gry: stan różni się tylko polem giftAt', () => {
+    const a = createEconomy(SEED, info);
+    const b = createEconomy(SEED, info);
+    b.giftAt = a.giftAt + 3 * MINUTES_PER_DAY;   // inne okna paczek, ta sama reszta
+    run(a, info, 6 * MINUTES_PER_DAY);
+    run(b, info, 6 * MINUTES_PER_DAY);
+    expect(a.giftAt).not.toBe(b.giftAt);
+    expect({ ...a, giftAt: 0 }).toEqual({ ...b, giftAt: 0 });
+    expect(a.tapStreak).toBe(0);   // stepMinute nie stuka za gracza
+    expect(a.lastTapAt).toBe(-1e9);
+    expect(a.giftSeq).toBe(1);     // i nie odbiera paczek
+  });
+
   it('pierwszy dzień: sprzedaż, zamówienie o 11:00, zamknięcie dnia z płacami', () => {
     const s = createEconomy(SEED, info);
     const events = run(s, info, MINUTES_PER_DAY);

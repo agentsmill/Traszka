@@ -1,7 +1,8 @@
 import { hashString } from '@/sim/rng';
 import {
-  BANKRUPTCY_AT, CATS, CAT_INFO, CREDIT_LIMIT, DELIVERY_AT, DELIVERY_AT_AFTERNOON, DELIVERY_AT_NIGHT,
-  FINE_BASE, FINE_PER_PALLET, FRANCHISE_FEE_FIXED, FRANCHISE_FEE_SHARE, HIRE_COST, HOT, HOUR_CURVE, ITEMS_PER_CUSTOMER,
+  BANKRUPTCY_AT, CATS, CAT_INFO, COMBO_WINDOW, CREDIT_LIMIT, DELIVERY_AT, DELIVERY_AT_AFTERNOON, DELIVERY_AT_NIGHT,
+  FINE_BASE, FINE_PER_PALLET, FRANCHISE_FEE_FIXED, FRANCHISE_FEE_SHARE, GIFT_FIRST, GIFT_GAP_MIN, GIFT_GAP_SPREAD, GIFT_OPEN,
+  HIRE_COST, HOT, HOUR_CURVE, ITEMS_PER_CUSTOMER,
   LOT_TRAFFIC, MEDIA_PER_DAY, MINUTES_PER_DAY, OPEN_FROM, OPEN_TO, ORDER_DEADLINE, PALLET_FEE, PALLET_ITEMS, PALLETS_FREE, PATIENCE,
   RESTOCK_RATE, RETURN_FEE, SCO_ACCEPT, SCO_RATE, STAFF_MAX, STAFF_START, START_CASH, TAP_ITEMS, TILL_RATE, TRAFFIC_PER_SHELF_ITEM,
   TRAFFIC_RANGE, UNLOAD_AT, UNLOAD_RATE, WAGE_PER_DAY, type Cat,
@@ -116,8 +117,13 @@ export interface EconomyState {
   cleanDays: number;
   /** Numer kolejnej paczki od Centrali (losowa nagroda). */
   giftSeq: number;
+  /** Minuta otwarcia bieżącego albo następnego okna paczki od Centrali (okno trwa `GIFT_OPEN` minut gry, `giftOpen`). */
+  giftAt: number;
   /** Do tej minuty stuknięcia działają ×3 (nagroda z paczki). */
   tapBoostUntil: number;
+  /** Combo stukania w czasie gry (nie zegarem przeglądarki): stuknięcia w serii (0 = brak) i minuta ostatniego udanego. */
+  tapStreak: number;
+  lastTapAt: number;
   lastDayProfit: number;
   bestDayProfit: number;
   /** Sieć sklepów z poprzednich rozgrywek: punkty partnera (trwała premia) i dochód z sieci na dzień. */
@@ -259,7 +265,10 @@ export function createEconomy(seed: string, info: StoreInfo, partner: EconomySta
     questSeq: 1,
     cleanDays: 0,
     giftSeq: 1,
+    giftAt: giftWindowFrom(OPEN_FROM + GIFT_FIRST),
     tapBoostUntil: 0,
+    tapStreak: 0,
+    lastTapAt: -1e9,
     lastDayProfit: 0,
     bestDayProfit: 0,
     partner: { ...partner },
@@ -278,6 +287,7 @@ export const isStoreOpen = (s: EconomyState): boolean => isOpenAt(minuteOfDay(s.
 /** Jedna minuta gry. Zdarzenia dla gracza (dostawa, mandat, raport…) trafiają do `out`. */
 export function stepMinute(s: EconomyState, info: StoreInfo, out: EconEvent[]): void {
   if (s.gameOver) return;
+  if (s.minute >= s.giftAt + GIFT_OPEN) scheduleGift(s);   // okno paczki nie odebrane na czas wygasa
   const mod = minuteOfDay(s.minute);
   const fx = effects(s, info);
   const open = isStoreOpen(s);
@@ -699,6 +709,49 @@ export type CommandResult = { ok: true; text?: string; value?: number } | { ok: 
 
 /** Mnożnik stuknięć z paczki od Centrali („turbo rozładunek”). */
 export const tapBoost = (s: EconomyState): number => (s.minute < s.tapBoostUntil ? 3 : 1);
+
+// --- Combo stukania i okna paczek w czasie gry -------------------------------------------------------------
+// Dotąd combo mierzył zegar przeglądarki, a paczki liczniki `setTimeout` w interfejsie; serwer odtwarzający bieg
+// nie widzi żadnego z nich. Oba żyją więc w stanie, w minutach gry i z `rand01`.
+
+/** Mnożnik za szybkie stukanie: ×1 do 3 stuknięć w serii, potem o 1 wyżej co 4, najwyżej ×5. */
+export const comboMult = (streak: number): number => Math.min(5, 1 + Math.floor(streak / 4));
+
+/** Seria, jaką da stuknięcie w tej minucie: podtrzymuje poprzednią, jeśli od ostatniego minęło najwyżej `COMBO_WINDOW`. */
+export const nextTapStreak = (s: EconomyState): number => (s.minute - s.lastTapAt <= COMBO_WINDOW ? s.tapStreak + 1 : 1);
+
+/** Zalicza udane stuknięcie: zapisuje serię i minutę. */
+export function commitTap(s: EconomyState): void {
+  s.tapStreak = nextTapStreak(s);
+  s.lastTapAt = s.minute;
+}
+
+/** Combo do interfejsu: bieżąca seria i mnożnik, a po wygaśnięciu serii `{ count: 0, mult: 1 }`. */
+export function tapCombo(s: EconomyState): { count: number; mult: number } {
+  if (s.minute - s.lastTapAt > COMBO_WINDOW) return { count: 0, mult: 1 };
+  return { count: s.tapStreak, mult: comboMult(s.tapStreak) };
+}
+
+/** Czy paczka od Centrali czeka na odbiór: okno trwa `GIFT_OPEN` minut od `giftAt`, po końcu gry nie ma paczek. */
+export const giftOpen = (s: EconomyState): boolean => s.giftAt <= s.minute && s.minute < s.giftAt + GIFT_OPEN && !s.gameOver;
+
+/**
+ * Najbliższa minuta, w której okno paczki mieści się w godzinach otwarcia (od `OPEN_FROM` do `OPEN_TO - GIFT_OPEN`,
+ * żeby cała paczka zdążyła zaczekać przed zamknięciem): sama `minute`, gdy już w nich jest; przed otwarciem otwarcie
+ * tego dnia, po ostatniej możliwej minucie otwarcie następnego dnia. Okno nigdy nie wypada wcześniej, niż wypadało.
+ */
+export function giftWindowFrom(minute: number): number {
+  const day = dayOf(minute);
+  const mod = minuteOfDay(minute);
+  if (mod < OPEN_FROM) return day * MINUTES_PER_DAY + OPEN_FROM;
+  if (mod > OPEN_TO - GIFT_OPEN) return (day + 1) * MINUTES_PER_DAY + OPEN_FROM;
+  return minute;
+}
+
+/** Planuje następne okno paczki: `GIFT_GAP_MIN` do `GIFT_GAP_MIN + GIFT_GAP_SPREAD` minut od teraz, przesunięte w godziny otwarcia. */
+export function scheduleGift(s: EconomyState): void {
+  s.giftAt = giftWindowFrom(s.minute + GIFT_GAP_MIN + Math.floor(rand01(s.seedHash, s.giftAt, 30) * GIFT_GAP_SPREAD));
+}
 
 /**
  * Gracz stuka w paletę: franczyzobiorca sam rozładowuje kawałek. Bez `id` bierze najpilniejszą. `combo` to mnożnik

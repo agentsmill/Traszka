@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { generateStore } from '@/sim/store/generateStore';
-import { CATS, MINUTES_PER_DAY } from './catalog';
+import { CATS, GIFT_FIRST, MINUTES_PER_DAY } from './catalog';
 import { dateOfDay } from './calendar';
-import { buyEquipment, buyUpgrade, createEconomy, stepMinute, type EconEvent, type EconomyState } from './economy';
+import { buyEquipment, buyUpgrade, createEconomy, giftWindowFrom, stepMinute, type EconEvent, type EconomyState } from './economy';
 import { LIMITS, sanitizeEconomy } from './sanitize';
 import { xpToNext } from './progress';
 import { computeStoreInfo, type StoreInfo } from './storeInfo';
@@ -86,8 +86,12 @@ describe('sanitizeEconomy: poprawny stan przechodzi bez zmian', () => {
       const inf = computeStoreInfo(generateStore(seed));
       const out = sanitizeEconomy(raw, defaults(inf, seed))!;
       expect(out).not.toBeNull();
-      // L9: tytuł zlecenia nie jest już częścią stanu
-      expect(out).toEqual({ ...raw, lastReport: null, quests: dropQuestTitles(raw.quests) });
+      // L9: tytuł zlecenia nie jest już częścią stanu. L1 i L3: zapis nie ma combo ani okna paczki, więc dostaje brak serii,
+      // ostatnie stuknięcie dawno temu i pierwsze okno GIFT_FIRST minut po minucie zapisu (w godzinach otwarcia)
+      expect(out).toEqual({
+        ...raw, lastReport: null, quests: dropQuestTitles(raw.quests),
+        tapStreak: 0, lastTapAt: -1e9, giftAt: giftWindowFrom((raw.minute as number) + GIFT_FIRST),
+      });
     }
   });
 

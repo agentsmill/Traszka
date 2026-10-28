@@ -1,9 +1,10 @@
 import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { formatMonth, isLastDayOfMonth } from '@/sim/economy/calendar';
-import { CAT_INFO, CATS, CREDIT_LIMIT, MINUTES_PER_DAY, OPEN_FROM, PALLET_ITEMS } from '@/sim/economy/catalog';
+import { CAT_INFO, CATS, CREDIT_LIMIT, GIFT_FIRST, MINUTES_PER_DAY, OPEN_FROM, PALLET_ITEMS } from '@/sim/economy/catalog';
 import {
-  buyEquipment, buyUpgrade, effects, emptyCounters, startRemont, stepMinute, tapPallet, type Counters, type EconEvent, type EconomyState,
+  buyEquipment, buyUpgrade, effects, emptyCounters, giftWindowFrom, startRemont, stepMinute, tapPallet, type Counters, type EconEvent,
+  type EconomyState,
 } from '@/sim/economy/economy';
 import { questTitle, type Quest } from '@/sim/economy/quests';
 import { LIMITS } from '@/sim/economy/sanitize';
@@ -62,6 +63,19 @@ const effectsBackroomCap = (s: GameSession): number => effects(s.econ, s.info).b
 const withoutQuestTitles = (e: EconomyState): EconomyState => ({
   ...e,
   quests: (e.quests as (Quest & { title?: string })[]).map(({ title: _, ...q }) => q),
+});
+
+/**
+ * Stan, jaki daje wczytanie zapisu z produkcji (fixtures): bez tytułów zleceń (L9) i z polami combo i okien paczek,
+ * których zapisy sprzed L1 i L3 jeszcze nie mają. Migracja: brak serii (`tapStreak` 0), ostatnie stuknięcie dawno temu
+ * (`lastTapAt` -1e9, jak `lastFineAt`) i pierwsze okno paczki `GIFT_FIRST` minut po minucie zapisu, przesunięte
+ * w godziny otwarcia (`giftWindowFrom`).
+ */
+const asLoaded = (e: EconomyState): EconomyState => ({
+  ...withoutQuestTitles(e),
+  tapStreak: 0,
+  lastTapAt: -1e9,
+  giftAt: giftWindowFrom(e.minute + GIFT_FIRST),
 });
 
 let storage: MemoryStorage;
@@ -218,7 +232,7 @@ describe('migracja zapisu v1 (sam stan ekonomii, bez układu)', () => {
       const s = createSession(seed);
       expect(s.fromSave).toBe(true);
       expect(s.loadNotice).toBeNull();
-      expect(s.econ).toEqual({ ...withoutQuestTitles(v1), lastReport: null });
+      expect(s.econ).toEqual({ ...asLoaded(v1), lastReport: null });
       expect(s.layout).toEqual(layoutFor(seed, remont));
       expect(s.layoutLevel).toBe(remont);
       // palety i sprzęt wskazują na istniejące miejsca i sloty w układzie
@@ -318,7 +332,7 @@ describe('zapisy v2 z produkcji', () => {
         expect(s.ephemeral).toBe(false);
         expect(s.retired).toBe(false);
         expect(s.layout).toEqual(f.layout);
-        expect(s.econ).toEqual(withoutQuestTitles(f.econ));
+        expect(s.econ).toEqual(asLoaded(f.econ));
         for (const q of s.econ.quests) expect('title' in q).toBe(false);
         expect(s.layoutLevel).toBe(remont);
         expect(errorLog).not.toHaveBeenCalled();
@@ -356,12 +370,12 @@ describe('zapisy v2 z produkcji', () => {
         expect(saved.gameVersion).toBe(gameVersion);
         expect(saved.generatorVersion).toBe(GENERATOR_VERSION);
         expect(saved.layout).toEqual(f.layout);
-        expect(saved.econ).toEqual(withoutQuestTitles(f.econ));
+        expect(saved.econ).toEqual(asLoaded(f.econ));
         expect(storage.getItem(key(seed))).not.toContain('"title"');
         expect(storage.getItem(`${key(seed)}:broken`)).toBeNull();
 
         const again = createSession(seed, false, partner);
-        expect(again.econ).toEqual(withoutQuestTitles(f.econ));
+        expect(again.econ).toEqual(asLoaded(f.econ));
         expect(again.layout).toEqual(f.layout);
       });
     });
