@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { OUTFIT_ORDER, rollCashierLook, stepOutfit, type CashierLook } from '@/game/cashier';
 import { NICK_MAX } from '@/game/nick';
-import { SEED_MAX, freeSeed } from '@/game/seeds';
+import { clipSeedInput, freeSeed } from '@/game/seeds';
 import { randomSeed } from '@/game/seedWords';
 import { hasStoredSave } from '@/game/session';
 import { submitStart } from '@/game/start';
@@ -120,6 +120,20 @@ function StartScreen({ request }: { request: StartRequest }) {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
+  /**
+   * Limit pola seeda liczy punkty kodowe (`SEED_MAX`: emoji to jeden znak), więc pilnuje go ten program, a nie `maxLength`, który
+   * liczy jednostki UTF-16 i ucinałby po 20 emoji. Wklejony tekst też jest przycinany; kursor zostaje tam, gdzie był (albo na końcu).
+   */
+  const editSeed = (input: HTMLInputElement): void => {
+    const clipped = clipSeedInput(input.value);
+    if (clipped !== input.value) {
+      const caret = Math.min(input.selectionStart ?? clipped.length, clipped.length);
+      input.value = clipped;
+      input.setSelectionRange(caret, caret);
+    }
+    setSeed(clipped);
+  };
+
   const submit = (e: Event): void => {
     e.preventDefault();
     const result = submitStart({ nick, seed, look, specialOutfits: special });
@@ -169,8 +183,8 @@ function StartScreen({ request }: { request: StartRequest }) {
 
             <label class="tt-field-label" for="tt-seed">Seed sklepu</label>
             <div class="tt-seedrow">
-              <input id="tt-seed" class="tt-input" type="text" value={seed} maxLength={SEED_MAX} autocomplete="off" autocapitalize="off"
-                spellcheck={false} placeholder="dowolny tekst" onInput={(e) => setSeed(e.currentTarget.value)} />
+              <input id="tt-seed" class="tt-input" type="text" value={seed} autocomplete="off" autocapitalize="off"
+                spellcheck={false} placeholder="dowolny tekst" onInput={(e) => editSeed(e.currentTarget)} />
               <button type="button" class="tt-btn tt-dice" aria-label="Wylosuj seed" title="Wylosuj seed"
                 onClick={() => setSeed(freeSeed(randomSeed, hasStoredSave))}>🎲</button>
             </div>

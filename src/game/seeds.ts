@@ -56,24 +56,71 @@ const REAL_DEPS: SeedDeps = { hasSave: hasStoredSave, build: (seed) => generateS
 export interface ResolvedStore { seed: string; notice: string | null }
 
 /**
- * Tekst seeda po czyszczeniu (pusty, gdy nic nie zostało): NFC (ten sam napis to ten sam seed), znaki sterujące znikają
- * (tabulator i nowy wiersz to spacje), spacje zwinięte i przycięte, małe litery, najwyżej `SEED_MAX` znaków. Tnie po punktach
- * kodowych, więc emoji nie rozpada się na pojedynczy surogat, którego nie da się zapisać w adresie ani w kluczu.
+ * Znaki, które nic nie rysują, a mogłyby zrobić ze seeda niewidzialny albo zmieniony napis w rankingu (seedy będą tam widoczne dla
+ * wszystkich): spacje i łączniki zerowej szerokości (U+200B, U+200C), łącznik słów (U+2060), BOM (U+FEFF) i znaki sterujące
+ * kierunkiem tekstu (U+200E, U+200F, U+202A–U+202E, U+2066–U+2069), które potrafią odwrócić pozostałą część strony. Spójnik zerowej
+ * szerokości (U+200D) też jest niewidoczny, ale skleja emoji (rodzina, zawód), więc zostaje tylko tam (`keepEmojiJoiners`).
+ * U+FEFF jest dla `\s` spacją, więc musi zniknąć, zanim spacje zostaną zwinięte (inaczej wychodzi spacja zamiast niczego).
  */
-function cleanSeed(raw: string): string {
-  const text = raw.normalize('NFC')
-    .replace(/\p{Cc}/gu, (c) => (/\s/.test(c) ? ' ' : ''))
-    .replace(/\s+/g, ' ').trim()
-    .toLowerCase().normalize('NFC');
-  return Array.from(text).slice(0, SEED_MAX).join('').trim();
+const INVISIBLE = /[\u200b\u200c\u2060\ufeff\u200e\u200f\u202a-\u202e\u2066-\u2069]/g;
+const JOINER = '\u200d';
+const PICTOGRAPH = /^\p{Extended_Pictographic}$/u;
+/** Co może stać między emoji a spójnikiem: selektor wariantu (❤\ufe0f) i odcień skóry (👩🏽). */
+const EMOJI_TAIL = /^[\ufe0f\p{Emoji_Modifier}]$/u;
+
+/** Zostawia spójnik ZWJ tylko między dwoma emoji (przed nim emoji z ewentualnym selektorem wariantu albo odcieniem skóry, po nim emoji). */
+function keepEmojiJoiners(text: string): string {
+  if (!text.includes(JOINER)) return text;
+  const chars = Array.from(text);
+  let out = '';
+  chars.forEach((c, i) => {
+    if (c !== JOINER) {
+      out += c;
+      return;
+    }
+    let before = i - 1;
+    while (before >= 0 && EMOJI_TAIL.test(chars[before]!)) before--;
+    if (before >= 0 && PICTOGRAPH.test(chars[before]!) && i + 1 < chars.length && PICTOGRAPH.test(chars[i + 1]!)) out += c;
+  });
+  return out;
 }
 
 /**
- * Seed wpisany przez gracza w postaci, pod którą gra go zapamięta: przycięty, małymi literami, ze zwiniętymi spacjami i do 40
- * znaków. Pusty tekst (też same spacje) to losowy seed z `draw` (domyślnie `randomSeed`). Idempotentna.
+ * Tekst seeda po czyszczeniu (pusty, gdy nic nie zostało): NFC (ten sam napis to ten sam seed), znaki niewidoczne i sterujące
+ * znikają (tabulator i nowy wiersz to spacje; zerowej szerokości, kierunkowe i luźny ZWJ nie liczą się do limitu), spacje
+ * zwinięte i przycięte, małe litery, najwyżej `SEED_MAX` znaków. Tnie po punktach kodowych, więc emoji nie rozpada się na pojedynczy
+ * surogat, którego nie da się zapisać w adresie ani w kluczu, a obcięcie w środku sklejonego emoji nie zostawia na końcu spójnika.
+ */
+function cleanSeed(raw: string): string {
+  const text = keepEmojiJoiners(raw.normalize('NFC').replace(INVISIBLE, ''))
+    .replace(/\p{Cc}/gu, (c) => (/\s/.test(c) ? ' ' : ''))
+    .replace(/\s+/g, ' ').trim()
+    .toLowerCase().normalize('NFC');
+  return Array.from(text).slice(0, SEED_MAX).join('').replace(/\u200d+$/, '').trim();
+}
+
+/**
+ * Seed wpisany przez gracza w postaci, pod którą gra go zapamięta: przycięty, małymi literami, ze zwiniętymi spacjami, bez znaków
+ * niewidocznych i do 40 znaków. Pusty tekst (też same spacje albo same znaki niewidoczne) to losowy seed z `draw` (domyślnie
+ * `randomSeed`). Idempotentna. Jedyne miejsce, które mówi, jaki tekst jest seedem nowego sklepu: `chooseStore` używa jej, nie własnej kopii.
  */
 export function normalizeSeed(raw: string, draw: () => string = randomSeed): string {
   return cleanSeed(raw) || draw();
+}
+
+/**
+ * Wpis w polu „Seed sklepu” przycięty do `SEED_MAX` punktów kodowych (emoji to jeden znak, a nie dwie jednostki UTF-16, jak liczy
+ * `maxLength`). To tylko limit pola: niczego więcej nie czyści (spacje, wielkość liter i znaki niewidoczne zostają do `normalizeSeed`),
+ * i nigdy nie dzieli emoji na pojedynczy surogat.
+ */
+export function clipSeedInput(text: string): string {
+  let count = 0;
+  let end = 0;
+  for (const c of text) {
+    if (++count > SEED_MAX) break;
+    end += c.length;
+  }
+  return end === text.length ? text : text.slice(0, end);
 }
 
 /** Seed, od którego zaczyna się wejście na stronę: `?seed=` z adresu, potem ostatnio grany sklep, potem losowy. */
@@ -109,15 +156,16 @@ export function resolveStore(seed: string, deps: Partial<SeedDeps> = {}): Resolv
 /**
  * Seed z pola „Seed sklepu” → sklep, który się otworzy. Zapis pod seedem wygrywa ze wszystkim: gracz dostaje swój sklep
  * („Wczytujemy Twój sklep spod tego seeda”) i nic go nie nadpisze (gra otwiera go bez `fresh`; od nowa zaczyna się tylko przez
- * ⚙ w tym sklepie). Najpierw szukamy zapisu pod tekstem wpisanym dosłownie (stare sklepy z wielkimi literami powstały przed
- * normalizacją), potem pod znormalizowanym. Bez zapisu: znormalizowany seed przez `resolveStore`. Pusty tekst to losowy seed
- * spośród wolnych.
+ * ⚙ w tym sklepie). Zapisu szukamy po kolei pod tekstem wpisanym dosłownie, przyciętym i znormalizowanym: stare sklepy z wielkimi
+ * literami albo ze spacją na brzegu (ręcznie edytowany adres `?seed=%20x`) powstały przed normalizacją i leżą pod swoim napisem.
+ * Bez zapisu: seed znormalizowany przez `normalizeSeed` (jedna reguła dla pola, adresu i ⚙) idzie przez `resolveStore`. Pusty tekst
+ * (też same spacje i znaki niewidoczne) to losowy seed spośród wolnych.
  */
 export function chooseStore(raw: string, deps: Partial<SeedDeps> = {}): ResolvedStore {
   const d = { ...REAL_DEPS, ...deps };
-  const cleaned = cleanSeed(raw);
-  for (const candidate of new Set([raw.trim(), cleaned])) {
+  const seed = normalizeSeed(raw, () => freeSeed(d.draw, d.hasSave));
+  for (const candidate of new Set([raw, raw.trim(), seed])) {
     if (candidate !== '' && d.hasSave(candidate)) return { seed: candidate, notice: EXISTING_STORE_NOTICE };
   }
-  return resolveStore(cleaned || freeSeed(d.draw, d.hasSave), d);
+  return resolveStore(seed, d);
 }
