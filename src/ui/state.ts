@@ -75,8 +75,8 @@ export const welcome: Signal<Welcome | null> = signal<Welcome | null>(null);
 export const combo: Signal<{ count: number; mult: number }> = signal({ count: 0, mult: 1 });
 
 /** Sieć sklepów i ustawienia z mety (meta.ts) dla interfejsu. */
-export interface MetaView { points: number; stores: number; networkIncome: number; sound: boolean; vibration: boolean }
-export const metaView: Signal<MetaView> = signal<MetaView>({ points: 0, stores: 0, networkIncome: 0, sound: true, vibration: true });
+export interface MetaView { points: number; stores: number; networkIncome: number; /** Seedy sklepów już w sieci. */ network: string[]; sound: boolean; vibration: boolean }
+export const metaView: Signal<MetaView> = signal<MetaView>({ points: 0, stores: 0, networkIncome: 0, network: [], sound: true, vibration: true });
 export const showPrestige: Signal<boolean> = signal(false);
 
 /** Polecenia gracza w grze. Implementuje je main.ts (zmienia stan ekonomii i odświeża scenę). */

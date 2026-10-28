@@ -11,6 +11,14 @@ export function listenForNotices(): void {
   });
 }
 
+/**
+ * Wysyła komunikat dla gracza tym samym kanałem co renderer. Idzie po zakończeniu bieżącego zadania, czyli po komunikatach
+ * renderera z tego samego startu: ten o zapisie, który może kosztować gracza postęp, zostaje na wierzchu.
+ */
+export function postNotice(text: string): void {
+  setTimeout(() => window.dispatchEvent(new CustomEvent(NOTICE_EVENT, { detail: { text } })), 0);
+}
+
 /** Pasek u góry z komunikatem (np. tryb oszczędny albo brak WebGL 2). Zostaje, dopóki gracz go nie zamknie. */
 export function Notice() {
   const text = notice.value;

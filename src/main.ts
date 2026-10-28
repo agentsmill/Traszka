@@ -17,10 +17,11 @@ import { createBlobShadows } from '@/render/characters/blobShadows';
 import { MAX_FRAME_DT, advanceClock, clockAlpha } from '@/game/loop';
 import { randomSeed } from '@/game/seedWords';
 import { createWorld, type World } from '@/game/world';
-import { createSession, deleteSave, lastSavedSeed, saveSession, syncLayout, type GameSession } from '@/game/session';
 import {
-  addToNetwork, advanceDaily, dailyReward, loadMeta, offlineEarnings, partnerOf, saveMeta, type Meta,
-} from '@/game/meta';
+  BROKEN_SAVE_NOTICE, BROKEN_SAVE_NOTICE_NO_COPY, createSession, deleteSave, lastSavedSeed, quarantineSave, retireSession, reviveSession,
+  saveSession, syncLayout, type GameSession,
+} from '@/game/session';
+import { addToNetwork, claimDaily, loadMeta, partnerOf, saveMeta, welcomeOffer, type Meta } from '@/game/meta';
 import { rankFor } from '@/sim/economy/progress';
 import { play, buzz, setSound, setVibration, type Sfx } from '@/ui/sfx';
 import { confetti } from '@/ui/fx';
@@ -40,7 +41,7 @@ import { spotCells } from '@/sim/economy/storeInfo';
 import { generateStore } from '@/sim/store/generateStore';
 import { CELL_SIZE_M } from '@/sim/grid';
 import { renderUi } from '@/ui/App';
-import { listenForNotices } from '@/ui/Notice';
+import { listenForNotices, postNotice } from '@/ui/Notice';
 import { createWorldOverlay } from '@/ui/worldOverlay';
 import { FrameMeter } from '@/ui/perfMeter';
 import * as ui from '@/ui/state';
@@ -289,16 +290,20 @@ function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: st
   let meta: Meta = loadMeta();
   setSound(meta.sound);
   setVibration(meta.vibration);
+  // createSession nie rzuca z powodu zapisu: uszkodzony trafia do kopii, a gra startuje od zera z komunikatem (loadNotice)
   let session: GameSession | null = benchMode ? null : createSession(initialSeed, params.get('new') === '1', partnerOf(meta));
+  if (session?.loadNotice) postNotice(session.loadNotice);
   const persist = (): void => {
     if (!session) return;
     saveSession(session);
-    meta.lastSeen = Date.now();
+    if (!ui.welcome.value) meta.lastSeen = Date.now();   // zarobek z nieobecności czeka na „Odbierz!”, więc czas wyjścia zostaje stary
     saveMeta(meta);
   };
   const publishMeta = (): void => {
     const p = partnerOf(meta);
-    ui.metaView.value = { points: p.points, stores: p.stores, networkIncome: p.networkIncome, sound: meta.sound, vibration: meta.vibration };
+    ui.metaView.value = {
+      points: p.points, stores: p.stores, networkIncome: p.networkIncome, network: meta.network.map((n) => n.seed), sound: meta.sound, vibration: meta.vibration,
+    };
   };
   publishMeta();
   const overlay = benchMode ? null : createWorldOverlay(document.body);
@@ -384,15 +389,35 @@ function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: st
     }).catch((error: unknown) => console.error('Nie udało się zbudować ulicy.', error));
   }
 
-  function setSeed(next: string, fresh = false): void {
+  /**
+   * Przechodzi do sklepu `next`: zapisuje obecny, buduje świat nowego i dopiero wtedy zmienia adres. Gdy coś po drodze
+   * rzuci, zostaje poprzedni sklep (świat budowany od nowa z jego sesji), a gracz dostaje komunikat. Zwraca, czy się udało.
+   */
+  function setSeed(next: string, fresh = false): boolean {
     persist();
+    const previous = session;
+    const previousSeed = loaded?.world.seed ?? ui.seed.value;
+    try {
+      if (!benchMode) session = createSession(next, fresh, partnerOf(meta));
+      ui.selection.value = null;
+      load(next);
+    } catch (error) {
+      console.error(`Nie udało się otworzyć sklepu „${next}”.`, error);
+      session = previous;
+      try {
+        load(previous ? previous.seed : previousSeed);
+      } catch (again) {
+        console.error('Nie udało się odtworzyć poprzedniego sklepu.', again);
+      }
+      postNotice(`Nie udało się otworzyć sklepu „${next}”. Zostajesz w poprzednim.`);
+      return false;
+    }
     writeSeedToUrl(next);
-    if (!benchMode) session = createSession(next, fresh, partnerOf(meta));
-    ui.selection.value = null;
-    load(next);
     ui.seed.value = next;
     publish();
     persist();
+    if (session?.loadNotice) postNotice(session.loadNotice);
+    return true;
   }
 
   // --- Ekonomia → scena i interfejs ---
@@ -546,7 +571,10 @@ function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: st
       ui.welcome.value = null;
       if (!session || !w) return;
       grantOffline(session.econ, w.offline);
-      if (w.daily) grantDaily(session.econ, w.daily.cash, w.daily.ogonki);
+      if (w.daily && w.streak !== null) {
+        grantDaily(session.econ, w.daily.cash, w.daily.ogonki);
+        claimDaily(meta, w.streak, new Date());   // seria przesuwa się dopiero po odebraniu premii
+      }
       play('coins');
       confetti();
       afterAction();
@@ -554,12 +582,17 @@ function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: st
     },
     openNextStore: () => {
       if (!session) return;
-      const old = session.econ;
-      meta = addToNetwork(meta, old);
-      saveMeta(meta);
-      deleteSave(old.seed);
+      const closed = session;
+      const before = meta;
+      meta = addToNetwork(meta, closed.econ);   // nowy sklep dostaje już premię z tego; ten sam seed drugi raz niczego nie daje
+      retireSession(closed);                    // zapis znika i nie wróci: setSeed zaraz zapisuje „bieżący” sklep
+      if (!setSeed(randomSeed(), true)) {       // nowy sklep się nie otworzył: wszystko wraca na miejsce
+        meta = before;
+        reviveSession(closed);
+        persist();
+        return;
+      }
       publishMeta();
-      setSeed(randomSeed(), true);
       ui.tab.value = null;
       ui.celebration.value = {
         title: 'NOWA TRASZKA!',
@@ -664,19 +697,27 @@ function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: st
     randomize: () => setSeed(randomSeed()),
   };
 
-  load(initialSeed);
+  try {
+    load(initialSeed);
+  } catch (error) {
+    // Zapis przeszedł walidację, a świat i tak się z niego nie zbudował (np. nietypowy układ): zapis idzie do kopii, a gra
+    // startuje od zera. Bez tego odświeżenie powtarzałoby ten sam wyjątek w nieskończoność.
+    if (!session?.fromSave) throw error;
+    console.error('Nie udało się zbudować sklepu z zapisu.', error);
+    const backedUp = quarantineSave(session.seed);
+    session = createSession(session.seed, true, partnerOf(meta));
+    session.loadNotice = backedUp ? BROKEN_SAVE_NOTICE : BROKEN_SAVE_NOTICE_NO_COPY;
+    postNotice(session.loadNotice);
+    load(session.seed);
+  }
   if (session) {
-    writeSeedToUrl(session.seed);
+    writeSeedToUrl(session.seed);   // adres dopiero po tym, jak świat stoi
     publish();
     const fresh = session.econ.minute === OPEN_FROM && session.econ.total.customers === 0;
-    const streak = advanceDaily(meta, new Date());
     if (fresh) {
       ui.showIntro.value = true;
     } else if (!session.econ.gameOver) {   // po wypowiedzeniu umowy wstaje samo okno końca gry, bez premii na powitanie
-      const hours = meta.lastSeen > 0 ? (Date.now() - meta.lastSeen) / 3_600_000 : 0;
-      const offline = offlineEarnings(session.econ, hours);
-      const daily = streak !== null ? dailyReward(streak, session.econ.level) : null;
-      if (offline > 0 || daily) ui.welcome.value = { hours, offline, streak, daily };
+      ui.welcome.value = welcomeOffer(meta, session.econ, new Date());   // nic się nie zapisuje, dopóki gracz nie kliknie „Odbierz!”
     }
     persist();
   }
@@ -832,6 +873,5 @@ if (params.get('charTest') === '1') {
   const benchKit = params.get('bench') === '1' ? await import('@/bench/bench') : null;
   const requested = benchKit ? benchKit.BENCH_SEED : params.get('seed');
   const seed = requested || lastSavedSeed() || randomSeed();
-  if (!requested) writeSeedToUrl(seed);
-  startGame(canvas, uiRoot, seed, presetFromUrl(), params, benchKit);
+  startGame(canvas, uiRoot, seed, presetFromUrl(), params, benchKit);   // adres wpisze sam, gdy świat już stoi
 }

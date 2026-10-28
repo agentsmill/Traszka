@@ -386,7 +386,9 @@ function GoalsPanel({ s, game }: { s: EconomyState; game: GameActions }) {
         <Row label="Sklepy w sieci">{meta.stores}</Row>
         <Row label="Dochód z sieci">{zl(meta.networkIncome)} / dzień</Row>
         <Row label="Punkty Partnera">{meta.points} (+{4 * meta.points}% marży, +{3 * meta.points}% ruchu)</Row>
-        {prestigeReady(s)
+        {meta.network.includes(s.seed)
+          ? <p class="tt-hint">Ten lokal już jest w Twojej sieci, więc drugi raz nie da Punktów Partnera ani dochodu. Otwórz sklep z innym seedem (Ustawienia), żeby sieć rosła.</p>
+          : prestigeReady(s)
           ? (
             <>
               <p class="tt-hint">Ten sklep jest gotowy, by dołączyć do sieci: da <b>+{prestigePoints(s)} Punktów Partnera</b> i <b>{zl(networkIncomeOf(s))}</b> dziennie w każdej kolejnej grze.</p>
