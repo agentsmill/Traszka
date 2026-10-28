@@ -4,9 +4,11 @@ import type { Agent } from '@/sim/crowd/crowd';
 import type { StoreLayout } from '@/sim/store/types';
 import { characterBlobRadii, setCharacterShadowCasting, type BlobShadows, type BlobSlot } from './characters/blobShadows';
 import type { CharacterFactory, CharacterInstance, OutfitOverrides } from './characters/characterFactory';
+import { Gait } from './characters/gait';
 import type { OutfitFile } from './characters/modularPack';
 import { cellToWorld } from './coords';
 import { headingToYaw, turnTowards } from './crowdView';
+import { STAFF_WALK_SPEED } from './staff/walker';
 import { PALETTE } from './style';
 
 /** Czas gestu przy sprzedaży (s animacji): krótki, żeby nie zasłaniał następnego klienta. */
@@ -17,6 +19,13 @@ export const GESTURE_HOP_M = 0.12;
 export const GESTURE_BOW_RAD = 0.2;
 /** Mundur personelu: góra w zieleni marki (ruling R43). */
 const UNIFORM: OutfitOverrides = Object.freeze({ top: PALETTE.brand.green });
+
+/**
+ * Gdzie kasjer jest, gdy nie stoi za kasą, tylko chodzi po sklepie (zmiana kasjera, praca poza kasą): to, co liczy załoga
+ * personelu na ekranie. `x`, `y` w kratkach jak `Agent.x/y` (środek kratki = indeks + 0.5), `heading` w rad (0 = +x siatki),
+ * `moving` mówi, czy w tej klatce idzie (wybiera klip chodu).
+ */
+export interface CashierPose { x: number; y: number; heading: number; moving: boolean }
 
 /** Zwalnia postać i zdejmuje ją ze sceny (jej własne `dispose` zwalnia materiał i szkielet, geometria jest wspólna w fabryce). */
 export function releaseCharacter(character: CharacterInstance): void {
@@ -54,13 +63,22 @@ export function createCashierCharacter(factory: CharacterFactory, look: CashierL
  * wygładzanie), a bez klienta wraca do spojrzenia na kasę. Przy sprzedaży robi krótki gest proceduralny (podskok z ukłonem),
  * bez nowych klipów. Strój zwykły nosi w zieleni marki (mundur personelu, `OutfitOverrides.top`), specjalny zostaje sobą.
  *
+ * Od załogi personelu na ekranie dostaje dwie rzeczy z zewnątrz. `setPose` zdejmuje go zza lady: chodzi po sklepie jak
+ * pracownik (pozycja, obrót i klip chodu z pozy, bez gestu), a `setPose(null)` odstawia go za kasę. `setVisible(false)` chowa
+ * go, gdy jest poza zmianą: postać zostaje (kolejna zmiana, wygląd i strój specjalny się nie gubią), tylko nie jest rysowana ani
+ * animowana. Klip `idle`/`walk` wybiera `Gait`, ten sam co u pracowników, więc kasjer chodzi dokładnie jak oni.
+ *
  * Strój specjalny dochodzi na żądanie (`ensureOutfit`, ruling R40): do tego czasu miejsce za ladą jest puste (albo stoi poprzedni
  * kasjer, gdy to zmiana wyglądu). Stroje zwykłe i specjalne, które fabryka już ma (`hasOutfit`), powstają od razu, więc remont w
  * środku klatki nie zostawia klatki bez kasjera. Układ bez kasy nie ma kasjera; widok jest wtedy bezczynny.
  */
 export class CashierView {
   private readonly spot: CashierSpot | null;
+  /** Kratka za kasą we współrzędnych świata (`null` bez kasy). */
+  private readonly home: { x: number; z: number } | null;
   private current: CharacterInstance | null = null;
+  /** Wybór klipu `current`; nowy przy każdej budowie postaci (nowa postać zaczyna w `idle`). */
+  private gait: Gait | null = null;
   private look: CashierLook | null = null;
   private slot: BlobSlot | null = null;
   private yaw: number;
@@ -70,6 +88,11 @@ export class CashierView {
   private request = 0;
   private castShadows = true;
   private disposed = false;
+  /** Poza z `setPose`, gdy `posed`; zapisywana w miejscu, bo `setPose` bywa wołane co klatkę (bez alokacji). */
+  private readonly pose: CashierPose = { x: 0, y: 0, heading: 0, moving: false };
+  private posed = false;
+  /** Czy kasjer jest na zmianie (`setVisible`): pamiętane też przed zbudowaniem postaci, bo strój specjalny dochodzi później. */
+  private visible = true;
 
   /** `blobs`: wspólne plamy cienia (kasjer rezerwuje jedno miejsce); bez nich kasjer jest bez plamy. */
   constructor(
@@ -80,6 +103,7 @@ export class CashierView {
     look: CashierLook,
   ) {
     this.spot = cashierSpot(layout);
+    this.home = this.spot ? cellToWorld(layout, this.spot.cell.x, this.spot.cell.y) : null;
     this.yaw = headingToYaw(this.spot?.heading ?? 0);
     this.setLook(look);
   }
@@ -124,26 +148,69 @@ export class CashierView {
   }
 
   /**
+   * Kasjer chodzi: pozycja, obrót i klip z `pose` zamiast stania za kasą (bez gestu i bez patrzenia na klienta). Wołane co klatkę
+   * z aktualną pozą; `update` ją stosuje. `null` odstawia kasjera na kratkę za kasą (od następnej klatki znów patrzy na klienta i
+   * robi gest, a klip wraca do `Idle`). Poza jest kopiowana. Nie rusza wczytywania wyglądu: strój specjalny, który dopiero dochodzi,
+   * powstanie od razu na pozycji z pozy.
+   */
+  setPose(pose: CashierPose | null): void {
+    if (this.disposed) return;
+    if (pose) {
+      this.pose.x = pose.x;
+      this.pose.y = pose.y;
+      this.pose.heading = pose.heading;
+      this.pose.moving = pose.moving;
+      this.posed = true;
+      return;
+    }
+    if (!this.posed) return;
+    this.posed = false;
+    if (this.current) this.place(this.current.object);
+  }
+
+  /**
+   * Kasjer na zmianie (`true`, domyślnie) albo poza nią: postać i plama niewidoczne (`object.visible = false`, plama o zerowym
+   * promieniu, miejsce w plamach zostaje), bez zwalniania, więc powrót na zmianę nie buduje niczego od nowa. Ukryty kasjer nie
+   * jest animowany, bo nikt go nie widzi (`update` nic nie robi). Działa też przed zbudowaniem postaci i przy zmianie wyglądu.
+   */
+  setVisible(visible: boolean): void {
+    if (this.disposed || visible === this.visible) return;
+    this.visible = visible;
+    if (!this.current) return;
+    this.current.object.visible = visible;
+    this.placeBlob(this.current.object);
+  }
+
+  /**
    * Jedna klatka. `dt` to czas ramki w sekundach symulacji (rzeczywisty dt × prędkość gry; 0 przy pauzie): napędza obrót.
-   * `animDt` to czas ramki dla animacji (np. przycięty do `ANIM_SPEED_CAP` × dt, jak w tłumie): napędza `Idle` i gest.
+   * `animDt` to czas ramki dla animacji (np. przycięty do `ANIM_SPEED_CAP` × dt, jak w tłumie): napędza klip i gest.
    * `serving` to klient płacący przy kasie (kasjer patrzy na niego) albo null, `sale` to sprzedaż w tej klatce (zaczyna gest).
+   * Z pozą (`setPose`) kasjer idzie według niej, a `serving` i `sale` go nie obchodzą.
    */
   update(dt: number, serving: Agent | null, sale: boolean, animDt: number = dt): void {
     const character = this.current;
-    if (this.disposed || !this.spot || !character) return;
-    if (sale) this.gestureT = 0;
-    this.yaw = turnTowards(this.yaw, headingToYaw(this.headingTo(serving)), dt);
-    character.update(animDt);
-
-    let bow = 0;
-    if (this.gestureT !== null) {
-      this.gestureT += animDt;
-      if (this.gestureT >= GESTURE_S) this.gestureT = null;
-      else bow = Math.sin(Math.PI * (this.gestureT / GESTURE_S));
-    }
+    if (this.disposed || !this.spot || !character || !this.visible) return;
     const o = character.object;
-    o.position.y = GESTURE_HOP_M * bow;
-    o.rotation.x = GESTURE_BOW_RAD * bow;
+    if (this.posed) {
+      this.gestureT = null;
+      this.yaw = turnTowards(this.yaw, headingToYaw(this.pose.heading), dt);
+      this.gait!.update(this.pose.moving, dt, animDt);
+      this.place(o);
+      o.rotation.x = 0;
+    } else {
+      if (sale) this.gestureT = 0;
+      this.yaw = turnTowards(this.yaw, headingToYaw(this.headingTo(serving)), dt);
+      this.gait!.update(false, dt, animDt);
+
+      let bow = 0;
+      if (this.gestureT !== null) {
+        this.gestureT += animDt;
+        if (this.gestureT >= GESTURE_S) this.gestureT = null;
+        else bow = Math.sin(Math.PI * (this.gestureT / GESTURE_S));
+      }
+      o.position.y = GESTURE_HOP_M * bow;
+      o.rotation.x = GESTURE_BOW_RAD * bow;
+    }
     o.rotation.y = this.yaw;
   }
 
@@ -154,6 +221,7 @@ export class CashierView {
     this.request++;   // wczytywanie w toku nic już nie postawi
     if (this.current) releaseCharacter(this.current);
     this.current = null;
+    this.gait = null;
     this.slot?.release();
     this.slot = null;
   }
@@ -166,25 +234,40 @@ export class CashierView {
     return Math.hypot(dx, dy) < 1e-6 ? heading : Math.atan2(dy, dx);
   }
 
-  /** Stawia kasjera w danym wyglądzie na jego kratce; poprzednia postać (zmiana wyglądu) jest zwalniana po utworzeniu nowej. */
+  /**
+   * Stawia kasjera w danym wyglądzie tam, gdzie powinien być teraz (na kratce za kasą albo na pozycji z pozy, jeśli akurat chodzi),
+   * z zachowaniem ukrycia; poprzednia postać (zmiana wyglądu) jest zwalniana po utworzeniu nowej.
+   */
   private build(look: CashierLook): void {
-    const spot = this.spot!;
     const character = createCashierCharacter(this.factory, look);
     const previous = this.current;
     this.current = character;
+    this.gait = new Gait(character, this.factory.walkSpeedMps, STAFF_WALK_SPEED);   // nowa postać zaczyna w `idle`
     if (previous) releaseCharacter(previous);
 
     const o = character.object;
     o.rotation.order = 'YXZ';   // obrót wokół osi y postaci, a dopiero potem pochylenie (ukłon) wokół jej własnej osi x
-    const at = cellToWorld(this.layout, spot.cell.x, spot.cell.y);
-    o.position.set(at.x, 0, at.z);
     o.rotation.y = this.yaw;
+    o.visible = this.visible;
     if (!this.castShadows) setCharacterShadowCasting(o, false);
     this.parent.add(o);
     this.gestureT = null;
 
     this.slot ??= this.blobs?.reserve() ?? null;
-    const [rx, rz] = characterBlobRadii(o);
-    this.slot?.set(at.x, at.z, rx, rz);
+    this.place(o);
+  }
+
+  /** Stawia postać na podłodze na pozycji z pozy albo, bez pozy, na kratce za kasą, i plamę pod nią. */
+  private place(o: Object3D): void {
+    const at = this.posed ? cellToWorld(this.layout, this.pose.x - 0.5, this.pose.y - 0.5) : this.home!;   // poza w kratkach: środek = indeks + 0.5
+    o.position.set(at.x, 0, at.z);
+    this.placeBlob(o);
+  }
+
+  /** Plama pod stopami postaci (elipsa wg tuszy); ukryty kasjer ma ją o zerowym promieniu, ale miejsce w plamach zostaje. */
+  private placeBlob(o: Object3D): void {
+    if (!this.slot) return;
+    const [rx, rz] = this.visible ? characterBlobRadii(o) : [0, 0];
+    this.slot.set(o.position.x, o.position.z, rx, rz);
   }
 }
