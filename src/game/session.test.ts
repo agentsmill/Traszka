@@ -12,7 +12,7 @@ import { GENERATOR_VERSION, generateStore } from '@/sim/store/generateStore';
 import { MemoryStorage } from './memoryStorage';
 import {
   BROKEN_SAVE_NOTICE, NEWER_SAVE_NOTICE, SAVE_SCHEMA, UNBUILDABLE_SAVE_NOTICE, createSession, deleteSave, discardSave, hasStoredSave,
-  lastSavedSeed, layoutFor, retireSession, reviveSession, saveSession, syncLayout, withLayoutFromSeed, type GameSession,
+  lastSavedSeed, layoutFor, retireSession, reviveSession, saveSession, syncLayout, withLayoutFromSeed, type GameSession, type SaveEnvelope,
 } from './session';
 
 /**
@@ -236,6 +236,118 @@ describe('migracja zapisu v1 (sam stan ekonomii, bez układu)', () => {
     const partner = { points: 3, networkIncome: 450, stores: 2 };
     expect(createSession(BLOK, false, partner).econ.partner).toEqual(partner);
   });
+});
+
+/**
+ * Koperty v2 wygenerowane kodem produkcji (`src/sim` i `session.ts` sprzed zmian etapu 2) przez bota: stuka w palety i kasę,
+ * odbiera zlecenia i paczki, kupuje ulepszenia i sprzęt, robi remonty. To dokładnie ten format, jaki mają zapisy graczy w
+ * przeglądarkach. Dalsze zmiany stanu gry wolno robić tylko tak, żeby te pliki wczytywały się dalej; jeśli któraś zmiana
+ * wymaga innego wyniku wczytania, trzeba to opisać jawnie jako migrację (i zaktualizować tę próbę), a nie po cichu.
+ */
+describe('zapisy v2 z produkcji', () => {
+  const FIXTURE_A = 'traszka-v2-a';
+  const FIXTURE_B = 'traszka-v2-b';
+  const cases: { file: string; seed: string; partner: EconomyState['partner']; remont: number; describeIt: (e: EconomyState) => void }[] = [
+    {
+      // 30 dni od otwarcia i jeszcze pięć godzin: raport za wrzesień, palety z porannej dostawy i zamówienie z 11:00 w drodze
+      file: 'save-v2-dzien30.json', seed: FIXTURE_A, partner: { points: 0, networkIncome: 0, stores: 0 }, remont: 1,
+      describeIt: (e) => {
+        expect(e.lastReport?.label).toBe('wrzesień 2026');
+        expect(e.pallets.length).toBeGreaterThan(0);
+        expect(e.deliveries.length).toBeGreaterThan(0);
+        expect(e.quests).toHaveLength(3);
+        for (const q of e.quests) expect(q.title.length).toBeGreaterThan(0);
+        expect(e.equipment.length).toBeGreaterThan(0);
+      },
+    },
+    {
+      // remont poziomu 2 (łącznie z premią z sieci sklepów) i trzy dni po nim: sprzęt rozstawiony w slotach nowego układu
+      file: 'save-v2-remont2.json', seed: FIXTURE_B, partner: { points: 120, networkIncome: 350, stores: 2 }, remont: 2,
+      describeIt: (e) => {
+        expect(e.level).toBeGreaterThanOrEqual(14);
+        expect(e.equipment.length).toBeGreaterThan(0);
+        for (const unit of e.equipment) expect(unit.slot, unit.id).not.toBeNull();
+        expect(e.pallets.length).toBeGreaterThan(0);
+        expect(e.deliveries.length).toBeGreaterThan(0);
+        expect(e.partner).toEqual({ points: 120, networkIncome: 350, stores: 2 });
+      },
+    },
+  ];
+
+  for (const { file, seed, partner, remont, describeIt } of cases) {
+    const fixture = (): SaveEnvelope => JSON.parse(text(file)) as SaveEnvelope;
+
+    describe(file, () => {
+      it('to koperta v2 z treścią, na której opiera się przypięcie', () => {
+        const f = fixture();
+        expect(Object.keys(f).sort()).toEqual(['econ', 'gameVersion', 'generatorVersion', 'layout', 'schema', 'seed']);
+        expect(f.schema).toBe(2);
+        expect(f.seed).toBe(seed);
+        expect(f.econ.version).toBe(1);
+        expect(f.econ.seed).toBe(seed);
+        expect(f.econ.remontLevel).toBe(remont);
+        expect(f.econ.gameOver).toBe(false);
+        expect(f.econ.partner).toEqual(partner);
+        expect(nonFinite(f)).toEqual([]);
+        describeIt(f.econ);
+      });
+
+      it('wczytuje się jak zwykły zapis: stan i układ bez zmian, bez komunikatu i bez błędów', () => {
+        const f = fixture();
+        storage.setItem(key(seed), text(file));
+
+        const s = createSession(seed, false, partner);
+        expect(s.fromSave).toBe(true);
+        expect(s.loadNotice).toBeNull();
+        expect(s.ephemeral).toBe(false);
+        expect(s.retired).toBe(false);
+        expect(s.layout).toEqual(f.layout);
+        expect(s.econ).toEqual(f.econ);
+        expect(s.layoutLevel).toBe(remont);
+        expect(errorLog).not.toHaveBeenCalled();
+
+        // samo wczytanie niczego nie zapisuje ani nie tworzy kopii
+        expect(storage.getItem(key(seed))).toBe(text(file));
+        expect(storage.getItem(`${key(seed)}:broken`)).toBeNull();
+        // palety i sprzęt stoją w miejscach, które istnieją w zapisanym układzie
+        for (const p of s.econ.pallets) expect(s.info.spots[p.loc][p.spot], `${p.loc}#${p.spot}`).toBeDefined();
+        for (const e of s.econ.equipment) expect(s.info.slots.some((slot) => slot.id === e.slot), String(e.slot)).toBe(true);
+      });
+
+      it('po wczytaniu gra toczy się dalej: dziesięć dni bez NaN i bez wyjątku', () => {
+        storage.setItem(key(seed), text(file));
+        const s = createSession(seed, false, partner);
+        const from = s.econ.minute;
+        play(s, 10);
+        expect(s.econ.minute).toBe(from + 10 * MINUTES_PER_DAY);
+        expect(s.econ.gameOver).toBe(false);
+        expect(nonFinite(s.econ)).toEqual([]);
+        expect(JSON.parse(JSON.stringify(s.econ))).toEqual(s.econ);   // NaN i Infinity zamieniłyby się w null
+        expect(errorLog).not.toHaveBeenCalled();
+      });
+
+      it('zapis po wczytaniu daje kopertę v2 z tym samym układem i stanem', () => {
+        const f = fixture();
+        storage.setItem(key(seed), text(file));
+        const s = createSession(seed, false, partner);
+        saveSession(s);
+
+        const saved = JSON.parse(storage.getItem(key(seed))!) as SaveEnvelope;
+        expect(Object.keys(saved).sort()).toEqual(['econ', 'gameVersion', 'generatorVersion', 'layout', 'schema', 'seed']);
+        expect(saved.schema).toBe(2);
+        expect(saved.seed).toBe(seed);
+        expect(saved.gameVersion).toBe(gameVersion);
+        expect(saved.generatorVersion).toBe(GENERATOR_VERSION);
+        expect(saved.layout).toEqual(f.layout);
+        expect(saved.econ).toEqual(f.econ);
+        expect(storage.getItem(`${key(seed)}:broken`)).toBeNull();
+
+        const again = createSession(seed, false, partner);
+        expect(again.econ).toEqual(f.econ);
+        expect(again.layout).toEqual(f.layout);
+      });
+    });
+  }
 });
 
 describe('uszkodzone zapisy', () => {
