@@ -46,7 +46,7 @@ export const SAVE_BUNDLE_VERSION = 1;
  * gracza nic nie kosztuje, więc limity na klucz i adres nie zatrzymają kogoś, kto je zmienia; ten licznik zatrzymuje. Zapis z gry
  * waży ok. 10 KB, ale w najgorszym razie 2000 wysłań po 64 KB to ok. 125 MB na dobę: tyle najwyżej doleje się do bazy.
  */
-export const SAVE_DAILY_BUDGET = 2_000;
+export const SAVE_DAILY_BUDGET = 300;
 /** Licznik budżetu dziennego żyje dobę od pierwszego wysłania (nazwa klucza ma dzień, więc stary licznik nikomu nie przeszkadza). */
 export const BUDGET_TTL = DAY;
 /** Ranking seeda żyje ponad rok od ostatniego wyniku, a ranking tygodnia dziewięć tygodni (bieżący i dwa miesiące wstecz). */
