@@ -1,9 +1,9 @@
-import { Group, Mesh, type Object3D } from 'three';
+import { BufferGeometry, DataTexture, Group, Mesh, MeshBasicMaterial, type Material, type Object3D } from 'three';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CashierLook } from '@/game/cashier';
 import type { CharacterFactory, CharacterInstance, OutfitOverrides } from '@/render/characters/characterFactory';
 import type { OutfitFile } from '@/render/characters/modularPack';
-import { PALETTE } from '@/render/style';
+import { PALETTE, material } from '@/render/style';
 import { DRAG_RAD_PER_PX, RESUME_SPIN_AFTER_MS, SPIN_RAD_S, cameraDistance, createStartPreview, type PreviewRenderer } from './preview';
 
 const REGULAR: CashierLook = { outfit: 'men-suit', appearanceSeed: 'kasjer-a' };
@@ -19,10 +19,23 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
 }
 const flush = (): Promise<void> => new Promise((resolve) => { setTimeout(resolve, 0); });
 
-/** Fabryka-atrapa jak w teście CashierView: postać to grupa z jedną siatką; `hasOutfit` odpowiada jak prawdziwa. */
+/**
+ * Fabryka-atrapa jak w teście CashierView: postać to grupa z jedną siatką; `hasOutfit` odpowiada jak prawdziwa. Jak w prawdziwej
+ * fabryce geometria jest WSPÓLNA dla wszystkich postaci tego samego stroju (żyje w fabryce, dzieli ją z grą), a materiał jest
+ * własny postaci i zwalnia go jej `dispose`.
+ */
 function fakeFactory(ensure: (outfit: OutfitFile) => Promise<void> = () => Promise.resolve()) {
   const made: Made[] = [];
   const ready = new Set<OutfitFile>();
+  const shared = new Map<OutfitFile, BufferGeometry>();
+  const sharedGeometry = (outfit: OutfitFile): BufferGeometry => {
+    let geometry = shared.get(outfit);
+    if (!geometry) {
+      shared.set(outfit, geometry = new BufferGeometry());
+      geometry.name = `wspólna geometria ${outfit}`;
+    }
+    return geometry;
+  };
   const ensureOutfit = vi.fn((outfit: OutfitFile) => ensure(outfit).then(() => { ready.add(outfit); }));
   const factory: CharacterFactory = {
     walkSpeedMps: 1.15,
@@ -32,23 +45,71 @@ function fakeFactory(ensure: (outfit: OutfitFile) => Promise<void> = () => Promi
     hasOutfit: (outfit) => !outfit.startsWith('special-') || ready.has(outfit),
     createWithOutfit(seed, outfit, overrides) {
       const object = new Group();
-      object.add(new Mesh());
+      const own = new MeshBasicMaterial();
+      object.add(new Mesh(sharedGeometry(outfit), own));
       const update = vi.fn();
-      const dispose = vi.fn(() => object.removeFromParent());
+      const dispose = vi.fn(() => { own.dispose(); object.removeFromParent(); });
       const character: CharacterInstance = { object, outfit, setAnim: vi.fn(), update, dispose, isFallback: false };
       made.push({ seed, outfit, overrides, character, update, dispose });
       return character;
     },
   };
-  return { factory, made, ensureOutfit };
+  return { factory, made, ensureOutfit, sharedGeometry };
 }
 
-/** Renderer-atrapa: zapisuje wywołania; scena do sprawdzenia przychodzi z `render`. */
+/** Renderer-atrapa: zapisuje wywołania; scena do sprawdzenia przychodzi z `render`. Bez właściwości materiałów (nic nie zdążył narysować). */
 function fakeRenderer() {
   const renderer = {
     setPixelRatio: vi.fn(), setSize: vi.fn(), render: vi.fn(), dispose: vi.fn(), forceContextLoss: vi.fn(),
+    properties: { get: (): unknown => undefined },
   } satisfies PreviewRenderer;
   return renderer;
+}
+
+/**
+ * Renderer-atrapa, który zachowuje się jak prawdziwy `WebGLRenderer` three 0.186:
+ * - przy rysowaniu zapisuje się na zdarzenie `dispose` każdej geometrii i każdego materiału, które widzi, a zdejmuje się z nich tylko
+ *   wtedy, gdy ktoś TEN obiekt zwolni; własne `dispose()` renderera niczego nie zdejmuje, więc obiekt, który przeżywa podgląd
+ *   (wspólna geometria fabryki, materiał z pamięci stylu), trzyma po nim nasłuch, a przez niego cały renderer;
+ * - materiał dostaje w uniformie `dfgLUT` GLOBALNĄ teksturę DFG LUT (jedna na stronę, dzielona przez wszystkie renderery), też
+ *   zapisuje się na jej `dispose`, a zwolnienie materiału kasuje jego właściwości (`properties.remove`), więc po zwolnieniu materiału
+ *   nie da się już z niego odczytać tekstury.
+ * `subscribed` to to, czym renderer jest związany (`labels()`: czytelne nazwy), `lut` to ta globalna tekstura, `game` to nasłuch
+ * „drugiego renderera, który żyje dalej” (gra pod ekranem „Nowy sklep”): zapisuje się na LUT-cie tak samo i musi umieć zapisać się znowu.
+ */
+function trackingRenderer() {
+  const lut = new DataTexture();
+  lut.name = 'DFG_LUT';
+  const game = { dropped: 0, subscribe: () => lut.addEventListener('dispose', game.onDispose), onDispose: () => { game.dropped++; lut.removeEventListener('dispose', game.onDispose); } };
+  game.subscribe();
+  const properties = new Map<object, { uniforms: { dfgLUT: { value: DataTexture } } }>();
+  const subscribed = new Map<BufferGeometry | Material | DataTexture, () => void>();
+  const watch = (resource: BufferGeometry | Material | DataTexture): void => {
+    if (subscribed.has(resource)) return;
+    const onDispose = (): void => {
+      resource.removeEventListener('dispose', onDispose);
+      subscribed.delete(resource);
+      properties.delete(resource);
+    };
+    subscribed.set(resource, onDispose);
+    resource.addEventListener('dispose', onDispose);
+  };
+  const renderer = Object.assign(fakeRenderer(), { properties: { get: (object: unknown) => properties.get(object as object) } });
+  renderer.render.mockImplementation((scene: Object3D) => {
+    scene.traverse((object) => {
+      const mesh = object as Mesh;
+      if (!mesh.isMesh) return;
+      watch(mesh.geometry);
+      for (const material of [mesh.material].flat()) {
+        watch(material);
+        properties.set(material, { uniforms: { dfgLUT: { value: lut } } });
+        watch(lut);
+      }
+    });
+  });
+  /** Czytelny opis tego, na czym renderer jest zapisany (do porównań i komunikatów): nazwy albo rodzaje obiektów. */
+  const labels = (): string[] => [...subscribed.keys()].map((r) => r.name || String(r.type));
+  return Object.assign(renderer, { subscribed, labels, lut, game });
 }
 
 /** Kanwa-atrapa: zdarzenia wskaźnika (przeciąganie) i rozmiar z CSS. */
@@ -368,5 +429,130 @@ describe('createStartPreview: dispose zwalnia renderer przy starcie gry', () => 
     void preview.show(REGULAR);
     preview.dispose();
     expect(factory.dispose).not.toHaveBeenCalled();
+  });
+});
+
+describe('createStartPreview: własność zasobów (renderer podglądu nie może przeżyć podglądu)', () => {
+  const geometriesOf = (renderer: ReturnType<typeof trackingRenderer>): BufferGeometry[] =>
+    [...renderer.subscribed.keys()].filter((r): r is BufferGeometry => r instanceof BufferGeometry);
+
+  it('po dispose renderer nie jest zapisany na żadnej geometrii ani żadnym materiale (nic, co przeżywa podgląd, nie trzyma po nim nasłuchu)', async () => {
+    const renderer = trackingRenderer();
+    const { factory } = fakeFactory();
+    const preview = createStartPreview(fakeCanvas(), factory, { renderer });
+    void preview.show(REGULAR);
+    step(16);
+    await preview.show(KING);                                 // zmiana wyglądu w trakcie: poprzednia postać zwolniona
+    step(16);
+    expect(renderer.subscribed.size).toBeGreaterThan(0);      // atrapa naprawdę widziała podest i postać
+    preview.dispose();
+    expect(renderer.labels()).toEqual([]);
+  });
+
+  it('geometria wspólna z grą (fabryka) i materiały z pamięci stylu nigdy nie trafiają do renderera podglądu, a podgląd ich nie zwalnia', () => {
+    const renderer = trackingRenderer();
+    const { factory, sharedGeometry } = fakeFactory();
+    const cached = [material('plasticMatte', PALETTE.brand.cream), material('plasticMatte', PALETTE.brand.green)];
+    const disposed = [sharedGeometry('men-suit'), ...cached].map((resource) => vi.spyOn(resource, 'dispose'));
+    const preview = createStartPreview(fakeCanvas(), factory, { renderer });
+    void preview.show(REGULAR);
+    step(16);
+    expect(renderer.subscribed.has(sharedGeometry('men-suit'))).toBe(false);
+    for (const resource of cached) expect(renderer.subscribed.has(resource)).toBe(false);
+    preview.dispose();
+    for (const spy of disposed) expect(spy).not.toHaveBeenCalled();    // zasoby gry (i jej kasjera) zostają całe
+  });
+
+  it('podgląd rysuje swoją kopię geometrii postaci: te same wierzchołki, ta sama kula otaczająca, a postać z fabryki nie jest ruszana', () => {
+    const renderer = trackingRenderer();
+    const { factory, made, sharedGeometry } = fakeFactory();
+    sharedGeometry('men-suit').computeBoundingSphere();
+    const preview = createStartPreview(fakeCanvas(), factory, { renderer });
+    void preview.show(REGULAR);
+    step(16);
+    const mesh = made[0]!.character.object.children[0] as Mesh;
+    expect(mesh.geometry).not.toBe(sharedGeometry('men-suit'));
+    expect(mesh.geometry).toBeInstanceOf(BufferGeometry);
+    expect(mesh.geometry.boundingSphere?.radius).toBe(sharedGeometry('men-suit').boundingSphere?.radius);
+    expect(geometriesOf(renderer)).toContain(mesh.geometry);
+  });
+
+  it('zmiany wyglądu nie zbierają zasobów: geometria zwolnionej postaci jest zwalniana od razu, więc na podeście zostaje jedna kopia', async () => {
+    const renderer = trackingRenderer();
+    const { factory } = fakeFactory();
+    const preview = createStartPreview(fakeCanvas(), factory, { renderer });
+    void preview.show(REGULAR);
+    step(16);
+    const pedestalAndOne = geometriesOf(renderer).length;
+    for (const seed of ['a', 'b', 'c', 'd', 'e']) {
+      void preview.show({ outfit: 'men-suit', appearanceSeed: `kasjer-${seed}` });
+      await preview.show({ outfit: 'special-men-king', appearanceSeed: `kasjer-${seed}` });
+      step(16);
+    }
+    expect(geometriesOf(renderer)).toHaveLength(pedestalAndOne);
+  });
+
+  it('postać, której budowa się nie udała, nie zostawia niczego: ani na podeście, ani w rendererze', () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const renderer = trackingRenderer();
+    const { factory } = fakeFactory();
+    factory.createWithOutfit = () => { throw new Error('nie da się zbudować'); };
+    const preview = createStartPreview(fakeCanvas(), factory, { renderer });
+    void preview.show(REGULAR);
+    step(16);
+    preview.dispose();
+    expect(renderer.labels()).toEqual([]);
+  });
+
+  it('postać, której geometrii nie da się skopiować, jest zwalniana, a na podeście zostaje poprzednia', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const renderer = trackingRenderer();
+    const { factory, made, sharedGeometry } = fakeFactory();
+    const preview = createStartPreview(fakeCanvas(), factory, { renderer });
+    void preview.show(REGULAR);
+    vi.spyOn(sharedGeometry('women-suit'), 'clone').mockImplementation(() => { throw new Error('brak pamięci'); });
+    await preview.show({ outfit: 'women-suit', appearanceSeed: 'kasjer-z' });
+    step(16);
+    expect(error).toHaveBeenCalledTimes(1);
+    expect(made.map((m) => m.outfit)).toEqual(['men-suit', 'women-suit']);
+    expect(made[1]!.dispose).toHaveBeenCalledTimes(1);          // nieudana postać zwolniona (materiał, szkielet)
+    expect(made[0]!.dispose).not.toHaveBeenCalled();            // poprzednia dalej stoi
+    expect(characters(renderer)).toEqual([made[0]!.character.object]);
+    expect(preview.look).toEqual(REGULAR);
+    preview.dispose();
+    expect(renderer.labels()).toEqual([]);
+  });
+
+  it('globalna tekstura DFG LUT three (jedna na stronę, w uniformie materiału): po dispose renderer nie jest na niej zapisany, a przed dispose jej nie ruszamy', () => {
+    const renderer = trackingRenderer();
+    const preview = createStartPreview(fakeCanvas(), fakeFactory().factory, { renderer });
+    void preview.show(REGULAR);
+    step(16);
+    expect(renderer.labels()).toContain('DFG_LUT');          // atrapa jak three: po rysowaniu renderer trzyma nasłuch na LUT-cie
+    void preview.show({ ...REGULAR, appearanceSeed: 'kasjer-inny' });
+    step(16);
+    expect(renderer.game.dropped).toBe(0);                   // póki podgląd żyje (także po zmianie wyglądu), LUT stoi
+    preview.dispose();
+    expect(renderer.labels()).not.toContain('DFG_LUT');
+    expect(renderer.labels()).toEqual([]);
+  });
+
+  it('zwolnienie LUT-a przy dispose nie psuje renderera, który żyje dalej (gra): dostaje `dispose` raz i sam zapisze się na LUT-cie znowu', () => {
+    const renderer = trackingRenderer();
+    const preview = createStartPreview(fakeCanvas(), fakeFactory().factory, { renderer });
+    void preview.show(REGULAR);
+    step(16);
+    preview.dispose();
+    expect(renderer.game.dropped).toBe(1);
+    renderer.game.subscribe();                               // następna klatka gry
+    expect(renderer.lut.hasEventListener('dispose', renderer.game.onDispose)).toBe(true);
+  });
+
+  it('podgląd, który nic nie narysował (kanwa bez rozmiaru), nie dotyka LUT-a: renderer nigdy się na nim nie zapisał', () => {
+    const renderer = trackingRenderer();
+    const preview = createStartPreview(fakeCanvas(0, 0), fakeFactory().factory, { renderer });
+    step(16);
+    preview.dispose();
+    expect(renderer.game.dropped).toBe(0);
   });
 });
