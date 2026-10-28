@@ -199,15 +199,15 @@ function pallet(v: unknown, minute: number): Pallet | null {
   return out;
 }
 
+/** Zlecenie ze stanu albo zapisu. Pole `title` z zapisów sprzed L9 jest pomijane: tytuł liczy `questTitle` przy wyświetlaniu. */
 function quest(v: unknown): Quest | null {
-  if (!isRec(v) || !isNum(v.id) || !isNum(v.target) || v.target <= 0 || !isNum(v.start) || typeof v.title !== 'string') return null;
+  if (!isRec(v) || !isNum(v.id) || !isNum(v.target) || v.target <= 0 || !isNum(v.start)) return null;
   if (!QUEST_KINDS.includes(v.kind as QuestKind) || !isRec(v.reward)) return null;
   const { cash, ogonki, xp } = v.reward;
   if (!isNum(cash) || !isNum(ogonki) || !isNum(xp)) return null;
   return {
     id: whole(v.id, 0, 0, LIMITS.id),
     kind: v.kind as QuestKind,
-    title: v.title,
     target: Math.min(v.target, LIMITS.money),
     start: money(v.start, 0),
     // XP z nagrody trafia do `processLevels`, więc nie więcej niż daje zlecenie na najwyższym poziomie (newQuest: 40 + 10 · poziom)

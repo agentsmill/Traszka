@@ -11,7 +11,7 @@ import {
   EQUIPMENT, GROUP_LABEL, UPGRADES, WORKSHOP_LEVEL, equipmentCost, upgradeCost, type UpgradeGroup,
 } from '@/sim/economy/upgrades';
 import { nextRankAt, rankFor, xpToNext } from '@/sim/economy/progress';
-import { questDone, questProgress } from '@/sim/economy/quests';
+import { questDone, questProgress, questTitle } from '@/sim/economy/quests';
 import { networkIncomeOf, prestigePoints, prestigeReady } from '@/game/meta';
 import { econ, metaView, selection, showPrestige, tab, type GameActions, type TabId } from '../state';
 import { duration, int, pct, plural, signedZl, zl } from './format';
@@ -367,7 +367,7 @@ function GoalsPanel({ s, game }: { s: EconomyState; game: GameActions; v: number
           const done = questDone(s, q);
           return (
             <div key={q.id} class={`tt-quest${done ? ' done' : ''}`}>
-              <div class="tt-row"><b>{q.title}</b></div>
+              <div class="tt-row"><b>{questTitle(q)}</b></div>
               <Bar value={questProgress(s, q)} />
               <div class="tt-row">
                 <span class="tt-muted">+{zl(q.reward.cash)} · +{q.reward.ogonki} 🦎 · +{q.reward.xp} XP</span>

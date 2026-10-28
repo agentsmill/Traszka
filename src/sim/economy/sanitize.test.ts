@@ -29,6 +29,10 @@ function nonFinite(v: unknown, path = 'stan'): string[] {
 const fixture = (name: string): Record<string, unknown> =>
   JSON.parse(readFileSync(new URL(`../../game/fixtures/${name}`, import.meta.url), 'utf8')) as Record<string, unknown>;
 
+/** Zlecenia z zapisu sprzed L9 (z polem `title`) bez tytułu, tak jak wczytuje je dziś `sanitizeEconomy`. */
+const dropQuestTitles = (quests: unknown): Record<string, unknown>[] =>
+  (quests as Record<string, unknown>[]).map(({ title: _, ...q }) => q);
+
 describe('sanitizeEconomy: poprawny stan przechodzi bez zmian', () => {
   it('nowa gra', () => {
     const s = defaults();
@@ -82,8 +86,44 @@ describe('sanitizeEconomy: poprawny stan przechodzi bez zmian', () => {
       const inf = computeStoreInfo(generateStore(seed));
       const out = sanitizeEconomy(raw, defaults(inf, seed))!;
       expect(out).not.toBeNull();
-      expect(out).toEqual({ ...raw, lastReport: null });
+      // L9: tytuł zlecenia nie jest już częścią stanu
+      expect(out).toEqual({ ...raw, lastReport: null, quests: dropQuestTitles(raw.quests) });
     }
+  });
+
+  it('zapisy z tytułami zleceń (v1 i v2 z produkcji): zlecenia wracają bez title, reszta pól ta sama', () => {
+    const cases: [string, string, Record<string, unknown>][] = [
+      ['save-v1-blok-dzien40.json', 'kiełbasa-42', fixture('save-v1-blok-dzien40.json')],
+      ['save-v1-remont1.json', 'traszka-1', fixture('save-v1-remont1.json')],
+      ['save-v2-dzien30.json', 'traszka-v2-a', fixture('save-v2-dzien30.json').econ as Record<string, unknown>],
+      ['save-v2-remont2.json', 'traszka-v2-b', fixture('save-v2-remont2.json').econ as Record<string, unknown>],
+    ];
+    for (const [file, seed, raw] of cases) {
+      const rawQuests = raw.quests as Record<string, unknown>[];
+      expect(rawQuests.length, file).toBeGreaterThan(0);
+      for (const q of rawQuests) expect(typeof q.title, `${file}: zapis sprzed L9 ma tytuł`).toBe('string');
+
+      const out = sanitizeEconomy(raw, defaults(computeStoreInfo(generateStore(seed)), seed));
+      expect(out, file).not.toBeNull();
+      expect(out!.quests, file).toHaveLength(rawQuests.length);
+      out!.quests.forEach((q, i) => {
+        const was = rawQuests[i]!;
+        expect('title' in q, `${file} #${i}`).toBe(false);
+        expect({ id: q.id, kind: q.kind, target: q.target, start: q.start, reward: q.reward }, `${file} #${i}`)
+          .toEqual({ id: was.id, kind: was.kind, target: was.target, start: was.start, reward: was.reward });
+      });
+      expect(JSON.stringify(out), file).not.toContain('"title"');
+    }
+  });
+
+  it('zlecenie bez title przechodzi sanitizację (dziś by wypadło)', () => {
+    const s = defaults();
+    const bare = (json(s).quests as Record<string, unknown>[]).map(({ title: _, ...q }) => q);
+    expect(bare).toHaveLength(3);
+    for (const q of bare) expect('title' in q).toBe(false);
+    const out = sanitizeEconomy({ ...json(s), quests: bare }, defaults())!;
+    expect(out.quests).toEqual(s.quests);
+    expect(out).toEqual(s);
   });
 
   it('nie gubi żadnego pola stanu: klucze wyniku to klucze createEconomy', () => {

@@ -12,7 +12,6 @@ export type QuestKind = 'serve' | 'pallets' | 'taps' | 'margin' | 'upgrade' | 'c
 export interface Quest {
   id: number;
   kind: QuestKind;
-  title: string;
   target: number;
   /** Wartość licznika w chwili przyjęcia zlecenia (dla `rep`: 0, liczy się wartość bieżąca). */
   start: number;
@@ -57,6 +56,7 @@ export function niceRound(n: number): number {
 
 export const QUEST_KINDS: readonly QuestKind[] = ['serve', 'pallets', 'taps', 'margin', 'upgrade', 'clean', 'rep', 'hot'];
 
+/** Napisy zleceń do wyświetlania; stan ich nie trzyma, bo `toLocaleString` różni się między silnikami (L9). */
 const TITLE: Record<QuestKind, (n: number) => string> = {
   serve: (n) => `Obsłuż ${n.toLocaleString('pl-PL')} klientów`,
   pallets: (n) => `Rozładuj ${n} ${n === 1 ? 'paletę' : n < 5 ? 'palety' : 'palet'}`,
@@ -67,6 +67,12 @@ const TITLE: Record<QuestKind, (n: number) => string> = {
   rep: (n) => `Podnieś reputację do ${n}`,
   hot: (n) => `Sprzedaj ${n.toLocaleString('pl-PL')} hot-dogów i kaw`,
 };
+
+/**
+ * Tytuł zlecenia z rodzaju i celu. Tylko do wyświetlania: tekst z `toLocaleString` zależy od ICU silnika,
+ * więc nie trafia do stanu ekonomii (L9), a zapisy sprzed zmiany tracą przy wczytaniu jedynie to pole.
+ */
+export const questTitle = (q: Pick<Quest, 'kind' | 'target'>): string => TITLE[q.kind](q.target);
 
 /** Nowe zlecenie innego rodzaju niż aktywne. Deterministyczne z seeda i numeru zlecenia. */
 export function newQuest(s: EconomyState, scale: QuestScale): Quest {
@@ -92,7 +98,6 @@ export function newQuest(s: EconomyState, scale: QuestScale): Quest {
   return {
     id,
     kind,
-    title: TITLE[kind](target),
     target,
     start,
     reward: {

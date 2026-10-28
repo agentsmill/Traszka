@@ -5,6 +5,7 @@ import { CAT_INFO, CATS, CREDIT_LIMIT, MINUTES_PER_DAY, OPEN_FROM, PALLET_ITEMS 
 import {
   buyEquipment, buyUpgrade, effects, emptyCounters, startRemont, stepMinute, tapPallet, type Counters, type EconEvent, type EconomyState,
 } from '@/sim/economy/economy';
+import { questTitle, type Quest } from '@/sim/economy/quests';
 import { LIMITS } from '@/sim/economy/sanitize';
 import { computeStoreInfo } from '@/sim/economy/storeInfo';
 import { REMONTS } from '@/sim/economy/upgrades';
@@ -51,6 +52,15 @@ const text = (name: string): string => readFileSync(new URL(`./fixtures/${name}`
 const gameVersion = (JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as { version: string }).version;
 
 const effectsBackroomCap = (s: GameSession): number => effects(s.econ, s.info).backroomCap;
+
+/**
+ * L9: tytuł zlecenia nie jest już częścią stanu. Zapisy z produkcji (fixtures) mają go jeszcze w `quests[]`,
+ * a wczytane i zapisane ponownie wracają bez niego, więc oczekiwany stan to fixture bez tytułów zleceń.
+ */
+const withoutQuestTitles = (e: EconomyState): EconomyState => ({
+  ...e,
+  quests: (e.quests as (Quest & { title?: string })[]).map(({ title: _, ...q }) => q),
+});
 
 let storage: MemoryStorage;
 let errorLog: ReturnType<typeof vi.spyOn>;
@@ -206,7 +216,7 @@ describe('migracja zapisu v1 (sam stan ekonomii, bez układu)', () => {
       const s = createSession(seed);
       expect(s.fromSave).toBe(true);
       expect(s.loadNotice).toBeNull();
-      expect(s.econ).toEqual({ ...v1, lastReport: null });
+      expect(s.econ).toEqual({ ...withoutQuestTitles(v1), lastReport: null });
       expect(s.layout).toEqual(layoutFor(seed, remont));
       expect(s.layoutLevel).toBe(remont);
       // palety i sprzęt wskazują na istniejące miejsca i sloty w układzie
@@ -256,7 +266,11 @@ describe('zapisy v2 z produkcji', () => {
         expect(e.pallets.length).toBeGreaterThan(0);
         expect(e.deliveries.length).toBeGreaterThan(0);
         expect(e.quests).toHaveLength(3);
-        for (const q of e.quests) expect(q.title.length).toBeGreaterThan(0);
+        // zapis sprzed L9 niesie tytuły zleceń; po wczytaniu ich nie ma, a napis liczy się z rodzaju i celu
+        for (const q of e.quests) {
+          expect(typeof (q as Quest & { title?: unknown }).title).toBe('string');
+          expect(questTitle(q).length).toBeGreaterThan(0);
+        }
         expect(e.equipment.length).toBeGreaterThan(0);
       },
     },
@@ -302,7 +316,8 @@ describe('zapisy v2 z produkcji', () => {
         expect(s.ephemeral).toBe(false);
         expect(s.retired).toBe(false);
         expect(s.layout).toEqual(f.layout);
-        expect(s.econ).toEqual(f.econ);
+        expect(s.econ).toEqual(withoutQuestTitles(f.econ));
+        for (const q of s.econ.quests) expect('title' in q).toBe(false);
         expect(s.layoutLevel).toBe(remont);
         expect(errorLog).not.toHaveBeenCalled();
 
@@ -339,11 +354,12 @@ describe('zapisy v2 z produkcji', () => {
         expect(saved.gameVersion).toBe(gameVersion);
         expect(saved.generatorVersion).toBe(GENERATOR_VERSION);
         expect(saved.layout).toEqual(f.layout);
-        expect(saved.econ).toEqual(f.econ);
+        expect(saved.econ).toEqual(withoutQuestTitles(f.econ));
+        expect(storage.getItem(key(seed))).not.toContain('"title"');
         expect(storage.getItem(`${key(seed)}:broken`)).toBeNull();
 
         const again = createSession(seed, false, partner);
-        expect(again.econ).toEqual(f.econ);
+        expect(again.econ).toEqual(withoutQuestTitles(f.econ));
         expect(again.layout).toEqual(f.layout);
       });
     });
