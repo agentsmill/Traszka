@@ -27,20 +27,24 @@ describe('props: teksty (docs/style-guide.md §6)', () => {
     for (const lines of BOARD_LINES) expect(lines.length).toBeGreaterThan(0);
   });
 
-  it('żadnych prawdziwych marek ani tytułów: ani w hasłach, plakatach i potykaczach, ani w źródłach tekstów sklepu i ulicy', () => {
+  it('żadnych prawdziwych marek ani tytułów: ani w hasłach, plakatach i potykaczach, ani w żadnym źródle gry czy stronie startowej', () => {
     // Prawdziwe produkty, tytuły i hasła sieci (spec: tylko „Traszka” i „Centrala”). Dopisuj tu, gdy ktoś zauważy kolejne.
     const BANNED = [/excel/i, /fakty i mity/i, /blisko ciebie/i, /żabk|zabk/i];
     const texts = [
       ...SLOGANS, ...POSTERS.flatMap((p) => [p.title, p.footer]), ...BOARD_LINES.flat(),
     ];
     for (const t of texts) for (const re of BANNED) expect(t, `${t} ~ ${re}`).not.toMatch(re);
-    const dirs = ['src/render/store', 'src/render/street'];
-    for (const dir of dirs) {
-      for (const f of readdirSync(dir, { recursive: true, encoding: 'utf8' })) {
-        if (!f.endsWith('.ts') || f.endsWith('.test.ts')) continue;
-        const source = readFileSync(`${dir}/${f}`, 'utf8');
-        for (const re of BANNED) expect(source, `${dir}/${f} ~ ${re}`).not.toMatch(re);
-      }
+    // Teksty dla gracza są wszędzie: interfejs (src/ui), ekonomia (nazwy ulepszeń, zlecenia, kamienie milowe, zdarzenia),
+    // gra (src/game, main.ts), render, a opis strony siedzi w index.html. Skanujemy więc całe src, a testy pomijamy,
+    // bo to w nich leży lista zakazanych słów.
+    const sources = readdirSync('src', { recursive: true, encoding: 'utf8' })
+      .filter((f) => /\.(ts|tsx|css)$/.test(f) && !/\.test\.tsx?$/.test(f))
+      .map((f) => `src/${f}`);
+    expect(sources.length).toBeGreaterThan(50);
+    expect(sources).toEqual(expect.arrayContaining(['src/main.ts', 'src/ui/game/overlays.tsx', 'src/sim/economy/upgrades.ts', 'src/game/session.ts']));
+    for (const f of [...sources, 'index.html']) {
+      const source = readFileSync(f, 'utf8');
+      for (const re of BANNED) expect(source, `${f} ~ ${re}`).not.toMatch(re);
     }
   });
 });
