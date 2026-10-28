@@ -249,6 +249,84 @@ describe('siły franczyzobiorcy przy stukaniu', () => {
     expect(t.tycoon.fatigue.energy).toBe(1);
   });
 
+  it('combo nie płaci za ponad to, co da się obsłużyć: kolejka 1 przy ×5 to jedno stuknięcie', () => {
+    const s = withQueue(1);
+    s.tapStreak = 15;   // następne stuknięcie to 16. w serii: combo ×5
+    s.lastTapAt = s.minute;
+    const served = s.total.customers;
+    const out = applyCommand(s, info, { type: 'tapTill' });
+    expect(out.result.ok).toBe(true);
+    expect(s.tapStreak).toBe(16);
+    expect(s.total.customers - served).toBeCloseTo(1, 6);
+    expect(s.queue).toBeCloseTo(0, 6);
+    expect(s.tycoon.fatigue.energy).toBe(100 - FATIGUE.tapCost.kasa);
+    expect(s.tycoon.fatigue.tapsToday).toBe(1);
+
+    const t = withQueue(2.5);   // 2,5 klienta to trzy stuknięcia, nie pięć
+    expect(tapTill(t, info, 5).ok).toBe(true);
+    expect(t.queue).toBeCloseTo(0, 6);
+    expect(t.tycoon.fatigue.energy).toBe(100 - 3 * FATIGUE.tapCost.kasa);
+  });
+
+  it('zmęczenie przeniesione zwiększa liczbę stuknięć potrzebnych na kolejkę', () => {
+    const s = withQueue(2);
+    s.tycoon.fatigue.carried = 30;   // moc 0,82 na stuknięcie: dwóch klientów to 3 stuknięcia
+    expect(tapTill(s, info, 5).ok).toBe(true);
+    expect(s.queue).toBeCloseTo(0, 6);
+    expect(s.tycoon.fatigue.energy).toBe(100 - 3 * FATIGUE.tapCost.kasa);
+  });
+
+  it('combo nie płaci za ponad to, co zostało na palecie: 3 sztuki przy ×5 to jedno stuknięcie', () => {
+    const s = fresh();
+    emptyBackroom(s);
+    const p = s.pallets[0]!;
+    for (const c of CATS) p.items[c] = 0;
+    p.items.napoje = 3;
+    p.total = 3;
+    s.tapStreak = 15;
+    s.lastTapAt = s.minute;
+    const out = applyCommand(s, info, { type: 'tapPallet', palletId: p.id });
+    expect(out.result.ok).toBe(true);
+    expect(value(out.result)).toBeCloseTo(3, 6);
+    expect(s.tapStreak).toBe(16);
+    expect(s.tycoon.fatigue.energy).toBe(100 - FATIGUE.tapCost.paleta);
+    expect(s.tycoon.fatigue.tapsToday).toBe(1);
+  });
+
+  it('combo jest też przycięte miejscem: 12 sztuk wolnego miejsca przy ×5 to dwa stuknięcia', () => {
+    const s = fresh();
+    const p = s.pallets[0]!;
+    const only = CATS[0]!;
+    for (const c of CATS) p.items[c] = 0;
+    p.items[only] = 100;
+    p.total = 100;
+    noRoom(s, [only]);
+    s.shelf[only] = info.shelfCap[only] - 12;
+    const r = tapPallet(s, info, p.id, 5);
+    expect(value(r)).toBeCloseTo(12, 6);
+    expect(s.tycoon.fatigue.energy).toBe(100 - 2 * FATIGUE.tapCost.paleta);
+  });
+
+  it('paleta, z której zmieści się ułamek sztuki, to odmowa przed zużyciem sił', () => {
+    const s = fresh();
+    const p = s.pallets[0]!;
+    const [full, almostEmpty] = [CATS[0]!, CATS[1]!];
+    for (const c of CATS) p.items[c] = 0;
+    p.items[full] = 100;           // ta kategoria nie ma miejsca na półce
+    p.items[almostEmpty] = 0.01;   // ta ma całą wolną półkę, ale na palecie jest jej prawie nic
+    p.total = 100.01;
+    noRoom(s, [full]);
+    s.shelf[almostEmpty] = 0;
+    const before = JSON.stringify(s.pallets);
+    const r = tapPallet(s, info, p.id, 5);
+    expect(r.ok).toBe(false);
+    expect(refusalText(r)).toContain('nie ma gdzie wyłożyć');
+    expect(s.tycoon.fatigue.energy).toBe(100);
+    expect(s.tycoon.fatigue.tapsToday).toBe(0);
+    expect(s.tycoon.fatigue.refusedToday).toBe(0);
+    expect(JSON.stringify(s.pallets)).toBe(before);
+  });
+
   it('wózek z ulepszeń mnoży sztuki z palety', () => {
     const s = fresh();
     emptyBackroom(s);

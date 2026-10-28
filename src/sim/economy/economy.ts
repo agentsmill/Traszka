@@ -21,7 +21,7 @@ import { QUESTS_ACTIVE, newQuest, questDone, type Quest, type QuestScale } from 
 import {
   cleaningDemand, cleanHall, cleanlinessEffects, closeHallMonth, rollWeather, sampleHall, soilHall, type HallState,
 } from './tycoon/cleanliness';
-import { fatigueNight, tap as fatigueTap, tapItems } from './tycoon/fatigue';
+import { fatigueEfficiency, fatigueNight, tap as fatigueTap, tapItems } from './tycoon/fatigue';
 import { closeKpiWeek, type KpiMetrics, type KpiScale } from './tycoon/kpi';
 import { createShift, peopleOnShift, type ShiftState } from './tycoon/shift';
 import {
@@ -844,36 +844,46 @@ export function tapCombo(s: EconomyState): { count: number; mult: number } {
   return { count: s.tapStreak, mult: comboMult(s.tapStreak) };
 }
 
-/** Poniżej tylu sztuk rozładunek się nie liczy (szum zmiennoprzecinkowy po dopełnieniu półek, a nie realny ruch towaru). */
-const MIN_MOVED = 1e-6;
+/** Mniej miejsca niż pół sztuki to nie rozładunek (tyle samo, co próg pustej palety w `removeEmptyPallets`). */
+const MIN_ROOM = 0.5;
 
 /**
- * Ile sztuk z palety zmieści się teraz: wolne zaplecze plus wolne półki tych kategorii, które na niej leżą, ale nie więcej
- * niż zostało na palecie. Bez miejsca stuknięcie jest odmową, zanim zużyje siły.
+ * Ile sztuk z palety zmieści się teraz: wolne zaplecze plus, w każdej kategorii z palety, tyle, ile zmieści jej półka i ile
+ * jej jest na palecie; nie więcej niż zostało na palecie. Bez miejsca stuknięcie jest odmową, zanim zużyje siły.
  */
 function palletRoom(s: EconomyState, info: StoreInfo, fx: Effects, p: Pallet): number {
   let room = Math.max(0, fx.backroomCap - sum(s.backroom));
-  for (const c of CATS) if (p.items[c] > 0) room += Math.max(0, info.shelfCap[c] - s.shelf[c]);
+  for (const c of CATS) room += Math.min(Math.max(0, p.items[c]), Math.max(0, info.shelfCap[c] - s.shelf[c]));
   return Math.min(p.total, room);
 }
+
+/**
+ * Combo przycięte do tego, co da się wykorzystać: stuknięcia ponad `needTaps` kosztowałyby siły za nic (combo mnoży koszt
+ * i efekt po równo). Bzdura zamiast combo (NaN, nieskończoność) zostaje jednym stuknięciem, jak w `tycoon/fatigue.ts`.
+ */
+const usableCombo = (combo: number, needTaps: number): number => Math.min(Number.isFinite(combo) ? combo : 1, needTaps);
 
 /**
  * Gracz stuka w paletę: franczyzobiorca sam rozładowuje kawałek. Bez `id` bierze najpilniejszą. `combo` to mnożnik za szybkie
  * stukanie (liczy go wołający); razem z nim rośnie koszt w siłach (tycoon/fatigue.ts), a zmęczenie z wczoraj zmniejsza moc.
  * Najpierw sprawdza paletę i miejsce, dopiero potem zużywa siły, więc odmowa „nie ma co ani gdzie” ich nie rusza; odmowa rąk
- * to pusta pula. Wynik: rozładowane sztuki, a przy złotej palecie także komunikat: w `text`, a gdy podano `events`, jako
- * zdarzenie `golden` dopisane do tej tablicy (wtedy `text` zostaje pusty).
+ * to pusta pula. Combo nie przekracza liczby stuknięć, jakiej potrzeba na to, co się zmieści. Wynik: rozładowane sztuki,
+ * a przy złotej palecie także komunikat: w `text`, a gdy podano `events`, jako zdarzenie `golden` dopisane do tej tablicy
+ * (wtedy `text` zostaje pusty).
  */
 export function tapPallet(s: EconomyState, info: StoreInfo, id?: number, combo = 1, events?: EconEvent[]): CommandResult {
   const fx = effects(s, info);
   const p = id !== undefined ? s.pallets.find((x) => x.id === id)
     : [...s.pallets].sort((a, b) => Number(!!b.golden) - Number(!!a.golden) || PALLET_ORDER[a.loc] - PALLET_ORDER[b.loc] || a.since - b.since)[0];
   if (!p) return { ok: false, text: 'Brak palet do rozładunku.' };
-  if (palletRoom(s, info, fx, p) <= MIN_MOVED) return { ok: false, text: 'Zaplecze i półki pełne: nie ma gdzie wyłożyć towaru.' };
-  const r = fatigueTap(s.tycoon.fatigue, 'paleta', combo);
+  const room = palletRoom(s, info, fx, p);
+  if (room < MIN_ROOM) return { ok: false, text: 'Zaplecze i półki pełne: nie ma gdzie wyłożyć towaru.' };
+  const cart = 1 + 0.25 * level(s, 'wozek');
+  const needTaps = Math.max(1, Math.ceil(room / (tapItems(fatigueEfficiency(s.tycoon.fatigue)) * cart) - 1e-9));
+  const r = fatigueTap(s.tycoon.fatigue, 'paleta', usableCombo(combo, needTaps));
   if (!r.ok) return { ok: false, text: r.text ?? 'Ręce odmawiają.' };
   const out: EconEvent[] = [];
-  const moved = unloadPallet(s, info, fx, p, tapItems(r.power) * (1 + 0.25 * level(s, 'wozek')), out);
+  const moved = unloadPallet(s, info, fx, p, tapItems(r.power) * cart, out);
   removeEmptyPallets(s);
   events?.push(...out);   // premia już wypłacona, więc zdarzenie nie przepada
   for (const k of [s.today, s.month, s.total]) k.taps++;
@@ -882,12 +892,14 @@ export function tapPallet(s: EconomyState, info: StoreInfo, id?: number, combo =
 
 /**
  * Gracz stuka w kasę: franczyzobiorca obsługuje klienta z kolejki (z combo kilku naraz, a zmęczenie obsługuje ułamek). Sklep
- * zamknięty albo pusta kolejka to odmowa bez zużycia sił. Zwraca zarobioną marżę.
+ * zamknięty albo pusta kolejka to odmowa bez zużycia sił, a combo nie przekracza liczby stuknięć, jakiej potrzeba na kolejkę.
+ * Zwraca zarobioną marżę.
  */
 export function tapTill(s: EconomyState, info: StoreInfo, combo = 1): CommandResult {
   if (!isStoreOpen(s)) return { ok: false, text: 'Sklep zamknięty.' };
   if (s.queue < 1) return { ok: false, text: 'Nikt nie czeka przy kasie.' };
-  const r = fatigueTap(s.tycoon.fatigue, 'kasa', combo);
+  const needTaps = Math.max(1, Math.ceil(s.queue / fatigueEfficiency(s.tycoon.fatigue) - 1e-9));
+  const r = fatigueTap(s.tycoon.fatigue, 'kasa', usableCombo(combo, needTaps));
   if (!r.ok) return { ok: false, text: r.text ?? 'Ręce odmawiają.' };
   const n = Math.min(s.queue, r.power);
   s.queue -= n;
