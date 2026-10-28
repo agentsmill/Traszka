@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
-import { formatRecoveryCode } from '@/game/playerKey';
+import { CROCKFORD, formatRecoveryCode } from '@/game/playerKey';
 import { API_ERRORS } from './errors';
 import {
-  BOARD_LIMIT_DEFAULT, BOARD_LIMIT_MAX, BOARD_LIMITS, KNOWN_GAME_VERSIONS, KNOWN_GENERATOR_VERSIONS, RATE_LIMITS, SAVE_BUNDLE_FORMAT,
-  SAVE_DAILY_BUDGET, SAVE_MAX_BYTES,
+  BOARD_LIMIT_DEFAULT, BOARD_LIMIT_MAX, BOARD_LIMITS, KNOWN_GAME_VERSIONS, KNOWN_GENERATOR_VERSIONS, RATE_LIMITS, RUN_MAX_BODY_BYTES,
+  SAVE_BODY_BYTES, SAVE_BUNDLE_FORMAT, SAVE_DAILY_BUDGET, SAVE_MAX_BYTES, SMALL_BODY_BYTES, type RateAction,
 } from './config';
 import {
   clientAddress, handleLeaderboard, handlePlayer, handleRuns, handleSaveDownload, handleSaveUpload, type ServerDeps,
@@ -330,6 +330,109 @@ describe('POST /api/save/upload i /api/save/download: zapis kodem odzyskiwania',
     clock.now = Date.UTC(2026, 9, 29, 0, 0, 5);
     expect((await upload(deps, KEY_A, save, { 'x-real-ip': '10.1.0.1' })).status).toBe(200);
     expect(await runCommand(redis, ['GET', KEYS.budget('save', '2026-10-29')])).toBe('1');
+  });
+});
+
+/**
+ * Limity na poziomie handlerów: każdy z czterech endpointów POST ma wołać limiter. Same testy `checkRate` w izolacji nie zauważą
+ * usuniętego wywołania, a bez limitera najbardziej podatne są właśnie player i zapis (klucz kosztuje zero).
+ */
+describe('limit zgłoszeń na poziomie handlerów: 429 z Retry-After na klucz i na adres', () => {
+  const keyN = (i: number): string => `${CROCKFORD[(i >> 5) & 31]}${CROCKFORD[i & 31]}`.padEnd(20, '7');
+  const cases: { name: string; action: RateAction; call: (deps: ServerDeps, i: number, key: string, headers: Record<string, string>) => Promise<Response> }[] = [
+    { name: 'POST /api/runs', action: 'runs', call: (deps, i, key, h) => handleRuns(post('/api/runs', { key, nick: `Gracz${i}`, run: run() }, h), deps) },
+    { name: 'POST /api/player', action: 'player', call: (deps, _i, key, h) => handlePlayer(post('/api/player', { key }, h), deps) },
+    { name: 'POST /api/save/upload', action: 'saveUp', call: (deps, _i, key, h) => handleSaveUpload(post('/api/save/upload', { key, save: testBundle() }, h), deps) },
+    { name: 'POST /api/save/download', action: 'saveDown', call: (deps, _i, key, h) => handleSaveDownload(post('/api/save/download', { key }, h), deps) },
+  ];
+  const ipv4 = (i: number): string => `10.0.${i >> 8}.${i & 255}`;
+  /** Ten sam prefiks /64, za każdym razem inna końcówka (tak rotuje klient, któremu dostawca dał cały prefiks). */
+  const ipv6 = (i: number): string => `2001:db8:abcd:12:${i.toString(16)}:${i}::${i + 1}`;
+
+  for (const c of cases) {
+    const { perKey, perAddress, window } = RATE_LIMITS[c.action];
+
+    it(`${c.name}: po ${perKey} żądaniach jednego klucza (z różnych adresów) następne to 429, a inny klucz przechodzi`, async () => {
+      const { deps } = setup();
+      for (let i = 0; i < perKey; i++) expect((await c.call(deps, i, KEY_A, { 'x-real-ip': ipv4(i) })).status, `żądanie ${i + 1}`).not.toBe(429);
+      const denied = await c.call(deps, perKey, KEY_A, { 'x-real-ip': ipv4(perKey) });
+      expect(denied.status).toBe(429);
+      expect((await body(denied)).error).toBe('rate-limited');
+      expect(denied.headers.get('cache-control')).toBe('no-store');
+      const retry = Number(denied.headers.get('retry-after'));
+      expect(retry).toBeGreaterThan(0);
+      expect(retry).toBeLessThanOrEqual(window);
+      expect((await c.call(deps, perKey + 1, KEY_B, { 'x-real-ip': ipv4(perKey + 1) })).status).not.toBe(429);
+    });
+
+    it(`${c.name}: po ${perAddress} żądaniach z jednego adresu (z różnymi kluczami) następne to 429, a inny adres przechodzi`, async () => {
+      const { deps } = setup();
+      for (let i = 0; i < perAddress; i++) expect((await c.call(deps, i, keyN(i), { 'x-real-ip': '203.0.113.7' })).status, `żądanie ${i + 1}`).not.toBe(429);
+      const denied = await c.call(deps, perAddress, keyN(perAddress), { 'x-real-ip': '203.0.113.7' });
+      expect(denied.status).toBe(429);
+      expect((await body(denied)).error).toBe('rate-limited');
+      expect(Number(denied.headers.get('retry-after'))).toBeGreaterThan(0);
+      expect((await c.call(deps, perAddress + 1, keyN(perAddress + 1), { 'x-real-ip': '198.51.100.9' })).status).not.toBe(429);
+    });
+
+    it(`${c.name}: klient IPv6 zmieniający końcówkę adresu w swoim prefiksie /64 trafia na ten sam limit, a inny prefiks przechodzi`, async () => {
+      const { deps } = setup();
+      for (let i = 0; i < perAddress; i++) expect((await c.call(deps, i, keyN(i), { 'x-real-ip': ipv6(i) })).status, `żądanie ${i + 1}`).not.toBe(429);
+      const denied = await c.call(deps, perAddress, keyN(perAddress), { 'x-real-ip': ipv6(perAddress + 100) });
+      expect(denied.status).toBe(429);
+      expect((await c.call(deps, perAddress + 1, keyN(perAddress + 1), { 'x-real-ip': '2001:db8:abcd:13::1' })).status).not.toBe(429);
+    });
+  }
+
+  it('odmowa limitu nie dotyka niczego poza licznikami: nick, wynik i zapis nie powstają', async () => {
+    const { deps, redis } = setup();
+    for (let i = 0; i < RATE_LIMITS.runs.perKey; i++) await submit(deps, KEY_A, `Gracz${i}`.slice(0, 20), undefined, { 'x-real-ip': ipv4(i) });
+    const before = redis.keys().filter((k) => !k.startsWith('tr:rl:') && !k.startsWith('tr:salt:'));
+    expect((await submit(deps, KEY_A, 'Inny', undefined, { 'x-real-ip': ipv4(99) })).status).toBe(429);
+    expect(redis.keys().filter((k) => !k.startsWith('tr:rl:') && !k.startsWith('tr:salt:'))).toEqual(before);
+  });
+});
+
+describe('wczesna odmowa po nagłówku Content-Length: 413 bez czytania ciała', () => {
+  const cases: [string, typeof handleRuns, string, number, string][] = [
+    ['POST /api/runs', handleRuns, '/api/runs', RUN_MAX_BODY_BYTES, 'too-large'],
+    ['POST /api/player', handlePlayer, '/api/player', SMALL_BODY_BYTES, 'too-large'],
+    ['POST /api/save/download', handleSaveDownload, '/api/save/download', SMALL_BODY_BYTES, 'too-large'],
+    ['POST /api/save/upload', handleSaveUpload, '/api/save/upload', SAVE_BODY_BYTES, 'save-too-large'],
+  ];
+
+  for (const [name, handler, path, max, error] of cases) {
+    it(`${name}: nagłówek większy niż ${max} B kończy się 413 ${error}, zanim ktokolwiek sięgnie po ciało albo do bazy`, async () => {
+      const { deps, redis } = setup();
+      const req = post(path, { key: KEY_A }, { 'content-length': String(max + 1) });
+      const read = vi.spyOn(req, 'text');
+      const res = await handler(req, deps);
+      expect(res.status).toBe(413);
+      expect((await body(res)).error).toBe(error);
+      expect(read).not.toHaveBeenCalled();
+      expect(redis.calls).toBe(0);
+    });
+
+    it(`${name}: nagłówek równy ${max} B nie odrzuca wcześniej (ciało i tak sprawdza się po odczycie), a bez nagłówka za duże ciało to 413 po odczycie`, async () => {
+      const { deps } = setup();
+      const ok = post(path, { key: KEY_A }, { 'content-length': String(max) });
+      const read = vi.spyOn(ok, 'text');
+      expect((await handler(ok, deps)).status).not.toBe(413);
+      expect(read).toHaveBeenCalledTimes(1);
+      const big = post(path, `{"x":"${'a'.repeat(max)}"}`);
+      expect(big.headers.get('content-length')).toBeNull();
+      const res = await handler(big, deps);
+      expect(res.status).toBe(413);
+      expect((await body(res)).error).toBe(error);
+    });
+  }
+
+  it('nagłówek, który nie jest liczbą, nie blokuje żądania (liczy się ciało)', async () => {
+    const { deps } = setup();
+    for (const value of ['abc', '', '-5', '12abc']) {
+      const res = await handlePlayer(post('/api/player', { key: KEY_A }, { 'content-length': value }), deps);
+      expect(res.status, value).toBe(200);
+    }
   });
 });
 
