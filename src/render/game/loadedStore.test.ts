@@ -265,6 +265,32 @@ describe('loadStore / unloadStore', () => {
     for (const m of made) expect(m.character.dispose).toHaveBeenCalledTimes(1);
   });
 
+  it('załoga prowadzi kasjera z tego sklepu (nie innego): bez opisu zmiany stoi za ladą, bez ludzi jest schowany, na kasie zostaje za ladą, a z zadaniem poza kasą stoi przy zadaniu', () => {
+    const { cell } = cashierSpot(layout)!;
+    const home = cellToWorld(layout, cell.x, cell.y);
+    /** Świeży sklep po pierwszym opisie zmiany `people` i jednej klatce (załoga przed kasjerem, jak w scenie); `null`: bez opisu. */
+    const shop = (people: { id: number; task: 'kasa' | 'wolny' }[] | null) => {
+      const { factory } = fakeFactory();
+      const loaded = loadStore(source({ factory, blobs: createBlobShadows(8) }));
+      if (people) loaded.staffView!.sync({ people, minute: 480, pallets: [] });
+      loaded.staffView!.update(1 / 16, 1 / 16, null);
+      loaded.cashierView!.update(1 / 16, null, false, 1 / 16);
+      const o = loaded.cashierView!.character!.object;
+      const seen = { visible: o.visible, apart: Math.hypot(o.position.x - home.x, o.position.z - home.z) };   // przed unloadStore: dispose załogi odstawia kasjera
+      unloadStore(loaded);
+      return seen;
+    };
+
+    expect(shop(null)).toEqual({ visible: true, apart: 0 });                           // ekonomia jeszcze nic nie podała: kasjer stoi jak dawniej
+    expect(shop([]).visible).toBe(false);                                              // nikogo na zmianie
+    const atTill = shop([{ id: 0, task: 'kasa' }]);
+    expect(atTill.visible).toBe(true);
+    expect(atTill.apart).toBeLessThan(1e-6);                                           // na kasie zostaje za ladą
+    const away = shop([{ id: 0, task: 'wolny' }]);
+    expect(away.visible).toBe(true);
+    expect(away.apart).toBeGreaterThan(0.5);                                           // ten sam kasjer stoi na zapleczu, nie za ladą
+  });
+
   it('unloadStore zwalnia załogę przed kasjerem (załoga go prowadzi), a kolejność reszty zostaje', () => {
     const loaded = loadStore(source());
     unloadStore(loaded);
