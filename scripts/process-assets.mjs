@@ -8,12 +8,16 @@
 //
 // Źródła są tylko czytane (gltf-transform), nic z assets-src/ nie jest wykonywane.
 // Postacie: z 24 wbudowanych klipów zostają tylko Idle i Walk (reszta nigdy nie jest odtwarzana), potem przycięcie
-// klatek animacji (resample) i uproszczenie do CHARACTER_TRIANGLES trójkątów (najpierw po topologii, a gdy siatka jest
-// pocięta na kawałki, metodą sloppy). Uproszczenie jest odrzucane, jeśli psuje skinning lub liczbę skinów/animacji/prymitywów.
-// Stroje specjalne (special-*.glb, tylko dla kasjera gracza) idą tą samą ścieżką, ale między uproszczeniem topologicznym
-// a „sloppy” próbują uproszczenia topologicznego z flagą Permissive (PERMISSIVE): ich cienkie płytki zbroi „sloppy” rwie
-// w dziury. Zadanie `drop` usuwa przed uproszczeniem węzły, których gra nie rysuje (pistolet, miecz): zjadałyby limit
-// trójkątów, a niezwiązane ze skórą wisiałyby na kości dłoni jako osobne siatki, czyli dodatkowe draw calle postaci.
+// klatek animacji (resample) i uproszczenie do celu zadania (`triangles`, domyślnie CHARACTER_TRIANGLES). Uproszczenie
+// jest odrzucane, jeśli psuje skinning lub liczbę skinów/animacji/prymitywów.
+// Siatki Quaterniusa są cieniowane płasko (każda ściana ma własne wierzchołki), więc zwykłe uproszczenie topologiczne nic
+// nie zwija, a „sloppy” rwie cienkie części (płytki zbroi, nogawki, oczy pod skórą twarzy) w dziury. Dlatego każde zadanie
+// postaci ma `permissive: true`: uproszczenie topologiczne z flagą Permissive (PERMISSIVE). Zadanie z `permissive`, które
+// nie schodzi do celu, kończy potok błędem: nie ma po cichu gorszej ścieżki. Cel 3 tys. trójkątów wystarcza zwykłym strojom;
+// kosmonauta, król i poszukiwacz przygód (mężczyzna) dostają więcej (`triangles`, uzasadnienie przy ich zadaniach).
+// Stroje specjalne (special-*.glb, tylko dla kasjera gracza) idą tą samą ścieżką. Zadanie `drop` usuwa przed uproszczeniem
+// węzły, których gra nie rysuje (pistolet, miecz): zjadałyby limit trójkątów, a niezwiązane ze skórą wisiałyby na kości
+// dłoni jako osobne siatki, czyli dodatkowe draw calle postaci.
 // Tekstury postaci (stroje modular ich nie mają) byłyby skalowane do TEXTURE_LIMIT i zapisywane jako JPEG.
 // Na końcu każdy plik dostaje bezstratną kompresję meshopt (EXT_meshopt_compression, bez kwantyzacji), a zapisany plik
 // jest wczytany z powrotem dekoderem meshopt i porównany ze źródłem (macierze inverseBindMatrices po nazwie kości).
@@ -43,6 +47,7 @@ const OUT = join(ROOT, 'public', 'assets');
 /** Katalogi wyjścia, w których skrypt sprząta pliki, których już nie tworzy. */
 const OUT_DIRS = ['characters', 'props'];
 
+/** Domyślny cel uproszczenia postaci w trójkątach; zadanie może go zmienić własnym `triangles`. */
 const CHARACTER_TRIANGLES = 3000;
 // Mniejsze prymitywy (oczy, drobne detale) nie są upraszczane, bo uproszczenie mogłoby je usunąć.
 const SMALL_PRIMITIVE_TRIANGLES = 300;
@@ -58,37 +63,40 @@ const WOMEN = join(SRC, 'quaternius-modular-women', 'files', 'Ultimate Modular W
 const CITY = join(SRC, 'kenney-city-kit-roads', 'files', 'Models', 'GLB format');
 const CAR = join(SRC, 'kenney-car-kit', 'files', 'Models', 'GLB format');
 
-/** Wspólne ustawienia strojów specjalnych: postać, a do uproszczenia strategia permissive (patrz PERMISSIVE). */
-const SPECIAL = { character: true, permissive: true };
+/** Wspólne ustawienia zadania postaci: klipy, tekstury i uproszczenie strategią permissive (patrz PERMISSIVE). */
+const CHARACTER = { character: true, permissive: true };
 
 /**
  * Wejście -> wyjście względem public/assets. `character: true` włącza przycięcie klipów, uproszczenie i tekstury.
+ * `triangles`: cel uproszczenia tego pliku (domyślnie CHARACTER_TRIANGLES); tylko dla zadań postaci.
  * `drop`: nazwy węzłów (z siatkami) usuwanych przed resztą potoku, każdy musi istnieć dokładnie raz.
- * `permissive`: przed „sloppy” próbuje uproszczenia topologicznego z flagą Permissive (patrz PERMISSIVE).
+ * `permissive`: uproszczenie topologiczne z flagą Permissive (patrz PERMISSIVE); gdy nie schodzi do celu, potok kończy się błędem.
  */
 const JOBS = [
-  { src: join(MEN, 'Casual_Hoodie.gltf'), out: 'characters/men-casual-hoodie.glb', character: true },
-  { src: join(MEN, 'Casual_2.gltf'), out: 'characters/men-casual-2.glb', character: true },
-  { src: join(MEN, 'Suit.gltf'), out: 'characters/men-suit.glb', character: true },
-  { src: join(MEN, 'Worker.gltf'), out: 'characters/men-worker.glb', character: true },
-  { src: join(MEN, 'Farmer.gltf'), out: 'characters/men-farmer.glb', character: true },
-  { src: join(MEN, 'Beach.gltf'), out: 'characters/men-beach.glb', character: true },
-  { src: join(MEN, 'Punk.gltf'), out: 'characters/men-punk.glb', character: true },
-  { src: join(WOMEN, 'Casual.gltf'), out: 'characters/women-casual.glb', character: true },
-  { src: join(WOMEN, 'Suit.gltf'), out: 'characters/women-suit.glb', character: true },
-  { src: join(WOMEN, 'Formal.gltf'), out: 'characters/women-formal.glb', character: true },
-  { src: join(WOMEN, 'Worker.gltf'), out: 'characters/women-worker.glb', character: true },
-  { src: join(WOMEN, 'Punk.gltf'), out: 'characters/women-punk.glb', character: true },
+  { src: join(MEN, 'Casual_Hoodie.gltf'), out: 'characters/men-casual-hoodie.glb', ...CHARACTER },
+  { src: join(MEN, 'Casual_2.gltf'), out: 'characters/men-casual-2.glb', ...CHARACTER },
+  { src: join(MEN, 'Suit.gltf'), out: 'characters/men-suit.glb', ...CHARACTER },
+  { src: join(MEN, 'Worker.gltf'), out: 'characters/men-worker.glb', ...CHARACTER },
+  { src: join(MEN, 'Farmer.gltf'), out: 'characters/men-farmer.glb', ...CHARACTER },
+  { src: join(MEN, 'Beach.gltf'), out: 'characters/men-beach.glb', ...CHARACTER },
+  { src: join(MEN, 'Punk.gltf'), out: 'characters/men-punk.glb', ...CHARACTER },
+  { src: join(WOMEN, 'Casual.gltf'), out: 'characters/women-casual.glb', ...CHARACTER },
+  { src: join(WOMEN, 'Suit.gltf'), out: 'characters/women-suit.glb', ...CHARACTER },
+  { src: join(WOMEN, 'Formal.gltf'), out: 'characters/women-formal.glb', ...CHARACTER },
+  { src: join(WOMEN, 'Worker.gltf'), out: 'characters/women-worker.glb', ...CHARACTER },
+  { src: join(WOMEN, 'Punk.gltf'), out: 'characters/women-punk.glb', ...CHARACTER },
   // Stroje specjalne (ASSETS.characters.special): tylko kasjer gracza, klienci ich nie dostają.
-  { src: join(MEN, 'Spacesuit.gltf'), out: 'characters/special-men-spacesuit.glb', ...SPECIAL },
-  { src: join(MEN, 'King.gltf'), out: 'characters/special-men-king.glb', ...SPECIAL },
-  { src: join(MEN, 'Swat.gltf'), out: 'characters/special-men-swat.glb', ...SPECIAL, drop: ['Pistol'] },
-  { src: join(MEN, 'Adventurer.gltf'), out: 'characters/special-men-adventurer.glb', ...SPECIAL },
-  { src: join(WOMEN, 'SciFi.gltf'), out: 'characters/special-women-scifi.glb', ...SPECIAL, drop: ['Pistol'] },
-  { src: join(WOMEN, 'Adventurer.gltf'), out: 'characters/special-women-adventurer.glb', ...SPECIAL },
-  { src: join(WOMEN, 'Witch.gltf'), out: 'characters/special-women-witch.glb', ...SPECIAL },
-  { src: join(WOMEN, 'Medieval.gltf'), out: 'characters/special-women-medieval.glb', ...SPECIAL, drop: ['Sword'] },
-  { src: join(WOMEN, 'Soldier.gltf'), out: 'characters/special-women-soldier.glb', ...SPECIAL },
+  // `triangles: 5000`: przy 3000 kosmonaucie rwie się pancerz (12,1 tys. px przezroczystych dziur w 16 widokach, przy 5000: 1,5 tys.),
+  // a królowi i poszukiwaczowi (m) oczy giną pod skórą twarzy (widoczność oczu od frontu 0% i 43%, przy 5000: 48% i 75%; źródło: 45% i 75%).
+  { src: join(MEN, 'Spacesuit.gltf'), out: 'characters/special-men-spacesuit.glb', ...CHARACTER, triangles: 5000 },
+  { src: join(MEN, 'King.gltf'), out: 'characters/special-men-king.glb', ...CHARACTER, triangles: 5000 },
+  { src: join(MEN, 'Swat.gltf'), out: 'characters/special-men-swat.glb', ...CHARACTER, drop: ['Pistol'] },
+  { src: join(MEN, 'Adventurer.gltf'), out: 'characters/special-men-adventurer.glb', ...CHARACTER, triangles: 5000 },
+  { src: join(WOMEN, 'SciFi.gltf'), out: 'characters/special-women-scifi.glb', ...CHARACTER, drop: ['Pistol'] },
+  { src: join(WOMEN, 'Adventurer.gltf'), out: 'characters/special-women-adventurer.glb', ...CHARACTER },
+  { src: join(WOMEN, 'Witch.gltf'), out: 'characters/special-women-witch.glb', ...CHARACTER },
+  { src: join(WOMEN, 'Medieval.gltf'), out: 'characters/special-women-medieval.glb', ...CHARACTER, drop: ['Sword'] },
+  { src: join(WOMEN, 'Soldier.gltf'), out: 'characters/special-women-soldier.glb', ...CHARACTER },
   { src: join(CITY, 'light-curved.glb'), out: 'props/lamp-curved.glb' },
   { src: join(CAR, 'delivery.glb'), out: 'props/van-delivery.glb' },
 ];
@@ -109,6 +117,7 @@ const verifyIo = new NodeIO()
  * Uproszczenie „sloppy” ignoruje topologię. Siatki modularne są złożone z osobnych
  * kawałków (szwy nie dzielą krawędzi), więc zwykłe uproszczenie ich nie zmniejsza.
  * Limit błędu (SLOPPY_ERROR) jest ciasny: przy błędzie 1 postacie się rozpadają.
+ * Używają go tylko zadania postaci bez `permissive` (obecnie żadne): „sloppy” rwie cienkie części w dziury.
  */
 const SLOPPY = {
   simplify: (indices, positions, stride, target, error) =>
@@ -120,8 +129,9 @@ const SLOPPY = {
  * cieniowane płasko (każda ściana ma własne wierzchołki z własną normalną), więc zwykłe uproszczenie widzi sam szew i nie
  * zwinie niczego (10558 trójkątów kosmonauty zostaje 10138 nawet przy błędzie 0,5), a „sloppy” rwie cienkie płytki zbroi
  * w dziury. Z `Permissive` ta sama siatka schodzi do celu przy błędzie rzędu 0,01–0,04 i zachowuje kształty. Limit błędu
- * (PERMISSIVE_ERROR) jest zapasowy: wszystkie stroje specjalne schodzą do celu, zanim go osiągną (inaczej wynik wyższy niż
- * limit trójkątów jest odrzucany i zadanie spada na „sloppy”).
+ * (PERMISSIVE_ERROR) jest zapasowy: wszystkie zadania schodzą do celu, zanim go osiągną. Gdyby któreś nie zeszło (wynik
+ * wyższy niż cel + 10% albo zepsuty skinning), potok kończy się błędem z opisem, zamiast po cichu wziąć gorszą ścieżkę:
+ * wtedy trzeba podnieść `triangles` zadania albo PERMISSIVE_ERROR.
  */
 const PERMISSIVE = {
   simplify: (indices, positions, stride, target, error, flags) =>
@@ -195,7 +205,10 @@ function simplifyCharacter(doc, target, simplifier, error) {
   for (const prim of big) simplifyPrimitive(prim, { simplifier, ratio, error });
 }
 
-/** Upraszcza kopię dokumentu. Zwraca wynik tylko wtedy, gdy zachowano skinning i animacje. */
+/**
+ * Upraszcza kopię dokumentu. `doc` w wyniku jest ustawione tylko wtedy, gdy zachowano skinning i animacje, a siatka zeszła do
+ * celu (z zapasem 10%); `tris` i `intact` opisują wynik także przy odrzuceniu (do komunikatu błędu).
+ */
 async function trySimplify(doc, before, simplifier, error, target) {
   const candidate = cloneDocument(doc);
   simplifyCharacter(candidate, target, simplifier, error);
@@ -206,7 +219,7 @@ async function trySimplify(doc, before, simplifier, error, target) {
     after.anims === before.anims &&
     after.skinnedPrims === before.skinnedPrims &&
     skinningIntact(candidate);
-  return intact && after.tris <= target * 1.1 ? candidate : null;
+  return { doc: intact && after.tris <= target * 1.1 ? candidate : null, tris: after.tris, intact };
 }
 
 /**
@@ -281,13 +294,19 @@ async function prepare(job, simplifyTo) {
   if (!simplifyTo || before.tris <= simplifyTo) return result(doc, '');
 
   const topology = await trySimplify(doc, before, MeshoptSimplifier, 0.01, simplifyTo);
-  if (topology) return result(topology, 'uproszczono');
+  if (topology.doc) return result(topology.doc, 'uproszczono');
   if (job.permissive) {
     const permissive = await trySimplify(doc, before, PERMISSIVE, PERMISSIVE_ERROR, simplifyTo);
-    if (permissive) return result(permissive, 'uproszczono (permissive)');
+    if (permissive.doc) return result(permissive.doc, 'uproszczono (permissive)');
+    // Bez cichego spadku na „sloppy”: dziury w stroju widać dopiero w grze, a nie w tabeli potoku.
+    throw new Error(
+      `${job.out}: uproszczenie permissive nie osiągnęło celu ${simplifyTo} trójkątów ` +
+        `(wynik ${permissive.tris}, limit ${Math.floor(simplifyTo * 1.1)}, skinning ${permissive.intact ? 'cały' : 'zepsuty'}); ` +
+        'podnieś `triangles` zadania albo PERMISSIVE_ERROR',
+    );
   }
   const sloppy = await trySimplify(doc, before, SLOPPY, SLOPPY_ERROR, simplifyTo);
-  if (sloppy) return result(sloppy, 'uproszczono (sloppy)');
+  if (sloppy.doc) return result(sloppy.doc, 'uproszczono (sloppy)');
   return result(doc, 'BEZ uproszczenia: uproszczenie psuje skinning lub animacje');
 }
 
@@ -311,11 +330,17 @@ function sameMatrices(a, b) {
   return a.length === b.length && a.every((m, i) => m.length === b[i].length && m.every((v, k) => v === b[i][k]));
 }
 
+/** Cel uproszczenia zadania w trójkątach; 0 = bez uproszczenia (rekwizyty). `triangles` ma sens tylko dla postaci. */
+function targetTriangles(job) {
+  if (job.triangles !== undefined && !job.character) throw new Error(`${job.out}: \`triangles\` dotyczy tylko zadań postaci`);
+  return job.character ? (job.triangles ?? CHARACTER_TRIANGLES) : 0;
+}
+
 async function processJob(job) {
   const outPath = join(OUT, job.out);
   await mkdir(dirname(outPath), { recursive: true });
 
-  const { doc, before, sourceInverseBind, note } = await prepare(job, job.character ? CHARACTER_TRIANGLES : 0);
+  const { doc, before, sourceInverseBind, note } = await prepare(job, targetTriangles(job));
   const matricesBefore = inverseBindMatrices(doc);
   if (job.character) {
     await doc.transform(
@@ -350,7 +375,7 @@ async function processJob(job) {
   }
 
   const { size } = await stat(outPath);
-  return { file: job.out, tris: after.tris, skins: after.skins, anims: after.anims, kb: size / 1024, note };
+  return { file: job.out, tris: after.tris, skins: after.skins, anims: after.anims, kb: size / 1024, note, target: job.triangles };
 }
 
 /** Usuwa z katalogów wyjścia pliki, których żadne zadanie już nie tworzy (np. po usunięciu paczki ze źródeł). */
@@ -385,7 +410,7 @@ async function main() {
     `${file.padEnd(width)}  ${String(tris).padStart(9)}  ${kb.padStart(9)}  ${notes}`;
   console.log(`\n${line('plik', 'trójkąty', 'KB', 'uwagi')}`);
   for (const r of rows) {
-    const notes = [r.note, r.skins ? `skiny ${r.skins}` : '', r.anims ? `animacje ${r.anims}` : '']
+    const notes = [r.note, r.target ? `cel ${r.target}` : '', r.skins ? `skiny ${r.skins}` : '', r.anims ? `animacje ${r.anims}` : '']
       .filter(Boolean)
       .join(', ');
     console.log(line(r.file, r.tris, r.kb.toFixed(1), notes));

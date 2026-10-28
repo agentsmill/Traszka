@@ -11,10 +11,11 @@ import { outfitOfPath } from './modularPack';
 /**
  * Strona podglądu postaci `?charTest=1` (ładowana dynamicznie z main.ts, nie wchodzi do głównego pakietu gry): 12 postaci
  * z paczki modular (stroje klientów), wszystkie w chodzie, kamera okrąża scenę. Parametry (do zrzutów): `set=special` (zamiast
- * klientów dziewięć strojów specjalnych kasjera, przez `createWithOutfit`) albo `set=all` (wszystkie 21 strojów, zwykłe
- * i specjalne), `look=<seed>` (wszystkie postacie z jednym wyglądem: te same proporcje, skóra i kolory, więc strój widać
- * bez zakłóceń; bez `set` strój i tak losuje się z seeda), `layout=ring` (domyślnie: postacie
- * chodzą po okręgu) albo `layout=row` (jeden rząd, chód w miejscu, twarzą do kamery; `turn` obraca o podane stopnie), `orbit`
+ * klientów dziewięć strojów specjalnych kasjera, przez `createWithOutfit`), `set=regular` (po jednym z 12 strojów zwykłych,
+ * też przez `createWithOutfit`) albo `set=all` (wszystkie 21 strojów, zwykłe i specjalne), `look=<seed>` (wszystkie postacie
+ * z jednym wyglądem: te same proporcje, skóra i kolory, więc strój widać bez zakłóceń; bez `set` strój i tak losuje się
+ * z seeda), `layout=ring` (domyślnie: postacie chodzą po okręgu) albo `layout=row` (jeden rząd, chód w miejscu, twarzą
+ * do kamery; `turn` obraca o podane stopnie), `orbit`
  * (stopnie na sekundę, 0 zatrzymuje, domyślnie 12), `yaw` (początkowy kąt kamery), `zoom` (wysokość widoku w m), `close`
  * i `n` (numer postaci: kadr na jednej postaci, wymusza layout=row), `night=1`, `q` (preset jakości). Zoom i obrót są własne
  * (CameraRig ma obrót co 90° i zoom ≥ 6 m, a tu potrzebny jest kadr na jedną postać).
@@ -38,8 +39,9 @@ export function startCharTestPage(canvas: HTMLCanvasElement, preset: QualityPres
     return;
   }
   const set = params.get('set');
-  /** Stroje do pokazania przez `createWithOutfit` (`set=special` albo `set=all`); null: klienci przez `create`. */
+  /** Stroje do pokazania przez `createWithOutfit` (`set=special`, `set=regular` albo `set=all`); null: klienci przez `create`. */
   const outfits = set === 'special' ? ASSETS.characters.special.map(outfitOfPath)
+    : set === 'regular' ? ASSETS.characters.modular.map(outfitOfPath)
     : set === 'all' ? [...ASSETS.characters.modular, ...ASSETS.characters.special].map(outfitOfPath) : null;
   const count = outfits ? outfits.length : CUSTOMER_COUNT;
   const look = params.get('look');
@@ -64,7 +66,8 @@ export function startCharTestPage(canvas: HTMLCanvasElement, preset: QualityPres
   ctx.setTimeOfDay(night ? 'night' : 'day');
 
   const label = document.createElement('div');
-  label.textContent = set === 'special' ? 'Test postaci (stroje specjalne)' : set === 'all' ? 'Test postaci (wszystkie stroje)' : 'Test postaci (modular)';
+  label.textContent = set === 'special' ? 'Test postaci (stroje specjalne)' : set === 'regular' ? 'Test postaci (stroje zwykłe)'
+    : set === 'all' ? 'Test postaci (wszystkie stroje)' : 'Test postaci (modular)';
   label.style.cssText = 'position:fixed;left:12px;top:10px;font:600 14px system-ui,sans-serif;color:#4b3f3a;text-shadow:0 1px 0 #fff3df;pointer-events:none';
   document.body.appendChild(label);
 

@@ -30,7 +30,7 @@ export interface CharacterFactory {
    * Kasjer gracza: wygląd (skóra, włosy, ubranie, wzrost, szerokość) z seeda jak w `create`, ale w wybranym stroju, zwykłym albo
    * specjalnym (`OutfitFile`). Ten sam seed daje tę samą twarz i kolory w każdym stroju. Kasjer nie nosi akcesoriów klientów
    * (plecak, torba, telefon): zasłaniałyby strój, a męski strój Adventurer ma własny plecak. Gdy plik stroju się nie wczytał, kasjer
-   * dostaje strój zwykły tej samej płci (z ostrzeżeniem), a gdy nie wczytało się nic, postać zastępczą.
+   * dostaje strój zwykły tej samej płci (z ostrzeżeniem, jednym na strój), a gdy nie wczytało się nic, postać zastępczą.
    */
   createWithOutfit(appearanceSeed: string, outfit: OutfitFile): CharacterInstance;
   /**
@@ -146,6 +146,8 @@ export async function createCharacterFactory(load: typeof loadGLB = loadGLB): Pr
     return { create: fallback, createWithOutfit: fallback, walkSpeedMps: WALK_SPEED_MPS, dispose() {} };
   }
   const loaded = pack;
+  // Kasjer powstaje od nowa przy każdej zmianie wyglądu, więc brak pliku stroju ostrzega raz na strój, nie przy każdym wywołaniu.
+  const warnedMissing = new Set<OutfitFile>();
   return {
     walkSpeedMps: WALK_SPEED_MPS,
     create(seed) {
@@ -162,7 +164,10 @@ export async function createCharacterFactory(load: typeof loadGLB = loadGLB): Pr
         const a: Appearance = { ...pickAppearance(seed), accessory: 'none' };
         let variant = loaded.variantOf(outfit);
         if (!variant) {
-          console.warn(`Postacie: brak stroju ${outfit}, używam stroju zwykłego tej samej płci.`);
+          if (!warnedMissing.has(outfit)) {
+            warnedMissing.add(outfit);
+            console.warn(`Postacie: brak stroju ${outfit}, używam stroju zwykłego tej samej płci.`);
+          }
           variant = loaded.variantFor({ ...a, body: outfitBody(outfit) }, createRng(subSeed(seed, 'outfit')));
         }
         return assemble(variant, a, seed);

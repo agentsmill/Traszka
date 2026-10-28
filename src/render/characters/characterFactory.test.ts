@@ -336,6 +336,21 @@ describe('paczka modular: stroje, klipy, tabela OUTFIT_PAINT', () => {
     }
   }, 60_000);
 
+  it('plik każdego stroju ma budżet trójkątów z potoku: 3 tys., a kosmonauta, król i poszukiwacz przygód (m) 5 tys.', async () => {
+    // Uproszczenie permissive schodzi dokładnie do celu zadania. „Sloppy” zostawiał stroje zwykłe na 2,7–2,9 tys. trójkątów i z dziurami
+    // (kamizelka i kask robotnika, spodnie robotnicy), a kosmonaucie przy 3 tys. rwał się pancerz, królowi i poszukiwaczowi znikały oczy.
+    const target = (file: OutfitFile): number => (['special-men-spacesuit', 'special-men-king', 'special-men-adventurer'].includes(file) ? 5000 : 3000);
+    for (const url of urls) {
+      const file = outfitName(url);
+      let triangles = 0;
+      for (const mesh of skinnedMeshes((await loadFromDisk(url)).scene)) {
+        triangles += (mesh.geometry.index ?? mesh.geometry.getAttribute('position')).count / 3;
+      }
+      expect(triangles, `${file}: ${triangles} trójkątów, cel ${target(file)}`).toBeGreaterThan(target(file) * 0.98);
+      expect(triangles, `${file}: ${triangles} trójkątów, cel ${target(file)}`).toBeLessThanOrEqual(target(file) * 1.1);
+    }
+  }, 60_000);
+
   it('klip wybierany jest po dokładnej nazwie, a dopiero potem po wzorcu (najzwyklejsza nazwa)', () => {
     const clip = (name: string): AnimationClip => new AnimationClip(name, 1, []);
     // „WALK” sortuje się alfabetycznie przed „Walk”: sam wzorzec wybrałby go, dokładna nazwa nie
@@ -361,6 +376,32 @@ describe('createCharacterFactory: częściowe awarie', () => {
       }
     }
     expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  }, 60_000);
+
+  it('brakujący strój ostrzega raz na strój, a nie przy każdym createWithOutfit (kasjer powstaje od nowa przy każdej zmianie wyglądu)', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const loadWithoutSpecial = (url: string): Promise<GLTF> => (ASSETS.characters.special.includes(url) ? Promise.reject(new Error('404')) : loadFromDisk(url));
+    const factory = await createCharacterFactory(loadWithoutSpecial);
+    const missingOutfitWarnings = (): string[] => warn.mock.calls.map((call) => String(call[0])).filter((message) => message.includes('brak stroju'));
+    warn.mockClear(); // ostrzeżenie o niewczytanych plikach przy budowie fabryki to osobna sprawa
+
+    for (const seed of ['a', 'b', 'c', 'd', 'e']) factory.createWithOutfit(seed, 'special-men-king').dispose();
+    expect(missingOutfitWarnings()).toHaveLength(1);
+    expect(missingOutfitWarnings()[0]).toContain('special-men-king');
+
+    // inny brakujący strój ostrzega osobno, a powtórki obu już nie
+    for (const seed of ['a', 'b', 'c']) factory.createWithOutfit(seed, 'special-women-witch').dispose();
+    for (const seed of ['f', 'g']) factory.createWithOutfit(seed, 'special-men-king').dispose();
+    expect(missingOutfitWarnings()).toHaveLength(2);
+    expect(missingOutfitWarnings()[1]).toContain('special-women-witch');
+
+    // licznik należy do fabryki: druga fabryka (np. podgląd na ekranie startowym) ostrzega o tym samym stroju jeszcze raz
+    const second = await createCharacterFactory(loadWithoutSpecial);
+    warn.mockClear();
+    second.createWithOutfit('a', 'special-men-king').dispose();
+    second.createWithOutfit('b', 'special-men-king').dispose();
+    expect(missingOutfitWarnings()).toHaveLength(1);
     warn.mockRestore();
   }, 60_000);
 
