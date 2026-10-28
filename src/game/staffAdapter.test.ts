@@ -67,6 +67,14 @@ describe('staffFromEconomy: godziny pracy', () => {
     }
   });
 
+  it('w pierwszej minucie po otwarciu przydział z nocy (0 i 0) nie zostawia kasy pustej: pierwsza osoba staje na kasie', () => {
+    const s = calm(3, 0);
+    s.lastWorkers = 0;
+    s.minute = OPEN_FROM;
+    expect(tasks(s)[0]).toBe('kasa');
+    expect(count(tasks(s), 'kasa')).toBe(1);
+  });
+
   it('remont nie wyprowadza ludzi ze sklepu: w godzinach otwarcia pracują, choć nikt nie stoi na kasie', () => {
     const s = calm(3, 0);
     s.remontUntil = s.minute + 600;

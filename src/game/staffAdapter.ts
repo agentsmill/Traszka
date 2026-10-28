@@ -30,7 +30,10 @@ export function staffFromEconomy(s: EconomyState, info: StoreInfo): StaffAssignm
 
   // zatrudnienie dodaje osobę o największym id, a zwolnienie zabiera tę o największym
   const n = clamp(Math.floor(s.staff), 0, STAFF_MAX);
-  const cashiers = clamp(s.lastCashiers, 0, n);
+  // `doWork` zapisuje przydział w każdej minucie, także zamkniętej (wtedy 0 i 0), więc w pierwszej minucie po otwarciu
+  // `lastCashiers` pochodzi jeszcze z nocy. Bez żadnego przydziału na kasie staje pierwsza osoba, żeby rano nikt nie zaczynał na zapleczu.
+  const allocated = s.lastCashiers > 0 || s.lastWorkers > 0;
+  const cashiers = allocated ? clamp(s.lastCashiers, 0, n) : Math.min(n, 1);
   const pallets = s.pallets.filter((p) => p.total > 0).length;
   const urgent = hasUrgentRestock(s, info);
   const topUp = hasRestockWork(s, info);
