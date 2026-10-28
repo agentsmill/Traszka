@@ -15,7 +15,7 @@ const squareCells = (s: PalletSpot): Cell[] => [
 
 /**
  * Dokładna kopia `floorSpots` sprzed zmiany komparatora, z `Math.hypot` (w testach wolno). To wzorzec kolejności:
- * nowa wersja ma dawać dokładnie te same miejsca w tej samej kolejności.
+ * nowa wersja ma dawać te same miejsca w tej samej kolejności, poza dokładnymi remisami odległości.
  */
 function legacyFloorSpots(layout: StoreLayout): PalletSpot[] {
   const FLOOR_SPOTS_MAX = 3;
@@ -84,6 +84,8 @@ function centreDist2(layout: StoreLayout, s: PalletSpot): number {
   return dx * dx + dy * dy;
 }
 
+const sameSpot = (a: PalletSpot | undefined, b: PalletSpot | undefined): boolean => a?.x === b?.x && a?.y === b?.y;
+
 describe('miejsca na palety w sali', () => {
   /**
    * Kolejność ma być jak przy `Math.hypot` z jednym wyjątkiem: dokładne remisy odległości. Specyfikacja nie gwarantuje
@@ -91,20 +93,20 @@ describe('miejsca na palety w sali', () => {
    * wartości (różnica w ostatnim bicie) i o ich kolejności decydował szum zaokrąglenia, zależny od silnika. Teraz
    * remis rozstrzyga kolejność skanowania. Dlatego test wymaga równości z wzorcem albo, w pierwszym miejscu różnicy,
    * dwóch miejsc o tym samym całkowitym kwadracie odległości; każda inna rozbieżność to błąd.
+   * Listy układów, które się różnią, celowo nie przypinamy: zależy ona od tego, jak dany silnik zaokrągla `Math.hypot`
+   * (lokalnie Node 25, w CI Node 24), czyli od dokładnie tej cechy, której kod ma już nie używać. Kierunek rozstrzygania
+   * remisów przypina następny test, na literałach niezależnych od silnika.
    */
   it('kolejność miejsc w sali jak przy Math.hypot, różnice tylko przy dokładnych remisach: 1000 seedów × 4 poziomy remontu', () => {
-    const differing: string[] = [];
     for (let i = 0; i < SEEDS; i++) {
       const seed = `spot-${i}`;
       for (let level = 0; level <= 3; level++) {
         const layout = layoutFor(seed, level);
         const actual = computeStoreInfo(layout).spots.floor;
         const legacy = legacyFloorSpots(layout);
-        const same = (a: PalletSpot | undefined, b: PalletSpot | undefined): boolean => a?.x === b?.x && a?.y === b?.y;
         let at = -1;
-        for (let k = 0; k < Math.max(actual.length, legacy.length) && at < 0; k++) if (!same(actual[k], legacy[k])) at = k;
+        for (let k = 0; k < Math.max(actual.length, legacy.length) && at < 0; k++) if (!sameSpot(actual[k], legacy[k])) at = k;
         if (at < 0) continue;
-        differing.push(`${seed}:${level}`);
         const mine = actual[at];
         const old = legacy[at];
         const where = `seed ${seed}, poziom ${level}, pierwsza różnica na miejscu ${at}`;
@@ -113,7 +115,13 @@ describe('miejsca na palety w sali', () => {
         expect(centreDist2(layout, mine!), `${where}: to nie jest dokładny remis odległości`).toBe(centreDist2(layout, old!));
       }
     }
-    // dla domyślnej próby znamy dokładnie, które układy się różnią (trzecie miejsce przy remisie); przy SPOT_SEEDS tylko reguła wyżej
-    if (process.env.SPOT_SEEDS === undefined) expect(differing).toEqual(['spot-252:1', 'spot-676:1']);
   }, 120_000);
+
+  it('dokładny remis odległości rozstrzyga kolejność skanowania, tak samo w każdym silniku', () => {
+    // w obu układach (5,11) i (13,15) leżą dokładnie tak samo daleko od środka (kwadrat 85 w podwojonych współrzędnych);
+    // (5,11) jest wcześniej w skanowaniu (wiersz 11 przed 15), więc wchodzi przed (13,15), któremu `Math.hypot` bywał przychylny
+    for (const seed of ['spot-252', 'spot-676']) {
+      expect(computeStoreInfo(layoutFor(seed, 1)).spots.floor, seed).toEqual([{ x: 9, y: 11 }, { x: 9, y: 15 }, { x: 5, y: 11 }]);
+    }
+  });
 });

@@ -146,12 +146,12 @@ function floorSpots(layout: StoreLayout): PalletSpot[] {
   // współrzędnymi: kwadrat odległości jest wtedy dokładną liczbą całkowitą (czterokrotnością prawdziwego), a ten sam
   // porządek daje porównanie samych kwadratów. Dokładny remis rozstrzyga jawnie indeks kandydata, czyli kolejność
   // skanowania (wiersz po wierszu), więc w każdym silniku tak samo; dawniej decydował o nim szum zaokrąglenia hypot.
-  const midX2 = width;
-  const midY2 = FRONT_WALL_Y + layout.midWallY;
+  const centre2X = width;
+  const centre2Y = FRONT_WALL_Y + layout.midWallY;
   const byCentre = candidates
     .map((spot, index) => {
-      const dx = 2 * spot.x - midX2;
-      const dy = 2 * spot.y - midY2;
+      const dx = 2 * spot.x - centre2X;
+      const dy = 2 * spot.y - centre2Y;
       return { spot, index, dist2: dx * dx + dy * dy };
     })
     .sort((a, b) => a.dist2 - b.dist2 || a.index - b.index);
