@@ -402,18 +402,51 @@ describe('zepsute polecenia', () => {
     }
   });
 
-  it('polecenie, którego type zmienia się między odczytami, kończy się odmową, a nie brakiem wyniku', () => {
-    // tylko obiekt spoza JSON-a (getter): pierwszy odczyt przechodzi `isCommand`, kolejne dają już inny napis
-    const { s, info } = base();
-    const before = snapshot(s);
-    let reads = 0;
-    const cmd = { get type() { return reads++ === 0 ? 'hire' : 'nuke'; } } as unknown as Command;
-    const out = applyCommand(s, info, cmd);
-    expect(reads).toBeGreaterThan(1);
-    expect(out.result).toEqual({ ok: false, text: 'Nieznane polecenie.' });
-    expect(out.events).toEqual([]);
-    expect(out.layoutChanged).toBe(false);
-    expect(snapshot(s)).toBe(before);
+  describe('polecenie z getterem, którego type zmienia się między odczytami (tylko obiekt spoza JSON-a)', () => {
+    /** Polecenie, którego kolejne odczyty `type` dają kolejne `types` (ostatni zostaje); `reads()` mówi, ile razy je odczytano. */
+    function flipping(...types: string[]): { cmd: Command; reads: () => number } {
+      let reads = 0;
+      const cmd = { get type() { return types[Math.min(reads++, types.length - 1)]; } } as unknown as Command;
+      return { cmd, reads: () => reads };
+    }
+
+    it('claimGift, potem hire: o poleceniu rozstrzyga pierwszy odczyt, więc zamknięte okno paczki odmawia, a hire się nie wykonuje', () => {
+      const { s, info } = base();
+      s.cash = 10 * HIRE_COST;
+      expect(s.minute).toBeLessThan(s.giftAt);   // okno paczki zamknięte
+      const before = snapshot(s);
+      const { cmd, reads } = flipping('claimGift', 'hire');
+      const out = applyCommand(s, info, cmd);
+      expect(reads()).toBe(1);
+      expect(out.result).toEqual({ ok: false, text: 'Paczki od Centrali już nie ma.' });
+      expect(out.events).toEqual([]);
+      expect(out.layoutChanged).toBe(false);
+      expect(snapshot(s)).toBe(before);
+    });
+
+    it('hire, hire, potem claimGift: odbiór paczki nie przemyca się poza zamknięte okno, wykonuje się tylko hire', () => {
+      const { s, info } = base();
+      s.cash = 10 * HIRE_COST;
+      const staff = s.staff;
+      const gifts = s.giftSeq;
+      const { cmd, reads } = flipping('hire', 'hire', 'claimGift');
+      const out = applyCommand(s, info, cmd);
+      expect(reads()).toBe(1);
+      expect(out.result).toEqual({ ok: true });
+      expect(s.staff).toBe(staff + 1);
+      expect(s.giftSeq).toBe(gifts);
+    });
+
+    it('poprawny typ, potem nieznany: odczyt jest jeden, więc polecenie się wykonuje, a nie kończy brakiem wyniku', () => {
+      const { s, info } = base();
+      s.cash = 10 * HIRE_COST;
+      const staff = s.staff;
+      const { cmd, reads } = flipping('hire', 'nuke');
+      const out = applyCommand(s, info, cmd);
+      expect(reads()).toBe(1);
+      expect(out.result).toEqual({ ok: true });
+      expect(s.staff).toBe(staff + 1);
+    });
   });
 });
 

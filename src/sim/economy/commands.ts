@@ -86,45 +86,51 @@ function tap(s: EconomyState, attempt: (combo: number) => CommandResult): Comman
   return r;
 }
 
-function run(s: EconomyState, info: StoreInfo, cmd: Command, events: EconEvent[]): CommandResult {
-  switch (cmd.type) {
-    case 'tapPallet': return tap(s, (combo) => tapPallet(s, info, cmd.palletId, combo, events));
+function run(s: EconomyState, info: StoreInfo, c: Command, events: EconEvent[]): CommandResult {
+  switch (c.type) {
+    case 'tapPallet': return tap(s, (combo) => tapPallet(s, info, c.palletId, combo, events));
     case 'tapTill': return tap(s, (combo) => tapTill(s, info, combo));
-    case 'claimQuest': return claimQuest(s, info, cmd.questId);
+    case 'claimQuest': return claimQuest(s, info, c.questId);
     case 'claimGift': {
       const r = claimGift(s, info);
       scheduleGift(s);   // jedno okno to jeden odbiór: następne dopiero za kilka godzin gry
       return r;
     }
-    case 'movePallet': return movePallet(s, info, cmd.palletId, cmd.loc);
-    case 'returnPallet': return returnPallet(s, cmd.palletId);
-    case 'setOrder': setOrder(s, cmd.auto, cmd.manual); return { ok: true };
+    case 'movePallet': return movePallet(s, info, c.palletId, c.loc);
+    case 'returnPallet': return returnPallet(s, c.palletId);
+    case 'setOrder': setOrder(s, c.auto, c.manual); return { ok: true };
     case 'hire': return hire(s);
     case 'fire': return fire(s);
-    case 'setPriority': setPriority(s, cmd.priority); return { ok: true };
-    case 'buyUpgrade': return buyUpgrade(s, cmd.id);
-    case 'buyEquipment': return buyEquipment(s, info, cmd.id, cmd.slotId);
+    case 'setPriority': setPriority(s, c.priority); return { ok: true };
+    case 'buyUpgrade': return buyUpgrade(s, c.id);
+    case 'buyEquipment': return buyEquipment(s, info, c.id, c.slotId);
     case 'startRemont': return startRemont(s);
     case 'campaign': return campaign(s);
     case 'rushRemont': return rushRemont(s);
-    default: return { ok: false, text: 'Nieznane polecenie.' };   // nieosiągalne po `isCommand`, ale wynik ma być zawsze
+    default: {
+      // wyczerpanie sprawdza kompilator: nowy typ w `Command` bez gałęzi wyżej nie przejdzie `tsc`
+      const unreachable: never = c;
+      void unreachable;
+      return { ok: false, text: 'Nieznane polecenie.' };   // nieosiągalne po `isCommand`, ale wynik ma być zawsze
+    }
   }
 }
 
 /**
  * Stosuje polecenie gracza do stanu. Odmowa z powodu kształtu, końca gry albo zamkniętego okna paczki nie rusza stanu
  * i nie rzuca. Przyjęte polecenie (także to, które się nie udało) kończy się przeliczeniem poziomów, a gdy zmienił się
- * poziom remontu, nowym układem sklepu i przeniesieniem palet oraz sprzętu.
+ * poziom remontu, nowym układem sklepu i przeniesieniem palet oraz sprzętu. Polecenie jest kopiowane raz na początku i dalej
+ * czyta się już tylko kopię: obiekt z getterem (spoza JSON-a) nie da innego `type` przy walidacji, w oknie paczki i w `run`.
  */
 export function applyCommand(state: EconomyState, info: StoreInfo, cmd: Command): CommandOutcome {
-  if (!isCommand(cmd)) return refused('Nieznane polecenie.');
-  const type = cmd.type;   // raz: `type` z getterem mógłby za drugim razem dać co innego, a przejść `isCommand`
+  const c = typeof cmd === 'object' && cmd !== null && !Array.isArray(cmd) ? { ...cmd } : cmd;
+  if (!isCommand(c)) return refused('Nieznane polecenie.');
   if (state.gameOver) return refused('Gra skończona: Centrala wypowiedziała umowę.');
-  if (type === 'claimGift' && !giftOpen(state)) return refused('Paczki od Centrali już nie ma.');
+  if (c.type === 'claimGift' && !giftOpen(state)) return refused('Paczki od Centrali już nie ma.');
 
   const events: EconEvent[] = [];
   const remontBefore = state.remontLevel;
-  const result = run(state, info, cmd, events);
+  const result = run(state, info, c, events);
   processLevels(state, events);   // poziom z nagrody albo stuknięcia od razu, także w pauzie (H1)
   if (state.remontLevel === remontBefore) return { result, events, layoutChanged: false };
 

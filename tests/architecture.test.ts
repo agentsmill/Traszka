@@ -20,7 +20,10 @@ interface Scanned {
   literals: string[];
 }
 
-/** Po tych słowach kluczowych `/` zaczyna regex; po innych identyfikatorach, liczbach, `)` i `]` to dzielenie. */
+/**
+ * Po tych słowach kluczowych `/` zaczyna regex; po innych identyfikatorach, liczbach, `)` i `]` to dzielenie. Słowo po
+ * `.` albo `?.` (`cfg.of`, `x.in`, `a.new`) jest nazwą pola, więc wyjątek go nie dotyczy.
+ */
 const REGEX_AFTER = new Set(['return', 'typeof', 'instanceof', 'in', 'of', 'new', 'delete', 'void', 'throw', 'case', 'do', 'else', 'yield', 'await']);
 const isWordChar = (c: string): boolean => /[\w$]/.test(c) || c > '\x7f';
 
@@ -84,6 +87,7 @@ function scanCode(src: string): Scanned {
     let out = '';
     let depth = 0;
     let value = false;   // poprzedni znaczący token kończy wartość, więc `/` jest dzieleniem
+    let member = false;  // poprzedni znaczący token to `.` dostępu do pola (nie `...`), więc następne słowo jest nazwą pola
     while (i < src.length) {
       const c = src[i]!;
       const next = src[i + 1];
@@ -98,25 +102,34 @@ function scanCode(src: string): Scanned {
       } else if (c === '"' || c === "'") {
         out += quoted(c);
         value = true;
+        member = false;
       } else if (c === '`') {
         out += template();
         value = true;
+        member = false;
       } else if (c === '/' && !value && skipRegex()) {
         out += '/_/';
         value = true;
+        member = false;
       } else if (isWordChar(c)) {
         let j = i + 1;
         while (j < src.length && isWordChar(src[j]!)) j++;
         const word = src.slice(i, j);
         out += word;
         i = j;
-        value = !REGEX_AFTER.has(word);
+        value = member || !REGEX_AFTER.has(word);
+        member = false;
       } else if (/\s/.test(c)) {
         out += c;
         i++;
       } else if ((c === '+' || c === '-') && next === c) {
         out += c + c;   // `i++ / 2`: ++ i -- nie zmieniają tego, czy `/` jest dzieleniem
         i += 2;
+      } else if ((c === '!' && value && next !== '=') || c === '#') {
+        // `xs[i]! / 2`: asercja nie-null po wartości (nie `!=`) i `#` nazwy prywatnej (`this.#of`) zostawiają `value` i `member` jak były.
+        // Znana pomyłka w bezpieczną stronę: `if (x) !/Date/.test(s)` (negacja zaraz po nagłówku) traktuje regex jak kod i da fałszywy alarm.
+        out += c;
+        i++;
       } else {
         if (c === '}' && nested && depth === 0) {
           i++;
@@ -124,8 +137,9 @@ function scanCode(src: string): Scanned {
         }
         depth += c === '{' ? 1 : c === '}' ? -1 : 0;
         out += c;
-        i++;
         value = c === ')' || c === ']';
+        member = c === '.' && src[i - 1] !== '.';   // `...` nie jest dostępem do pola: spread przed `new` zostaje słowem kluczowym
+        i++;
       }
     }
     return out;
@@ -167,7 +181,7 @@ const matches = (name: string, re: RegExp): Rule => ({ name, test: (code) => re.
  * Odwołanie do globalnej nazwy. Poza dostępem do pola (`staff.performance`, `a?.performance`; ale nie `...performance`)
  * i poza deklaracją w pozycji klucza, pola albo parametru z adnotacją (`{ performance: 1 }`, `window?: boolean`,
  * `(performance: number)`): to są zwykłe nazwy własne. Dalej łapie `cond ? window : null`, `{ a: window }`, `{ window }`
- * i `typeof window`. `globalThis.window` łapie zakaz `globalThis`.
+ * i `typeof window`. `globalThis.window` i `global.Date` (Node) łapią zakazy `globalThis` i `global`.
  */
 function globalName(name: string): Rule {
   const member = new RegExp(`(?<!\\.)\\.\\s*${name}\\b`, 'g');
@@ -194,7 +208,7 @@ const ENGINE_MATH: Rule[] = [
 /** Zegar, losowość, przeglądarka, wejście-wyjście: wszędzie w src/sim, także w crowd/ i nav/. */
 const GLOBAL_NAMES = [
   'Date', 'performance', 'localStorage', 'window',
-  'globalThis', 'self', 'crypto', 'Intl', 'document', 'navigator', 'sessionStorage', 'indexedDB',
+  'globalThis', 'global', 'self', 'crypto', 'Intl', 'document', 'navigator', 'sessionStorage', 'indexedDB',
   'fetch', 'setTimeout', 'setInterval', 'requestAnimationFrame', 'queueMicrotask', 'process', 'require',
 ];
 const ALWAYS: Rule[] = [
@@ -368,6 +382,11 @@ describe('simViolations: reguły na próbkach', () => {
     [SIM_FILE, "const t = globalThis['performance'].now();", 'globalThis'],
     [SIM_FILE, 'const t = self.performance.now();', 'self'],
     [SIM_FILE, 'const w = self.window;', 'self'],
+    // `global` w Node to to samo co `globalThis`: `global.Date` zostaje po wyjęciu pola, więc zdradza je tylko ta nazwa
+    [SIM_FILE, 'global.Date.now()', 'global'],
+    [SIM_FILE, 'global.performance', 'global'],
+    [SIM_FILE, 'const t = global.performance.now();', 'global'],
+    [SIM_FILE, 'const t = cond ? global : null;', 'global'],
     // losowość, locale, zegary, sieć i środowisko (determinizm odtworzenia biegu między przeglądarką a serwerem)
     [SIM_FILE, 'const id = crypto.randomUUID();', 'crypto'],
     [SIM_FILE, 'crypto.getRandomValues(new Uint8Array(4));', 'crypto'],
@@ -413,6 +432,19 @@ describe('simViolations: reguły na próbkach', () => {
     [SIM_FILE, 'const h = a / b; const r = Math.random(); const q = c / d;', 'Math.random'],
     [SIM_FILE, 'const h = i++ / 2; const r = Math.random(); const q = c / 3;', 'Math.random'],
     [SIM_FILE, 'const h = `${a}` / 2; const r = Math.random(); const q = c / 3;', 'Math.random'],
+    // `!` po wartości to asercja nie-null, nie negacja: `/` za nią dalej jest dzieleniem (inaczej `/ ys[j]!; Math.random(); const q = a /` byłoby regexem)
+    [SIM_FILE, 'xs[i]! / ys[j]!; Math.random(); const q = a / b;', 'Math.random'],
+    [SIM_FILE, 'm.get(k)! / 2; const t = Date.now(); const q = c / 3;', 'Date'],
+    [SIM_FILE, 'const h = x! / 2; const r = Math.random(); const q = c / 3;', 'Math.random'],
+    [SIM_FILE, 'const h = a.b!.c! / 2; const r = Math.random(); const q = c / 3;', 'Math.random'],
+    // słowo kluczowe jako nazwa pola (po `.` albo `?.`) to identyfikator, więc kończy wartość: `cfg.of / 2`
+    [SIM_FILE, 'cfg.of / 2; Math.random(); c / 3', 'Math.random'],
+    [SIM_FILE, 'const h = cfg.in / 2; const r = Math.random(); const q = c / 3;', 'Math.random'],
+    [SIM_FILE, 'const h = a.new / 2; const r = Math.random(); const q = c / 3;', 'Math.random'],
+    [SIM_FILE, 'const h = b.delete / 2; const r = Math.random(); const q = c / 3;', 'Math.random'],
+    [SIM_FILE, 'const h = cfg?.of / 2; const r = Math.random(); const q = c / 3;', 'Math.random'],
+    [SIM_FILE, 'const h = cfg\n  .of / 2; const r = Math.random(); const q = c / 3;', 'Math.random'],
+    [SIM_FILE, 'const h = this.#of / 2; const r = Math.random(); const q = c / 3;', 'Math.random'],
     [SIM_FILE, 'const h = a / 2; // 2 / 3\nconst r = Math.random();', 'Math.random'],
     // `//` w literale tekstowym nie jest komentarzem, więc nie chowa reszty linii
     [SIM_FILE, "const u = 'http://x'; const r = Math.random();", 'Math.random'],
@@ -497,6 +529,18 @@ describe('simViolations: reguły na próbkach', () => {
     [SIM_FILE, 'const re = /\\*\\*/;'],
     [SIM_FILE, "const a = s.replace(/'/g, '').split(/\\s*,\\s*/);"],
     [SIM_FILE, 'const half = (a + b) / 2; const third = c / 3;'],
+    // asercja nie-null przed dzieleniem; komentarz po niej dalej jest komentarzem
+    [SIM_FILE, 'xs[0]! / 2; // Date w komentarzu'],
+    [SIM_FILE, 'const h = a.b!.c! / 2; // Date.now()\nconst q = c / 3; // Math.random()'],
+    // `!` poza pozycją po wartości to negacja albo `!=`/`!==`: regex za nią dalej jest regexem, nie dzieleniem
+    [SIM_FILE, 'const ok = !/Date|window/.test(s);'],
+    [SIM_FILE, 'if (a && !/Math.random()/.test(s)) f();'],
+    [SIM_FILE, 'const ok = x != /Date/.test(s);'],
+    [SIM_FILE, 'const ok = xs[0] !== /Date/.test(s);'],
+    // słowo kluczowe jako pole nie zamienia dzielenia w regex; prawdziwe `of`/`in` przed regexem nadal go zaczynają
+    [SIM_FILE, 'const h = cfg.of / 2; // Date w komentarzu'],
+    [SIM_FILE, 'for (const m of /Date/g.exec(s) ?? []) f(m);'],
+    [SIM_FILE, 'for (const k in /Date/g.exec(s) ?? {}) f(k);'],
     // typeof Math nic nie woła
     [SIM_FILE, 'type MathLike = typeof Math;'],
     [SIM_FILE, 'const ok = typeof Math !== "undefined";'],
