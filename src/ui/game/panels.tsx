@@ -356,7 +356,7 @@ export function ShopPanel({ s, info, game }: { s: EconomyState; info: StoreInfo;
 export function GoalsPanel({ s, game }: { s: EconomyState; game: GameActions; v: number }) {
   const t = s.today;
   const m = s.month;
-  const profit = (k: typeof t): number => k.margin + k.other - k.wages - k.media - k.fee - k.fines - k.logistics;
+  const profit = (k: typeof t): number => k.margin + k.bonus + k.other - k.wages - k.media - k.fee - k.fines - k.logistics;
   const goals = MILESTONES.filter((x) => !s.milestones.includes(x.id)).slice(0, 3);
   const best = Math.max(1, ...s.history.map((h) => Math.abs(h.profit)));
   const nextRank = nextRankAt(s.level);
@@ -407,13 +407,13 @@ export function GoalsPanel({ s, game }: { s: EconomyState; game: GameActions; v:
       <Section title="Dziś">
         <Row label="Klienci">{int(t.customers)} (utraceni: {int(t.lost)})</Row>
         <Row label="Obrót">{zl(t.revenue)}</Row>
-        <Row label="Marża (Twój przychód)">{zl(t.margin + t.other)}</Row>
+        <Row label="Marża i premie (Twój przychód)">{zl(t.margin + t.bonus + t.other)}</Row>
         <Row label="Koszty (bez płac)">{zl(t.fines + t.logistics)}</Row>
         <p class="tt-hint">Płace i media rozliczają się przy zamknięciu, o 23:00.</p>
       </Section>
       <Section title="Ten miesiąc">
         <Row label="Obrót">{zl(m.revenue)}</Row>
-        <Row label="Marża">{zl(m.margin + m.other)}</Row>
+        <Row label="Marża i premie">{zl(m.margin + m.bonus + m.other)}</Row>
         <Row label="Płace">−{zl(m.wages)}</Row>
         <Row label="Media">−{zl(m.media)}</Row>
         <Row label="Mandaty">−{zl(m.fines)}</Row>

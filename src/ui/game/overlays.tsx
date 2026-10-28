@@ -111,13 +111,15 @@ export function Toasts() {
   );
 }
 
-function ReportBody({ r }: { r: MonthReport }) {
+/** Pozycje raportu: marża i inne przychody, premie Centrali (osobny licznik) i koszty sumują się do wyniku miesiąca. */
+export function ReportBody({ r }: { r: MonthReport }) {
   const c = r.counters;
   return (
     <>
       <div class="tt-row"><span>Klienci</span><span>{int(c.customers)} (utraceni: {int(c.lost)})</span></div>
       <div class="tt-row"><span>Obrót</span><span>{zl(c.revenue)}</span></div>
       <div class="tt-row"><span>Marża i inne przychody</span><span>{zl(c.margin + c.other)}</span></div>
+      <div class="tt-row"><span>Premie Centrali</span><span>{zl(c.bonus)}</span></div>
       <div class="tt-row"><span>Płace</span><span>−{zl(c.wages)}</span></div>
       <div class="tt-row"><span>Media</span><span>−{zl(c.media)}</span></div>
       <div class="tt-row"><span>Opłata franczyzowa</span><span>−{zl(c.fee)}</span></div>

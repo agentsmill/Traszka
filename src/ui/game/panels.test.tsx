@@ -132,4 +132,18 @@ describe('panele wysyłają polecenia przez game.dispatch, a nie wołają symula
     expect(game.dispatch).toHaveBeenCalledTimes(1);
     expect(game.dispatch).toHaveBeenCalledWith({ type: 'claimQuest', questId: q.id });
   });
+
+  it('cele: premie Centrali wchodzą do marży i do wyniku miesiąca (osobny licznik bonus)', () => {
+    const { s } = rich();
+    Object.assign(s.today, { margin: 1000, other: 200, bonus: 300 });
+    Object.assign(s.month, { margin: 10_000, other: 500, bonus: 700, wages: 2000, media: 600, fines: 100, logistics: 200 });
+    const tree = GoalsPanel({ s, game: fakeGame(), v: 1 });
+    const value = (section: string, label: string): string => {
+      const row = walk(sectionTitled(tree, section)).find((v) => v.props.label === label);
+      return textOf(row!).replace(/[\s\u00a0\u202f]/g, '');
+    };
+    expect(value('Dziś', 'Marża i premie (Twój przychód)')).toBe('1500zł');
+    expect(value('Ten miesiąc', 'Marża i premie')).toBe('11200zł');
+    expect(value('Ten miesiąc', 'Wynik (przed opłatą franczyzową)')).toBe('+8300zł');
+  });
 });

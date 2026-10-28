@@ -2,7 +2,7 @@ import type { VNode } from 'preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { GIFT_OPEN } from '@/sim/economy/catalog';
 import type { Command } from '@/sim/economy/commands';
-import { createEconomy, type CommandResult, type EconomyState } from '@/sim/economy/economy';
+import { createEconomy, emptyCounters, type CommandResult, type EconomyState, type MonthReport } from '@/sim/economy/economy';
 import { EQUIPMENT } from '@/sim/economy/upgrades';
 import { computeStoreInfo, type StoreInfo } from '@/sim/economy/storeInfo';
 import { layoutFor } from '@/sim/store/layoutFor';
@@ -10,10 +10,10 @@ import {
   econ, ephemeral, hints, report, selection, showHints, showSettings, start, tab, welcome, type GameActions,
 } from '../state';
 import {
-  ClickerBar, ComboChip, EPHEMERAL_BADGE, EPHEMERAL_NOTE, FIRST_DAY_HINTS, FirstDayHints, GiftDrop, RESTART_CONFIRM, SelectionCard, StoreActions,
-  StoreBadge,
+  ClickerBar, ComboChip, EPHEMERAL_BADGE, EPHEMERAL_NOTE, FIRST_DAY_HINTS, FirstDayHints, GiftDrop, RESTART_CONFIRM, ReportBody, SelectionCard,
+  StoreActions, StoreBadge,
 } from './overlays';
-import { buttonsOf, click, labels, textOf, walk } from './vnodeTree';
+import { buttonsOf, click, labels, textOf, walk, type Vnode } from './vnodeTree';
 
 /** Sygnały, które sterują widocznością nakładek, do stanu wyjściowego (nic nie otwarte, brak gry). */
 const resetSignals = (): void => {
@@ -362,5 +362,35 @@ describe('przyciski nakładek wysyłają polecenia', () => {
     click(buy[0]!);
     const first = EQUIPMENT.find((e) => e.size <= 2)!;
     expect(game.dispatch).toHaveBeenCalledWith({ type: 'buyEquipment', id: first.id, slotId: slot.id });
+  });
+});
+
+describe('raport miesięczny: pozycje sumują się do wyniku', () => {
+  /** Wiersze raportu jako napis → liczba (zł, ze znakiem): „−2 000 zł” to -2000, spacje tysięcy bywają twarde. */
+  const rows = (r: MonthReport): Map<string, number> => new Map(
+    walk(ReportBody({ r })).filter((v) => String(v.props.class).startsWith('tt-row'))
+      .map((v) => [textOf((v.props.children as Vnode[])[0]), textOf((v.props.children as Vnode[])[1])] as const)
+      .map(([label, text]) => [label, Number(text.replace(/[\s\u00a0\u202f]|zł/g, '').replace('−', '-').replace('+', '')) || 0]),
+  );
+  const report = (bonus: number): MonthReport => {
+    const counters = { ...emptyCounters(), margin: 10_000, other: 500, bonus, wages: 2000, media: 600, fee: 4500, fines: 100, logistics: 200 };
+    return { label: 'wrzesień 2026', counters, profit: 10_000 + bonus + 500 - 2000 - 600 - 4500 - 100 - 200, cash: 5000, comment: 'x' };
+  };
+
+  it('premia Centrali ma własny wiersz, a wiersze razem dają wynik miesiąca', () => {
+    const r = report(300);
+    const v = rows(r);
+    expect(v.get('Premie Centrali')).toBe(300);
+    const sum = ['Marża i inne przychody', 'Premie Centrali', 'Płace', 'Media', 'Opłata franczyzowa', 'Mandaty', 'Logistyka']
+      .reduce((n, label) => n + v.get(label)!, 0);
+    expect(sum).toBe(r.profit);
+    expect(v.get('Wynik miesiąca')).toBe(r.profit);
+  });
+
+  it('raport bez premii (stary zapis) pokazuje zerowy wiersz i też się sumuje', () => {
+    const r = report(0);
+    const v = rows(r);
+    expect(v.get('Premie Centrali')).toBe(0);
+    expect(['Marża i inne przychody', 'Płace', 'Media', 'Opłata franczyzowa', 'Mandaty', 'Logistyka'].reduce((n, l) => n + v.get(l)!, 0)).toBe(r.profit);
   });
 });
