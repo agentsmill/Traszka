@@ -26,6 +26,7 @@ function fakeFactory(scale = 1, walkSpeedMps = 1.15) {
     },
     createWithOutfit() { throw new Error('tłum nie tworzy kasjera'); },
     ensureOutfit: () => Promise.resolve(),
+    hasOutfit: () => false,
   };
   return { factory, made };
 }
@@ -295,6 +296,7 @@ describe('CrowdView: plamy cienia i polityka cieni (zadanie 16)', () => {
       },
       createWithOutfit() { throw new Error('tłum nie tworzy kasjera'); },
       ensureOutfit: () => Promise.resolve(),
+      hasOutfit: () => false,
     };
   }
   const castOf = (parent: Object3D): boolean[] => {

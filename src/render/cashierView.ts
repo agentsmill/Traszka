@@ -18,6 +18,33 @@ export const GESTURE_BOW_RAD = 0.2;
 /** Mundur personelu: góra w zieleni marki (ruling R43). */
 const UNIFORM: OutfitOverrides = Object.freeze({ top: PALETTE.brand.green });
 
+/** Zwalnia postać i zdejmuje ją ze sceny (jej własne `dispose` zwalnia materiał i szkielet, geometria jest wspólna w fabryce). */
+function releaseCharacter(character: CharacterInstance): void {
+  character.dispose();
+  character.object.removeFromParent();
+}
+
+/**
+ * Czy `createWithOutfit` zbuduje ten strój od razu: zwykły zawsze, specjalny tylko, gdy fabryka już go ma (po `ensureOutfit`).
+ * Wspólne dla kasjera w sklepie i podglądu na ekranie startowego: czekają na `ensureOutfit` tylko wtedy, gdy trzeba.
+ */
+export const isOutfitReady = (factory: CharacterFactory, outfit: OutfitFile): boolean => !isSpecialOutfit(outfit) || factory.hasOutfit(outfit);
+
+/**
+ * Postać kasjera w danym wyglądzie: jedna reguła dla sklepu (`CashierView`) i dla podglądu na ekranie startowego, więc gracz
+ * widzi w podglądzie dokładnie tego kasjera, który stanie za ladą. O mundurze decyduje strój, który faktycznie powstał, nie
+ * poproszony: strój specjalny zostaje sobą, a każdy inny (zwykły podstawiony przez fabrykę, gdy plik stroju specjalnego się nie
+ * wczytał, albo postać zastępcza) to personel w brand.green, więc budowany jest jeszcze raz z mundurem, a próba bez munduru jest
+ * zwalniana. Strój specjalny musi być już gotowy (`ensureOutfit`), inaczej fabryka podstawia strój zwykły tej samej płci.
+ */
+export function createCashierCharacter(factory: CharacterFactory, look: CashierLook): CharacterInstance {
+  const special = isSpecialOutfit(look.outfit);
+  const character = factory.createWithOutfit(look.appearanceSeed, look.outfit, special ? undefined : UNIFORM);
+  if (!special || (character.outfit !== null && isSpecialOutfit(character.outfit))) return character;
+  releaseCharacter(character);   // poproszono o strój specjalny, a powstał zwykły: ta sama postać, tylko w mundurze
+  return factory.createWithOutfit(look.appearanceSeed, look.outfit, UNIFORM);
+}
+
 /**
  * Rysuje kasjera gracza: jedna postać (`CharacterFactory.createWithOutfit`) na kratce pasa personelu za kasą (`cashierSpot`), z
  * własną plamą cienia (miejsce zarezerwowane w `BlobShadows`). Nie trzyma stanu gry, tylko to, co widać; klatkę po klatce dostaje
@@ -71,7 +98,7 @@ export class CashierView {
     const wanted: CashierLook = { outfit: look.outfit, appearanceSeed: look.appearanceSeed };   // kopia: wołający może zmieniać swój obiekt
     this.look = wanted;
     const request = ++this.request;
-    if (this.canBuildNow(wanted.outfit)) {
+    if (isOutfitReady(this.factory, wanted.outfit)) {
       this.build(wanted);
       return;
     }
@@ -125,7 +152,7 @@ export class CashierView {
     if (this.disposed) return;
     this.disposed = true;
     this.request++;   // wczytywanie w toku nic już nie postawi
-    if (this.current) this.release(this.current);
+    if (this.current) releaseCharacter(this.current);
     this.current = null;
     this.slot?.release();
     this.slot = null;
@@ -139,30 +166,13 @@ export class CashierView {
     return Math.hypot(dx, dy) < 1e-6 ? heading : Math.atan2(dy, dx);
   }
 
-  /** Czy strój da się zbudować w tej samej chwili: zwykły zawsze, specjalny tylko, gdy fabryka już go ma. */
-  private canBuildNow(outfit: OutfitFile): boolean {
-    return !isSpecialOutfit(outfit) || this.factory.hasOutfit?.(outfit) === true;
-  }
-
-  /**
-   * Tworzy postać. O mundurze decyduje strój, który faktycznie powstał, nie poproszony: strój specjalny zostaje sobą, a każdy inny
-   * (zwykły podstawiony przez fabrykę, gdy plik stroju specjalnego się nie wczytał, albo postać zastępcza) to personel w brand.green.
-   */
-  private create(look: CashierLook): CharacterInstance {
-    const special = isSpecialOutfit(look.outfit);
-    const character = this.factory.createWithOutfit(look.appearanceSeed, look.outfit, special ? undefined : UNIFORM);
-    if (!special || (character.outfit !== null && isSpecialOutfit(character.outfit))) return character;
-    this.release(character);   // poproszono o strój specjalny, a powstał zwykły: ta sama postać, tylko w mundurze
-    return this.factory.createWithOutfit(look.appearanceSeed, look.outfit, UNIFORM);
-  }
-
   /** Stawia kasjera w danym wyglądzie na jego kratce; poprzednia postać (zmiana wyglądu) jest zwalniana po utworzeniu nowej. */
   private build(look: CashierLook): void {
     const spot = this.spot!;
-    const character = this.create(look);
+    const character = createCashierCharacter(this.factory, look);
     const previous = this.current;
     this.current = character;
-    if (previous) this.release(previous);
+    if (previous) releaseCharacter(previous);
 
     const o = character.object;
     o.rotation.order = 'YXZ';   // obrót wokół osi y postaci, a dopiero potem pochylenie (ukłon) wokół jej własnej osi x
@@ -176,10 +186,5 @@ export class CashierView {
     this.slot ??= this.blobs?.reserve() ?? null;
     const [rx, rz] = characterBlobRadii(o);
     this.slot?.set(at.x, at.z, rx, rz);
-  }
-
-  private release(character: CharacterInstance): void {
-    character.dispose();
-    character.object.removeFromParent();
   }
 }

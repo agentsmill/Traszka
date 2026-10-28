@@ -124,6 +124,7 @@ function fakeFactory(): { factory: CharacterFactory; made: { seed: string; outfi
     create: (seed) => build(seed, null),
     createWithOutfit: (seed, outfit) => build(seed, outfit),
     ensureOutfit: () => Promise.resolve(),
+    hasOutfit: () => true,   // atrapa buduje każdy strój od razu
   };
   return { factory, made };
 }

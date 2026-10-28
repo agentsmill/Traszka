@@ -47,10 +47,10 @@ export interface CharacterFactory {
   /**
    * Czy `createWithOutfit` zbuduje ten strój od razu, bez `ensureOutfit`: strój zwykły tak, specjalny dopiero po udanym
    * `ensureOutfit` (nieudany niczego nie zmienia: strój dalej jest nieobecny, a kolejne `ensureOutfit` próbuje jeszcze raz).
-   * Pozwala widokowi kasjera postawić postać w tej samej klatce, gdy strój jest już w pamięci (remont w klatce nie zostawia
-   * klatki bez kasjera). Opcjonalne: fabryka, która nie umie odpowiedzieć, zostawia decyzję obietnicy z `ensureOutfit`.
+   * Pozwala widokowi kasjera i podglądowi na ekranie startowego postawić postać w tej samej klatce, gdy strój jest już w pamięci
+   * (remont w klatce nie zostawia klatki bez kasjera), a czekać na obietnicę tylko wtedy, gdy trzeba.
    */
-  hasOutfit?(outfit: OutfitFile): boolean;
+  hasOutfit(outfit: OutfitFile): boolean;
   /**
    * Prędkość stopy podporowej w klipie chodu, m/s dla modelu bazowego (postać skalowana w poziomie o `s` ma na podłodze
    * `walkSpeedMps · s`). Jedyne źródło tej liczby: tłum (CrowdView) dobiera po niej tempo klipu do prędkości agenta.

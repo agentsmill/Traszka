@@ -71,7 +71,7 @@ describe('createCharacterFactory: postać zastępcza', () => {
     cashier.dispose();
     expect(factory.walkSpeedMps).toBe(WALK_SPEED_MPS);
     await expect(factory.ensureOutfit('special-men-king')).resolves.toBeUndefined();   // nie ma czego wczytywać, ale kontrakt trzyma
-    expect(factory.hasOutfit?.('special-men-king')).toBe(true);                         // kapsuła powstaje od razu w każdym stroju
+    expect(factory.hasOutfit('special-men-king')).toBe(true);                         // kapsuła powstaje od razu w każdym stroju
     expect(() => factory.dispose()).not.toThrow();
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();
@@ -698,7 +698,7 @@ describe('stroje specjalne na żądanie (ruling R40) i mundur kasjera', () => {
     const built = warn.mock.calls.filter((call) => String(call[0]).includes('nie udało się zbudować stroju special-men-king'));
     expect(built).toHaveLength(1);
     expect(built[0]![1]).toBeInstanceOf(TypeError);                              // przyczyna idzie do ostrzeżenia
-    expect(factory.hasOutfit?.('special-men-king')).toBe(false);
+    expect(factory.hasOutfit('special-men-king')).toBe(false);
     expect(REGULAR).toContain(factory.createWithOutfit('a', 'special-men-king').outfit);   // jak przy braku pliku
     warn.mockRestore();
   });
@@ -708,16 +708,16 @@ describe('stroje specjalne na żądanie (ruling R40) i mundur kasjera', () => {
     let down = true;
     const spy = spyLoader((url) => down && url.includes('special-men-king'));
     const factory = await createCharacterFactory(spy.load);
-    for (const outfit of REGULAR) expect(factory.hasOutfit?.(outfit), outfit).toBe(true);
-    for (const outfit of SPECIAL) expect(factory.hasOutfit?.(outfit), outfit).toBe(false);
+    for (const outfit of REGULAR) expect(factory.hasOutfit(outfit), outfit).toBe(true);
+    for (const outfit of SPECIAL) expect(factory.hasOutfit(outfit), outfit).toBe(false);
     await factory.ensureOutfit('special-women-witch');
-    expect(factory.hasOutfit?.('special-women-witch')).toBe(true);
-    expect(factory.hasOutfit?.('special-men-swat')).toBe(false);              // inne specjalne dalej czekają
+    expect(factory.hasOutfit('special-women-witch')).toBe(true);
+    expect(factory.hasOutfit('special-men-swat')).toBe(false);              // inne specjalne dalej czekają
     await factory.ensureOutfit('special-men-king');                           // plik nie dochodzi
-    expect(factory.hasOutfit?.('special-men-king')).toBe(false);
+    expect(factory.hasOutfit('special-men-king')).toBe(false);
     down = false;
     await factory.ensureOutfit('special-men-king');
-    expect(factory.hasOutfit?.('special-men-king')).toBe(true);
+    expect(factory.hasOutfit('special-men-king')).toBe(true);
     const before = spy.urls.length;
     expect(factory.createWithOutfit('a', 'special-men-king').outfit).toBe('special-men-king');
     expect(spy.urls).toHaveLength(before);                                    // pytanie i budowa nic nie pobierają

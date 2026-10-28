@@ -1,6 +1,6 @@
 import { Box3, Color, Group, Matrix4, Mesh, SkinnedMesh, Vector3, type Material, type Object3D } from 'three';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
-import { DEFAULT_CASHIER_LOOK, cashierSpot, type CashierLook } from '@/game/cashier';
+import { DEFAULT_CASHIER_LOOK, REGULAR_OUTFITS, cashierSpot, type CashierLook } from '@/game/cashier';
 import { SIM_STEP, type Agent, type Crowd } from '@/sim/crowd/crowd';
 import { generateStore } from '@/sim/store/generateStore';
 import { layoutFromParts, validParts } from '@/sim/store/testLayouts';
@@ -10,7 +10,7 @@ import { REGION } from './characters/characterMaterial';
 import { createCharacterFactory, type CharacterFactory, type CharacterInstance, type OutfitOverrides } from './characters/characterFactory';
 import type { OutfitFile } from './characters/modularPack';
 import { loadFromDisk } from './characters/testAssets';
-import { CashierView, GESTURE_BOW_RAD, GESTURE_HOP_M, GESTURE_S } from './cashierView';
+import { CashierView, GESTURE_BOW_RAD, GESTURE_HOP_M, GESTURE_S, createCashierCharacter, isOutfitReady } from './cashierView';
 import { cellToWorld } from './coords';
 import { CrowdView, TURN_RATE_MAX, headingToYaw } from './crowdView';
 import { PALETTE } from './style';
@@ -437,6 +437,52 @@ describe('CashierView: mundur wg stroju, który naprawdę powstał', () => {
   });
 });
 
+describe('createCashierCharacter i isOutfitReady: ta sama reguła w sklepie i w podglądzie ekranu startowego', () => {
+  const UNIFORM = { top: PALETTE.brand.green };
+
+  it('strój zwykły: jedna budowa z mundurem w zieleni marki', () => {
+    const { factory, made } = fakeFactory();
+    const character = createCashierCharacter(factory, REGULAR_LOOK);
+    expect(made).toHaveLength(1);
+    expect(made[0]!.seed).toBe('kasjer-a');
+    expect(made[0]!.outfit).toBe('men-suit');
+    expect(made[0]!.overrides).toEqual(UNIFORM);
+    expect(character).toBe(made[0]!.character);
+  });
+
+  it('strój specjalny, który powstał: zostaje sobą, jedna budowa, bez munduru', async () => {
+    const { factory, made } = fakeFactory();
+    await factory.ensureOutfit('special-men-king');
+    const character = createCashierCharacter(factory, KING_LOOK);
+    expect(made).toHaveLength(1);
+    expect(made[0]!.overrides).toBeUndefined();
+    expect(character.outfit).toBe('special-men-king');
+  });
+
+  it('strój specjalny, którego nie ma (fabryka dała zwykły albo kapsułę): ta sama postać w mundurze, a próba bez munduru jest zwolniona i zdjęta ze sceny', () => {
+    for (const built of ['women-punk', null] as const) {
+      const { factory, made } = fakeFactory(() => Promise.resolve(), () => built);
+      const parent = new Group();
+      const character = createCashierCharacter(factory, KING_LOOK);
+      expect(made.map((m) => m.overrides), String(built)).toEqual([undefined, UNIFORM]);
+      expect(made[0]!.dispose).toHaveBeenCalledTimes(1);
+      expect(made[0]!.character.object.parent).toBeNull();
+      expect(character).toBe(made[1]!.character);
+      parent.add(character.object);
+      expect(parent.children).toEqual([made[1]!.character.object]);
+    }
+  });
+
+  it('isOutfitReady: strój zwykły zawsze, specjalny dopiero po ensureOutfit', async () => {
+    const { factory } = fakeFactory();
+    for (const outfit of REGULAR_OUTFITS) expect(isOutfitReady(factory, outfit), outfit).toBe(true);
+    expect(isOutfitReady(factory, 'special-women-witch')).toBe(false);
+    await factory.ensureOutfit('special-women-witch');
+    expect(isOutfitReady(factory, 'special-women-witch')).toBe(true);
+    expect(isOutfitReady(factory, 'special-men-king')).toBe(false);
+  });
+});
+
 describe('CashierView: strój już gotowy powstaje od razu (remont w klatce nie zostawia klatki bez kasjera)', () => {
   it('po ensureOutfit nowy widok z tym wyglądem ma postać natychmiast, bez ponownego ensureOutfit', async () => {
     const { factory, made, ensureOutfit } = fakeFactory();
@@ -492,17 +538,6 @@ describe('CashierView: strój już gotowy powstaje od razu (remont w klatce nie 
     await flush();
     expect(view.character!.outfit).toBe('special-men-king');   // spóźniona wiedźma niczego nie nadpisuje
     expect(made.filter((m) => m.outfit === 'special-women-witch')).toHaveLength(0);
-  });
-
-  it('fabryka, która nie umie powiedzieć, czy strój jest gotowy (bez hasOutfit), dostaje stare zachowanie: postać po ensureOutfit', async () => {
-    const { factory, made } = fakeFactory();
-    const blind: CharacterFactory = { ...factory, hasOutfit: undefined };
-    await blind.ensureOutfit('special-men-king');
-    const view = new CashierView(blind, layout, new Group(), null, KING_LOOK);
-    expect(view.character).toBeNull();
-    await flush();
-    expect(view.character).not.toBeNull();
-    expect(made).toHaveLength(1);
   });
 });
 
