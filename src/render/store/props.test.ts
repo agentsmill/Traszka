@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { Box3, Color, Mesh, MeshStandardMaterial, type Object3D } from 'three';
 import { PALETTE } from '@/render/style';
@@ -27,9 +27,21 @@ describe('props: teksty (docs/style-guide.md §6)', () => {
     for (const lines of BOARD_LINES) expect(lines.length).toBeGreaterThan(0);
   });
 
-  it('żadnych prawdziwych marek: w tekstach rekwizytów i murali nie ma nazwy sieci, którą parodiujemy', () => {
-    const source = readFileSync('src/render/store/props.ts', 'utf8') + readFileSync('src/render/street/facadeAtlas.ts', 'utf8');
-    expect(source).not.toMatch(/żabk|zabk/i);
+  it('żadnych prawdziwych marek ani tytułów: ani w hasłach, plakatach i potykaczach, ani w źródłach tekstów sklepu i ulicy', () => {
+    // Prawdziwe produkty, tytuły i hasła sieci (spec: tylko „Traszka” i „Centrala”). Dopisuj tu, gdy ktoś zauważy kolejne.
+    const BANNED = [/excel/i, /fakty i mity/i, /blisko ciebie/i, /żabk|zabk/i];
+    const texts = [
+      ...SLOGANS, ...POSTERS.flatMap((p) => [p.title, p.footer]), ...BOARD_LINES.flat(),
+    ];
+    for (const t of texts) for (const re of BANNED) expect(t, `${t} ~ ${re}`).not.toMatch(re);
+    const dirs = ['src/render/store', 'src/render/street'];
+    for (const dir of dirs) {
+      for (const f of readdirSync(dir, { recursive: true, encoding: 'utf8' })) {
+        if (!f.endsWith('.ts') || f.endsWith('.test.ts')) continue;
+        const source = readFileSync(`${dir}/${f}`, 'utf8');
+        for (const re of BANNED) expect(source, `${dir}/${f} ~ ${re}`).not.toMatch(re);
+      }
+    }
   });
 });
 

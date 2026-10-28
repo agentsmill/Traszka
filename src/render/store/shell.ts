@@ -41,7 +41,15 @@ const LAMP_Y = 2.7;
  * nocą mocniej. Panele startują z materiałem dziennym; `buildStore.setTimeOfDay` podmienia go na nocny.
  */
 export const LAMP_EMISSIVE = { day: 2.0, night: 2.5 } as const;
-/** Poświata witryny na chodniku nocą: kolor okien nocą (przewodnik §4), głębokość plamy (m). */
+/**
+ * Chodnik przed ścianą, od zewnętrznego lica muru do krawężnika (m): `front` to wiersze 0…FRONT_WALL_Y−1 siatki plus
+ * kawałek wiersza muru, `side` to chodnik wzdłuż przecznicy przy lokalu narożnym (`SIDE_STREET_SIDEWALK_M` minus krawężnik).
+ * Poświata witryny nie sięga dalej, bo za krawężnikiem jest jezdnia o 14 cm niżej i plama wisiałaby nad nią z twardym brzegiem.
+ */
+export const SIDE_STREET_SIDEWALK_M = 1.8;
+export const CURB_W_M = 0.18;
+export const SIDEWALK_DEPTH = { front: (FRONT_WALL_Y + 1) * M - DOOR_WALL_T, side: SIDE_STREET_SIDEWALK_M - CURB_W_M } as const;
+/** Poświata witryny na chodniku nocą: kolor okien nocą (przewodnik §4), najwyższa głębokość plamy (m; ścina ją chodnik). */
 const WINDOW_GLOW = { color: '#ffd28a', opacity: 0.5, depth: 2.6 } as const;
 
 export interface WallParts { low: Group; cap: Group; high: Group }
@@ -425,7 +433,8 @@ export function buildShell(layout: StoreLayout): Shell {
         glowGroup.position.set(...line.at);
         glowGroup.rotation.y = line.rotY;
         windowGlow.add(glowGroup);
-        plane(glowGroup, [len + 0.8, WINDOW_GLOW.depth], [uc, 0.02, -WALL_T - WINDOW_GLOW.depth / 2], glowMaterial, {
+        const depth = Math.min(WINDOW_GLOW.depth, line.side === 'front' ? SIDEWALK_DEPTH.front : SIDEWALK_DEPTH.side);
+        plane(glowGroup, [len + 0.8, depth], [uc, 0.02, -WALL_T - depth / 2], glowMaterial, {
           rot: [-Math.PI / 2, 0, 0], name: 'window glow',
         });
       }
@@ -465,7 +474,7 @@ export function buildShell(layout: StoreLayout): Shell {
     }
   }
 
-  // plakaty: do 4, nie bliżej niż 4 kratki od siebie na jednej ścianie
+  // plakaty: do POSTERS.length (6), nie bliżej niż 4 kratki od siebie na jednej ścianie
   const chosen: typeof posterSpots = [];
   for (const spot of rng.shuffle(posterSpots)) {
     if (chosen.length >= POSTERS.length) break;

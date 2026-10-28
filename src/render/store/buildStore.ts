@@ -150,6 +150,8 @@ export function buildStore(layout: StoreLayout): StoreView {
   const lampNight = glow(BRAND.cream, LAMP_EMISSIVE.night);
   const windowGlow = mergedGroup('window-glow', [shell.windowGlow], owned);
   windowGlow.visible = false;
+  // plama światła leży na chodniku: N8AO ma jej nie traktować jak szyby i zostawić AO pod nią (patrz blobShadows.ts)
+  windowGlow.traverse((o) => { o.userData.treatAsOpaque = true; });
 
   // ściany: low zawsze, high (pełna) albo cap (przekrój) zależnie od kamery
   const walls = {} as Record<WallSide, { group: Group; high: Group; cap: Group }>;

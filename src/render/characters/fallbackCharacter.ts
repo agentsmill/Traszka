@@ -3,7 +3,7 @@ import {
   type BufferGeometry, type MeshStandardMaterial,
 } from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { PALETTE, material } from '@/render/style';
+import { MATERIALS, PALETTE, material } from '@/render/style';
 import type { Appearance } from './appearance';
 import type { CharacterInstance } from './characterFactory';
 
@@ -34,7 +34,7 @@ export function characterPalette(a: Appearance, shoes: string = PALETTE.wall[4])
  * Szorstkość tkaniny (`fabric` z docs/style-guide.md §3) dla regionów od włosów w górę i ubrań: skóra i oczy zostają
  * `plasticMatte` (lekki połysk, „zabawkowa” skóra jak w Two Point), reszta jest matowa jak materiał. Zadanie 16.
  */
-const FABRIC_ROUGHNESS = 0.95;
+const FABRIC_ROUGHNESS = MATERIALS.fabric.roughness;
 
 /**
  * Materiał jednej postaci: `MeshStandardMaterial` (rodzaj plasticMatte) z kolorem z palety po `region`; regiony ubrań,

@@ -80,9 +80,10 @@ export const BEVEL: { small: number; medium: number } = deepFreeze({ small: 0.01
 export type MaterialKind = 'plasticMatte' | 'plasticGloss' | 'metalPainted' | 'glass' | 'wood' | 'emissive' | 'fabric';
 export interface MaterialOpts { emissiveIntensity?: number; opacity?: number }
 
-interface KindSpec { roughness: number; metalness: number; opacity: number; emissiveIntensity: number }
+export interface KindSpec { roughness: number; metalness: number; opacity: number; emissiveIntensity: number }
 
-const KIND: Record<MaterialKind, KindSpec> = {
+/** Parametry fizyczne rodzajów materiałów (źródło prawdy dla `material()` i dla shaderów, które je powielają). */
+export const MATERIALS: Readonly<Record<MaterialKind, Readonly<KindSpec>>> = {
   plasticMatte: { roughness: 0.7, metalness: 0, opacity: 1, emissiveIntensity: 0 },
   plasticGloss: { roughness: 0.3, metalness: 0, opacity: 1, emissiveIntensity: 0 },
   metalPainted: { roughness: 0.42, metalness: 0.35, opacity: 1, emissiveIntensity: 0 },
@@ -108,7 +109,7 @@ const cache = new Map<string, Material>();
  */
 export function material(kind: MaterialKind, color: string, opts: MaterialOpts = {}): Material {
   if (!HEX.test(color)) throw new Error(`material(): kolor musi mieć postać #rrggbb, jest "${color}"`);
-  const spec = KIND[kind];
+  const spec = MATERIALS[kind];
   const opacity = opts.opacity ?? spec.opacity;
   const emissiveIntensity = opts.emissiveIntensity ?? spec.emissiveIntensity;
   if (!(opacity >= 0 && opacity <= 1)) throw new RangeError(`material(): opacity poza [0, 1]: ${opacity}`);

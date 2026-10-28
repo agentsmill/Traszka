@@ -8,6 +8,7 @@ import { ASSETS, loadGLB } from '@/render/assets';
 import { cellToWorld } from '@/render/coords';
 import { PALETTE, material } from '@/render/style';
 import { BRAND, FIX, cachedTexture, canvasTexture, makeTextured } from '@/render/store/parts';
+import { CURB_W_M } from '@/render/store/shell';
 import {
   BOARD_LINES, buildBench, buildBin, buildNewsStand, buildPlanter, buildPylon, buildSandwichBoard, pylonTextures,
 } from '@/render/store/props';
@@ -43,7 +44,7 @@ const PLATE = 0.5;
 const LIMIT = 48;            // zasięg ulicy w obie strony (m); widok ma ≤ 30 m wysokości, a pan sięga 4 m poza sklep
 const CURB_SEG = 5;          // długość odcinka krawężnika (m)
 const CURB_NEAR = 16;        // do tylu metrów od środka sklepu krawężnik ma fazę 2-segmentową, dalej 1-segmentową
-const CURB_W = 0.18;
+const CURB_W = CURB_W_M;
 const CURB_TOP = 0.02;
 const ROAD_Y = -0.14;
 const ROAD_W = 7;
@@ -576,6 +577,7 @@ export async function buildStreet(layout: StoreLayout, seed: string, load: (url:
   owned.push(poolGeometry);
   const pools = new Mesh(poolGeometry, poolMaterial);
   pools.name = 'lamp-pools';
+  pools.userData.treatAsOpaque = true;   // plama światła leży na posadzce: AO pod nią ma zostać (patrz blobShadows.ts)
   pools.visible = false;
   root.add(pools);
 

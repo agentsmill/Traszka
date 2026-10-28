@@ -43,14 +43,14 @@ Emissive (kolor, `emissiveIntensity`):
 | Murale | `#ffd28a`, maska 25% | 0 | jak okna |
 
 - Ciepłe światła punktowe wnętrza (`#ffd28a`, do 6) są w scenie zawsze, a dzień/noc zmienia tylko ich natężenie (0 w dzień). Ukrywanie ich przekompilowałoby przy pierwszym przełączeniu wszystkie materiały (przycięcie klatki).
-- Nocą witryny i wejście kładą na chodniku ciepłą plamę światła (`#ffd28a`, addytywnie, 2,6 m w głąb), a latarnie plamę `#ffb35c`.
+- Nocą witryny i wejście kładą na chodniku ciepłą plamę światła (`#ffd28a`, addytywnie, do 2,6 m w głąb, ale nie dalej niż do krawężnika: `SIDEWALK_DEPTH` w `store/shell.ts`), a latarnie plamę `#ffb35c`. Obie plamy i plamy cienia postaci mają `userData.treatAsOpaque`, żeby N8AO (przezroczystość) nie zerował pod nimi AO.
 - Maska świecenia napisu ma czarne tło (nie przezroczyste): emissive czyta tylko RGB, a brzegi liter po `clearRect` miały pełny kolor i jaśniejszą, poszarpaną obwódkę.
 
 ## 5. Postacie
 - **Paczka: `modular` (Quaternius Modular Men/Women), jedyna w grze.** Wybór z `?charTest=1` w zadaniu 16: prawdziwe ubrania i buty, różne sylwetki (sukienka, bluza, szorty, ogrodniczki), 2,9 tys. trójkątów i własne klipy chodu. UBC odpada: anatomia superbohatera pod malowaną koszulką, „legginsy” zamiast spodni, bose stopy, gniewne oczy. Zadanie 16b usuwa paczkę UBC (ciała, fryzury, brwi i UAL) z potoku assetów i kodu; `?pack=ubc` działa tylko do tego czasu.
 - Proporcje z `CHARACTER_STYLE` (modele bazowe są smukłe i długonogie, Two Point jest krępe): głowa ×1,45, dłonie ×1,35, tułów (miednica, brzuch, klatka) ×1,14, szyja i barki wracają do ×1, więc ręce i głowa rosną tylko o własne mnożniki. Wzrost 1,55–1,88 m (od podeszwy do czubka głowy, po powiększeniu), tusza ×0,95–1,25. Wzrost wyrównuje skala całej postaci, więc większa głowa i tułów dają krótsze nogi w proporcji. Nogi nie są skalowane: stopy modular to kości IK przypięte do korzenia.
 - Personel nosi `brand.green`, klient nigdy. Góra i dół w różnych kolorach. Białe części stroju (kołnierz koszuli, podeszwy) mają ciepłą biel `wall[0]`: przyciągnięte do PALETTE dawały szaroniebieski kołnierz, który pod brodą czytał się jak zarost.
-- **Cienie postaci (decyzja R30):** każda postać ma miękką plamę cienia (`characters/blobShadows.ts`: jedna `InstancedMesh` na cały tłum, 1 draw call, kolor `wall[4]`, promień 0,4 m × tusza) na wszystkich presetach. Prawdziwy cień z mapy cieni (+1 draw call i ~2,9 tys. trójkątów na postać) tylko na presecie `wysoka` (`QualitySettings.characterShadows`).
+- **Cienie postaci (decyzja R30):** każda postać ma miękką plamę cienia (`characters/blobShadows.ts`: jedna `InstancedMesh` na cały tłum, 1 draw call, kolor `wall[4]`, promień 0,54 m × tusza, krycie 0,82, `userData.treatAsOpaque` przeciw zerowaniu AO przez N8AO) na wszystkich presetach. Prawdziwy cień z mapy cieni (+1 draw call i ~2,9 tys. trójkątów na postać) tylko na presecie `wysoka` (`QualitySettings.characterShadows`).
 - Animacja: powyżej ×4 nogi chodzą w tempie ×4 (`ANIM_SPEED_CAP`), a postać przesuwa się z prędkością gry; przy ×8 klip chodu migał (stroboskop).
 
 ## 6. Humor
@@ -64,7 +64,7 @@ Emissive (kolor, `emissiveIntensity`):
 
 ## 7. Przekrój i miasto
 - Przekrój (widok wnętrza): ściany sklepu od strony kamery spadają do 0,5 m, bryła nad sklepem znika, **sąsiad od strony kamery** (yaw 0–1: od −x, yaw 2–3: od +x) spada do 0,5 m z przekrojem wnętrza (podłoga z desek, ściany działowe z przejściami, schody), a **dalszy sąsiad zostaje w pełnej wysokości**. Nie zasłania sklepu (promienie do kamery biegną od niego), a kadr wygląda jak miasto, nie jak plac.
-- Ślepa ściana szczytowa dalszego sąsiada (odsłonięta, gdy bryła nad sklepem znika) dostaje mural z atlasu elewacji, oparty tuż nad sklepem (≤ 3,3 m wysokości, cały w domyślnym kadrze).
+- Ślepa ściana szczytowa dalszego sąsiada (odsłonięta, gdy bryła nad sklepem znika) dostaje mural z atlasu elewacji, oparty tuż nad sklepem i o naroże od strony ulicy (≤ 2,5 m wysokości), cały w domyślnym kadrze pod paskiem UI (test w `buildStreet.test.ts`: yaw 0, 1400×860 i 1200×672).
 - Za wierszem budynków jest podwórko (`street/courtyard.ts`): ścieżka, trawnik, trzepak, wiata śmietnikowa z koszami do segregacji, piaskownica, ławka, drzewa, podjazd i blaszaki. Reguła zasłaniania: rzecz o wysokości h stoi ≥ h metrów za tylną ścianą (w izometrii promień do kamery wznosi się o tyle, ile przebiega wzdłuż z), więc przy kamerze od podwórka nic nie wchodzi w kadr wnętrza. Pilnuje tego `courtyard.test.ts`.
 - Rekwizyty uliczne stoją wyłącznie w wierszu 0 chodnika (pas mebli ulicznych, zablokowany dla klientów, ruling R32). W sali nie stawiamy niczego na podłodze: symulacja nie zna rekwizytów, więc klient przeszedłby przez donicę.
 - Wysokie meble przy ścianach w przekroju (R22): zostają pełne, z wykończonymi plecami (§1). Rozdzielenie ich od scalonej siatki i przyciemnianie dokłada ~10–15 draw calli i ścieżkę przezroczystości z artefaktami; wrócimy do tego, gdy dojdzie zaznaczanie mebli (etap 2).

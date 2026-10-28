@@ -160,12 +160,18 @@ describe.each([['ubc'], ['modular']] as [CharacterPack][])('createCharacterFacto
       for (let o: Object3D | null = bones.find((b) => re.test(b.name))!; o && (o as Bone).isBone; o = o.parent) k *= o.scale.x;
       return k;
     };
-    if (bones.some((b) => /^chest$/i.test(b.name))) {
-      for (const re of [/^hips$/i, /^abdomen$/i, /^torso$/i, /^chest$/i]) expect(absolute(re), String(re)).toBeCloseTo(CHARACTER_STYLE.torsoScale, 5);
-      for (const re of [/^neck$/i, /^shoulderl$/i, /^shoulderr$/i]) expect(absolute(re), String(re)).toBeCloseTo(1, 5);
-      expect(absolute(/^head$/i)).toBeCloseTo(CHARACTER_STYLE.headScale, 5);
-      expect(absolute(/^wristl$/i)).toBeCloseTo(CHARACTER_STYLE.handScale, 5);
+    // Skalowanie tułowia dotyczy szkieletu modular (UBC nie ma kości chest). Modular MA ją mieć: bez niej test by nic nie sprawdzał.
+    const hasChest = bones.some((b) => /^chest$/i.test(b.name));
+    if (pack !== 'modular') {
+      expect(hasChest, 'UBC nie ma kości chest').toBe(false);
+      c.dispose();
+      return;
     }
+    expect(hasChest, 'kość chest w szkielecie modular').toBe(true);
+    for (const re of [/^hips$/i, /^abdomen$/i, /^torso$/i, /^chest$/i]) expect(absolute(re), String(re)).toBeCloseTo(CHARACTER_STYLE.torsoScale, 5);
+    for (const re of [/^neck$/i, /^shoulderl$/i, /^shoulderr$/i]) expect(absolute(re), String(re)).toBeCloseTo(1, 5);
+    expect(absolute(/^head$/i)).toBeCloseTo(CHARACTER_STYLE.headScale, 5);
+    expect(absolute(/^wristl$/i)).toBeCloseTo(CHARACTER_STYLE.handScale, 5);
     c.dispose();
   });
 

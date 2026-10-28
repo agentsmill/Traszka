@@ -142,7 +142,7 @@ export const SLOGANS: readonly string[] = [
   'CENTRALA CZUWA 24/7 (W GODZ. 9–15)',
   'KPI TO STAN UMYSŁU',
   'NOWOŚĆ! STARA CENA W NOWYM KOLORZE',
-  'BLISKO CIEBIE. CENTRALA: BLISKO EXCELA',
+  'CENTRALA: BLISKO TABELKI',
   'PROMOCJA: 3 W CENIE 3!',
   'TU MIAŁA BYĆ PODWYŻKA',
   'OGONKI: TERAZ 10% WIĘCEJ OGONKA',
@@ -266,7 +266,7 @@ function newspaperTexture(): Texture {
     const papers = [
       { mast: 'GŁOS OSIEDLA', head: 'CENTRALA: REKORDOWY KWARTAŁ', bg: BRAND.cream },
       { mast: 'KURIER', head: 'OGONKI DROŻSZE O 0,01', bg: PALETTE.wall[0] },
-      { mast: 'FAKTY I MITY', head: 'NAUKOWCY: PONIEDZIAŁEK ISTNIEJE', bg: BRAND.cream },
+      { mast: 'PLOTKA DNIA', head: 'NAUKOWCY: PONIEDZIAŁEK ISTNIEJE', bg: BRAND.cream },
     ];
     const pw = w / 3;
     papers.forEach((p, i) => {

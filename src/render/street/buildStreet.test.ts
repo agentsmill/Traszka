@@ -4,6 +4,8 @@ import { Box3, BoxGeometry, Color, Group, Mesh, MeshStandardMaterial, Object3D, 
 import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { generateStore } from '@/sim/store/generateStore';
 import { cellToWorld } from '@/render/coords';
+import { CameraRig } from '@/render/cameraRig';
+import { CELL_SIZE_M } from '@/sim/grid';
 import type { LotKind, StoreLayout } from '@/sim/store/types';
 import { PALETTE } from '@/render/style';
 import { WALL_H } from '@/render/store/shell';
@@ -354,6 +356,49 @@ describe('buildStreet: kolory, tekstury, noc, zwalnianie', () => {
     view.setTimeOfDay('day');
     expect(material.emissiveIntensity).toBe(0);
     expect(pools.visible).toBe(false);
+  });
+
+  it('mural na odsłoniętej ścianie mieści się w domyślnym kadrze pod paskiem UI (yaw 0, zoom domyślny, 1400×860 i 1200×672)', async () => {
+    // Kadr jak w main.ts: granice sklepu, cel kamery na środku sali i zaplecza.
+    const TOP_BAR_PX = 44;   // pasek gry (ui.css .tt-hud) ma ok. 43 px wysokości
+    const atlas = createFacadeAtlas();
+    const rects = [atlas.cell('mural'), atlas.cell('muralSzop')];
+    let framed = 0;
+    for (const seed of ['kiełbasa-42', 'kiełbasa-7', 'kiełbasa-12', 'traszka-1', 'traszka-5', 'kiełbasa-3']) {
+      const { view, layout } = await street(seed);
+      view.setBuildingCutaway(true, 0);
+      const lo = cellToWorld(layout, 0, 0);
+      const hi = cellToWorld(layout, layout.width - 1, layout.depth - 1);
+      const pts: Vector3[] = [];
+      for (const mesh of meshesOf(view.root.getObjectByName('buildings')!)) {
+        if (!visible(mesh)) continue;
+        mesh.updateWorldMatrix(true, false);
+        const uv = mesh.geometry.attributes.uv!;
+        const pos = mesh.geometry.attributes.position!;
+        for (let i = 0; i < uv.count; i++) {
+          const u = uv.getX(i);
+          const v = uv.getY(i);
+          if (rects.some((r) => u >= r[0] - 1e-6 && u <= r[2] + 1e-6 && v >= r[1] - 1e-6 && v <= r[3] + 1e-6)) {
+            pts.push(new Vector3().fromBufferAttribute(pos, i).applyMatrix4(mesh.matrixWorld));
+          }
+        }
+      }
+      if (pts.length === 0) continue;   // niski sąsiad (kamienica/pawilon) muralu nie dostaje
+      framed++;
+      for (const [w, h] of [[1400, 860], [1200, 672]] as const) {
+        const rig = new CameraRig(w / h);
+        rig.setBounds(lo.x - CELL_SIZE_M / 2, lo.z - CELL_SIZE_M / 2, hi.x + CELL_SIZE_M / 2, hi.z + CELL_SIZE_M / 2);
+        rig.panBy(-rig.target.x, cellToWorld(layout, 0, (5 + layout.depth) / 2).z - rig.target.z);
+        rig.camera.updateMatrixWorld(true);
+        let top = Infinity;
+        for (const p of pts) {
+          const ndc = p.clone().project(rig.camera);
+          top = Math.min(top, ((1 - ndc.y) / 2) * h);
+        }
+        expect(top, `${seed} ${w}×${h}: górna krawędź muru (px od góry ekranu)`).toBeGreaterThanOrEqual(TOP_BAR_PX + 6);
+      }
+    }
+    expect(framed, 'co najmniej jeden seed ma mural w kadrze').toBeGreaterThanOrEqual(2);
   });
 
   it('dispose zwalnia geometrie ulicy i odpina root, a ponowne wywołanie nic nie psuje', async () => {

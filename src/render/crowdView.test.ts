@@ -298,6 +298,13 @@ describe('CrowdView: plamy cienia i polityka cieni (zadanie 16)', () => {
     expect(m[12]).toBeCloseTo(at.x, 5);
     expect(m[14]).toBeCloseTo(at.z, 5);
     expect(m[0]).toBeCloseTo(BLOB_RADIUS * 1.2, 5);   // promień w metrach × tusza, bez skali wzrostu
+    // postać, która odchodzi (znika z tłumu albo przechodzi w 'gone'), traci plamę w tej samej klatce
+    view.sync(crowdOf(SIM_STEP, agent({ id: 1 })), 0, 0);
+    expect(blobs.mesh.count).toBe(1);
+    view.sync(crowdOf(2 * SIM_STEP, agent({ id: 1, state: 'gone' })), 0, 0);
+    expect(blobs.mesh.count).toBe(0);
+    view.sync(crowdOf(3 * SIM_STEP, agent({ id: 1 }), agent({ id: 2, x: 12.5 })), 0, 0);
+    expect(blobs.mesh.count).toBe(2);
     view.dispose();
     expect(blobs.mesh.count).toBe(0);
     blobs.dispose();

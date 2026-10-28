@@ -4,7 +4,7 @@ import { FRONT_WALL_Y, type LotKind, type StoreLayout } from '@/sim/store/types'
 import { CELL_SIZE_M } from '@/sim/grid';
 import { PALETTE } from '@/render/style';
 import { roundedBoxGeometry } from '@/render/store/parts';
-import { WALL_H, WALL_T } from '@/render/store/shell';
+import { SIDE_STREET_SIDEWALK_M, WALL_H, WALL_T } from '@/render/store/shell';
 import type { AtlasCellName, FacadeAtlas } from './facadeAtlas';
 
 /**
@@ -297,27 +297,32 @@ function facades(c: Ctx, s: VolumeSpec): void {
   }
 }
 
-/** Najwyższy mural (m): przy domyślnym zoomie nad sklepem widać ~3,5 m ściany, a cały mural ma się zmieścić w kadrze. */
-const MURAL_MAX_H = 3.3;
+/** Najwyższy mural (m): cały musi się zmieścić w domyślnym kadrze pod paskiem UI (test w buildStreet.test.ts). */
+const MURAL_MAX_H = 2.5;
 /** Proporcje komórek muralu w atlasie (szerokość / wysokość wnętrza komórki). */
 const MURAL_ASPECT = { mural: 500 / 500, muralSzop: 500 / 436 } as const;
+/** Odstęp muralu od naroża od strony ulicy (m) i od dołu, nad murem sklepu (m). */
+const MURAL_CORNER_GAP = 0.5;
+const MURAL_SILL = 0.15;
 
 /**
  * Mural na ślepej ścianie szczytowej: największy prostokąt o proporcjach komórki, który mieści się nad parterem sklepu
- * (od WALL_H + 0,35 m do H − 0,6 m) z marginesem 0,5 m od naroży, oparty o dolną krawędź (tuż nad sklepem, więc mieści się
- * w kadrze domyślnego zoomu). Niski budynek muralu nie dostaje.
+ * (od WALL_H + 0,15 m do H − 0,6 m), oparty o dolną krawędź i o naroże od strony ulicy. Przy domyślnym zoomie ściana
+ * ucieka w głąb ekranu ku górze, więc środek ściany wypadał za paskiem UI; przy ulicy i tuż nad sklepem mural jest
+ * najniżej na ekranie. Niski budynek muralu nie dostaje.
  */
 function mural(c: Ctx, cell: 'mural' | 'muralSzop', f: Face, H: number): void {
-  const y0 = WALL_H + 0.35;
+  const y0 = WALL_H + MURAL_SILL;
   const y1 = H - 0.6;
-  const maxW = f.length - 1;
+  const maxW = f.length - 2 * MURAL_CORNER_GAP;
   const maxH = y1 - y0;
   if (maxW < 2 || maxH < 2) return;
   const aspect = MURAL_ASPECT[cell];
   const w = Math.min(maxW, Math.min(maxH, MURAL_MAX_H) * aspect);
   const h = w / aspect;
-  const mid = f.length / 2;
-  c.b.faceQuad(f, mid - w / 2, mid + w / 2, y0, y0 + h, 0.02, c.cell(cell), WHITE);
+  // koniec ściany od ulicy: s = 0 dla ściany z normalną −x (biegnie od frontu w głąb), s = długość dla ściany +x
+  const a = f.nx < 0 ? MURAL_CORNER_GAP : f.length - MURAL_CORNER_GAP - w;
+  c.b.faceQuad(f, a, a + w, y0, y0 + h, 0.02, c.cell(cell), WHITE);
 }
 
 /** Dach: pokład, attyka dookoła i kilka drobiazgów (klatka schodowa, wentylatory, kominy). */
@@ -428,7 +433,7 @@ export function cornerSide(layout: StoreLayout): 'minX' | 'maxX' | null {
 }
 
 /** Przecznica przy lokalu narożnym: chodnik, jezdnia, chodnik (m). */
-export const SIDE_STREET = { sidewalk: 1.8, road: 5, total: 8.6 } as const;
+export const SIDE_STREET = { sidewalk: SIDE_STREET_SIDEWALK_M, road: 5, total: 2 * SIDE_STREET_SIDEWALK_M + 5 } as const;
 
 /** `own`: liczba kondygnacji budynku ze sklepem (blok 5, kamienica 3–4, pawilon 1); `neighbour`: sąsiadów. */
 const STYLE_RANGES: Record<LotKind, {

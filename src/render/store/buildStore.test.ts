@@ -4,7 +4,9 @@ import { generateStore } from '@/sim/store/generateStore';
 import type { Facing, Fixture, FixtureKind, StoreLayout } from '@/sim/store/types';
 import { CELL_SIZE_M } from '@/sim/grid';
 import { PALETTE } from '@/render/style';
+import { cornerSide, SIDE_STREET, storeOuter } from '@/render/street/buildings';
 import { buildStore, FIXTURE_BUILDERS, type StoreView } from './buildStore';
+import { CURB_W_M, SIDEWALK_DEPTH } from './shell';
 import { buildSelfCheckout } from './fixtures';
 import { makeSignTexture } from './signTexture';
 
@@ -195,6 +197,44 @@ describe('lokal narożny (druga witryna)', () => {
     const mats = new Set(meshesOf(view.root).map((m) => (m.material as Material).name));
     expect([...mats].some((n) => n.includes('glass'))).toBe(true);
     expect([...mats].some((n) => n.includes('foil'))).toBe(true);
+    view.dispose();
+  });
+});
+
+describe('poświata witryn nocą', () => {
+  /** Kratka siatki: 0,5 m. Krawężnik (lico od strony chodnika) leży na początku wiersza 0, czyli w z = −głębokość/2. */
+  const kerbZ = (l: StoreLayout): number => -(l.depth * CELL_SIZE_M) / 2;
+
+  for (const seed of ['kiełbasa-42', 'kiełbasa-12', 'traszka-1']) {
+    it(`${seed}: plama kończy się na krawężniku (front i boczna witryna), nie wisi nad jezdnią z twardym brzegiem`, () => {
+      const l = generateStore(seed);
+      const view = buildStore(l);
+      const glow = view.root.getObjectByName('window-glow')!;
+      glow.updateMatrixWorld(true);
+      const box = new Box3().setFromObject(glow);
+      const o = storeOuter(l);
+      expect(box.min.z).toBeGreaterThanOrEqual(kerbZ(l) - 1e-6);
+      expect(box.min.z).toBeLessThan(o.z0 - 1);   // ale wciąż sięga na chodnik, a nie jest ścięta do zera
+      const side = cornerSide(l);
+      if (side === 'minX') expect(box.min.x).toBeGreaterThanOrEqual(o.x0 - SIDEWALK_DEPTH.side - 1e-6);
+      if (side === 'maxX') expect(box.max.x).toBeLessThanOrEqual(o.x1 + SIDEWALK_DEPTH.side + 1e-6);
+      view.dispose();
+    });
+  }
+
+  it('boczna witryna lokalu narożnego ma plamę krótszą niż front (chodnik wzdłuż przecznicy jest węższy)', () => {
+    expect(SIDEWALK_DEPTH.side).toBeLessThan(SIDEWALK_DEPTH.front);
+    expect(SIDEWALK_DEPTH.front).toBeLessThan(2.6);   // bez ścięcia front wychodziłby poza krawężnik o ok. 0,3 m
+    // chodnik wzdłuż przecznicy: SIDE_STREET.sidewalk od lica muru do krawędzi jezdni, z czego krawężnik zajmuje CURB_W_M
+    expect(SIDE_STREET.sidewalk - CURB_W_M).toBeCloseTo(SIDEWALK_DEPTH.side, 9);
+  });
+
+  it('plama i poświata latarni są oznaczone dla N8AO (AO zostaje pod nimi): userData.treatAsOpaque', () => {
+    const view = buildStore(generateStore('kiełbasa-12'));
+    const glow = view.root.getObjectByName('window-glow')!;
+    const meshes = meshesOf(glow);
+    expect(meshes.length).toBeGreaterThan(0);
+    for (const m of meshes) expect(m.userData.treatAsOpaque, m.name).toBe(true);
     view.dispose();
   });
 });

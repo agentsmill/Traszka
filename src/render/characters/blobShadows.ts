@@ -9,18 +9,24 @@ import { PALETTE } from '@/render/style';
  *
  * Plama leży tuż nad najwyższą nakładką podłogi (mata 3 cm), w kolorze `wall[4]` (ciepły brąz, nie czerń), bez zapisu
  * głębi, więc nie zasłania niczego poza podeszwami.
+ *
+ * Pod AO (presety `srednia` i `wysoka`) N8AO jest „świadomy przezroczystości”: wszędzie, gdzie rysuje się przezroczysta
+ * siatka bez zapisu głębi, zeruje AO. Plama jest właśnie taka, więc AO wokół stóp znikało, a zostawała połowa jej siły
+ * (na `niska`, bez AO, plama była wyraźna). `userData.treatAsOpaque` wyłącza tę regułę dla plamy: AO zostaje pod nią,
+ * a plama wygląda tak samo na wszystkich presetach. Wysokość plamy nie ma z tym nic wspólnego (podnoszenie jej nad
+ * podłogę tylko odrywa ją od stóp), a wyłączenie `transparencyAware` w całym przebiegu zmieniłoby też AO pod szybami i poświatami.
  */
 export const BLOB_Y = 0.034;
-/** Promień plamy (m) dla postaci o mnożniku szerokości 1. */
-export const BLOB_RADIUS = 0.4;
-const BLOB_OPACITY = 0.62;
+/** Promień plamy (m) dla postaci o mnożniku szerokości 1: przy domyślnym zoomie widać ją ok. 8 px dookoła stóp. */
+export const BLOB_RADIUS = 0.54;
+export const BLOB_OPACITY = 0.82;
 
 function blobTexture(): Texture {
   return cachedTexture('blobShadow', () => canvasTexture(64, 64, (ctx, w, h) => {
     const g = ctx.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, w / 2);
     g.addColorStop(0, 'rgba(255,255,255,1)');
-    g.addColorStop(0.5, 'rgba(255,255,255,0.8)');
-    g.addColorStop(0.8, 'rgba(255,255,255,0.3)');
+    g.addColorStop(0.5, 'rgba(255,255,255,0.9)');
+    g.addColorStop(0.8, 'rgba(255,255,255,0.4)');
     g.addColorStop(1, 'rgba(255,255,255,0)');
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, w, h);
@@ -45,6 +51,7 @@ export function createBlobShadows(capacity = 96): BlobShadows {
   });
   const mesh = new InstancedMesh(geometry, material, capacity);
   mesh.name = 'blob-shadows';
+  mesh.userData.treatAsOpaque = true;
   mesh.instanceMatrix.setUsage(DynamicDrawUsage);
   mesh.count = 0;
   mesh.frustumCulled = false;   // instancje rozrzucone po całym sklepie; bryła brzegowa geometrii ich nie obejmuje
