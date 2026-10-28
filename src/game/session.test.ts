@@ -10,10 +10,11 @@ import { LIMITS } from '@/sim/economy/sanitize';
 import { computeStoreInfo } from '@/sim/economy/storeInfo';
 import { REMONTS } from '@/sim/economy/upgrades';
 import { GENERATOR_VERSION, generateStore } from '@/sim/store/generateStore';
+import { layoutFor } from '@/sim/store/layoutFor';
 import { MemoryStorage } from './memoryStorage';
 import {
   BROKEN_SAVE_NOTICE, NEWER_SAVE_NOTICE, SAVE_SCHEMA, UNBUILDABLE_SAVE_NOTICE, createSession, deleteSave, discardSave, hasStoredSave,
-  lastSavedSeed, layoutFor, retireSession, reviveSession, saveSession, syncLayout, withLayoutFromSeed, type GameSession, type SaveEnvelope,
+  lastSavedSeed, retireSession, reviveSession, saveSession, syncLayout, withLayoutFromSeed, type GameSession, type SaveEnvelope,
 } from './session';
 
 /**
@@ -49,7 +50,8 @@ const BLOK = 'kiełbasa-42';
 const PAWILON = 'traszka-1';
 const key = (seed: string): string => `traszka:save:${seed}`;
 const text = (name: string): string => readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8');
-const gameVersion = (JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as { version: string }).version;
+// Vite wstawia pod Vitest wersję 'test' (vite.config.ts), a nie wersję z package.json.
+const gameVersion = 'test';
 
 const effectsBackroomCap = (s: GameSession): number => effects(s.econ, s.info).backroomCap;
 

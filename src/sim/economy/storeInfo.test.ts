@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { layoutFor } from '@/game/session';
 import { staffStripCells } from '@/sim/crowd/crowd';
 import type { Cell } from '@/sim/grid';
+import { layoutFor } from '@/sim/store/layoutFor';
 import { FRONT_WALL_Y, type StoreLayout } from '@/sim/store/types';
 import { accessCells, isWalkable } from '@/sim/store/validate';
 import { FINE_PALLET_POW } from './exactMath';

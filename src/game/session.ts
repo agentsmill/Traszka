@@ -5,11 +5,11 @@ import { computeStoreInfo, type StoreInfo } from '@/sim/economy/storeInfo';
 import { REMONTS } from '@/sim/economy/upgrades';
 import type { EconClock } from '@/sim/economy/clock';
 import { isRec, whole } from '@/sim/guards';
-import { subSeed } from '@/sim/rng';
-import { GENERATOR_VERSION, generateStore } from '@/sim/store/generateStore';
+import { GENERATOR_VERSION } from '@/sim/store/generateStore';
+import { layoutFor } from '@/sim/store/layoutFor';
 import { sanitizeLayout } from '@/sim/store/sanitize';
 import type { StoreLayout } from '@/sim/store/types';
-import { version as GAME_VERSION } from '../../package.json';
+import { GAME_VERSION } from './version';
 
 /** Rozgrywka jednego sklepu: stan ekonomii i układ, w którym się toczy (po remoncie układ się zmienia). */
 export interface GameSession {
@@ -31,32 +31,6 @@ export interface GameSession {
    * pod tym seedem jest cudzy (z nowszej wersji gry) i nie wolno go ruszyć, a gracz i tak ma dostać działającą grę.
    */
   ephemeral: boolean;
-}
-
-/**
- * Układ sklepu po `level` remontach: ten sam rodzaj lokalu, większe wymiary i więcej slotów sprzętu. Generator dostaje
- * osobny podseed na każdy poziom; gdyby nie znalazł układu, próbuje kolejnych, a na końcu z mniejszym przyrostem.
- */
-export function layoutFor(seed: string, level: number): StoreLayout {
-  const base = generateStore(seed);
-  const r = REMONTS[Math.min(level, REMONTS.length) - 1];
-  if (!r) return base;
-  for (const scale of [1, 0.75, 0.5]) {
-    const lot = {
-      ...base.lot,
-      interiorWidth: base.lot.interiorWidth + Math.round(r.grow[0] * scale),
-      salesDepth: base.lot.salesDepth + Math.round(r.grow[1] * scale),
-      backroomDepth: base.lot.backroomDepth + Math.round(r.grow[2] * scale),
-    };
-    for (let attempt = 0; attempt < 4; attempt++) {
-      try {
-        return generateStore(subSeed(seed, `remont:${r.level}:${attempt}`), lot, { equipmentSlots: r.slots });
-      } catch {
-        // kolejna próba
-      }
-    }
-  }
-  return base;
 }
 
 // --- Zapis w przeglądarce ----------------------------------------------------------------------------------------

@@ -5,9 +5,9 @@ import { SIM_STEP, createCrowd, staffStripCells, stepCrowd, type Agent, type Age
 import { REMONTS } from '@/sim/economy/upgrades';
 import { createRng } from '@/sim/rng';
 import { generateStore } from '@/sim/store/generateStore';
+import { layoutFor } from '@/sim/store/layoutFor';
 import { layoutFromParts, validParts } from '@/sim/store/testLayouts';
 import type { Fixture, StoreLayout } from '@/sim/store/types';
-import { layoutFor } from './session';
 import {
   APPEARANCE_SEED_MAX, DEFAULT_CASHIER_LOOK, OUTFIT_ORDER, REGULAR_OUTFITS, SPECIAL_LOOK_CHANCE, SPECIAL_OUTFITS,
   cashierCues, cashierSpot, isCashierLook, isSpecialOutfit, randomCashierLook, rollCashierLook, stepOutfit, type CashierLook,
