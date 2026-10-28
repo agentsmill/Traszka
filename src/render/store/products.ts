@@ -161,7 +161,7 @@ interface Product {
   sz: number;
 }
 
-interface Placement { matrix: Matrix4; color: Color }
+interface Placement { matrix: Matrix4; color: Color; category: Category }
 
 type FixtureKindName = string;
 
@@ -170,12 +170,24 @@ function mixFor(kind: FixtureKindName | undefined, category: Category): Mix {
   return MIX[category];
 }
 
+/** Towar w sklepie: grupa z `InstancedMesh` na kształt i sterowanie zapełnieniem półek wg kategorii. */
+export interface Goods {
+  root: Group;
+  /** Pokazuje ułamek `fraction` (0–1) towaru kategorii `category`; reszta znika z półek w losowej kolejności. */
+  setFill(category: Category, fraction: number): void;
+}
+
 /**
  * Wypełnia towarem wszystkie `view.shelfSlots` i zwraca grupę z `InstancedMesh` na kształt. Grupę dodaj do `view.root`
  * (wtedy `view.dispose()` zwolni bufory instancji). Losowość: `createRng(subSeed(seed, 'products'))`, więc ten sam seed
  * i ten sam sklep dają identyczny układ.
  */
 export function fillShelves(view: StoreView, seed: string): Group {
+  return createGoods(view, seed).root;
+}
+
+/** Jak `fillShelves`, ale z `setFill`: ekonomia gry pokazuje stan zapasu pustoszejącymi półkami. */
+export function createGoods(view: StoreView, seed: string): Goods {
   const rng = createRng(subSeed(seed, 'products'));
 
   const kinds = new Map<string, FixtureKindName>();
@@ -191,6 +203,8 @@ export function fillShelves(view: StoreView, seed: string): Group {
 
   const group = new Group();
   group.name = 'goods';
+  /** Instancje każdej kategorii w kolejności znikania (losowej, z osobnego strumienia, żeby nie ruszać układu). */
+  const byCategory = new Map<Category, { mesh: InstancedMesh; index: number; matrix: Matrix4 }[]>();
   for (const id of SHAPE_IDS) {
     const list = placements.get(id)!;
     if (list.length === 0) continue;
@@ -199,13 +213,46 @@ export function fillShelves(view: StoreView, seed: string): Group {
     // draw calls: towar nie rzuca cienia (kilka kształtów więcej w przejściu cienia to kilka draw calls więcej), ale go odbiera
     mesh.castShadow = false;
     mesh.receiveShadow = true;
-    list.forEach((p, i) => { mesh.setMatrixAt(i, p.matrix); mesh.setColorAt(i, p.color); });
+    list.forEach((p, i) => {
+      mesh.setMatrixAt(i, p.matrix);
+      mesh.setColorAt(i, p.color);
+      const entries = byCategory.get(p.category) ?? [];
+      entries.push({ mesh, index: i, matrix: p.matrix });
+      byCategory.set(p.category, entries);
+    });
     mesh.instanceMatrix.needsUpdate = true;
     mesh.instanceColor!.needsUpdate = true;
     mesh.computeBoundingSphere();
     group.add(mesh);
   }
-  return group;
+
+  const order = createRng(subSeed(seed, 'products:fill'));
+  const visible = new Map<Category, number>();
+  for (const [category, entries] of byCategory) {
+    byCategory.set(category, order.shuffle(entries));
+    visible.set(category, entries.length);
+  }
+  const HIDDEN = new Matrix4().makeScale(0, 0, 0);
+
+  return {
+    root: group,
+    setFill(category, fraction) {
+      const entries = byCategory.get(category);
+      if (!entries) return;
+      const want = Math.round(Math.min(1, Math.max(0, fraction)) * entries.length);
+      const have = visible.get(category)!;
+      if (want === have) return;
+      const touched = new Set<InstancedMesh>();
+      const [from, to] = want > have ? [have, want] : [want, have];
+      for (let i = from; i < to; i++) {
+        const e = entries[i]!;
+        e.mesh.setMatrixAt(e.index, want > have ? e.matrix : HIDDEN);
+        touched.add(e.mesh);
+      }
+      for (const m of touched) m.instanceMatrix.needsUpdate = true;
+      visible.set(category, want);
+    },
+  };
 }
 
 const POS = new Vector3();
@@ -267,6 +314,7 @@ function fillSlot(slot: ShelfSlot, mix: Mix, fridge: boolean, rng: Rng, out: Map
           out.get(shape.id)!.push({
             matrix: new Matrix4().compose(POS, QUAT, SCALE),
             color: base.clone().multiplyScalar(rng.range(0.93, 1)),
+            category: slot.category,
           });
         }
       }

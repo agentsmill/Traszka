@@ -91,7 +91,8 @@ function mergeSources(name: string, sources: Object3D[], owned: BufferGeometry[]
   return out;
 }
 
-function mergedGroup(name: string, sources: Object3D[], owned: BufferGeometry[]): Group {
+/** Scala `sources` w grupę z jedną siatką na materiał; geometrie wyniku trafiają do `owned` (do zwolnienia). */
+export function mergedGroup(name: string, sources: Object3D[], owned: BufferGeometry[]): Group {
   const g = new Group();
   g.name = name;
   g.add(...mergeSources(name, sources, owned));

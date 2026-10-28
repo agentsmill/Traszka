@@ -184,8 +184,15 @@ const blockBottom = (block: Block): number => block.items[block.items.length - 1
 
 // --- Kroki budowy ---------------------------------------------------------------------------------
 
+/** Opcje generatora (remont): bez nich wynik dla seeda jest taki sam jak zawsze. */
+export interface GenerateOptions {
+  /** Ile slotów sprzętu 2×2 postawić (zamiast losowych 1–3). Generator stawia tyle, ile się zmieści. */
+  equipmentSlots?: number;
+}
+
 interface Build {
   rng: Rng;
+  opts: GenerateOptions;
   lot: LotSpec;
   floor: Floor;
   block: Block;
@@ -196,11 +203,12 @@ interface Build {
   queue: Cell[];
 }
 
-function newBuild(lot: LotSpec, rng: Rng): Build {
+function newBuild(lot: LotSpec, rng: Rng, opts: GenerateOptions): Build {
   const gap = rng.chance(STAFF_GAP_2_CHANCE) && lot.interiorWidth >= STAFF_GAP_2_MIN_WIDTH ? 2 : 1;
   const { width, midWallY } = storeDimensions(lot);
   return {
     rng,
+    opts,
     lot,
     floor: new Floor(width, midWallY),
     block: planBlock(rng, 2 + gap),           // x=1 regał, potem pas personelu, potem kasa
@@ -347,7 +355,7 @@ function placeSelfCheckout(b: Build): void {
 /** Krok 8. 1–3 sloty sprzętu 2×2 w losowych wolnych miejscach przy ścianach (z wolnym frontem, dostępnym z wejścia). */
 function placeEquipment(b: Build): void {
   const { floor, rng } = b;
-  const wanted = rng.int(1, 4);
+  const wanted = b.opts.equipmentSlots ?? rng.int(1, 4);
   const spots: Cell[] = [];
   for (let y = SALES_TOP; y <= floor.midWallY - 2; y++) {
     for (let x = 1; x <= floor.width - 3; x++) {
@@ -396,8 +404,8 @@ function assemble(seed: string, lot: LotSpec, b: Build): StoreLayout {
   };
 }
 
-function buildAttempt(seed: string, lot: LotSpec, rng: Rng): StoreLayout | null {
-  const b = newBuild(lot, rng);
+function buildAttempt(seed: string, lot: LotSpec, rng: Rng, opts: GenerateOptions): StoreLayout | null {
+  const b = newBuild(lot, rng, opts);
   try {
     buildShell(b);
     placeCheckout(b);
@@ -416,12 +424,12 @@ function buildAttempt(seed: string, lot: LotSpec, rng: Rng): StoreLayout | null 
 }
 
 /**
- * Deterministyczny sklep z seeda. Bez `lot` wybiera lokal przez pickLot(seed). Do 10 prób z subSeed(seed, `store:try:${n}`);
+ * Deterministyczny sklep z seeda. Bez `lot` wybiera lokal przez pickLot(seed); `opts` zmienia liczbę slotów (remont). Do 10 prób z subSeed(seed, `store:try:${n}`);
  * po 10 nieudanych rzuca Error('generateStore: brak poprawnego układu').
  */
-export function generateStore(seed: string, lot: LotSpec = pickLot(seed)): StoreLayout {
+export function generateStore(seed: string, lot: LotSpec = pickLot(seed), opts: GenerateOptions = {}): StoreLayout {
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-    const layout = buildAttempt(seed, lot, createRng(subSeed(seed, `store:try:${attempt}`)));
+    const layout = buildAttempt(seed, lot, createRng(subSeed(seed, `store:try:${attempt}`)), opts);
     if (layout && validateLayout(layout).ok) return layout;
   }
   throw new Error('generateStore: brak poprawnego układu');

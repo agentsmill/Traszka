@@ -75,7 +75,7 @@ const lookHeading = (facing: Facing): number => Math.atan2(-FACING_VECTOR[facing
 
 // --- Stan wewnętrzny ---------------------------------------------------------------------------------
 
-type Goal = 'fixture' | 'queue' | 'slot' | 'exit';
+type Goal = 'fixture' | 'queue' | 'slot' | 'exit' | 'sco';
 
 /** Mebel do oglądania wraz z kratkami, na których wolno przy nim stanąć. */
 interface Spot { fixture: Fixture; cells: Cell[]; look: number }
@@ -88,7 +88,11 @@ interface Nav {
   queueIndex: Int16Array;           // indeks kratki w checkoutQueue albo −1
   spots: Spot[];
   tillLook: number;                 // kierunek patrzenia przy kasie
+  payPoints: PayPoint[];            // kasy samoobsługowe: kratka przed ekranem i kierunek patrzenia
 }
+
+/** Miejsce płacenia przy kasie samoobsługowej (kratka dostępu przed nią). */
+export interface PayPoint { cell: Cell; look: number }
 
 /** Wszystko, co agent wie o sobie poza polami `Agent` widocznymi dla renderera. */
 interface Brain {
@@ -113,6 +117,8 @@ interface Brain {
 interface CrowdInternals {
   seed: string;
   opts: CrowdOptions;
+  obstacles: Cell[];                // palety: kratki niedostępne poza samym układem
+  payPoints: PayPoint[];
   nav: Nav;
   occ: Int32Array;                  // kratka → id agenta, który ją trzyma, albo −1
   queue: number[];                  // id stojących w kolejce, [0] płaci albo zaraz zapłaci
@@ -160,7 +166,7 @@ export function staffStripCells(layout: StoreLayout): Cell[] {
   return strip;
 }
 
-function buildNav(layout: StoreLayout): Nav {
+function buildNav(layout: StoreLayout, obstacles: readonly Cell[] = [], payPoints: readonly PayPoint[] = []): Nav {
   const { width, depth: height } = layout;
   const at = (c: Cell): number => c.y * width + c.x;
 
@@ -169,6 +175,7 @@ function buildNav(layout: StoreLayout): Nav {
     for (let x = 0; x < width; x++) blocked[y * width + x] = isWalkable(layout, x, y) ? 0 : 1;
   }
   for (const c of staffStripCells(layout)) blocked[at(c)] = 1;
+  for (const c of obstacles) if (c.x >= 0 && c.y >= 0 && c.x < width && c.y < height) blocked[at(c)] = 1;
   // wiersz 0 chodnika to pas mebli ulicznych (ławka, kosz, latarnie, drzewa z buildStreet): klienci tam nie wchodzą
   for (let x = 0; x < width; x++) blocked[x] = 1;
 
@@ -202,7 +209,8 @@ function buildNav(layout: StoreLayout): Nav {
   }
 
   const till = layout.fixtures.find((f) => f.kind === 'checkout');
-  return { layout, width, height, blocked, queueIndex, spots, tillLook: till ? lookHeading(till.facing) : 0 };
+  const pays = payPoints.filter((p) => reachable[at(p.cell)] === 1 && blocked[at(p.cell)] === 0);
+  return { layout, width, height, blocked, queueIndex, spots, tillLook: till ? lookHeading(till.facing) : 0, payPoints: pays };
 }
 
 // --- Tworzenie i krok --------------------------------------------------------------------------------
@@ -214,6 +222,8 @@ export function createCrowd(layout: StoreLayout, seed: string, opts: CrowdOption
   const internal: CrowdInternals = {
     seed,
     opts: { ...opts },
+    obstacles: [],
+    payPoints: [],
     nav,
     occ: new Int32Array(nav.width * nav.height).fill(-1),
     queue: [],
@@ -231,7 +241,7 @@ export function createCrowd(layout: StoreLayout, seed: string, opts: CrowdOption
 export function stepCrowd(crowd: Crowd, layout: StoreLayout, dt: number): void {
   const s = crowd.internal;
   if (s.nav.layout !== layout) {
-    const nav = buildNav(layout);
+    const nav = buildNav(layout, s.obstacles, s.payPoints);
     if (nav.width * nav.height !== s.occ.length) throw new Error('stepCrowd: układ o innych wymiarach niż w createCrowd');
     s.nav = nav;
   }
@@ -246,6 +256,30 @@ export function stepCrowd(crowd: Crowd, layout: StoreLayout, dt: number): void {
   }
   if (s.pending < 0) s.pending = 0;
 }
+
+/** Zmienia tempo napływu i docelową liczbę klientów (ekonomia gry steruje gęstością tłumu). */
+export function setCrowdRate(crowd: Crowd, opts: CrowdOptions): void {
+  const o = crowd.internal.opts;
+  if (o.targetCount === opts.targetCount && o.spawnPerMinute === opts.spawnPerMinute) return;
+  crowd.internal.opts = { ...opts };
+}
+
+/**
+ * Przeszkody spoza układu (palety) i miejsca płacenia przy kasach samoobsługowych. Przebudowuje siatkę nawigacji;
+ * agenci w drodze zachowują trasy, a zablokowaną kratkę obchodzą przy najbliższym przeplanowaniu.
+ */
+export function setCrowdExtras(crowd: Crowd, obstacles: readonly Cell[], payPoints: readonly PayPoint[]): void {
+  const s = crowd.internal;
+  const same = <T>(a: readonly T[], b: readonly T[], eq: (x: T, y: T) => boolean): boolean =>
+    a.length === b.length && a.every((x, i) => eq(x, b[i]!));
+  if (same(s.obstacles, obstacles, sameCell) && same(s.payPoints, payPoints, (x, y) => sameCell(x.cell, y.cell) && x.look === y.look)) return;
+  s.obstacles = [...obstacles];
+  s.payPoints = [...payPoints];
+  s.nav = buildNav(s.nav.layout, s.obstacles, s.payPoints);
+}
+
+/** Kierunek patrzenia klienta przy kasie samoobsługowej z frontem `facing`. */
+export const payLook = (facing: Facing): number => lookHeading(facing);
 
 function simStep(s: CrowdInternals): void {
   for (let i = 0; i < s.agents.length; i++) stepAgent(s, s.agents[i]!);
@@ -413,6 +447,11 @@ function walk(s: CrowdInternals, a: Agent, b: Brain): void {
 /** Rezerwuje kratkę `target` i zaczyna do niej iść. Zajęta: czeka, po 2 s szuka obejścia, po 5 s idzie na ducha. */
 function startMove(s: CrowdInternals, a: Agent, b: Brain, target: Cell): boolean {
   const i = cellAt(s, target);
+  // na trasie stanęła paleta (setCrowdExtras): szukamy nowej drogi do tego samego celu
+  if (s.nav.blocked[i] === 1 && b.goalCell !== null && !sameCell(target, b.goalCell)) {
+    const path = findRoute(s, a, b.cell, b.goalCell, false);
+    if (path !== null && path.length > 1) { b.path = path; b.pathPos = 1; return false; }
+  }
   const holder = s.occ[i]!;
   if (holder === -1 || holder === a.id) {
     s.occ[i] = a.id;
@@ -476,6 +515,13 @@ function reachGoal(s: CrowdInternals, a: Agent, b: Brain): boolean {
     case 'exit':
       a.state = 'gone';
       return true;
+    case 'sco': {
+      const point = s.nav.payPoints.find((p) => sameCell(p.cell, b.cell));
+      a.state = 'paying';
+      b.timer = b.payTime * 1.3;
+      if (point) a.heading = point.look;
+      return true;
+    }
     default:
       return true;
   }
@@ -495,7 +541,29 @@ function chooseNextGoal(s: CrowdInternals, a: Agent, b: Brain): void {
       return;
     }
   }
+  if (routeToSco(s, a, b)) return;
   if (routeToQueueTail(s, a, b)) setWalkingState(a, 'toQueue');
+}
+
+/** Część klientów płaci przy wolnej kasie samoobsługowej (reszta woli człowieka albo wszystkie są zajęte). */
+function routeToSco(s: CrowdInternals, a: Agent, b: Brain): boolean {
+  if (s.nav.payPoints.length === 0 || !b.rng.chance(0.6)) return false;
+  const free = s.nav.payPoints.filter((p) => isFreeToPay(s, b, p.cell));
+  if (free.length === 0) return false;
+  const point = b.rng.pick(free);
+  if (!routeTo(s, a, b, point.cell, 'sco')) return false;
+  b.spot = null;
+  setWalkingState(a, 'browsing');
+  return true;
+}
+
+function isFreeToPay(s: CrowdInternals, self: Brain, c: Cell): boolean {
+  const holder = s.occ[cellAt(s, c)];
+  if (holder !== -1 && s.brains.get(holder!) !== self) return false;
+  for (const other of s.brains.values()) {
+    if (other !== self && other.goal === 'sco' && other.goalCell !== null && sameCell(other.goalCell, c)) return false;
+  }
+  return true;
 }
 
 /** 'entering' przechodzi w następny stan dopiero za progiem sklepu (cellReached). */

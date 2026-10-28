@@ -36,13 +36,21 @@ const gltfLoader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
 const cache = new Map<string, Promise<GLTF>>();
 
 /**
+ * Ścieżka z `ASSETS` (względem `public/`) jako URL względem `base` z vite.config.ts. Dzięki temu build działa
+ * także spod podkatalogu, np. na GitHub Pages (`/Traszka/`).
+ */
+export function assetUrl(path: string): string {
+  return import.meta.env.BASE_URL + path.replace(/^\//, '');
+}
+
+/**
  * Wczytuje GLB (kompresja meshopt). Wynik jest cache'owany po URL; błędne wczytanie nie zostaje w cache.
  * `GLTF.scene` jest współdzielona: przed dodaniem do sceny klonuj ją przez `SkeletonUtils.clone`.
  */
 export function loadGLB(url: string): Promise<GLTF> {
   let pending = cache.get(url);
   if (!pending) {
-    pending = gltfLoader.loadAsync(url).catch((err: unknown) => {
+    pending = gltfLoader.loadAsync(assetUrl(url)).catch((err: unknown) => {
       cache.delete(url);
       throw err;
     });
