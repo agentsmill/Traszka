@@ -2,10 +2,11 @@ import type { ComponentChildren } from 'preact';
 import { CATS, CAT_INFO, HIRE_COST, HOUR_CURVE, ORDER_DEADLINE, RESTOCK_RATE, RETURN_FEE, SCO_RATE, STAFF_MAX, TILL_RATE, UNLOAD_RATE, WAGE_PER_DAY } from '@/sim/economy/catalog';
 import { formatClock, minuteOfDay } from '@/sim/economy/calendar';
 import {
-  LOC_LABEL, PRIORITY_LABEL, assistantSuggestion, effects, expectedDailyCustomers, freeSpots, isClosedForRemont, level,
-  nextRemont, plPallets, slotFree, slotUsage, upgradeBlocker, workshopUnlocked, type EconomyState, type Priority,
+  LOC_LABEL, assistantSuggestion, effects, expectedDailyCustomers, freeSpots, isClosedForRemont, level, nextRemont, plPallets,
+  robotFleet, slotFree, slotUsage, upgradeBlocker, workshopUnlocked, type EconomyState,
 } from '@/sim/economy/economy';
 import { MILESTONES } from '@/sim/economy/milestones';
+import { PROFILE_HINT, PROFILE_LABEL, STAFF_PROFILES } from '@/sim/economy/tycoon/staff';
 import type { PalletLoc, StoreInfo } from '@/sim/economy/storeInfo';
 import {
   EQUIPMENT, GROUP_LABEL, UPGRADES, WORKSHOP_LEVEL, equipmentCost, upgradeCost, type UpgradeGroup,
@@ -14,7 +15,7 @@ import { nextRankAt, rankFor, xpToNext } from '@/sim/economy/progress';
 import { questDone, questProgress, questTitle } from '@/sim/economy/quests';
 import { networkIncomeOf, prestigePoints, prestigeReady } from '@/game/meta';
 import { econ, metaView, selection, showPrestige, tab, type GameActions, type TabId } from '../state';
-import { duration, int, pct, plural, signedZl, zl } from './format';
+import { duration, int, pct, people, plural, signedZl, zl } from './format';
 
 // --- Wspólne -----------------------------------------------------------------------------------------
 
@@ -115,7 +116,7 @@ function StorePanel({ s, info }: { s: EconomyState; info: StoreInfo; v: number }
       <Section title="Kasa i kolejka">
         <Row label="Kolejka">{int(s.queue)} {plural(Math.round(s.queue), 'osoba', 'osoby', 'osób')} (cierpliwość: {fx.patience})</Row>
         <Bar value={s.queue / Math.max(1, fx.patience)} warn={s.queue >= fx.patience} />
-        <Row label="Stanowiska kasowe">{fx.tills}, teraz na kasie: {s.lastCashiers}</Row>
+        <Row label="Stanowiska kasowe">{fx.tills}, teraz na kasie: {people(s.lastCashiers)}</Row>
         <Row label="Kasy samoobsługowe">{fx.sco}</Row>
         <Row label="Ruch teraz / w szczycie">{int(demand)} / {int(peak)} klientów/h</Row>
         <Row label="Przepustowość (max)">{int(cap.max)} klientów/h</Row>
@@ -161,7 +162,8 @@ export function PalletsPanel({ s, info, game }: { s: EconomyState; info: StoreIn
   const mod = minuteOfDay(s.minute);
   const pending = s.deliveries.reduce((n, d) => n + d.count, 0);
   const fx = effects(s, info);
-  const workPerHour = (s.lastWorkers * UNLOAD_RATE * fx.unloadMult + fx.autoUnload) * 60;
+  const robots = robotFleet(s);
+  const workPerHour = s.shift.human.rozladunek * UNLOAD_RATE * fx.unloadMult * 60;
   return (
     <>
       <Section title="Zamówienie na jutro">
@@ -183,7 +185,7 @@ export function PalletsPanel({ s, info, game }: { s: EconomyState; info: StoreIn
       </Section>
       <Section title={`Palety (${s.pallets.length})`}>
         <Row label="Wolne miejsca">pod sklepem {freeSpots(s, info, 'sidewalk')} · zaplecze {freeSpots(s, info, 'backroom')} · sala {freeSpots(s, info, 'floor')}</Row>
-        <Row label="Rozładunek teraz">~{int(workPerHour)} szt./h ({s.lastWorkers} {plural(s.lastWorkers, 'osoba', 'osoby', 'osób')}{fx.autoUnload > 0 ? ' + automatyka' : ''})</Row>
+        <Row label="Rozładunek teraz">~{int(workPerHour)} szt./h ({people(s.shift.human.rozladunek)} os.{robots.tasmociag > 0 || robots.edward > 0 ? ' + automatyka' : ''})</Row>
         {s.pallets.length === 0 && <p class="tt-hint">Brak palet. Cisza przed dostawą.</p>}
         {s.pallets.map((p) => <PalletItem key={p.id} s={s} info={info} id={p.id} game={game} />)}
         <p class="tt-hint">Pod sklepem: ryzyko mandatu Straży Miejskiej. W sali: korek i mniej klientów. Zaplecze: bezpiecznie, ale miejsc jest mało.</p>
@@ -219,14 +221,10 @@ export function PalletItem({ s, info, id, game, compact = false }: { s: EconomyS
 
 // --- Ludzie ------------------------------------------------------------------------------------------
 
-const PRIORITY_HINT: Record<Priority, string> = {
-  klienci: 'Przy kolejce otwierają się wszystkie kasy. Palety czekają.',
-  rowno: 'Na kasie tyle osób, ile trzeba na kolejkę (przy SCO czasem nikt). Reszta rozładowuje.',
-  palety: 'Na kasie ktoś staje dopiero przy długiej kolejce (albo gdy nie ma SCO). Reszta przy paletach.',
-};
-
 export function PeoplePanel({ s, info, game }: { s: EconomyState; info: StoreInfo; game: GameActions; v: number }) {
   const fx = effects(s, info);
+  const robots = robotFleet(s);
+  const profile = s.tycoon.staff.profile;
   return (
     <>
       <Section title="Zespół na zmianie">
@@ -237,21 +235,21 @@ export function PeoplePanel({ s, info, game }: { s: EconomyState; info: StoreInf
         </div>
         <Row label="Płace">{int(s.staff * WAGE_PER_DAY)} zł / dzień</Row>
         <p class="tt-hint">Rekrutacja: {HIRE_COST} zł. Każda osoba na zmianie to {WAGE_PER_DAY} zł dziennie (dwa etaty na 17-godzinny dzień).</p>
-        <Row label="Teraz">{s.lastCashiers} na kasie · {s.lastWorkers} przy paletach i półkach</Row>
+        <Row label="Teraz">{people(s.shift.human.kasa)} na kasie · {people(s.shift.human.rozladunek + s.shift.human.wykladanie + s.shift.human.sprzatanie)} przy paletach i półkach</Row>
       </Section>
-      <Section title="Priorytet pracy">
-        <div class="tt-seg wide" role="group" aria-label="Priorytet">
-          {(['klienci', 'rowno', 'palety'] as Priority[]).map((p) => (
-            <button key={p} type="button" class={`tt-btn${s.priority === p ? ' on' : ''}`} onClick={() => game.dispatch({ type: 'setPriority', priority: p })}>{PRIORITY_LABEL[p]}</button>
+      <Section title="Profil pracy">
+        <div class="tt-seg wide" role="group" aria-label="Profil pracy">
+          {STAFF_PROFILES.map((p) => (
+            <button key={p} type="button" class={`tt-btn${profile === p ? ' on' : ''}`} onClick={() => game.dispatch({ type: 'setStaffProfile', profile: p })}>{PROFILE_LABEL[p]}</button>
           ))}
         </div>
-        <p class="tt-hint">{PRIORITY_HINT[s.priority]}</p>
+        <p class="tt-hint">{profile === 'wlasny' ? PROFILE_LABEL.wlasny : PROFILE_HINT[profile]}</p>
         <p class="tt-hint">Jedna osoba: kasa ~{int(TILL_RATE * fx.tillSpeed * 60)} klientów/h albo rozładunek ~{int(UNLOAD_RATE * fx.unloadMult * 60)} szt./h, wykładanie ~{int(RESTOCK_RATE * 60)} szt./h.</p>
       </Section>
-      {(fx.autoUnload > 0 || fx.autoRestock > 0) && (
+      {(robots.tasmociag > 0 || robots.wykladacz > 0 || fx.humanoid) && (
         <Section title="Automatyka (warsztat)">
-          {level(s, 'tasmociag') > 0 && <Row label="Taśmociąg">poziom {level(s, 'tasmociag')}</Row>}
-          {level(s, 'wykladacz') > 0 && <Row label="Wykładacz">poziom {level(s, 'wykladacz')}</Row>}
+          {robots.tasmociag > 0 && <Row label="Taśmociąg">poziom {robots.tasmociag}</Row>}
+          {robots.wykladacz > 0 && <Row label="Wykładacz">poziom {robots.wykladacz}</Row>}
           {fx.humanoid && <Row label="Humanoid eDward">pracuje 24/7 🤖</Row>}
           <p class="tt-hint">Automatyka pracuje także w nocy, gdy sklep jest zamknięty.</p>
         </Section>

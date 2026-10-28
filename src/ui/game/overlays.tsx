@@ -9,7 +9,7 @@ import {
   celebration, ephemeral, econ, hints, metaView, nextHint, preset, report, selection, seed, showPerf, showPrestige, showSettings,
   start, tab, toasts, welcome, type Controls, type GameActions,
 } from '../state';
-import { int, plural, signedZl, zl } from './format';
+import { int, people, signedZl, zl } from './format';
 import { PalletItem } from './panels';
 
 export const DISCLAIMER = 'Wszystkie firmy, postacie i zdarzenia są fikcyjne.';
@@ -35,7 +35,7 @@ export function SelectionCard({ game }: { game: GameActions }) {
     body = (
       <>
         <h3>Kasa</h3>
-        <p>Kolejka: <b>{int(s.queue)}</b> · na kasie: {s.lastCashiers} {plural(s.lastCashiers, 'osoba', 'osoby', 'osób')} · SCO: {fx.sco}</p>
+        <p>Kolejka: <b>{int(s.queue)}</b> · na kasie: {people(s.lastCashiers)} os. · SCO: {fx.sco}</p>
         <button type="button" class="tt-btn tt-primary big" disabled={!isStoreOpen(s) || s.queue < 1} onClick={() => game.dispatch({ type: 'tapTill' })}>Obsłuż klienta</button>
         <p class="tt-hint">Stuknięcie w kasę w sklepie też obsługuje klienta. Ty też umiesz kasować.</p>
       </>

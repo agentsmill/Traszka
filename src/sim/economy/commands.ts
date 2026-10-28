@@ -2,10 +2,11 @@ import { layoutFor } from '@/sim/store/layoutFor';
 import type { StoreLayout } from '@/sim/store/types';
 import {
   buyEquipment, buyUpgrade, campaign, claimGift, claimQuest, commitTap, comboMult, fire, giftOpen, hire, movePallet, nextTapStreak,
-  PRIORITY_LABEL, processLevels, relayout, returnPallet, rushRemont, scheduleGift, setOrder, setPriority, startRemont, tapPallet, tapTill,
-  type CommandResult, type EconEvent, type EconomyState, type Priority,
+  processLevels, relayout, returnPallet, rushRemont, scheduleGift, setOrder, startRemont, tapPallet, tapTill,
+  type CommandResult, type EconEvent, type EconomyState,
 } from './economy';
 import { computeStoreInfo, type PalletLoc, type StoreInfo } from './storeInfo';
+import { STAFF_PROFILES, TASK_LABEL, pinStaff, setStaffProfile, type StaffProfile, type StaffTask } from './tycoon/staff';
 import { EQUIPMENT_BY_ID, UPGRADE_BY_ID, type EquipmentId, type UpgradeId } from './upgrades';
 
 /**
@@ -39,7 +40,8 @@ export type Command =
   | { type: 'setOrder'; auto: boolean; manual?: number }
   | { type: 'hire' }
   | { type: 'fire' }
-  | { type: 'setPriority'; priority: Priority }
+  | { type: 'setStaffProfile'; profile: StaffProfile }
+  | { type: 'pinStaff'; task: StaffTask; count: number }
   | { type: 'buyUpgrade'; id: UpgradeId }
   | { type: 'buyEquipment'; id: EquipmentId; slotId?: string }
   | { type: 'startRemont' }
@@ -55,13 +57,13 @@ type NestedFields<C> = C extends { type: infer T extends string }
 type MustBeNever<Offenders extends never> = Offenders;
 /**
  * Kontrola w czasie kompilacji: dodanie do `Command` pola, które nie jest prostą wartością, kończy się błędem `tsc` typu
- * „Type '"setPriority.order"' does not satisfy the constraint 'never'” (typ i pole w cudzysłowie). Przeczytaj komentarz nad `Command`.
+ * „Type '"pinStaff.order"' does not satisfy the constraint 'never'” (typ i pole w cudzysłowie). Przeczytaj komentarz nad `Command`.
  */
 export type FlatCommands = MustBeNever<NestedFields<Command>>;
 
 /** Wszystkie typy poleceń (do testów pokrycia i do walidacji). */
 export const COMMAND_TYPES: readonly Command['type'][] = [
-  'tapPallet', 'tapTill', 'claimQuest', 'claimGift', 'movePallet', 'returnPallet', 'setOrder', 'hire', 'fire', 'setPriority',
+  'tapPallet', 'tapTill', 'claimQuest', 'claimGift', 'movePallet', 'returnPallet', 'setOrder', 'hire', 'fire', 'setStaffProfile', 'pinStaff',
   'buyUpgrade', 'buyEquipment', 'startRemont', 'campaign', 'rushRemont',
 ];
 
@@ -89,7 +91,9 @@ const VALID = {
   setOrder: (c) => typeof c.auto === 'boolean' && (c.manual === undefined || isFiniteNumber(c.manual)),
   hire: noFields,
   fire: noFields,
-  setPriority: (c) => isKeyOf(PRIORITY_LABEL, c.priority),
+  setStaffProfile: (c) => typeof c.profile === 'string' && STAFF_PROFILES.includes(c.profile as StaffProfile),
+  // liczba osób całkowita i nieujemna; górną granicę (personel na zmianie) sprawdza `pinStaff`
+  pinStaff: (c) => isKeyOf(TASK_LABEL, c.task) && isInt(c.count) && c.count >= 0,
   buyUpgrade: (c) => isKeyOf(UPGRADE_BY_ID, c.id),
   buyEquipment: (c) => isKeyOf(EQUIPMENT_BY_ID, c.id) && (c.slotId === undefined || typeof c.slotId === 'string'),
   startRemont: noFields,
@@ -145,7 +149,8 @@ function run(s: EconomyState, info: StoreInfo, c: Command, events: EconEvent[]):
     case 'setOrder': setOrder(s, c.auto, c.manual); return { ok: true };
     case 'hire': return hire(s);
     case 'fire': return fire(s);
-    case 'setPriority': setPriority(s, c.priority); return { ok: true };
+    case 'setStaffProfile': return setStaffProfile(s.tycoon.staff, c.profile);
+    case 'pinStaff': return pinStaff(s.tycoon.staff, c.task, c.count, s.staff);
     case 'buyUpgrade': return buyUpgrade(s, c.id);
     case 'buyEquipment': return buyEquipment(s, info, c.id, c.slotId);
     case 'startRemont': return startRemont(s);

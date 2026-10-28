@@ -3,11 +3,13 @@ import { CATS, GIFT_FIRST, MINUTES_PER_DAY, PALLET_ITEMS, STAFF_MAX, type Cat } 
 import { dayOf } from './calendar';
 import {
   emptyCounters, giftWindowFrom, kpiMetrics, kpiScaleOf, type Counters, type Delivery, type EconomyState, type EquipmentUnit,
-  type MonthReport, type Pallet, type Priority,
+  type MonthReport, type Pallet,
 } from './economy';
 import { xpToNext } from './progress';
 import { QUESTS_ACTIVE, QUEST_KINDS, type Quest, type QuestKind } from './quests';
 import { sanitizeHall } from './tycoon/cleanliness';
+import { sanitizeShift } from './tycoon/shift';
+import { PROFILE_ORDER, type StaffProfile } from './tycoon/staff';
 import { sanitizeTycoon } from './tycoon/state';
 import type { StoreInfo } from './storeInfo';
 import { EQUIPMENT_BY_ID, REMONTS, UPGRADE_BY_ID, type EquipmentId, type UpgradeId } from './upgrades';
@@ -86,6 +88,8 @@ const LONGEST_REMONT = Math.max(...REMONTS.map((r) => r.days)) * MINUTES_PER_DAY
  * - zapis sprzed tycoona nie ma pola `tycoon`: dostaje świeży stan, a zaufanie Centrali bierze ze starego pola `trust`
  *   (`null`, tekst albo brak to 60, liczba spoza 0–100 jest przycinana). Tydzień KPI liczy się wtedy od dnia i liczników
  *   wczytanego zapisu, w skali sklepu (`info`). Uszkodzony `tycoon` naprawia się sam, kawałek po kawałku, i nie kasuje zapisu.
+ * - ten sam zapis ma jeszcze dawny `priority` (kasa/po równo/palety): zamienia się na profil puli ludzi (`klienci` i `rowno`
+ *   na `kolejka`, `palety` na `dostawa`). Zapis z `tycoon` zostaje przy profilu z własnej puli.
  * Wynik ma dokładnie pola `EconomyState` (test pilnuje, żeby nowe pole nie umknęło tej funkcji).
  */
 export function sanitizeEconomy(raw: unknown, defaults: EconomyState, info: StoreInfo): EconomyState | null {
@@ -122,7 +126,6 @@ export function sanitizeEconomy(raw: unknown, defaults: EconomyState, info: Stor
     order: order(raw.order, defaults.order),
     deliveries: (raw.deliveries as unknown[] | undefined)?.map(delivery).filter(notNull).slice(0, LIMITS.deliveries) ?? defaults.deliveries,
     staff,
-    priority: priority(raw.priority, defaults.priority),
     queue: num(raw.queue, defaults.queue, 0, LIMITS.queue),
     arrivalAcc: num(raw.arrivalAcc, defaults.arrivalAcc, 0, 1),
     upgrades: upgrades(raw.upgrades),
@@ -139,8 +142,10 @@ export function sanitizeEconomy(raw: unknown, defaults: EconomyState, info: Stor
     milestones: (raw.milestones as unknown[] | undefined)?.filter((m): m is string => typeof m === 'string').slice(0, LIMITS.milestones)
       ?? defaults.milestones,
     gameOver: typeof raw.gameOver === 'boolean' ? raw.gameOver : defaults.gameOver,
-    lastCashiers: whole(raw.lastCashiers, defaults.lastCashiers, 0, STAFF_MAX),
-    lastWorkers: whole(raw.lastWorkers, defaults.lastWorkers, 0, STAFF_MAX),
+    // osobominuty z ostatniego przydziału (ułamki), nie liczba osób: `whole` zaokrągliłoby je i zapis nie wracałby co do bajta
+    lastCashiers: num(raw.lastCashiers, defaults.lastCashiers, 0, STAFF_MAX),
+    lastWorkers: num(raw.lastWorkers, defaults.lastWorkers, 0, STAFF_MAX),
+    shift: sanitizeShift(raw.shift),
     level,
     // pasek XP mieści najwyżej kilka poziomów (nagroda ze zlecenia wpada przed `processLevels`); więcej to pętla bez końca
     xp: num(raw.xp, defaults.xp, 0, 3 * xpToNext(level)),
@@ -170,6 +175,8 @@ export function sanitizeEconomy(raw: unknown, defaults: EconomyState, info: Stor
     day: dayOf(minute), seedHash, trust: raw.trust as number, staff,
     metrics: kpiMetrics(total, sanitizeHall(rawTycoon?.hall)), scale: kpiScaleOf(wynik, info),
   });
+  // zapis sprzed puli ludzi ma tylko stary priorytet pracy: profil z mapy; zapis z `tycoon` zostaje przy własnym profilu
+  if (!rawTycoon) setLegacyProfile(wynik.tycoon.staff, raw.priority);
   return wynik;
 }
 
@@ -270,8 +277,15 @@ function order(v: unknown, fallback: EconomyState['order']): EconomyState['order
   return { auto: typeof v.auto === 'boolean' ? v.auto : fallback.auto, manual: whole(v.manual, fallback.manual, 0, 30) };
 }
 
-function priority(v: unknown, fallback: Priority): Priority {
-  return v === 'klienci' || v === 'rowno' || v === 'palety' ? v : fallback;
+/** Dawny priorytet pracy (zniknął z `EconomyState`) i profil puli ludzi, który go zastępuje. */
+const PRIORITY_PROFILE: Record<string, StaffProfile> = { klienci: 'kolejka', rowno: 'kolejka', palety: 'dostawa' };
+
+/** Stary priorytet na profil; nieznany albo brak zostawia profil domyślny świeżej puli. `hasOwn`, bo `__proto__` nie jest priorytetem. */
+function setLegacyProfile(pool: EconomyState['tycoon']['staff'], priority: unknown): void {
+  if (typeof priority !== 'string' || !Object.hasOwn(PRIORITY_PROFILE, priority)) return;
+  const profile = PRIORITY_PROFILE[priority]!;
+  pool.profile = profile;
+  pool.order = [...PROFILE_ORDER[profile]];
 }
 
 function counters(v: unknown): Counters {

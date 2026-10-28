@@ -92,14 +92,16 @@ describe('sanitizeEconomy: poprawny stan przechodzi bez zmian', () => {
       // L9: tytuł zlecenia nie jest już częścią stanu. L1 i L3: zapis nie ma combo ani okna paczki, więc dostaje brak serii,
       // ostatnie stuknięcie dawno temu i pierwsze okno GIFT_FIRST minut po minucie zapisu (w godzinach otwarcia).
       // Tycoon: stare `trust` przechodzi do `tycoon.trust`, a liczniki dostają zerowe `bonus`, `wut` i `fineCount`.
-      const { trust, ...rest } = raw;
+      // Pula ludzi: dawny `priority` zamienia się na profil w `tycoon.staff`, a `shift` (ostatnia minuta) startuje pusty.
+      const { trust, priority, ...rest } = raw;
       const { tycoon, ...progress } = out;
       expect(progress).toEqual({
-        ...rest, lastReport: null, quests: dropQuestTitles(raw.quests),
+        ...rest, lastReport: null, quests: dropQuestTitles(raw.quests), shift: defaults(inf, seed).shift,
         tapStreak: 0, lastTapAt: -1e9, giftAt: giftWindowFrom((raw.minute as number) + GIFT_FIRST),
         today: withNewCounters(raw.today), month: withNewCounters(raw.month), total: withNewCounters(raw.total),
       });
       expect(tycoon.trust.value).toBe(trust);
+      expect(tycoon.staff.profile).toBe({ klienci: 'kolejka', rowno: 'kolejka', palety: 'dostawa' }[priority as string]);
     }
   });
 
@@ -160,6 +162,61 @@ describe('sanitizeEconomy: poprawny stan przechodzi bez zmian', () => {
       expect(JSON.stringify(sanitizeEconomy(json(s), defaults(), info))).toBe(JSON.stringify(s));
     }
     expect(s.history.length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe('sanitizeEconomy: dawny priorytet pracy a profil puli ludzi', () => {
+  /** Zapis sprzed puli ludzi: `priority` na wierzchu i żadnego `tycoon`. */
+  const legacy = (priority: unknown): Record<string, unknown> => {
+    const { tycoon: _, ...old } = json(defaults());
+    return { ...old, priority };
+  };
+  const profileOf = (raw: unknown): string => sanitizeEconomy(raw, defaults(), info)!.tycoon.staff.profile;
+
+  it('zapis bez tycoon: klienci to kolejka, palety to dostawa, rowno to kolejka', () => {
+    expect(profileOf(legacy('klienci'))).toBe('kolejka');
+    expect(profileOf(legacy('palety'))).toBe('dostawa');
+    expect(profileOf(legacy('rowno'))).toBe('kolejka');
+  });
+
+  it('profil niesie ze sobą kolejność zadań, a stare pole priority nie zostaje w stanie', () => {
+    const out = sanitizeEconomy(legacy('palety'), defaults(), info)!;
+    expect(out.tycoon.staff.order).toEqual(['rozladunek', 'kasa', 'wykladanie', 'sprzatanie']);
+    expect('priority' in out).toBe(false);
+  });
+
+  it('brak, śmieć albo nazwa z prototypu zostawia profil domyślny', () => {
+    for (const bad of [undefined, null, 5, 'szalony', '__proto__', 'toString', 'constructor', {}, []]) {
+      expect(profileOf(legacy(bad)), String(bad)).toBe('kolejka');
+    }
+  });
+
+  it('zapis z tycoon zostaje przy własnym profilu, nawet gdy ma jeszcze stary priorytet', () => {
+    const s = defaults();
+    s.tycoon.staff.profile = 'porzadek';
+    s.tycoon.staff.order = ['sprzatanie', 'kasa', 'wykladanie', 'rozladunek'];
+    s.tycoon.staff.pinned.kasa = 1;
+    const out = sanitizeEconomy({ ...json(s), priority: 'palety' }, defaults(), info)!;
+    expect(out.tycoon.staff).toEqual(s.tycoon.staff);
+  });
+
+  it('przypięci ze starego zapisu się nie pojawiają, a zapis z przypiętymi ponad personel jest przycięty do personelu', () => {
+    expect(sanitizeEconomy(legacy('palety'), defaults(), info)!.tycoon.staff.pinned).toEqual({ kasa: 0, rozladunek: 0, wykladanie: 0, sprzatanie: 0 });
+    const s = defaults();
+    s.staff = 2;
+    s.tycoon.staff.pinned = { kasa: 5, rozladunek: 0, wykladanie: 0, sprzatanie: 0 };
+    expect(sanitizeEconomy(json(s), defaults(), info)!.tycoon.staff.pinned.kasa).toBe(2);
+  });
+
+  it('ułamki osobominut z ostatniego przydziału wracają z zapisu bez zaokrąglenia', () => {
+    const s = defaults();
+    s.lastCashiers = 0.4375;
+    s.lastWorkers = 1.25;
+    s.shift = { staff: 2, human: { kasa: 0.4375, rozladunek: 1, wykladanie: 0.25, sprzatanie: 0 } };
+    const out = sanitizeEconomy(json(s), defaults(), info)!;
+    expect(out.lastCashiers).toBe(0.4375);
+    expect(out.lastWorkers).toBe(1.25);
+    expect(JSON.stringify(out)).toBe(JSON.stringify(s));
   });
 });
 
@@ -334,9 +391,18 @@ describe('sanitizeEconomy: napraw to, co da się naprawić', () => {
   });
 
   it('tryb gry po zepsuciu enuma wraca do domyślnego', () => {
-    const out = sanitizeEconomy({ ...json(defaults()), priority: 'szalony', order: { auto: 'tak', manual: null } }, defaults(), info)!;
-    expect(out.priority).toBe('rowno');
+    const out = sanitizeEconomy({ ...json(defaults()), order: { auto: 'tak', manual: null } }, defaults(), info)!;
     expect(out.order).toEqual({ auto: true, manual: 4 });
+  });
+
+  it('profil puli ludzi po zepsuciu wraca do domyślnego, a zmiana z ostatniej minuty do pustej', () => {
+    const raw = json(defaults());
+    (raw.tycoon as { staff: { profile: unknown } }).staff.profile = 'szalony';
+    raw.shift = { staff: 'dwóch', human: { kasa: -1, rozladunek: 'x' } };
+    const out = sanitizeEconomy(raw, defaults(), info)!;
+    expect(out.tycoon.staff.profile).toBe('kolejka');
+    expect(out.shift).toEqual(defaults().shift);
+    expect(sanitizeEconomy({ ...raw, shift: undefined }, defaults(), info)!.shift).toEqual(defaults().shift);
   });
 });
 

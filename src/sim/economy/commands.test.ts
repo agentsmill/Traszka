@@ -5,11 +5,12 @@ import { GIFT_OPEN, HIRE_COST } from './catalog';
 import { applyCommand, COMMAND_TYPES, isCommand, type Command } from './commands';
 import {
   buyEquipment, buyUpgrade, campaign, claimGift, claimQuest, commitTap, createEconomy, fire, freeSpots, hire, movePallet,
-  processLevels, relayout, returnPallet, rushRemont, scheduleGift, setOrder, setPriority, startRemont, tapPallet, tapTill,
+  processLevels, relayout, returnPallet, rushRemont, scheduleGift, setOrder, startRemont, tapPallet, tapTill,
   type CommandResult, type EconomyState,
 } from './economy';
 import { questMetric } from './quests';
 import { computeStoreInfo, type StoreInfo } from './storeInfo';
+import { pinStaff, setStaffProfile } from './tycoon/staff';
 import { xpToNext } from './progress';
 
 const SEED = 'kiełbasa-42';
@@ -79,9 +80,13 @@ const CASES: Record<Command['type'], () => Prepared> = {
     s.staff = 3;
     return { s, info, cmd: { type: 'fire' }, legacy: (b) => fire(b) };
   },
-  setPriority: () => {
+  setStaffProfile: () => {
     const { s, info } = base();
-    return { s, info, cmd: { type: 'setPriority', priority: 'palety' }, legacy: (b) => { setPriority(b, 'palety'); return { ok: true }; } };
+    return { s, info, cmd: { type: 'setStaffProfile', profile: 'dostawa' }, legacy: (b) => setStaffProfile(b.tycoon.staff, 'dostawa') };
+  },
+  pinStaff: () => {
+    const { s, info } = base();
+    return { s, info, cmd: { type: 'pinStaff', task: 'kasa', count: 1 }, legacy: (b) => pinStaff(b.tycoon.staff, 'kasa', 1, b.staff) };
   },
   buyUpgrade: () => {
     const { s, info } = base();
@@ -372,8 +377,9 @@ describe('remont', () => {
 
   it('zwykłe polecenie nie przebudowuje układu i nie zwraca layout ani info', () => {
     const { s, info } = base();
-    const out = applyCommand(s, info, { type: 'setPriority', priority: 'klienci' });
-    expect(out.result).toEqual({ ok: true });
+    const out = applyCommand(s, info, { type: 'setStaffProfile', profile: 'porzadek' });
+    expect(out.result.ok).toBe(true);
+    expect(s.tycoon.staff.profile).toBe('porzadek');
     expect(out.layoutChanged).toBe(false);
     expect(out.layout).toBeUndefined();
     expect(out.info).toBeUndefined();
@@ -390,6 +396,39 @@ describe('remont', () => {
   });
 });
 
+describe('polecenia puli ludzi', () => {
+  it('setStaffProfile ustawia profil i kolejność zadań w stanie tycoona', () => {
+    const { s, info } = base();
+    expect(s.tycoon.staff.profile).toBe('kolejka');
+    const out = applyCommand(s, info, { type: 'setStaffProfile', profile: 'dostawa' });
+    expect(out.result.ok).toBe(true);
+    expect(s.tycoon.staff.profile).toBe('dostawa');
+    expect(s.tycoon.staff.order[0]).toBe('rozladunek');
+  });
+
+  it('pinStaff przypina osoby, a więcej niż jest na zmianie to odmowa bez zmiany stanu', () => {
+    const { s, info } = base();
+    s.staff = 3;
+    expect(applyCommand(s, info, { type: 'pinStaff', task: 'kasa', count: 2 }).result.ok).toBe(true);
+    expect(s.tycoon.staff.pinned.kasa).toBe(2);
+    const before = snapshot(s);
+    const refused = applyCommand(s, info, { type: 'pinStaff', task: 'rozladunek', count: 2 });   // 2 + 2 > 3
+    expect(refused.result.ok).toBe(false);
+    expect(snapshot(s)).toBe(before);
+    expect(applyCommand(s, info, { type: 'pinStaff', task: 'kasa', count: 0 }).result.ok).toBe(true);   // zdjęcie przydziału
+    expect(s.tycoon.staff.pinned.kasa).toBe(0);
+  });
+
+  it('zwolnienie po przypięciu wszystkich przycina przypiętych', () => {
+    const { s, info } = base();
+    s.staff = 3;
+    expect(applyCommand(s, info, { type: 'pinStaff', task: 'kasa', count: 3 }).result.ok).toBe(true);
+    expect(applyCommand(s, info, { type: 'fire' }).result.ok).toBe(true);
+    expect(s.staff).toBe(2);
+    expect(s.tycoon.staff.pinned.kasa).toBe(2);
+  });
+});
+
 describe('zepsute polecenia', () => {
   const BROKEN: unknown[] = [
     { type: 'nuke' },
@@ -397,7 +436,11 @@ describe('zepsute polecenia', () => {
     { type: 'buyUpgrade', id: '__proto__' },
     { type: 'buyEquipment', id: 'x' },
     { type: 'movePallet', palletId: 1, loc: 'roof' },
-    { type: 'setPriority', priority: 'all' },
+    { type: 'setPriority', priority: 'palety' },
+    { type: 'setStaffProfile', profile: 'all' },
+    { type: 'setStaffProfile', profile: '__proto__' },
+    { type: 'pinStaff', task: 'kawa', count: 1 },
+    { type: 'pinStaff', task: 'kasa', count: 1.5 },
     { type: 'setOrder', auto: 'yes' },
     { type: 'setOrder', auto: true, manual: NaN },
     { type: 'claimQuest', questId: '1' },
@@ -498,9 +541,12 @@ describe('isCommand', () => {
       { type: 'setOrder', auto: false, manual: 12.4 },
       { type: 'hire' },
       { type: 'fire' },
-      { type: 'setPriority', priority: 'klienci' },
-      { type: 'setPriority', priority: 'rowno' },
-      { type: 'setPriority', priority: 'palety' },
+      { type: 'setStaffProfile', profile: 'kolejka' },
+      { type: 'setStaffProfile', profile: 'dostawa' },
+      { type: 'setStaffProfile', profile: 'porzadek' },
+      { type: 'pinStaff', task: 'kasa', count: 1 },
+      { type: 'pinStaff', task: 'rozladunek', count: 0 },
+      { type: 'pinStaff', task: 'sprzatanie', count: 100 },   // górną granicę sprawdza dopiero stan (pinStaff odmawia)
       { type: 'buyUpgrade', id: 'wozek' },
       { type: 'buyEquipment', id: 'piec' },
       { type: 'buyEquipment', id: 'sco', slotId: 'slot-1' },
@@ -523,7 +569,15 @@ describe('isCommand', () => {
       { type: 'movePallet', palletId: 1, loc: 'constructor' }, { type: 'returnPallet' }, { type: 'returnPallet', palletId: NaN },
       { type: 'setOrder' }, { type: 'setOrder', auto: 1 }, { type: 'setOrder', auto: true, manual: '4' },
       { type: 'setOrder', auto: true, manual: Infinity }, { type: 'setOrder', auto: true, manual: null },
-      { type: 'setPriority' }, { type: 'setPriority', priority: 'toString' }, { type: 'setPriority', priority: 1 },
+      { type: 'setPriority' }, { type: 'setPriority', priority: 'rowno' },   // dawny priorytet pracy: polecenie znikło
+      { type: 'setStaffProfile' }, { type: 'setStaffProfile', profile: 'toString' }, { type: 'setStaffProfile', profile: '__proto__' },
+      { type: 'setStaffProfile', profile: 'wlasny' }, { type: 'setStaffProfile', profile: 1 }, { type: 'setStaffProfile', profile: null },
+      { type: 'pinStaff' }, { type: 'pinStaff', task: 'kasa' }, { type: 'pinStaff', count: 1 },
+      { type: 'pinStaff', task: 'kawa', count: 1 }, { type: 'pinStaff', task: '__proto__', count: 1 },
+      { type: 'pinStaff', task: 'toString', count: 1 }, { type: 'pinStaff', task: 1, count: 1 },
+      { type: 'pinStaff', task: 'kasa', count: NaN }, { type: 'pinStaff', task: 'kasa', count: Infinity },
+      { type: 'pinStaff', task: 'kasa', count: -1 }, { type: 'pinStaff', task: 'kasa', count: 1.5 },
+      { type: 'pinStaff', task: 'kasa', count: '2' }, { type: 'pinStaff', task: 'kasa', count: null },
       { type: 'buyUpgrade' }, { type: 'buyUpgrade', id: 5 }, { type: 'buyUpgrade', id: 'constructor' },
       { type: 'buyUpgrade', id: 'sco' }, { type: 'buyEquipment', id: 'szkolenie' }, { type: 'buyEquipment', id: 'toString' },
       { type: 'buyEquipment', id: 'sco', slotId: 5 }, { type: 'buyEquipment', id: 'sco', slotId: null },

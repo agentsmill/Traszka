@@ -94,13 +94,14 @@ const legacyTrust = (e: EconomyState): number => (e as unknown as { trust: numbe
 
 /**
  * Stan, jaki daje wczytanie zapisu z produkcji (fixtures), bez `tycoon`: bez tytułów zleceń (L9), bez starego pola `trust`
- * (przeszło do `tycoon.trust`), z zerowymi licznikami `bonus`, `wut` i `fineCount` (także w raporcie) i z polami combo
+ * (przeszło do `tycoon.trust`), bez starego `priority` (przeszedł do profilu w `tycoon.staff`), z pustą zmianą (`shift`: zapis
+ * nie pamięta ostatniej minuty), z zerowymi licznikami `bonus`, `wut` i `fineCount` (także w raporcie) i z polami combo
  * i okien paczek, których zapisy sprzed L1 i L3 jeszcze nie mają. Migracja: brak serii (`tapStreak` 0), ostatnie stuknięcie
  * dawno temu (`lastTapAt` -1e9, jak `lastFineAt`) i pierwsze okno paczki `GIFT_FIRST` minut po minucie zapisu, przesunięte
  * w godziny otwarcia (`giftWindowFrom`).
  */
 const asLoaded = (e: EconomyState): Omit<EconomyState, 'tycoon'> => {
-  const { trust: _, ...rest } = withoutTycoon(withoutQuestTitles(e)) as Omit<EconomyState, 'tycoon'> & { trust?: number };
+  const { trust: _, priority: __, ...rest } = withoutTycoon(withoutQuestTitles(e)) as Omit<EconomyState, 'tycoon'> & { trust?: number; priority?: string };
   const counters = (c: Counters): Counters => ({ ...c, bonus: 0, wut: 0, fineCount: 0 });
   return {
     ...rest,
@@ -108,6 +109,7 @@ const asLoaded = (e: EconomyState): Omit<EconomyState, 'tycoon'> => {
     month: counters(rest.month),
     total: counters(rest.total),
     lastReport: rest.lastReport && { ...rest.lastReport, counters: counters(rest.lastReport.counters) },
+    shift: { staff: 0, human: { kasa: 0, rozladunek: 0, wykladanie: 0, sprzatanie: 0 } },
     tapStreak: 0,
     lastTapAt: -1e9,
     giftAt: giftWindowFrom(e.minute + GIFT_FIRST),
@@ -481,6 +483,9 @@ describe('zapisy z produkcji a stan tycoona', () => {
       expect(s.econ.tycoon.trust.value).toBe(legacyTrust(was));
       expect(s.econ.tycoon.trust.monthStart).toBe(legacyTrust(was));
       expect('trust' in s.econ).toBe(false);
+      // dawny priorytet pracy ('rowno') przeszedł do profilu puli ludzi
+      expect('priority' in s.econ).toBe(false);
+      expect(s.econ.tycoon.staff.profile).toBe('kolejka');
       // tydzień KPI liczy się od dnia wczytania i od liczników zapisu
       expect(s.econ.tycoon.kpi.fromDay).toBe(Math.floor(was.minute / MINUTES_PER_DAY));
       expect(s.econ.tycoon.kpi.start.customers).toBe(was.total.customers);

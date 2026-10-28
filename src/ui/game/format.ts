@@ -9,6 +9,9 @@ export const signedZl = (n: number): string => `${n >= 0 ? '+' : '−'}${zl(Math
 
 export const int = (n: number): string => Math.round(n).toLocaleString('pl-PL');
 
+/** Osoby albo osobominuty z jednym miejscem po przecinku, bez zbędnego „,0”: „1”, „0,4”, „1,7”. */
+export const people = (n: number): string => (Math.round(n * 10) / 10).toLocaleString('pl-PL');
+
 export const pct = (x: number): string => `${Math.round(Math.max(0, Math.min(1, x)) * 100)}%`;
 
 /** „1 h 20 min”, „35 min” */

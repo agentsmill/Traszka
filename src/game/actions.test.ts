@@ -99,7 +99,8 @@ describe('dziennik biegu', () => {
     const firstUpgrade = UPGRADES[0]!.id;
     const script: Command[] = [
       { type: 'tapPallet' }, { type: 'tapPallet', palletId: 2 }, { type: 'tapTill' }, { type: 'setOrder', auto: false, manual: 6 },
-      { type: 'movePallet', palletId: 1, loc: 'backroom' }, { type: 'hire' }, { type: 'setPriority', priority: 'palety' },
+      { type: 'movePallet', palletId: 1, loc: 'backroom' }, { type: 'hire' }, { type: 'setStaffProfile', profile: 'dostawa' },
+      { type: 'pinStaff', task: 'kasa', count: 1 }, { type: 'pinStaff', task: 'rozladunek', count: 9 },
       { type: 'buyUpgrade', id: firstUpgrade }, { type: 'claimGift' }, { type: 'startRemont' }, { type: 'claimQuest', questId: 1 },
       { type: 'fire' }, { type: 'returnPallet', palletId: 2 }, { type: 'campaign' }, { type: 'rushRemont' }, { type: 'setOrder', auto: true },
     ];
@@ -348,7 +349,8 @@ describe('tabela AFTER', () => {
       movePallet: { okToast: true },
       returnPallet: { okToast: true, clearSelection: 'after' },
       setOrder: { okToast: false },
-      setPriority: { okToast: false },
+      setStaffProfile: { okToast: false },
+      pinStaff: { okToast: false },
       hire: { okToast: false },
       fire: { okToast: false },
       buyUpgrade: { okToast: true, sfx: 'coins', persist: true },

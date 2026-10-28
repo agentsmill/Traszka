@@ -4,12 +4,11 @@ import { createSession } from '@/game/session';
 import { isOpenAt, minuteOfDay } from '@/sim/economy/calendar';
 import { MINUTES_PER_DAY, OPEN_FROM } from '@/sim/economy/catalog';
 import { applyCommand, COMMAND_TYPES, type Command } from '@/sim/economy/commands';
-import {
-  giftOpen, isClosedForRemont, nextRemont, PRIORITY_LABEL, stepMinute, type EconEvent, type EconomyState, type Priority,
-} from '@/sim/economy/economy';
+import { giftOpen, isClosedForRemont, nextRemont, stepMinute, type EconEvent, type EconomyState } from '@/sim/economy/economy';
 import { rand01 } from '@/sim/economy/rand';
 import { questDone } from '@/sim/economy/quests';
 import type { StoreInfo } from '@/sim/economy/storeInfo';
+import { STAFF_PROFILES, STAFF_TASKS } from '@/sim/economy/tycoon/staff';
 import { EQUIPMENT, UPGRADES } from '@/sim/economy/upgrades';
 import { hashString } from '@/sim/rng';
 import { GENERATOR_VERSION } from '@/sim/store/generateStore';
@@ -42,13 +41,13 @@ const BROKEN: unknown[] = [
   { type: 'setOrder', auto: true, manual: NaN },
   { type: 'claimQuest', questId: '1' },
   { type: 'movePallet', palletId: 1, loc: 'roof' },
-  { type: 'setPriority', priority: '__proto__' },
+  { type: 'setStaffProfile', profile: '__proto__' },
+  { type: 'pinStaff', task: 'kasa', count: 1.5 },
   { type: 'nuke' },
 ];
 
 const UPGRADE_IDS = UPGRADES.map((u) => u.id);
 const EQUIPMENT_IDS = EQUIPMENT.map((e) => e.id);
-const PRIORITIES = Object.keys(PRIORITY_LABEL) as Priority[];
 
 /** Gracz-bot: stuka, odbiera, kupuje, zatrudnia, robi remonty i co jakiś czas wysyła śmieci. Każda decyzja z `roll`. */
 const bot: Policy = ({ state: s, roll, issue }) => {
@@ -76,7 +75,9 @@ const bot: Policy = ({ state: s, roll, issue }) => {
   if (onSidewalk && roll(10) < 0.3) issue({ type: 'movePallet', palletId: onSidewalk.id, loc: 'backroom' });
   if (s.pallets.length > 0 && roll(11) < 0.0003) issue({ type: 'returnPallet', palletId: s.pallets[Math.floor(roll(12) * s.pallets.length)]!.id });
   if (roll(13) < 0.001) issue({ type: 'setOrder', auto: roll(14) < 0.8, manual: Math.floor(roll(15) * 10) });
-  if (roll(16) < 0.001) issue({ type: 'setPriority', priority: PRIORITIES[Math.floor(roll(17) * PRIORITIES.length)] });
+  if (roll(16) < 0.001) issue({ type: 'setStaffProfile', profile: STAFF_PROFILES[Math.floor(roll(17) * STAFF_PROFILES.length)] });
+  // przypięcie: 0 zdejmuje przydział, a więcej niż ludzi na zmianie gra odrzuca (dziennik pamięta i to)
+  if (roll(21) < 0.001) issue({ type: 'pinStaff', task: STAFF_TASKS[Math.floor(roll(22) * STAFF_TASKS.length)], count: Math.floor(roll(23) * 4) });
   if (s.staff > 3 && roll(18) < 0.0005) issue({ type: 'fire' });
   if (roll(19) < 1 / 500) issue(BROKEN[Math.floor(roll(20) * BROKEN.length)]);
 };
@@ -266,22 +267,24 @@ describe('odtwarzanie biegu', () => {
     // przy poprawnej minucie i numerze
     const hostile: unknown[] = [
       { type: 'nuke' }, { type: 'buyUpgrade', id: 'toString' }, { type: 'buyUpgrade', id: '__proto__' }, { type: 'buyEquipment', id: 'x' },
-      { type: 'movePallet', palletId: 1, loc: 'roof' }, { type: 'setPriority', priority: 'all' }, { type: 'setOrder', auto: 'yes' },
+      { type: 'movePallet', palletId: 1, loc: 'roof' }, { type: 'setStaffProfile', profile: 'all' }, { type: 'pinStaff', task: 'kawa', count: 1 },
+      { type: 'pinStaff', task: 'kasa', count: NaN }, { type: 'pinStaff', task: 'kasa', count: -1 }, { type: 'setPriority', priority: 'palety' },
+      { type: 'setOrder', auto: 'yes' },
       { type: 'setOrder', auto: true, manual: NaN }, { type: 'setOrder', auto: true, manual: Infinity }, { type: 'claimQuest', questId: '1' },
       { type: 'tapPallet', palletId: 1.5 }, { type: 'returnPallet', palletId: NaN }, { type: 'constructor' }, null, 'tapTill', [], 7, undefined,
     ].map((cmd, i) => ({ minute: START + 50 + i * 311, seq: 1_000_000 + i, cmd }));
     // wpisy bez minuty albo numeru, jakich nie da się uporządkować: pomijane w całości
-    const cmd = { type: 'setPriority', priority: 'palety' };
+    const cmd = { type: 'setStaffProfile', profile: 'porzadek' };
     const malformed: unknown[] = [
       null, 7, 'tapTill', [], {}, { cmd }, { minute: START + 10, seq: 1 }, { minute: NaN, seq: 1, cmd }, { minute: Infinity, seq: 1, cmd },
       { minute: -Infinity, seq: 1, cmd }, { minute: '400', seq: 1, cmd }, { minute: START + 10, seq: NaN, cmd }, { minute: START + 10, seq: '1', cmd },
       { minute: START + 10, seq: undefined, cmd },
     ];
-    // po końcu: gdyby zadziałały, stan by się zmienił (priorytet z 'rowno' na 'palety', a zlecenia i dostawy poszłyby inaczej)
+    // po końcu: gdyby zadziałały, stan by się zmienił (profil pracy z 'kolejka' na 'porzadek', a zlecenia i dostawy poszłyby inaczej)
     const late = [until + 1, until + 5, until + MINUTES_PER_DAY, 1e9, Number.MAX_VALUE].map((minute, i) => ({ minute, seq: 2_000_000 + i, cmd }));
     // te działają: sprzed startu (lądują na starcie, w kolejności seq) i ze zdublowanym numerem (kolejność wpisów rozstrzyga remis)
     const early = [{ minute: -10, seq: 5, cmd: { type: 'setOrder', auto: false, manual: 9 } }, { minute: -1e9, seq: 0, cmd: { type: 'hire' } }];
-    const dupes = legit.slice(100, 140).map((e) => ({ ...e, cmd: { type: 'setPriority', priority: 'klienci' } }));
+    const dupes = legit.slice(100, 140).map((e) => ({ ...e, cmd: { type: 'setStaffProfile', profile: 'dostawa' } }));
 
     const inert = new Set<unknown>([...hostile, ...malformed, ...late]);
     const all = [...legit, ...dupes, ...early, ...hostile, ...malformed, ...late];
@@ -354,7 +357,7 @@ describe('odtwarzanie biegu', () => {
       // gra skończona: żadne polecenie nie przechodzi, także to z minuty końca i z kolejnych dni
       const seq = record.log.length;
       const tail: LogEntry[] = [end, end + 1, end + 60, end + 10 * MINUTES_PER_DAY].flatMap((minute, i) => [
-        { minute, seq: seq + 2 * i, cmd: { type: 'setPriority', priority: 'palety' } },
+        { minute, seq: seq + 2 * i, cmd: { type: 'setStaffProfile', profile: 'dostawa' } },
         { minute, seq: seq + 2 * i + 1, cmd: { type: 'setOrder', auto: false, manual: 30 } },
       ] as LogEntry[]);
       const longer = { ...record, log: [...record.log, ...tail] };

@@ -20,6 +20,10 @@ import { XP, levelReward, xpToNext } from './progress';
 import { QUESTS_ACTIVE, newQuest, questDone, type Quest, type QuestScale } from './quests';
 import { rollWeather, type HallState } from './tycoon/cleanliness';
 import { closeKpiWeek, type KpiMetrics, type KpiScale } from './tycoon/kpi';
+import { createShift, peopleOnShift, type ShiftState } from './tycoon/shift';
+import {
+  PEOPLE_PER_PALLET, normalizePins, restockDemand, serveTill, stepStaff, tillDemand, unloadDemand, zeroTasks, type RobotFleet,
+} from './tycoon/staff';
 import { createTycoon, type TycoonState } from './tycoon/state';
 import { dateOfGameDay } from './tycoon/time';
 import { TRUST, addTrust, closeTrustMonth, trustTerminates, trustTier, turnoverBonusShare, type TrustReason } from './tycoon/trust';
@@ -27,9 +31,6 @@ import { TRUST, addTrust, closeTrustMonth, trustTerminates, trustTier, turnoverB
 // Ekonomia jednego sklepu (spec §6–§8) jako czysta symulacja z krokiem jednej minuty gry. Klienci są modelowani
 // zbiorczo (strumień przyjść, kolejka, przepustowość kas), a tłum w 3D to ich obraz, a nie źródło liczb.
 // Stan jest zwykłym obiektem JSON, więc zapis gry to JSON.stringify.
-
-export type Priority = 'klienci' | 'rowno' | 'palety';
-export const PRIORITY_LABEL: Record<Priority, string> = { klienci: 'Najpierw kasa', rowno: 'Po równo', palety: 'Najpierw palety' };
 
 export interface Pallet {
   id: number;
@@ -95,7 +96,6 @@ export interface EconomyState {
   order: { auto: boolean; manual: number };
   deliveries: Delivery[];
   staff: number;
-  priority: Priority;
   queue: number;
   arrivalAcc: number;
   upgrades: Partial<Record<UpgradeId, number>>;
@@ -112,9 +112,11 @@ export interface EconomyState {
   lastReport: MonthReport | null;
   milestones: string[];
   gameOver: boolean;
-  /** Ostatni przydział ludzi (do interfejsu): ilu na kasie, ilu przy paletach. */
+  /** Ostatni przydział ludzi w osobominutach (do interfejsu): na kasie, przy paletach, półkach i sprzątaniu. Z `shift.human`. */
   lastCashiers: number;
   lastWorkers: number;
+  /** Zmiana w ostatniej wykonanej minucie (tycoon/shift.ts): ilu ludzi i co robili. Z tego `staffOnShift` pokazuje ludzi na ekranie. */
+  shift: ShiftState;
   /** Poziom gracza i XP zebrane na obecnym poziomie (progress.ts). */
   level: number;
   xp: number;
@@ -177,8 +179,6 @@ export interface Effects {
   hotMult: number;
   shrink: number;
   fineMult: number;
-  autoUnload: number;
-  autoRestock: number;
   humanoid: boolean;
   ogonkiMult: number;
   /** Mnożnik marży (punkty partnera z sieci sklepów). */
@@ -212,8 +212,6 @@ export function effects(s: EconomyState, info: StoreInfo): Effects {
     hotMult: 1 + 0.3 * level(s, 'kawa') + 0.4 * activeEquipment(s, 'piec'),
     shrink: 0.03 * (1 - 0.4 * level(s, 'kamery')),
     fineMult: 1 - 0.25 * level(s, 'kamery'),
-    autoUnload: 4 * level(s, 'tasmociag') + (humanoid ? 3 * UNLOAD_RATE : 0),
-    autoRestock: 12 * level(s, 'wykladacz') + (humanoid ? RESTOCK_RATE : 0),
     humanoid,
     ogonkiMult: 1 + 0.5 * level(s, 'traszkapka'),
     marginMult: 1 + 0.04 * s.partner.points,
@@ -278,7 +276,6 @@ export function createEconomy(seed: string, info: StoreInfo, partner: EconomySta
     order: { auto: true, manual: 4 },
     deliveries: [],
     staff: STAFF_START,
-    priority: 'rowno',
     queue: 0,
     arrivalAcc: 0,
     upgrades: {},
@@ -296,6 +293,7 @@ export function createEconomy(seed: string, info: StoreInfo, partner: EconomySta
     gameOver: false,
     lastCashiers: 1,
     lastWorkers: 1,
+    shift: createShift(),
     level: 1,
     xp: 0,
     quests: [],
@@ -345,12 +343,10 @@ export function stepMinute(s: EconomyState, info: StoreInfo, out: EconEvent[]): 
   for (const d of s.deliveries.filter((x) => x.at <= s.minute)) deliver(s, info, d.count, out);
   s.deliveries = s.deliveries.filter((x) => x.at > s.minute);
 
-  // kto obsłużył kolejkę w tej minucie, ten w niej nie rozładowuje: podział na kasę i resztę robimy raz
-  let cashiers = 0;
-  if (open) cashiers = serveCustomers(s, info, fx, mod);
+  if (open) arrive(s, info, fx, mod);
   else s.queue = 0;
-  // personel pracuje w godzinach otwarcia, także w czasie remontu (wtedy nikt nie stoi na kasie)
-  doWork(s, info, fx, isOpenAt(mod), cashiers, out);
+  // ludzie pracują w godzinach otwarcia, także w czasie remontu (wtedy nikt nie stoi na kasie); automatyka całą dobę
+  runStaff(s, info, fx, open, out);
   if (mod >= 8 * 60 && mod < 20 * 60) checkFine(s, fx, out);
   if (mod === ORDER_DEADLINE) placeOrder(s, info, fx, out);
   if (mod === OPEN_TO) closeDay(s, info, out);
@@ -360,8 +356,8 @@ export function stepMinute(s: EconomyState, info: StoreInfo, out: EconEvent[]): 
   s.minute++;
 }
 
-/** Przyjęcie i obsługa klientów w jednej minucie. Zwraca, ilu ludzi stało na kasie (reszta personelu pracuje przy towarze). */
-function serveCustomers(s: EconomyState, info: StoreInfo, fx: Effects, mod: number): number {
+/** Przyjście klientów w jednej minucie; ci, którzy widzą długą kolejkę, rezygnują (spec §6.1). Obsługa idzie przez pulę ludzi (`runStaff`). */
+function arrive(s: EconomyState, info: StoreInfo, fx: Effects, mod: number): void {
   const hour = Math.floor(mod / 60);
   const floorPallets = s.pallets.filter((p) => p.loc === 'floor').length;
   const boost = s.minute < s.boostUntil ? 1.3 : 1;
@@ -371,7 +367,6 @@ function serveCustomers(s: EconomyState, info: StoreInfo, fx: Effects, mod: numb
   const arrivals = Math.floor(s.arrivalAcc);
   s.arrivalAcc -= arrivals;
 
-  // klienci, którzy widzą długą kolejkę, rezygnują (spec §6.1)
   const over = s.queue - Math.max(1, fx.patience);
   const balk = over < 0 ? 0 : Math.min(1, 0.35 * (over + 1));
   const lost = arrivals * balk;
@@ -380,30 +375,6 @@ function serveCustomers(s: EconomyState, info: StoreInfo, fx: Effects, mod: numb
     s.reputation -= lost * 0.03;
     for (const c of [s.today, s.month, s.total]) c.lost += lost;
   }
-
-  const cashiers = allocateCashiers(s, fx);
-  const capTill = cashiers * TILL_RATE * fx.tillSpeed;
-  const capSco = fx.sco * SCO_RATE * fx.scoSpeed;
-  const scoServed = Math.min(capSco, s.queue * fx.scoAccept);
-  const tillServed = Math.min(capTill, s.queue - scoServed);
-  const served = Math.max(0, scoServed + tillServed);
-  s.queue = Math.max(0, s.queue - served);
-  if (served > 0) sell(s, fx, served, scoServed / served);
-  if (s.queue > 4) s.reputation -= 0.002 * (s.queue - 4);
-  s.reputation = Math.min(100, Math.max(0, s.reputation));
-  return cashiers;
-}
-
-/** Ilu ludzi stoi na kasie, gdy sklep jest otwarty (reszta pracuje przy paletach i półkach). */
-function allocateCashiers(s: EconomyState, fx: Effects): number {
-  const staff = s.staff;
-  let want: number;
-  switch (s.priority) {
-    case 'klienci': want = s.queue > 0.3 ? fx.tills : 1; break;
-    case 'rowno': want = Math.max(fx.sco > 0 && s.queue < 1.5 ? 0 : 1, Math.ceil(s.queue / 4)); break;
-    case 'palety': want = s.queue > 5 ? 1 : fx.sco > 0 ? 0 : 1; break;
-  }
-  return Math.max(0, Math.min(staff, fx.tills, want));
 }
 
 /** Sprzedaż `served` klientów: koszyk z półek, marża, strefa hot, ubytki na SCO, reputacja. */
@@ -447,34 +418,66 @@ function sell(s: EconomyState, fx: Effects, served: number, scoShare: number): n
 
 const PALLET_ORDER: Record<PalletLoc, number> = { sidewalk: 0, floor: 1, backroom: 2 };
 
-function doWork(s: EconomyState, info: StoreInfo, fx: Effects, shift: boolean, cashiers: number, out: EconEvent[]): void {
-  const workers = shift ? Math.max(0, s.staff - cashiers) : 0;
-  s.lastCashiers = cashiers;
-  s.lastWorkers = workers;
+/**
+ * Automatyka z warsztatu dla puli ludzi (tycoon/staff.ts): poziomy taśmociągu i wykładacza oraz eDward. Prasa do śmieci
+ * dojdzie z własnym ulepszeniem w zadaniu 3 (do tego czasu zero).
+ */
+export const robotFleet = (s: EconomyState): RobotFleet => ({
+  tasmociag: level(s, 'tasmociag'), wykladacz: level(s, 'wykladacz'), prasa: 0, edward: level(s, 'humanoid') > 0 ? 1 : 0,
+});
 
-  let time = workers;   // osobominuty
-  // 1. pilne wykładanie: półki poniżej połowy
-  time -= restock(s, info, 0.5, time * RESTOCK_RATE) / RESTOCK_RATE;
-  // 2. rozładunek palet (najpierw chodnik: mandat; potem sala: korek; na końcu zaplecze)
-  const pallets = [...s.pallets].sort((a, b) => PALLET_ORDER[a.loc] - PALLET_ORDER[b.loc] || a.since - b.since);
-  for (const p of pallets) {
-    if (time <= 1e-6) break;
-    const rate = UNLOAD_RATE * fx.unloadMult * UNLOAD_AT[p.loc];
-    time -= unloadPallet(s, info, fx, p, time * rate, out) / rate;
-  }
-  // 3. dokładanie do pełna
-  if (time > 1e-6) restock(s, info, 1, time * RESTOCK_RATE);
+/** Wolne miejsce na towar: zaplecze i półki. Bez niego nie ma co rozładowywać. */
+const stockRoom = (s: EconomyState, info: StoreInfo, fx: Effects): number =>
+  Math.max(0, fx.backroomCap - sum(s.backroom)) + CATS.reduce((n, c) => n + Math.max(0, info.shelfCap[c] - s.shelf[c]), 0);
 
-  // automatyka z warsztatu działa całą dobę
-  if (fx.autoUnload > 0) {
-    let budget = fx.autoUnload;
-    for (const p of [...s.pallets].sort((a, b) => PALLET_ORDER[b.loc] - PALLET_ORDER[a.loc])) {
-      if (budget <= 1e-6) break;
-      budget -= unloadPallet(s, info, fx, p, budget, out);
-    }
+const unloadRate = (fx: Effects, p: Pallet): number => UNLOAD_RATE * fx.unloadMult * UNLOAD_AT[p.loc];
+
+/**
+ * Praca jednej minuty: zapotrzebowanie czterech zadań w osobominutach, przydział z puli ludzi i automatyki, a potem kasa,
+ * rozładunek i wykładanie z tym, co zadanie dostało. Kto stoi na kasie, to wynik przydziału (profil i przypięci gracza),
+ * a nie osobna reguła. Sprzątania i śmieci jeszcze nie ma (zadanie 3), więc zapotrzebowanie sprzątania to zero.
+ */
+function runStaff(s: EconomyState, info: StoreInfo, fx: Effects, open: boolean, out: EconEvent[]): void {
+  const staff = peopleOnShift(s);
+  const tillRate = TILL_RATE * fx.tillSpeed;
+  const till = tillDemand({
+    queue: open ? s.queue : 0, tills: fx.tills, tillRate, sco: fx.sco, scoRate: SCO_RATE * fx.scoSpeed, scoAccept: fx.scoAccept,
+  });
+  const demand = zeroTasks();
+  demand.kasa = till.demand;
+  demand.rozladunek = Math.min(
+    unloadDemand(s.pallets.map((p) => ({ items: p.total, rate: unloadRate(fx, p) }))),
+    stockRoom(s, info, fx) / (UNLOAD_RATE * fx.unloadMult),
+  );
+  demand.wykladanie = restockDemand(
+    CATS.reduce((n, c) => n + Math.max(0, Math.min(info.shelfCap[c] - s.shelf[c], s.backroom[c])), 0), RESTOCK_RATE,
+  );
+  const alloc = stepStaff(s.tycoon.staff, { staff, demand, robots: robotFleet(s), scoFreed: till.freed });
+
+  // kasa: najpierw potwierdzenia wieku na SCO, potem kolejka; klient SCO bez potwierdzenia zostaje w kolejce
+  if (open) {
+    const served = serveTill(till, alloc.total.kasa, tillRate);
+    s.queue = Math.max(0, s.queue - served.total);
+    if (served.total > 0) sell(s, fx, served.total, served.sco / served.total);
+    if (s.queue > 4) s.reputation -= 0.002 * (s.queue - 4);
+    s.reputation = Math.min(100, Math.max(0, s.reputation));
   }
-  if (fx.autoRestock > 0) restock(s, info, 1, fx.autoRestock);
+
+  // rozładunek: najpierw chodnik (mandat), potem sala (korek), na końcu zaplecze; przy palecie najwyżej dwie osoby
+  let minutes = alloc.total.rozladunek;
+  for (const p of [...s.pallets].sort((a, b) => PALLET_ORDER[a.loc] - PALLET_ORDER[b.loc] || a.since - b.since)) {
+    if (minutes <= 1e-9) break;
+    const rate = unloadRate(fx, p);
+    const use = Math.min(minutes, PEOPLE_PER_PALLET, p.total / rate);
+    unloadPallet(s, info, fx, p, use * rate, out);
+    minutes -= use;
+  }
+  restock(s, info, 1, alloc.total.wykladanie * RESTOCK_RATE);
   removeEmptyPallets(s);
+
+  s.shift = { staff, human: alloc.human };
+  s.lastCashiers = alloc.human.kasa;
+  s.lastWorkers = alloc.human.rozladunek + alloc.human.wykladanie + alloc.human.sprzatanie;
 }
 
 /** Wykłada z zaplecza na półki do poziomu `fill` pojemności, najwyżej `budget` sztuk. Zwraca liczbę sztuk. */
@@ -881,11 +884,8 @@ export function hire(s: EconomyState): CommandResult {
 export function fire(s: EconomyState): CommandResult {
   if (s.staff <= 1) return { ok: false, text: 'Ktoś musi stać na kasie.' };
   s.staff--;
+  normalizePins(s.tycoon.staff, s.staff);   // przypięci ponad personel schodzą z posterunków
   return { ok: true };
-}
-
-export function setPriority(s: EconomyState, p: Priority): void {
-  s.priority = p;
 }
 
 export function workshopUnlocked(s: EconomyState): boolean {

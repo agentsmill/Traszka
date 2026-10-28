@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { PRIORITY_LABEL, createEconomy, nextRemont, upgradeBlocker, type CommandResult, type EconomyState } from '@/sim/economy/economy';
+import { createEconomy, nextRemont, upgradeBlocker, type CommandResult, type EconomyState } from '@/sim/economy/economy';
 import type { Command } from '@/sim/economy/commands';
 import { questMetric } from '@/sim/economy/quests';
+import { PROFILE_HINT, PROFILE_LABEL, STAFF_PROFILES } from '@/sim/economy/tycoon/staff';
 import { computeStoreInfo, type PalletLoc, type StoreInfo } from '@/sim/economy/storeInfo';
 import { EQUIPMENT, UPGRADES } from '@/sim/economy/upgrades';
 import { layoutFor } from '@/sim/store/layoutFor';
@@ -68,7 +69,7 @@ describe('panele wysyłają polecenia przez game.dispatch, a nie wołają symula
     expect(game.dispatch).toHaveBeenCalledTimes(4);
   });
 
-  it('ludzie: zatrudnij, zwolnij i priorytet pracy', () => {
+  it('ludzie: zatrudnij, zwolnij i profil pracy', () => {
     const { s, info } = rich();
     const game = fakeGame();
     const tree = PeoplePanel({ s, info, game, v: 1 });
@@ -76,11 +77,48 @@ describe('panele wysyłają polecenia przez game.dispatch, a nie wołają symula
     expect(game.dispatch).toHaveBeenLastCalledWith({ type: 'hire' });
     click(buttonAria(tree, 'Zwolnij'));
     expect(game.dispatch).toHaveBeenLastCalledWith({ type: 'fire' });
-    for (const priority of ['klienci', 'rowno', 'palety'] as const) {
-      click(buttonLabelled(tree, PRIORITY_LABEL[priority]));
-      expect(game.dispatch).toHaveBeenLastCalledWith({ type: 'setPriority', priority });
+    for (const profile of STAFF_PROFILES) {
+      click(buttonLabelled(tree, PROFILE_LABEL[profile]));
+      expect(game.dispatch).toHaveBeenLastCalledWith({ type: 'setStaffProfile', profile });
     }
     expect(game.dispatch).toHaveBeenCalledTimes(5);
+  });
+
+  it('ludzie: aktywny profil ma klasę on i swoją podpowiedź, własna kolejność nie zapala żadnego przycisku', () => {
+    const { s, info } = rich();
+    const game = fakeGame();
+    for (const profile of STAFF_PROFILES) {
+      s.tycoon.staff.profile = profile;
+      const tree = PeoplePanel({ s, info, game, v: 1 });
+      for (const other of STAFF_PROFILES) {
+        const on = String(buttonLabelled(tree, PROFILE_LABEL[other]).props.class).split(' ').includes('on');
+        expect(on, `${profile} / ${other}`).toBe(other === profile);
+      }
+      expect(textOf(tree)).toContain(PROFILE_HINT[profile]);
+    }
+    s.tycoon.staff.profile = 'wlasny';
+    const own = PeoplePanel({ s, info, game, v: 1 });
+    expect(buttonsOf(own).filter((b) => String(b.props.class).split(' ').includes('on'))).toHaveLength(0);
+    expect(textOf(own)).toContain(PROFILE_LABEL.wlasny);
+  });
+
+  it('ludzie: automatyka z warsztatu widoczna po zakupie, a bez niej sekcji nie ma', () => {
+    const { s, info } = rich();
+    const game = fakeGame();
+    expect(textOf(PeoplePanel({ s, info, game, v: 1 }))).not.toContain('Automatyka');
+    s.upgrades.tasmociag = 2;
+    const tree = PeoplePanel({ s, info, game, v: 1 });
+    expect(textOf(tree)).toContain('Automatyka');
+    expect(walk(tree).some((v) => v.props.label === 'Taśmociąg')).toBe(true);   // etykieta wiersza to prop, nie dziecko
+  });
+
+  it('palety: rozładunek teraz pokazuje pracę ludzi z ostatniej minuty i automatykę', () => {
+    const { s, info } = rich();
+    const game = fakeGame();
+    s.shift = { staff: 2, human: { kasa: 0, rozladunek: 1.5, wykladanie: 0, sprzatanie: 0 } };
+    expect(textOf(PalletsPanel({ s, info, game, v: 1 }))).toContain('~540 szt./h (1,5 os.)');
+    s.upgrades.tasmociag = 1;
+    expect(textOf(PalletsPanel({ s, info, game, v: 1 }))).toContain('+ automatyka');
   });
 
   it('ulepszenia: przycisk „Kup” ulepszenia wysyła buyUpgrade z id', () => {

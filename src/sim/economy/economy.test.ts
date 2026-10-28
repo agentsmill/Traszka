@@ -4,11 +4,12 @@ import { BANKRUPTCY_AT, CATS, MINUTES_PER_DAY, OPEN_FROM, START_CASH, TILL_RATE,
 import { dateOfDay, formatDate, isLastDayOfMonth } from './calendar';
 import { advanceEconomy } from './clock';
 import {
-  buyEquipment, buyUpgrade, changeTrust, claimGift, claimQuest, createEconomy, effects, estimatedDailyMargin, expectedDailyCustomers,
-  kpiMetricsOf, kpiScaleOf, movePallet, relayout, returnPallet, slotFree, startRemont, stepMinute, tapPallet, tapTill, unlocksAt,
-  upgradeBlocker, workshopUnlocked, type CommandResult, type EconEvent, type EconomyState,
+  buyEquipment, buyUpgrade, changeTrust, claimGift, claimQuest, createEconomy, effects, estimatedDailyMargin, expectedDailyCustomers, fire,
+  kpiMetricsOf, kpiScaleOf, movePallet, relayout, returnPallet, robotFleet, slotFree, startRemont, stepMinute, tapPallet, tapTill,
+  unlocksAt, upgradeBlocker, workshopUnlocked, type CommandResult, type EconEvent, type EconomyState,
 } from './economy';
 import { computeStoreInfo, type StoreInfo } from './storeInfo';
+import { pinStaff, setStaffProfile } from './tycoon/staff';
 import { TRUST, trustTier } from './tycoon/trust';
 import { UPGRADE_BY_ID } from './upgrades';
 
@@ -94,8 +95,7 @@ describe('ekonomia', () => {
   it('palety pod sklepem ściągają Straż Miejską, na zapleczu nie', () => {
     const fines = (onSidewalk: boolean): number => {
       const s = createEconomy(SEED, info);
-      s.staff = 1;            // nikt nie rozładowuje: jedyna osoba stoi na kasie
-      s.priority = 'klienci';
+      s.staff = 0;            // nikt nie rozładowuje: pula ludzi oddaje wolne ręce paletom, więc jedyny pewny sposób to brak ludzi
       s.order = { auto: false, manual: 0 };
       if (!onSidewalk) for (const p of [...s.pallets]) movePallet(s, info, p.id, 'backroom');
       for (const c of CATS) s.backroom[c] = 0;
@@ -115,8 +115,7 @@ describe('ekonomia', () => {
 
   it('przesadne zamówienie bez rąk do pracy: palety się kumulują, a nadmiar kierowca zabiera za opłatą', () => {
     const s = createEconomy(SEED, info);
-    s.staff = 1;
-    s.priority = 'klienci';
+    s.staff = 0;
     s.order = { auto: false, manual: 12 };
     const events = run(s, info, 4 * MINUTES_PER_DAY);
     expect(s.pallets.length).toBeGreaterThanOrEqual(8);
@@ -151,7 +150,7 @@ describe('ekonomia', () => {
     expect(buyUpgrade(s, 'tasmociag').ok).toBe(false);
     s.level = 10;
     expect(buyUpgrade(s, 'tasmociag').ok).toBe(true);
-    expect(effects(s, info).autoUnload).toBe(4);
+    expect(robotFleet(s)).toEqual({ tasmociag: 1, wykladacz: 0, prasa: 0, edward: 0 });
   });
 
   it('slot 2×2 mieści dwie kasy samoobsługowe; bez slotów zakup się nie udaje', () => {
@@ -208,13 +207,13 @@ describe('ekonomia', () => {
 describe('rozładunek z automatyką warsztatu', () => {
   const emptyItems = () => Object.fromEntries(CATS.map((c) => [c, 0])) as Record<(typeof CATS)[number], number>;
 
-  it('złota paleta, którą pracownik prawie rozładował, a taśmociąg dokończył, daje premię i licznik dokładnie raz', () => {
+  it('złota paleta rozładowana przez ludzi i taśmociąg w jednej minucie daje premię i licznik dokładnie raz', () => {
     const s = createEconomy(SEED, info);
-    s.upgrades.tasmociag = 1;   // 4 szt./min, całą dobę
+    s.upgrades.tasmociag = 1;   // całą dobę
     s.staff = 2;
-    s.priority = 'palety';      // jedna osoba na kasie, druga rozładowuje
     s.order = { auto: false, manual: 0 };
-    // pracownik zdejmie UNLOAD_RATE × UNLOAD_AT.sidewalk sztuk i zostawi 0,2 szt., które w tej samej minucie dobierze taśmociąg
+    setStaffProfile(s.tycoon.staff, 'dostawa');   // ludzie najpierw przy paletach, nie przy półkach
+    // ułamek nad tym, co zdejmuje człowiek przy jednej minucie pracy: pula dokłada taśmociąg w tej samej minucie
     const total = UNLOAD_RATE * UNLOAD_AT.sidewalk + 0.2;
     s.pallets = [{ id: 900, loc: 'sidewalk', spot: 0, items: { ...emptyItems(), napoje: total }, total, initial: total, since: s.minute, golden: true }];
     const events: EconEvent[] = [];
@@ -244,16 +243,134 @@ describe('personel w jednej minucie', () => {
     const s = createEconomy(SEED, info);
     s.upgrades.drugaKasa = 1;
     s.staff = 3;
-    s.priority = 'rowno';
     s.order = { auto: false, manual: 0 };
-    s.queue = 4.3;   // przed obsługą: ceil(4,3 / 4) = 2 kasjerów; po niej zostaje ok. 2,9, czyli „1 kasjer”
+    s.queue = 4.3;   // przed obsługą kolejka starcza na dwa stanowiska; profil „Kolejka” daje im pierwszeństwo
     const before = s.total.customers;
     stepMinute(s, info, []);
     const served = s.total.customers - before;
     expect(served).toBeCloseTo(2 * TILL_RATE, 6);   // obsłużyło dwóch kasjerów
-    expect(s.lastCashiers).toBe(2);
-    expect(s.lastWorkers).toBe(1);
-    expect(s.lastCashiers + s.lastWorkers).toBe(s.staff);
+    expect(s.lastCashiers).toBeCloseTo(2, 9);
+    expect(s.lastWorkers).toBeCloseTo(1, 9);
+    expect(s.lastCashiers + s.lastWorkers).toBeCloseTo(s.staff, 9);
+    expect(s.shift.staff).toBe(3);
+    expect(s.shift.human.kasa).toBeCloseTo(2, 9);
+  });
+});
+
+describe('pula ludzi zamiast priorytetu', () => {
+  const sumTotals = (s: EconomyState): number => s.pallets.reduce((n, p) => n + p.total, 0);
+  const sumOf = (r: Record<(typeof CATS)[number], number>): number => CATS.reduce((n, c) => n + r[c], 0);
+
+  it('profil „dostawa” rozładowuje więcej niż „kolejka”, gdy kolejka stoi', () => {
+    const left = (profile: 'kolejka' | 'dostawa'): number => {
+      const s = createEconomy(SEED, info);
+      setStaffProfile(s.tycoon.staff, profile);
+      s.order = { auto: false, manual: 0 };
+      s.queue = 12;
+      run(s, info, 60);
+      return sumTotals(s);
+    };
+    expect(left('dostawa')).toBeLessThan(left('kolejka'));
+  });
+
+  it('przypięta osoba obsługuje kasę wbrew profilowi „dostawa”, dopóki jest kolejka', () => {
+    const served = (pinned: boolean): number => {
+      const s = createEconomy(SEED, info);
+      setStaffProfile(s.tycoon.staff, 'dostawa');
+      if (pinned) expect(pinStaff(s.tycoon.staff, 'kasa', 1, s.staff).ok).toBe(true);
+      s.order = { auto: false, manual: 0 };
+      s.queue = 12;
+      stepMinute(s, info, []);
+      return s.total.customers;
+    };
+    expect(served(true)).toBeCloseTo(TILL_RATE, 6);
+    expect(served(false)).toBeLessThan(served(true));   // sama „dostawa” wysyła obu ludzi do palet
+  });
+
+  it('taśmociąg rozładowuje nocą, gdy nikogo nie ma na zmianie', () => {
+    const night = (tasmociag: number): { before: number; after: number; shift: EconomyState['shift'] } => {
+      const s = createEconomy(SEED, info);
+      s.minute = 2 * 60;
+      s.upgrades.tasmociag = tasmociag;
+      expect(movePallet(s, info, s.pallets[0]!.id, 'backroom').ok).toBe(true);
+      s.pallets = s.pallets.filter((p) => p.loc === 'backroom');
+      const before = s.pallets[0]!.total;
+      run(s, info, 30);
+      return { before, after: s.pallets[0]!.total, shift: s.shift };
+    };
+    const belt = night(1);
+    expect(belt.after).toBeLessThan(belt.before);
+    expect(belt.shift.staff).toBe(0);
+    const none = night(0);
+    expect(none.after).toBe(none.before);   // bez taśmociągu noc nic nie robi
+  });
+
+  it('wykładacz uzupełnia półki nocą z zaplecza', () => {
+    const s = createEconomy(SEED, info);
+    s.minute = 2 * 60;
+    s.upgrades.wykladacz = 1;
+    for (const c of CATS) s.shelf[c] = 0.5 * info.shelfCap[c];
+    const before = sumOf(s.shelf);
+    run(s, info, 30);
+    expect(sumOf(s.shelf)).toBeGreaterThan(before + 100);
+  });
+
+  it('eDward bierze zadania z puli także nocą', () => {
+    const s = createEconomy(SEED, info);
+    s.minute = 2 * 60;
+    s.upgrades.humanoid = 1;
+    expect(robotFleet(s).edward).toBe(1);
+    const before = sumTotals(s);
+    run(s, info, 30);
+    expect(sumTotals(s)).toBeLessThan(before);
+  });
+
+  it('shift: w godzinach pracy tyle osób, ile personelu, nocą zero; ludzie mają pracę tylko w godzinach pracy', () => {
+    const s = createEconomy(SEED, info);
+    s.staff = 3;
+    run(s, info, 6 * 60);                       // 12:00
+    expect(s.shift.staff).toBe(3);
+    const sum = Object.values(s.shift.human).reduce((n, v) => n + v, 0);
+    expect(sum).toBeGreaterThan(0);
+    expect(sum).toBeLessThanOrEqual(3 + 1e-9);
+    // pola dla interfejsu i adaptera „Ludzie na ekranie” to ten sam przydział
+    const h = s.shift.human;
+    expect(s.lastCashiers).toBe(h.kasa);
+    expect(s.lastWorkers).toBe(h.rozladunek + h.wykladanie + h.sprzatanie);
+    run(s, info, 12 * 60);                      // 0:00
+    expect(s.shift.staff).toBe(0);
+    expect(Object.values(s.shift.human).reduce((n, v) => n + v, 0)).toBe(0);
+    expect(s.lastCashiers).toBe(0);
+    expect(s.lastWorkers).toBe(0);
+  });
+
+  it('efekt karty „chory” zmniejsza zmianę w symulacji, a nie tylko na ekranie', () => {
+    const s = createEconomy(SEED, info);
+    s.staff = 3;
+    s.tycoon.cards.active.push({ kind: 'staff', value: -1, from: 0, until: 1e9, seq: 1 });
+    run(s, info, 10);
+    expect(s.shift.staff).toBe(2);
+  });
+
+  it('zwolnienie przycina przypiętych do personelu', () => {
+    const s = createEconomy(SEED, info);
+    s.staff = 3;
+    expect(pinStaff(s.tycoon.staff, 'kasa', 3, s.staff).ok).toBe(true);
+    expect(s.tycoon.staff.pinned.kasa).toBe(3);
+    expect(fire(s).ok).toBe(true);
+    expect(s.staff).toBe(2);
+    expect(s.tycoon.staff.pinned.kasa).toBe(2);
+    expect(fire(s).ok).toBe(true);
+    expect(fire(s).ok).toBe(false);   // ostatnia osoba zostaje
+    expect(s.tycoon.staff.pinned.kasa).toBe(1);
+  });
+
+  it('wykonana minuta nocą nie zabiera ludziom pracy z kart (czas kart odrabiają tylko ludzie na zmianie)', () => {
+    const s = createEconomy(SEED, info);
+    s.minute = 2 * 60;
+    s.tycoon.staff.chores = 5;
+    run(s, info, 30);
+    expect(s.tycoon.staff.chores).toBe(5);
   });
 });
 
@@ -385,8 +502,7 @@ describe('nagrody i postęp', () => {
 describe('zaufanie Centrali przez moduł tycoona', () => {
   /** Dochodzi do pierwszego mandatu (palety pod sklepem, nikt ich nie rozładowuje) i staje zaraz po nim. */
   const untilFine = (s: EconomyState): EconEvent[] => {
-    s.staff = 1;            // jedyna osoba stoi na kasie, więc palety zostają na chodniku
-    s.priority = 'klienci';
+    s.staff = 0;            // nikt nie rozładowuje, więc palety zostają na chodniku
     s.order = { auto: false, manual: 0 };
     const events: EconEvent[] = [];
     for (let i = 0; i < 10 * MINUTES_PER_DAY && !events.some((e) => e.kind === 'fine'); i++) stepMinute(s, info, events);
@@ -435,8 +551,7 @@ describe('zaufanie Centrali przez moduł tycoona', () => {
 
   it('kierowca, który zabrał palety, obniża zaufanie z przyczyną palety', () => {
     const s = createEconomy(SEED, info);
-    s.staff = 1;
-    s.priority = 'klienci';
+    s.staff = 0;
     s.order = { auto: false, manual: 12 };
     const events = run(s, info, 4 * MINUTES_PER_DAY);
     expect(events.some((e) => e.kind === 'warning' && e.text.includes('zabrał'))).toBe(true);
