@@ -79,11 +79,13 @@ export function Sheet({ game }: { game: GameActions }) {
         <button type="button" class="tt-iconbtn" aria-label="Zamknij" onClick={() => { tab.value = null; }}>✕</button>
       </div>
       <div class="tt-sheet-body">
-        {open === 'sklep' && <StorePanel s={view.s} info={view.info} />}
-        {open === 'palety' && <PalletsPanel s={view.s} info={view.info} game={game} />}
-        {open === 'ludzie' && <PeoplePanel s={view.s} info={view.info} game={game} />}
-        {open === 'ulepszenia' && <ShopPanel s={view.s} info={view.info} game={game} />}
-        {open === 'cele' && <GoalsPanel s={view.s} game={game} />}
+        {/* `v` (wersja stanu) jest w propsach celowo: stan ekonomii zmienia się w miejscu, a @preact/signals pomija
+            render komponentu, którego propsy są płytko równe. Bez `v` panel po „Odbierz!” albo zakupie zostawał nieaktualny. */}
+        {open === 'sklep' && <StorePanel s={view.s} info={view.info} v={view.v} />}
+        {open === 'palety' && <PalletsPanel s={view.s} info={view.info} game={game} v={view.v} />}
+        {open === 'ludzie' && <PeoplePanel s={view.s} info={view.info} game={game} v={view.v} />}
+        {open === 'ulepszenia' && <ShopPanel s={view.s} info={view.info} game={game} v={view.v} />}
+        {open === 'cele' && <GoalsPanel s={view.s} game={game} v={view.v} />}
       </div>
     </aside>
   );
@@ -99,7 +101,7 @@ function capacityPerHour(s: EconomyState, info: StoreInfo): { now: number; max: 
   return { now: s.lastCashiers * till + sco, max: Math.min(s.staff, fx.tills) * till + sco };
 }
 
-function StorePanel({ s, info }: { s: EconomyState; info: StoreInfo }) {
+function StorePanel({ s, info }: { s: EconomyState; info: StoreInfo; v: number }) {
   const fx = effects(s, info);
   const cap = capacityPerHour(s, info);
   const hour = Math.floor(minuteOfDay(s.minute) / 60);
@@ -153,7 +155,7 @@ function StorePanel({ s, info }: { s: EconomyState; info: StoreInfo }) {
 
 // --- Palety ------------------------------------------------------------------------------------------
 
-function PalletsPanel({ s, info, game }: { s: EconomyState; info: StoreInfo; game: GameActions }) {
+function PalletsPanel({ s, info, game }: { s: EconomyState; info: StoreInfo; game: GameActions; v: number }) {
   const suggestion = assistantSuggestion(s, info);
   const mod = minuteOfDay(s.minute);
   const pending = s.deliveries.reduce((n, d) => n + d.count, 0);
@@ -222,7 +224,7 @@ const PRIORITY_HINT: Record<Priority, string> = {
   palety: 'Na kasie ktoś staje dopiero przy długiej kolejce (albo gdy nie ma SCO). Reszta przy paletach.',
 };
 
-function PeoplePanel({ s, info, game }: { s: EconomyState; info: StoreInfo; game: GameActions }) {
+function PeoplePanel({ s, info, game }: { s: EconomyState; info: StoreInfo; game: GameActions; v: number }) {
   const fx = effects(s, info);
   return (
     <>
@@ -259,7 +261,7 @@ function PeoplePanel({ s, info, game }: { s: EconomyState; info: StoreInfo; game
 
 // --- Ulepszenia --------------------------------------------------------------------------------------
 
-function ShopPanel({ s, info, game }: { s: EconomyState; info: StoreInfo; game: GameActions }) {
+function ShopPanel({ s, info, game }: { s: EconomyState; info: StoreInfo; game: GameActions; v: number }) {
   const remont = nextRemont(s);
   const closed = isClosedForRemont(s);
   const groups: UpgradeGroup[] = ['kasa', 'palety', 'klienci', 'warsztat'];
@@ -350,7 +352,7 @@ function ShopPanel({ s, info, game }: { s: EconomyState; info: StoreInfo; game: 
 
 // --- Cele i wyniki -------------------------------------------------------------------------------------
 
-function GoalsPanel({ s, game }: { s: EconomyState; game: GameActions }) {
+function GoalsPanel({ s, game }: { s: EconomyState; game: GameActions; v: number }) {
   const t = s.today;
   const m = s.month;
   const profit = (k: typeof t): number => k.margin + k.other - k.wages - k.media - k.fee - k.fines - k.logistics;
