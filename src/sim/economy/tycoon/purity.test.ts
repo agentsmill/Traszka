@@ -46,6 +46,14 @@ describe('moduły tycoona: czystość', () => {
     expect(sources.filter((f) => /^import (?!type )[^;]*from ['"]\.\.\/economy['"]/m.test(code(f)))).toEqual([]);
   });
 
+  it('żadnych prawdziwych marek w tekstach modułów (tylko parodie: Traszka, Centrala, Szop 24h, Kawka Express)', () => {
+    // te same zakazy co w src/render/store/props.test.ts plus sieci, napoje i usługi, które mogłyby się wkraść w żart
+    const banned = [/excel/i, /fakty i mity/i, /blisko ciebie/i, /żabk|zabk/i, /biedronk/i, /\blidl/i, /carrefour/i, /lewiatan/i,
+      /orlen/i, /stokrotk/i, /kaufland/i, /auchan/i, /\bekipa\b/i, /książul|ksiazul/i, /zappk/i, /coca|pepsi/i, /kinder/i,
+      /red bull/i, /mcdonald/i, /\bkfc\b/i, /starbucks/i, /inpost/i, /paczkomat/i, /allegro/i, /\bblik\b/i];
+    for (const f of sources) for (const re of banned) expect(readFileSync(join(DIR, f), 'utf8'), `${f} ~ ${re}`).not.toMatch(re);
+  });
+
   it('kanały losowości są w zakresie 100–199 i się nie powtarzają', () => {
     const values = Object.values(CH);
     expect(new Set(values).size).toBe(values.length);
