@@ -14,6 +14,21 @@ import { EQUIPMENT_BY_ID, UPGRADE_BY_ID, type EquipmentId, type UpgradeId } from
  * jest w stanie, więc przeglądarka i serwer odtwarzający dziennik poleceń dostają ten sam stan co do bajtu.
  */
 
+/**
+ * Jak dodać nowe polecenie (każdy krok poza ostatnim pilnuje kompilator albo test, więc pominięcie wyjdzie od razu):
+ * 1. wariant w tej unii; pola tylko płaskie (`string`, `number`, `boolean`, `undefined`), bez tablic i obiektów (patrz niżej);
+ * 2. walidator w tabeli `VALID` (kształt pól; `tsc` wymusza wpis dla każdego typu);
+ * 3. gałąź w `run` (`tsc` wymusza przez `never`);
+ * 4. typ w `COMMAND_TYPES` (test `commands.test.ts` porównuje je z `CASES`);
+ * 5. wpis w `CASES` w `commands.test.ts` (`tsc` wymusza; test sprawdza też, że polecenie przechodzi `isCommand`);
+ * 6. wpis w `AFTER` w `src/game/actions.ts` (`tsc` wymusza) i, gdy zmienia się tabela, test, który ją przypina (`actions.test.ts`);
+ * 7. wysłanie z interfejsu przez `game.dispatch` (typowane), nigdy przez wywołanie funkcji z `economy.ts`.
+ * Dziennik i odtwarzanie biegu (`replayRun`) obejmą nowe polecenie same.
+ *
+ * Pola są płaskie, bo `dispatchCommand` (dziennik) i `applyCommand` kopiują polecenie płytko (`{ ...cmd }`): pole-obiekt albo
+ * tablica dzieliłoby referencję ze stanem gry albo z obiektem interfejsu, a późniejsza zmiana po cichu przepisałaby dziennik
+ * (`replayRun` rozjechałby się ze stanem). Kompilator tego pilnuje (`FlatCommands` niżej), a test w `commands.test.ts` sprawdza to samo na wartościach.
+ */
 export type Command =
   | { type: 'tapPallet'; palletId?: number }
   | { type: 'tapTill' }
@@ -31,6 +46,19 @@ export type Command =
   | { type: 'campaign' }
   | { type: 'rushRemont' };
 
+/** Wartość pola polecenia: tylko to, co kopia płytka (`{ ...cmd }`) naprawdę kopiuje. */
+type FieldValue = string | number | boolean | undefined;
+/** `typ.pole` każdego pola każdego wariantu `Command`, którego wartość nie jest `FieldValue` (tablica, obiekt, `null`); `never`, gdy wszystkie są płaskie. */
+type NestedFields<C> = C extends { type: infer T extends string }
+  ? { [K in keyof C]-?: [C[K]] extends [FieldValue] ? never : `${T}.${K & string}` }[keyof C]
+  : never;
+type MustBeNever<Offenders extends never> = Offenders;
+/**
+ * Kontrola w czasie kompilacji: dodanie do `Command` pola, które nie jest prostą wartością, kończy się błędem `tsc` typu
+ * „Type '"setPriority.order"' does not satisfy the constraint 'never'” (typ i pole w cudzysłowie). Przeczytaj komentarz nad `Command`.
+ */
+export type FlatCommands = MustBeNever<NestedFields<Command>>;
+
 /** Wszystkie typy poleceń (do testów pokrycia i do walidacji). */
 export const COMMAND_TYPES: readonly Command['type'][] = [
   'tapPallet', 'tapTill', 'claimQuest', 'claimGift', 'movePallet', 'returnPallet', 'setOrder', 'hire', 'fire', 'setPriority',
@@ -44,25 +72,41 @@ const isFiniteNumber = (x: unknown): x is number => typeof x === 'number' && Num
 /** Klucz własny katalogu: `hasOwn`, bo `in` i `[]` przepuszczałyby `toString`, `constructor` i `__proto__`. */
 const isKeyOf = (catalog: object, x: unknown): boolean => typeof x === 'string' && Object.hasOwn(catalog, x);
 
+type Fields = Record<string, unknown>;
+const noFields = (): boolean => true;
+
 /**
- * Czy `x` ma kształt polecenia: znany `type` i pola właściwych typów. Dziennik poleceń przychodzi od klienta, więc
- * to jedyna bariera przed `NaN`, tekstem zamiast liczby czy `id` spoza katalogów. Zbędne klucze są dozwolone.
+ * Walidatory pól po typie polecenia. `satisfies Record<Command['type'], …>` robi z tej tabeli kontrolę w czasie kompilacji:
+ * nowy typ w `Command` bez wpisu tutaj nie przejdzie `tsc` (dawny `switch` z `default: return false` odrzuciłby go po cichu).
+ */
+const VALID = {
+  tapPallet: (c) => c.palletId === undefined || isInt(c.palletId),
+  tapTill: noFields,
+  claimQuest: (c) => isInt(c.questId),
+  claimGift: noFields,
+  movePallet: (c) => isInt(c.palletId) && LOCS.includes(c.loc as PalletLoc),
+  returnPallet: (c) => isInt(c.palletId),
+  setOrder: (c) => typeof c.auto === 'boolean' && (c.manual === undefined || isFiniteNumber(c.manual)),
+  hire: noFields,
+  fire: noFields,
+  setPriority: (c) => isKeyOf(PRIORITY_LABEL, c.priority),
+  buyUpgrade: (c) => isKeyOf(UPGRADE_BY_ID, c.id),
+  buyEquipment: (c) => isKeyOf(EQUIPMENT_BY_ID, c.id) && (c.slotId === undefined || typeof c.slotId === 'string'),
+  startRemont: noFields,
+  campaign: noFields,
+  rushRemont: noFields,
+} satisfies Record<Command['type'], (c: Fields) => boolean>;
+
+/**
+ * Czy `x` ma kształt polecenia: znany `type` (klucz własny tabeli `VALID`, nie `toString` ani `__proto__`) i pola właściwych
+ * typów. Dziennik poleceń przychodzi od klienta, więc to jedyna bariera przed `NaN`, tekstem zamiast liczby czy `id` spoza
+ * katalogów. Zbędne klucze są dozwolone.
  */
 export function isCommand(x: unknown): x is Command {
   if (typeof x !== 'object' || x === null || Array.isArray(x)) return false;
-  const c = x as Record<string, unknown>;
-  switch (c.type) {
-    case 'tapPallet': return c.palletId === undefined || isInt(c.palletId);
-    case 'claimQuest': return isInt(c.questId);
-    case 'movePallet': return isInt(c.palletId) && LOCS.includes(c.loc as PalletLoc);
-    case 'returnPallet': return isInt(c.palletId);
-    case 'setOrder': return typeof c.auto === 'boolean' && (c.manual === undefined || isFiniteNumber(c.manual));
-    case 'setPriority': return isKeyOf(PRIORITY_LABEL, c.priority);
-    case 'buyUpgrade': return isKeyOf(UPGRADE_BY_ID, c.id);
-    case 'buyEquipment': return isKeyOf(EQUIPMENT_BY_ID, c.id) && (c.slotId === undefined || typeof c.slotId === 'string');
-    case 'tapTill': case 'claimGift': case 'hire': case 'fire': case 'startRemont': case 'campaign': case 'rushRemont': return true;
-    default: return false;
-  }
+  const c = x as Fields;
+  const type = c.type;   // raz: obiekt z getterem nie da innego `type` przy sprawdzeniu i przy wyborze walidatora
+  return typeof type === 'string' && Object.hasOwn(VALID, type) && VALID[type as Command['type']](c);
 }
 
 /**
@@ -121,6 +165,7 @@ function run(s: EconomyState, info: StoreInfo, c: Command, events: EconEvent[]):
  * i nie rzuca. Przyjęte polecenie (także to, które się nie udało) kończy się przeliczeniem poziomów, a gdy zmienił się
  * poziom remontu, nowym układem sklepu i przeniesieniem palet oraz sprzętu. Polecenie jest kopiowane raz na początku i dalej
  * czyta się już tylko kopię: obiekt z getterem (spoza JSON-a) nie da innego `type` przy walidacji, w oknie paczki i w `run`.
+ * Kopia jest płytka, bo pola poleceń są płaskie (komentarz nad `Command`, kontrola `FlatCommands`).
  */
 export function applyCommand(state: EconomyState, info: StoreInfo, cmd: Command): CommandOutcome {
   const c = typeof cmd === 'object' && cmd !== null && !Array.isArray(cmd) ? { ...cmd } : cmd;

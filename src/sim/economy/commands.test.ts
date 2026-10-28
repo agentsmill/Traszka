@@ -149,6 +149,37 @@ describe('każdy typ polecenia daje ten sam stan co dzisiejsza ścieżka main.ts
   });
 });
 
+/** Pola polecenia (`typ.pole`), których wartość nie jest tekstem, liczbą, wartością logiczną ani `undefined` (tablica, obiekt, `null`, funkcja…). */
+function nestedFields(cmd: object): string[] {
+  const type = (cmd as { type: unknown }).type;
+  return Object.entries(cmd)
+    .filter(([, value]) => !['string', 'number', 'boolean', 'undefined'].includes(typeof value) || value === null)
+    .map(([key]) => `${String(type)}.${key}`);
+}
+
+describe('polecenia są płaskie: dziennik i applyCommand kopiują je płytko', () => {
+  // Gdy ten test pęka: nowe pole nie jest prostą wartością. Kopia `{ ...cmd }` w `dispatchCommand` i `applyCommand` dzieliłaby wtedy
+  // referencję ze stanem albo z obiektem interfejsu, a późniejsza zmiana po cichu przepisałaby dziennik (i `replayRun` rozjechałby
+  // się ze stanem). Albo zostaw pole płaskie, albo skopiuj je głęboko w `dispatchCommand` i `applyCommand` oraz sprawdź je w `isCommand`.
+  it.each(COMMAND_TYPES)('%s: każde pole to string, number, boolean albo undefined', (type) => {
+    const { cmd } = CASES[type]();
+    expect(nestedFields(cmd), `pola ${type} poza prostymi wartościami: patrz komentarz nad tym testem i nad typem Command`).toEqual([]);
+  });
+
+  it('wykrywa tablicę, obiekt, null i funkcję (kontrola nie jest pusta)', () => {
+    expect(nestedFields({ type: 'x', order: ['a'], nested: { a: 1 }, nothing: null, fn: () => 1 }))
+      .toEqual(['x.order', 'x.nested', 'x.nothing', 'x.fn']);
+    expect(nestedFields({ type: 'x', n: 1, s: 'a', b: false, u: undefined })).toEqual([]);
+  });
+
+  it('przypadki testowe ustawiają pola opcjonalne, więc kontrola obejmuje wszystkie pola', () => {
+    // pole pominięte w `CASES` byłoby poza kontrolą na wartościach (kompilator i tak sprawdza typ)
+    expect(CASES.tapPallet().cmd).toHaveProperty('palletId');
+    expect(CASES.setOrder().cmd).toHaveProperty('manual');
+    expect(CASES.buyEquipment().cmd).toHaveProperty('slotId');
+  });
+});
+
 describe('stuknięcia w serii', () => {
   it('4. stuknięcie rozładowuje 2× tyle co 1.', () => {
     const { s, info } = base();
