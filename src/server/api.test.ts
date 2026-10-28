@@ -12,6 +12,7 @@ import { API_ERRORS } from './errors';
 import { fakeUpstash, type FakeUpstash } from './fakeUpstash';
 import { handleRuns } from './http';
 import { MemoryRedis } from './memoryRedis';
+import { testBundle } from './testBundle';
 
 /**
  * Pliki z `api/` tak, jak uruchomi je Vercel: zmienne środowiskowe (atrapy), a `fetch` do Upstash podmieniony na atrapę nad
@@ -78,10 +79,18 @@ describe('api/** na Vercelu (atrapa Upstash przez fetch)', () => {
     expect(me).toMatchObject({ ok: true, nicks: ['Mateusz'], nick: { status: 'mine' }, ranks: { global: { rank: 1, score: 12_345 } } });
   });
 
-  it('zapis: wyślij i pobierz tym samym kodem', async () => {
-    const save = JSON.stringify({ schema: 2, seed: 'pierogi-731' });
+  it('zapis: wyślij i pobierz tym samym kodem; w bazie tylko zapis i liczniki, a nie obca treść', async () => {
+    const save = testBundle();
     expect((await upload(post('/api/save/upload', { key: KEY, save }))).status).toBe(200);
     expect(await (await download(post('/api/save/download', { key: KEY.toLowerCase() }))).json()).toMatchObject({ ok: true, save });
+    expect(redis.keys().every((k) => /^tr:(save|rl|salt|budget):/.test(k))).toBe(true);
+  });
+
+  it('zapis, który nie jest paczką z gry, nie trafia do bazy', async () => {
+    const res = await upload(post('/api/save/upload', { key: KEY, save: JSON.stringify({ schema: 2, seed: 'pierogi-731' }) }));
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ ok: false, error: 'bad-save' });
+    expect(upstash.log).toEqual([]);
   });
 
   it('bez zmiennych środowiskowych: 503 „ranking jeszcze nie działa”, bez sięgania do bazy', async () => {
@@ -109,7 +118,7 @@ describe('api/** na Vercelu (atrapa Upstash przez fetch)', () => {
 
 describe('wyłącznik RANKING_ENABLED: bez niego żaden endpoint nie dotyka bazy', () => {
   const OFF_MESSAGE = 'Ranking Centrali jeszcze nie ruszył.';
-  const save = JSON.stringify({ schema: 2, seed: 'pierogi-731' });
+  const save = testBundle();
   /** Każdy z pięciu endpointów z żądaniem, które po włączeniu rankingu poszłoby prosto do bazy (limit zgłoszeń to pierwsze polecenie). */
   const endpoints: [string, () => Promise<Response>][] = [
     ['GET /api/leaderboard', () => leaderboard(new Request(`${ORIGIN}/api/leaderboard?board=global`))],

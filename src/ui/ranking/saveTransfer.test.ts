@@ -3,8 +3,9 @@ import { DEFAULT_CASHIER_LOOK } from '@/game/cashier';
 import { MemoryStorage } from '@/game/memoryStorage';
 import { loadMeta, saveMeta, type Meta } from '@/game/meta';
 import { NEWER_SAVE_NOTICE, createSession, hasStoredSave, lastSavedSeed, saveSession } from '@/game/session';
-import { SAVE_MAX_BYTES } from '@/server/config';
-import { TRANSFER_ERRORS, exportTransfer, importTransfer } from './saveTransfer';
+import { SAVE_BUNDLE_FORMAT, SAVE_BUNDLE_VERSION, SAVE_MAX_BYTES } from '@/server/config';
+import { checkSave } from '@/server/saves';
+import { TRANSFER_ERRORS, TRANSFER_FORMAT, exportTransfer, importTransfer, type TransferBundle } from './saveTransfer';
 
 let storage: MemoryStorage;
 beforeEach(() => {
@@ -55,6 +56,15 @@ describe('przeniesienie zapisu: wszystko, czego gra potrzebuje do wczytania', ()
   it('paczka po pełnym sezonie mieści się w szufladzie Centrali (64 KB)', () => {
     deviceA();
     expect(new TextEncoder().encode(exportTransfer()!).length).toBeLessThan(SAVE_MAX_BYTES / 2);
+  });
+
+  it('serwer przyjmuje paczkę, którą składa gra: format i wersja w config.ts serwera to te same co w grze', () => {
+    deviceA();
+    const text = exportTransfer()!;
+    expect(SAVE_BUNDLE_FORMAT).toBe(TRANSFER_FORMAT);
+    const gameVersion: TransferBundle['version'] = SAVE_BUNDLE_VERSION;   // przestaje się kompilować, gdy gra podbije wersję paczki
+    expect((JSON.parse(text) as TransferBundle).version).toBe(gameVersion);
+    expect(checkSave(text)).toEqual({ ok: true, value: text });
   });
 
   it('nic do wysłania: bez sklepu albo z metą z nowszej wersji gry (jej tu nie znamy) paczki nie ma', () => {

@@ -8,8 +8,10 @@ import { sha256Hex } from './hash.js';
  * - `tr:lb:global`, `tr:lb:seed:{seedId}`, `tr:lb:week:{rrrr-Wtt}` → zbiory sortowane, członek `{tag}:{nickKey}`, wynik w zł;
  * - `tr:entry:{tag}:{nickKey}` → JSON `{ nick, seed, at }`: nick do wyświetlania oraz seed i chwila najlepszego wyniku w rankingu
  *   globalnym; bez czasu życia, bo wyniki zostają w rankingu także po wygaśnięciu rezerwacji nicka;
- * - `tr:save:{owner}` → JSON `{ savedAt, save }`: jeden zapis gry na klucz;
- * - `tr:salt:{okno}:{nr}` i `tr:rl:{akcja}:{nr}:{k|a}:{skrót}` → sól i liczniki limitu zgłoszeń, giną z końcem okna.
+ * - `tr:save:{owner}` → tekst `{savedAt}\n{paczka zapisu}`: jeden zapis gry na klucz, paczka bajt w bajt (bez ucieczek JSON-a w
+ *   JSON-ie, więc 64 KB zajmuje w bazie 64 KB), a chwila wysłania (ms) w pierwszej linii;
+ * - `tr:salt:{okno}:{nr}` i `tr:rl:{akcja}:{nr}:{k|a}:{skrót}` → sól i liczniki limitu zgłoszeń, giną z końcem okna;
+ * - `tr:budget:{nazwa}:{RRRR-MM-DD}` → globalny licznik wysłań w dobie UTC (np. `tr:budget:save:2026-10-28`), żyje dobę.
  *
  * `owner` to SHA-256 klucza gracza (samego klucza serwer nie przechowuje), `tag` to jego pierwsze 16 znaków: członek rankingu
  * pamięta, czyj był wynik, więc gdy wygasły nick zarezerwuje ktoś inny, stare wyniki zostają osobnym wpisem i nie łączą się z jego.
@@ -26,6 +28,7 @@ export const KEYS = {
   save: (owner: string): string => `${P}save:${owner}`,
   salt: (window: number, index: number): string => `${P}salt:${window}:${index}`,
   rate: (action: string, index: number, who: string): string => `${P}rl:${action}:${index}:${who}`,
+  budget: (name: string, day: string): string => `${P}budget:${name}:${day}`,
 } as const;
 
 /** Właściciel nicka: SHA-256 klucza gracza (w postaci kanonicznej, z przedrostkiem tej gry). */

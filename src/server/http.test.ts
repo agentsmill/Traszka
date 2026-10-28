@@ -1,12 +1,15 @@
 import { describe, expect, it, vi } from 'vitest';
 import { formatRecoveryCode } from '@/game/playerKey';
 import { API_ERRORS } from './errors';
-import { KNOWN_GAME_VERSIONS, KNOWN_GENERATOR_VERSIONS, RATE_LIMITS, SAVE_MAX_BYTES } from './config';
+import { KNOWN_GAME_VERSIONS, KNOWN_GENERATOR_VERSIONS, RATE_LIMITS, SAVE_BUNDLE_FORMAT, SAVE_DAILY_BUDGET, SAVE_MAX_BYTES } from './config';
 import {
   clientAddress, handleLeaderboard, handlePlayer, handleRuns, handleSaveDownload, handleSaveUpload, type ServerDeps,
 } from './http';
+import { KEYS, ownerOf } from './keys';
 import { MemoryRedis } from './memoryRedis';
+import { run as runCommand } from './redis';
 import type { RunRecord } from './runs';
+import { testBundle } from './testBundle';
 import { replayNotAvailable, type VerifyResult } from './verify';
 import { weekOf } from './week';
 
@@ -177,10 +180,13 @@ describe('POST /api/player: moje nicki i miejsca (po wpisaniu kodu, przed sezone
 });
 
 describe('POST /api/save/upload i /api/save/download: zapis kodem odzyskiwania', () => {
+  const save = testBundle();
+  const upload = (deps: ServerDeps, key: string, text: unknown = save, headers?: Record<string, string>) =>
+    handleSaveUpload(post('/api/save/upload', { key, save: text }, headers), deps);
+
   it('wysłany zapis wraca na drugim urządzeniu z tym samym kodem; inny kod nie ma zapisu (404)', async () => {
     const { deps } = setup();
-    const save = JSON.stringify({ schema: 2, seed: 'pierogi-731' });
-    const up = await handleSaveUpload(post('/api/save/upload', { key: KEY_A, save }), deps);
+    const up = await upload(deps, KEY_A);
     expect(up.status).toBe(200);
     expect(await body(up)).toEqual({ ok: true, bytes: save.length, savedAt: NOW });
     const down = await handleSaveDownload(post('/api/save/download', { key: formatRecoveryCode(KEY_A).toLowerCase() }), deps);
@@ -192,21 +198,67 @@ describe('POST /api/save/upload i /api/save/download: zapis kodem odzyskiwania',
 
   it('za duży zapis 413, nie-JSON 400, zły klucz 400', async () => {
     const { deps } = setup();
-    const big = JSON.stringify({ x: 'a'.repeat(SAVE_MAX_BYTES) });
-    expect((await handleSaveUpload(post('/api/save/upload', { key: KEY_A, save: big }), deps)).status).toBe(413);
-    expect((await handleSaveUpload(post('/api/save/upload', { key: KEY_A, save: 'zapis' }), deps)).status).toBe(400);
-    expect((await handleSaveUpload(post('/api/save/upload', { key: 'abc', save: '{}' }), deps)).status).toBe(400);
+    expect((await upload(deps, KEY_A, testBundle({ bytes: SAVE_MAX_BYTES + 1 }))).status).toBe(413);
+    expect((await upload(deps, KEY_A, testBundle({ bytes: SAVE_MAX_BYTES }))).status).toBe(200);
+    expect((await upload(deps, KEY_A, 'zapis')).status).toBe(400);
+    expect((await upload(deps, 'abc', '{}')).status).toBe(400);
+  });
+
+  it('przyjmuje tylko paczkę z gry: inny kształt to 400 bad-save, bez zapisu w bazie i bez zużycia budżetu', async () => {
+    const { deps, redis } = setup();
+    const fake = (over: object) => JSON.stringify({ ...(JSON.parse(save) as object), ...over });
+    for (const text of [
+      JSON.stringify({ schema: 2, seed: 'pierogi-731' }), '[]', fake({ format: 'inny' }), fake({ version: 2 }), fake({ meta: 'x' }), fake({ save: [] }),
+      fake({ seed: '' }),
+    ]) {
+      const res = await upload(deps, KEY_A, text);
+      expect(res.status, text.slice(0, 60)).toBe(400);
+      expect((await body(res)).error).toBe('bad-save');
+    }
+    expect((await upload(deps, KEY_A, { format: SAVE_BUNDLE_FORMAT })).status).toBe(400);   // obiekt zamiast tekstu
+    expect(redis.keys()).toEqual([]);
   });
 
   it('zapis z kluczem gracza w środku odpada (serwer nie przechowuje kluczy, nawet przez nieuwagę klienta)', async () => {
     const { deps, redis } = setup();
     for (const key of [KEY_A, formatRecoveryCode(KEY_A), formatRecoveryCode(KEY_A).toLowerCase()]) {
-      const save = JSON.stringify({ meta: { player: { nick: 'Ala', key } } });
-      const res = await handleSaveUpload(post('/api/save/upload', { key: KEY_A, save }), deps);
+      const text = JSON.stringify({ ...(JSON.parse(save) as object), meta: { player: { nick: 'Ala', key } } });
+      const res = await upload(deps, KEY_A, text);
       expect(res.status, key).toBe(400);
       expect((await body(res)).error).toBe('bad-save');
     }
     expect(redis.keys().filter((k) => k.startsWith('tr:save:'))).toEqual([]);
+  });
+
+  it('globalny budżet dzienny: ostatnie wysłanie przechodzi, następne to 429 save-budget z Retry-After do północy UTC, dla każdego klucza i adresu', async () => {
+    const { deps, redis } = setup();
+    const budgetKey = KEYS.budget('save', '2026-10-28');
+    await runCommand(redis, ['SET', budgetKey, String(SAVE_DAILY_BUDGET - 1)]);
+    expect((await upload(deps, KEY_A, save, { 'x-real-ip': '203.0.113.1' })).status).toBe(200);
+    for (const [key, ip] of [[KEY_B, '198.51.100.9'], [KEY_A, '203.0.113.1'], [KEY_B, '192.0.2.77']] as const) {
+      const res = await upload(deps, key, save, { 'x-real-ip': ip });
+      expect(res.status, `${key} ${ip}`).toBe(429);
+      expect(res.headers.get('retry-after')).toBe(String(12 * 3600));   // NOW to 12:00 UTC
+      expect(res.headers.get('cache-control')).toBe('no-store');
+      expect(await body(res)).toEqual({ ok: false, error: 'save-budget', message: API_ERRORS['save-budget'].message });
+    }
+    // do bazy trafił tylko zapis, który się zmieścił w budżecie; pobieranie nie zależy od budżetu wysyłania
+    expect(redis.keys().filter((k) => k.startsWith('tr:save:'))).toEqual([KEYS.save(await ownerOf(KEY_A))]);
+    expect((await handleSaveDownload(post('/api/save/download', { key: KEY_A }), deps)).status).toBe(200);
+  });
+
+  it('budżet liczy tylko wysłania, które doszły do zapisu, a od północy UTC zaczyna się od zera', async () => {
+    const { deps, redis, clock } = setup();
+    const budgetKey = KEYS.budget('save', '2026-10-28');
+    await upload(deps, KEY_A, 'to nie paczka');                                  // zły kształt: bez licznika
+    for (let i = 0; i < RATE_LIMITS.saveUp.perKey; i++) await upload(deps, KEY_B, save, { 'x-real-ip': `10.0.0.${i}` });
+    expect((await upload(deps, KEY_B, save, { 'x-real-ip': '10.0.1.1' })).status).toBe(429);   // limit na klucz: też bez licznika
+    expect(await runCommand(redis, ['GET', budgetKey])).toBe(String(RATE_LIMITS.saveUp.perKey));
+    await runCommand(redis, ['SET', budgetKey, String(SAVE_DAILY_BUDGET)]);
+    expect((await upload(deps, KEY_A, save, { 'x-real-ip': '10.1.0.1' })).status).toBe(429);
+    clock.now = Date.UTC(2026, 9, 29, 0, 0, 5);
+    expect((await upload(deps, KEY_A, save, { 'x-real-ip': '10.1.0.1' })).status).toBe(200);
+    expect(await runCommand(redis, ['GET', KEYS.budget('save', '2026-10-29')])).toBe('1');
   });
 });
 

@@ -22,9 +22,26 @@ const DAY = 86_400;
 
 /** Rezerwacja nicka bez nowego wyniku wygasa po 12 miesiącach (spec §14.7). */
 export const NICK_TTL = 365 * DAY;
-/** Jeden zapis gry na klucz, do 64 KB (spec §14.7), żyje rok od ostatniego wysłania. */
+/**
+ * Jeden zapis gry na klucz, do 64 KB (spec §14.7). To przenosiny między urządzeniami, a nie kopia zapasowa, więc zapis żyje 30 dni
+ * od ostatniego wysłania (każde wysłanie odnawia czas). Krótki czas życia ogranicza też, ile śmieci zostanie w bazie po nadużyciu.
+ */
 export const SAVE_MAX_BYTES = 64 * 1024;
-export const SAVE_TTL = 365 * DAY;
+export const SAVE_TTL = 30 * DAY;
+/**
+ * Tylko paczka z gry trafia do szuflady: `TransferBundle` z `src/ui/ranking/saveTransfer.ts` (format, wersja 1, seed, meta i save
+ * jako obiekty). Kopia stałych, bo plik gry importuje się aliasem `@/`, którego funkcja serwerowa nie rozwiąże; test pilnuje równości.
+ */
+export const SAVE_BUNDLE_FORMAT = 'traszka-przeniesienie';
+export const SAVE_BUNDLE_VERSION = 1;
+/**
+ * Globalny budżet wysyłania zapisów na dobę UTC, wspólny dla wszystkich kluczy i adresów (ponad niego 429 do północy UTC). Klucz
+ * gracza nic nie kosztuje, więc limity na klucz i adres nie zatrzymają kogoś, kto je zmienia; ten licznik zatrzymuje. Zapis z gry
+ * waży ok. 10 KB, ale w najgorszym razie 2000 wysłań po 64 KB to ok. 125 MB na dobę: tyle najwyżej doleje się do bazy.
+ */
+export const SAVE_DAILY_BUDGET = 2_000;
+/** Licznik budżetu dziennego żyje dobę od pierwszego wysłania (nazwa klucza ma dzień, więc stary licznik nikomu nie przeszkadza). */
+export const BUDGET_TTL = DAY;
 /** Ranking seeda żyje ponad rok od ostatniego wyniku, a ranking tygodnia dziewięć tygodni (bieżący i dwa miesiące wstecz). */
 export const SEED_BOARD_TTL = 400 * DAY;
 export const WEEK_BOARD_TTL = 63 * DAY;

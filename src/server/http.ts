@@ -2,14 +2,14 @@ import { nickKey as keyOfNick, normalizeNick } from '../game/nick.js';
 import { parseRecoveryCode } from '../game/playerKey.js';
 import { isRec } from '../sim/guards.js';
 import {
-  BOARD_CACHE, BOARD_LIMIT_DEFAULT, BOARD_LIMIT_MAX, RUN_MAX_BODY_BYTES, SAVE_BODY_BYTES, SMALL_BODY_BYTES, type RateAction,
+  BOARD_CACHE, BOARD_LIMIT_DEFAULT, BOARD_LIMIT_MAX, RUN_MAX_BODY_BYTES, SAVE_BODY_BYTES, SAVE_DAILY_BUDGET, SMALL_BODY_BYTES, type RateAction,
 } from './config.js';
 import { API_ERRORS, fail, type ApiErrorCode, type ApiFailure, type Checked } from './errors.js';
 import type { RandomBytes } from './hash.js';
 import { KEYS, memberOf, ownerOf, seedIdOf } from './keys.js';
 import { rankOf, readBoard, recordScore, type BoardRef } from './leaderboard.js';
 import { claimNick, nickStatus, ownedNicks } from './nicks.js';
-import { checkRate } from './rateLimit.js';
+import { checkBudget, checkRate } from './rateLimit.js';
 import type { RedisExec } from './redis.js';
 import { isShowableSeed, parseSubmission } from './runs.js';
 import { checkSave, getSave, putSave } from './saves.js';
@@ -185,8 +185,11 @@ export const handlePlayer: Handler = async (request, deps) => {
 };
 
 /**
- * `POST /api/save/upload` z `{ key, save }`: kładzie zapis gry (tekst JSON do 64 KB) do jedynej szuflady tego klucza. Zapis
- * z samym kluczem gracza w środku odpada (gra wysyła paczkę bez klucza), bo serwer kluczy nie przechowuje.
+ * `POST /api/save/upload` z `{ key, save }`: kładzie paczkę zapisu z gry (tekst JSON do 64 KB, kształt `TransferBundle`) do jedynej
+ * szuflady tego klucza na 30 dni. Zapis z samym kluczem gracza w środku odpada (gra wysyła paczkę bez klucza), bo serwer kluczy nie
+ * przechowuje. Po kontroli kształtu i limitu na klucz i adres liczy się globalny budżet dzienny (429 do północy UTC): bez niego
+ * kto zmienia klucze i adresy, wypełniłby bazę, a limity na klucz i adres go nie zatrzymają. Budżet idzie po limicie na adres,
+ * żeby jeden adres nie wypalił go w całości.
  */
 export const handleSaveUpload: Handler = async (request, deps) => {
   const bad = wrongMethod(request, 'POST');
@@ -200,7 +203,10 @@ export const handleSaveUpload: Handler = async (request, deps) => {
   if (save.value.toUpperCase().replace(/-/g, '').includes(who.value.key)) return apiError('bad-save');
   const limit = await limited(request, deps, 'saveUp', who.value.owner);
   if (limit) return limit;
-  return json({ ok: true, ...(await putSave(deps.redis, who.value.owner, save.value, deps.now())) });
+  const now = deps.now();
+  const budget = await checkBudget(deps.redis, 'save', SAVE_DAILY_BUDGET, now);
+  if (!budget.ok) return apiError('save-budget', undefined, { 'retry-after': String(budget.retryAfter) });
+  return json({ ok: true, ...(await putSave(deps.redis, who.value.owner, save.value, now)) });
 };
 
 /** `POST /api/save/download` z `{ key }`: oddaje zapis z szuflady tego klucza (klucz w ciele, nigdy w adresie) albo 404. */

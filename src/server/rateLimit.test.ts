@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { RATE_LIMITS } from './config';
+import { BUDGET_TTL, RATE_LIMITS } from './config';
+import { KEYS } from './keys';
 import { MemoryRedis } from './memoryRedis';
-import { checkRate } from './rateLimit';
+import { checkBudget, checkRate, utcDay } from './rateLimit';
+import { run } from './redis';
 
 const OWNER = 'a'.repeat(64);
 const OTHER = 'b'.repeat(64);
@@ -67,5 +69,64 @@ describe('limit zgłoszeń na klucz i na adres', () => {
     await checkRate(redis, 'runs', { owner: null, address: ADDRESS }, clock.now, random);
     const second = redis.keys().find((k) => k.includes(':a:'))!.split(':a:')[1];
     expect(second).not.toBe(first);
+  });
+});
+
+describe('doba UTC', () => {
+  it('dzień jako RRRR-MM-DD i chwila jego końca (północ UTC), także na granicy dnia i w roku przestępnym', () => {
+    expect(utcDay(Date.UTC(2026, 9, 28, 12))).toEqual({ id: '2026-10-28', end: Date.UTC(2026, 9, 29) });
+    expect(utcDay(Date.UTC(2026, 9, 28, 23, 59, 59, 999))).toEqual({ id: '2026-10-28', end: Date.UTC(2026, 9, 29) });
+    expect(utcDay(Date.UTC(2026, 9, 29))).toEqual({ id: '2026-10-29', end: Date.UTC(2026, 9, 30) });
+    expect(utcDay(Date.UTC(2026, 11, 31, 23))).toEqual({ id: '2026-12-31', end: Date.UTC(2027, 0, 1) });
+    expect(utcDay(Date.UTC(2028, 1, 29, 5))).toEqual({ id: '2028-02-29', end: Date.UTC(2028, 2, 1) });
+  });
+});
+
+describe('globalny budżet dzienny (jeden licznik na dobę UTC, niezależny od klucza i adresu)', () => {
+  const NOON = Date.UTC(2026, 9, 28, 12);
+
+  it('do limitu włącznie przechodzi, ponad limit odmowa z czasem do północy UTC; licznik tylko rośnie', async () => {
+    const redis = new MemoryRedis(() => NOON);
+    for (let i = 0; i < 3; i++) expect(await checkBudget(redis, 'save', 3, NOON), `wysłanie ${i + 1}`).toEqual({ ok: true, retryAfter: 0 });
+    expect(await checkBudget(redis, 'save', 3, NOON)).toEqual({ ok: false, retryAfter: 12 * 3600 });
+    expect(await checkBudget(redis, 'save', 3, NOON + 3_600_000)).toMatchObject({ ok: false, retryAfter: 11 * 3600 });
+    expect(await run(redis, ['GET', KEYS.budget('save', '2026-10-28')])).toBe('5');
+  });
+
+  it('czas do północy zaokrąglony w górę i nigdy mniejszy niż sekunda', async () => {
+    const redis = new MemoryRedis(() => NOON);
+    await run(redis, ['SET', KEYS.budget('save', '2026-10-28'), '10']);
+    expect((await checkBudget(redis, 'save', 10, Date.UTC(2026, 9, 28, 23, 59, 58, 500))).retryAfter).toBe(2);
+    expect((await checkBudget(redis, 'save', 10, Date.UTC(2026, 9, 28, 23, 59, 59, 999))).retryAfter).toBe(1);
+  });
+
+  it('licznik nazywa się tr:budget:{nazwa}:{dzień}, żyje dobę, a o północy UTC zaczyna się nowy od zera', async () => {
+    const clock = { now: NOON };
+    const redis = new MemoryRedis(() => clock.now);
+    await checkBudget(redis, 'save', 1, clock.now);
+    expect(redis.keys()).toEqual(['tr:budget:save:2026-10-28']);
+    expect(BUDGET_TTL).toBe(86_400);
+    expect(Number(await run(redis, ['PTTL', 'tr:budget:save:2026-10-28']))).toBe(BUDGET_TTL * 1000);
+    expect((await checkBudget(redis, 'save', 1, clock.now)).ok).toBe(false);
+    clock.now = Date.UTC(2026, 9, 29, 0, 0, 1);
+    expect((await checkBudget(redis, 'save', 1, clock.now)).ok).toBe(true);
+    expect(redis.keys()).toEqual(['tr:budget:save:2026-10-28', 'tr:budget:save:2026-10-29']);
+    clock.now = Date.UTC(2026, 9, 29, 12);   // doba po założeniu starego licznika
+    expect(redis.keys()).toEqual(['tr:budget:save:2026-10-29']);
+  });
+
+  it('osobne nazwy mają osobne liczniki, a jedno sprawdzenie to jedno zapytanie do bazy', async () => {
+    const redis = new MemoryRedis(() => NOON);
+    await checkBudget(redis, 'save', 1, NOON);
+    expect((await checkBudget(redis, 'save', 1, NOON)).ok).toBe(false);
+    expect((await checkBudget(redis, 'inne', 1, NOON)).ok).toBe(true);
+    const before = redis.calls;
+    await checkBudget(redis, 'save', 1, NOON);
+    expect(redis.calls - before).toBe(1);
+  });
+
+  it('odpowiedź bazy bez liczby to odmowa, a nie przepuszczenie', async () => {
+    const broken = { exec: async () => [null, null] };
+    expect(await checkBudget(broken, 'save', 100, NOON)).toMatchObject({ ok: false });
   });
 });

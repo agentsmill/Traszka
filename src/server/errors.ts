@@ -17,6 +17,7 @@ export const API_ERRORS = {
   'rate-limited': { status: 429, message: 'Za dużo zgłoszeń naraz. Centrala prosi o cierpliwość (i o kawę).' },
   'bad-save': { status: 400, message: 'To nie wygląda na zapis gry.' },
   'save-too-large': { status: 413, message: 'Zapis ma więcej niż 64 KB, a Centrala ma dla gracza tylko jedną szufladę.' },
+  'save-budget': { status: 429, message: 'Wszystkie szuflady Centrali są na dziś zajęte. Wyślij zapis jutro.' },
   'no-save': { status: 404, message: 'Pod tym kodem nie ma zapisu w szufladzie Centrali.' },
   'bad-board': { status: 400, message: 'Nie ma takiego rankingu. Centrala prowadzi globalny, seeda i tygodnia.' },
   'method': { status: 405, message: 'Ta metoda tu nie działa.' },
