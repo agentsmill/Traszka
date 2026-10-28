@@ -282,7 +282,7 @@ function openSave(data: unknown, seed: string, partner?: EconomyState['partner']
     }
   }
 
-  const econ = sanitizeEconomy(storedEcon, world.defaults);
+  const econ = sanitizeEconomy(storedEcon, world.defaults, world.info);
   if (!econ) return invalid;
   try {
     if (partner) econ.partner = { ...partner };

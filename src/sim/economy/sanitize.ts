@@ -1,11 +1,15 @@
 import { isNum, isRec, num, whole, type Rec } from '@/sim/guards';
 import { CATS, GIFT_FIRST, MINUTES_PER_DAY, PALLET_ITEMS, STAFF_MAX, type Cat } from './catalog';
+import { dayOf } from './calendar';
 import {
-  emptyCounters, giftWindowFrom, type Counters, type Delivery, type EconomyState, type EquipmentUnit, type MonthReport, type Pallet,
-  type Priority,
+  emptyCounters, giftWindowFrom, kpiMetrics, kpiScaleOf, type Counters, type Delivery, type EconomyState, type EquipmentUnit,
+  type MonthReport, type Pallet, type Priority,
 } from './economy';
 import { xpToNext } from './progress';
 import { QUESTS_ACTIVE, QUEST_KINDS, type Quest, type QuestKind } from './quests';
+import { sanitizeHall } from './tycoon/cleanliness';
+import { sanitizeTycoon } from './tycoon/state';
+import type { StoreInfo } from './storeInfo';
 import { EQUIPMENT_BY_ID, REMONTS, UPGRADE_BY_ID, type EquipmentId, type UpgradeId } from './upgrades';
 
 /**
@@ -78,10 +82,13 @@ const LONGEST_REMONT = Math.max(...REMONTS.map((r) => r.days)) * MINUTES_PER_DAY
  *   poziomy, liczby palet) są zaokrąglane, listy mają górną długość;
  * - uszkodzony element listy (paleta bez zawartości, nieznane ulepszenie) wypada, a reszta zostaje;
  * - lista tam, gdzie ma być obiekt (albo odwrotnie), cudzy seed czy nieznana wersja stanu to `null`: tego nie naprawiamy,
- *   bo nie wiadomo, co jeszcze w takim zapisie jest nie tak.
+ *   bo nie wiadomo, co jeszcze w takim zapisie jest nie tak;
+ * - zapis sprzed tycoona nie ma pola `tycoon`: dostaje świeży stan, a zaufanie Centrali bierze ze starego pola `trust`
+ *   (`null`, tekst albo brak to 60, liczba spoza 0–100 jest przycinana). Tydzień KPI liczy się wtedy od dnia i liczników
+ *   wczytanego zapisu, w skali sklepu (`info`). Uszkodzony `tycoon` naprawia się sam, kawałek po kawałku, i nie kasuje zapisu.
  * Wynik ma dokładnie pola `EconomyState` (test pilnuje, żeby nowe pole nie umknęło tej funkcji).
  */
-export function sanitizeEconomy(raw: unknown, defaults: EconomyState): EconomyState | null {
+export function sanitizeEconomy(raw: unknown, defaults: EconomyState, info: StoreInfo): EconomyState | null {
   if (!isRec(raw) || raw.version !== 1 || raw.seed !== defaults.seed) return null;
 
   const wantsList = ['pallets', 'deliveries', 'equipment', 'history', 'milestones', 'quests'];
@@ -95,24 +102,26 @@ export function sanitizeEconomy(raw: unknown, defaults: EconomyState): EconomySt
     .slice(0, LIMITS.pallets);
   const quests = uniqueBy((raw.quests as unknown[] | undefined)?.map(quest) ?? defaults.quests, (q) => q.id).slice(0, QUESTS_ACTIVE);
   const partner = raw.partner as Rec | undefined;
+  const seedHash = whole(raw.seedHash, defaults.seedHash, 0, 0xffff_ffff);
+  const staff = whole(raw.staff, defaults.staff, 1, STAFF_MAX);
+  const total = counters(raw.total);
 
-  return {
+  const wynik: EconomyState = {
     version: 1,
     seed: defaults.seed,
-    seedHash: whole(raw.seedHash, defaults.seedHash, 0, 0xffff_ffff),
+    seedHash,
     minute,
     cash: money(raw.cash, defaults.cash),
     ogonki: num(raw.ogonki, defaults.ogonki, 0, LIMITS.money),
     ogonkiAcc: num(raw.ogonkiAcc, defaults.ogonkiAcc, 0, 1),
     reputation: num(raw.reputation, defaults.reputation, 0, 100),
-    trust: num(raw.trust, defaults.trust, 0, 100),
     shelf: stock(raw.shelf, defaults.shelf, LIMITS.stockPerCat),
     backroom: stock(raw.backroom, defaults.backroom, LIMITS.stockPerCat),
     pallets,
     nextPalletId: Math.max(whole(raw.nextPalletId, defaults.nextPalletId, 1, LIMITS.id + 1), 1 + Math.max(0, ...pallets.map((p) => p.id))),
     order: order(raw.order, defaults.order),
     deliveries: (raw.deliveries as unknown[] | undefined)?.map(delivery).filter(notNull).slice(0, LIMITS.deliveries) ?? defaults.deliveries,
-    staff: whole(raw.staff, defaults.staff, 1, STAFF_MAX),
+    staff,
     priority: priority(raw.priority, defaults.priority),
     queue: num(raw.queue, defaults.queue, 0, LIMITS.queue),
     arrivalAcc: num(raw.arrivalAcc, defaults.arrivalAcc, 0, 1),
@@ -124,7 +133,7 @@ export function sanitizeEconomy(raw: unknown, defaults: EconomyState): EconomySt
     lastFineAt: whole(raw.lastFineAt, defaults.lastFineAt, defaults.lastFineAt, minute),
     today: counters(raw.today),
     month: counters(raw.month),
-    total: counters(raw.total),
+    total,
     history: (raw.history as unknown[] | undefined)?.map(historyRow).filter(notNull).slice(-LIMITS.history) ?? defaults.history,
     lastReport: report(raw.lastReport),
     milestones: (raw.milestones as unknown[] | undefined)?.filter((m): m is string => typeof m === 'string').slice(0, LIMITS.milestones)
@@ -153,7 +162,15 @@ export function sanitizeEconomy(raw: unknown, defaults: EconomyState): EconomySt
       networkIncome: num(partner?.networkIncome, defaults.partner.networkIncome, 0, LIMITS.money),
       stores: whole(partner?.stores, defaults.partner.stores, 0, LIMITS.network),
     },
+    tycoon: defaults.tycoon,   // zaślepka: skala KPI poniżej liczy się z reszty wczytanego stanu
   };
+  // liczniki i sala są już po sanitize, a `trust` to surowe stare pole (sanitizeTrust je sprawdza)
+  const rawTycoon = isRec(raw.tycoon) ? raw.tycoon : null;
+  wynik.tycoon = sanitizeTycoon(raw.tycoon, {
+    day: dayOf(minute), seedHash, trust: raw.trust as number, staff,
+    metrics: kpiMetrics(total, sanitizeHall(rawTycoon?.hall)), scale: kpiScaleOf(wynik, info),
+  });
+  return wynik;
 }
 
 // --- Części stanu ----------------------------------------------------------------------------------------------

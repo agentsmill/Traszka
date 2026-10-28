@@ -29,6 +29,9 @@ function nonFinite(v: unknown, path = 'stan'): string[] {
 const fixture = (name: string): Record<string, unknown> =>
   JSON.parse(readFileSync(new URL(`../../game/fixtures/${name}`, import.meta.url), 'utf8')) as Record<string, unknown>;
 
+/** Liczniki z zapisu sprzed tycoona: trzy nowe pola (premie Centrali, WUT, mandaty) są zerowe. */
+const withNewCounters = (c: unknown): Record<string, unknown> => ({ ...(c as Record<string, unknown>), bonus: 0, wut: 0, fineCount: 0 });
+
 /** Zlecenia z zapisu sprzed L9 (z polem `title`) bez tytułu, tak jak wczytuje je dziś `sanitizeEconomy`. */
 const dropQuestTitles = (quests: unknown): Record<string, unknown>[] =>
   (quests as Record<string, unknown>[]).map(({ title: _, ...q }) => q);
@@ -36,7 +39,7 @@ const dropQuestTitles = (quests: unknown): Record<string, unknown>[] =>
 describe('sanitizeEconomy: poprawny stan przechodzi bez zmian', () => {
   it('nowa gra', () => {
     const s = defaults();
-    expect(sanitizeEconomy(json(s), defaults())).toEqual(s);
+    expect(sanitizeEconomy(json(s), defaults(), info)).toEqual(s);
   });
 
   it('gra po 30 dniach z zakupami, zleceniami i raportem miesięcznym', () => {
@@ -48,9 +51,9 @@ describe('sanitizeEconomy: poprawny stan przechodzi bez zmian', () => {
     buyEquipment(s, info, 'piec');
     play(s, info, 30);
     expect(s.lastReport).not.toBeNull();
-    expect(sanitizeEconomy(json(s), defaults())).toEqual(s);
+    expect(sanitizeEconomy(json(s), defaults(), info)).toEqual(s);
     // także co do bajta po zapisie w JSON (kolejność kluczy): na tym oprze się porównywanie i haszowanie stanów
-    expect(JSON.stringify(sanitizeEconomy(json(s), defaults()))).toBe(JSON.stringify(s));
+    expect(JSON.stringify(sanitizeEconomy(json(s), defaults(), info))).toBe(JSON.stringify(s));
   });
 
   it('gra zaawansowana (humanoid, warsztat, sprzęt, sieć sklepów) przechodzi bez zmian co 10 dni przez 60 dni', () => {
@@ -63,7 +66,7 @@ describe('sanitizeEconomy: poprawny stan przechodzi bez zmian', () => {
     for (const id of ['sco', 'sco', 'bankomat', 'piec', 'paczkownik'] as const) buyEquipment(s, info, id);
     for (let block = 0; block < 6; block++) {
       play(s, info, 10);
-      expect(JSON.stringify(sanitizeEconomy(json(s), defaults()))).toBe(JSON.stringify(s));
+      expect(JSON.stringify(sanitizeEconomy(json(s), defaults(), info))).toBe(JSON.stringify(s));
     }
     expect(s.total.palletsUnloaded).toBeGreaterThan(50);
   });
@@ -72,26 +75,31 @@ describe('sanitizeEconomy: poprawny stan przechodzi bez zmian', () => {
     const closed = defaults();
     closed.remontLevel = 1;
     closed.remontUntil = closed.minute + 3 * MINUTES_PER_DAY;
-    expect(sanitizeEconomy(json(closed), defaults())).toEqual(closed);
+    expect(sanitizeEconomy(json(closed), defaults(), info)).toEqual(closed);
     const bankrupt = defaults();
     bankrupt.cash = -1e6;
     play(bankrupt, info, 30);
     expect(bankrupt.gameOver).toBe(true);
-    expect(JSON.stringify(sanitizeEconomy(json(bankrupt), defaults()))).toBe(JSON.stringify(bankrupt));
+    expect(JSON.stringify(sanitizeEconomy(json(bankrupt), defaults(), info))).toBe(JSON.stringify(bankrupt));
   });
 
   it('prawdziwe zapisy v1 z produkcji (sprzed koperty v2): wszystkie pola zachowane, nowe uzupełnione', () => {
     for (const [file, seed] of [['save-v1-blok-dzien40.json', 'kiełbasa-42'], ['save-v1-remont1.json', 'traszka-1']] as const) {
       const raw = fixture(file);
       const inf = computeStoreInfo(generateStore(seed));
-      const out = sanitizeEconomy(raw, defaults(inf, seed))!;
+      const out = sanitizeEconomy(raw, defaults(inf, seed), inf)!;
       expect(out).not.toBeNull();
       // L9: tytuł zlecenia nie jest już częścią stanu. L1 i L3: zapis nie ma combo ani okna paczki, więc dostaje brak serii,
-      // ostatnie stuknięcie dawno temu i pierwsze okno GIFT_FIRST minut po minucie zapisu (w godzinach otwarcia)
-      expect(out).toEqual({
-        ...raw, lastReport: null, quests: dropQuestTitles(raw.quests),
+      // ostatnie stuknięcie dawno temu i pierwsze okno GIFT_FIRST minut po minucie zapisu (w godzinach otwarcia).
+      // Tycoon: stare `trust` przechodzi do `tycoon.trust`, a liczniki dostają zerowe `bonus`, `wut` i `fineCount`.
+      const { trust, ...rest } = raw;
+      const { tycoon, ...progress } = out;
+      expect(progress).toEqual({
+        ...rest, lastReport: null, quests: dropQuestTitles(raw.quests),
         tapStreak: 0, lastTapAt: -1e9, giftAt: giftWindowFrom((raw.minute as number) + GIFT_FIRST),
+        today: withNewCounters(raw.today), month: withNewCounters(raw.month), total: withNewCounters(raw.total),
       });
+      expect(tycoon.trust.value).toBe(trust);
     }
   });
 
@@ -107,7 +115,8 @@ describe('sanitizeEconomy: poprawny stan przechodzi bez zmian', () => {
       expect(rawQuests.length, file).toBeGreaterThan(0);
       for (const q of rawQuests) expect(typeof q.title, `${file}: zapis sprzed L9 ma tytuł`).toBe('string');
 
-      const out = sanitizeEconomy(raw, defaults(computeStoreInfo(generateStore(seed)), seed));
+      const inf = computeStoreInfo(generateStore(seed));
+      const out = sanitizeEconomy(raw, defaults(inf, seed), inf);
       expect(out, file).not.toBeNull();
       expect(out!.quests, file).toHaveLength(rawQuests.length);
       out!.quests.forEach((q, i) => {
@@ -125,14 +134,100 @@ describe('sanitizeEconomy: poprawny stan przechodzi bez zmian', () => {
     const bare = (json(s).quests as Record<string, unknown>[]).map(({ title: _, ...q }) => q);
     expect(bare).toHaveLength(3);
     for (const q of bare) expect('title' in q).toBe(false);
-    const out = sanitizeEconomy({ ...json(s), quests: bare }, defaults())!;
+    const out = sanitizeEconomy({ ...json(s), quests: bare }, defaults(), info)!;
     expect(out.quests).toEqual(s.quests);
     expect(out).toEqual(s);
   });
 
-  it('nie gubi żadnego pola stanu: klucze wyniku to klucze createEconomy', () => {
-    const out = sanitizeEconomy(json(defaults()), defaults())!;
+  it('nie gubi żadnego pola stanu: klucze wyniku to klucze createEconomy, z tycoon i bez trust', () => {
+    const out = sanitizeEconomy(json(defaults()), defaults(), info)!;
     expect(Object.keys(out).sort()).toEqual(Object.keys(defaults()).sort());
+    expect(Object.keys(out)).toContain('tycoon');
+    expect(Object.keys(out)).not.toContain('trust');
+  });
+
+  it('createEconomy przez JSON i sanitize wraca bajt w bajt', () => {
+    const e = defaults();
+    const d = defaults();
+    expect(JSON.stringify(sanitizeEconomy(JSON.parse(JSON.stringify(e)), d, info))).toBe(JSON.stringify(e));
+  });
+
+  it('tycoon po 70 dniach gry (dwa miesiące, kolejne tygodnie KPI) wraca bajt w bajt', () => {
+    const s = defaults();
+    s.cash = 1e6;
+    for (const days of [11, 30, 29]) {
+      play(s, info, days);
+      expect(JSON.stringify(sanitizeEconomy(json(s), defaults(), info))).toBe(JSON.stringify(s));
+    }
+    expect(s.history.length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe('sanitizeEconomy: migracja do stanu tycoona', () => {
+  /** Zapis sprzed tycoona: pole `trust` na wierzchu i żadnego `tycoon`. */
+  const legacy = (trust: unknown, patch: Record<string, unknown> = {}): Record<string, unknown> => {
+    const { tycoon: _, ...old } = json(defaults());
+    return { ...old, trust, ...patch };
+  };
+  const trustOf = (raw: unknown): number => sanitizeEconomy(raw, defaults(), info)!.tycoon.trust.value;
+
+  it('zapis bez pola tycoon bierze zaufanie ze starego trust', () => {
+    expect(trustOf(legacy(42))).toBe(42);
+    expect(trustOf(legacy(0))).toBe(0);
+    expect(trustOf(legacy(null))).toBe(60);
+    expect(trustOf(legacy('x'))).toBe(60);
+    expect(trustOf(legacy(undefined))).toBe(60);
+    expect(trustOf(legacy(150))).toBe(100);
+    expect(trustOf(legacy(-30))).toBe(0);
+  });
+
+  it('migracja nie zostawia starego pola trust, a zaufanie startuje miesiąc od wczytanej wartości', () => {
+    const out = sanitizeEconomy(legacy(42), defaults(), info)!;
+    expect('trust' in out).toBe(false);
+    expect(out.tycoon.trust).toEqual({ value: 42, monthStart: 42, month: {} });
+  });
+
+  it('zapis z tycoon ma pierwszeństwo przed starym trust, a zepsuty tycoon wraca do świeżego z zaufaniem ze starego pola', () => {
+    const s = defaults();
+    s.tycoon.trust.value = 33;
+    expect(trustOf({ ...json(s), trust: 80 })).toBe(33);
+    expect(trustOf({ ...json(s), trust: 80, tycoon: 'zepsute' })).toBe(80);
+    expect(trustOf({ ...json(s), trust: 80, tycoon: [] })).toBe(80);
+    expect(trustOf({ ...json(s), tycoon: { ...json(s.tycoon), version: 2 } })).toBe(60);
+  });
+
+  it('świeży tydzień KPI liczy się od dnia i liczników wczytanego zapisu, w skali sklepu z zapisu', () => {
+    const s = defaults();
+    play(s, info, 3);
+    const day = Math.floor(s.minute / MINUTES_PER_DAY);
+    const { tycoon: _, ...old } = json(s);
+    const out = sanitizeEconomy({ ...old, trust: 55 }, defaults(), info)!;
+    expect(out.tycoon.kpi.fromDay).toBe(day);
+    expect(out.tycoon.kpi.toDay).toBeGreaterThanOrEqual(day);
+    expect(out.tycoon.kpi.start).toEqual({
+      customers: s.total.customers, hotSold: s.total.hotSold, lost: s.total.lost, fines: s.total.fineCount, cleanSum: 0, cleanMinutes: 0,
+    });
+    expect(out.tycoon.cards.pending).toEqual([]);
+    expect(out.tycoon.hall.weather).toBeDefined();
+  });
+
+  it('licznik bez nowych pól (zapis sprzed tycoona) dostaje je zerowe, a wpisane liczby przycina do granic', () => {
+    const base = json(defaults());
+    const old = (c: unknown): Record<string, unknown> => { const { bonus: _b, wut: _w, fineCount: _f, ...rest } = c as Record<string, unknown>; return rest; };
+    const out = sanitizeEconomy({ ...base, today: old(base.today), month: old(base.month), total: { ...old(base.total), bonus: 1e99, fineCount: 'x' } }, defaults(), info)!;
+    expect(out.today).toMatchObject({ bonus: 0, wut: 0, fineCount: 0 });
+    expect(out.month).toMatchObject({ bonus: 0, wut: 0, fineCount: 0 });
+    expect(out.total).toMatchObject({ bonus: 1e60, wut: 0, fineCount: 0 });
+  });
+
+  it('tydzień KPI z dalekiej przyszłości jest zastępowany świeżym od dnia wczytania', () => {
+    const s = defaults();
+    play(s, info, 2);
+    const raw = json(s);
+    (raw.tycoon as { kpi: { fromDay: number; toDay: number } }).kpi.fromDay = 5000;
+    (raw.tycoon as { kpi: { fromDay: number; toDay: number } }).kpi.toDay = 5006;
+    const out = sanitizeEconomy(raw, defaults(), info)!;
+    expect(out.tycoon.kpi.fromDay).toBeLessThanOrEqual(Math.floor(s.minute / MINUTES_PER_DAY));
   });
 });
 
@@ -140,7 +235,7 @@ describe('sanitizeEconomy: napraw to, co da się naprawić', () => {
   const repaired = (patch: Record<string, unknown>): EconomyState => {
     const s = defaults();
     play(s, info, 2);
-    const out = sanitizeEconomy({ ...json(s), ...patch }, defaults());
+    const out = sanitizeEconomy({ ...json(s), ...patch }, defaults(), info);
     expect(out).not.toBeNull();
     return out!;
   };
@@ -163,9 +258,10 @@ describe('sanitizeEconomy: napraw to, co da się naprawić', () => {
   });
 
   it('reputacja, zaufanie, kolejka, pracownicy: zła wartość daje domyślną, a skrajna jest przycięta do zakresu', () => {
-    const s = repaired({ reputation: null, trust: 'x', queue: -4, staff: 99, level: -3, remontLevel: 17 });
+    const s = repaired({ reputation: null, tycoon: { ...json(defaults()).tycoon as object, trust: { value: 'x', monthStart: 'y', month: null } }, queue: -4, staff: 99, level: -3, remontLevel: 17 });
     expect(s.reputation).toBe(50);
-    expect(s.trust).toBe(60);
+    expect(s.tycoon.trust.value).toBe(60);
+    expect(s.tycoon.trust.monthStart).toBe(60);
     expect(s.queue).toBe(0);
     expect(s.staff).toBe(8);
     expect(s.level).toBe(1);
@@ -214,7 +310,7 @@ describe('sanitizeEconomy: napraw to, co da się naprawić', () => {
       history: [{ label: 'wrzesień 2026', profit: null, revenue: 10 }, { profit: 1 }, 3],
       milestones: ['pallet1', 7, null, 'upgrade1'],
       quests: [null, { id: 1 }, ...json(s).quests as unknown[]],
-    }, defaults())!;
+    }, defaults(), info)!;
     expect(out.pallets).toHaveLength(1);
     expect(out.pallets[0]!.id).toBe(s.pallets[0]!.id);
     expect(out.deliveries).toEqual([{ at: 9000, count: 2 }]);
@@ -225,27 +321,27 @@ describe('sanitizeEconomy: napraw to, co da się naprawić', () => {
   });
 
   it('ulepszenia: nieznane i zbyt wysokie poziomy są odrzucone albo przycięte', () => {
-    const out = sanitizeEconomy({ ...json(defaults()), upgrades: { ulotki: 99, szkolenie: 'x', czołg: 3, wozek: 2.4, klima: -1 } }, defaults())!;
+    const out = sanitizeEconomy({ ...json(defaults()), upgrades: { ulotki: 99, szkolenie: 'x', czołg: 3, wozek: 2.4, klima: -1 } }, defaults(), info)!;
     expect(out.upgrades).toEqual({ ulotki: 5, wozek: 2 });
   });
 
   it('paleta: suma sztuk wynika z zawartości, a nowy numer palety nie koliduje z istniejącymi', () => {
     const s = defaults();
     const p = json(s.pallets[0]) as { id: number; total: number };
-    const out = sanitizeEconomy({ ...json(s), nextPalletId: 1, pallets: [{ ...p, id: 40, total: null }] }, defaults())!;
+    const out = sanitizeEconomy({ ...json(s), nextPalletId: 1, pallets: [{ ...p, id: 40, total: null }] }, defaults(), info)!;
     expect(out.pallets[0]!.total).toBeCloseTo(CATS.reduce((n, c) => n + out.pallets[0]!.items[c], 0), 9);
     expect(out.nextPalletId).toBe(41);
   });
 
   it('tryb gry po zepsuciu enuma wraca do domyślnego', () => {
-    const out = sanitizeEconomy({ ...json(defaults()), priority: 'szalony', order: { auto: 'tak', manual: null } }, defaults())!;
+    const out = sanitizeEconomy({ ...json(defaults()), priority: 'szalony', order: { auto: 'tak', manual: null } }, defaults(), info)!;
     expect(out.priority).toBe('rowno');
     expect(out.order).toEqual({ auto: true, manual: 4 });
   });
 });
 
 describe('sanitizeEconomy: czego nie da się naprawić', () => {
-  const broken = (patch: Record<string, unknown>): EconomyState | null => sanitizeEconomy({ ...json(defaults()), ...patch }, defaults());
+  const broken = (patch: Record<string, unknown>): EconomyState | null => sanitizeEconomy({ ...json(defaults()), ...patch }, defaults(), info);
 
   it('lista tam, gdzie ma być lista, i obiekt tam, gdzie ma być obiekt', () => {
     expect(broken({ pallets: null })).toBeNull();
@@ -260,7 +356,7 @@ describe('sanitizeEconomy: czego nie da się naprawić', () => {
   });
 
   it('nie to, czego szukamy: nie obiekt, zła wersja, cudzy seed', () => {
-    for (const raw of [null, undefined, 42, 'x', [], true]) expect(sanitizeEconomy(raw, defaults())).toBeNull();
+    for (const raw of [null, undefined, 42, 'x', [], true]) expect(sanitizeEconomy(raw, defaults(), info)).toBeNull();
     expect(broken({ version: 2 })).toBeNull();
     expect(broken({ version: undefined })).toBeNull();
     expect(broken({ seed: 'inny-sklep' })).toBeNull();
@@ -291,7 +387,7 @@ describe('sanitizeEconomy: skończone, ale absurdalne liczby (zapis ręcznie zmi
     return s;
   };
   const load = (patch: Record<string, unknown>, base: EconomyState = rich()): EconomyState => {
-    const out = sanitizeEconomy({ ...json(base), ...patch }, defaults());
+    const out = sanitizeEconomy({ ...json(base), ...patch }, defaults(), info);
     expect(out).not.toBeNull();
     return out!;
   };
@@ -480,7 +576,7 @@ describe('sanitizeEconomy: skończone, ale absurdalne liczby (zapis ręcznie zmi
     const broken: string[] = [];
     for (const path of all) {
       for (const value of [1e308, -1e308, 1e15]) {
-        const out = sanitizeEconomy(withValue(path, value), defaults());
+        const out = sanitizeEconomy(withValue(path, value), defaults(), info);
         const where = `${path.join('.')} = ${value}`;
         if (!out) { broken.push(`${where}: null`); continue; }
         if (biggest(out) > 1e60) { unbounded.push(`${where} → ${biggest(out)}`); continue; }   // bez gry: mogłaby się zawiesić

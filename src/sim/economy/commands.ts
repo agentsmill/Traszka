@@ -141,7 +141,7 @@ function run(s: EconomyState, info: StoreInfo, c: Command, events: EconEvent[]):
       return r;
     }
     case 'movePallet': return movePallet(s, info, c.palletId, c.loc);
-    case 'returnPallet': return returnPallet(s, c.palletId);
+    case 'returnPallet': return returnPallet(s, c.palletId, events);
     case 'setOrder': setOrder(s, c.auto, c.manual); return { ok: true };
     case 'hire': return hire(s);
     case 'fire': return fire(s);

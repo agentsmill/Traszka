@@ -109,6 +109,7 @@ function StorePanel({ s, info }: { s: EconomyState; info: StoreInfo; v: number }
   const peak = expectedDailyCustomers(s, info) / 15.6 * 1.3;
   const backroom = CATS.reduce((n, c) => n + s.backroom[c], 0);
   const usage = slotUsage(s);
+  const trust = s.tycoon.trust.value;
   return (
     <>
       <Section title="Kasa i kolejka">
@@ -132,8 +133,8 @@ function StorePanel({ s, info }: { s: EconomyState; info: StoreInfo; v: number }
       <Section title="Opinia">
         <Row label="Reputacja">{int(s.reputation)} / 100</Row>
         <Bar value={s.reputation / 100} warn={s.reputation < 30} />
-        <Row label="Zaufanie Centrali">{int(s.trust)} / 100</Row>
-        <Bar value={s.trust / 100} warn={s.trust < 30} />
+        <Row label="Zaufanie Centrali">{int(trust)} / 100</Row>
+        <Bar value={trust / 100} warn={trust < 30} />
         <p class="tt-hint">Reputacja rośnie, gdy klienci znajdują towar i nie czekają. Spada przez puste półki, kolejki i mandaty.</p>
       </Section>
       <Section title="Sloty na sprzęt">

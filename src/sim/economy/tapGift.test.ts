@@ -247,7 +247,8 @@ describe('combo i okna paczek w zapisie', () => {
       const save = raw();
       for (const k of ['tapStreak', 'lastTapAt', 'giftAt']) expect(k in save, `${file}: zapis sprzed L1/L3 nie ma ${k}`).toBe(false);
       const minute = save.minute as number;
-      const out = sanitizeEconomy(save, createEconomy(seed, computeStoreInfo(generateStore(seed))))!;
+      const inf = computeStoreInfo(generateStore(seed));
+      const out = sanitizeEconomy(save, createEconomy(seed, inf), inf)!;
       expect(out, file).not.toBeNull();
       expect(out.tapStreak, file).toBe(0);
       expect(out.lastTapAt, file).toBe(-1e9);
@@ -264,7 +265,7 @@ describe('combo i okna paczek w zapisie', () => {
     expect(giftOpen(s)).toBe(true);
     commitTap(s);
     commitTap(s);
-    const back = sanitizeEconomy(json(s), fresh())!;
+    const back = sanitizeEconomy(json(s), fresh(), info)!;
     expect(back).toEqual(s);
     expect(giftOpen(back)).toBe(true);
     expect(back.giftAt).toBe(s.giftAt);
@@ -274,15 +275,15 @@ describe('combo i okna paczek w zapisie', () => {
 
     // giftAt z zakresu [0, minuta + 2 doby] wraca bez zmian, także to z przyszłej doby
     const ahead = { ...json(s), giftAt: s.minute + 2 * MINUTES_PER_DAY };
-    expect(sanitizeEconomy(ahead, fresh())!.giftAt).toBe(s.minute + 2 * MINUTES_PER_DAY);
-    expect(sanitizeEconomy({ ...json(s), giftAt: 0 }, fresh())!.giftAt).toBe(0);
+    expect(sanitizeEconomy(ahead, fresh(), info)!.giftAt).toBe(s.minute + 2 * MINUTES_PER_DAY);
+    expect(sanitizeEconomy({ ...json(s), giftAt: 0 }, fresh(), info)!.giftAt).toBe(0);
   });
 
   it('sanitize przycina combo i okno do zakresów, a nieliczbę zastępuje wartością z migracji', () => {
     const s = fresh();
     s.minute = 5000;
     const base = json(s);
-    const load = (patch: Record<string, unknown>): EconomyState => sanitizeEconomy({ ...base, ...patch }, fresh())!;
+    const load = (patch: Record<string, unknown>): EconomyState => sanitizeEconomy({ ...base, ...patch }, fresh(), info)!;
 
     expect(load({ giftAt: 1e12 }).giftAt).toBe(5000 + 2 * MINUTES_PER_DAY);
     expect(load({ giftAt: -50 }).giftAt).toBe(0);

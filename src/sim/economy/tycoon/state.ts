@@ -3,16 +3,15 @@ import { createCards, sanitizeCards, type CardOutcome, type CardsState } from '.
 import { createHall, sanitizeHall, type HallState, type Weather } from './cleanliness';
 import { createFatigue, sanitizeFatigue, spendEnergy, type FatigueState } from './fatigue';
 import { newKpiWeek, sanitizeKpi, type KpiMetrics, type KpiScale, type KpiState } from './kpi';
-import { sanitizeReport, type TycoonMonthReport } from './report';
 import { addChores, createStaffPool, sanitizeStaffPool, type StaffPoolState } from './staff';
 import { addTrust, createTrust, sanitizeTrust, type TrustState } from './trust';
 import { createWaste, sanitizeWaste, type WasteState } from './waste';
 import { addWut, createWut, sanitizeWut, type WutState } from './wut';
 
 /**
- * Wszystkie kawałki stanu tycoona w jednym obiekcie JSON: w części 2 to jedno pole `EconomyState.tycoon` (zob.
- * INTEGRATION.md). Każdy kawałek ma własne funkcje w swoim module; tu jest tylko tworzenie, wczytanie z zapisu
- * i zaksięgowanie skutków karty po stronie tycoona.
+ * Wszystkie kawałki stanu tycoona w jednym obiekcie JSON: pole `EconomyState.tycoon` (zob. INTEGRATION.md). Każdy kawałek
+ * ma własne funkcje w swoim module; tu jest tylko tworzenie, wczytanie z zapisu i zaksięgowanie skutków karty po stronie
+ * tycoona. Raportu miesiąca tu nie ma: trzyma go ekonomia w `MonthReport.detail`.
  */
 
 export interface TycoonState {
@@ -25,13 +24,12 @@ export interface TycoonState {
   trust: TrustState;
   kpi: KpiState;
   wut: WutState;
-  lastReport: TycoonMonthReport | null;
 }
 
 export interface TycoonInit {
   day: number;
   seedHash: number;
-  /** Zaufanie startowe (w części 2: dzisiejsze `EconomyState.trust`). */
+  /** Zaufanie startowe albo stare pole `trust` z zapisu sprzed tycoona. */
   trust?: number;
   weather?: Weather;
   /** Liczniki narastające sklepu (KPI liczy od nich postęp) i skala sklepu (cele i nagrody). */
@@ -50,13 +48,12 @@ export function createTycoon(init: TycoonInit): TycoonState {
     trust: createTrust(init.trust),
     kpi: newKpiWeek(init.seedHash, 1, init.day, init.metrics, init.scale),
     wut: createWut(),
-    lastReport: null,
   };
 }
 
 /**
  * Wczytanie z zapisu. Brak pola (zapis sprzed tycoona) daje świeży kawałek, a zaufanie bierze się wtedy z `init.trust`
- * (dzisiejsze `EconomyState.trust`). `staff` to liczba osób na zmianie (przydziały ręczne muszą się w niej mieścić).
+ * (stare pole `trust` zapisu). `staff` to liczba osób na zmianie (przydziały ręczne muszą się w niej mieścić).
  */
 export function sanitizeTycoon(raw: unknown, init: TycoonInit & { staff: number }): TycoonState {
   const fresh = createTycoon(init);
@@ -71,7 +68,6 @@ export function sanitizeTycoon(raw: unknown, init: TycoonInit & { staff: number 
     trust: sanitizeTrust(raw.trust, init.trust),
     kpi: sanitizeKpi(raw.kpi, fresh.kpi),
     wut: sanitizeWut(raw.wut),
-    lastReport: raw.lastReport === null || raw.lastReport === undefined ? null : sanitizeReport(raw.lastReport),
   };
 }
 

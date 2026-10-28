@@ -50,6 +50,17 @@ describe('stan tycoona w jednym obiekcie', () => {
     expect(createTycoon({ ...INIT, trust: 'abc' as unknown as number }).trust.value).toBe(TRUST.start);
   });
 
+  it('stan nie niesie raportu miesiąca: raport trzyma ekonomia (MonthReport.detail), a makieta własną listę', () => {
+    const t = createTycoon(INIT);
+    expect(Object.keys(t).sort()).toEqual(['cards', 'fatigue', 'hall', 'kpi', 'staff', 'trust', 'version', 'waste', 'wut']);
+    const old = { ...JSON.parse(JSON.stringify(t)), lastReport: { stary: true } };
+    expect(Object.keys(sanitizeTycoon(old, { ...INIT, staff: 2 })).sort()).toEqual(Object.keys(t).sort());
+    const s = createSandbox();
+    for (let i = 0; i < 31 * 1440; i++) stepPassive(s);
+    expect(s.reports.length).toBeGreaterThanOrEqual(1);
+    expect('lastReport' in s.tycoon).toBe(false);
+  });
+
   it('uszkodzony kawałek naprawia się sam, reszta zostaje', () => {
     const t = createTycoon(INIT);
     t.fatigue.energy = 33;

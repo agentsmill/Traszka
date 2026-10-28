@@ -402,7 +402,6 @@ function closeMonth(s: SandboxState, day: number): void {
     marginPerCustomer: MARGIN_PER_CUSTOMER,
   }, s.seedHash);
   closeWasteMonth(t.waste);
-  t.lastReport = report;
   s.reports.push(report);
   s.month = emptyMonth();
 }

@@ -3,9 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { formatMonth, isLastDayOfMonth } from '@/sim/economy/calendar';
 import { CAT_INFO, CATS, CREDIT_LIMIT, GIFT_FIRST, MINUTES_PER_DAY, OPEN_FROM, PALLET_ITEMS } from '@/sim/economy/catalog';
 import {
-  buyEquipment, buyUpgrade, effects, emptyCounters, giftWindowFrom, stepMinute, tapPallet, type CommandResult, type Counters, type EconEvent,
-  type EconomyState,
+  buyEquipment, buyUpgrade, effects, emptyCounters, giftWindowFrom, kpiMetricsOf, kpiScaleOf, stepMinute, tapPallet, type CommandResult,
+  type Counters, type EconEvent, type EconomyState,
 } from '@/sim/economy/economy';
+import { newKpiWeek } from '@/sim/economy/tycoon/kpi';
 import { questTitle, type Quest } from '@/sim/economy/quests';
 import { LIMITS } from '@/sim/economy/sanitize';
 import { computeStoreInfo } from '@/sim/economy/storeInfo';
@@ -83,18 +84,35 @@ const withQuestTitles = (e: EconomyState): EconomyState => ({
   quests: e.quests.map((q) => ({ ...q, title: questTitle(q) })),
 });
 
+/** Stan bez tycoona: zapisy z produkcji go nie mają, więc tycoon sprawdzamy osobno (zaufanie ze starego pola `trust`). */
+const withoutTycoon = (e: EconomyState): Omit<EconomyState, 'tycoon'> => {
+  const { tycoon: _, ...rest } = e;
+  return rest;
+};
+/** Zaufanie z zapisu sprzed tycoona (stare pole `trust`, którego typ `EconomyState` już nie ma). */
+const legacyTrust = (e: EconomyState): number => (e as unknown as { trust: number }).trust;
+
 /**
- * Stan, jaki daje wczytanie zapisu z produkcji (fixtures): bez tytułów zleceń (L9) i z polami combo i okien paczek,
- * których zapisy sprzed L1 i L3 jeszcze nie mają. Migracja: brak serii (`tapStreak` 0), ostatnie stuknięcie dawno temu
- * (`lastTapAt` -1e9, jak `lastFineAt`) i pierwsze okno paczki `GIFT_FIRST` minut po minucie zapisu, przesunięte
+ * Stan, jaki daje wczytanie zapisu z produkcji (fixtures), bez `tycoon`: bez tytułów zleceń (L9), bez starego pola `trust`
+ * (przeszło do `tycoon.trust`), z zerowymi licznikami `bonus`, `wut` i `fineCount` (także w raporcie) i z polami combo
+ * i okien paczek, których zapisy sprzed L1 i L3 jeszcze nie mają. Migracja: brak serii (`tapStreak` 0), ostatnie stuknięcie
+ * dawno temu (`lastTapAt` -1e9, jak `lastFineAt`) i pierwsze okno paczki `GIFT_FIRST` minut po minucie zapisu, przesunięte
  * w godziny otwarcia (`giftWindowFrom`).
  */
-const asLoaded = (e: EconomyState): EconomyState => ({
-  ...withoutQuestTitles(e),
-  tapStreak: 0,
-  lastTapAt: -1e9,
-  giftAt: giftWindowFrom(e.minute + GIFT_FIRST),
-});
+const asLoaded = (e: EconomyState): Omit<EconomyState, 'tycoon'> => {
+  const { trust: _, ...rest } = withoutTycoon(withoutQuestTitles(e)) as Omit<EconomyState, 'tycoon'> & { trust?: number };
+  const counters = (c: Counters): Counters => ({ ...c, bonus: 0, wut: 0, fineCount: 0 });
+  return {
+    ...rest,
+    today: counters(rest.today),
+    month: counters(rest.month),
+    total: counters(rest.total),
+    lastReport: rest.lastReport && { ...rest.lastReport, counters: counters(rest.lastReport.counters) },
+    tapStreak: 0,
+    lastTapAt: -1e9,
+    giftAt: giftWindowFrom(e.minute + GIFT_FIRST),
+  };
+};
 
 let storage: MemoryStorage;
 let errorLog: ReturnType<typeof vi.spyOn>;
@@ -270,7 +288,8 @@ describe('migracja zapisu v1 (sam stan ekonomii, bez układu)', () => {
       const s = createSession(seed);
       expect(s.fromSave).toBe(true);
       expect(s.loadNotice).toBeNull();
-      expect(s.econ).toEqual({ ...asLoaded(v1), lastReport: null });
+      expect(withoutTycoon(s.econ)).toEqual({ ...asLoaded(v1), lastReport: null });
+      expect(s.econ.tycoon.trust.value).toBe(legacyTrust(v1));
       expect(s.layout).toEqual(layoutFor(seed, remont));
       expect(s.layoutLevel).toBe(remont);
       // palety i sprzęt wskazują na istniejące miejsca i sloty w układzie
@@ -370,7 +389,8 @@ describe('zapisy v2 z produkcji', () => {
         expect(s.ephemeral).toBe(false);
         expect(s.retired).toBe(false);
         expect(s.layout).toEqual(f.layout);
-        expect(s.econ).toEqual(asLoaded(f.econ));
+        expect(withoutTycoon(s.econ)).toEqual(asLoaded(f.econ));
+        expect(s.econ.tycoon.trust.value).toBe(legacyTrust(f.econ));
         for (const q of s.econ.quests) expect('title' in q).toBe(false);
         expect(s.layoutLevel).toBe(remont);
         expect(errorLog).not.toHaveBeenCalled();
@@ -409,7 +429,7 @@ describe('zapisy v2 z produkcji', () => {
         expect(saved.generatorVersion).toBe(GENERATOR_VERSION);
         expect(saved.layout).toEqual(f.layout);
         // w kopercie zlecenia mają tytuły jak w zapisie z produkcji (build sprzed L9 bez nich je gubi); stan z koperty ich nie ma
-        expect(saved.econ).toEqual(withQuestTitles(asLoaded(f.econ)));
+        expect(saved.econ).toEqual(withQuestTitles({ ...asLoaded(f.econ), tycoon: s.econ.tycoon }));
         const savedQuests = saved.econ.quests as (Quest & { title: string })[];
         expect(savedQuests.map((q) => q.title)).toEqual(s.econ.quests.map((q) => questTitle(q)));
         // te same napisy co w zapisie z produkcji; spacja w liczbie (NBSP albo wąska) zależy od ICU, więc porównujemy bez rozróżniania spacji
@@ -418,10 +438,54 @@ describe('zapisy v2 z produkcji', () => {
         expect(storage.getItem(`${key(seed)}:broken`)).toBeNull();
 
         const again = createSession(seed, false, partner);
-        expect(again.econ).toEqual(asLoaded(f.econ));
+        expect(withoutTycoon(again.econ)).toEqual(asLoaded(f.econ));
+        expect(again.econ.tycoon).toEqual(s.econ.tycoon);   // tycoon z migracji wraca z zapisu bez zmian
         for (const q of again.econ.quests) expect('title' in q).toBe(false);
         expect(again.layout).toEqual(f.layout);
       });
+    });
+  }
+});
+
+/**
+ * Stan tycoona dochodzi do zapisów z produkcji (v1 i v2) migracją w `sanitizeEconomy`: zapisy nie mają pola `tycoon`, a stare
+ * `trust` przechodzi do `tycoon.trust`. `EconomyState.version` zostaje 1, a `SAVE_SCHEMA` 2, więc cofnięcie wdrożenia nadal
+ * wczyta nowy zapis (nieznane pole przepadnie, postęp zostanie).
+ */
+describe('zapisy z produkcji a stan tycoona', () => {
+  const cases = [
+    { file: 'save-v1-blok-dzien40.json', seed: BLOK, partner: undefined, v2: false },
+    { file: 'save-v1-remont1.json', seed: PAWILON, partner: undefined, v2: false },
+    { file: 'save-v2-dzien30.json', seed: 'traszka-v2-a', partner: { points: 0, networkIncome: 0, stores: 0 }, v2: true },
+    { file: 'save-v2-remont2.json', seed: 'traszka-v2-b', partner: { points: 120, networkIncome: 350, stores: 2 }, v2: true },
+  ];
+
+  it('stałe wersji zapisu się nie zmieniły (cofnięcie wdrożenia wczytuje nowy zapis)', () => {
+    expect(SAVE_SCHEMA).toBe(2);
+    expect(createSession(BLOK, true).econ.version).toBe(1);
+  });
+
+  for (const { file, seed, partner, v2 } of cases) {
+    it(`${file}: gotówka, poziom, XP, ulepszenia, sprzęt, remont i historia równe zapisowi, zaufanie przeszło do tycoona`, () => {
+      const raw = JSON.parse(text(file)) as EconomyState | SaveEnvelope;
+      const was = (v2 ? (raw as SaveEnvelope).econ : raw) as EconomyState;
+      storage.setItem(key(seed), text(file));
+
+      const s = createSession(seed, false, partner);
+      expect(s.fromSave).toBe(true);
+      expect(s.loadNotice).toBeNull();
+      expect(errorLog).not.toHaveBeenCalled();
+      for (const field of ['cash', 'level', 'xp', 'upgrades', 'equipment', 'remontLevel', 'history'] as const) {
+        expect(s.econ[field], field).toEqual(was[field]);
+      }
+      expect(s.econ.tycoon.trust.value).toBe(legacyTrust(was));
+      expect(s.econ.tycoon.trust.monthStart).toBe(legacyTrust(was));
+      expect('trust' in s.econ).toBe(false);
+      // tydzień KPI liczy się od dnia wczytania i od liczników zapisu
+      expect(s.econ.tycoon.kpi.fromDay).toBe(Math.floor(was.minute / MINUTES_PER_DAY));
+      expect(s.econ.tycoon.kpi.start.customers).toBe(was.total.customers);
+      expect(s.econ.total.fineCount).toBe(0);
+      expectPlayable(s);
     });
   }
 });
@@ -634,6 +698,8 @@ describe('minuty i historia z długiej, ale możliwej gry wracają z zapisu bez 
     const played = playedSession(BLOK);
     const days = Math.round(100 * 365.2425);
     played.econ.minute = days * MINUTES_PER_DAY + OPEN_FROM;
+    // sto lat później tydzień KPI też już jest ten sam co dziś (przeskok zegara bez gry zostawiłby go sprzed stu lat)
+    played.econ.tycoon.kpi = newKpiWeek(played.econ.seedHash, 1, days, kpiMetricsOf(played.econ), kpiScaleOf(played.econ, played.info));
     played.econ.history = monthlyHistory(days);
     expect(played.econ.history).toHaveLength(1200);
     saveSession(played);

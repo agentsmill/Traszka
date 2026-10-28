@@ -4,11 +4,12 @@ import { BANKRUPTCY_AT, CATS, MINUTES_PER_DAY, OPEN_FROM, START_CASH, TILL_RATE,
 import { dateOfDay, formatDate, isLastDayOfMonth } from './calendar';
 import { advanceEconomy } from './clock';
 import {
-  buyEquipment, buyUpgrade, claimGift, claimQuest, createEconomy, effects, movePallet, relayout, slotFree, startRemont,
-  stepMinute, tapPallet, tapTill, unlocksAt, upgradeBlocker, workshopUnlocked, type CommandResult, type EconEvent,
-  type EconomyState,
+  buyEquipment, buyUpgrade, changeTrust, claimGift, claimQuest, createEconomy, effects, estimatedDailyMargin, expectedDailyCustomers,
+  kpiMetricsOf, kpiScaleOf, movePallet, relayout, returnPallet, slotFree, startRemont, stepMinute, tapPallet, tapTill, unlocksAt,
+  upgradeBlocker, workshopUnlocked, type CommandResult, type EconEvent, type EconomyState,
 } from './economy';
 import { computeStoreInfo, type StoreInfo } from './storeInfo';
+import { TRUST, trustTier } from './tycoon/trust';
 import { UPGRADE_BY_ID } from './upgrades';
 
 const SEED = 'kiełbasa-42';   // blok z 1 slotem SCO i 3 slotami 2×2
@@ -378,5 +379,186 @@ describe('nagrody i postęp', () => {
     s.level = 4;
     expect(buyEquipment(s, info, 'piec').ok).toBe(true);
     expect(unlocksAt(4)).toContain('Piec do pizzy');
+  });
+});
+
+describe('zaufanie Centrali przez moduł tycoona', () => {
+  /** Dochodzi do pierwszego mandatu (palety pod sklepem, nikt ich nie rozładowuje) i staje zaraz po nim. */
+  const untilFine = (s: EconomyState): EconEvent[] => {
+    s.staff = 1;            // jedyna osoba stoi na kasie, więc palety zostają na chodniku
+    s.priority = 'klienci';
+    s.order = { auto: false, manual: 0 };
+    const events: EconEvent[] = [];
+    for (let i = 0; i < 10 * MINUTES_PER_DAY && !events.some((e) => e.kind === 'fine'); i++) stepMinute(s, info, events);
+    expect(events.some((e) => e.kind === 'fine')).toBe(true);
+    return events;
+  };
+
+  it('nowa gra: zaufanie startowe 60 w stanie tycoona, a starego pola trust nie ma', () => {
+    const s = createEconomy(SEED, info);
+    expect(s.tycoon.trust.value).toBe(TRUST.start);
+    expect('trust' in s).toBe(false);
+    expect(s.tycoon.staff.profile).toBe('kolejka');
+  });
+
+  it('tydzień KPI nowej gry liczy się od liczników sklepu i jego skali', () => {
+    const s = createEconomy(SEED, info);
+    expect(s.tycoon.kpi.fromDay).toBe(0);
+    expect(s.tycoon.kpi.start).toEqual(kpiMetricsOf(s));
+    expect(s.tycoon.kpi.target).toBeGreaterThan(0);
+  });
+
+  it('kpiMetricsOf: klienci, hot-dogi i odstraszeni z licznika gry, mandaty z fineCount, czystość z sali', () => {
+    const s = createEconomy(SEED, info);
+    Object.assign(s.total, { customers: 120, hotSold: 31, lost: 7, fineCount: 2, fines: 900 });
+    Object.assign(s.tycoon.hall, { totalSum: 5000, totalMinutes: 60 });
+    expect(kpiMetricsOf(s)).toEqual({ customers: 120, hotSold: 31, lost: 7, fines: 2, cleanSum: 5000, cleanMinutes: 60 });
+  });
+
+  it('kpiScaleOf: oczekiwani klienci i marża dnia sklepu oraz poziom gracza', () => {
+    const s = createEconomy(SEED, info);
+    s.level = 6;
+    expect(kpiScaleOf(s, info)).toEqual({
+      dailyCustomers: expectedDailyCustomers(s, info), dailyMargin: estimatedDailyMargin(s, info), level: 6,
+    });
+  });
+
+  it('mandat obniża zaufanie z przyczyną mandaty', () => {
+    const s = createEconomy(SEED, info);
+    untilFine(s);
+    expect(s.tycoon.trust.month.mandaty).toBe(-1);
+    expect(s.tycoon.trust.value).toBe(TRUST.start + TRUST.fine);
+    expect(s.total.fineCount).toBe(1);
+    expect(s.month.fineCount).toBe(1);
+    expect(s.total.fines).toBeGreaterThan(0);
+  });
+
+  it('kierowca, który zabrał palety, obniża zaufanie z przyczyną palety', () => {
+    const s = createEconomy(SEED, info);
+    s.staff = 1;
+    s.priority = 'klienci';
+    s.order = { auto: false, manual: 12 };
+    const events = run(s, info, 4 * MINUTES_PER_DAY);
+    expect(events.some((e) => e.kind === 'warning' && e.text.includes('zabrał'))).toBe(true);
+    expect(s.tycoon.trust.month.palety).toBeLessThan(0);
+  });
+
+  it('odesłana paleta: -4 z przyczyną palety', () => {
+    const s = createEconomy(SEED, info);
+    expect(returnPallet(s, s.pallets[0]!.id).ok).toBe(true);
+    expect(s.tycoon.trust.month).toEqual({ palety: TRUST.returnedPallet });
+    expect(s.tycoon.trust.value).toBe(TRUST.start + TRUST.returnedPallet);
+  });
+
+  it('zmiana progu zaufania daje zdarzenie trust-tier, drobna zmiana w tym samym progu niczego nie dopisuje', () => {
+    const s = createEconomy(SEED, info);
+    const out: EconEvent[] = [];
+    expect(changeTrust(s, 'inne', -40, out)).toBe(-40);
+    const tier = trustTier(20);
+    expect(out).toEqual([{ kind: 'trust-tier', text: `Zaufanie Centrali: ${tier.label}. ${tier.flavor}` }]);
+    expect(changeTrust(s, 'inne', 0.1, out)).toBeCloseTo(0.1, 9);
+    expect(out).toHaveLength(1);
+    expect(changeTrust(s, 'inne', 0, out)).toBe(0);
+    expect(out).toHaveLength(1);
+  });
+
+  it('changeTrust bez tablicy zdarzeń też działa, a miękkie granice zostają w addTrust', () => {
+    const s = createEconomy(SEED, info);
+    s.tycoon.trust.value = 80;
+    expect(changeTrust(s, 'kpi', 10)).toBe(5);   // powyżej 75 zysk liczy się w połowie
+    expect(s.tycoon.trust.value).toBe(85);
+    expect(s.tycoon.trust.month.kpi).toBe(5);
+  });
+
+  /** Dochodzi do 22:00 ostatniego dnia września (dzień 29), tuż przed zamknięciem dnia i miesiąca. */
+  const toMonthEnd = (s: EconomyState): void => {
+    run(s, info, 29 * MINUTES_PER_DAY + 16 * 60);
+    expect(dateOfDay(Math.floor(s.minute / MINUTES_PER_DAY)).date).toBe(30);
+  };
+
+  it('zaufanie 0 przy zamknięciu miesiąca to koniec gry', () => {
+    const s = createEconomy(SEED, info);
+    toMonthEnd(s);
+    s.cash = 1e6;                    // to nie bankructwo
+    s.tycoon.trust.value = 2;
+    s.month.fines += 1e6;            // wynik miesiąca ujemny: -8 (w połowie, bo poniżej 30) zbija zaufanie do zera
+    const events = run(s, info, 2 * 60);
+    expect(s.tycoon.trust.value).toBe(0);
+    expect(s.gameOver).toBe(true);
+    const over = events.filter((e) => e.kind === 'gameover');
+    expect(over).toHaveLength(1);
+    expect(over[0]!.text).toBe('Centrala wypowiada umowę franczyzową: zaufanie spadło do zera. Dziękujemy za współpracę.');
+    // raport miesiąca wyszedł przed końcem gry, a nowy miesiąc zaczyna się od tej wartości
+    expect(events.some((e) => e.kind === 'month')).toBe(true);
+    expect(s.tycoon.trust.monthStart).toBe(0);
+    expect(s.tycoon.trust.month).toEqual({});
+  });
+
+  it('zaufanie 0 w środku miesiąca to tylko ostrzeżenie, a dobry wynik miesiąca ratuje umowę', () => {
+    const mid = createEconomy(SEED, info);
+    run(mid, info, 3 * MINUTES_PER_DAY);
+    mid.tycoon.trust.value = 0;
+    run(mid, info, 2 * MINUTES_PER_DAY);
+    expect(mid.gameOver).toBe(false);
+
+    const s = createEconomy(SEED, info);
+    toMonthEnd(s);
+    s.cash = 1e6;
+    s.tycoon.trust.value = 2;
+    s.month.margin += 1e6;           // wynik miesiąca dodatni: +5 podnosi zaufanie
+    const events = run(s, info, 2 * 60);
+    expect(s.gameOver).toBe(false);
+    expect(s.tycoon.trust.value).toBe(7);
+    expect(events.some((e) => e.kind === 'gameover')).toBe(false);
+  });
+
+  it('bankructwo i wypowiedzenie umowy naraz: jedno zdarzenie gameover', () => {
+    const s = createEconomy(SEED, info);
+    toMonthEnd(s);
+    s.cash = -1e6;
+    s.tycoon.trust.value = 1;
+    s.month.fines += 1e6;
+    const events = run(s, info, 2 * 60);
+    expect(s.gameOver).toBe(true);
+    expect(events.filter((e) => e.kind === 'gameover')).toHaveLength(1);
+  });
+
+  it('premia od obrotu idzie do licznika bonus według progu zaufania, a wynik miesiąca ją liczy', () => {
+    const s = createEconomy(SEED, info);
+    toMonthEnd(s);
+    s.tycoon.trust.value = 90;       // próg ulubieńca: 1,5% obrotu
+    const events = run(s, info, 2 * 60);
+    const c = events.find((e) => e.kind === 'month')!.report!.counters;
+    expect(c.bonus).toBe(Math.round(0.015 * c.revenue));
+    expect(c.bonus).toBeGreaterThan(0);
+    const report = events.find((e) => e.kind === 'month')!.report!;
+    expect(report.profit).toBeCloseTo(c.margin + c.bonus + c.other - c.wages - c.media - c.fee - c.fines - c.logistics - c.wut, 6);
+  });
+
+  it('poniżej 70 premii od obrotu nie ma (dawne „≥ 70 to 1%” zastąpiły progi z tycoona)', () => {
+    const s = createEconomy(SEED, info);
+    toMonthEnd(s);
+    s.tycoon.trust.value = 69;
+    const events = run(s, info, 2 * 60);
+    expect(events.find((e) => e.kind === 'month')!.report!.counters.bonus).toBe(0);
+  });
+
+  it('wynik miesiąca w zaufaniu ląduje w zamkniętym miesiącu (zmiana z przyczyną wynik przed closeTrustMonth)', () => {
+    // closeTrustMonth wołany jest po changeTrust('wynik'): po zamknięciu start nowego miesiąca to wartość PO zmianie z wyniku
+    const s = createEconomy(SEED, info);
+    toMonthEnd(s);
+    s.tycoon.trust.value = 60;
+    s.tycoon.trust.monthStart = 60;
+    s.month.margin += 1e6;
+    run(s, info, 2 * 60);
+    expect(s.tycoon.trust.monthStart).toBe(65);
+  });
+
+  it('licznik fineCount rośnie razem z mandatami i przechodzi przez zapis JSON', () => {
+    const s = createEconomy(SEED, info);
+    untilFine(s);
+    const restored = JSON.parse(JSON.stringify(s)) as EconomyState;
+    expect(restored.total.fineCount).toBe(1);
+    expect(restored.tycoon.trust.month.mandaty).toBe(-1);
   });
 });
