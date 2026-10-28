@@ -1,7 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CAT_INFO, CATS, CREDIT_LIMIT, MINUTES_PER_DAY, OPEN_FROM, PALLET_ITEMS } from '@/sim/economy/catalog';
-import { buyEquipment, buyUpgrade, effects, startRemont, stepMinute, tapPallet, type EconEvent, type EconomyState } from '@/sim/economy/economy';
+import {
+  buyEquipment, buyUpgrade, effects, emptyCounters, startRemont, stepMinute, tapPallet, type Counters, type EconEvent, type EconomyState,
+} from '@/sim/economy/economy';
 import { LIMITS } from '@/sim/economy/sanitize';
 import { computeStoreInfo } from '@/sim/economy/storeInfo';
 import { REMONTS } from '@/sim/economy/upgrades';
@@ -423,6 +425,60 @@ describe('granice wartości z zapisu (LIMITS) nie schodzą poniżej tego, co pot
     expect(most.queue * 4).toBeLessThanOrEqual(LIMITS.queue);
     expect(most.deliveries * 2).toBeLessThanOrEqual(LIMITS.deliveries);
     expect(most.pallets * 2).toBeLessThanOrEqual(LIMITS.pallets);
+  });
+});
+
+describe('pieniądze w zapisie: LIMITS.money to straż przed przepełnieniem, a nie granica rozgrywki', () => {
+  /** Ta sama kwota we wszystkich polach pieniężnych: kasa, liczniki, najlepszy dzień, historia, raport miesięczny, dochód z sieci. */
+  function setMoney(e: EconomyState, value: number): void {
+    e.cash = value;
+    e.lastDayProfit = value;
+    e.bestDayProfit = value;
+    e.partner = { ...e.partner, networkIncome: value };
+    for (const k of Object.keys(emptyCounters()) as (keyof Counters)[]) e.today[k] = e.month[k] = e.total[k] = value;
+    e.history = [{ label: 'wrzesień 2026', profit: value, revenue: value }];
+    e.lastReport = { label: 'wrzesień 2026', counters: { ...e.total }, profit: value, cash: value, comment: 'Rekordowy miesiąc!' };
+  }
+  const savedEcon = (): EconomyState => (JSON.parse(storage.getItem(key(BLOK))!) as { econ: EconomyState }).econ;
+
+  // 1,5e12: kasa po ok. 100 sklepach sieci (aktywny gracz, ok. 10 godzin przy ×8); 1e45: sieć kilkuset sklepów
+  for (const value of [1.5e12, 1e45]) {
+    it(`${value}: zapis wczytany i zapisany ponownie wraca bez zmian (kasa, liczniki, najlepszy dzień, historia, raport, dochód z sieci)`, () => {
+      const played = playedSession(BLOK);
+      setMoney(played.econ, value);
+      saveSession(played);
+      const before = savedEcon();
+
+      const loaded = createSession(BLOK);   // wczytanie
+      expect(loaded.fromSave).toBe(true);
+      expect(loaded.loadNotice).toBeNull();
+      expect(loaded.econ.cash).toBe(value);
+      expect(loaded.econ.total.other).toBe(value);
+      expect(loaded.econ.history[0]!.profit).toBe(value);
+      expect(loaded.econ.lastReport).toMatchObject({ cash: value, profit: value });
+      expect(loaded.econ.bestDayProfit).toBe(value);
+
+      saveSession(loaded);                  // zapis po wczytaniu: pierwszy persist() po starcie
+      expect(savedEcon()).toEqual(before);
+      expectPlayable(loaded);
+    });
+  }
+
+  it('1e61 (i 1e308) jest przycięte do granicy 1e60, liczby zostają skończone, a gra się toczy', () => {
+    for (const huge of [1e61, 1e308]) {
+      const played = playedSession(BLOK);
+      setMoney(played.econ, huge);
+      saveSession(played);
+      const loaded = createSession(BLOK);
+      expect(LIMITS.money).toBe(1e60);
+      expect(loaded.econ.cash).toBe(1e60);
+      expect(loaded.econ.total.other).toBe(1e60);
+      expect(loaded.econ.history[0]).toEqual({ label: 'wrzesień 2026', profit: 1e60, revenue: 1e60 });
+      expect(loaded.econ.lastReport).toMatchObject({ cash: 1e60, profit: 1e60 });
+      expect(loaded.econ.bestDayProfit).toBe(1e60);
+      expect(loaded.econ.partner.networkIncome).toBe(1e60);
+      expectPlayable(loaded);   // także NaN i Infinity po dniu gry (dochód z sieci dolicza się do kasy co wieczór)
+    }
   });
 });
 

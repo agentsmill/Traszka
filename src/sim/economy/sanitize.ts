@@ -10,16 +10,23 @@ import { EQUIPMENT_BY_ID, REMONTS, UPGRADE_BY_ID, type EquipmentId, type Upgrade
 /**
  * Granice liczb z zapisu. „Skończona” nie znaczy „rozsądna”: zapis zmieniony ręcznie (albo zepsuty) potrafi mieć 1e308
  * tam, gdzie gra liczy sztuki, minuty i poziomy. Wtedy `deliver()` kręci pętlę po 1e308 paletach, `processLevels`
- * odejmuje 120 od 1e308 bez końca, a ułamkowa minuta po cichu wyłącza zamykanie dni (`mod === OPEN_TO`). Każda granica
- * jest wzięta z maksimum samej gry (komentarz przy polu) i ma duży zapas: prawdziwy zapis nigdy jej nie dotyka, więc wraca
- * bez zmian co do bajta, a zapis ze skrajną liczbą wczytuje się i gra normalnie. Test w `game/session.test.ts` pilnuje,
- * żeby granice nie zeszły poniżej tego, co potrafi największy sklep z generatora.
+ * odejmuje 120 od 1e308 bez końca, a ułamkowa minuta po cichu wyłącza zamykanie dni (`mod === OPEN_TO`). Granice sztuk,
+ * minut, numerów i poziomów są wzięte z maksimum samej gry (komentarz przy polu) i mają duży zapas: prawdziwy zapis nigdy
+ * ich nie dotyka, więc wraca bez zmian co do bajta, a zapis ze skrajną liczbą wczytuje się i gra normalnie. Pieniądze to
+ * wyjątek: gra nie ma dla nich górnej granicy (pętla prestiżu nie kończy się), więc `money` jest tylko strażą przed
+ * przepełnieniem. Test w `game/session.test.ts` pilnuje, żeby granice nie zeszły poniżej tego, co potrafi największy sklep
+ * z generatora i długa gra.
  */
 export const LIMITS = {
   /** Minuty gry: 1000 lat. Kalendarz zostaje poprawną datą, a `rand01` (int32) się nie zawija: 5,3e8 < 2^31. */
   minute: 1000 * 366 * MINUTES_PER_DAY,
-  /** Złotówki i liczniki: bilion. Sklep zarabia dziesiątki tysięcy dziennie, bilion to tysiące lat ciągłej gry. */
-  money: 1e12,
+  /**
+   * Złotówki i liczniki: straż przed przepełnieniem, nie granica rozgrywki (resztę robi `Number.isFinite`). Dochód z sieci
+   * rośnie o ok. 10% na każdy kolejny sklep: zmierzone 1,1e12 zł w kasie po 97 sklepach sieci (aktywny gracz, 8–12 godzin przy
+   * ×8), a tysiąc sklepów to ok. 3e49. 1e60 leży ponad tym z zapasem i daleko od 1e308, więc sumy i mnożenia przez stawki
+   * zostają skończone.
+   */
+  money: 1e60,
   /** Palet w jednej dostawie: zamówienie ręczne ma najwyżej 30, a limit kredytu po trzecim remoncie (CREDIT_LIMIT × 2,5) mieści 91 palet. */
   orderPallets: 100,
   /** Palet naraz w sklepie: miejsc jest najwyżej 28 (do 17 na chodniku, 3 w sali, 8 na zapleczu). */
@@ -32,17 +39,26 @@ export const LIMITS = {
   history: 12_000,
   /** Kamienie milowe: w grze jest ich 15. */
   milestones: 200,
-  /** Sztuk jednej kategorii na półkach albo zapleczu: największy sklep mieści na półkach 2145 sztuk kategorii, zaplecze 18 810 w sumie. */
+  /**
+   * Sztuk jednej kategorii na półkach albo zapleczu: największa półka z generatora mieści 2451 sztuk kategorii (zmierzone na
+   * wszystkich 45 000 seedach, które losuje gra, na czterech poziomach remontu), zaplecze 18 810 w sumie.
+   */
   stockPerCat: 100_000,
   /** Sztuk na palecie: PALLET_ITEMS i sztuka zapasu na zaokrąglenia (suma składu palety wychodzi z ułamków). */
   palletItems: PALLET_ITEMS + 1,
-  /** Kolejka przy kasie: klienci rezygnują dużo wcześniej (cierpliwość ≤ 10, potem rezygnuje każdy kolejny). */
+  /**
+   * Kolejka przy kasie: ruch rośnie z Punktami Partnera, więc w 4000 dniach gry kolejka sięgała 538 osób przy 5,3 tys. punktów
+   * i 2799 przy 40 tys. Granica przycina tylko chwilowe zaległości (kolejka zeruje się co wieczór po zamknięciu sklepu).
+   */
   queue: 1000,
   /** Poziom gracza: do 1000. poziomu potrzeba ok. 2 mld XP (`xpToNext`), czyli tysięcy lat gry. */
   level: 1000,
   /** Numery palet i zleceń: 2^30; `rand01` liczy je jako int32. */
   id: 2 ** 30,
-  /** Punkty Partnera: sklep daje pierwiastek z marży / 20 000 (do ok. 7000 przy bilionie), sklepów w sieci jest do tysiąca. */
+  /**
+   * Punkty Partnera: sklep daje pierwiastek z marży / 20 000, a marża jednego sklepu jest mała (zmierzone 5094 punkty po 97
+   * sklepach sieci); 1e7 mieści tysiąc sklepów po ok. 10 tys. punktów.
+   */
   partnerPoints: 1e7,
   /** Sklepy w sieci. */
   network: 1000,
@@ -139,7 +155,7 @@ function notNull<T>(v: T | null): v is T {
   return v !== null;
 }
 
-/** Kwota w złotych: skończona, w granicach ±bilion (ujemna to dług, nie błąd). */
+/** Kwota w złotych: skończona, w granicach ±`LIMITS.money` (ujemna to dług, nie błąd). */
 const money = (v: unknown, fallback: number): number => num(v, fallback, -LIMITS.money, LIMITS.money);
 
 /** Zostawia pierwszy element z danym kluczem (zdublowany numer palety albo zlecenia to uszkodzenie) i pomija wypadłe (null). */

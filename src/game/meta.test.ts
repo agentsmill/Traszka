@@ -185,12 +185,35 @@ describe('meta ze skrajnymi liczbami', () => {
     expect(m.partnerPoints).toBe(1e7);
     expect(m.daily.streak).toBeLessThanOrEqual(366_000);
     expect(m.lastSeen).toBeLessThanOrEqual(8.64e15);
-    expect(m.network.map((n) => n.income)).toEqual([1e12, 1e12, 0]);
+    expect(m.network.map((n) => n.income)).toEqual([1e60, 1e60, 0]);
     expect(m.network.map((n) => n.level)).toEqual([1000, 7, 1]);
-    expect(m.network.map((n) => n.margin)).toEqual([1e12, 5, 0]);
+    expect(m.network.map((n) => n.margin)).toEqual([1e60, 5, 0]);
     const p = partnerOf(m);
     expect(Number.isFinite(p.networkIncome)).toBe(true);
-    expect(p.networkIncome).toBeLessThanOrEqual(3e12);
+    expect(p.networkIncome).toBeLessThanOrEqual(3e60);
+  });
+
+  it('dochód i marża sklepu w sieci z długiej gry (1,5e12 i 1e45) wracają bez zmian po wczytaniu i zapisie', () => {
+    for (const v of [1.5e12, 1e45]) {
+      const good: Meta = {
+        version: 1, partnerPoints: 5000, network: [entry('a', v, 97, v), entry('b', v / 3, 98, v / 7)],
+        daily: { date: '2026-10-27', streak: 4 }, lastSeen: Date.UTC(2026, 9, 27), sound: true, vibration: true,
+      };
+      expect(load(good)).toEqual(good);
+      saveMeta(loadMeta());   // pierwszy zapis mety po starcie
+      expect(JSON.parse(storage.getItem(META_KEY)!)).toEqual(good);
+      expect(partnerOf(loadMeta()).networkIncome).toBe(v + v / 3);
+    }
+  });
+
+  it('1e61 jest przycięte do granicy 1e60, a suma dochodów całej sieci zostaje skończona', () => {
+    const m = load({
+      version: 1, partnerPoints: 1, daily: { date: '', streak: 0 }, lastSeen: 0, sound: true, vibration: true,
+      network: Array.from({ length: 1000 }, (_, i) => entry(`s${i}`, 1e61, 5, 1e61)),
+    });
+    expect(m.network).toHaveLength(1000);
+    expect(m.network.every((n) => n.income === 1e60 && n.margin === 1e60)).toBe(true);
+    expect(Number.isFinite(partnerOf(m).networkIncome)).toBe(true);
   });
 
   it('sieć ma najwyżej tysiąc sklepów', () => {

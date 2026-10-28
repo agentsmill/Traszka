@@ -329,10 +329,10 @@ describe('sanitizeEconomy: skończone, ale absurdalne liczby (zapis ręcznie zmi
     const out = load({ quests: quests.map((q) => ({ ...q, start: -1e308, target: 1e308, reward: { cash: 1e308, ogonki: 1e308, xp: 1e308 } })) }, s);
     for (const q of out.quests) {
       expect(q.reward.xp).toBeLessThanOrEqual(40 + 10 * 1000);
-      expect(q.reward.cash).toBeLessThanOrEqual(1e12);
-      expect(q.reward.ogonki).toBeLessThanOrEqual(1e12);
-      expect(q.target).toBeLessThanOrEqual(1e12);
-      expect(q.start).toBeGreaterThanOrEqual(-1e12);
+      expect(q.reward.cash).toBe(1e60);
+      expect(q.reward.ogonki).toBe(1e60);
+      expect(q.target).toBe(1e60);
+      expect(q.start).toBe(-1e60);
     }
     plays(out);
   });
@@ -367,22 +367,25 @@ describe('sanitizeEconomy: skończone, ale absurdalne liczby (zapis ręcznie zmi
     plays(out);
   });
 
-  it('pieniądze i liczniki: do biliona w obie strony, a raport i historia tak samo', () => {
+  it('pieniądze i liczniki: straż przed przepełnieniem na 1e60 w obie strony (1e61 i 1e308 też), a raport i historia tak samo', () => {
     const base = json(rich());
-    const counters = Object.fromEntries(Object.keys(base.total as object).map((k) => [k, 1e308]));
-    const out = load({
-      cash: 1e308, ogonki: 1e308, lastDayProfit: -1e308, bestDayProfit: 1e308,
-      today: counters, month: counters, total: counters,
-      history: [{ label: 'x', profit: 1e308, revenue: -1e308 }],
-      lastReport: { label: 'x', comment: 'y', counters, profit: 1e308, cash: -1e308 },
-    });
-    expect(out.cash).toBe(1e12);
-    expect(out.ogonki).toBe(1e12);
-    expect(out.lastDayProfit).toBe(-1e12);
-    expect(out.total.margin).toBe(1e12);
-    expect(out.history[0]).toEqual({ label: 'x', profit: 1e12, revenue: -1e12 });
-    expect(out.lastReport).toMatchObject({ profit: 1e12, cash: -1e12 });
-    plays(out, 1);
+    for (const huge of [1e61, 1e308]) {
+      const counters = Object.fromEntries(Object.keys(base.total as object).map((k) => [k, huge]));
+      const out = load({
+        cash: huge, ogonki: huge, lastDayProfit: -huge, bestDayProfit: huge,
+        today: counters, month: counters, total: counters,
+        history: [{ label: 'x', profit: huge, revenue: -huge }],
+        lastReport: { label: 'x', comment: 'y', counters, profit: huge, cash: -huge },
+      });
+      expect(out.cash).toBe(1e60);
+      expect(out.ogonki).toBe(1e60);
+      expect(out.lastDayProfit).toBe(-1e60);
+      expect(out.total.margin).toBe(1e60);
+      expect(out.history[0]).toEqual({ label: 'x', profit: 1e60, revenue: -1e60 });
+      expect(out.lastReport).toMatchObject({ profit: 1e60, cash: -1e60 });
+      expect(nonFinite(out)).toEqual([]);
+      plays(out, 1);
+    }
   });
 
   it('sieć sklepów i numery: premia partnerska, serie numerów i hasz seeda mają granice', () => {
@@ -391,7 +394,7 @@ describe('sanitizeEconomy: skończone, ale absurdalne liczby (zapis ręcznie zmi
       seedHash: 1e308, cleanDays: 1e308, lastCashiers: 1e308, lastWorkers: -1e308,
     });
     expect(out.partner.points).toBeLessThanOrEqual(1e7);
-    expect(out.partner.networkIncome).toBeLessThanOrEqual(1e12);
+    expect(out.partner.networkIncome).toBe(1e60);
     expect(out.partner.stores).toBeLessThanOrEqual(1000);
     expect(out.nextPalletId).toBeLessThanOrEqual(2 ** 30 + 1);
     expect(out.questSeq).toBeLessThanOrEqual(2 ** 30 + 1);
@@ -403,7 +406,7 @@ describe('sanitizeEconomy: skończone, ale absurdalne liczby (zapis ręcznie zmi
     plays(out, 1);
   });
 
-  it('przegląd wszystkich liczb stanu: po wpisaniu 1e308, -1e308 albo 1e15 w dowolne pole żadna nie przekracza biliona, a gra się toczy', () => {
+  it('przegląd wszystkich liczb stanu: po wpisaniu 1e308, -1e308 albo 1e15 w dowolne pole żadna nie przekracza 1e60, a gra się toczy', () => {
     const base = rich();
     const raw = json(base);
     // ścieżki do liczb; z list bierzemy dwa pierwsze elementy (te same pola, inne wywołania)
@@ -436,7 +439,7 @@ describe('sanitizeEconomy: skończone, ale absurdalne liczby (zapis ręcznie zmi
         const out = sanitizeEconomy(withValue(path, value), defaults());
         const where = `${path.join('.')} = ${value}`;
         if (!out) { broken.push(`${where}: null`); continue; }
-        if (biggest(out) > 1e12) { unbounded.push(`${where} → ${biggest(out)}`); continue; }   // bez gry: mogłaby się zawiesić
+        if (biggest(out) > 1e60) { unbounded.push(`${where} → ${biggest(out)}`); continue; }   // bez gry: mogłaby się zawiesić
         play(out, info, 1);
         if (nonFinite(out).length > 0) broken.push(`${where}: ${nonFinite(out)[0]}`);
       }
