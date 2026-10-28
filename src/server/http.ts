@@ -78,11 +78,11 @@ async function limited(request: Request, deps: ServerDeps, action: RateAction, o
 }
 
 /** Klucz gracza z ciała żądania → skrót właściciela. Brak pola to zły formularz, nieczytelny kod to `bad-key`. */
-async function ownerFrom(body: unknown): Promise<Checked<{ body: Record<string, unknown>; owner: string }>> {
+async function ownerFrom(body: unknown): Promise<Checked<{ body: Record<string, unknown>; key: string; owner: string }>> {
   if (!isRec(body) || body.key === undefined) return fail('bad-request');
   const key = parseRecoveryCode(body.key);
   if (key === null) return fail('bad-key');
-  return { ok: true, value: { body, owner: await ownerOf(key) } };
+  return { ok: true, value: { body, key, owner: await ownerOf(key) } };
 }
 
 function boardLimit(raw: string | null): number {
@@ -184,7 +184,10 @@ export const handlePlayer: Handler = async (request, deps) => {
   return json({ ok: true, nicks, nick: { nick: n.nick, status }, ranks: { global, seed: seedRank, week } });
 };
 
-/** `POST /api/save/upload` z `{ key, save }`: kładzie zapis gry (tekst JSON do 64 KB) do jedynej szuflady tego klucza. */
+/**
+ * `POST /api/save/upload` z `{ key, save }`: kładzie zapis gry (tekst JSON do 64 KB) do jedynej szuflady tego klucza. Zapis
+ * z samym kluczem gracza w środku odpada (gra wysyła paczkę bez klucza), bo serwer kluczy nie przechowuje.
+ */
 export const handleSaveUpload: Handler = async (request, deps) => {
   const bad = wrongMethod(request, 'POST');
   if (bad) return bad;
@@ -194,6 +197,7 @@ export const handleSaveUpload: Handler = async (request, deps) => {
   if (!who.ok) return failure(who);
   const save = checkSave(who.value.body.save);
   if (!save.ok) return failure(save);
+  if (save.value.toUpperCase().replace(/-/g, '').includes(who.value.key)) return apiError('bad-save');
   const limit = await limited(request, deps, 'saveUp', who.value.owner);
   if (limit) return limit;
   return json({ ok: true, ...(await putSave(deps.redis, who.value.owner, save.value, deps.now())) });

@@ -26,9 +26,12 @@ export interface RecoveryDeps {
   adoptKey: (key: string) => string | null;
   /** Gracz wybrał nick z kodu (gra ustawia go jako nick gracza). */
   useNick?: (nick: string) => void;
-  /** Zapis do wysłania (tekst JSON) albo null, gdy nie ma czego wysłać. */
+  /** Zapis do wysłania (tekst JSON) albo null, gdy nie ma czego wysłać; w grze `exportTransfer` z `saveTransfer.ts`. */
   exportSave: () => string | null;
-  /** Wczytuje pobrany zapis na tym urządzeniu; null to sukces, tekst to komunikat. */
+  /**
+   * Wczytuje pobrany zapis na tym urządzeniu; null to sukces, tekst to komunikat. W grze `importTransfer`, a po sukcesie
+   * przeładowanie strony (gra trzyma metę i sklep w pamięci i nadpisałaby nimi wczytaną paczkę).
+   */
   importSave: (save: string) => string | null;
   /** Schowek; domyślnie `navigator.clipboard`. */
   copy?: (text: string) => Promise<void>;

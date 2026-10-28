@@ -16,7 +16,7 @@ const dateText = (ms: number): string => new Date(ms).toLocaleString('pl-PL', { 
 
 function confirmText(pending: Pending, currentCode: string | null): string {
   if (pending.kind === 'download') {
-    return `Pobrać zapis wysłany ${dateText(pending.savedAt)}? Zastąpi zapis sklepu na tym urządzeniu.`;
+    return `Pobrać zapis wysłany ${dateText(pending.savedAt)}? Zastąpi na tym urządzeniu ten sklep, sieć sklepów, Punkty Partnera i kasjera. Inne sklepy zostaną.`;
   }
   return currentCode
     ? `Ten kod zastąpi klucz tego urządzenia. Obecny kod (${currentCode}) przestanie tu działać, więc zapisz go, jeśli ma do czegoś wrócić.`

@@ -197,6 +197,17 @@ describe('POST /api/save/upload i /api/save/download: zapis kodem odzyskiwania',
     expect((await handleSaveUpload(post('/api/save/upload', { key: KEY_A, save: 'zapis' }), deps)).status).toBe(400);
     expect((await handleSaveUpload(post('/api/save/upload', { key: 'abc', save: '{}' }), deps)).status).toBe(400);
   });
+
+  it('zapis z kluczem gracza w środku odpada (serwer nie przechowuje kluczy, nawet przez nieuwagę klienta)', async () => {
+    const { deps, redis } = setup();
+    for (const key of [KEY_A, formatRecoveryCode(KEY_A), formatRecoveryCode(KEY_A).toLowerCase()]) {
+      const save = JSON.stringify({ meta: { player: { nick: 'Ala', key } } });
+      const res = await handleSaveUpload(post('/api/save/upload', { key: KEY_A, save }), deps);
+      expect(res.status, key).toBe(400);
+      expect((await body(res)).error).toBe('bad-save');
+    }
+    expect(redis.keys().filter((k) => k.startsWith('tr:save:'))).toEqual([]);
+  });
 });
 
 describe('adres klienta', () => {
