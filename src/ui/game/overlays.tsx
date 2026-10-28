@@ -348,12 +348,14 @@ export function GiftDrop({ game, onClaim }: { game: GameActions; onClaim: (x: nu
   const late = lateGift.value;
   if (!view || !giftOpen(view.s) || report.value || start.value || welcome.value || showSettings.value) return null;
   if (late && late.s === view.s && late.giftAt === view.s.giftAt) return null;
-  const spot = spotFor(view.s.giftAt);
+  // okno, które gracz widzi: zapamiętane przy renderowaniu, bo zanim kliknie, symulacja mogła już zaplanować następne (`scheduleGift`)
+  const giftAt = view.s.giftAt;
+  const spot = spotFor(giftAt);
   return (
     <button type="button" class="tt-gift" style={{ left: `${spot.x}%`, top: `${spot.y}%` }} aria-label="Paczka od Centrali"
       onClick={() => {
         if (!giftOpen(view.s)) {
-          lateGift.value = { s: view.s, giftAt: view.s.giftAt };   // zmiana sygnału odświeża komponent: paczka znika od razu
+          lateGift.value = { s: view.s, giftAt };   // zmiana sygnału odświeża komponent: paczka znika od razu
           return;
         }
         const r = game.dispatch({ type: 'claimGift' });

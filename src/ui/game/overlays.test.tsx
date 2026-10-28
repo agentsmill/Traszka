@@ -254,6 +254,26 @@ describe('paczka od Centrali: okno z symulacji, a nie timer interfejsu (L1)', ()
     expect(GiftDrop({ game, onClaim })).not.toBeNull();
   });
 
+  it('spóźniony klik po tym, jak symulacja zaplanowała już następne okno, chowa tylko widziane okno: następna paczka się pokaże', () => {
+    vi.stubGlobal('window', { innerWidth: 1000, innerHeight: 800 });
+    const game = fakeGame();
+    const onClaim = vi.fn();
+    const s = at(9000 + 1, 9000);
+    const drop = GiftDrop({ game, onClaim }) as VNode<Record<string, unknown>>;
+    expect(drop.type).toBe('button');
+
+    // przed kliknięciem minęło okno i `stepMinute` zaplanował kolejne (`scheduleGift` przesuwa `giftAt` dalej)
+    const next = 9000 + GIFT_OPEN + 1200;
+    s.minute = 9000 + GIFT_OPEN + 1;
+    s.giftAt = next;
+    click(drop);
+    expect(game.dispatch).not.toHaveBeenCalled();
+    expect(GiftDrop({ game, onClaim })).toBeNull();      // między oknami paczki nie ma
+
+    s.minute = next + 1;                                 // następne okno: paczka widoczna mimo spóźnionego kliknięcia w poprzednią
+    expect(GiftDrop({ game, onClaim })).not.toBeNull();
+  });
+
   it('klik w oknie, które jeszcze trwa, nadal wysyła claimGift (stan odczytany w chwili kliknięcia)', () => {
     vi.stubGlobal('window', { innerWidth: 1000, innerHeight: 800 });
     const game = fakeGame({ ok: true, text: 'ok' });
