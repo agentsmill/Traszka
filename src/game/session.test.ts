@@ -918,6 +918,19 @@ describe('dziennik poleceń sesji (run)', () => {
     expect(createSession(BLOK, true).run).not.toBe(s.run);   // każda sesja ma własny dziennik
   });
 
+  it('premia sieci sklepów wyłącza dziennik, bo replayRun startuje bez partnera: z zerowym partnerem dziennik jest', () => {
+    const zero = { points: 0, networkIncome: 0, stores: 0 };
+    expect(createSession(BLOK, true, zero).run).not.toBeNull();
+    expect(createSession(BLOK, true, { points: 3, networkIncome: 200, stores: 1 }).run).toBeNull();
+    // każde pole z osobna: dwa pierwsze zmieniają gospodarkę, `stores` tylko leży w stanie (odtworzony stan miałby inne bajty)
+    expect(createSession(BLOK, true, { ...zero, points: 1 }).run).toBeNull();
+    expect(createSession(BLOK, true, { ...zero, networkIncome: 50 }).run).toBeNull();
+    expect(createSession(BLOK, true, { ...zero, stores: 1 }).run).toBeNull();
+    // także sklep tymczasowy i gra bez zapisu
+    expect(createSession(PAWILON, false, { points: 3, networkIncome: 200, stores: 1 }).run).toBeNull();
+    expect(createSession(PAWILON, true, { points: 3, networkIncome: 200, stores: 1 }, { ephemeral: true }).run).toBeNull();
+  });
+
   it('gra bez zapisu, uszkodzony zapis i sklep tymczasowy zaczynają nowy dziennik', () => {
     expect(createSession(PAWILON).run?.record.log).toEqual([]);
     storage.setItem(key(BLOK), '{"ucięty');

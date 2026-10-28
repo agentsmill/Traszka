@@ -16,8 +16,9 @@ import { GAME_VERSION } from './version';
 /**
  * Dziennik poleceń sesji: `RunRecord` z wpisami `{minute, seq, cmd}` i numer następnego wpisu. `replayRun(record, minute)`
  * odtwarza z niego stan gry, ale tylko dla sesji, która zaczęła od świeżego sklepu i której stan zmieniały wyłącznie
- * polecenia i upływ minut (patrz `GameSession.run`). Odtwarzanie startuje bez premii partnera (`freshRun`), więc dla gry z
- * `partner` w sieci sklepów dziennik nie odtworzy stanu co do bajtu.
+ * polecenia i upływ minut (patrz `GameSession.run`). Niezmiennik: sesja, która ma `run`, jest odtwarzalna, czyli
+ * `replayRun(run.record, minuta)` daje jej stan co do bajtu. Dlatego gra z premią sieci sklepów (`partner`) dziennika nie ma:
+ * odtwarzanie startuje przez `freshRun` bez partnera, a `RunRecord` nie niesie pola `partner`.
  */
 export interface RunLog {
   record: RunRecord;
@@ -48,12 +49,21 @@ export interface GameSession {
    */
   ephemeral: boolean;
   /**
-   * Dziennik poleceń tej rozgrywki (zapisuje go `dispatchCommand`) albo null, gdy nie da się go prowadzić wiernie: stan nie
-   * zaczął się od świeżego sklepu (sesja z zapisu), został przestawiony `relayout` (`withLayoutFromSeed`), zmieniło go coś
-   * spoza dziennika (nagroda powitalna, `skip`: `markOffLog`) albo dziennik przekroczył `RUN_LOG_MAX`.
+   * Dziennik poleceń tej rozgrywki (zapisuje go `dispatchCommand`) albo null, gdy nie da się go prowadzić wiernie. Jeśli nie jest
+   * null, `replayRun` odtwarza z niego stan sesji (patrz `RunLog`). Jest null, gdy: stan nie zaczął się od świeżego sklepu bez
+   * premii sieci (sesja z zapisu, gra z niezerowym `partner`), został przestawiony `relayout` (`withLayoutFromSeed`), zmieniło go
+   * coś spoza dziennika (nagroda powitalna, `skip`: `markOffLog`) albo dziennik przekroczył `RUN_LOG_MAX`.
    */
   run: RunLog | null;
 }
+
+/**
+ * Czy premia sieci sklepów jest zerowa, tak jak w `freshRun`. Gospodarkę zmieniają `points` (mnożniki w `effects`) oraz
+ * `networkIncome` (dochód dzienny w `closeDay`). `stores` niczego w symulacji nie liczy, ale leży w stanie
+ * (`EconomyState.partner`), więc i ono musi być zerem, żeby odtworzony stan zgadzał się co do bajtu. Brak `partner` to zera.
+ */
+const noPartner = (partner?: EconomyState['partner']): boolean =>
+  partner === undefined || (partner.points === 0 && partner.networkIncome === 0 && partner.stores === 0);
 
 /** Pusty dziennik nowej gry: bieg zwykły (`casual`) od świeżego sklepu z seeda, z wersjami gry i generatora, którymi go prowadzimy. */
 const newRunLog = (seed: string): RunLog => ({
@@ -292,8 +302,9 @@ function openSave(data: unknown, seed: string, partner?: EconomyState['partner']
  * nowa z `loadNotice` dla gracza. Poprawny zapis, którego nie da się użyć (z nowszej wersji gry albo świat się z niego nie
  * składa), zostaje na miejscu, a gracz dostaje sklep tymczasowy (`ephemeral`). Rzuca tylko wtedy, gdy generator nie daje
  * sklepu dla seeda. `partner` to premia z sieci sklepów (meta.ts): aktualna przy każdym wczytaniu. `options.ephemeral` zaczyna
- * świeżą grę jako tymczasową („zacznij od nowa” w sklepie tymczasowym), bez zaglądania do zapisu. Każda nowa gra (także
- * tymczasowa) dostaje pusty dziennik poleceń (`run`); sesja z zapisu go nie ma.
+ * świeżą grę jako tymczasową („zacznij od nowa” w sklepie tymczasowym), bez zaglądania do zapisu. Nowa gra (także
+ * tymczasowa) bez premii sieci (`partner` zerowy albo pominięty) dostaje pusty dziennik poleceń (`run`); sesja z zapisu i gra z
+ * premią sieci go nie mają, bo `replayRun` ich nie odtworzy.
  */
 export function createSession(seed: string, fresh = false, partner?: EconomyState['partner'], options: { ephemeral?: boolean } = {}): GameSession {
   let loadNotice: string | null = null;
@@ -315,7 +326,8 @@ export function createSession(seed: string, fresh = false, partner?: EconomyStat
   const info = computeStoreInfo(layout);
   const econ = createEconomy(seed, info, partner);
   return {
-    seed, econ, layout, info, clock: { acc: 0 }, layoutLevel: 0, fromSave: false, loadNotice, retired: false, ephemeral, run: newRunLog(seed),
+    seed, econ, layout, info, clock: { acc: 0 }, layoutLevel: 0, fromSave: false, loadNotice, retired: false, ephemeral,
+    run: noPartner(partner) ? newRunLog(seed) : null,   // `replayRun` startuje bez premii sieci: z nią dziennik nie byłby odtwarzalny
   };
 }
 

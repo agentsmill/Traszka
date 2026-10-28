@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MINUTES_PER_DAY, OPEN_FROM } from '@/sim/economy/catalog';
-import { COMMAND_TYPES, type Command } from '@/sim/economy/commands';
+import { applyCommand, COMMAND_TYPES, type Command } from '@/sim/economy/commands';
 import { stepMinute, type CommandResult, type EconEvent } from '@/sim/economy/economy';
+import { xpToNext } from '@/sim/economy/progress';
 import { questMetric } from '@/sim/economy/quests';
 import { UPGRADES } from '@/sim/economy/upgrades';
 import { layoutFor } from '@/sim/store/layoutFor';
@@ -189,6 +190,44 @@ describe('kroki po poleceniu', () => {
     expect(rec.calls[1]).toEqual(['buzz', 8]);
   });
 
+  describe('zdarzenia', () => {
+    /** Zdarzenia, jakie to samo polecenie da na kopii stanu: to, co ma dojść do `handleEvents`. */
+    const eventsOn = (s: GameSession, cmd: Command): EconEvent[] => applyCommand(structuredClone(s.econ), s.info, cmd).events;
+    const received = (rec: ReturnType<typeof recorder>): EconEvent[][] => rec.named('handleEvents').map((c) => c[1] as EconEvent[]);
+
+    it('stuknięcie w złotą paletę: zdarzenie golden z wyniku polecenia trafia do handleEvents', () => {
+      const s = fresh();
+      const pallet = s.econ.pallets[0]!;
+      pallet.golden = true;
+      for (const key of Object.keys(pallet.items) as (keyof typeof pallet.items)[]) pallet.items[key] = 0;
+      pallet.items.napoje = 3;
+      pallet.total = 3;
+      const cmd: Command = { type: 'tapPallet', palletId: pallet.id };
+      const expected = eventsOn(s, cmd);
+      expect(expected.map((e) => e.kind)).toEqual(['golden']);
+
+      const rec = recorder();
+      const r = dispatchCommand(s, cmd, rec.fx);
+      expect(r.ok).toBe(true);
+      expect(received(rec)).toEqual([expected]);
+      expect(rec.named('toast')).toEqual([]);   // tapPallet nie pokazuje toastu: złotą paletę pokazuje samo zdarzenie
+    });
+
+    it('odebranie zlecenia, które daje poziom: zdarzenie levelup z wyniku polecenia trafia do handleEvents', () => {
+      const s = fresh();
+      const id = finishQuest(s);
+      s.econ.xp = xpToNext(s.econ.level) - 1;   // nagroda zlecenia daje XP, więc wchodzi nowy poziom
+      const cmd: Command = { type: 'claimQuest', questId: id };
+      const expected = eventsOn(s, cmd);
+      expect(expected.map((e) => e.kind)).toEqual(['levelup']);
+
+      const rec = recorder();
+      expect(dispatchCommand(s, cmd, rec.fx).ok).toBe(true);
+      expect(received(rec)).toEqual([expected]);
+      expect(s.econ.level).toBe(2);
+    });
+  });
+
   it('returnPallet: toast z tekstem, zaznaczenie czyszczone po poleceniu, także nieudanym', () => {
     const s = fresh();
     const ok = recorder();
@@ -222,8 +261,10 @@ describe('kroki po poleceniu', () => {
     it('remont: układ sesji podmieniony, rebuildScene raz, zapis, zaznaczenie wyczyszczone przed', () => {
       const s = readyForRemont();
       const oldLayout = s.layout;
-      const seen: { stage: string; level: number; layout: unknown; info: unknown }[] = [];
-      const snapshot = (stage: string): void => { seen.push({ stage, level: s.layoutLevel, layout: s.layout, info: s.info }); };
+      const seen: { stage: string; level: number; remont: number; logged: number; layout: unknown; info: unknown }[] = [];
+      const snapshot = (stage: string): void => {
+        seen.push({ stage, level: s.layoutLevel, remont: s.econ.remontLevel, logged: log(s).length, layout: s.layout, info: s.info });
+      };
       const rec = recorder({
         clearSelection: () => { rec.calls.push(['clearSelection']); snapshot('clearSelection'); },
         persist: () => { rec.calls.push(['persist']); snapshot('persist'); },
@@ -244,6 +285,8 @@ describe('kroki po poleceniu', () => {
       expect(rec.named('persist')).toHaveLength(1);
       expect(rec.named('rebuildScene')).toHaveLength(1);
       expect(seen.map((x) => [x.stage, x.level])).toEqual([['clearSelection', 0], ['persist', 1], ['rebuildScene', 1]]);
+      // zaznaczenie schodzi jeszcze przed poleceniem: stan nie zmieniony przez `applyCommand` i nic w dzienniku
+      expect(seen.map((x) => [x.stage, x.remont, x.logged])).toEqual([['clearSelection', 0, 0], ['persist', 1, 1], ['rebuildScene', 1, 1]]);
       expect(seen[0]!.layout).toBe(oldLayout);
       expect(seen[1]!.layout).toBe(s.layout);
       expect(seen[2]!.info).toBe(s.info);
