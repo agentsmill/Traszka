@@ -1424,10 +1424,25 @@
   box-shadow: 0 2px 0 var(--tt-green-dark);
 }
 
-/* Telefon: podgląd u góry, formularz pod spodem, a przycisk startu przykleja się do dołu okna, więc nie trzeba go szukać. */
-@media (max-width: 699px) {
+/* „Otwieramy…”: przycisk wyłączony, ale nie wyblakły (to odpowiedź na kliknięcie, a nie przycisk, którego nie wolno użyć); reszta ekranu nie reaguje. */
+.tt-start-go .tt-btn.tt-primary:disabled {
+  opacity: 1;
+  background: var(--tt-green-dark);
+  cursor: progress;
+}
+
+.tt-start-grid.is-busy {
+  pointer-events: none;
+}
+
+/* Telefon w pionie (i każde okno węższe niż 560 px): podgląd u góry, formularz pod spodem, a przycisk startu przykleja się do dołu
+   okna, więc nie trzeba go szukać. Pasek z przyciskiem zasłania dół okna, więc przewijanie do pola (błąd po „Otwieramy sklep!”,
+   Tab, klawiatura ekranowa) zatrzymuje się nad nim: `--tt-go-h` to jego zmierzona wysokość (StartScreen.tsx). Telefon poziomo
+   (667×375, 844×390) ma dwie kolumny (niżej), bo w jednej przycisk startu nie mieści się w oknie bez przewijania. */
+@media (max-width: 699px) and (orientation: portrait), (max-width: 559px) {
   .tt-start-wrap {
     padding: 0;
+    scroll-padding-bottom: calc(var(--tt-go-h, 88px) + 12px);
   }
 
   .tt-modal.tt-start {
@@ -1466,8 +1481,13 @@
   }
 }
 
-/* Niskie okno przy dwóch kolumnach (telefon poziomo): niższy podgląd, a przycisk startu zostaje w oknie przy przewijaniu. */
-@media (max-height: 600px) and (min-width: 700px) {
+/* Niskie okno przy dwóch kolumnach (telefon poziomo, także węższy niż 700 px: 667×375, 568×320): niższy podgląd, a przycisk startu
+   zostaje w oknie przy przewijaniu, nad nim zatrzymują się pola, do których przewija przeglądarka (jak w pionie, wyżej). */
+@media (max-height: 600px) and (orientation: landscape) and (min-width: 560px) {
+  .tt-start-wrap {
+    scroll-padding-bottom: calc(var(--tt-go-h, 88px) + 12px);
+  }
+
   .tt-modal.tt-start {
     padding: 14px 22px 12px;
   }

@@ -8,6 +8,7 @@ import { submitStart } from '@/game/start';
 import type { OutfitFile } from '@/render/characters/modularPack';
 import { DISCLAIMER } from '../game/overlays';
 import { start, type StartRequest } from '../state';
+import { createLauncher, type Launcher } from './launch';
 import { createStartPreview, type StartPreview } from './preview';
 
 /** Nazwy strojów pod podglądem (typ pilnuje, że każdy z 21 strojów ma nazwę). */
@@ -59,8 +60,16 @@ function StartScreen({ request }: { request: StartRequest }) {
   /** Podgląd 3D: `loading` do czasu fabryki postaci, `ready` gdy stoi, `none` gdy się nie udał (formularz działa i bez niego). */
   const [stage, setStage] = useState<'loading' | 'ready' | 'none'>('loading');
   const [pending, setPending] = useState(false);
+  /** „Otwieramy sklep!” ruszyło: przycisk jest wyłączony z napisem „Otwieramy…”, a budowa świata czeka na namalowanie go. */
+  const [busy, setBusy] = useState(false);
+  /** Licznik próśb o pokazanie pola z błędem (każda zła próba zatwierdzenia, także z tym samym komunikatem, przewija na nowo). */
+  const [revealTick, setRevealTick] = useState(0);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const bandRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const nickRef = useRef<HTMLInputElement>(null);
+  const launcherRef = useRef<Launcher | null>(null);
+  launcherRef.current ??= createLauncher();
   const previewRef = useRef<StartPreview | null>(null);
   const lookRef = useRef(look);
   lookRef.current = look;
@@ -111,7 +120,10 @@ function StartScreen({ request }: { request: StartRequest }) {
     start.value = null;
     then();
   };
-  const back = (): void => close(() => request.onBack?.());
+  const back = (): void => {
+    if (launcherRef.current?.busy) return;   // „Otwieramy…” już ruszyło: nie ma powrotu
+    close(() => request.onBack?.());
+  };
 
   useEffect(() => {
     if (request.mode !== 'new') return;
@@ -119,6 +131,31 @@ function StartScreen({ request }: { request: StartRequest }) {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, []);
+
+  /**
+   * Przyklejony pasek z przyciskiem (telefon, niskie okno) zasłania dół okna, więc to, co ma być widać (pole z błędem, pole, na które
+   * przeszło się klawiszem), musi zatrzymać się nad nim: wysokość paska idzie do `--tt-go-h`, a CSS robi z niej `scroll-padding-bottom`
+   * okna ekranu (`ui.css`). Pasek bywa wyższy z „Wróć do gry”, ma też pas na dole ekranu telefonu, więc mierzymy go, a nie zgadujemy.
+   */
+  useEffect(() => {
+    const wrap = wrapRef.current;
+    const band = bandRef.current;
+    if (!wrap || !band) return;
+    const sync = (): void => { wrap.style.setProperty('--tt-go-h', `${band.offsetHeight}px`); };
+    sync();
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(sync);
+    observer.observe(band);
+    return () => observer.disconnect();
+  }, []);
+
+  /** Po złym zatwierdzeniu (już po narysowaniu komunikatu) pole nazwy wjeżdża nad pasek z przyciskiem, razem z błędem pod nim. */
+  useEffect(() => {
+    const input = nickRef.current;
+    if (revealTick === 0 || !input) return;
+    input.scrollIntoView({ block: 'center' });   // wnętrze okna bez paska (scroll-padding-bottom), więc błąd pod polem też jest widać
+    input.focus({ preventScroll: true });
+  }, [revealTick]);
 
   /**
    * Limit pola seeda liczy punkty kodowe (`SEED_MAX`: emoji to jeden znak), więc pilnuje go ten program, a nie `maxLength`, który
@@ -136,21 +173,23 @@ function StartScreen({ request }: { request: StartRequest }) {
 
   const submit = (e: Event): void => {
     e.preventDefault();
+    if (launcherRef.current?.busy) return;
     const result = submitStart({ nick, seed, look, specialOutfits: special });
     if (!result.ok) {
       setNickError(result.nickError);
-      nickRef.current?.focus();
+      setRevealTick((t) => t + 1);
       return;
     }
-    close(() => request.onStart(result.choice));
+    // odpowiedź od razu („Otwieramy…”), a ciężka budowa świata dopiero po jej namalowaniu (launch.ts)
+    launcherRef.current?.launch(() => setBusy(true), () => close(() => request.onStart(result.choice)));
   };
 
   const label = OUTFIT_LABEL[look.outfit];
   const at = OUTFIT_ORDER.indexOf(look.outfit) + 1;
   return (
-    <div class="tt-modal-wrap tt-start-wrap">
+    <div ref={wrapRef} class="tt-modal-wrap tt-start-wrap">
       <div class="tt-modal tt-start" role="dialog" aria-modal="true" aria-labelledby="tt-start-title">
-        <form class="tt-start-grid" noValidate onSubmit={submit}>
+        <form class={`tt-start-grid${busy ? ' is-busy' : ''}`} noValidate aria-busy={busy} onSubmit={submit}>
           <header class="tt-start-head">
             <h2 id="tt-start-title">Twój kasjer</h2>
             <p class="tt-hint">Wybierz, kto stanie za ladą, wpisz nazwę i seed sklepu, i otwieramy.</p>
@@ -190,9 +229,9 @@ function StartScreen({ request }: { request: StartRequest }) {
             </div>
             <p class="tt-hint">Dowolny tekst. Ten sam seed to ten sam sklep, a każdy seed ma własny zapis gry.</p>
 
-            <div class="tt-start-go">
-              <button type="submit" class="tt-btn tt-primary big">Otwieramy sklep!</button>
-              {request.mode === 'new' && <button type="button" class="tt-btn big tt-back" onClick={back}>Wróć do gry</button>}
+            <div ref={bandRef} class="tt-start-go">
+              <button type="submit" class="tt-btn tt-primary big" disabled={busy}>{busy ? 'Otwieramy…' : 'Otwieramy sklep!'}</button>
+              {request.mode === 'new' && <button type="button" class="tt-btn big tt-back" disabled={busy} onClick={back}>Wróć do gry</button>}
             </div>
             <p class="tt-disclaimer2">{DISCLAIMER}</p>
           </section>
