@@ -1,16 +1,18 @@
 import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { NodeIO } from '@gltf-transform/core';
 import { EXTMeshoptCompression } from '@gltf-transform/extensions';
 import { MeshoptDecoder } from 'meshoptimizer';
-import { Box3, Color, Mesh, SkinnedMesh, type Bone, type Material, type Object3D } from 'three';
+import { AnimationClip, Box3, Color, Mesh, ShaderLib, SkinnedMesh, type Bone, type Material, type MeshStandardMaterial, type Object3D } from 'three';
 import { GLTFLoader, type GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { ASSETS } from '@/render/assets';
 import { CHARACTER_STYLE } from '@/render/style';
 import { pickAppearance } from './appearance';
-import { REGION } from './fallbackCharacter';
-import { createCharacterFactory, type CharacterFactory, type CharacterPack } from './characterFactory';
+import { CHARACTER_PROGRAM_KEY, REGION } from './characterMaterial';
+import { createCharacterFactory, type CharacterFactory } from './characterFactory';
+import { OUTFIT_PAINT, findClip, outfitPart, type OutfitFile } from './modularPack';
+import { WALK_SPEED_MPS } from './walkSpeed';
 
 /**
  * Loader testowy: czyta prawdziwe GLB z public/, usuwa tekstury (Node nie ma obrazów) i parsuje GLTFLoaderem,
@@ -49,6 +51,12 @@ function meshCount(root: Object3D): number {
   root.traverse((o) => { if (o instanceof Mesh) n++; });
   return n;
 }
+/** Wartość uniformu `uPalette`, który materiał ustawia przy kompilacji (na kopii shadera `standard` z three). */
+function paletteUniform(material: Material): Color[] {
+  const shader = { uniforms: {} as Record<string, { value: Color[] }>, vertexShader: ShaderLib.standard.vertexShader, fragmentShader: ShaderLib.standard.fragmentShader };
+  (material as MeshStandardMaterial).onBeforeCompile(shader as never, undefined as never);
+  return shader.uniforms.uPalette.value;
+}
 function bone(root: Object3D, pattern: RegExp): Bone {
   let found: Bone | undefined;
   root.traverse((o) => { if (!found && (o as Bone).isBone && pattern.test(o.name)) found = o as Bone; });
@@ -59,24 +67,24 @@ function bone(root: Object3D, pattern: RegExp): Bone {
 describe('createCharacterFactory: postać zastępcza', () => {
   it('gdy wczytanie assetów zawiedzie, zwraca fabrykę postaci zastępczych i nie rzuca', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    for (const pack of ['ubc', 'modular'] as CharacterPack[]) {
-      const factory = await createCharacterFactory(pack, () => Promise.reject(new Error('404')));
-      const c = factory.create('x');
-      expect(c.isFallback).toBe(true);
-      expect(c.object.children.length).toBeGreaterThan(0);
-      c.setAnim('walk');
-      c.update(0.1);
-      c.setAnim('idle', 0);
-      c.update(0.1);
-      c.dispose();
-    }
+    const factory = await createCharacterFactory(() => Promise.reject(new Error('404')));
+    const c = factory.create('x');
+    expect(c.isFallback).toBe(true);
+    expect(c.object.children.length).toBeGreaterThan(0);
+    c.setAnim('walk');
+    c.update(0.1);
+    c.setAnim('idle', 0);
+    c.update(0.1);
+    c.dispose();
+    expect(factory.walkSpeedMps).toBe(WALK_SPEED_MPS);
+    expect(() => factory.dispose()).not.toThrow();
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();
   });
 
   it('postać zastępcza ma kolory z Appearance, wzrost z Appearance i kiwa się w chodzie', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const factory = await createCharacterFactory('ubc', () => Promise.reject(new Error('404')));
+    const factory = await createCharacterFactory(() => Promise.reject(new Error('404')));
     const a = pickAppearance('seed-a');
     const c = factory.create('seed-a');
     const box = new Box3().setFromObject(c.object);
@@ -93,11 +101,15 @@ describe('createCharacterFactory: postać zastępcza', () => {
   });
 });
 
-describe.each([['ubc'], ['modular']] as [CharacterPack][])('createCharacterFactory(%s) na prawdziwych assetach', (pack) => {
+describe('createCharacterFactory na prawdziwych assetach', () => {
   let factory: CharacterFactory;
   beforeAll(async () => {
-    factory = await createCharacterFactory(pack, loadFromDisk);
+    factory = await createCharacterFactory(loadFromDisk);
   }, 60_000);
+
+  it('prędkość stopy w klipie chodu pochodzi z fabryki (jedno źródło dla tłumu)', () => {
+    expect(factory.walkSpeedMps).toBe(WALK_SPEED_MPS);
+  });
 
   it('buduje prawdziwą postać (nie zastępczą) z jednym SkinnedMesh i jednym materiałem', () => {
     for (const seed of ['a', 'b', 'c', 'd', 'e', 'f']) {
@@ -160,14 +172,8 @@ describe.each([['ubc'], ['modular']] as [CharacterPack][])('createCharacterFacto
       for (let o: Object3D | null = bones.find((b) => re.test(b.name))!; o && (o as Bone).isBone; o = o.parent) k *= o.scale.x;
       return k;
     };
-    // Skalowanie tułowia dotyczy szkieletu modular (UBC nie ma kości chest). Modular MA ją mieć: bez niej test by nic nie sprawdzał.
-    const hasChest = bones.some((b) => /^chest$/i.test(b.name));
-    if (pack !== 'modular') {
-      expect(hasChest, 'UBC nie ma kości chest').toBe(false);
-      c.dispose();
-      return;
-    }
-    expect(hasChest, 'kość chest w szkielecie modular').toBe(true);
+    // Szkielet stroju MA mieć kość chest: bez niej test by nic nie sprawdzał.
+    expect(bones.some((b) => /^chest$/i.test(b.name)), 'kość chest w szkielecie').toBe(true);
     for (const re of [/^hips$/i, /^abdomen$/i, /^torso$/i, /^chest$/i]) expect(absolute(re), String(re)).toBeCloseTo(CHARACTER_STYLE.torsoScale, 5);
     for (const re of [/^neck$/i, /^shoulderl$/i, /^shoulderr$/i]) expect(absolute(re), String(re)).toBeCloseTo(1, 5);
     expect(absolute(/^head$/i)).toBeCloseTo(CHARACTER_STYLE.headScale, 5);
@@ -236,28 +242,95 @@ describe.each([['ubc'], ['modular']] as [CharacterPack][])('createCharacterFacto
     b.dispose();
   });
 
-  it('każda postać ma własny materiał, ale wszystkie dzielą program shadera', () => {
-    const mats = ['a', 'b', 'c'].map((s) => materialOf(skinnedMeshes(factory.create(s).object)[0]));
-    expect(new Set(mats).size).toBe(3);
-    expect(new Set(mats.map((m) => m.customProgramCacheKey())).size).toBe(1);
+  it('każda postać ma własny materiał i własną paletę (uniform), ale dwie postacie dzielą program shadera', () => {
+    const [a, b] = ['seed-a', 'seed-b'].map((s) => factory.create(s));
+    const [ma, mb] = [a, b].map((c) => materialOf(skinnedMeshes(c.object)[0]));
+    expect(ma).not.toBe(mb);
+    expect(ma.customProgramCacheKey()).toBe(mb.customProgramCacheKey());
+    expect(ma.customProgramCacheKey()).toBe(CHARACTER_PROGRAM_KEY);   // własny klucz programu, nie domyślny
+    const [pa, pb] = [paletteUniform(ma), paletteUniform(mb)];
+    expect(pa).toHaveLength(24);
+    expect(pb).toHaveLength(24);
+    expect(pa.map((c) => c.getHex())).not.toEqual(pb.map((c) => c.getHex()));
+    a.dispose();
+    b.dispose();
+  });
+
+  it('akcesorium widać w siatce: regiony 8/9 są tylko u postaci z plecakiem, torbą albo telefonem', () => {
+    const kinds = new Set<string>();
+    for (let i = 0; i < 80; i++) {
+      const seed = `akcesorium-${i}`;
+      const { accessory } = pickAppearance(seed);
+      kinds.add(accessory);
+      const c = factory.create(seed);
+      const regions = skinnedMeshes(c.object)[0].geometry.getAttribute('region').array as Float32Array;
+      const hasAccent = regions.some((r) => r === REGION.accent || r === REGION.accent2);
+      expect(hasAccent, `${seed}: ${accessory}`).toBe(accessory !== 'none');
+      c.dispose();
+    }
+    expect(kinds).toEqual(new Set(['none', 'backpack', 'bag', 'phone']));
+  });
+
+  it('dispose fabryki zwalnia współdzieloną geometrię i opróżnia cache, a create nadal działa', async () => {
+    const own = await createCharacterFactory(loadFromDisk);   // własna fabryka: nie ruszamy geometrii pozostałych testów
+    const seeds = ['dispose-a', 'dispose-b', 'dispose-c', 'dispose-d'];
+    const chars = seeds.map((s) => own.create(s));
+    const geometries = new Set(chars.map((c) => skinnedMeshes(c.object)[0].geometry));
+    const freed = vi.fn();
+    for (const g of geometries) g.addEventListener('dispose', freed);
+    for (const c of chars) c.dispose();
+    expect(freed).not.toHaveBeenCalled();          // postać zwalnia tylko swoje (materiał, szkielet)
+    own.dispose();
+    expect(freed).toHaveBeenCalledTimes(geometries.size);
+    const again = own.create(seeds[0]);
+    expect(again.isFallback).toBe(false);
+    expect(geometries.has(skinnedMeshes(again.object)[0].geometry)).toBe(false); // zbudowana od nowa
+    again.dispose();
+  }, 60_000);
+});
+
+describe('paczka modular: stroje, klipy, tabela OUTFIT_PAINT', () => {
+  const files = ASSETS.characters.modular.map((url) => basename(url, '.glb'));
+
+  it('każdy strój z ASSETS ma wpis w OUTFIT_PAINT i odwrotnie', () => {
+    expect(Object.keys(OUTFIT_PAINT).sort()).toEqual([...files].sort());
+  });
+
+  it('każda reguła OUTFIT_PAINT trafia w istniejący materiał części stroju (literówka w nazwie materiału się nie ukryje)', async () => {
+    for (const url of ASSETS.characters.modular) {
+      const file = basename(url, '.glb') as OutfitFile;
+      const present = new Set<string>();
+      for (const mesh of skinnedMeshes((await loadFromDisk(url)).scene)) {
+        const mat = (Array.isArray(mesh.material) ? mesh.material[0] : mesh.material) as MeshStandardMaterial;
+        present.add(`${outfitPart(mesh)}:${mat.name}`);
+      }
+      for (const key of Object.keys(OUTFIT_PAINT[file])) expect(present.has(key), `${file}: ${key}`).toBe(true);
+    }
+  }, 60_000);
+
+  it('plik każdego stroju niesie dokładnie dwa klipy: Idle i Walk (pipeline usuwa pozostałe)', async () => {
+    for (const url of ASSETS.characters.modular) {
+      const names = (await loadFromDisk(url)).animations.map((a) => a.name).sort();
+      expect(names, url).toEqual(['Idle', 'Walk']);
+    }
+  }, 60_000);
+
+  it('klip wybierany jest po dokładnej nazwie, a dopiero potem po wzorcu (najzwyklejsza nazwa)', () => {
+    const clip = (name: string): AnimationClip => new AnimationClip(name, 1, []);
+    // „WALK” sortuje się alfabetycznie przed „Walk”: sam wzorzec wybrałby go, dokładna nazwa nie
+    expect(findClip([clip('WALK'), clip('Walk'), clip('Idle')], 'Walk')?.name).toBe('Walk');
+    expect(findClip([clip('Idle_Talking_Loop'), clip('Idle_Loop'), clip('Idle')], 'Idle')?.name).toBe('Idle');
+    // zapas: brak dokładnej nazwy → najkrótsza pasująca
+    expect(findClip([clip('Walk_Formal_Loop'), clip('Walk_Loop')], 'Walk')?.name).toBe('Walk_Loop');
+    expect(findClip([clip('Run')], 'Walk')).toBeUndefined();
   });
 });
 
 describe('createCharacterFactory: częściowe awarie', () => {
-  it('brak jednej fryzury nie wywala fabryki ubc (postać bez włosów, nie zastępcza)', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const failingHair = new Set(ASSETS.characters.ubc.hair);
-    const factory = await createCharacterFactory('ubc', (url) => (failingHair.has(url) ? Promise.reject(new Error('404')) : loadFromDisk(url)));
-    const c = factory.create('x');
-    expect(c.isFallback).toBe(false);
-    c.dispose();
-    warn.mockRestore();
-  }, 60_000);
-
   it('modular używa tych strojów, które się wczytały', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const only = ASSETS.characters.modular[0];
-    const factory = await createCharacterFactory('modular', (url) => (url === only ? loadFromDisk(url) : Promise.reject(new Error('404'))));
+    const factory = await createCharacterFactory((url) => (url === only ? loadFromDisk(url) : Promise.reject(new Error('404'))));
     for (const seed of ['a', 'b', 'c', 'd']) {
       const c = factory.create(seed);
       expect(c.isFallback).toBe(false);

@@ -3,7 +3,7 @@ import { SIM_STEP, type Agent, type Crowd } from '@/sim/crowd/crowd';
 import { CELL_SIZE_M } from '@/sim/grid';
 import type { StoreLayout } from '@/sim/store/types';
 import { BLOB_RADIUS, type BlobShadows } from './characters/blobShadows';
-import type { CharacterFactory, CharacterInstance, CharacterPack } from './characters/characterFactory';
+import type { CharacterFactory, CharacterInstance } from './characters/characterFactory';
 import { walkTimeScale } from './characters/walkSpeed';
 import { cellToWorld } from './coords';
 
@@ -64,7 +64,6 @@ export class CrowdView {
     private readonly factory: CharacterFactory,
     private readonly layout: StoreLayout,
     private readonly parent: Object3D,
-    private readonly pack: CharacterPack = 'modular',
     private readonly shadows: BlobShadows | null = null,
   ) {}
 
@@ -150,7 +149,7 @@ export class CrowdView {
       yaw: headingToYaw(agent.heading),
       anim: 'idle',
       stillFor: 0,
-      walkScale: walkTimeScale(this.pack, agent.speed * CELL_SIZE_M, character.object.scale.z),
+      walkScale: walkTimeScale(this.factory.walkSpeedMps, agent.speed * CELL_SIZE_M, character.object.scale.z),
     };
     this.tracked.set(agent.id, t);
     if (agent.moving) {

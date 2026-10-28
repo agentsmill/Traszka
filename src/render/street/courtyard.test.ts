@@ -21,6 +21,6 @@ describe('buildCourtyard', () => {
           if (avoid) expect(x > avoid[0] + 0.05 && x < avoid[1] - 0.05, `${seed} x=${x} na przecznicy`).toBe(false);
         }
       }
-    });
+    }, 30_000);   // kilkaset tysięcy asercji: ~2 s na wolnym rdzeniu, a przy obciążonej maszynie przekraczało domyślne 5 s
   }
 });

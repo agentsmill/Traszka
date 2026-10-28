@@ -23,7 +23,7 @@ Wzorzec: **Two Point Hospital**: ciepło, nasycenie, czytelność z daleka. Wart
 ## 3. Materiały
 `plasticMatte`: korpusy, ściany, plakaty; `plasticGloss`: opakowania, listwy; `metalPainted`: ramy, słupki, latarnie; `wood`: blaty, palety; `fabric`: ubrania, wycieraczki; `glass`: szyby; `emissive`: tylko to, co świeci. Szkło i emissive bez cieni. Materiałów z cache nie zmieniaj i nie zwalniaj (świecenie zmieniane nocą ma własny materiał per sklep lub ulica).
 
-- Postać to jeden materiał (jeden draw call): skóra i oczy mają `plasticMatte` (lekki połysk „zabawkowej” skóry), a włosy, ubrania i akcesoria szorstkość `fabric` (0,95) przez region w shaderze postaci (`fallbackCharacter.ts`, `FABRIC_ROUGHNESS`).
+- Postać to jeden materiał (jeden draw call): skóra i oczy mają `plasticMatte` (lekki połysk „zabawkowej” skóry), a włosy, ubrania i akcesoria szorstkość `fabric` (0,95) przez region w shaderze postaci (`characterMaterial.ts`, `FABRIC_ROUGHNESS`).
 - Ulica i budynki: materiały z kolorami wierzchołków (kolor z PALETTE w wierzchołku, faktura w atlasie elewacji), żeby cały budynek, podwórko i rekwizyt kosztowały po jednym draw callu.
 
 ## 4. Światło
@@ -47,7 +47,7 @@ Emissive (kolor, `emissiveIntensity`):
 - Maska świecenia napisu ma czarne tło (nie przezroczyste): emissive czyta tylko RGB, a brzegi liter po `clearRect` miały pełny kolor i jaśniejszą, poszarpaną obwódkę.
 
 ## 5. Postacie
-- **Paczka: `modular` (Quaternius Modular Men/Women), jedyna w grze.** Wybór z `?charTest=1` w zadaniu 16: prawdziwe ubrania i buty, różne sylwetki (sukienka, bluza, szorty, ogrodniczki), 2,9 tys. trójkątów i własne klipy chodu. UBC odpada: anatomia superbohatera pod malowaną koszulką, „legginsy” zamiast spodni, bose stopy, gniewne oczy. Zadanie 16b usuwa paczkę UBC (ciała, fryzury, brwi i UAL) z potoku assetów i kodu; `?pack=ubc` działa tylko do tego czasu.
+- **Paczka: `modular` (Quaternius Modular Men/Women), jedyna w grze.** Wybór z `?charTest=1` w zadaniu 16: prawdziwe ubrania i buty, różne sylwetki (sukienka, bluza, szorty, ogrodniczki), 2,9 tys. trójkątów i własne klipy chodu. UBC odpadła: anatomia superbohatera pod malowaną koszulką, „legginsy” zamiast spodni, bose stopy, gniewne oczy. Zadanie 16b usunęło paczkę UBC (ciała, fryzury, brwi i UAL) z potoku assetów i kodu, więc `?pack=ubc` nie istnieje, a `?charTest=1` pokazuje tylko postacie modular.
 - Proporcje z `CHARACTER_STYLE` (modele bazowe są smukłe i długonogie, Two Point jest krępe): głowa ×1,45, dłonie ×1,35, tułów (miednica, brzuch, klatka) ×1,14, szyja i barki wracają do ×1, więc ręce i głowa rosną tylko o własne mnożniki. Wzrost 1,55–1,88 m (od podeszwy do czubka głowy, po powiększeniu), tusza ×0,95–1,25. Wzrost wyrównuje skala całej postaci, więc większa głowa i tułów dają krótsze nogi w proporcji. Nogi nie są skalowane: stopy modular to kości IK przypięte do korzenia.
 - Personel nosi `brand.green`, klient nigdy. Góra i dół w różnych kolorach. Białe części stroju (kołnierz koszuli, podeszwy) mają ciepłą biel `wall[0]`: przyciągnięte do PALETTE dawały szaroniebieski kołnierz, który pod brodą czytał się jak zarost.
 - **Cienie postaci (decyzja R30):** każda postać ma miękką plamę cienia (`characters/blobShadows.ts`: jedna `InstancedMesh` na cały tłum, 1 draw call, kolor `wall[4]`, promień 0,54 m × tusza, krycie 0,82, `userData.treatAsOpaque` przeciw zerowaniu AO przez N8AO) na wszystkich presetach. Prawdziwy cień z mapy cieni (+1 draw call i ~2,9 tys. trójkątów na postać) tylko na presecie `wysoka` (`QualitySettings.characterShadows`).

@@ -7,27 +7,10 @@ import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.j
  * (scripts/process-assets.mjs). Licencje: public/assets/LICENSES.md.
  */
 export const ASSETS: {
-  characters: {
-    ubc: { male: string; female: string; hair: string[]; eyebrows: string[] };
-    modular: string[];
-    animations: string;
-  };
-  props: Record<'tree1' | 'tree2' | 'lamp' | 'van', string>;
+  characters: { modular: string[] };
+  props: Record<'lamp' | 'van', string>;
 } = {
   characters: {
-    ubc: {
-      male: '/assets/characters/ubc-male.glb',
-      female: '/assets/characters/ubc-female.glb',
-      hair: [
-        '/assets/characters/hair-beard.glb',
-        '/assets/characters/hair-buns.glb',
-        '/assets/characters/hair-buzzed.glb',
-        '/assets/characters/hair-buzzed-female.glb',
-        '/assets/characters/hair-long.glb',
-        '/assets/characters/hair-simple-parted.glb',
-      ],
-      eyebrows: ['/assets/characters/eyebrows-regular.glb', '/assets/characters/eyebrows-female.glb'],
-    },
     modular: [
       '/assets/characters/men-casual-hoodie.glb',
       '/assets/characters/men-casual-2.glb',
@@ -42,11 +25,8 @@ export const ASSETS: {
       '/assets/characters/women-worker.glb',
       '/assets/characters/women-punk.glb',
     ],
-    animations: '/assets/characters/ual1-standard.glb',
   },
   props: {
-    tree1: '/assets/props/tree-default.glb',
-    tree2: '/assets/props/tree-fat.glb',
     lamp: '/assets/props/lamp-curved.glb',
     van: '/assets/props/van-delivery.glb',
   },

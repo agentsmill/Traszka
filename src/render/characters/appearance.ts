@@ -6,9 +6,8 @@ import { createRng, subSeed } from '@/sim/rng';
  * więc klient odtworzony z zapisu wygląda tak samo. Kolory pochodzą wyłącznie z PALETTE.
  */
 export interface Appearance {
+  /** Płeć wybiera strój (męski albo damski); fryzura jest częścią stroju. */
   body: 'male' | 'female';
-  /** Indeks w `ASSETS.characters.ubc.hair` (pack ubc). W packu modular fryzura jest częścią stroju. */
-  hairIndex: number;
   skin: string;
   hair: string;
   top: string;
@@ -19,15 +18,6 @@ export interface Appearance {
   width: number;
   accessory: 'none' | 'backpack' | 'bag' | 'phone';
 }
-
-/**
- * Indeksy w `ASSETS.characters.ubc.hair` (beard, buns, buzzed, buzzed-female, long, simple-parted):
- * broda tylko u mężczyzn; koki, długie i „buzzed-female” czytają się jako kobiece; „simple-parted” pasuje do obu.
- */
-export const HAIRSTYLES_BY_BODY: Record<Appearance['body'], readonly number[]> = {
-  male: [0, 2, 5],
-  female: [1, 3, 4, 5],
-};
 
 const ACCESSORY_WEIGHTS: ReadonlyArray<readonly [Appearance['accessory'], number]> = [
   ['none', 0.5], ['backpack', 0.2], ['bag', 0.2], ['phone', 0.1],
@@ -43,7 +33,6 @@ export const MIN_CLOTHES_SKIN_DISTANCE = 0.3;
 export function pickAppearance(seed: string): Appearance {
   const rng = createRng(subSeed(seed, 'appearance'));
   const body: Appearance['body'] = rng.chance(0.5) ? 'male' : 'female';
-  const hairIndex = rng.pick(HAIRSTYLES_BY_BODY[body]);
   const skin = rng.pick(PALETTE.skin);
   const hair = rng.pick(PALETTE.hair);
   const visible = PALETTE.clothes.filter((c) => colorDistance(c, skin) >= MIN_CLOTHES_SKIN_DISTANCE);
@@ -62,5 +51,5 @@ export function pickAppearance(seed: string): Appearance {
     if (roll < weight) { accessory = kind; break; }
     roll -= weight;
   }
-  return { body, hairIndex, skin, hair, top, bottom, height, width, accessory };
+  return { body, skin, hair, top, bottom, height, width, accessory };
 }

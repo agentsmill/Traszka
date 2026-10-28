@@ -1,6 +1,5 @@
 import { Group, MathUtils, Mesh, type BufferGeometry, type Material } from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
-import { BENCH_CROWD, BENCH_SEED, createBenchSession } from '@/bench/bench';
 import { createRenderContext, type RenderContext } from '@/render/renderer';
 import { ISO_PITCH_DEG } from '@/render/cameraRig';
 import { QUALITY, detectDeviceCaps, pickInitialPreset, type QualityPresetId } from '@/render/quality';
@@ -10,8 +9,7 @@ import { cellToWorld } from '@/render/coords';
 import { buildStore, type StoreView } from '@/render/store/buildStore';
 import { fillShelves } from '@/render/store/products';
 import { buildStreet, type StreetView } from '@/render/street/buildStreet';
-import { startCharTestPage } from '@/render/characters/charTestPage';
-import { createCharacterFactory, type CharacterFactory, type CharacterPack } from '@/render/characters/characterFactory';
+import { createCharacterFactory, type CharacterFactory } from '@/render/characters/characterFactory';
 import { ANIM_SPEED_CAP, CrowdView } from '@/render/crowdView';
 import { createBlobShadows } from '@/render/characters/blobShadows';
 import { MAX_FRAME_DT, advanceClock, clockAlpha } from '@/game/loop';
@@ -23,6 +21,12 @@ import { renderUi } from '@/ui/App';
 import { listenForNotices } from '@/ui/Notice';
 import { FrameMeter } from '@/ui/perfMeter';
 import * as ui from '@/ui/state';
+
+/**
+ * Moduł benchmarku (`?bench=1`). Ładowany dynamicznie tylko dla tego trybu: zwykła gra nie pobiera maszyny stanów pomiaru.
+ * Nakładka wyników (`ui/BenchOverlay`, kilkadziesiąt linii JSX, z samymi importami typów z modułu) zostaje w pakiecie statycznie.
+ */
+type BenchModule = typeof import('@/bench/bench');
 
 /** Ile metrów na ekranie to jeden piksel (kamera ortograficzna: tyle samo w poziomie i w pionie). */
 const metersPerPixel = (ctx: RenderContext): number => ctx.rig.viewSize / Math.max(1, window.innerHeight);
@@ -169,12 +173,13 @@ function writeSeedToUrl(seed: string): void {
  * Gra `?seed=<seed>` (bez seeda: losowy, wpisany do adresu): generateStore → buildStore → buildStreet + tłum z symulacji.
  * Sterowanie jak w scenie próbnej (bindControls) plus N dzień/noc, X widok z zewnątrz (pełne ściany, szyld i pełna zabudowa
  * ulicy), R nowy losowy seed; przekrój (cutaway) podąża za obrotem kamery. F3 włącza nakładkę wydajności.
- * Parametry do zrzutów: `yaw` (0–3), `night=1`, `ext=1`, `zoom` (wysokość widoku w m), `q` (preset jakości), `pack`
- * (`ubc` zamiast postaci `modular`, tylko do porównań), `perf=1` (nakładka wydajności od startu).
+ * Parametry do zrzutów: `yaw` (0–3), `night=1`, `ext=1`, `zoom` (wysokość widoku w m), `q` (preset jakości),
+ * `perf=1` (nakładka wydajności od startu). `?charTest=1` to osobna strona podglądu postaci (ładowana dynamicznie).
  *
  * `bench=1` to benchmark (src/bench): seed `bench`, 60 postaci, stała kamera, bez sterowania. Parametry `seed`, `yaw`, `zoom`,
  * `night` i `ext` są wtedy ignorowane, żeby wyniki były porównywalne. Bieg liczy klatki w tej samej pętli co gra
- * (te same liczniki rysowania), a `quick=1` skraca go do próbnego uruchomienia.
+ * (te same liczniki rysowania), a `quick=1` skraca go do próbnego uruchomienia. `startGame` dostaje moduł benchmarku jako
+ * `benchKit` (dynamiczny import w main.ts); `null` to zwykła gra.
  *
  * Symulacja idzie stałym krokiem SIM_STEP (advanceClock), render interpoluje pozycje współczynnikiem acc / SIM_STEP.
  * Prędkość to `world.speed`; sklep i tłum startują, gdy postacie są gotowe (do tego czasu symulacja stoi).
@@ -182,7 +187,7 @@ function writeSeedToUrl(seed: string): void {
  * Nakładka (`src/ui`) steruje grą przez `Controls`. Przyciski i klawisze wołają te same funkcje, a te aktualizują
  * sygnały, które czyta interfejs, więc oba sposoby zawsze pokazują to samo.
  */
-function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: string, preset: QualityPresetId, params: URLSearchParams, pack: CharacterPack): void {
+function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: string, preset: QualityPresetId, params: URLSearchParams, benchKit: BenchModule | null): void {
   // Nakładka wstaje pierwsza: komunikat z createRenderContext musi trafić w działający nasłuch. Bez renderera nie ma czego sterować.
   listenForNotices();
   renderUi(root, null);
@@ -204,7 +209,7 @@ function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: st
   const blobs = createBlobShadows();
   crowdRoot.add(blobs.mesh);
 
-  const benchMode = params.get('bench') === '1';
+  const benchMode = benchKit !== null;
   let tod: TimeOfDay = !benchMode && params.get('night') === '1' ? 'night' : 'day';
   let exterior = !benchMode && params.get('ext') === '1';
   let factory: CharacterFactory | null = null;
@@ -226,13 +231,13 @@ function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: st
     unload();
     const mine = generation;
 
-    const world = createWorld(seed, benchMode ? BENCH_CROWD : undefined);
+    const world = createWorld(seed, benchKit?.BENCH_CROWD);
     world.speed = speed;
     const { layout } = world;
     const view = buildStore(layout);
     view.root.add(fillShelves(view, seed));   // view.dispose() zwalnia też bufory instancji towaru
     ctx.scene.add(view.root);
-    const current: Loaded = { world, view, street: null, crowdView: factory ? new CrowdView(factory, layout, crowdRoot, pack, blobs) : null };
+    const current: Loaded = { world, view, street: null, crowdView: factory ? new CrowdView(factory, layout, crowdRoot, blobs) : null };
     loaded = current;
     clock.acc = 0;
 
@@ -317,13 +322,13 @@ function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: st
     });
   }
 
-  void createCharacterFactory(pack).then((created) => {
+  void createCharacterFactory().then((created) => {
     factory = created;
-    if (loaded && !loaded.crowdView) loaded.crowdView = new CrowdView(created, loaded.world.layout, crowdRoot, pack, blobs);
+    if (loaded && !loaded.crowdView) loaded.crowdView = new CrowdView(created, loaded.world.layout, crowdRoot, blobs);
   }).catch((error: unknown) => console.error('Nie udało się wczytać postaci.', error));
 
-  const bench = benchMode
-    ? createBenchSession(ctx, crowdRoot, {
+  const bench = benchKit
+    ? benchKit.createBenchSession(ctx, crowdRoot, {
       quick: params.get('quick') === '1',
       onProgress: (progress) => { ui.bench.value = progress; },
       onPreset: (id) => { ui.preset.value = id; },
@@ -378,19 +383,23 @@ const params = new URLSearchParams(location.search);
 const canvas = document.getElementById('scene') as HTMLCanvasElement;
 const uiRoot = document.getElementById('ui') as HTMLElement;
 
+const presetFromUrl = (): QualityPresetId => {
+  const q = params.get('q');
+  return q && q in QUALITY ? (q as QualityPresetId) : pickInitialPreset(detectDeviceCaps());
+};
+
 if (params.get('charTest') === '1') {
-  const q = params.get('q');
-  startCharTestPage(canvas, q && q in QUALITY ? (q as QualityPresetId) : pickInitialPreset(detectDeviceCaps()), params);
+  // podgląd postaci to narzędzie deweloperskie: osobny fragment pakietu, pobierany tylko pod tym adresem
+  void import('@/render/characters/charTestPage')
+    .then(({ startCharTestPage }) => startCharTestPage(canvas, presetFromUrl(), params))
+    .catch((error: unknown) => console.error('Nie udało się wczytać podglądu postaci.', error));
 } else if (params.get('scene') === 'test') {
-  const q = params.get('q');
-  startTestScene(canvas, q && q in QUALITY ? (q as QualityPresetId) : pickInitialPreset(detectDeviceCaps()));
+  startTestScene(canvas, presetFromUrl());
 } else {
-  const q = params.get('q');
-  const requested = params.get('bench') === '1' ? BENCH_SEED : params.get('seed');
+  // benchmark też jest osobnym fragmentem: zwykła gra go nie pobiera
+  const benchKit = params.get('bench') === '1' ? await import('@/bench/bench') : null;
+  const requested = benchKit ? benchKit.BENCH_SEED : params.get('seed');
   const seed = requested || randomSeed();
   if (!requested) writeSeedToUrl(seed);
-  // Zadanie 16: modular to jedyna paczka gry (docs/style-guide.md §5). `?pack=ubc` zostaje tylko do porównań, dopóki
-  // zadanie 16b nie usunie paczki UBC z potoku assetów.
-  const pack: CharacterPack = params.get('pack') === 'ubc' ? 'ubc' : 'modular';
-  startGame(canvas, uiRoot, seed, q && q in QUALITY ? (q as QualityPresetId) : pickInitialPreset(detectDeviceCaps()), params, pack);
+  startGame(canvas, uiRoot, seed, presetFromUrl(), params, benchKit);
 }

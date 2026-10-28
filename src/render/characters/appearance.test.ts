@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { ASSETS } from '@/render/assets';
 import { CHARACTER_STYLE, PALETTE } from '@/render/style';
-import { HAIRSTYLES_BY_BODY, MIN_CLOTHES_SKIN_DISTANCE, pickAppearance } from './appearance';
+import { MIN_CLOTHES_SKIN_DISTANCE, pickAppearance } from './appearance';
 
 const SEEDS = Array.from({ length: 100 }, (_, i) => `klient-${i}`);
 
@@ -42,22 +41,6 @@ describe('pickAppearance', () => {
       expect(dist(a.top, a.skin)).toBeGreaterThanOrEqual(MIN_CLOTHES_SKIN_DISTANCE);
       expect(dist(a.bottom, a.skin)).toBeGreaterThanOrEqual(MIN_CLOTHES_SKIN_DISTANCE);
     }
-  });
-
-  it('fryzura pasuje do ciała i wskazuje istniejący plik z ASSETS', () => {
-    const hair = ASSETS.characters.ubc.hair;
-    const seen = { male: new Set<number>(), female: new Set<number>() };
-    for (const a of SEEDS.map(pickAppearance)) {
-      expect(HAIRSTYLES_BY_BODY[a.body]).toContain(a.hairIndex);
-      expect(a.hairIndex).toBeLessThan(hair.length);
-      seen[a.body].add(a.hairIndex);
-    }
-    // broda tylko u mężczyzn; koki, długie i „buzzed-female” tylko u kobiet
-    const name = (i: number): string => hair[i];
-    expect([...seen.female].map(name).some((f) => f.includes('beard'))).toBe(false);
-    expect([...seen.male].map(name).some((f) => /buns|long|buzzed-female/.test(f))).toBe(false);
-    expect(seen.male.size).toBeGreaterThanOrEqual(2);
-    expect(seen.female.size).toBeGreaterThanOrEqual(2);
   });
 
   it('akcesorium to jedna z czterech wartości i każda się zdarza', () => {

@@ -21,12 +21,12 @@ const CELLS: AtlasCellName[] = ['okno', 'oknoGasne', 'loggia', 'szewPlyty', 'tyn
 /** Loader, który zawsze zawodzi: w Node nie ma sieci ani WebGL, a ulica ma wtedy dać same grupy rekwizytów (ruling R5). */
 const failing = (): Promise<GLTF> => Promise.reject(new Error('brak sieci'));
 
-/** Atrapa modelu GLB: siatka z materiałem o nazwie jak w paczce Kenneya, wysokość 1,66 m (jak drzewo). */
+/** Atrapa modelu GLB (latarnia, dostawczak): jedna siatka o wysokości 1,66 m, którą ulica skaluje do wysokości rekwizytu. */
 const stubLoader = (): Promise<GLTF> => {
   const scene = new Group();
   const geometry = new BoxGeometry(0.7, 1.66, 0.6);
   geometry.translate(0, 0.78, 0);
-  scene.add(new Mesh(geometry, new MeshStandardMaterial({ name: 'leafsGreen' })));
+  scene.add(new Mesh(geometry, new MeshStandardMaterial({ name: 'stub' })));
   return Promise.resolve({ scene } as unknown as GLTF);
 };
 
@@ -259,19 +259,34 @@ describe('buildStreet: rekwizyty i seed', () => {
       const box = new Box3().setFromObject(group);
       return { min: box.min.y, height: box.max.y - box.min.y };
     };
-    for (const tree of view.root.children.filter((c) => c.name.startsWith('prop:tree:'))) {
-      const h = heightOf(tree.name);
-      expect(h.height).toBeGreaterThanOrEqual(3.5);
-      expect(h.height).toBeLessThanOrEqual(5.7);
-      expect(h.min).toBeCloseTo(0, 5);
-    }
+    for (const name of ['prop:lamp:0', 'prop:van:0']) expect(heightOf(name).min, name).toBeCloseTo(0, 5);
     expect(heightOf('prop:lamp:0').height).toBeCloseTo(4.5, 3);
     expect(heightOf('prop:van:0').height).toBeCloseTo(2.2, 3);
     // model spłaszczony do jednej siatki z kolorami wierzchołków (draw calls), bez rzucania cienia (poza zasięgiem kamery cienia)
-    const crowns = meshesOf(view.root.getObjectByName('prop:tree:0')!);
-    expect(crowns).toHaveLength(1);
-    expect(crowns[0]!.castShadow).toBe(false);
-    expect((crowns[0]!.material as MeshStandardMaterial).vertexColors).toBe(true);
+    for (const name of ['prop:lamp:0', 'prop:van:0']) {
+      const parts = meshesOf(view.root.getObjectByName(name)!);
+      expect(parts.length, name).toBeGreaterThanOrEqual(1);
+      for (const part of parts) expect(part.castShadow, `${name}:${part.name}`).toBe(false);
+      expect((parts.find((p) => p.name.endsWith(':main'))!.material as MeshStandardMaterial).vertexColors, name).toBe(true);
+    }
+  });
+
+  it('drzewa są proceduralne: 3,5–5,7 m, stoją na ziemi, to jedna siatka z kolorami wierzchołków bez cienia (bez modeli)', async () => {
+    for (const seed of ['kiełbasa-42', 'kiełbasa-12', 'traszka-1']) {
+      const { view } = await street(seed);
+      const trees = view.root.children.filter((c) => c.name.startsWith('prop:tree:'));
+      expect(trees.length, seed).toBeGreaterThanOrEqual(2);
+      for (const tree of trees) {
+        const box = new Box3().setFromObject(tree);
+        expect(box.max.y - box.min.y, `${seed} ${tree.name}`).toBeGreaterThanOrEqual(3.5);
+        expect(box.max.y - box.min.y, `${seed} ${tree.name}`).toBeLessThanOrEqual(5.7);
+        expect(box.min.y, `${seed} ${tree.name}`).toBeCloseTo(0, 5);
+        const crowns = meshesOf(tree);
+        expect(crowns, tree.name).toHaveLength(1);
+        expect(crowns[0]!.castShadow).toBe(false);
+        expect((crowns[0]!.material as MeshStandardMaterial).vertexColors).toBe(true);
+      }
+    }
   });
 });
 

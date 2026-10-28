@@ -5,14 +5,15 @@ import { CELL_SIZE_M } from '@/sim/grid';
 import { generateStore } from '@/sim/store/generateStore';
 import type { CharacterFactory, CharacterInstance } from './characters/characterFactory';
 import { cellToWorld } from './coords';
-import { WALK_SPEED_MPS } from './characters/walkSpeed';
 import { BLOB_RADIUS, createBlobShadows } from './characters/blobShadows';
 import { ANIM_SPEED_CAP, CrowdView, TURN_RATE_MAX } from './crowdView';
 
-/** Fabryka-atrapa: postać to pusta grupa, a wywołania zapisujemy. */
-function fakeFactory(scale = 1) {
+/** Fabryka-atrapa: postać to pusta grupa, a wywołania zapisujemy. `walkSpeedMps` to prędkość stopy w klipie (jedyne źródło dla tłumu). */
+function fakeFactory(scale = 1, walkSpeedMps = 1.15) {
   const made: { seed: string; character: CharacterInstance; setAnim: ReturnType<typeof vi.fn>; update: ReturnType<typeof vi.fn>; dispose: ReturnType<typeof vi.fn> }[] = [];
   const factory: CharacterFactory = {
+    walkSpeedMps,
+    dispose: vi.fn(),
     create(seed) {
       const object = new Group();
       object.scale.set(scale, scale, scale);
@@ -208,15 +209,24 @@ describe('CrowdView', () => {
 
   it('skaluje czas klipu chodu do agent.speed (stopy nie ślizgają się), a postój gra w normalnym tempie', () => {
     const { factory, made } = fakeFactory(0.9);
-    const view = new CrowdView(factory, layout, new Group(), 'modular');
+    const view = new CrowdView(factory, layout, new Group());
     const walker = agent({ id: 1, moving: true, speed: 2.6 });
     const idler = agent({ id: 2, moving: false, speed: 2.6 });
     view.sync(crowdOf(0, walker, idler), 0, 0.02);
-    const expected = (2.6 * CELL_SIZE_M) / (WALK_SPEED_MPS.modular * 0.9);
+    const expected = (2.6 * CELL_SIZE_M) / (factory.walkSpeedMps * 0.9);
     expect(expected).toBeGreaterThan(0.5);
     expect(expected).toBeLessThan(2);
     expect(made[0]!.update).toHaveBeenLastCalledWith(expect.closeTo(0.02 * expected, 12));
     expect(made[1]!.update).toHaveBeenLastCalledWith(0.02);
+  });
+
+  it('prędkość stopy w klipie bierze z fabryki: inna fabryka daje inny mnożnik czasu klipu', () => {
+    const tempo = (walkSpeedMps: number): number => {
+      const { factory, made } = fakeFactory(0.9, walkSpeedMps);
+      new CrowdView(factory, layout, new Group()).sync(crowdOf(0, agent({ moving: true, speed: 2.6 })), 0, 1);
+      return made[0]!.update.mock.calls.at(-1)![0] as number;
+    };
+    expect(tempo(1.15) / tempo(0.92)).toBeCloseTo(0.92 / 1.15, 10);   // wolniejszy klip trzeba grać szybciej
   });
 
   it('mnożnik chodu jest ograniczony do [0,5; 2]', () => {
@@ -271,6 +281,8 @@ describe('CrowdView: plamy cienia i polityka cieni (zadanie 16)', () => {
   /** Fabryka, której postać ma jedną siatkę (żeby było czym rzucać cień). */
   function meshFactory(): CharacterFactory {
     return {
+      walkSpeedMps: 1.15,
+      dispose: vi.fn(),
       create() {
         const object = new Group();
         object.scale.set(0.9 * 1.2, 0.9, 0.9 * 1.2);   // wzrost 0,9 × model, tusza 1,2
@@ -289,7 +301,7 @@ describe('CrowdView: plamy cienia i polityka cieni (zadanie 16)', () => {
 
   it('jedna plama na widoczną postać, pod jej stopami, elipsa wg tuszy; dispose chowa plamy', () => {
     const blobs = createBlobShadows(8);
-    const view = new CrowdView(meshFactory(), layout, new Group(), 'modular', blobs);
+    const view = new CrowdView(meshFactory(), layout, new Group(), blobs);
     view.sync(crowdOf(0, agent({ id: 1 }), agent({ id: 2, x: 12.5 }), agent({ id: 3, state: 'gone' })), 0, 0);
     expect(blobs.mesh.count).toBe(2);
     const m = new (blobs.mesh.instanceMatrix.array.constructor as Float32ArrayConstructor)(16);

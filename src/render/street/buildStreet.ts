@@ -190,7 +190,7 @@ function buildGround(g: Ground, lay: Layout, rng: Rng, crossing: number | null):
 
 // --- Modele Kenney: przemalowanie na paletę ----------------------------------------------------------------
 
-type PropKind = 'tree' | 'lamp' | 'van';
+type PropKind = 'lamp' | 'van';
 
 const LAMP_GLOW = '#ffb35c';
 /** Neon pylonu (napis i logo `brand.cream`): nocą jak neon szyldu (przewodnik §4: 3), w dzień ledwie się żarzy. */
@@ -201,11 +201,9 @@ const lampHeadMaterial = (night: boolean): Material =>
   night ? material('emissive', LAMP_GLOW, { emissiveIntensity: LAMP_HEAD_NIGHT }) : material('plasticGloss', BRAND.cream);
 
 /** Kolor części modelu po przemalowaniu (tylko PALETTE). Żarówka latarni jest osobna: ma materiał emissive. */
-function partColor(key: string, leaves: string): string {
+function partColor(key: string): string {
   const { productCategory: cat, street } = PALETTE;
   switch (key) {
-    case 'trunk': return FIX.wood;
-    case 'leaves': return leaves;
     case 'pole': return street.asphalt[0];
     case 'body': return BRAND.green;
     case 'cream': return BRAND.cream;
@@ -220,8 +218,7 @@ function partColor(key: string, leaves: string): string {
 }
 
 /** Część modelu wg koloru teksela z `colormap` Kenneya (gradienty palety) i nazwy siatki. */
-function partOf(kind: PropKind, meshName: string, materialName: string, rgb: [number, number, number] | null, p: Vector3): string {
-  if (kind === 'tree') return materialName === 'woodBark' ? 'trunk' : 'leaves';
+function partOf(kind: PropKind, meshName: string, rgb: [number, number, number] | null, p: Vector3): string {
   // głowica latarni: koniec wysięgnika (ostatnie 17 cm w kierunku −z na samej górze modelu 0,67 m)
   if (kind === 'lamp') return p.y > 0.6 && p.z < -0.04 ? 'bulb' : 'pole';
   if (!rgb) return 'body';
@@ -252,11 +249,11 @@ function readPixels(texture: Texture | null): { data: Uint8ClampedArray; w: numb
 
 /**
  * Przemalowuje model Kenneya na paletę stylu i spłaszcza go do jednej siatki z kolorami wierzchołków (`material`), plus
- * osobnej siatki żarówki latarni (emissive). Drzewo, latarnia i dostawczak kosztują więc 1–2 draw calle zamiast
+ * osobnej siatki żarówki latarni (emissive). Latarnia i dostawczak kosztują więc 1–2 draw calle zamiast
  * kilkunastu (dostawczak ma 6 siatek i 8 kolorów). Siatki są nowe (zwalnia je `owned`). Skaluje do `height`, stawia na podłożu.
  */
 function restyleModel(
-  kind: PropKind, source: Object3D, height: number, leaves: string, material: Material, owned: BufferGeometry[],
+  kind: PropKind, source: Object3D, height: number, material: Material, owned: BufferGeometry[],
 ): { model: Group; lampHeads: Mesh[] } {
   source.updateMatrixWorld(true);
   interface Bucket { pos: number[]; nor: number[]; col: number[] }
@@ -286,9 +283,9 @@ function restyleModel(
       }
       centroid.set(0, 0, 0);
       for (let j = 0; j < 3; j++) centroid.add(v.fromBufferAttribute(p, order[t + j]!).applyMatrix4(mesh.matrixWorld).multiplyScalar(1 / 3));
-      const key = partOf(kind, mesh.name, mat.name, rgb, centroid);
+      const key = partOf(kind, mesh.name, rgb, centroid);
       const bucket = key === 'bulb' ? buckets.bulb : buckets.main;
-      c.set(partColor(key, leaves));
+      c.set(partColor(key));
       for (let j = 0; j < 3; j++) {
         const i = order[t + j]!;
         v.fromBufferAttribute(p, i).applyMatrix4(mesh.matrixWorld);
@@ -333,10 +330,7 @@ interface PropSpec {
   url: string;
   /** Docelowa wysokość modelu (m). */
   height: number;
-  /** Kolor korony (tylko drzewa); losowany z seeda przed wczytaniem, żeby nie zależał od kolejności wczytywania. */
-  leaves: string;
 }
-const LEAVES = [BRAND.green, PALETTE.productCategory.napoje[3], PALETTE.productCategory.przekaski[3]];
 
 // --- Rekwizyty proceduralne (props.ts) --------------------------------------------------------------
 
@@ -597,7 +591,7 @@ export async function buildStreet(layout: StoreLayout, seed: string, load: (url:
     group.position.set(p.x, 0, p.z);
     group.rotation.y = p.rotY;
     root.add(group);
-    specs.push({ kind, group, url, height, leaves: treeRng.pick(LEAVES) });
+    specs.push({ kind, group, url, height });
   };
   props.lamps.forEach((p, i) => addProp('lamp', i, p, ASSETS.props.lamp, 4.5));
   // drzewa proceduralne (courtyard.ts), jak na podwórku: modele Kenneya obok krępych mebli wyglądały płasko (zadanie 16)
@@ -640,7 +634,7 @@ export async function buildStreet(layout: StoreLayout, seed: string, load: (url:
   await Promise.all(specs.map(async (spec) => {
     try {
       const gltf = await load(spec.url);
-      const styled = restyleModel(spec.kind, gltf.scene.clone(true), spec.height, spec.leaves, propMaterial, owned);
+      const styled = restyleModel(spec.kind, gltf.scene.clone(true), spec.height, propMaterial, owned);
       spec.group.add(styled.model);
       lampHeads.push(...styled.lampHeads);
     } catch (error) {
