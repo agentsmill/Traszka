@@ -29,7 +29,7 @@ export interface CrewMember {
   /** Zadanie trzymane (po histerezie), nie chwilowe. */
   readonly task: StaffDuty;
   readonly walker: StaffWalker;
-  /** Wychodzi ze sklepu (zwolniony albo koniec zmiany); znika po dojściu na chodnik. */
+  /** Wychodzi ze sklepu (zwolniony albo koniec zmiany); znika po dojściu na chodnik albo po 20 s czasu widoku. */
   readonly leaving: boolean;
   /** To ciało „kasjera z ekranu startowego” (wygląd gracza). */
   readonly isCashier: boolean;
@@ -108,7 +108,11 @@ export class StaffCrew {
     this.nav = buildStaffNav(this.layout, []);
   }
 
-  /** Ludzie w kolejności rosnącego id. Ta sama tablica, dopóki nikt nie przyjdzie ani nie zniknie. */
+  /**
+   * Ludzie w kolejności rosnącego id, razem z tymi, którzy jeszcze wychodzą. Nigdy więcej niż `STAFF_VIEW_MAX` (twardy limit:
+   * jedna postać to jeden SkinnedMesh): gdy nowi przychodzą, a brakuje miejsca, od razu znika wychodzący od najdawniej.
+   * Ta sama tablica, dopóki nikt nie przyjdzie ani nie zniknie.
+   */
   get members(): readonly CrewMember[] {
     return this.list;
   }
@@ -143,8 +147,8 @@ export class StaffCrew {
     const pallets = input.pallets;
     const signature = `${active.map((a) => `${a.id}:${a.task}`).join(',')}|${pallets.map((p) => `${p.loc}@${cellKey(p.spot)}`).join(',')}`;
     if (signature !== this.signature) {
-      this.signature = signature;
       this.retarget(active, byId, pallets);
+      this.signature = signature;   // dopiero po udanym liczeniu: wyjątek nie może sprawić, że kolejne sync pominą liczenie
     }
     this.synced = true;
   }
@@ -153,9 +157,18 @@ export class StaffCrew {
   step(dt: number): void {
     if (!(dt > 0) || !Number.isFinite(dt)) return;
     this.elapsed += dt;
-    for (const p of this.list) p.walker.step(dt, this.nav);
-    const stay = this.list.filter((p) => !(p.leaving && (p.walker.atGoal || this.elapsed - p.leaveSince >= LEAVE_TIMEOUT_S)));
-    if (stay.length !== this.list.length) this.list = stay;
+    // Klatka bez wychodzącego, który skończył, niczego nie alokuje: tablicę budujemy od nowa dopiero, gdy ktoś znika.
+    let someoneLeft = false;
+    for (const p of this.list) {
+      p.walker.step(dt, this.nav);
+      if (this.hasLeft(p)) someoneLeft = true;
+    }
+    if (someoneLeft) this.list = this.list.filter((p) => !this.hasLeft(p));
+  }
+
+  /** Wychodzący, który doszedł na chodnik albo wychodzi już `LEAVE_TIMEOUT_S` (np. droga zastawiona): znika ze sklepu. */
+  private hasLeft(p: Person): boolean {
+    return p.leaving && (p.walker.atGoal || this.elapsed - p.leaveSince >= LEAVE_TIMEOUT_S);
   }
 
   /** Gdy zmienił się zbiór kratek palet: nowa siatka i ponowne planowanie dróg u wszystkich (stare ścieżki mogły przejść przez paletę). */
@@ -202,7 +215,28 @@ export class StaffCrew {
         cashierTaken = true;
       }
     }
-    if (arrivals.length > 0) this.list = [...this.list, ...arrivals].sort((a, b) => a.id - b.id);
+    if (arrivals.length > 0) {
+      this.list = [...this.list, ...arrivals].sort((a, b) => a.id - b.id);
+      this.makeRoom();
+    }
+  }
+
+  /**
+   * Twardy limit ciał: dopóki jest ich więcej niż `STAFF_VIEW_MAX`, znika od razu wychodzący, który wychodzi najdawniej (remis:
+   * o wyższym id). Zostający mieszczą się w limicie (`normalise`), więc ktoś wychodzący zawsze się znajdzie. Jeśli zniknął
+   * wychodzący kasjer, ciało kasjera jest znów wolne dla kolejnego przybysza.
+   */
+  private makeRoom(): void {
+    while (this.list.length > STAFF_VIEW_MAX) {
+      let drop: Person | undefined;
+      for (const p of this.list) {
+        if (!p.leaving) continue;
+        if (!drop || p.leaveSince < drop.leaveSince || (p.leaveSince === drop.leaveSince && p.id > drop.id)) drop = p;
+      }
+      if (!drop) return;   // niemożliwe, gdy zostający mieszczą się w limicie; zabezpiecza tylko przed pętlą bez końca
+      const gone = drop;
+      this.list = this.list.filter((p) => p !== gone);
+    }
   }
 
   /**
