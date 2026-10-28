@@ -134,7 +134,8 @@ export function hintCandidates(r: ReportInput): ReportHint[] {
   const sum = (x: Record<string, number>): number => STAFF_TASKS.reduce((n, t) => n + (x[t] ?? 0), 0);
   const worked = sum(r.staff.worked) - sum(r.staff.robot);
   const paid = worked + r.staff.idle + r.staff.chores;
-  const waiting = sum(r.staff.waiting);
+  // kasa ma własną wskazówkę („kolejka”), a sprzątanie swoją („czystość”): tu tylko towar, który czekał na ręce
+  const starved = r.staff.starved.rozladunek + r.staff.starved.wykladanie;
   const out: ReportHint[] = [
     { id: 'mandaty', value: f.fines, impact: f.fines },
     { id: 'wut', value: f.wut, impact: f.wut },
@@ -143,8 +144,9 @@ export function hintCandidates(r: ReportInput): ReportHint[] {
     { id: 'czystosc', value: r.cleanlinessAvg, impact: Math.max(0, 70 - r.cleanlinessAvg) * 0.001 * f.margin },
     // bezczynność ponad ćwierć opłaconego czasu to pieniądze za stanie
     { id: 'bezczynnosc', value: r.staff.idle / 60, impact: paid > 0 && r.staff.idle > 0.4 * paid ? (r.staff.idle - 0.25 * paid) * WAGE_PER_MINUTE : 0 },
-    // zadania czekające na ludzi (poza kasą, którą liczy „kolejka”): wycena jak godziny pracy, których zabrakło
-    { id: 'braki', value: waiting / 60, impact: (waiting - r.staff.waiting.kasa) * WAGE_PER_MINUTE * 0.5 },
+    // minuty, w których palety albo półki nie dostały nikogo: ćwierć płacy za te minuty (szkoda jest głównie w mandatach
+    // i pustych półkach, które mają własne pozycje, więc to wskazówka „na drugim miejscu”)
+    { id: 'braki', value: starved / 60, impact: starved * WAGE_PER_MINUTE * 0.25 },
     { id: 'zmeczenie', value: r.exhaustedDays, impact: r.exhaustedDays >= 5 ? r.exhaustedDays * 40 : 0 },
     { id: 'zaufanie', value: -r.trust.delta, impact: r.trust.delta < -3 ? -r.trust.delta * 150 : 0 },
     { id: 'karty', value: r.cards.auto, impact: r.cards.auto > r.cards.answered ? r.cards.auto * 60 : 0 },

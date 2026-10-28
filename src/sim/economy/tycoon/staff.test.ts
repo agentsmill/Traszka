@@ -200,6 +200,7 @@ describe('zapotrzebowanie zadań i statystyki', () => {
     expect(pool.day.worked.kasa).toBeCloseTo(9);
     expect(pool.day.waiting.sprzatanie).toBeCloseTo(10);
     expect(pool.day.scoFreed).toBeCloseTo(1);
+    expect(pool.day.starved).toEqual({ kasa: 0, rozladunek: 0, wykladanie: 0, sprzatanie: 10 });
     const day = closeStaffDay(pool);
     expect(day.worked.wykladanie).toBeCloseTo(10);
     expect(pool.day.worked.kasa).toBe(0);

@@ -61,12 +61,16 @@ describe('raport miesięczny', () => {
     expect(pickHint(input()).id).toBe('brawo');
   });
 
-  it('wskazówka o ludziach: czekające zadania i bezczynność', () => {
+  it('wskazówka o ludziach: palety i półki bez rąk, bezczynność', () => {
     const busy = emptyStaffStats();
-    busy.waiting.rozladunek = 6000;
-    busy.waiting.sprzatanie = 3000;
+    busy.starved.rozladunek = 6000;
+    busy.starved.wykladanie = 3000;
+    busy.starved.sprzatanie = 50_000;   // sprzątanie ma własną wskazówkę (czystość), tu się nie liczy
     busy.worked.kasa = 30_000;
     expect(pickHint(input({ staff: busy }))).toMatchObject({ id: 'braki', value: 150 });
+    const onlySweep = emptyStaffStats();
+    onlySweep.starved.sprzatanie = 50_000;
+    expect(pickHint(input({ staff: onlySweep })).id).toBe('brawo');
     const idle = emptyStaffStats();
     idle.worked.kasa = 20_000;
     idle.idle = 40_000;

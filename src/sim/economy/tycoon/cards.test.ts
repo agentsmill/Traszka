@@ -204,6 +204,8 @@ describe('rozstrzyganie', () => {
     const cs = createCards(10);
     const card = make('lodowka');
     cs.pending.push(card);
+    expect(visibleCards(cs, card.showAt - 1)).toEqual([]);
+    expect(visibleCards(cs, card.showAt)).toEqual([card]);
     expect(resolveCard(cs, card.seq, 0, card.showAt - 1, SEED)).toEqual({ ok: false, text: 'Na tę kartę jeszcze za wcześnie.' });
     expect(resolveCard(cs, card.seq, 7, card.showAt, SEED).ok).toBe(false);
     const r = resolveCard(cs, card.seq, 1, card.showAt + 5, SEED);

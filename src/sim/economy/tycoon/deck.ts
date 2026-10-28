@@ -148,22 +148,22 @@ export const DECK: readonly CardDef[] = [
       {
         label: 'Generalne porządki po zamknięciu',
         result: 'Audytor przejechał palcem po regale i pokiwał głową. Z uznaniem albo z żalem, że nie ma czego wpisać.',
-        delta: () => ({ staffMinutes: 120, trust: 4 }),
-        risk: { chance: () => 0.1, delta: () => ({ trust: -10 }), text: 'Audytor znalazł jeden okruszek. Był to okruszek strategiczny.' },
+        delta: () => ({ staffMinutes: 120, trust: 2 }),
+        risk: { chance: () => 0.1, delta: () => ({ trust: -8 }), text: 'Audytor znalazł jeden okruszek. Był to okruszek strategiczny.' },
       },
       {
         label: 'Wynajmij firmę sprzątającą',
         result: 'Firma sprzątająca wyszorowała nawet to, czego nie było. Audyt zaliczony.',
-        delta: (c) => ({ cash: -0.12 * c.dailyMargin, trust: 4 }),
-        risk: { chance: () => 0.05, delta: () => ({ trust: -10 }), text: 'Audytor uznał, że jest „podejrzanie czysto”. Minus za brak autentyczności.' },
+        delta: (c) => ({ cash: -0.12 * c.dailyMargin, trust: 2 }),
+        risk: { chance: () => 0.05, delta: () => ({ trust: -8 }), text: 'Audytor uznał, że jest „podejrzanie czysto”. Minus za brak autentyczności.' },
       },
       {
         label: 'Będzie, co ma być',
         result: 'Było dobrze. Audytor był zmęczony po poprzednim sklepie i patrzył głównie w telefon.',
-        delta: () => ({ trust: 4 }),
+        delta: () => ({ trust: 2 }),
         risk: {
           chance: (_, p) => p.p / 100,
-          delta: (c) => ({ trust: -10, fine: -0.15 * c.dailyMargin }),
+          delta: (c) => ({ trust: -8, fine: -0.15 * c.dailyMargin }),
           text: 'Audytor znalazł kurz na kurzu. Raport ma 14 stron, w tym trzy o mopie, i karę na końcu.',
         },
       },
@@ -180,7 +180,7 @@ export const DECK: readonly CardDef[] = [
       {
         label: 'Wchodzę na całego: plakaty, wobler, uśmiech',
         result: 'Promocja hula. Grosze sypią się do kasy, hot-dogi z kasy.',
-        delta: () => ({ staffMinutes: 30, trust: 2 }),
+        delta: () => ({ staffMinutes: 30, trust: 1 }),
         mods: () => [{ kind: 'traffic', value: 0.08, minutes: DAY }, { kind: 'margin', value: -0.1, minutes: DAY }],
       },
       {
@@ -192,7 +192,7 @@ export const DECK: readonly CardDef[] = [
       {
         label: 'Mail na pewno trafił do spamu',
         result: 'Centrala sprawdziła, czy jej maile trafiają do spamu. Nie trafiają.',
-        delta: () => ({ trust: -3 }),
+        delta: () => ({ trust: -2 }),
       },
     ],
     fallback: 2,
@@ -239,7 +239,7 @@ export const DECK: readonly CardDef[] = [
         result: 'Mem o „sezonie palet” ma 200 tysięcy wyświetleń. Osiedle przychodzi zobaczyć te palety na żywo.',
         delta: () => ({ staffMinutes: 60, reputation: 3 }),
         mods: () => [{ kind: 'traffic', value: 0.05, minutes: 3 * DAY }],
-        risk: { chance: () => 0.15, delta: () => ({ trust: -4 }), text: 'Centrala obejrzała mema o „sezonie palet”. Nie zrozumiała. Potem zrozumiała.' },
+        risk: { chance: () => 0.15, delta: () => ({ trust: -3 }), text: 'Centrala obejrzała mema o „sezonie palet”. Nie zrozumiała. Potem zrozumiała.' },
       },
       {
         label: 'Zgłaszam Centrali, niech się tym zajmą',
@@ -249,7 +249,7 @@ export const DECK: readonly CardDef[] = [
       {
         label: 'Udaję, że nie widzę',
         result: 'Konto rośnie, a Ty nic nie wiesz. Oficjalnie.',
-        risk: { chance: () => 0.3, delta: () => ({ trust: -2 }), text: 'Centrala znalazła konto i pyta, czemu nikt jej nie zgłosił.' },
+        risk: { chance: () => 0.3, delta: () => ({ trust: -1 }), text: 'Centrala znalazła konto i pyta, czemu nikt jej nie zgłosił.' },
       },
     ],
     fallback: 2,
@@ -543,8 +543,7 @@ export const CIRCULARS: readonly CardDef[] = [
       },
       {
         label: 'Dziękuję, nie skorzystam',
-        result: 'Centrala przyjęła odmowę ze zrozumieniem i notatką w aktach.',
-        delta: () => ({ trust: -1 }),
+        result: 'Centrala przyjęła odmowę ze zrozumieniem i notatką w aktach. Na razie tylko notatką.',
       },
     ],
     fallback: 1,
@@ -559,7 +558,7 @@ export const CIRCULARS: readonly CardDef[] = [
       {
         label: 'Zapisuję cały zespół',
         result: 'Zespół uśmiecha się zgodnie z procedurą. Klienci trochę się boją.',
-        delta: () => ({ staffMinutes: 120, trust: 3, cash: -80 }),
+        delta: () => ({ staffMinutes: 120, trust: 2, cash: -80 }),
       },
       {
         label: 'Zapisuję tylko siebie',
@@ -569,7 +568,7 @@ export const CIRCULARS: readonly CardDef[] = [
       {
         label: 'Przeczytam w weekend',
         result: 'Weekend minął. Okólnik też. Centrala nie.',
-        delta: () => ({ trust: -2 }),
+        delta: () => ({ trust: -1 }),
       },
     ],
     fallback: 2,
@@ -645,17 +644,16 @@ export const CIRCULARS: readonly CardDef[] = [
       {
         label: 'Wypełniam szczerze',
         result: 'Szczerość doceniona. Centrala zaplanowała z Tobą „rozmowę rozwojową”.',
-        delta: () => ({ staffMinutes: 40, trust: -2 }),
+        delta: () => ({ staffMinutes: 40, trust: -1 }),
       },
       {
         label: 'Wypełniam na 10',
         result: 'Dziękujemy! Twoja opinia pomoże nam utrzymać obecny poziom.',
-        delta: () => ({ staffMinutes: 40, trust: 2 }),
+        delta: () => ({ staffMinutes: 40, trust: 1 }),
       },
       {
         label: 'Nie wypełniam',
         result: 'Ankieta zamknięta. Średnia ocena sieci: 9,8. Bez Ciebie.',
-        delta: () => ({ trust: -1 }),
       },
     ],
     fallback: 2,

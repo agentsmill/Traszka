@@ -46,8 +46,10 @@ export interface StaffStats {
   /** Praca ludzi i robotów wg zadania. */
   worked: TaskMinutes;
   robot: TaskMinutes;
-  /** Zapotrzebowanie, którego nikt nie wziął (zadanie czekało). */
+  /** Zapotrzebowanie, którego nikt nie wziął, w osobominutach (ile rąk by się przydało). */
   waiting: TaskMinutes;
+  /** Minuty, w których zadanie miało pracę, a nie dostało nikogo (zadanie czekało). */
+  starved: TaskMinutes;
   /** Ludzie bez zadania (także przypięci do zadania, które akurat nie miało pracy). */
   idle: number;
   /** Czas ludzi oddany kartom decyzji. */
@@ -57,7 +59,7 @@ export interface StaffStats {
 }
 
 export const emptyStaffStats = (): StaffStats => ({
-  worked: zeroTasks(), robot: zeroTasks(), waiting: zeroTasks(), idle: 0, chores: 0, scoFreed: 0,
+  worked: zeroTasks(), robot: zeroTasks(), waiting: zeroTasks(), starved: zeroTasks(), idle: 0, chores: 0, scoFreed: 0,
 });
 
 export interface StaffPoolState {
@@ -166,11 +168,15 @@ export function allocateStaff(pool: StaffPoolState, input: StaffInput): StaffAll
   return { human, robot, total, waiting: need, chores, idle };
 }
 
+/** Zadanie „czeka”, gdy chciało co najmniej tyle osobominut, a nie dostało nic. */
+const STARVED_MIN = 0.05;
+
 function addStats(st: StaffStats, a: StaffAllocation, scoFreed: number): void {
   for (const t of STAFF_TASKS) {
     st.worked[t] += a.total[t];
     st.robot[t] += a.robot[t];
     st.waiting[t] += a.waiting[t];
+    if (a.waiting[t] > STARVED_MIN && a.total[t] < 1e-9) st.starved[t]++;
   }
   st.idle += a.idle;
   st.chores += a.chores;
@@ -327,6 +333,7 @@ function stats(v: unknown): StaffStats {
     worked: tasks(r.worked, z, STAT_MAX),
     robot: tasks(r.robot, z, STAT_MAX),
     waiting: tasks(r.waiting, z, STAT_MAX),
+    starved: tasks(r.starved, z, STAT_MAX),
     idle: num(r.idle, 0, 0, STAT_MAX),
     chores: num(r.chores, 0, 0, STAT_MAX),
     scoFreed: num(r.scoFreed, 0, 0, STAT_MAX),

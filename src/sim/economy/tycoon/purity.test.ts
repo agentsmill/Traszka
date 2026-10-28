@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { dateOfDay, isLastDayOfMonth } from '../calendar';
 import { CH, CHANNEL_RANGE } from './channels';
-import { dateOfGameDay, isMonthEnd, monthIndexOf, roundNice, weekdayOf } from './time';
+import { dateOfGameDay, daysLeftInMonth, isMonthEnd, monthIndexOf, roundNice, weekdayOf } from './time';
 
 const DIR = 'src/sim/economy/tycoon';
 const sources = readdirSync(DIR).filter((f) => f.endsWith('.ts') && !f.endsWith('.test.ts'));
@@ -71,6 +71,7 @@ describe('czas bez Date', () => {
       expect(dateOfGameDay(day)).toEqual({ year: ref.year, month: ref.month, date: ref.date });
       expect(weekdayOf(day)).toBe(ref.weekday);
       expect(isMonthEnd(day)).toBe(isLastDayOfMonth(day));
+      expect(daysLeftInMonth(day) === 1).toBe(isLastDayOfMonth(day));
     }
   });
 

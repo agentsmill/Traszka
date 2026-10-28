@@ -47,11 +47,18 @@ export function createTrust(value: number = TRUST.start): TrustState {
   return { value: v, monthStart: v, month: {} };
 }
 
-/** Zmiana zaufania z przyczyną. Zwraca zmianę po przycięciu do 0–100 (tyle trafia do raportu). */
+/**
+ * Miękkie granice: powyżej `softHigh` zyski liczą się w połowie (ulubieńcem Centrali zostaje się powoli), poniżej
+ * `softLow` straty też w połowie (do zera, czyli wypowiedzenia, schodzi się długo, a nie w jeden zły tydzień).
+ */
+export const TRUST_SOFT = { softHigh: 75, softLow: 30, factor: 0.5 } as const;
+
+/** Zmiana zaufania z przyczyną. Zwraca zmianę po miękkich granicach i przycięciu do 0–100 (tyle trafia do raportu). */
 export function addTrust(t: TrustState, reason: TrustReason, delta: number): number {
   if (!Number.isFinite(delta) || delta === 0) return 0;
   const before = t.value;
-  t.value = clamp(t.value + delta, 0, 100);
+  const soft = (delta > 0 && before >= TRUST_SOFT.softHigh) || (delta < 0 && before <= TRUST_SOFT.softLow);
+  t.value = clamp(t.value + (soft ? delta * TRUST_SOFT.factor : delta), 0, 100);
   const applied = t.value - before;
   if (applied !== 0) t.month[reason] = (t.month[reason] ?? 0) + applied;
   return applied;

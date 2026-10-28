@@ -29,7 +29,13 @@ describe('zaufanie Centrali', () => {
     expect(t.month).toEqual({});
   });
 
-  it('zaufanie trzyma się 0–100, a raport widzi tylko zmianę po przycięciu', () => {
+  it('miękkie granice: wysoko zyski liczą się w połowie, nisko straty też; raport widzi zmianę po przycięciu', () => {
+    const high = createTrust(80);
+    expect(addTrust(high, 'kpi', 4)).toBe(2);
+    expect(addTrust(high, 'mandaty', -4)).toBe(-4);
+    const low = createTrust(25);
+    expect(addTrust(low, 'mandaty', -4)).toBe(-2);
+    expect(addTrust(low, 'kpi', 4)).toBe(4);
     const t = createTrust(98);
     expect(addTrust(t, 'wynik', 5)).toBe(2);
     expect(addTrust(t, 'inne', -500)).toBe(-100);

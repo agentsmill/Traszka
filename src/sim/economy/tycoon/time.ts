@@ -44,6 +44,12 @@ export function dateOfGameDay(day: number): DayDate {
 
 export const isMonthEnd = (day: number): boolean => dateOfGameDay(day + 1).month !== dateOfGameDay(day).month;
 
+/** Ile dni miesiąca zostało razem z dniem `day` (ostatni dzień miesiąca: 1). */
+export function daysLeftInMonth(day: number): number {
+  const d = dateOfGameDay(day);
+  return monthLength(d.year, d.month) - d.date + 1;
+}
+
 /** Numer miesiąca gry: 0 to wrzesień 2026. Służy jako numer zdarzenia w losowaniu (komentarz Centrali). */
 export function monthIndexOf(day: number): number {
   const d = dateOfGameDay(day);
