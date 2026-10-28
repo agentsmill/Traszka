@@ -1,0 +1,82 @@
+{
+  "tap": [
+    {
+      "pack": "kenney-impact-sounds",
+      "file": "Audio/impactSoft_medium_000.ogg"
+    },
+    {
+      "pack": "kenney-impact-sounds",
+      "file": "Audio/impactSoft_medium_001.ogg"
+    },
+    {
+      "pack": "kenney-impact-sounds",
+      "file": "Audio/impactSoft_medium_002.ogg"
+    },
+    {
+      "pack": "kenney-impact-sounds",
+      "file": "Audio/impactSoft_medium_003.ogg"
+    },
+    {
+      "pack": "kenney-impact-sounds",
+      "file": "Audio/impactSoft_medium_004.ogg"
+    },
+    {
+      "pack": "kenney-impact-sounds",
+      "file": "Audio/footstep_carpet_002.ogg"
+    }
+  ],
+  "cash": [
+    {
+      "pack": "kenney-rpg-audio",
+      "file": "Audio/handleCoins2.ogg"
+    }
+  ],
+  "coins": [
+    {
+      "pack": "kenney-rpg-audio",
+      "file": "Audio/handleCoins.ogg"
+    }
+  ],
+  "levelup": [
+    {
+      "pack": "kenney-music-jingles",
+      "file": "Audio/Steel jingles/jingles_STEEL06.ogg"
+    }
+  ],
+  "gift": [
+    {
+      "pack": "kenney-interface-sounds",
+      "file": "Audio/confirmation_002.ogg"
+    }
+  ],
+  "golden": [
+    {
+      "pack": "kenney-music-jingles",
+      "file": "Audio/Steel jingles/jingles_STEEL10.ogg"
+    }
+  ],
+  "delivery": [
+    {
+      "pack": "kenney-impact-sounds",
+      "file": "Audio/impactPlank_medium_000.ogg"
+    }
+  ],
+  "fine": [
+    {
+      "pack": "kenney-interface-sounds",
+      "file": "Audio/error_005.ogg"
+    }
+  ],
+  "error": [
+    {
+      "pack": "kenney-interface-sounds",
+      "file": "Audio/error_004.ogg"
+    }
+  ],
+  "pop": [
+    {
+      "pack": "kenney-interface-sounds",
+      "file": "Audio/pluck_001.ogg"
+    }
+  ]
+}

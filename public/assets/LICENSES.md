@@ -4,6 +4,8 @@ Wszystkie assety w tym katalogu pochodzą z paczek na licencji CC0 1.0 Universal
 
 Pliki `.glb` są generowane z oryginałów w `assets-src/` (katalog git-ignored) poleceniem `npm run assets` (`scripts/process-assets.mjs`). Oryginały nie trafiają do repozytorium.
 
+Pliki `audio/*.mp3` i `audio/manifest.json` są generowane z oryginałów `.ogg` w `assets-src/` poleceniem `npm run audio` (`scripts/process-audio.mjs`), według wyboru w `scripts/audio-map.json`. Oryginały także nie trafiają do repozytorium.
+
 ## Paczki
 
 | Paczka | Autor | Licencja | URL | Data pobrania |
@@ -12,6 +14,10 @@ Pliki `.glb` są generowane z oryginałów w `assets-src/` (katalog git-ignored)
 | Kenney City Kit Roads (2.2) | Kenney (kenney.nl) | CC0 1.0 | https://kenney.nl/assets/city-kit-roads | 2026-10-27 |
 | Ultimate Modular Men (Feb 2022) | Quaternius | CC0 1.0 | https://quaternius.com | 2026-10-27 |
 | Ultimate Modular Women (April 2022) | Quaternius | CC0 1.0 | https://quaternius.com | 2026-10-27 |
+| Kenney Interface Sounds (1.0) | Kenney (kenney.nl) | CC0 1.0 | https://kenney.nl/assets/interface-sounds | 2026-10-28 |
+| Kenney Impact Sounds (1.0) | Kenney (kenney.nl) | CC0 1.0 | https://kenney.nl/assets/impact-sounds | 2026-10-28 |
+| Kenney RPG Audio | Kenney (kenney.nl) | CC0 1.0 | https://kenney.nl/assets/rpg-audio | 2026-10-28 |
+| Kenney Music Jingles | Kenney (kenney.nl) | CC0 1.0 | https://kenney.nl/assets/music-jingles | 2026-10-28 |
 
 Uwaga: plik `License.txt` w paczce Ultimate Modular Women ma w nagłówku nazwę „Ultimate Modular Males”. Treść licencji to CC0 1.0.
 
@@ -56,6 +62,10 @@ Stroje specjalne przechodzą przez ten sam potok co pozostałe postacie (klipy `
 | --- | --- | --- |
 | `lamp-curved.glb` | Kenney City Kit Roads | Models/GLB format/light-curved.glb |
 | `van-delivery.glb` | Kenney Car Kit | Models/GLB format/delivery.glb |
+
+### Dźwięki (`audio/`)
+
+Pliki `<rodzaj>-<n>.mp3` (np. `tap-0.mp3`) powstają z plików `.ogg` czterech paczek Kenneya z tabeli wyżej (Interface Sounds, Impact Sounds, RPG Audio, Music Jingles); plik `License.txt` każdej z nich to CC0 (Creative Commons Zero). Który plik z której paczki gra który dźwięk gry (`tap`, `cash`, `coins`, `levelup`, `gift`, `golden`, `delivery`, `fine`, `error`, `pop`), mówi `scripts/audio-map.json`: klucz to rodzaj dźwięku, `<n>` to numer wariantu, a wpis `{ pack, file }` wskazuje oryginał w paczce. Przetwarzanie nie zmienia charakteru dźwięku: mono 44,1 kHz, usunięta stała składowa, obcięta cisza na początku i końcu, krótkie wyciszenie końca i wyrównana głośność, potem MP3 (VBR).
 
 ## Biblioteki (nie są assetami, nie trafiają do `public/assets/`)
 
