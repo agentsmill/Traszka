@@ -14,7 +14,8 @@ import { createBlobShadows } from '@/render/characters/blobShadows';
 import { MAX_FRAME_DT, advanceClock, clockAlpha } from '@/game/loop';
 import { randomSeed } from '@/game/seedWords';
 import {
-  NEWER_SAVE_NOTICE, createSession, discardSave, lastSavedSeed, retireSession, reviveSession, saveSession, syncLayout, type GameSession,
+  NEWER_SAVE_NOTICE, UNBUILDABLE_SAVE_NOTICE, createSession, discardSave, lastSavedSeed, retireSession, reviveSession, saveSession, syncLayout,
+  type GameSession,
 } from '@/game/session';
 import { openStore } from '@/game/openStore';
 import { addToNetwork, claimDaily, loadMeta, partnerOf, saveMeta, startupWindow, type Meta } from '@/game/meta';
@@ -671,10 +672,17 @@ function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: st
     // Zapis, który przeszedł walidację, nie przepada z powodu świata, który się nie zbudował (openStore: druga próba z układem
     // z seeda, potem sklep tymczasowy); do kopii idzie tylko zapis, którego nie da się przeczytać. Każda nieudana próba budowy
     // sprząta po sobie scenę (loadStore), więc kolejna zaczyna od czystej.
-    session = openStore({
-      seed: initialSeed, fresh: params.get('new') === '1', partner: partnerOf(meta), randomSeed,
-      build: (opening) => { session = opening; load(opening.seed); },
-    });
+    try {
+      session = openStore({
+        seed: initialSeed, fresh: params.get('new') === '1', partner: partnerOf(meta), randomSeed,
+        build: (opening) => { session = opening; load(opening.seed); },
+      });
+    } catch (error) {
+      // żaden sklep się nie zbudował (renderer): zapis nietknięty, a gracz dostaje komunikat zamiast pustej strony
+      console.error('Nie udało się zbudować żadnego sklepu.', error);
+      postNotice(UNBUILDABLE_SAVE_NOTICE);
+      return;
+    }
     ui.seed.value = session.seed;
     if (session.loadNotice) postNotice(session.loadNotice);
   }
