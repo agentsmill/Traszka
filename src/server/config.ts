@@ -57,4 +57,4 @@ export const RATE_LIMITS: Readonly<Record<RateAction, RateLimit>> = {
 };
 
 /** Odpowiedź z rankingiem może poleżeć w pamięci podręcznej Vercela (wszyscy widzą to samo), zgłoszenia nigdy. */
-export const BOARD_CACHE = 'public, max-age=0, s-maxage=30, stale-while-revalidate=120';
+export const BOARD_CACHE = 'public, max-age=0, s-maxage=30, stale-while-revalidate=30';
