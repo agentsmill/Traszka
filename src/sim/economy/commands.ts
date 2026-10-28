@@ -80,8 +80,8 @@ export interface CommandOutcome {
 const refused = (text: string): CommandOutcome => ({ result: { ok: false, text }, events: [], layoutChanged: false });
 
 /** Stuknięcie: mnożnik z serii, jaką da to stuknięcie; do serii liczy się dopiero udane. */
-function tap(s: EconomyState, run: (combo: number) => CommandResult): CommandResult {
-  const r = run(comboMult(nextTapStreak(s)));
+function tap(s: EconomyState, attempt: (combo: number) => CommandResult): CommandResult {
+  const r = attempt(comboMult(nextTapStreak(s)));
   if (r.ok) commitTap(s);
   return r;
 }
@@ -107,6 +107,7 @@ function run(s: EconomyState, info: StoreInfo, cmd: Command, events: EconEvent[]
     case 'startRemont': return startRemont(s);
     case 'campaign': return campaign(s);
     case 'rushRemont': return rushRemont(s);
+    default: return { ok: false, text: 'Nieznane polecenie.' };   // nieosiągalne po `isCommand`, ale wynik ma być zawsze
   }
 }
 
@@ -117,8 +118,9 @@ function run(s: EconomyState, info: StoreInfo, cmd: Command, events: EconEvent[]
  */
 export function applyCommand(state: EconomyState, info: StoreInfo, cmd: Command): CommandOutcome {
   if (!isCommand(cmd)) return refused('Nieznane polecenie.');
+  const type = cmd.type;   // raz: `type` z getterem mógłby za drugim razem dać co innego, a przejść `isCommand`
   if (state.gameOver) return refused('Gra skończona: Centrala wypowiedziała umowę.');
-  if (cmd.type === 'claimGift' && !giftOpen(state)) return refused('Paczki od Centrali już nie ma.');
+  if (type === 'claimGift' && !giftOpen(state)) return refused('Paczki od Centrali już nie ma.');
 
   const events: EconEvent[] = [];
   const remontBefore = state.remontLevel;

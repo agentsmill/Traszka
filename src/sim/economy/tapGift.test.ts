@@ -28,6 +28,11 @@ const insideWindowRange = (minute: number): boolean => {
   const mod = minuteOfDay(minute);
   return mod >= OPEN_FROM && mod <= LAST_OPENING;
 };
+/**
+ * Najdłuższy odstęp od wygaśnięcia okna do następnego: 899 + 1200 minut po losowaniu (`GIFT_GAP_MIN` + `GIFT_GAP_SPREAD` - 1) i do
+ * 599 minut przesunięcia, gdy wylosowana minuta wypada o jedną za późno na dzień (przesunięcie na otwarcie następnego): 2698.
+ */
+const MAX_GIFT_GAP = GIFT_GAP_MIN + GIFT_GAP_SPREAD - 1 + (MINUTES_PER_DAY + OPEN_FROM - LAST_OPENING - 1);
 
 describe('combo z czasu gry', () => {
   it('combo: 1..3 stuknięcie ×1, 4. ×2, 8. ×3, 16. i dalej ×5; przerwa > COMBO_WINDOW zaczyna od 1', () => {
@@ -120,7 +125,7 @@ describe('okna paczek od Centrali', () => {
     expect(giftOpen(s)).toBe(false);
   });
 
-  it('okno bez odbioru wygasa w stepMinute i następne otwiera się 900–2100 minut później, zawsze w godzinach otwarcia', () => {
+  it('okno bez odbioru wygasa w stepMinute i następne otwiera się 900–2698 minut po wygaśnięciu, zawsze w godzinach otwarcia', () => {
     // prawdziwe kroki: okno z nowej gry zamyka się dokładnie po GIFT_OPEN minutach
     const s = fresh();
     const first = s.giftAt;
@@ -155,6 +160,7 @@ describe('okna paczek od Centrali', () => {
       expect(raw - before, `seed ${i}`).toBeLessThan(GIFT_GAP_MIN + GIFT_GAP_SPREAD);
       expect(insideWindowRange(e.giftAt), `seed ${i}: minuta dnia ${minuteOfDay(e.giftAt)}`).toBe(true);
       expect(e.giftAt, `seed ${i}`).toBeGreaterThanOrEqual(raw);   // przesunięcie nigdy nie przybliża okna
+      expect(e.giftAt - before, `seed ${i}`).toBeLessThanOrEqual(MAX_GIFT_GAP);
       if (e.giftAt !== raw) {
         if (dayOf(e.giftAt) === dayOf(raw)) sameDayShift++; else nextDayShift++;
       }

@@ -120,7 +120,7 @@ describe('sanitizeEconomy: poprawny stan przechodzi bez zmian', () => {
     }
   });
 
-  it('zlecenie bez title przechodzi sanitizację (dziś by wypadło)', () => {
+  it('zlecenie bez title przechodzi sanitizację (wcześniej wypadało)', () => {
     const s = defaults();
     const bare = (json(s).quests as Record<string, unknown>[]).map(({ title: _, ...q }) => q);
     expect(bare).toHaveLength(3);

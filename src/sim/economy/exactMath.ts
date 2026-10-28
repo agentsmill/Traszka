@@ -3,7 +3,9 @@
  * `**` z wykładnikiem ułamkowym ani od `Math.log10`, więc V8, JavaScriptCore i SpiderMonkey mogą się różnić ostatnim bitem.
  * Serwer odtwarzający bieg z seeda i dziennika poleceń musi dostać te same liczby co przeglądarka, więc tu liczymy tylko
  * tym, co jest dokładne w każdym silniku: mnożeniem double (IEEE 754), arytmetyką BigInt i literałami.
- * Testy (`exactMath.test.ts`) dowodzą, że wartości są te same, co z dawnych wzorów w V8.
+ * Testy (`exactMath.test.ts`) dowodzą, że wartości są te same, co z dawnych wzorów w V8. Jeden wyjątek: tuż pod potęgą
+ * dziesięciu `Math.log10` w V8 zaokrągla w górę, więc dawny wzór na `pow10Floor` dawał tam potęgę za dużą, a nowy daje
+ * właściwą (patrz niżej); `niceRound`, jedyny użytkownik, kończy w tym samym punkcie.
  */
 
 /** `base` do całkowitej potęgi `n` ≥ 0 pętlą mnożeń, zamiast `base ** n`, którego `Math.pow` bywa różny między silnikami. */
@@ -33,9 +35,12 @@ export const FINE_PALLET_POW: readonly number[] = [
 ];
 
 /**
- * Największa potęga dziesięciu ≤ `n` (dla n ≥ 1), zamiast `10 ** Math.floor(Math.log10(n))`. Potęgi 10 do 1e22 są dokładne
- * w double, więc do tej granicy wynik jest ten sam co z `**` i `Math.log10`; wyżej mnożenie dalej jest deterministyczne,
- * tylko już nie musi się zgadzać z `**`. Granica 1e300 chroni przed pętlą bez końca dla `Infinity`.
+ * Największa potęga dziesięciu ≤ `n` (dla n ≥ 1), zamiast `10 ** Math.floor(Math.log10(n))`. Wynik jest ten sam co z dawnego
+ * wzoru w V8 (test) z jednym wyjątkiem: tuż pod potęgą dziesięciu, dla n = p · (1 − 2^-52) z p od 1e3, `Math.log10` w V8
+ * zaokrągla w górę do całkowitego wykładnika, więc dawny wzór dawał potęgę większą od `n` (np. 1000 dla 999,9999999999998).
+ * Tu wychodzi właściwa, o rząd mniejsza; `niceRound` i tak kończy w tym samym punkcie. Potęgi 10 do 1e22 są dokładne w double;
+ * wyżej mnożenie dalej jest deterministyczne, tylko już nie musi się zgadzać z `**`. Granica 1e300 chroni przed pętlą bez
+ * końca dla `Infinity`.
  */
 export function pow10Floor(n: number): number {
   let p = 1;
@@ -72,7 +77,11 @@ function xpExact(level: number): number {
 /** Pamięć podręczna: `processLevels` pyta o XP do następnego poziomu co minutę, a interfejs przy każdym odświeżeniu. */
 const XP_CACHE = new Map<number, number>();
 
-/** XP do następnego poziomu: `Math.round(120 * level ** 1.55)` dla całkowitego `level` ≥ 0, w liczbach dokładnych. */
+/**
+ * XP do następnego poziomu: `Math.round(120 * level ** 1.55)` dla całkowitego `level` ≥ 0, w liczbach dokładnych. Zgodność
+ * z V8 sprawdzona do poziomu 10 000 (test); w grze poziom nie przekracza 1000 (`LIMITS.level`). Od poziomu 182 283 dokładny
+ * wynik i wzór w V8 mogą się już różnić, bo 1,55 jako double nie jest równe 31/20; tam obowiązuje wynik dokładny.
+ */
 export function xpCurve(level: number): number {
   if (!Number.isSafeInteger(level) || level < 0) throw new RangeError(`xpCurve: poziom musi być liczbą całkowitą ≥ 0, jest ${level}`);
   let xp = XP_CACHE.get(level);

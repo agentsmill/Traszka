@@ -90,8 +90,10 @@ export const TAP_ITEMS = 8;
  */
 export const COMBO_WINDOW = 15;
 /**
- * Paczki od Centrali w czasie gry: pierwsze okno GIFT_FIRST minut od startu, kolejne GIFT_GAP_MIN plus losowe
- * 0..GIFT_GAP_SPREAD minut po poprzednim, każde otwarte GIFT_OPEN minut (ok. 9 s przy ×1, jak dotąd).
+ * Paczki od Centrali w czasie gry: pierwsze okno GIFT_FIRST minut od startu (przesunięte w godziny otwarcia), każde otwarte
+ * GIFT_OPEN minut (ok. 9 s przy ×1, jak dotąd). Następne okno: GIFT_GAP_MIN plus losowe 0..GIFT_GAP_SPREAD minut od chwili,
+ * gdy poprzednie przestało czekać (odebrane albo wygasłe), przesunięte w godziny otwarcia (`giftWindowFrom`). Odstęp
+ * od końca okna to więc 900 do 2698 minut: 900..2099 po losowaniu plus do 599 minut przesunięcia na następne otwarcie.
  */
 export const GIFT_FIRST = 480;
 export const GIFT_GAP_MIN = 900;

@@ -401,6 +401,20 @@ describe('zepsute polecenia', () => {
       expect(snapshot(s), type).toBe(before);
     }
   });
+
+  it('polecenie, którego type zmienia się między odczytami, kończy się odmową, a nie brakiem wyniku', () => {
+    // tylko obiekt spoza JSON-a (getter): pierwszy odczyt przechodzi `isCommand`, kolejne dają już inny napis
+    const { s, info } = base();
+    const before = snapshot(s);
+    let reads = 0;
+    const cmd = { get type() { return reads++ === 0 ? 'hire' : 'nuke'; } } as unknown as Command;
+    const out = applyCommand(s, info, cmd);
+    expect(reads).toBeGreaterThan(1);
+    expect(out.result).toEqual({ ok: false, text: 'Nieznane polecenie.' });
+    expect(out.events).toEqual([]);
+    expect(out.layoutChanged).toBe(false);
+    expect(snapshot(s)).toBe(before);
+  });
 });
 
 describe('isCommand', () => {

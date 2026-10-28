@@ -34,9 +34,24 @@ export function freshRun(seed: string): { state: EconomyState; layout: StoreLayo
   return { state: createEconomy(seed, info), layout, info };
 }
 
-/** Wpis, który da się ustawić w kolejności. `cmd` sprawdza dopiero `applyCommand`, a `NaN` w `minute` rozwaliłby porządek sortowania. */
-const isOrderable = (e: unknown): e is LogEntry =>
-  typeof e === 'object' && e !== null && Number.isFinite((e as LogEntry).minute) && Number.isFinite((e as LogEntry).seq);
+/**
+ * Czy `x` jest wpisem dziennika, który da się ustawić w kolejności: obiekt ze skończonymi `minute` i `seq`. `cmd` może być
+ * czymkolwiek, bo polecenia odrzuca dopiero `applyCommand` (`isCommand`), a `NaN` w `minute` rozwaliłby porządek sortowania.
+ */
+export const isLogEntry = (x: unknown): x is LogEntry =>
+  typeof x === 'object' && x !== null && Number.isFinite((x as LogEntry).minute) && Number.isFinite((x as LogEntry).seq);
+
+/**
+ * Czy `x` ma kształt biegu: `seed` i `gameVersion` to napisy, `generatorVersion` liczba całkowita, `mode` 'casual' albo
+ * 'ranked', `log` tablica. Wpisów dziennika nie sprawdza (robi to `isLogEntry` i `applyCommand`), a granice (długość seeda,
+ * liczba wpisów, minuty) ustawia wołający, np. serwer rankingu przed `replayRun`.
+ */
+export function isRunRecord(x: unknown): x is RunRecord {
+  if (typeof x !== 'object' || x === null) return false;
+  const r = x as Record<string, unknown>;
+  return typeof r.seed === 'string' && typeof r.gameVersion === 'string' && Number.isInteger(r.generatorVersion)
+    && (r.mode === 'casual' || r.mode === 'ranked') && Array.isArray(r.log);
+}
 
 /**
  * Odtwarza bieg do minuty `untilMinute` i zwraca stan, jaki miała wtedy żywa gra: po poleceniach tej minuty, przed jej krokiem.
@@ -58,7 +73,7 @@ export function replayRun(run: RunRecord, untilMinute: number): EconomyState {
   }
   if (!Number.isFinite(untilMinute)) throw new RangeError(`untilMinute musi być liczbą skończoną, jest: ${untilMinute}.`);
 
-  const log = (Array.isArray(run.log) ? run.log.filter(isOrderable) : []).sort((a, b) => a.minute - b.minute || a.seq - b.seq);
+  const log = (Array.isArray(run.log) ? run.log.filter(isLogEntry) : []).sort((a, b) => a.minute - b.minute || a.seq - b.seq);
   const { state, info: start } = freshRun(run.seed);
   let info = start;
   const events: EconEvent[] = [];   // zdarzenia są tylko dla gracza; tablica jest wspólna i czyszczona co krok

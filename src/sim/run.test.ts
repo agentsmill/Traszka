@@ -1,3 +1,4 @@
+import { inspect } from 'node:util';
 import { describe, expect, it } from 'vitest';
 import { createSession } from '@/game/session';
 import { isOpenAt, minuteOfDay } from '@/sim/economy/calendar';
@@ -12,7 +13,7 @@ import type { StoreInfo } from '@/sim/economy/storeInfo';
 import { EQUIPMENT, UPGRADES } from '@/sim/economy/upgrades';
 import { hashString } from '@/sim/rng';
 import { GENERATOR_VERSION } from '@/sim/store/generateStore';
-import { freshRun, replayRun, type LogEntry, type RunRecord } from './run';
+import { freshRun, isLogEntry, isRunRecord, replayRun, type LogEntry, type RunRecord } from './run';
 
 // --- Żywa gra: to, co przyszłe actions.ts robi z poleceniami gracza ----------------------------------------------
 
@@ -147,6 +148,51 @@ const START = OPEN_FROM;
 /** Wiele dób gry na seedach: ok. 4 s na wolnym rdzeniu, a przy obciążonej maszynie (cały zestaw równolegle) dłużej niż domyślne 5 s. */
 const TIMEOUT = 60_000;
 
+describe('strażniki kształtu biegu (dla serwera rankingu przed replayRun)', () => {
+  const cmd = { type: 'tapTill' };
+
+  it('isLogEntry: obiekt ze skończonymi minute i seq, a cmd może być czymkolwiek (odrzuca go dopiero applyCommand)', () => {
+    const good: unknown[] = [
+      { minute: START, seq: 0, cmd }, { minute: -5, seq: 1.5, cmd }, { minute: 1e9, seq: -3, cmd }, { minute: 0, seq: 0 },
+      { minute: START, seq: 1, cmd: 'nuke' }, { minute: START, seq: 1, cmd: null }, { minute: START, seq: 2, cmd, dodatkowe: true },
+    ];
+    for (const e of good) expect(isLogEntry(e), inspect(e)).toBe(true);
+    const bad: unknown[] = [
+      null, undefined, 7, 'tapTill', true, [], [1, 2], {}, { cmd }, { minute: NaN, seq: 1, cmd }, { minute: START, seq: NaN, cmd },
+      { minute: Infinity, seq: 1, cmd }, { minute: START, seq: -Infinity, cmd }, { minute: '400', seq: 1, cmd }, { minute: START, seq: '1', cmd },
+      { minute: START, seq: null, cmd }, { minute: null, seq: 1, cmd }, { minute: START, cmd }, { seq: 1, cmd }, { minute: [400], seq: 1, cmd },
+    ];
+    for (const e of bad) expect(isLogEntry(e), inspect(e)).toBe(false);
+  });
+
+  it('isRunRecord: seed i gameVersion napisy, generatorVersion liczba całkowita, mode casual albo ranked, log tablica', () => {
+    const ok = recordOf(SEEDS[0]!, [{ minute: START, seq: 0, cmd }]);
+    expect(isRunRecord(ok)).toBe(true);
+    expect(isRunRecord({ ...ok, mode: 'casual' })).toBe(true);
+    expect(isRunRecord({ ...ok, log: [] })).toBe(true);
+    expect(isRunRecord({ ...ok, seed: '' })).toBe(true);   // długość i treść seeda ustawia wołający
+    expect(isRunRecord(clone(ok))).toBe(true);   // tak wygląda bieg po przejściu przez JSON
+    expect(isRunRecord({ ...ok, dodatkowe: 1 })).toBe(true);
+    const bad: [string, unknown][] = [
+      ['null', null], ['undefined', undefined], ['liczba', 7], ['napis', 'bieg'], ['tablica', []], ['pusty obiekt', {}],
+      ['seed liczbą', { ...ok, seed: 5 }], ['seed null', { ...ok, seed: null }], ['seed obiektem', { ...ok, seed: {} }], ['bez seeda', { ...ok, seed: undefined }],
+      ['gameVersion liczbą', { ...ok, gameVersion: 1 }], ['bez gameVersion', { ...ok, gameVersion: undefined }],
+      ['generatorVersion ułamkiem', { ...ok, generatorVersion: 1.5 }], ['generatorVersion napisem', { ...ok, generatorVersion: String(GENERATOR_VERSION) }],
+      ['generatorVersion NaN', { ...ok, generatorVersion: NaN }], ['generatorVersion Infinity', { ...ok, generatorVersion: Infinity }],
+      ['generatorVersion null', { ...ok, generatorVersion: null }],
+      ['mode spoza listy', { ...ok, mode: 'practice' }], ['bez mode', { ...ok, mode: undefined }], ['mode wielką literą', { ...ok, mode: 'Ranked' }],
+      ['log obiektem z length', { ...ok, log: { length: 5 } }], ['log null', { ...ok, log: null }], ['log napisem', { ...ok, log: 'abc' }], ['bez loga', { ...ok, log: undefined }],
+    ];
+    for (const [label, x] of bad) expect(isRunRecord(x), label).toBe(false);
+  });
+
+  it('bieg o poprawnym kształcie da się odtworzyć', () => {
+    const run = recordOf(SEEDS[0]!, [{ minute: START, seq: 0, cmd }]);
+    expect(isRunRecord(run)).toBe(true);
+    expect(replayRun(run, START + 10).minute).toBe(START + 10);
+  });
+});
+
 describe('odtwarzanie biegu', () => {
   it('odtworzenie z (seed, dziennik) daje bajt w bajt ten sam stan: 12 seedów × 90 dni', () => {
     const seen = new Set<string>();
@@ -216,7 +262,8 @@ describe('odtwarzanie biegu', () => {
     const until = live.state.minute;
     const legit = live.record.log;
 
-    // wpisy, które replayRun ma zignorować: polecenia z Review Focus 2 przy poprawnej minucie i numerze
+    // wpisy, które replayRun ma zignorować: polecenia zepsute (nieznany typ, id spoza katalogów, NaN, tekst zamiast liczby, nie-obiekt)
+    // przy poprawnej minucie i numerze
     const hostile: unknown[] = [
       { type: 'nuke' }, { type: 'buyUpgrade', id: 'toString' }, { type: 'buyUpgrade', id: '__proto__' }, { type: 'buyEquipment', id: 'x' },
       { type: 'movePallet', palletId: 1, loc: 'roof' }, { type: 'setPriority', priority: 'all' }, { type: 'setOrder', auto: 'yes' },
@@ -250,9 +297,11 @@ describe('odtwarzanie biegu', () => {
     expect(allFinite(state)).toBe(true);
     expect(JSON.stringify(messy)).toBe(before);   // dziennik klienta zostaje nietknięty (sortowanie na kopii)
 
-    // posortowany po (minute, seq) i, przy remisie, według kolejności w dzienniku; zepsute na końcu, bo nie mają miejsca w porządku
+    // posortowany po (minute, seq) i, przy remisie, według kolejności w dzienniku; zepsute na końcu, bo nie mają miejsca w porządku.
+    // Wyrocznia jest własna, a nie `isLogEntry` z run.ts: inaczej test sprawdzałby kod jego własnym kodem (zgodność pilnuje następna linia).
     const isOrderable = (e: unknown): e is LogEntry =>
       typeof e === 'object' && e !== null && Number.isFinite((e as LogEntry).minute) && Number.isFinite((e as LogEntry).seq);
+    for (const e of messy) expect(isLogEntry(e)).toBe(isOrderable(e));
     const orderable = messy.map((entry, i) => ({ entry, i })).filter(({ entry }) => isOrderable(entry));
     const sorted = [
       ...orderable.sort((a, b) => (a.entry as LogEntry).minute - (b.entry as LogEntry).minute || (a.entry as LogEntry).seq - (b.entry as LogEntry).seq || a.i - b.i)
