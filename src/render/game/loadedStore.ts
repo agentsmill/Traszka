@@ -118,14 +118,29 @@ export function loadStore(src: StoreSource): Loaded {
   }
 }
 
-/** Zdejmuje sklep ze sceny i zwalnia wszystko, co dla niego zbudowano (pola puste, bo budowa przerwana, są pomijane). */
+/**
+ * Zdejmuje sklep ze sceny i zwalnia wszystko, co dla niego zbudowano (pola puste, bo budowa przerwana, są pomijane). Sprząta do
+ * końca, nawet gdy któryś krok rzuci: każdy wykonuje się osobno, bryła sklepu schodzi ze sceny zawsze (także gdy jej własne
+ * `dispose` rzuciło przed zdjęciem), a dopiero na końcu idzie dalej pierwszy z błędów. Inaczej jeden zepsuty `dispose` zostawiałby
+ * w scenie sklep, którego nikt już nie znajdzie.
+ */
 export function unloadStore(loaded: Loaded): void {
-  loaded.crowdView?.dispose();
-  loaded.cashierView?.dispose();
-  loaded.street?.dispose();
-  loaded.pallets?.dispose();
-  loaded.equipment?.dispose();
-  loaded.till?.geometry.dispose();
-  (loaded.till?.material as Material | undefined)?.dispose();
-  loaded.view.dispose();
+  const errors: unknown[] = [];
+  const attempt = (step: () => void): void => {
+    try {
+      step();
+    } catch (error) {
+      errors.push(error);
+    }
+  };
+  attempt(() => loaded.crowdView?.dispose());
+  attempt(() => loaded.cashierView?.dispose());
+  attempt(() => loaded.street?.dispose());
+  attempt(() => loaded.pallets?.dispose());
+  attempt(() => loaded.equipment?.dispose());
+  attempt(() => loaded.till?.geometry.dispose());
+  attempt(() => (loaded.till?.material as Material | undefined)?.dispose());
+  attempt(() => loaded.view.dispose());
+  attempt(() => loaded.view.root.removeFromParent());
+  if (errors.length > 0) throw errors[0];
 }

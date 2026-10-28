@@ -303,8 +303,9 @@ function startGame(canvas: HTMLCanvasElement, root: HTMLElement, initialSeed: st
   function unload(): void {
     generation++;
     if (!loaded) return;
-    unloadStore(loaded);
-    loaded = null;
+    const old = loaded;
+    loaded = null;   // unloadStore sprząta do końca także wtedy, gdy rzuca: zwolnionego sklepu nie zwalniamy drugi raz
+    unloadStore(old);
   }
 
   /**

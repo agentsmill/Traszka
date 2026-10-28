@@ -1,12 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { Group, Mesh, Scene, type Object3D } from 'three';
+import { Group, Mesh, Scene, type Material, type Object3D } from 'three';
 import { DEFAULT_CASHIER_LOOK, cashierSpot } from '@/game/cashier';
 import { createBlobShadows } from '@/render/characters/blobShadows';
 import type { CharacterFactory, CharacterInstance } from '@/render/characters/characterFactory';
 import { cellToWorld } from '@/render/coords';
+import type { StreetView } from '@/render/street/buildStreet';
 import { computeStoreInfo } from '@/sim/economy/storeInfo';
 import { generateStore } from '@/sim/store/generateStore';
-import { attachCharacters, loadStore, unloadStore, type StoreSource } from './loadedStore';
+import { attachCharacters, loadStore, unloadStore, type Loaded, type StoreSource } from './loadedStore';
 
 /**
  * `loadStore` składa sklep z kilku części (bryła, towar, palety, sprzęt, kasa, widok tłumu, kasjer). Każda z nich może się wywrócić
@@ -15,8 +16,9 @@ import { attachCharacters, loadStore, unloadStore, type StoreSource } from './lo
  */
 const mocks = vi.hoisted(() => ({
   fail: { goods: false, pallets: false, equipment: false, crowd: false, cashier: false },
-  /** Część, której `dispose` ma rzucić (sprzątanie, które samo się wywraca). */
-  disposeThrows: null as string | null,
+  /** Części, których `dispose` ma rzucić (sprzątanie, które samo się wywraca); rzucają po zapisaniu się w `disposed`, bez zwalniania. */
+  disposeThrows: [] as string[],
+  /** Części, których `dispose` zostało zawołane (także te, które rzuciły). */
   disposed: [] as string[],
 }));
 
@@ -25,7 +27,7 @@ function watch<T extends { dispose(): void }>(name: string, part: T): T {
   const original = part.dispose.bind(part);
   part.dispose = () => {
     mocks.disposed.push(name);
-    if (mocks.disposeThrows === name) throw new Error(`dispose: ${name}`);
+    if (mocks.disposeThrows.includes(name)) throw new Error(`dispose: ${name}`);
     original();
   };
   return part;
@@ -96,7 +98,7 @@ let scene: Scene;
 let crowdParent: Group;
 beforeEach(() => {
   mocks.fail.goods = mocks.fail.pallets = mocks.fail.equipment = mocks.fail.crowd = mocks.fail.cashier = false;
-  mocks.disposeThrows = null;
+  mocks.disposeThrows.length = 0;
   mocks.disposed.length = 0;
   vi.restoreAllMocks();
   scene = new Scene();
@@ -130,6 +132,13 @@ const source = (over: Partial<StoreSource> = {}): StoreSource => ({
   scene, seed: SEED, layout, info, speed: 2, crowdParent, blobs: null, factory: fakeFactory().factory, cashierLook: DEFAULT_CASHIER_LOOK, ...over,
 });
 const stores = (): number => scene.children.filter((c) => c.name === 'store').length;
+/** Zapisuje, co z kasy do stukania zostało zwolnione (geometria, materiał): zdarzenie `dispose` z three.js, nie atrapa. */
+function watchTill(loaded: Loaded): string[] {
+  const released: string[] = [];
+  loaded.till!.geometry.addEventListener('dispose', () => released.push('geometry'));
+  (loaded.till!.material as Material).addEventListener('dispose', () => released.push('material'));
+  return released;
+}
 /** Kasjerzy w grupie tłumu: obiekty postaci z `createWithOutfit` (klienci to `create`, ich fabryka-atrapa tu nie buduje). */
 const cashiersIn = (made: { outfit: string | null; character: CharacterInstance }[]): Object3D[] =>
   made.filter((m) => m.outfit !== null && m.character.object.parent === crowdParent).map((m) => m.character.object);
@@ -238,12 +247,59 @@ describe('loadStore / unloadStore', () => {
     });
   }
 
-  it('sprzątanie, które samo się wywraca, nie zasłania pierwotnego błędu', () => {
+  it('sprzątanie, które samo się wywraca, nie zasłania pierwotnego błędu, a w scenie i tak nic nie zostaje', () => {
     const log = vi.spyOn(console, 'error').mockImplementation(() => {});
     mocks.fail.equipment = true;
-    mocks.disposeThrows = 'pallets';
+    mocks.disposeThrows.push('pallets');
     expect(() => loadStore(source())).toThrow('sprzęt');
     expect(log).toHaveBeenCalledTimes(1);
+    expect(log.mock.calls[0]![1]).toEqual(new Error('dispose: pallets'));   // zalogowany jest błąd sprzątania, rzucony jest pierwotny
+    expect(mocks.disposed.sort()).toEqual(['pallets', 'view']);             // widok zwolniony mimo błędu w paletach
+    expect(stores()).toBe(0);
+    expect(scene.children).toEqual([crowdParent]);
+    expect(crowdParent.children).toHaveLength(1);
+  });
+
+  describe('unloadStore sprząta do końca, nawet gdy któryś krok rzuci', () => {
+    /** Sklep z wszystkimi częściami, także z ulicą (w grze dochodzi później); `street` to atrapa z własnym `dispose`. */
+    function fullStore(): { loaded: Loaded; till: string[] } {
+      const loaded = loadStore(source());
+      loaded.street = watch('street', { root: new Group(), dispose: () => {} } as unknown as StreetView);
+      return { loaded, till: watchTill(loaded) };
+    }
+    const ALL = ['cashier', 'crowd', 'equipment', 'pallets', 'street', 'view'];
+    const steps = ['crowd', 'cashier', 'street', 'pallets', 'equipment', 'view'];   // w kolejności sprzątania
+
+    for (const step of steps) {
+      it(`rzuca krok „${step}”: pozostałe i tak się wykonują (z geometrią i materiałem kasy), bryła schodzi ze sceny, wyjątek idzie dalej`, () => {
+        const { loaded, till } = fullStore();
+        mocks.disposeThrows.push(step);
+        expect(() => unloadStore(loaded)).toThrow(`dispose: ${step}`);
+        expect(mocks.disposed.sort()).toEqual(ALL);
+        expect(till.sort()).toEqual(['geometry', 'material']);
+        expect(stores()).toBe(0);
+        expect(scene.children).toEqual([crowdParent]);   // ten krok rzucił, zanim cokolwiek zwolnił, więc jego własnych obiektów nie sprawdzamy
+      });
+    }
+
+    it('rzuca kilka kroków naraz: wszystkie się wykonują, a dalej idzie pierwszy błąd (w kolejności sprzątania)', () => {
+      const { loaded, till } = fullStore();
+      mocks.disposeThrows.push('view', 'pallets', 'cashier');
+      expect(() => unloadStore(loaded)).toThrow('dispose: cashier');
+      expect(mocks.disposed.sort()).toEqual(ALL);
+      expect(till.sort()).toEqual(['geometry', 'material']);
+      expect(stores()).toBe(0);
+    });
+
+    it('bez błędów nie rzuca nic, a tłum gry (plamy cienia) zostaje w scenie', () => {
+      const { loaded, till } = fullStore();
+      expect(() => unloadStore(loaded)).not.toThrow();
+      expect(mocks.disposed.sort()).toEqual(ALL);
+      expect(till.sort()).toEqual(['geometry', 'material']);
+      expect(stores()).toBe(0);
+      expect(scene.children).toEqual([crowdParent]);
+      expect(crowdParent.children).toHaveLength(1);
+    });
   });
 
   it('po nieudanej budowie następna udana zostawia w scenie dokładnie jeden sklep (odzyskiwanie po błędzie w setSeed i przy starcie)', () => {
