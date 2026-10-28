@@ -1,0 +1,688 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { computeStoreInfo, spotCells } from '@/sim/economy/storeInfo';
+import { manhattan, type Cell } from '@/sim/grid';
+import { findPath } from '@/sim/nav/astar';
+import { generateStore } from '@/sim/store/generateStore';
+import type { StoreLayout } from '@/sim/store/types';
+import { StaffCrew, type CrewInput, type CrewMember } from './crew';
+import { buildStaffNav, type StaffNav } from './staffNav';
+import { pickStaffSpots } from './targets';
+import { QUARTER_MIN, TASK_DWELL_S } from './taskHold';
+import { STAFF_VIEW_MAX, type PalletRef, type StaffAssignment, type StaffDuty, type StaffSpot } from './types';
+import { STAFF_WALK_SPEED, StaffWalker } from './walker';
+
+// Szpiedzy: ile razy załoga liczy miejsca, buduje siatkę, wyznacza cele i każe przeplanować drogi (te same dane, ten sam wynik).
+vi.mock('./targets', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./targets')>();
+  return { ...actual, pickStaffSpots: vi.fn(actual.pickStaffSpots) };
+});
+vi.mock('./staffNav', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./staffNav')>();
+  return { ...actual, buildStaffNav: vi.fn(actual.buildStaffNav) };
+});
+const pickSpy = vi.mocked(pickStaffSpots);
+const navSpy = vi.mocked(buildStaffNav);
+const setGoalSpy = vi.spyOn(StaffWalker.prototype, 'setGoal');
+const repathSpy = vi.spyOn(StaffWalker.prototype, 'repath');
+beforeEach(() => {   // klamry: zwrócona funkcja byłaby uznana za sprzątanie
+  pickSpy.mockClear();
+  navSpy.mockClear();
+  setGoalSpy.mockClear();
+  repathSpy.mockClear();
+});
+
+// Dwa bloki, dwie kamienice i pawilon z wejściem bliżej lewego chodnika (alfa, beta-12, kamienica-3), a seed-6 (pawilon) i
+// seed-11 (kamienica narożna) mają wejście bliżej prawego punktu pojawiania się, więc wejście z chodnika zna obie strony.
+const SEEDS = ['alfa', 'beta-12', 'kamienica-3', 'seed-6', 'seed-11'];
+/** Krok czasu widoku: potęga dwójki, więc sumy kroków (np. 20 s = 320 kroków) są dokładne. */
+const DT = 1 / 16;
+const MINUTE = 8 * 60;
+const MIX: StaffDuty[] = ['kasa', 'rozladunek', 'wykladanie', 'sprzatanie', 'wolny', 'kasa', 'wykladanie', 'rozladunek'];
+
+interface Scene { seed: string; layout: StoreLayout; pallets: PalletRef[]; street: Cell }
+
+function scene(seed: string): Scene {
+  const layout = generateStore(seed);
+  const { spots } = computeStoreInfo(layout);
+  expect(spots.backroom.length).toBeGreaterThanOrEqual(1);
+  expect(spots.floor.length).toBeGreaterThanOrEqual(1);
+  expect(spots.sidewalk.length).toBeGreaterThanOrEqual(2);
+  const pallets: PalletRef[] = [
+    { loc: 'backroom', spot: spots.backroom[0]!, since: 400 },
+    { loc: 'floor', spot: spots.floor[0]!, since: 300 },
+    { loc: 'sidewalk', spot: spots.sidewalk[1]!, since: 200 },
+  ];
+  // Punkt pojawiania się najbliżej wejścia (manhattan; przy remisie pierwszy).
+  const door = layout.entrance[0]!;
+  const street = layout.spawnPoints.reduce((best, p) => (manhattan(p, door) < manhattan(best, door) ? p : best));
+  return { seed, layout, pallets, street };
+}
+const SCENES = SEEDS.map(scene);
+
+const people = (n: number): StaffAssignment[] => MIX.slice(0, n).map((task, id) => ({ id, task }));
+const assign = (...pairs: [number, StaffDuty][]): StaffAssignment[] => pairs.map(([id, task]) => ({ id, task }));
+const input = (who: readonly StaffAssignment[], pallets: readonly PalletRef[] = [], minute = MINUTE): CrewInput => ({ people: who, minute, pallets });
+
+const centre = (c: Cell): { x: number; y: number } => ({ x: c.x + 0.5, y: c.y + 0.5 });
+const pos = (m: CrewMember): { x: number; y: number } => ({ x: m.walker.x, y: m.walker.y });
+const cellOf = (m: CrewMember): Cell => ({ x: Math.floor(m.walker.x), y: Math.floor(m.walker.y) });
+const sameCell = (a: Cell, b: Cell): boolean => a.x === b.x && a.y === b.y;
+const idsOf = (crew: StaffCrew): number[] => crew.members.map((m) => m.id);
+const member = (crew: StaffCrew, id: number): CrewMember => {
+  const found = crew.members.find((m) => m.id === id);
+  if (!found) throw new Error(`brak osoby ${id} w załodze`);
+  return found;
+};
+const cashiers = (crew: StaffCrew): number[] => crew.members.filter((m) => m.isCashier).map((m) => m.id);
+const snapshot = (crew: StaffCrew): unknown[] =>
+  crew.members.map((m) => [m.id, m.task, m.leaving, m.isCashier, m.walker.x, m.walker.y, m.walker.heading, m.walker.moving, m.walker.goal]);
+
+const navFor = (layout: StoreLayout, pallets: readonly PalletRef[]): StaffNav => buildStaffNav(layout, pallets.flatMap((p) => spotCells(p.spot)));
+/** Miejsca, jakie wyznacza targets dla tej ekipy od zera (bez `previous`): wzorzec dla pierwszego sync. */
+const expectedSpots = (s: Scene, who: readonly StaffAssignment[]): Map<number, StaffSpot> =>
+  pickStaffSpots(s.layout, navFor(s.layout, s.pallets), s.pallets, who);
+
+/** Kroki `DT`, aż `done()` albo upłynie `limitS` s (czasu widoku). `each` woła się po każdym kroku. Zwraca czas, który minął. */
+function until(crew: StaffCrew, done: () => boolean, limitS = 120, each?: () => void): number {
+  let t = 0;
+  while (!done() && t < limitS) {
+    crew.step(DT);
+    t += DT;
+    each?.();
+  }
+  return t;
+}
+const advance = (crew: StaffCrew, seconds: number): void => { until(crew, () => false, seconds); };
+
+function deepFreeze<T>(value: T): T {
+  if (typeof value === 'object' && value !== null && !Object.isFrozen(value)) {
+    Object.freeze(value);
+    for (const v of Object.values(value)) deepFreeze(v);
+  }
+  return value;
+}
+
+describe('układy użyte w testach', () => {
+  it('obejmują blok, kamienicę i pawilon oraz wejście bliższe lewemu i prawemu punktowi pojawiania się', () => {
+    expect(new Set(SCENES.map((s) => s.layout.lot.kind))).toEqual(new Set(['blok', 'kamienica', 'pawilon']));
+    const sides = new Set(SCENES.map((s) => (sameCell(s.street, s.layout.spawnPoints[0]!) ? 'lewy' : 'prawy')));
+    expect(sides).toEqual(new Set(['lewy', 'prawy']));
+  });
+});
+
+describe('StaffCrew: pierwszy sync', () => {
+  describe.each(SCENES)('$seed', (s) => {
+    it.each([1, 3, STAFF_VIEW_MAX])('%i osób od razu stoi na swoich miejscach, bez marszu', (n) => {
+      const crew = new StaffCrew(s.layout);
+      expect(crew.members).toEqual([]);
+      const who = people(n);
+      crew.sync(input(who, s.pallets));
+      const expected = expectedSpots(s, who);
+      expect(idsOf(crew)).toEqual(who.map((p) => p.id));
+      for (const m of crew.members) {
+        const spot = expected.get(m.id)!;
+        expect(m.task).toBe(who[m.id]!.task);
+        expect(m.leaving).toBe(false);
+        expect(pos(m)).toEqual(centre(spot.cell));
+        expect(m.walker.heading).toBe(spot.heading);
+        expect(m.walker.goal).toEqual(spot.cell);
+        expect(m.walker.atGoal).toBe(true);
+        expect(m.walker.moving).toBe(false);
+      }
+      const before = snapshot(crew);
+      crew.step(1);
+      expect(snapshot(crew)).toEqual(before);   // stoją w miejscu
+    });
+  });
+
+  it('pusty pierwszy sync też jest „pierwszy”: kto przyjdzie potem, wchodzi z chodnika', () => {
+    const { layout, pallets, street } = SCENES[0]!;
+    const crew = new StaffCrew(layout);
+    crew.sync(input([], pallets));
+    expect(crew.members).toEqual([]);
+    crew.sync(input(people(2), pallets));
+    for (const m of crew.members) {
+      expect(pos(m)).toEqual(centre(street));
+      expect(m.walker.atGoal).toBe(false);
+    }
+  });
+
+  it('zegar widoku startuje od zera i liczy tylko kroki', () => {
+    const crew = new StaffCrew(SCENES[0]!.layout);
+    expect(crew.clock).toBe(0);
+    crew.sync(input(people(2)));
+    expect(crew.clock).toBe(0);
+    crew.step(0.25);
+    crew.step(0.5);
+    expect(crew.clock).toBe(0.75);
+  });
+});
+
+describe('StaffCrew: wejście z sync', () => {
+  const { layout, pallets } = SCENES[0]!;
+
+  it('powyżej STAFF_VIEW_MAX nadmiar jest ignorowany: zostają osoby o najmniejszych id, w rosnącej kolejności', () => {
+    const crew = new StaffCrew(layout);
+    const ids = [11, 4, 9, 0, 7, 2, 10, 5, 3, 8, 1, 6];
+    crew.sync(input(ids.map((id) => ({ id, task: MIX[id % MIX.length]! })), pallets));
+    expect(idsOf(crew)).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
+    expect(crew.members).toHaveLength(STAFF_VIEW_MAX);
+  });
+
+  it('duplikaty nie zajmują miejsca w limicie, a przy powtórzonym id wygrywa pierwsza pozycja', () => {
+    const crew = new StaffCrew(layout);
+    const dupes = assign([0, 'kasa'], [0, 'wolny'], [0, 'sprzatanie'], [1, 'wykladanie'], [2, 'wolny'], [3, 'kasa'], [4, 'wolny'], [5, 'wolny'],
+      [6, 'wolny'], [7, 'wolny']);
+    crew.sync(input(dupes, pallets));
+    expect(idsOf(crew)).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
+    expect(member(crew, 0).task).toBe('kasa');
+  });
+
+  it('id ujemne, ułamkowe, NaN i nieskończone są ignorowane', () => {
+    const crew = new StaffCrew(layout);
+    crew.sync(input(assign([-1, 'kasa'], [1.5, 'kasa'], [Number.NaN, 'kasa'], [Infinity, 'kasa'], [-Infinity, 'kasa'], [3, 'wykladanie'], [0, 'kasa']), pallets));
+    expect(idsOf(crew)).toEqual([0, 3]);
+  });
+
+  it('kolejność wejścia nie ma znaczenia: ta sama ekipa w innej kolejności daje to samo', () => {
+    const a = new StaffCrew(layout);
+    const b = new StaffCrew(layout);
+    const who = people(6);
+    a.sync(input(who, pallets));
+    b.sync(input([...who].reverse(), pallets));
+    expect(snapshot(b)).toEqual(snapshot(a));
+  });
+
+  it('NaN w minucie nie psuje załogi: ludzie stoją na miejscach z zadaniami od ekonomii', () => {
+    const crew = new StaffCrew(layout);
+    const who = people(4);
+    crew.sync({ people: who, minute: Number.NaN, pallets });
+    expect(crew.members.map((m) => m.task)).toEqual(who.map((p) => p.task));
+    expect(crew.members.every((m) => m.walker.atGoal)).toBe(true);
+    crew.sync(input(who, pallets));
+    expect(crew.members.map((m) => m.task)).toEqual(who.map((p) => p.task));
+  });
+
+  it('ta sama lista i obiekty członków między wywołaniami, gdy nic się nie zmienia', () => {
+    const crew = new StaffCrew(layout);
+    const who = people(4);
+    crew.sync(input(who, pallets));
+    const list = crew.members;
+    const objects = [...list];
+    crew.step(DT);
+    crew.sync(input(who, pallets, MINUTE + 1));
+    crew.step(DT);
+    expect(crew.members).toBe(list);
+    expect(crew.members.every((m, i) => m === objects[i])).toBe(true);
+  });
+
+  it('po zatrudnieniu id mniejszego niż reszta lista nadal rośnie po id, a dotychczasowe obiekty zostają', () => {
+    const crew = new StaffCrew(layout);
+    crew.sync(input(assign([3, 'kasa'], [5, 'wykladanie']), pallets));
+    const [three, five] = crew.members;
+    crew.sync(input(assign([5, 'wykladanie'], [1, 'sprzatanie'], [3, 'kasa'], [4, 'wolny']), pallets));
+    expect(idsOf(crew)).toEqual([1, 3, 4, 5]);
+    expect(member(crew, 3)).toBe(three);
+    expect(member(crew, 5)).toBe(five);
+  });
+});
+
+describe('StaffCrew: zatrudnienie i zwolnienie', () => {
+  describe.each(SCENES)('$seed', (s) => {
+    const { layout, pallets, street } = s;
+    const base = assign([0, 'kasa'], [1, 'sprzatanie']);
+    const hired = assign([0, 'kasa'], [1, 'sprzatanie'], [2, 'wykladanie']);
+
+    it('zatrudniony w trakcie zmiany wchodzi z chodnika przez drzwi i dochodzi na swoje miejsce', () => {
+      const crew = new StaffCrew(layout);
+      crew.sync(input(base, pallets));
+      const resting = crew.members.map(pos);
+      crew.sync(input(hired, pallets));
+
+      const spot = expectedSpots(s, hired).get(2)!;
+      const hire = member(crew, 2);
+      expect(pos(hire)).toEqual(centre(street));
+      const door = layout.entrance[0]!;
+      expect(hire.walker.heading).toBeCloseTo(Math.atan2(door.y - street.y, door.x - street.x), 9);   // na chodniku twarzą do wejścia
+      expect(hire.walker.goal).toEqual(spot.cell);
+      expect(hire.walker.atGoal).toBe(false);
+      expect(hire.leaving).toBe(false);
+      expect(hire.task).toBe('wykladanie');
+      expect(crew.members.slice(0, 2).map(pos)).toEqual(resting);   // dotychczasowi stoją tam, gdzie stali
+
+      const visited: Cell[] = [];
+      const elapsed = until(crew, () => hire.walker.atGoal, 120, () => visited.push(cellOf(hire)));
+      expect(visited.some((c) => layout.entrance.some((e) => sameCell(e, c)))).toBe(true);
+      expect(pos(hire)).toEqual(centre(spot.cell));
+      expect(hire.walker.heading).toBe(spot.heading);
+      const route = findPath(layout.width, layout.depth, navFor(layout, pallets).blocked, street, spot.cell)!;
+      expect(route.length).toBeGreaterThan(8);
+      expect(Math.abs(elapsed - (route.length - 1) / STAFF_WALK_SPEED)).toBeLessThanOrEqual(2 * DT);
+      expect(crew.members.slice(0, 2).map(pos)).toEqual(resting);
+    });
+
+    it('zwolniona osoba wychodzi na chodnik, znika po dojściu, a reszta zostaje na miejscach', () => {
+      const crew = new StaffCrew(layout);
+      crew.sync(input(hired, pallets));
+      const resting = [pos(member(crew, 0)), pos(member(crew, 2))];
+      const leaver = member(crew, 1);
+
+      crew.sync(input(assign([0, 'kasa'], [2, 'wykladanie']), pallets));
+      expect(leaver.leaving).toBe(true);
+      expect(leaver.walker.goal).toEqual(street);
+      expect(crew.members).toContain(leaver);          // jeszcze w sklepie
+      expect(idsOf(crew)).toEqual([0, 1, 2]);
+      expect(member(crew, 0).leaving || member(crew, 2).leaving).toBe(false);
+
+      const elapsed = until(crew, () => !crew.members.includes(leaver), 20);
+      expect(elapsed).toBeGreaterThan(0.5);
+      expect(elapsed).toBeLessThan(20);
+      expect(idsOf(crew)).toEqual([0, 2]);
+      expect(leaver.walker.atGoal).toBe(true);         // zniknął, bo doszedł
+      expect(pos(leaver)).toEqual(centre(street));
+      expect([pos(member(crew, 0)), pos(member(crew, 2))]).toEqual(resting);
+    });
+  });
+
+  it('wychodzący, który nie może dojść na chodnik (wejście zastawione), znika po 20 s czasu widoku od początku wychodzenia', () => {
+    const { layout } = SCENES[0]!;
+    const crew = new StaffCrew(layout);
+    crew.sync(input(assign([0, 'kasa'])));
+    advance(crew, 5);
+    expect(crew.clock).toBe(5);
+    // Paleta 2×2 na obu kratkach wejścia zamyka salę od chodnika; zwolnienie w tym samym sync.
+    const sealed: PalletRef[] = [{ loc: 'floor', spot: { x: layout.entrance[0]!.x, y: layout.entrance[0]!.y }, since: 0 }];
+    crew.sync(input([], sealed));
+    const stuck = member(crew, 0);
+    expect(stuck.leaving).toBe(true);
+    const start = pos(stuck);
+
+    advance(crew, 19.75);
+    expect(crew.members).toContain(stuck);
+    expect(stuck.walker.atGoal).toBe(false);
+    expect(pos(stuck)).toEqual(start);                // zablokowany: stoi
+    crew.step(0.25);
+    expect(crew.clock).toBe(25);
+    expect(crew.members).toEqual([]);
+  });
+
+  it('osoba, która wraca na listę w trakcie wychodzenia, wychodzi do końca; potem pojawia się od nowa z chodnika', () => {
+    const { layout, pallets, street } = SCENES[1]!;
+    const crew = new StaffCrew(layout);
+    const both = assign([0, 'kasa'], [1, 'sprzatanie']);
+    crew.sync(input(both, pallets));
+    const first = member(crew, 1);
+
+    crew.sync(input(assign([0, 'kasa']), pallets));
+    expect(first.leaving).toBe(true);
+    crew.sync(input(both, pallets));                  // wróciła, ale zdążyła już ruszyć do wyjścia
+    expect(first.leaving).toBe(true);
+    expect(member(crew, 1)).toBe(first);
+
+    until(crew, () => !crew.members.includes(first), 20);
+    expect(idsOf(crew)).toEqual([0]);
+
+    crew.sync(input(both, pallets));                  // ta sama lista: id 1 jest znów „nowe”
+    const again = member(crew, 1);
+    expect(again).not.toBe(first);
+    expect(again.leaving).toBe(false);
+    expect(again.isCashier).toBe(false);
+    expect(pos(again)).toEqual(centre(street));
+    until(crew, () => again.walker.atGoal);
+    expect(again.walker.atGoal).toBe(true);
+    expect(member(crew, 0).isCashier).toBe(true);
+  });
+
+  it('zwolniony, który stoi już na chodniku (dopiero co przyszedł), znika przy najbliższym kroku', () => {
+    const { layout, pallets, street } = SCENES[2]!;
+    const crew = new StaffCrew(layout);
+    crew.sync(input(assign([0, 'kasa']), pallets));
+    crew.sync(input(assign([0, 'kasa'], [1, 'wolny']), pallets));
+    const fresh = member(crew, 1);
+    expect(pos(fresh)).toEqual(centre(street));
+    crew.sync(input(assign([0, 'kasa']), pallets));
+    crew.step(DT);
+    expect(idsOf(crew)).toEqual([0]);
+  });
+});
+
+describe('StaffCrew: kasjer', () => {
+  const { layout, pallets } = SCENES[0]!;
+
+  it('pierwszy sync: ciało kasjera dostaje osoba o najmniejszym id, niezależnie od zadania i kolejności', () => {
+    const crew = new StaffCrew(layout);
+    crew.sync(input(assign([5, 'kasa'], [2, 'wolny'], [7, 'wykladanie']), pallets));
+    expect(cashiers(crew)).toEqual([2]);
+    const solo = new StaffCrew(layout);
+    solo.sync(input(assign([4, 'sprzatanie']), pallets));
+    expect(cashiers(solo)).toEqual([4]);
+  });
+
+  it('trzyma się mimo zmian zadań i nowych osób o mniejszym id', () => {
+    const crew = new StaffCrew(layout);
+    crew.sync(input(assign([2, 'kasa'], [5, 'wykladanie']), pallets, 0));
+    const cashier = member(crew, 2);
+    crew.sync(input(assign([0, 'kasa'], [2, 'kasa'], [5, 'wykladanie']), pallets, 1));   // nowa osoba z mniejszym id
+    expect(cashiers(crew)).toEqual([2]);
+    expect(member(crew, 0).isCashier).toBe(false);
+
+    // Kasjer przechodzi na inne zadanie na granicy kwadransa; ciało kasjera zostaje u niego.
+    for (let m = 2; m < QUARTER_MIN; m++) crew.sync(input(assign([0, 'kasa'], [2, 'sprzatanie'], [5, 'wykladanie']), pallets, m));
+    advance(crew, TASK_DWELL_S + 1);
+    crew.sync(input(assign([0, 'kasa'], [2, 'sprzatanie'], [5, 'wykladanie']), pallets, QUARTER_MIN));
+    expect(member(crew, 2)).toBe(cashier);
+    expect(cashier.task).toBe('sprzatanie');
+    expect(cashiers(crew)).toEqual([2]);
+  });
+
+  it('po zniknięciu kasjera nikt go nie przejmuje, aż pojawi się ktoś nowy (wtedy najmniejsze id z tego sync)', () => {
+    const crew = new StaffCrew(layout);
+    crew.sync(input(assign([2, 'kasa'], [5, 'wykladanie'], [7, 'wolny']), pallets));
+    crew.sync(input(assign([5, 'wykladanie'], [7, 'wolny']), pallets));
+    expect(cashiers(crew)).toEqual([2]);              // wychodzi jako kasjer
+    until(crew, () => !idsOf(crew).includes(2), 20);
+    expect(idsOf(crew)).toEqual([5, 7]);
+    expect(cashiers(crew)).toEqual([]);
+    crew.sync(input(assign([5, 'wykladanie'], [7, 'wolny']), pallets));
+    expect(cashiers(crew)).toEqual([]);               // nikt nowy: nikt nie przejmuje
+    crew.sync(input(assign([9, 'kasa'], [5, 'wykladanie'], [7, 'wolny'], [8, 'wolny']), pallets));
+    expect(cashiers(crew)).toEqual([8]);              // 8 < 9, choć 5 i 7 są w sklepie dłużej
+  });
+
+  it('nowa osoba nie przejmuje ciała kasjera, dopóki ten jeszcze wychodzi', () => {
+    const crew = new StaffCrew(layout);
+    crew.sync(input(assign([2, 'kasa'], [5, 'wykladanie']), pallets));
+    crew.sync(input(assign([5, 'wykladanie'], [9, 'kasa']), pallets));   // 2 wychodzi, 9 wchodzi w tym samym sync
+    expect(cashiers(crew)).toEqual([2]);
+    expect(member(crew, 9).isCashier).toBe(false);
+    until(crew, () => !idsOf(crew).includes(2), 20);
+    expect(cashiers(crew)).toEqual([]);
+  });
+
+  it('po nocy (lista pusta, ludzie wychodzą, potem znów pełna) kasjerem zostaje najmniejsze id nowego sync', () => {
+    const crew = new StaffCrew(layout);
+    crew.sync(input(people(5), pallets));
+    expect(cashiers(crew)).toEqual([0]);
+    crew.sync(input([], pallets, 22 * 60));
+    expect(crew.members.every((m) => m.leaving)).toBe(true);
+    expect(cashiers(crew)).toEqual([0]);              // 0 nadal wychodzi jako kasjer
+    const elapsed = until(crew, () => crew.members.length === 0, 40);
+    expect(elapsed).toBeLessThan(20);
+    expect(cashiers(crew)).toEqual([]);
+
+    crew.sync(input(assign([6, 'kasa'], [3, 'wykladanie'], [4, 'wolny']), pallets, 24 * 60 + 6 * 60));
+    expect(idsOf(crew)).toEqual([3, 4, 6]);
+    expect(cashiers(crew)).toEqual([3]);
+    for (const m of crew.members) expect(m.walker.atGoal).toBe(false);   // przyszli z chodnika
+  });
+});
+
+describe('StaffCrew: histereza zadań i cele', () => {
+  const s = SCENES[0]!;
+  const { layout, pallets } = s;
+
+  it('zmiana zadania przez ekonomię co minutę nie rusza celów przed granicą kwadransa, a na granicy rusza tylko zmienionego', () => {
+    const crew = new StaffCrew(layout);
+    // Osoba 1 zaczyna jako druga kasjerka. Ekonomia przełącza ją co minutę między wykładaniem i kasą, a w ostatniej minucie
+    // okna (15) znów wybiera wykładanie: 8 minut wykładania kontra 7 kasy.
+    const crewAt = (one: StaffDuty): StaffAssignment[] => assign([0, 'kasa'], [1, one], [2, 'sprzatanie'], [3, 'wolny']);
+    crew.sync(input(crewAt('kasa'), pallets, 0));
+    const goals = crew.members.map((m) => m.walker.goal);
+    expect(pickSpy).toHaveBeenCalledTimes(1);
+    const setGoalCalls = setGoalSpy.mock.calls.length;
+
+    for (let m = 1; m < QUARTER_MIN; m++) {
+      crew.step(0.5);
+      crew.sync(input(crewAt(m % 2 === 1 ? 'wykladanie' : 'kasa'), pallets, m));
+      expect(crew.members.map((x) => x.task)).toEqual(['kasa', 'kasa', 'sprzatanie', 'wolny']);
+      expect(crew.members.map((x) => x.walker.goal)).toEqual(goals);
+    }
+    expect(crew.clock).toBeGreaterThanOrEqual(TASK_DWELL_S);
+    expect(pickSpy).toHaveBeenCalledTimes(1);          // żadnego nowego liczenia miejsc
+    expect(setGoalSpy).toHaveBeenCalledTimes(setGoalCalls);
+
+    crew.sync(input(crewAt('wykladanie'), pallets, QUARTER_MIN));
+    expect(crew.members.map((x) => x.task)).toEqual(['kasa', 'wykladanie', 'sprzatanie', 'wolny']);
+    expect(pickSpy).toHaveBeenCalledTimes(2);
+    const after = crew.members.map((x) => x.walker.goal);
+    expect(after[1]).not.toEqual(goals[1]);            // zmieniony idzie gdzie indziej
+    expect([after[0], after[2], after[3]]).toEqual([goals[0], goals[2], goals[3]]);   // reszta zostaje
+    expect(crew.members[1]!.walker.atGoal).toBe(false);
+  });
+
+  it('wartość `previous` dostają ci, których zadanie trzymane się nie zmieniło od ostatniego liczenia', () => {
+    const crew = new StaffCrew(layout);
+    const crewAt = (one: StaffDuty): StaffAssignment[] => assign([0, 'kasa'], [1, one], [2, 'sprzatanie'], [3, 'wolny']);
+    crew.sync(input(crewAt('wykladanie'), pallets, 0));
+    expect([...(pickSpy.mock.calls[0]![4] ?? new Map<number, StaffSpot>()).keys()]).toEqual([]);   // pierwsze liczenie: nikt jeszcze nigdzie nie stał
+    const first = pickSpy.mock.results[0]!.value as Map<number, StaffSpot>;
+
+    advance(crew, TASK_DWELL_S + 1);
+    for (let m = 1; m <= QUARTER_MIN; m++) crew.sync(input(crewAt('sprzatanie'), pallets, m));   // 1 zmienia zadanie na granicy
+    expect(member(crew, 1).task).toBe('sprzatanie');
+    expect(pickSpy).toHaveBeenCalledTimes(2);
+    const previous = pickSpy.mock.calls[1]![4] as Map<number, StaffSpot>;
+    expect([...previous.keys()].sort()).toEqual([0, 2, 3]);                        // bez osoby 1, której zadanie się zmieniło
+    for (const id of [0, 2, 3]) expect(previous.get(id)).toEqual(first.get(id));   // poprzednie miejsca, nie wymyślone
+  });
+
+  it('nowa osoba o mniejszym id nie przegania innych: wykładający i sprzątający zostają na swoich miejscach', () => {
+    const crew = new StaffCrew(layout);
+    const before = assign([3, 'wykladanie'], [4, 'wykladanie'], [5, 'sprzatanie'], [6, 'wolny']);
+    crew.sync(input(before, pallets));
+    const goals = crew.members.map((m) => m.walker.goal);
+    // Bez `previous` wykładanie liczy się po numerze wśród wykładających, więc dołożenie id 1 przesunęłoby obu.
+    const shifted = pickStaffSpots(layout, navFor(layout, pallets), pallets, assign([1, 'wykladanie'], ...before.map((p): [number, StaffDuty] => [p.id, p.task])));
+    expect(shifted.get(3)!.cell).not.toEqual(goals[0]);
+    pickSpy.mockClear();
+
+    crew.sync(input([...assign([1, 'wykladanie']), ...before], pallets));
+    expect(idsOf(crew)).toEqual([1, 3, 4, 5, 6]);
+    expect(crew.members.slice(1).map((m) => m.walker.goal)).toEqual(goals);
+    for (const m of crew.members.slice(1)) {
+      expect(m.walker.atGoal).toBe(true);
+      expect(m.walker.moving).toBe(false);
+    }
+    expect(member(crew, 1).walker.atGoal).toBe(false);   // a nowa idzie do swojego
+  });
+});
+
+describe('StaffCrew: palety', () => {
+  const s = SCENES[0]!;
+  const { layout, pallets } = s;
+  const crewWith = (n: number): StaffCrew => {
+    const crew = new StaffCrew(layout);
+    crew.sync(input(people(n), pallets));
+    pickSpy.mockClear();
+    navSpy.mockClear();
+    setGoalSpy.mockClear();
+    repathSpy.mockClear();
+    return crew;
+  };
+
+  it('zmiana samego `since` nie przebudowuje siatki, nie liczy miejsc od nowa i nie każe przeplanować dróg', () => {
+    const crew = crewWith(5);
+    const before = snapshot(crew);
+    crew.sync(input(people(5), pallets.map((p) => ({ ...p, since: p.since + 100 }))));
+    expect(navSpy).not.toHaveBeenCalled();
+    expect(pickSpy).not.toHaveBeenCalled();
+    expect(repathSpy).not.toHaveBeenCalled();
+    expect(snapshot(crew)).toEqual(before);
+  });
+
+  it('ta sama paleta na innej lokacji (te same kratki) liczy miejsca od nowa, ale siatki nie rusza', () => {
+    const crew = crewWith(5);
+    crew.sync(input(people(5), pallets.map((p) => ({ ...p, loc: p.loc === 'floor' ? 'backroom' : 'floor' }))));
+    expect(pickSpy).toHaveBeenCalledTimes(1);
+    expect(navSpy).not.toHaveBeenCalled();
+    expect(repathSpy).not.toHaveBeenCalled();
+  });
+
+  it('kolejność palet w wejściu nie zmienia zbioru kratek, więc siatka zostaje', () => {
+    const crew = crewWith(3);
+    crew.sync(input(people(3), [...pallets].reverse()));
+    expect(navSpy).not.toHaveBeenCalled();
+    expect(repathSpy).not.toHaveBeenCalled();
+  });
+
+  it('zmiana zbioru kratek palet przebudowuje siatkę, każe przeplanować drogi wszystkim (także wychodzącym) i liczy miejsca', () => {
+    const crew = crewWith(5);
+    crew.sync(input(assign(...people(5).slice(0, 4).map((p): [number, StaffDuty] => [p.id, p.task])), pallets));   // 4 zostaje, id 4 wychodzi
+    expect(member(crew, 4).leaving).toBe(true);
+    pickSpy.mockClear();
+    navSpy.mockClear();
+    repathSpy.mockClear();
+    const extra: PalletRef = { loc: 'sidewalk', spot: computeStoreInfo(layout).spots.sidewalk[3]!, since: 999 };
+    crew.sync(input(people(4), [...pallets, extra]));
+    expect(navSpy).toHaveBeenCalledTimes(1);
+    const keys = (cells: readonly Cell[]): string[] => cells.map((c) => `${c.x},${c.y}`).sort();
+    expect(keys(navSpy.mock.calls[0]![1])).toEqual(keys([...pallets, extra].flatMap((p) => spotCells(p.spot))));   // kratki wszystkich palet
+    expect(repathSpy).toHaveBeenCalledTimes(crew.members.length);
+    expect(crew.members).toHaveLength(5);
+    expect(pickSpy).toHaveBeenCalledTimes(1);
+    expect(pickSpy.mock.calls[0]![2]).toEqual([...pallets, extra]);
+  });
+
+  it.each(SCENES)('$seed: paleta, która pojawia się na drodze idącego, zmusza go do obejścia i nie przeszkadza dojść na miejsce', (sc) => {
+    const crew = new StaffCrew(sc.layout);
+    const base = assign([0, 'kasa']);
+    const hired = assign([0, 'kasa'], [1, 'wykladanie']);
+    crew.sync(input(base));
+    crew.sync(input(hired));
+    const hire = member(crew, 1);
+    const goal = hire.walker.goal!;
+    const open = navFor(sc.layout, []);
+    const route = findPath(open.width, open.depth, open.blocked, sc.street, goal)!;
+    advance(crew, 1);                                  // ~2,6 kratki marszu: paleta ma być dalej na trasie
+    const pallet: PalletRef = { loc: 'sidewalk', spot: { x: route[6]!.x, y: route[6]!.y }, since: 0 };
+    const blocked = new Set(spotCells(pallet.spot).map((c) => `${c.x},${c.y}`));
+    expect(route.some((c) => blocked.has(`${c.x},${c.y}`))).toBe(true);   // paleta naprawdę leży na trasie
+    expect(blocked.has(`${cellOf(hire).x},${cellOf(hire).y}`)).toBe(false);
+    expect(blocked.has(`${goal.x},${goal.y}`)).toBe(false);
+
+    crew.sync(input(hired, [pallet]));
+    expect(hire.walker.goal).toEqual(goal);
+    const visited: Cell[] = [];
+    until(crew, () => hire.walker.atGoal, 120, () => visited.push(cellOf(hire)));
+    expect(hire.walker.atGoal).toBe(true);
+    expect(pos(hire)).toEqual(centre(goal));
+    expect(visited.length).toBeGreaterThan(10);
+    expect(visited.some((c) => blocked.has(`${c.x},${c.y}`))).toBe(false);
+  });
+});
+
+describe('StaffCrew: wejście tylko do odczytu', () => {
+  const s = SCENES[1]!;
+
+  it('układ, ludzie i palety zamrożone głęboko: konstruktor, sync (zatrudnienie, zwolnienie, nowa paleta) i step nie rzucają, nic się nie zmienia', () => {
+    const layout = deepFreeze(structuredClone(s.layout));
+    const pallets = deepFreeze(structuredClone(s.pallets));
+    const extra = deepFreeze(structuredClone<PalletRef[]>([...s.pallets, { loc: 'sidewalk', spot: computeStoreInfo(s.layout).spots.sidewalk[3]!, since: 7 }]));
+    const crewA = deepFreeze(people(5));
+    const crewB = deepFreeze(people(7));
+    const crewC = deepFreeze(people(2));
+    const before = JSON.stringify({ layout, pallets, extra, crewA, crewB, crewC });
+
+    const crew = new StaffCrew(layout);
+    crew.sync(input(crewA, pallets));
+    advance(crew, 2);
+    crew.sync(input(crewB, extra, MINUTE + 1));
+    advance(crew, 3);
+    crew.sync(input(crewC, extra, MINUTE + 2));
+    expect(() => until(crew, () => crew.members.length === 2, 60)).not.toThrow();
+    expect(idsOf(crew)).toEqual([0, 1]);
+    expect(JSON.stringify({ layout, pallets, extra, crewA, crewB, crewC })).toBe(before);
+  });
+
+  it('załoga nie trzyma wejścia po referencji: zmiany tablic i obiektów po sync jej nie ruszają', () => {
+    const layout = structuredClone(s.layout);
+    const control = new StaffCrew(structuredClone(s.layout));
+    const crew = new StaffCrew(layout);
+    // Układ zepsuty po konstrukcji: gdyby załoga trzymała go po referencji, nie miałaby ani wejścia, ani mebli.
+    layout.cells.fill('wall');
+    layout.entrance.length = 0;
+    layout.fixtures.length = 0;
+    layout.spawnPoints.length = 0;
+    layout.checkoutQueue.length = 0;
+    layout.palletZoneOutside.length = 0;
+
+    const who = people(5);
+    const pallets = structuredClone(s.pallets);
+    control.sync(input(structuredClone(who), structuredClone(pallets)));
+    crew.sync(input(who, pallets));
+    const goals = snapshot(crew);
+    expect(goals).toEqual(snapshot(control));
+    who[0]!.task = 'wolny';
+    who.length = 0;
+    pallets[0]!.spot.x = 0;
+    pallets.length = 0;
+    advance(crew, 3);
+    advance(control, 3);
+    expect(snapshot(crew)).toEqual(snapshot(control));
+    expect(crew.members).toHaveLength(5);
+  });
+});
+
+describe('StaffCrew: układ bez wejścia albo punktów pojawiania się', () => {
+  // Brak części układu nie może wywrócić klatki: ludzie wchodzą tam, gdzie się da (punkt pojawiania się, a bez niego samo wejście
+  // albo róg siatki), a zatrudnienie, zwolnienie i marsz działają jak zwykle.
+  const base = SCENES[0]!;
+  const variants: [string, (l: StoreLayout) => void, (l: StoreLayout) => Cell][] = [
+    ['bez punktów pojawiania się', (l) => { l.spawnPoints.length = 0; }, (l) => l.entrance[0]!],
+    ['bez wejścia', (l) => { l.entrance.length = 0; }, (l) => l.spawnPoints[0]!],
+    ['bez jednego i drugiego', (l) => { l.spawnPoints.length = 0; l.entrance.length = 0; }, () => ({ x: 0, y: 0 })],
+  ];
+  it.each(variants)('%s: pierwszy sync, zatrudnienie, zwolnienie i marsz nie rzucają', (_name, damage, expectedStreet) => {
+    const layout = structuredClone(base.layout);
+    damage(layout);
+    const crew = new StaffCrew(layout);
+    expect(() => {
+      crew.sync(input(people(3)));
+      crew.sync(input(people(4)));
+      const hire = member(crew, 3);
+      expect(pos(hire)).toEqual(centre(expectedStreet(base.layout)));
+      advance(crew, 5);
+      crew.sync(input(people(2)));
+      until(crew, () => crew.members.length === 2, 40);
+    }).not.toThrow();
+    expect(idsOf(crew)).toEqual([0, 1]);
+  });
+});
+
+describe('StaffCrew: czas', () => {
+  const { layout, pallets } = SCENES[0]!;
+
+  it('dt niebędące skończoną liczbą dodatnią jest ignorowane (zegar i marsz stoją), kolejne poprawne dt działa', () => {
+    const crew = new StaffCrew(layout);
+    crew.sync(input(assign([0, 'kasa']), pallets));
+    crew.sync(input(assign([0, 'kasa'], [1, 'wykladanie']), pallets));
+    crew.step(0.5);
+    const clock = crew.clock;
+    const before = snapshot(crew);
+    for (const dt of [Number.NaN, -1, -Infinity, Infinity, 0]) {
+      crew.step(dt);
+      expect(crew.clock).toBe(clock);
+      expect(snapshot(crew)).toEqual(before);
+    }
+    crew.step(0.25);
+    expect(crew.clock).toBe(clock + 0.25);
+    expect(snapshot(crew)).not.toEqual(before);
+    expect(Number.isFinite(member(crew, 1).walker.x)).toBe(true);
+  });
+
+  it('wynik nie zależy od losowości: dwa takie same przebiegi dają ten sam zapis', () => {
+    const run = (): string => {
+      const crew = new StaffCrew(layout);
+      const trace: unknown[] = [];
+      crew.sync(input(people(5), pallets));
+      for (let i = 0; i < 300; i++) {
+        if (i === 20) crew.sync(input(people(7), pallets, MINUTE + 1));
+        if (i === 80) crew.sync(input(people(3), [...pallets, { loc: 'sidewalk', spot: computeStoreInfo(layout).spots.sidewalk[3]!, since: 5 }], MINUTE + 2));
+        crew.step(DT);
+        trace.push(snapshot(crew));
+      }
+      return JSON.stringify(trace);
+    };
+    expect(run()).toBe(run());
+  });
+});
