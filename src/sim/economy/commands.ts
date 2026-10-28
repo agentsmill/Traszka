@@ -1,8 +1,8 @@
 import { layoutFor } from '@/sim/store/layoutFor';
 import type { StoreLayout } from '@/sim/store/types';
 import {
-  buyEquipment, buyUpgrade, campaign, claimGift, claimQuest, commitTap, comboMult, fire, giftOpen, hire, movePallet, nextTapStreak,
-  processLevels, relayout, returnPallet, rushRemont, scheduleGift, setOrder, startRemont, tapPallet, tapTill,
+  buyEquipment, buyUpgrade, campaign, claimQuest, commitTap, comboMult, fire, hire, movePallet, nextTapStreak,
+  processLevels, relayout, returnPallet, rushRemont, setOrder, startRemont, tapPallet, tapTill,
   type CommandResult, type EconEvent, type EconomyState,
 } from './economy';
 import { computeStoreInfo, type PalletLoc, type StoreInfo } from './storeInfo';
@@ -34,7 +34,6 @@ export type Command =
   | { type: 'tapPallet'; palletId?: number }
   | { type: 'tapTill' }
   | { type: 'claimQuest'; questId: number }
-  | { type: 'claimGift' }
   | { type: 'movePallet'; palletId: number; loc: PalletLoc }
   | { type: 'returnPallet'; palletId: number }
   | { type: 'setOrder'; auto: boolean; manual?: number }
@@ -63,7 +62,7 @@ export type FlatCommands = MustBeNever<NestedFields<Command>>;
 
 /** Wszystkie typy poleceń (do testów pokrycia i do walidacji). */
 export const COMMAND_TYPES: readonly Command['type'][] = [
-  'tapPallet', 'tapTill', 'claimQuest', 'claimGift', 'movePallet', 'returnPallet', 'setOrder', 'hire', 'fire', 'setStaffProfile', 'pinStaff',
+  'tapPallet', 'tapTill', 'claimQuest', 'movePallet', 'returnPallet', 'setOrder', 'hire', 'fire', 'setStaffProfile', 'pinStaff',
   'buyUpgrade', 'buyEquipment', 'startRemont', 'campaign', 'rushRemont',
 ];
 
@@ -85,7 +84,6 @@ const VALID = {
   tapPallet: (c) => c.palletId === undefined || isInt(c.palletId),
   tapTill: noFields,
   claimQuest: (c) => isInt(c.questId),
-  claimGift: noFields,
   movePallet: (c) => isInt(c.palletId) && LOCS.includes(c.loc as PalletLoc),
   returnPallet: (c) => isInt(c.palletId),
   setOrder: (c) => typeof c.auto === 'boolean' && (c.manual === undefined || isFiniteNumber(c.manual)),
@@ -127,7 +125,7 @@ export interface CommandOutcome {
 
 const refused = (text: string): CommandOutcome => ({ result: { ok: false, text }, events: [], layoutChanged: false });
 
-/** Stuknięcie: mnożnik z serii, jaką da to stuknięcie; do serii liczy się dopiero udane. */
+/** Stuknięcie: mnożnik z serii, jaką da to stuknięcie; do serii liczy się dopiero udane (odmowa rąk jej nie podtrzymuje). */
 function tap(s: EconomyState, attempt: (combo: number) => CommandResult): CommandResult {
   const r = attempt(comboMult(nextTapStreak(s)));
   if (r.ok) commitTap(s);
@@ -139,11 +137,6 @@ function run(s: EconomyState, info: StoreInfo, c: Command, events: EconEvent[]):
     case 'tapPallet': return tap(s, (combo) => tapPallet(s, info, c.palletId, combo, events));
     case 'tapTill': return tap(s, (combo) => tapTill(s, info, combo));
     case 'claimQuest': return claimQuest(s, info, c.questId);
-    case 'claimGift': {
-      const r = claimGift(s, info);
-      scheduleGift(s);   // jedno okno to jeden odbiór: następne dopiero za kilka godzin gry
-      return r;
-    }
     case 'movePallet': return movePallet(s, info, c.palletId, c.loc);
     case 'returnPallet': return returnPallet(s, c.palletId, events);
     case 'setOrder': setOrder(s, c.auto, c.manual); return { ok: true };
@@ -166,17 +159,16 @@ function run(s: EconomyState, info: StoreInfo, c: Command, events: EconEvent[]):
 }
 
 /**
- * Stosuje polecenie gracza do stanu. Odmowa z powodu kształtu, końca gry albo zamkniętego okna paczki nie rusza stanu
- * i nie rzuca. Przyjęte polecenie (także to, które się nie udało) kończy się przeliczeniem poziomów, a gdy zmienił się
- * poziom remontu, nowym układem sklepu i przeniesieniem palet oraz sprzętu. Polecenie jest kopiowane raz na początku i dalej
- * czyta się już tylko kopię: obiekt z getterem (spoza JSON-a) nie da innego `type` przy walidacji, w oknie paczki i w `run`.
+ * Stosuje polecenie gracza do stanu. Odmowa z powodu kształtu albo końca gry nie rusza stanu i nie rzuca. Przyjęte polecenie
+ * (także to, które się nie udało) kończy się przeliczeniem poziomów, a gdy zmienił się poziom remontu, nowym układem sklepu
+ * i przeniesieniem palet oraz sprzętu. Polecenie jest kopiowane raz na początku i dalej czyta się już tylko kopię: obiekt
+ * z getterem (spoza JSON-a) nie da innego `type` przy walidacji i w `run`.
  * Kopia jest płytka, bo pola poleceń są płaskie (komentarz nad `Command`, kontrola `FlatCommands`).
  */
 export function applyCommand(state: EconomyState, info: StoreInfo, cmd: Command): CommandOutcome {
   const c = typeof cmd === 'object' && cmd !== null && !Array.isArray(cmd) ? { ...cmd } : cmd;
   if (!isCommand(c)) return refused('Nieznane polecenie.');
   if (state.gameOver) return refused('Gra skończona: Centrala wypowiedziała umowę.');
-  if (c.type === 'claimGift' && !giftOpen(state)) return refused('Paczki od Centrali już nie ma.');
 
   const events: EconEvent[] = [];
   const remontBefore = state.remontLevel;

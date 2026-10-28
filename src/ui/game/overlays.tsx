@@ -1,13 +1,12 @@
-import { signal } from '@preact/signals';
 import { useEffect, useState } from 'preact/hooks';
 import { RETURN_FEE } from '@/sim/economy/catalog';
-import { effects, giftOpen, isStoreOpen, slotFree, slotUsage, tapCombo, type EconomyState, type MonthReport } from '@/sim/economy/economy';
+import { effects, isStoreOpen, slotFree, slotUsage, tapCombo, type MonthReport } from '@/sim/economy/economy';
 import { EQUIPMENT, EQUIPMENT_BY_ID, equipmentCost } from '@/sim/economy/upgrades';
 import type { QualityPresetId } from '@/render/quality';
 import { networkIncomeOf, prestigePoints } from '@/game/meta';
 import {
   celebration, ephemeral, econ, hints, metaView, nextHint, preset, report, selection, seed, showPerf, showPrestige, showSettings,
-  start, tab, toasts, welcome, type Controls, type GameActions,
+  tab, toasts, welcome, type Controls, type GameActions,
 } from '../state';
 import { int, people, signedZl, zl } from './format';
 import { PalletItem } from './panels';
@@ -166,7 +165,7 @@ export const FIRST_DAY_HINTS: readonly string[] = [
   '📦 Palety przyjeżdżają pod sklep. Stukaj w nie, żeby rozładować, zanim przyjdzie Straż Miejska. Złota paleta to premia.',
   '🧾 Kolejka za długa? Klienci odchodzą. Stuknij w kasę, kup kasę samoobsługową albo zatrudnij pracownika.',
   '🎯 Zlecenia Centrali (zakładka Cele) dają nagrody, a poziomy odblokowują sprzęt, remonty i warsztat.',
-  '🎁 Łap paczki od Centrali, gdy pojawią się nad sklepem.',
+  '💪 Stukanie męczy: dzienna pula sił się kończy, a noc oddaje tylko część. Resztę robią pracownicy.',
   '👆 Przeciągnij, żeby przesunąć widok, a szczypnięciem albo kółkiem myszy przybliżysz. Gra zapisuje się sama.',
 ];
 
@@ -317,54 +316,6 @@ export function PrestigeModal({ game }: { game: GameActions }) {
         <button type="button" class="tt-btn big" onClick={() => { showPrestige.value = false; }}>Jeszcze nie</button>
       </div>
     </div>
-  );
-}
-
-/** Miejsce paczki w oknie z `giftAt`: ułamki okna w procentach, losowane raz na okno (kolejne renderowanie tego samego okna je zachowuje). */
-let giftSpot: { window: number; x: number; y: number } | null = null;
-function spotFor(giftAt: number): { x: number; y: number } {
-  if (giftSpot?.window === giftAt) return giftSpot;
-  giftSpot = { window: giftAt, x: 20 + Math.random() * 60, y: 30 + Math.random() * 30 };
-  return giftSpot;
-}
-
-/**
- * Okno paczki, w którym gracz kliknął już po jego zamknięciu (patrz `GiftDrop`): schowane od razu, bez czekania na następną publikację
- * stanu. Klucz to sesja (`s`) i `giftAt`: samo `giftAt` powtarza się po „Zacznij od nowa” w tym samym sklepie (wylicza się z seeda).
- */
-const lateGift = signal<{ s: EconomyState; giftAt: number } | null>(null);
-
-/**
- * Paczka od Centrali. Okno paczki daje symulacja, nie timer interfejsu: `giftOpen` jest prawdą od minuty `giftAt` przez
- * `GIFT_OPEN` minut gry (ok. 9 s przy ×1, krócej przy większej prędkości), więc paczka stoi w pauzie, a po wczytaniu zapisu
- * wraca tam, gdzie była. Interfejs losuje tylko miejsce nad sceną, raz na okno (klucz `giftAt`; `Math.random` w `ui` jest
- * dozwolony, bo to nie symulacja). Odbiór to polecenie `claimGift`: symulacja zamyka okno i planuje następne. Nie pokazuje się
- * przy otwartym raporcie, ekranie startowym, powitaniu ani ustawieniach.
- *
- * Stan w `econ` odświeża się co najwyżej co 200 ms, więc paczka potrafi stać na ekranie chwilę po zamknięciu okna. Klik w tej
- * chwili nie wysyła polecenia (symulacja odmówiłaby: czerwony toast i dźwięk błędu dla paczki, którą gracz widział), tylko
- * chowa paczkę. `view.s` to ten sam obiekt co stan sesji, więc `giftOpen` w obsłudze kliknięcia widzi bieżącą minutę gry.
- */
-export function GiftDrop({ game, onClaim }: { game: GameActions; onClaim: (x: number, y: number, text: string) => void }) {
-  const view = econ.value;
-  const late = lateGift.value;
-  if (!view || !giftOpen(view.s) || report.value || start.value || welcome.value || showSettings.value) return null;
-  if (late && late.s === view.s && late.giftAt === view.s.giftAt) return null;
-  // okno, które gracz widzi: zapamiętane przy renderowaniu, bo zanim kliknie, symulacja mogła już zaplanować następne (`scheduleGift`)
-  const giftAt = view.s.giftAt;
-  const spot = spotFor(giftAt);
-  return (
-    <button type="button" class="tt-gift" style={{ left: `${spot.x}%`, top: `${spot.y}%` }} aria-label="Paczka od Centrali"
-      onClick={() => {
-        if (!giftOpen(view.s)) {
-          lateGift.value = { s: view.s, giftAt };   // zmiana sygnału odświeża komponent: paczka znika od razu
-          return;
-        }
-        const r = game.dispatch({ type: 'claimGift' });
-        if (r.ok) onClaim(window.innerWidth * spot.x / 100, window.innerHeight * spot.y / 100, r.text ?? '');
-      }}>
-      🎁
-    </button>
   );
 }
 

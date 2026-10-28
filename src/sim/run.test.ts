@@ -4,7 +4,7 @@ import { createSession } from '@/game/session';
 import { isOpenAt, minuteOfDay } from '@/sim/economy/calendar';
 import { MINUTES_PER_DAY, OPEN_FROM } from '@/sim/economy/catalog';
 import { applyCommand, COMMAND_TYPES, type Command } from '@/sim/economy/commands';
-import { giftOpen, isClosedForRemont, nextRemont, stepMinute, type EconEvent, type EconomyState } from '@/sim/economy/economy';
+import { isClosedForRemont, nextRemont, stepMinute, type EconEvent, type EconomyState } from '@/sim/economy/economy';
 import { rand01 } from '@/sim/economy/rand';
 import { questDone } from '@/sim/economy/quests';
 import type { StoreInfo } from '@/sim/economy/storeInfo';
@@ -61,7 +61,6 @@ const bot: Policy = ({ state: s, roll, issue }) => {
     if (s.pallets.length > 0 && roll(3) < 0.15) issue({ type: 'tapPallet' });   // drugie stuknięcie w tej samej minucie
   }
   if (s.minute % 5 === 0) for (const q of s.quests) if (questDone(s, q)) issue({ type: 'claimQuest', questId: q.id });
-  if (giftOpen(s) ? roll(4) < 0.02 : roll(4) < 0.001) issue({ type: 'claimGift' });   // także próba poza oknem
   if (s.minute % 60 === 0 && roll(5) < 0.6) {
     if (roll(6) < 0.7) issue({ type: 'buyUpgrade', id: UPGRADE_IDS[Math.floor(roll(7) * UPGRADE_IDS.length)] });
     else issue({ type: 'buyEquipment', id: EQUIPMENT_IDS[Math.floor(roll(7) * EQUIPMENT_IDS.length)] });

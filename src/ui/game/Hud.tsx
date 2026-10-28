@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type { Speed } from '@/game/loop';
 import { dayOf, formatClock, formatDate } from '@/sim/economy/calendar';
-import { isClosedForRemont, tapBoost } from '@/sim/economy/economy';
+import { isClosedForRemont } from '@/sim/economy/economy';
 import { rankFor, xpToNext } from '@/sim/economy/progress';
 import { econ, showSettings, speed, tab, type Controls } from '../state';
 import { int, zl } from './format';
@@ -58,7 +58,6 @@ export function Hud({ controls }: { controls: Controls }) {
         <span class={`tt-cash${s.cash < 0 ? ' neg' : ''}${rising ? ' up' : ''}`} title="Gotówka">{zl(cash)}</span>
         <span class="tt-stat" title="Reputacja sklepu (0–100): ściąga klientów">⭐ {int(s.reputation)}</span>
         <span class="tt-stat" title="Ogonki: nagrody za cele, wydajesz w Ulepszeniach">🦎 {int(s.ogonki)}</span>
-        {tapBoost(s) > 1 && <span class="tt-stat hot" title="Turbo rękawice: stuknięcia ×3">🧤×3</span>}
         <button type="button" class="tt-iconbtn tt-gear" aria-label="Ustawienia" onClick={() => { showSettings.value = true; }}>⚙</button>
       </div>
       <div class="tt-hud-row">

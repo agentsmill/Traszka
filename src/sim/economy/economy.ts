@@ -1,10 +1,10 @@
 import { hashString } from '@/sim/rng';
 import {
   BANKRUPTCY_AT, CATS, CAT_INFO, COMBO_WINDOW, CREDIT_LIMIT, DELIVERY_AT, DELIVERY_AT_AFTERNOON, DELIVERY_AT_NIGHT,
-  FINE_BASE, FINE_PER_PALLET, FRANCHISE_FEE_FIXED, FRANCHISE_FEE_SHARE, GIFT_FIRST, GIFT_GAP_MIN, GIFT_GAP_SPREAD, GIFT_OPEN,
+  FINE_BASE, FINE_PER_PALLET, FRANCHISE_FEE_FIXED, FRANCHISE_FEE_SHARE,
   HIRE_COST, HOT, HOUR_CURVE, ITEMS_PER_CUSTOMER,
   LOT_TRAFFIC, MEDIA_PER_DAY, MINUTES_PER_DAY, OPEN_FROM, OPEN_TO, ORDER_DEADLINE, PALLET_FEE, PALLET_ITEMS, PALLETS_FREE, PATIENCE,
-  RESTOCK_RATE, RETURN_FEE, SCO_ACCEPT, SCO_RATE, STAFF_MAX, STAFF_START, START_CASH, TAP_ITEMS, TILL_RATE, TRAFFIC_PER_SHELF_ITEM,
+  RESTOCK_RATE, RETURN_FEE, SCO_ACCEPT, SCO_RATE, STAFF_MAX, STAFF_START, START_CASH, TILL_RATE, TRAFFIC_PER_SHELF_ITEM,
   TRAFFIC_RANGE, UNLOAD_AT, UNLOAD_RATE, WAGE_PER_DAY, type Cat,
 } from './catalog';
 import { dayOf, formatMonth, isLastDayOfMonth, isOpenAt, minuteOfDay } from './calendar';
@@ -21,6 +21,7 @@ import { QUESTS_ACTIVE, newQuest, questDone, type Quest, type QuestScale } from 
 import {
   cleaningDemand, cleanHall, cleanlinessEffects, closeHallMonth, rollWeather, sampleHall, soilHall, type HallState,
 } from './tycoon/cleanliness';
+import { fatigueNight, tap as fatigueTap, tapItems } from './tycoon/fatigue';
 import { closeKpiWeek, type KpiMetrics, type KpiScale } from './tycoon/kpi';
 import { createShift, peopleOnShift, type ShiftState } from './tycoon/shift';
 import {
@@ -132,12 +133,6 @@ export interface EconomyState {
   questSeq: number;
   /** Ile dni zamknięto bez mandatu (licznik do zleceń). */
   cleanDays: number;
-  /** Numer kolejnej paczki od Centrali (losowa nagroda). */
-  giftSeq: number;
-  /** Minuta otwarcia bieżącego albo następnego okna paczki od Centrali (okno trwa `GIFT_OPEN` minut gry, `giftOpen`). */
-  giftAt: number;
-  /** Do tej minuty stuknięcia działają ×3 (nagroda z paczki). */
-  tapBoostUntil: number;
   /** Combo stukania w czasie gry (nie zegarem przeglądarki): stuknięcia w serii (0 = brak) i minuta ostatniego udanego. */
   tapStreak: number;
   lastTapAt: number;
@@ -307,9 +302,6 @@ export function createEconomy(seed: string, info: StoreInfo, partner: EconomySta
     quests: [],
     questSeq: 1,
     cleanDays: 0,
-    giftSeq: 1,
-    giftAt: giftWindowFrom(OPEN_FROM + GIFT_FIRST),
-    tapBoostUntil: 0,
     tapStreak: 0,
     lastTapAt: -1e9,
     lastDayProfit: 0,
@@ -338,7 +330,6 @@ export const isStoreOpen = (s: EconomyState): boolean => isOpenAt(minuteOfDay(s.
 /** Jedna minuta gry. Zdarzenia dla gracza (dostawa, mandat, raport…) trafiają do `out`. */
 export function stepMinute(s: EconomyState, info: StoreInfo, out: EconEvent[]): void {
   if (s.gameOver) return;
-  if (s.minute >= s.giftAt + GIFT_OPEN) scheduleGift(s);   // okno paczki nie odebrane na czas wygasa
   const mod = minuteOfDay(s.minute);
   // pogoda dnia losuje się o północy (zaczep: później ustawi ją system pogody); dzień 0 ma pogodę z `createEconomy`
   if (mod === 0) s.tycoon.hall.weather = rollWeather(s.seedHash, dayOf(s.minute), dateOfGameDay(dayOf(s.minute)).month);
@@ -769,6 +760,7 @@ function closeDay(s: EconomyState, info: StoreInfo, out: EconEvent[]): void {
   if (t.fines === 0) s.cleanDays++;
   out.push({ kind: 'day', text: `Dzień zamknięty: ${Math.round(t.customers)} klientów, obrót ${fmt(t.revenue)} zł, wynik dnia ${profit >= 0 ? '+' : ''}${fmt(profit)} zł.` });
   s.today = emptyCounters();
+  fatigueNight(s.tycoon.fatigue);   // noc oddaje część sił, reszta zmęczenia przechodzi na jutro
 
   // Tymczasowo (zadanie 6 doda zaufanie, premię, XP i komunikat z wyniku): tydzień KPI przechodzi dalej w niedzielę. Bez tego
   // stan z grającej gry nie wracałby z zapisu bez zmian, bo sanitizeKpi zastępuje tydzień, który już minął, świeżym.
@@ -831,12 +823,8 @@ function checkMilestones(s: EconomyState, info: StoreInfo, out: EconEvent[]): vo
 
 export type CommandResult = { ok: true; text?: string; value?: number } | { ok: false; text: string };
 
-/** Mnożnik stuknięć z paczki od Centrali („turbo rozładunek”). */
-export const tapBoost = (s: EconomyState): number => (s.minute < s.tapBoostUntil ? 3 : 1);
-
-// --- Combo stukania i okna paczek w czasie gry -------------------------------------------------------------
-// Dotąd combo mierzył zegar przeglądarki, a paczki liczniki `setTimeout` w interfejsie; serwer odtwarzający bieg
-// nie widzi żadnego z nich. Oba żyją więc w stanie, w minutach gry i z `rand01`.
+// --- Combo stukania w czasie gry -----------------------------------------------------------------------------
+// Dotąd combo mierzył zegar przeglądarki; serwer odtwarzający bieg go nie widzi. Żyje więc w stanie, w minutach gry.
 
 /** Mnożnik za szybkie stukanie: ×1 do 3 stuknięć w serii, potem o 1 wyżej co 4, najwyżej ×5. */
 export const comboMult = (streak: number): number => Math.min(5, 1 + Math.floor(streak / 4));
@@ -856,51 +844,52 @@ export function tapCombo(s: EconomyState): { count: number; mult: number } {
   return { count: s.tapStreak, mult: comboMult(s.tapStreak) };
 }
 
-/** Czy paczka od Centrali czeka na odbiór: okno trwa `GIFT_OPEN` minut od `giftAt`, po końcu gry nie ma paczek. */
-export const giftOpen = (s: EconomyState): boolean => s.giftAt <= s.minute && s.minute < s.giftAt + GIFT_OPEN && !s.gameOver;
+/** Poniżej tylu sztuk rozładunek się nie liczy (szum zmiennoprzecinkowy po dopełnieniu półek, a nie realny ruch towaru). */
+const MIN_MOVED = 1e-6;
 
 /**
- * Najbliższa minuta, w której okno paczki mieści się w godzinach otwarcia (od `OPEN_FROM` do `OPEN_TO - GIFT_OPEN`,
- * żeby cała paczka zdążyła zaczekać przed zamknięciem): sama `minute`, gdy już w nich jest; przed otwarciem otwarcie
- * tego dnia, po ostatniej możliwej minucie otwarcie następnego dnia. Okno nigdy nie wypada wcześniej, niż wypadało.
+ * Ile sztuk z palety zmieści się teraz: wolne zaplecze plus wolne półki tych kategorii, które na niej leżą, ale nie więcej
+ * niż zostało na palecie. Bez miejsca stuknięcie jest odmową, zanim zużyje siły.
  */
-export function giftWindowFrom(minute: number): number {
-  const day = dayOf(minute);
-  const mod = minuteOfDay(minute);
-  if (mod < OPEN_FROM) return day * MINUTES_PER_DAY + OPEN_FROM;
-  if (mod > OPEN_TO - GIFT_OPEN) return (day + 1) * MINUTES_PER_DAY + OPEN_FROM;
-  return minute;
-}
-
-/** Planuje następne okno paczki: `GIFT_GAP_MIN` do `GIFT_GAP_MIN + GIFT_GAP_SPREAD` minut od teraz, przesunięte w godziny otwarcia. */
-export function scheduleGift(s: EconomyState): void {
-  s.giftAt = giftWindowFrom(s.minute + GIFT_GAP_MIN + Math.floor(rand01(s.seedHash, s.giftAt, 30) * GIFT_GAP_SPREAD));
+function palletRoom(s: EconomyState, info: StoreInfo, fx: Effects, p: Pallet): number {
+  let room = Math.max(0, fx.backroomCap - sum(s.backroom));
+  for (const c of CATS) if (p.items[c] > 0) room += Math.max(0, info.shelfCap[c] - s.shelf[c]);
+  return Math.min(p.total, room);
 }
 
 /**
- * Gracz stuka w paletę: franczyzobiorca sam rozładowuje kawałek. Bez `id` bierze najpilniejszą. `combo` to mnożnik
- * za szybkie stukanie (liczy go wołający). Wynik: rozładowane sztuki, a przy złotej palecie także komunikat: w `text`,
- * a gdy podano `events`, jako zdarzenie `golden` dopisane do tej tablicy (wtedy `text` zostaje pusty).
+ * Gracz stuka w paletę: franczyzobiorca sam rozładowuje kawałek. Bez `id` bierze najpilniejszą. `combo` to mnożnik za szybkie
+ * stukanie (liczy go wołający); razem z nim rośnie koszt w siłach (tycoon/fatigue.ts), a zmęczenie z wczoraj zmniejsza moc.
+ * Najpierw sprawdza paletę i miejsce, dopiero potem zużywa siły, więc odmowa „nie ma co ani gdzie” ich nie rusza; odmowa rąk
+ * to pusta pula. Wynik: rozładowane sztuki, a przy złotej palecie także komunikat: w `text`, a gdy podano `events`, jako
+ * zdarzenie `golden` dopisane do tej tablicy (wtedy `text` zostaje pusty).
  */
 export function tapPallet(s: EconomyState, info: StoreInfo, id?: number, combo = 1, events?: EconEvent[]): CommandResult {
   const fx = effects(s, info);
   const p = id !== undefined ? s.pallets.find((x) => x.id === id)
     : [...s.pallets].sort((a, b) => Number(!!b.golden) - Number(!!a.golden) || PALLET_ORDER[a.loc] - PALLET_ORDER[b.loc] || a.since - b.since)[0];
   if (!p) return { ok: false, text: 'Brak palet do rozładunku.' };
+  if (palletRoom(s, info, fx, p) <= MIN_MOVED) return { ok: false, text: 'Zaplecze i półki pełne: nie ma gdzie wyłożyć towaru.' };
+  const r = fatigueTap(s.tycoon.fatigue, 'paleta', combo);
+  if (!r.ok) return { ok: false, text: r.text ?? 'Ręce odmawiają.' };
   const out: EconEvent[] = [];
-  const moved = unloadPallet(s, info, fx, p, TAP_ITEMS * (1 + 0.25 * level(s, 'wozek')) * combo * tapBoost(s), out);
+  const moved = unloadPallet(s, info, fx, p, tapItems(r.power) * (1 + 0.25 * level(s, 'wozek')), out);
   removeEmptyPallets(s);
-  events?.push(...out);   // premia już wypłacona, więc zdarzenie nie przepada nawet przy odmowie
-  if (moved <= 1e-6) return { ok: false, text: 'Zaplecze i półki pełne: nie ma gdzie wyłożyć towaru.' };
+  events?.push(...out);   // premia już wypłacona, więc zdarzenie nie przepada
   for (const k of [s.today, s.month, s.total]) k.taps++;
   return events ? { ok: true, value: moved } : { ok: true, value: moved, text: out[0]?.text };
 }
 
-/** Gracz stuka w kasę: franczyzobiorca obsługuje klienta z kolejki (z combo kilku naraz). Zwraca zarobioną marżę. */
+/**
+ * Gracz stuka w kasę: franczyzobiorca obsługuje klienta z kolejki (z combo kilku naraz, a zmęczenie obsługuje ułamek). Sklep
+ * zamknięty albo pusta kolejka to odmowa bez zużycia sił. Zwraca zarobioną marżę.
+ */
 export function tapTill(s: EconomyState, info: StoreInfo, combo = 1): CommandResult {
   if (!isStoreOpen(s)) return { ok: false, text: 'Sklep zamknięty.' };
   if (s.queue < 1) return { ok: false, text: 'Nikt nie czeka przy kasie.' };
-  const n = Math.min(Math.floor(s.queue), Math.max(1, Math.floor(combo * tapBoost(s))));
+  const r = fatigueTap(s.tycoon.fatigue, 'kasa', combo);
+  if (!r.ok) return { ok: false, text: r.text ?? 'Ręce odmawiają.' };
+  const n = Math.min(s.queue, r.power);
   s.queue -= n;
   const margin = sell(s, effects(s, info), n, 0);
   for (const k of [s.today, s.month, s.total]) k.taps++;
@@ -1139,30 +1128,6 @@ export function unlocksAt(lvl: number): string[] {
   for (const r of REMONTS) if (r.minLevel === lvl) out.push(r.name);
   if (lvl === WORKSHOP_LEVEL) out.push('Warsztat złotej rączki');
   return out;
-}
-
-export type GiftKind = 'cash' | 'ogonki' | 'rush' | 'turbo';
-
-/** Paczka od Centrali (pojawia się w interfejsie na kilka sekund): losowa nagroda. */
-export function claimGift(s: EconomyState, info: StoreInfo): CommandResult & { kind?: GiftKind } {
-  const r = rand01(s.seedHash, s.giftSeq++, 11);
-  s.xp += XP.gift;
-  if (r < 0.4) {
-    const cash = Math.round(Math.max(300, estimatedDailyMargin(s, info) * (0.15 + 0.2 * rand01(s.seedHash, s.giftSeq, 12))));
-    income(s, cash);
-    return { ok: true, kind: 'cash', value: cash, text: `Paczka od Centrali: premia +${fmt(cash)} zł!` };
-  }
-  if (r < 0.65) {
-    const n = 3 + Math.floor(rand01(s.seedHash, s.giftSeq, 13) * 6);
-    s.ogonki += n;
-    return { ok: true, kind: 'ogonki', value: n, text: `Paczka od Centrali: +${n} Ogonków!` };
-  }
-  if (r < 0.85) {
-    s.boostUntil = Math.max(s.minute, s.boostUntil) + 180;
-    return { ok: true, kind: 'rush', text: 'Szał zakupów! +30% klientów przez 3 godziny.' };
-  }
-  s.tapBoostUntil = Math.max(s.minute, s.tapBoostUntil) + 240;
-  return { ok: true, kind: 'turbo', text: 'Turbo rękawice! Stuknięcia ×3 przez 4 godziny gry.' };
 }
 
 /** Zarobek kierownika zmiany pod nieobecność gracza (liczy go warstwa gry z czasu rzeczywistego). */

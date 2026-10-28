@@ -4,7 +4,7 @@ import { BANKRUPTCY_AT, CATS, CAT_INFO, MINUTES_PER_DAY, OPEN_FROM, START_CASH, 
 import { dateOfDay, formatDate, isLastDayOfMonth } from './calendar';
 import { advanceEconomy } from './clock';
 import {
-  arrivalRate, buyEquipment, buyUpgrade, changeTrust, claimGift, claimQuest, createEconomy, effects, estimatedDailyMargin,
+  arrivalRate, buyEquipment, buyUpgrade, changeTrust, claimQuest, createEconomy, effects, estimatedDailyMargin,
   expectedDailyCustomers, fire, freeSpots, kpiMetricsOf, kpiScaleOf, movePallet, relayout, returnPallet, robotFleet, slotFree,
   startRemont, stepMinute, tapPallet, tapTill, unlocksAt, upgradeBlocker, workshopUnlocked, type CommandResult, type EconEvent,
   type EconomyState,
@@ -56,17 +56,13 @@ describe('ekonomia', () => {
     expect(JSON.stringify(restored)).toBe(JSON.stringify(a));
   });
 
-  it('okna paczek i combo nie zmieniają liczb gry: stan różni się tylko polem giftAt', () => {
+  it('stepMinute nie stuka za gracza: bez poleceń ani combo, ani siły się nie ruszają', () => {
     const a = createEconomy(SEED, info);
-    const b = createEconomy(SEED, info);
-    b.giftAt = a.giftAt + 3 * MINUTES_PER_DAY;   // inne okna paczek, ta sama reszta
     run(a, info, 6 * MINUTES_PER_DAY);
-    run(b, info, 6 * MINUTES_PER_DAY);
-    expect(a.giftAt).not.toBe(b.giftAt);
-    expect({ ...a, giftAt: 0 }).toEqual({ ...b, giftAt: 0 });
-    expect(a.tapStreak).toBe(0);   // stepMinute nie stuka za gracza
+    expect(a.tapStreak).toBe(0);
     expect(a.lastTapAt).toBe(-1e9);
-    expect(a.giftSeq).toBe(1);     // i nie odbiera paczek
+    expect(a.tycoon.fatigue).toEqual(createEconomy(SEED, info).tycoon.fatigue);
+    expect(a.total.taps).toBe(0);
   });
 
   it('pierwszy dzień: sprzedaż, zamówienie o 11:00, zamknięcie dnia z płacami', () => {
@@ -449,27 +445,14 @@ describe('nagrody i postęp', () => {
     expect(s.quests.some((x) => x.id === q.id)).toBe(false);
   });
 
-  it('combo i paczka „turbo” mnożą stuknięcia', () => {
+  it('combo mnoży stuknięcia', () => {
     const s = createEconomy(SEED, info);
     for (const c of CATS) s.backroom[c] = 0;
     const val = (r: CommandResult): number => (r.ok ? r.value ?? 0 : 0);
     const one = val(tapPallet(s, info, undefined, 1));
     const three = val(tapPallet(s, info, undefined, 3));
     expect(three).toBeCloseTo(one * 3, 5);
-    s.tapBoostUntil = s.minute + 100;
-    expect(val(tapPallet(s, info, undefined, 1))).toBeCloseTo(one * 3, 5);
-    expect(s.total.taps).toBe(3);
-  });
-
-  it('paczka od Centrali zawsze coś daje, a kolejne paczki dają różne nagrody', () => {
-    const s = createEconomy(SEED, info);
-    const kinds = new Set<string>();
-    for (let i = 0; i < 30; i++) {
-      const r = claimGift(s, info);
-      expect(r.ok).toBe(true);
-      kinds.add(r.kind!);
-    }
-    expect(kinds.size).toBeGreaterThanOrEqual(3);
+    expect(s.total.taps).toBe(2);
   });
 
   it('złota paleta po rozładunku daje premię i komunikat', () => {
@@ -479,7 +462,10 @@ describe('nagrody i postęp', () => {
     p.golden = true;
     const cash = s.cash;
     let text: string | undefined;
-    for (let i = 0; i < 200 && s.pallets.some((x) => x.id === p.id); i++) text = tapPallet(s, info, p.id, 5).text ?? text;
+    for (let i = 0; i < 200 && s.pallets.some((x) => x.id === p.id); i++) {
+      s.tycoon.fatigue.energy = 100;   // siły nie są tu tematem: pula wystarcza na całą paletę
+      text = tapPallet(s, info, p.id, 5).text ?? text;
+    }
     expect(s.pallets.some((x) => x.id === p.id)).toBe(false);
     expect(text).toMatch(/Złota paleta/);
     expect(s.cash).toBeGreaterThan(cash + 300);

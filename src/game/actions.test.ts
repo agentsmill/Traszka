@@ -101,7 +101,7 @@ describe('dziennik biegu', () => {
       { type: 'tapPallet' }, { type: 'tapPallet', palletId: 2 }, { type: 'tapTill' }, { type: 'setOrder', auto: false, manual: 6 },
       { type: 'movePallet', palletId: 1, loc: 'backroom' }, { type: 'hire' }, { type: 'setStaffProfile', profile: 'dostawa' },
       { type: 'pinStaff', task: 'kasa', count: 1 }, { type: 'pinStaff', task: 'rozladunek', count: 9 },
-      { type: 'buyUpgrade', id: firstUpgrade }, { type: 'claimGift' }, { type: 'startRemont' }, { type: 'claimQuest', questId: 1 },
+      { type: 'buyUpgrade', id: firstUpgrade }, { type: 'startRemont' }, { type: 'claimQuest', questId: 1 },
       { type: 'fire' }, { type: 'returnPallet', palletId: 2 }, { type: 'campaign' }, { type: 'rushRemont' }, { type: 'setOrder', auto: true },
     ];
     const results: CommandResult[] = [];
@@ -345,7 +345,6 @@ describe('tabela AFTER', () => {
       tapPallet: { okToast: false, sfx: 'tap', buzz: 8 },
       tapTill: { okToast: false, sfx: 'cash', buzz: 8 },
       claimQuest: { okToast: true, sfx: 'coins', buzz: [15, 30, 15], confetti: { fx: 0.5, fy: 0.6, count: 28 }, persist: true },
-      claimGift: { okToast: true, sfx: 'gift', buzz: [10, 20, 10] },
       movePallet: { okToast: true },
       returnPallet: { okToast: true, clearSelection: 'after' },
       setOrder: { okToast: false },

@@ -1,11 +1,11 @@
 import { inspect } from 'node:util';
 import { describe, expect, it } from 'vitest';
 import { layoutFor } from '@/sim/store/layoutFor';
-import { GIFT_OPEN, HIRE_COST } from './catalog';
+import { HIRE_COST } from './catalog';
 import { applyCommand, COMMAND_TYPES, isCommand, type Command } from './commands';
 import {
-  buyEquipment, buyUpgrade, campaign, claimGift, claimQuest, commitTap, createEconomy, fire, freeSpots, hire, movePallet,
-  processLevels, relayout, returnPallet, rushRemont, scheduleGift, setOrder, startRemont, tapPallet, tapTill,
+  buyEquipment, buyUpgrade, campaign, claimQuest, commitTap, createEconomy, fire, freeSpots, hire, movePallet,
+  processLevels, relayout, returnPallet, rushRemont, setOrder, startRemont, tapPallet, tapTill,
   type CommandResult, type EconomyState,
 } from './economy';
 import { questMetric } from './quests';
@@ -48,12 +48,6 @@ const CASES: Record<Command['type'], () => Prepared> = {
     const q = s.quests[0]!;
     q.start = questMetric(s, q.kind) - q.target - 1;   // cel już spełniony
     return { s, info, cmd: { type: 'claimQuest', questId: q.id }, legacy: (b, i) => claimQuest(b, i, q.id) };
-  },
-  claimGift: () => {
-    const { s, info } = base();
-    s.minute = s.giftAt;   // okno paczki otwarte
-    // dziś okno gasił licznik w interfejsie; w stanie gry odbiór planuje następne okno
-    return { s, info, cmd: { type: 'claimGift' }, legacy: (b, i) => { const r = claimGift(b, i); scheduleGift(b); return r; } };
   },
   movePallet: () => {
     const { s, info } = base();
@@ -280,44 +274,6 @@ describe('stuknięcia w serii', () => {
   });
 });
 
-describe('paczka od Centrali', () => {
-  it('poza oknem odmowa bez zmiany stanu; w oknie raz, drugi odbiór w tym samym oknie odmowa', () => {
-    const { s, info } = base();
-    s.xp = xpToNext(1) + 5;   // gdyby odmowa wołała processLevels, poziom by się zmienił
-
-    // przed oknem
-    expect(s.minute).toBeLessThan(s.giftAt);
-    let before = snapshot(s);
-    let out = applyCommand(s, info, { type: 'claimGift' });
-    expect(out.result).toEqual({ ok: false, text: 'Paczki od Centrali już nie ma.' });
-    expect(out.events).toEqual([]);
-    expect(out.layoutChanged).toBe(false);
-    expect(snapshot(s)).toBe(before);
-
-    // po oknie
-    s.minute = s.giftAt + GIFT_OPEN;
-    before = snapshot(s);
-    out = applyCommand(s, info, { type: 'claimGift' });
-    expect(out.result.ok).toBe(false);
-    expect(snapshot(s)).toBe(before);
-
-    // w oknie: odbiór raz
-    s.minute = s.giftAt;
-    const window = s.giftAt;
-    const seq = s.giftSeq;
-    out = applyCommand(s, info, { type: 'claimGift' });
-    expect(out.result.ok).toBe(true);
-    expect(s.giftSeq).toBe(seq + 1);
-    expect(s.giftAt).toBeGreaterThan(window);   // następne okno zaplanowane
-
-    // drugi odbiór w tej samej minucie
-    before = snapshot(s);
-    out = applyCommand(s, info, { type: 'claimGift' });
-    expect(out.result).toEqual({ ok: false, text: 'Paczki od Centrali już nie ma.' });
-    expect(snapshot(s)).toBe(before);
-  });
-});
-
 describe('poziomy', () => {
   it('XP z polecenia od razu podnosi poziom (processLevels) i zdarzenie levelup jest w events', () => {
     const { s, info } = base();
@@ -437,6 +393,7 @@ describe('zepsute polecenia', () => {
     { type: 'buyEquipment', id: 'x' },
     { type: 'movePallet', palletId: 1, loc: 'roof' },
     { type: 'setPriority', priority: 'palety' },
+    { type: 'claimGift' },   // paczka od Centrali zniknęła; stare dzienniki odpadają jako nieznane polecenie
     { type: 'setStaffProfile', profile: 'all' },
     { type: 'setStaffProfile', profile: '__proto__' },
     { type: 'pinStaff', task: 'kawa', count: 1 },
@@ -484,31 +441,15 @@ describe('zepsute polecenia', () => {
       return { cmd, reads: () => reads };
     }
 
-    it('claimGift, potem hire: o poleceniu rozstrzyga pierwszy odczyt, więc zamknięte okno paczki odmawia, a hire się nie wykonuje', () => {
-      const { s, info } = base();
-      s.cash = 10 * HIRE_COST;
-      expect(s.minute).toBeLessThan(s.giftAt);   // okno paczki zamknięte
-      const before = snapshot(s);
-      const { cmd, reads } = flipping('claimGift', 'hire');
-      const out = applyCommand(s, info, cmd);
-      expect(reads()).toBe(1);
-      expect(out.result).toEqual({ ok: false, text: 'Paczki od Centrali już nie ma.' });
-      expect(out.events).toEqual([]);
-      expect(out.layoutChanged).toBe(false);
-      expect(snapshot(s)).toBe(before);
-    });
-
-    it('hire, hire, potem claimGift: odbiór paczki nie przemyca się poza zamknięte okno, wykonuje się tylko hire', () => {
+    it('hire, hire, potem fire: o poleceniu rozstrzyga pierwszy odczyt, więc wykonuje się tylko hire', () => {
       const { s, info } = base();
       s.cash = 10 * HIRE_COST;
       const staff = s.staff;
-      const gifts = s.giftSeq;
-      const { cmd, reads } = flipping('hire', 'hire', 'claimGift');
+      const { cmd, reads } = flipping('hire', 'hire', 'fire');
       const out = applyCommand(s, info, cmd);
       expect(reads()).toBe(1);
       expect(out.result).toEqual({ ok: true });
       expect(s.staff).toBe(staff + 1);
-      expect(s.giftSeq).toBe(gifts);
     });
 
     it('poprawny typ, potem nieznany: odczyt jest jeden, więc polecenie się wykonuje, a nie kończy brakiem wyniku', () => {
@@ -532,7 +473,6 @@ describe('isCommand', () => {
       { type: 'tapPallet', palletId: undefined },
       { type: 'tapTill' },
       { type: 'claimQuest', questId: 7 },
-      { type: 'claimGift' },
       { type: 'movePallet', palletId: 1, loc: 'sidewalk' },
       { type: 'movePallet', palletId: 1, loc: 'backroom' },
       { type: 'movePallet', palletId: 1, loc: 'floor' },

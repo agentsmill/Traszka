@@ -1,8 +1,8 @@
 import { isNum, isRec, num, whole, type Rec } from '@/sim/guards';
-import { CATS, GIFT_FIRST, MINUTES_PER_DAY, PALLET_ITEMS, STAFF_MAX, type Cat } from './catalog';
+import { CATS, MINUTES_PER_DAY, PALLET_ITEMS, STAFF_MAX, type Cat } from './catalog';
 import { dayOf } from './calendar';
 import {
-  emptyCounters, giftWindowFrom, kpiMetrics, kpiScaleOf, type Counters, type Delivery, type EconomyState, type EquipmentUnit,
+  emptyCounters, kpiMetrics, kpiScaleOf, type Counters, type Delivery, type EconomyState, type EquipmentUnit,
   type MonthReport, type Pallet,
 } from './economy';
 import { xpToNext } from './progress';
@@ -154,11 +154,6 @@ export function sanitizeEconomy(raw: unknown, defaults: EconomyState, info: Stor
     quests,
     questSeq: Math.max(whole(raw.questSeq, defaults.questSeq, 1, LIMITS.id + 1), 1 + Math.max(0, ...quests.map((q) => q.id))),
     cleanDays: whole(raw.cleanDays, defaults.cleanDays, 0, LIMITS.minute / MINUTES_PER_DAY),
-    giftSeq: whole(raw.giftSeq, defaults.giftSeq, 1, LIMITS.id),
-    // zapis sprzed L3 nie ma okna paczki: pierwsze otwiera się GIFT_FIRST po minucie zapisu (w godzinach otwarcia),
-    // a okno z przyszłości dalszej niż dwie doby jest uszkodzeniem
-    giftAt: whole(raw.giftAt, giftWindowFrom(minute + GIFT_FIRST), 0, minute + 2 * MINUTES_PER_DAY),
-    tapBoostUntil: whole(raw.tapBoostUntil, defaults.tapBoostUntil, 0, LIMITS.minute),
     // zapis sprzed L1 nie ma combo: brak serii, ostatnie stuknięcie dawno temu (jak lastFineAt)
     tapStreak: whole(raw.tapStreak, defaults.tapStreak, 0, LIMITS.id),
     lastTapAt: whole(raw.lastTapAt, defaults.lastTapAt, defaults.lastTapAt, minute),

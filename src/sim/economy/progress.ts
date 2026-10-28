@@ -23,7 +23,6 @@ export const XP = {
   customer: 1,
   pallet: 12,
   purchase: 20,
-  gift: 15,
   golden: 40,
   milestonePerOgonek: 5,
 } as const;

@@ -1,9 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { formatMonth, isLastDayOfMonth } from '@/sim/economy/calendar';
-import { CAT_INFO, CATS, CREDIT_LIMIT, GIFT_FIRST, MINUTES_PER_DAY, OPEN_FROM, PALLET_ITEMS } from '@/sim/economy/catalog';
+import { CAT_INFO, CATS, CREDIT_LIMIT, MINUTES_PER_DAY, OPEN_FROM, PALLET_ITEMS } from '@/sim/economy/catalog';
 import {
-  buyEquipment, buyUpgrade, effects, emptyCounters, giftWindowFrom, kpiMetricsOf, kpiScaleOf, stepMinute, tapPallet, type CommandResult,
+  buyEquipment, buyUpgrade, effects, emptyCounters, kpiMetricsOf, kpiScaleOf, stepMinute, tapPallet, type CommandResult,
   type Counters, type EconEvent, type EconomyState,
 } from '@/sim/economy/economy';
 import { newKpiWeek } from '@/sim/economy/tycoon/kpi';
@@ -95,13 +95,13 @@ const legacyTrust = (e: EconomyState): number => (e as unknown as { trust: numbe
 /**
  * Stan, jaki daje wczytanie zapisu z produkcji (fixtures), bez `tycoon`: bez tytułów zleceń (L9), bez starego pola `trust`
  * (przeszło do `tycoon.trust`), bez starego `priority` (przeszedł do profilu w `tycoon.staff`), z pustą zmianą (`shift`: zapis
- * nie pamięta ostatniej minuty), z zerowymi licznikami `bonus`, `wut` i `fineCount` (także w raporcie) i z polami combo
- * i okien paczek, których zapisy sprzed L1 i L3 jeszcze nie mają. Migracja: brak serii (`tapStreak` 0), ostatnie stuknięcie
- * dawno temu (`lastTapAt` -1e9, jak `lastFineAt`) i pierwsze okno paczki `GIFT_FIRST` minut po minucie zapisu, przesunięte
- * w godziny otwarcia (`giftWindowFrom`).
+ * nie pamięta ostatniej minuty), z zerowymi licznikami `bonus`, `wut` i `fineCount` (także w raporcie), z polami combo,
+ * których zapisy sprzed L1 jeszcze nie mają, i bez pól paczki od Centrali (`giftSeq`, `tapBoostUntil`), które przepadają.
+ * Migracja: brak serii (`tapStreak` 0) i ostatnie stuknięcie dawno temu (`lastTapAt` -1e9, jak `lastFineAt`).
  */
 const asLoaded = (e: EconomyState): Omit<EconomyState, 'tycoon'> => {
-  const { trust: _, priority: __, ...rest } = withoutTycoon(withoutQuestTitles(e)) as Omit<EconomyState, 'tycoon'> & { trust?: number; priority?: string };
+  const { trust: _, priority: __, giftSeq: ___, tapBoostUntil: ____, ...rest } = withoutTycoon(withoutQuestTitles(e)) as
+    Omit<EconomyState, 'tycoon'> & { trust?: number; priority?: string; giftSeq?: number; tapBoostUntil?: number };
   const counters = (c: Counters): Counters => ({ ...c, bonus: 0, wut: 0, fineCount: 0 });
   return {
     ...rest,
@@ -112,7 +112,6 @@ const asLoaded = (e: EconomyState): Omit<EconomyState, 'tycoon'> => {
     shift: { staff: 0, human: { kasa: 0, rozladunek: 0, wykladanie: 0, sprzatanie: 0 } },
     tapStreak: 0,
     lastTapAt: -1e9,
-    giftAt: giftWindowFrom(e.minute + GIFT_FIRST),
   };
 };
 

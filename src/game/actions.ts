@@ -61,7 +61,6 @@ export const AFTER: Record<Command['type'], AfterStep> = {
   tapPallet: { okToast: false, sfx: 'tap', buzz: 8 },
   tapTill: { okToast: false, sfx: 'cash', buzz: 8 },
   claimQuest: { okToast: true, sfx: 'coins', buzz: [15, 30, 15], confetti: { fx: 0.5, fy: 0.6, count: 28 }, persist: true },
-  claimGift: { okToast: true, sfx: 'gift', buzz: [10, 20, 10] },
   movePallet: { okToast: true },
   returnPallet: { okToast: true, clearSelection: 'after' },
   setOrder: { okToast: false },

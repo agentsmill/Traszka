@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { generateStore } from '@/sim/store/generateStore';
-import { CATS, GIFT_FIRST, MINUTES_PER_DAY } from './catalog';
+import { CATS, MINUTES_PER_DAY } from './catalog';
 import { dateOfDay } from './calendar';
-import { buyEquipment, buyUpgrade, createEconomy, giftWindowFrom, stepMinute, type EconEvent, type EconomyState } from './economy';
+import { buyEquipment, buyUpgrade, createEconomy, stepMinute, type EconEvent, type EconomyState } from './economy';
 import { LIMITS, sanitizeEconomy } from './sanitize';
 import { xpToNext } from './progress';
 import { computeStoreInfo, type StoreInfo } from './storeInfo';
@@ -89,20 +89,37 @@ describe('sanitizeEconomy: poprawny stan przechodzi bez zmian', () => {
       const inf = computeStoreInfo(generateStore(seed));
       const out = sanitizeEconomy(raw, defaults(inf, seed), inf)!;
       expect(out).not.toBeNull();
-      // L9: tytuł zlecenia nie jest już częścią stanu. L1 i L3: zapis nie ma combo ani okna paczki, więc dostaje brak serii,
-      // ostatnie stuknięcie dawno temu i pierwsze okno GIFT_FIRST minut po minucie zapisu (w godzinach otwarcia).
+      // L9: tytuł zlecenia nie jest już częścią stanu. L1: zapis nie ma combo, więc dostaje brak serii i ostatnie stuknięcie
+      // dawno temu. Paczka od Centrali zniknęła: `giftSeq` i `tapBoostUntil` z zapisu przepadają (`giftAt` nie ma w żadnym).
       // Tycoon: stare `trust` przechodzi do `tycoon.trust`, a liczniki dostają zerowe `bonus`, `wut` i `fineCount`.
       // Pula ludzi: dawny `priority` zamienia się na profil w `tycoon.staff`, a `shift` (ostatnia minuta) startuje pusty.
-      const { trust, priority, ...rest } = raw;
+      const { trust, priority, giftSeq: _gs, tapBoostUntil: _tb, ...rest } = raw;
       const { tycoon, ...progress } = out;
       expect(progress).toEqual({
         ...rest, lastReport: null, quests: dropQuestTitles(raw.quests), shift: defaults(inf, seed).shift,
-        tapStreak: 0, lastTapAt: -1e9, giftAt: giftWindowFrom((raw.minute as number) + GIFT_FIRST),
+        tapStreak: 0, lastTapAt: -1e9,
         today: withNewCounters(raw.today), month: withNewCounters(raw.month), total: withNewCounters(raw.total),
       });
       expect(tycoon.trust.value).toBe(trust);
       expect(tycoon.staff.profile).toBe({ klienci: 'kolejka', rowno: 'kolejka', palety: 'dostawa' }[priority as string]);
     }
+  });
+
+  it('stary zapis z giftAt, giftSeq i tapBoostUntil wczytuje się bez tych pól, a reszta stanu zostaje', () => {
+    const s = defaults();
+    s.cash = 123_456;
+    s.xp = 40;
+    const old = { ...json(s), giftAt: s.minute + 480, giftSeq: 9, tapBoostUntil: s.minute + 200 };
+    for (const k of ['giftAt', 'giftSeq', 'tapBoostUntil']) expect(k in old).toBe(true);
+
+    const out = sanitizeEconomy(old, defaults(), info)!;
+    expect(out).not.toBeNull();
+    for (const k of ['giftAt', 'giftSeq', 'tapBoostUntil']) expect(k in out, k).toBe(false);
+    expect(out.cash).toBe(123_456);
+    expect(out.xp).toBe(40);
+    // poza przepadłymi polami wynik jest zapisem bez paczek co do bajta
+    expect(JSON.stringify(out)).toBe(JSON.stringify(s));
+    expect(JSON.stringify(out)).not.toMatch(/gift|tapBoost/i);
   });
 
   it('zapisy z tytułami zleceń (v1 i v2 z produkcji): zlecenia wracają bez title, reszta pól ta sama', () => {
@@ -547,10 +564,9 @@ describe('sanitizeEconomy: skończone, ale absurdalne liczby (zapis ręcznie zmi
 
   it('znaczniki czasu: remont najwyżej tak długi jak największy w grze, kary i premie nie wybiegają w przyszłość', () => {
     const s = rich();
-    const out = load({ remontUntil: 1e300, boostUntil: 1e300, tapBoostUntil: 1e300, lastFineAt: 1e300 }, s);
+    const out = load({ remontUntil: 1e300, boostUntil: 1e300, lastFineAt: 1e300 }, s);
     expect(out.remontUntil).toBeLessThanOrEqual(s.minute + 4 * MINUTES_PER_DAY);
     expect(out.boostUntil).toBeLessThanOrEqual(1000 * 366 * MINUTES_PER_DAY);
-    expect(out.tapBoostUntil).toBeLessThanOrEqual(1000 * 366 * MINUTES_PER_DAY);
     expect(out.lastFineAt).toBeLessThanOrEqual(s.minute);
     expect(load({ lastFineAt: -1e300 }, s).lastFineAt).toBe(-1e9);
     expect(load({ remontUntil: null }, s).remontUntil).toBeNull();
@@ -625,7 +641,7 @@ describe('sanitizeEconomy: skończone, ale absurdalne liczby (zapis ręcznie zmi
 
   it('sieć sklepów i numery: premia partnerska, serie numerów i hasz seeda mają granice', () => {
     const out = load({
-      partner: { points: 1e308, networkIncome: 1e308, stores: 1e308 }, nextPalletId: 1e308, questSeq: 1e308, giftSeq: 1e308,
+      partner: { points: 1e308, networkIncome: 1e308, stores: 1e308 }, nextPalletId: 1e308, questSeq: 1e308,
       seedHash: 1e308, cleanDays: 1e308, lastCashiers: 1e308, lastWorkers: -1e308,
     });
     expect(out.partner.points).toBeLessThanOrEqual(1e7);
@@ -633,7 +649,6 @@ describe('sanitizeEconomy: skończone, ale absurdalne liczby (zapis ręcznie zmi
     expect(out.partner.stores).toBeLessThanOrEqual(1000);
     expect(out.nextPalletId).toBeLessThanOrEqual(2 ** 30 + 1);
     expect(out.questSeq).toBeLessThanOrEqual(2 ** 30 + 1);
-    expect(out.giftSeq).toBeLessThanOrEqual(2 ** 30);
     expect(out.seedHash).toBeLessThanOrEqual(0xffffffff);
     expect(out.cleanDays).toBeLessThanOrEqual(1000 * 366);
     expect(out.lastCashiers).toBeLessThanOrEqual(8);

@@ -298,7 +298,7 @@ function nodeTestableViolations(path: string, source: string): string[] {
 
 // --- Kanały rand01 (kontrakty §3) ----------------------------------------------------------------------------------
 
-/** Moduły strumienia C: kanały losowości 100–199; reszta src/sim zostaje poniżej 100 (zajęte 1, 3, 7, 11, 12, 13, 21, 22, 30). */
+/** Moduły strumienia C: kanały losowości 100–199; reszta src/sim zostaje poniżej 100 (zajęte 1, 3, 7, 21, 22). */
 const TYCOON_DIR = 'src/sim/economy/tycoon/';
 
 /** Trzeci argument wywołania, którego nawias otwierający stoi tuż przed `from`; null, gdy wywołanie ma mniej argumentów. */

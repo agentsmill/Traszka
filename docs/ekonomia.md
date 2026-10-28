@@ -29,8 +29,8 @@ Cel: nagroda w każdej skali czasu, a gra bez końca.
 
 | Skala | Nagroda | Kod |
 |---|---|---|
-| sekunda | stuknięcie w paletę albo kasę: liczba nad palcem, dźwięk, wibracja; combo co 4 szybkie stuknięcia (do ×5) | `tapPallet`, `tapTill`, `main.ts` (`nextCombo`) |
-| minuta | Zlecenia Centrali (3 naraz, „Odbierz!”), złota paleta (8% palet), paczka od Centrali co 45–110 s | `quests.ts`, `claimQuest`, `claimGift` |
+| sekunda | stuknięcie w paletę albo kasę: liczba nad palcem, dźwięk, wibracja; combo co 4 szybkie stuknięcia (do ×5), a każde zużywa dzienną pulę sił (100; noc oddaje 70) | `tapPallet`, `tapTill`, `tycoon/fatigue.ts` |
+| minuta | Zlecenia Centrali (3 naraz, „Odbierz!”), złota paleta (8% palet) | `quests.ts`, `claimQuest` |
 | kilka minut | poziom gracza: XP z klientów, palet, zakupów i zleceń; nagroda i odblokowania na poziomach | `progress.ts`, `processLevels`, `unlocksAt` |
 | powrót | kierownik zmiany: 25% ostatniego dnia na godzinę nieobecności (do 8 h); seria dni do 7. dnia | `game/meta.ts` |
 | bez końca | „Otwórz kolejną Traszkę”: sklep dołącza do sieci (10% najlepszego dnia co dzień), Punkty Partnera (+4% marży, +3% ruchu każdy) | `game/meta.ts`, `partner` w stanie ekonomii |

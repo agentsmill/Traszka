@@ -3,7 +3,7 @@ import { PALETTE } from '@/render/style';
 import { BenchOverlay } from './BenchOverlay';
 import { Hud } from './game/Hud';
 import {
-  CelebrationBanner, ClickerBar, ComboChip, FirstDayHints, GiftDrop, PrestigeModal, ReportModal, RotateButtons, SelectionCard, Settings,
+  CelebrationBanner, ClickerBar, ComboChip, FirstDayHints, PrestigeModal, ReportModal, RotateButtons, SelectionCard, Settings,
   StoreBadge, Toasts, WelcomeModal,
 } from './game/overlays';
 import { Sheet, TabBar } from './game/panels';
@@ -43,7 +43,6 @@ export function App({ controls, game }: { controls: Controls | null; game: GameA
           </div>
           <ClickerBar game={game} onFloat={floatText} />
           <ComboChip />
-          <GiftDrop game={game} onClaim={(x, y, text) => floatText(x, y, text.split(':').pop()?.trim() ?? '', 'money')} />
           <RotateButtons controls={controls} />
           <Sheet game={game} />
           <TabBar />
