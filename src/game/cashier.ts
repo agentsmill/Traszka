@@ -1,9 +1,10 @@
 import type { OutfitFile } from '@/render/characters/modularPack';
 import type { Agent } from '@/sim/crowd/crowd';
 import type { Cell } from '@/sim/grid';
-import type { Rng } from '@/sim/rng';
+import { createRng, type Rng } from '@/sim/rng';
 import { accessCells } from '@/sim/store/validate';
 import type { Facing, StoreLayout } from '@/sim/store/types';
+import { randomUint32 } from './seedWords';
 
 /**
  * Kasjer gracza: wygląd, miejsce za ladą i reakcje na klientów przy kasie. Czysta logika bez three (widok: render/cashierView.ts);
@@ -45,6 +46,28 @@ export function randomCashierLook(rng: Rng, includeSpecial = true): CashierLook 
   const lucky = rng.chance(SPECIAL_LOOK_CHANCE);
   const outfit = rng.pick(includeSpecial && lucky ? SPECIAL_OUTFITS : REGULAR_OUTFITS);
   return { outfit, appearanceSeed: `kasjer-${rng.int(0, 2 ** 31).toString(36)}` };
+}
+
+/**
+ * Nowy losowy wygląd dla przycisku „Losuj” ekranu startowego. Losowość z `crypto` (jak `randomSeed`: każde wejście to inny
+ * kasjer), potem wszystko deterministycznie przez `randomCashierLook`. `random32` (liczba całkowita 0…2³²−1) do podmiany w testach.
+ */
+export function rollCashierLook(includeSpecial: boolean, random32: () => number = randomUint32): CashierLook {
+  return randomCashierLook(createRng(`losuj:${random32()}:${random32()}`), includeSpecial);
+}
+
+/** Kolejność strojów pod strzałkami ‹ › ekranu startowego: najpierw wszystkie zwykłe, potem specjalne. */
+export const OUTFIT_ORDER: readonly OutfitFile[] = [...REGULAR_OUTFITS, ...SPECIAL_OUTFITS];
+
+/**
+ * Ten sam kasjer w sąsiednim stroju z `OUTFIT_ORDER` (`dir` 1: następny, −1: poprzedni; po ostatnim wraca pierwszy). Seed wyglądu
+ * zostaje, więc twarz, skóra i kolory są te same w każdym stroju. Strzałki nie zależą od przełącznika „Stroje specjalne w losowaniu”:
+ * to jawny wybór gracza, a przełącznik dotyczy tylko losowania.
+ */
+export function stepOutfit(look: CashierLook, dir: 1 | -1): CashierLook {
+  const at = OUTFIT_ORDER.indexOf(look.outfit);
+  const next = OUTFIT_ORDER[(at + dir + OUTFIT_ORDER.length) % OUTFIT_ORDER.length]!;
+  return { outfit: next, appearanceSeed: look.appearanceSeed };
 }
 
 /** Czy `x` jest poprawnym wyglądem (np. wczytanym z zapisu): znany strój i niepusty seed o rozsądnej długości. */

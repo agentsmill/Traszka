@@ -4,8 +4,10 @@ import { MINUTES_PER_DAY } from '@/sim/economy/catalog';
 import { createEconomy, stepMinute, type EconEvent } from '@/sim/economy/economy';
 import { computeStoreInfo } from '@/sim/economy/storeInfo';
 import { MemoryStorage } from './memoryStorage';
+import { DEFAULT_CASHIER_LOOK, isCashierLook } from './cashier';
 import {
-  addToNetwork, claimDaily, loadMeta, partnerOf, pendingDaily, prestigePoints, saveMeta, startupWindow, welcomeOffer, type Meta,
+  addToNetwork, claimDaily, loadMeta, needsStartScreen, partnerOf, pendingDaily, prestigePoints, saveMeta, startupWindow, welcomeOffer,
+  type Meta, type Player,
 } from './meta';
 import { createSession, retireSession, saveSession } from './session';
 
@@ -326,5 +328,125 @@ describe('okno po otwarciu sklepu (startupWindow)', () => {
     expect(startupWindow({ ...meta, readOnly: true }, played(), false, now)).toEqual(none);
     const fresh = createEconomy('nowy', computeStoreInfo(generateStore('nowy')));
     expect(startupWindow(meta, fresh, true, now)).toEqual(none);   // awaryjny świat nie jest pierwszą grą gracza
+  });
+});
+
+describe('gracz w meta: nick i wygląd kasjera (ekran startowy)', () => {
+  const BASE = {
+    version: 1, partnerPoints: 4, network: [{ seed: 'a', income: 300, level: 12, margin: 90_000 }],
+    daily: { date: '2026-10-27', streak: 3 }, lastSeen: 5, sound: false, vibration: true,
+  };
+  const PLAYER: Player = { nick: 'Mateusz', look: { outfit: 'special-women-witch', appearanceSeed: 'kasjer-abc' }, specialOutfits: false };
+  const put = (blob: unknown): Meta => {
+    storage.setItem(META_KEY, JSON.stringify(blob));
+    return loadMeta();
+  };
+  const withPlayer = (player: unknown): Meta => put({ ...BASE, player });
+
+  it('świeża meta nie ma gracza, więc pierwsze wejście pokazuje ekran startowy', () => {
+    const meta = loadMeta();
+    expect('player' in meta).toBe(false);
+    expect(needsStartScreen(meta)).toBe(true);
+  });
+
+  it('stara meta bez nowych pól (sprzed ekranu startowego) działa jak dotąd: nic nie znika, gracza brak, ekran startowy się pokaże', () => {
+    const meta = put(BASE);
+    expect(meta).toEqual(BASE);
+    expect('player' in meta).toBe(false);
+    expect(needsStartScreen(meta)).toBe(true);
+    saveMeta(meta);   // pierwszy zapis po starcie niczego nie dopisuje
+    expect(JSON.parse(storage.getItem(META_KEY)!)).toEqual(BASE);
+  });
+
+  it('zapis i odczyt: nick, wygląd kasjera i przełącznik strojów specjalnych wracają bez zmian, reszta mety zostaje', () => {
+    saveMeta({ ...(put(BASE)), player: PLAYER });
+    expect(JSON.parse(storage.getItem(META_KEY)!)).toEqual({ ...BASE, player: PLAYER });
+    const again = loadMeta();
+    expect(again).toEqual({ ...BASE, player: PLAYER });
+    expect(needsStartScreen(again)).toBe(false);
+  });
+
+  it('gracz ze zwykłym strojem i włączonym przełącznikiem (wartości domyślne ekranu) też wraca bez zmian', () => {
+    const player: Player = { nick: 'Ala', look: { ...DEFAULT_CASHIER_LOOK }, specialOutfits: true };
+    expect(withPlayer(player).player).toEqual(player);
+  });
+
+  it('nick wraca znormalizowany (przycięty, zwinięte spacje, NFKC), a wielkość liter zostaje', () => {
+    expect(withPlayer({ ...PLAYER, nick: '  Ala   Ma  ' }).player!.nick).toBe('Ala Ma');
+    expect(withPlayer({ ...PLAYER, nick: 'Ｍateusz' }).player!.nick).toBe('Mateusz');
+    expect(withPlayer({ ...PLAYER, nick: 'ŁuKasz' }).player!.nick).toBe('ŁuKasz');
+  });
+
+  it('uszkodzony nick (pusty, emoji, za długi, zarezerwowany, zły typ) to brak gracza: ekran startowy pokaże się jeszcze raz', () => {
+    for (const nick of ['', '   ', '🍕', 'x'.repeat(21), 'Centrala', 'ADMIN', 5, null, undefined, [], {}, true]) {
+      const meta = withPlayer({ ...PLAYER, nick });
+      expect(meta.player, JSON.stringify(nick)).toBeUndefined();
+      expect(needsStartScreen(meta)).toBe(true);
+      expect(meta.partnerPoints).toBe(4);   // reszta mety jest cała
+    }
+  });
+
+  it('gracz, który nie jest obiektem, to brak gracza', () => {
+    for (const player of ['Mateusz', 5, null, [], true, [PLAYER]]) expect(withPlayer(player).player, JSON.stringify(player)).toBeUndefined();
+  });
+
+  it('uszkodzony wygląd kasjera daje wygląd domyślny, a nick zostaje', () => {
+    const brokenLooks: unknown[] = [
+      null, 'x', 5, [], {}, { outfit: 'nieznany', appearanceSeed: 'a' }, { outfit: 'men-suit' }, { appearanceSeed: 'a' },
+      { outfit: 'men-suit', appearanceSeed: '' }, { outfit: 'men-suit', appearanceSeed: 'x'.repeat(65) }, { outfit: 5, appearanceSeed: 'a' },
+      { outfit: 'men-suit', appearanceSeed: 5 }, { outfit: '__proto__', appearanceSeed: 'a' },
+    ];
+    for (const look of brokenLooks) {
+      const meta = withPlayer({ ...PLAYER, look });
+      expect(meta.player!.nick, JSON.stringify(look)).toBe('Mateusz');
+      expect(meta.player!.look, JSON.stringify(look)).toEqual(DEFAULT_CASHIER_LOOK);
+      expect(isCashierLook(meta.player!.look)).toBe(true);
+    }
+  });
+
+  it('brak wyglądu w zapisie to też wygląd domyślny', () => {
+    expect(withPlayer({ nick: 'Ala', specialOutfits: true }).player).toEqual({ nick: 'Ala', look: DEFAULT_CASHIER_LOOK, specialOutfits: true });
+  });
+
+  it('przełącznik strojów specjalnych, który nie jest wartością logiczną, wraca do domyślnego (włączony)', () => {
+    for (const specialOutfits of ['tak', 'false', 0, 1, null, undefined, [], {}]) {
+      expect(withPlayer({ ...PLAYER, specialOutfits }).player!.specialOutfits, JSON.stringify(specialOutfits)).toBe(true);
+    }
+    expect(withPlayer({ ...PLAYER, specialOutfits: false }).player!.specialOutfits).toBe(false);
+  });
+
+  it('obce pola w graczu i w wyglądzie odpadają, a wczytany wygląd jest własną kopią, nie wspólnym obiektem domyślnym', () => {
+    const meta = withPlayer({ nick: 'Ala', look: { outfit: 'men-suit', appearanceSeed: 'a', hack: 1 }, specialOutfits: true, key: 'xyz' });
+    expect(meta.player).toEqual({ nick: 'Ala', look: { outfit: 'men-suit', appearanceSeed: 'a' }, specialOutfits: true });
+    const broken = withPlayer({ ...PLAYER, look: null }).player!.look;
+    expect(broken).not.toBe(DEFAULT_CASHIER_LOOK);
+    expect(Object.isFrozen(broken)).toBe(false);
+  });
+
+  it('uszkodzony gracz nie psuje reszty mety: sieć, seria dni i dźwięk wracają jak zawsze', () => {
+    const meta = withPlayer('zepsuty');
+    expect(meta).toMatchObject({ partnerPoints: 4, sound: false, vibration: true, daily: { date: '2026-10-27', streak: 3 } });
+    expect(meta.network).toHaveLength(1);
+  });
+
+  it('meta z nowszej wersji gry zostaje nietknięta także wtedy, gdy w tej karcie ktoś wybierze kasjera (zmiana żyje tylko w pamięci)', () => {
+    const raw = JSON.stringify({ ...BASE, version: 2, player: { przyszłość: true } });
+    storage.setItem(META_KEY, raw);
+    const meta = loadMeta();
+    expect(meta.readOnly).toBe(true);
+    expect(meta.player).toBeUndefined();
+    expect(needsStartScreen(meta)).toBe(false);   // nowsza wersja gry już miała swój ekran startowy: tej karcie nie kazać go powtarzać co wejście
+    const chosen: Meta = { ...meta, player: PLAYER };   // ⚙ → „Nowy sklep” w tej karcie
+    saveMeta(chosen);
+    expect(storage.getItem(META_KEY)).toBe(raw);
+    expect(chosen.player).toEqual(PLAYER);
+  });
+
+  it('needsStartScreen: tak bez gracza, nie z graczem i nie przy mecie tylko do odczytu', () => {
+    const none = loadMeta();
+    expect(needsStartScreen(none)).toBe(true);
+    expect(needsStartScreen({ ...none, player: PLAYER })).toBe(false);
+    expect(needsStartScreen({ ...none, readOnly: true })).toBe(false);
+    expect(needsStartScreen({ ...none, readOnly: true, player: PLAYER })).toBe(false);
   });
 });

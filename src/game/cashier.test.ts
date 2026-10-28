@@ -9,8 +9,8 @@ import { layoutFromParts, validParts } from '@/sim/store/testLayouts';
 import type { Fixture, StoreLayout } from '@/sim/store/types';
 import { layoutFor } from './session';
 import {
-  APPEARANCE_SEED_MAX, DEFAULT_CASHIER_LOOK, REGULAR_OUTFITS, SPECIAL_LOOK_CHANCE, SPECIAL_OUTFITS,
-  cashierCues, cashierSpot, isCashierLook, isSpecialOutfit, randomCashierLook,
+  APPEARANCE_SEED_MAX, DEFAULT_CASHIER_LOOK, OUTFIT_ORDER, REGULAR_OUTFITS, SPECIAL_LOOK_CHANCE, SPECIAL_OUTFITS,
+  cashierCues, cashierSpot, isCashierLook, isSpecialOutfit, randomCashierLook, rollCashierLook, stepOutfit, type CashierLook,
 } from './cashier';
 
 describe('stroje kasjera', () => {
@@ -236,5 +236,79 @@ describe('cashierCues', () => {
       expect(sold.every((id) => served.has(id))).toBe(true);
       expect(served.size - sold.length, `${seed}: obsłużeni bez sprzedaży (najwyżej ten, który jeszcze płaci)`).toBeLessThanOrEqual(1);
     }
+  });
+});
+
+describe('strzałki ‹ › ekranu startowego: kolejność strojów i przełączanie', () => {
+  const look = (outfit: CashierLook['outfit'], appearanceSeed = 'kasjer-twarz'): CashierLook => ({ outfit, appearanceSeed });
+
+  it('kolejność to najpierw wszystkie zwykłe, potem wszystkie specjalne, każdy strój raz', () => {
+    expect([...OUTFIT_ORDER]).toEqual([...REGULAR_OUTFITS, ...SPECIAL_OUTFITS]);
+    expect(OUTFIT_ORDER).toHaveLength(21);
+    expect(new Set(OUTFIT_ORDER).size).toBe(21);
+    expect(OUTFIT_ORDER.slice(0, 12).every((o) => !isSpecialOutfit(o))).toBe(true);
+    expect(OUTFIT_ORDER.slice(12).every(isSpecialOutfit)).toBe(true);
+  });
+
+  it('następny strój zostawia twarz i kolory (seed wyglądu), zmienia tylko strój', () => {
+    const next = stepOutfit(look('men-suit', 'kasjer-xyz'), 1);
+    expect(next).toEqual({ outfit: 'men-worker', appearanceSeed: 'kasjer-xyz' });
+    expect(stepOutfit(next, -1)).toEqual(look('men-suit', 'kasjer-xyz'));
+  });
+
+  it('od wyglądu domyślnego strzałka w prawo przechodzi przez stroje zwykłe, dopiero potem trafia w specjalne', () => {
+    let at = DEFAULT_CASHIER_LOOK;
+    const seen: CashierLook['outfit'][] = [];
+    for (let i = 0; i < 11; i++) { at = stepOutfit(at, 1); seen.push(at.outfit); }
+    expect(seen.slice(0, 10).every((o) => !isSpecialOutfit(o))).toBe(true);
+    expect(seen[10]).toBe('special-men-spacesuit');   // pierwszy specjalny po jedenastu krokach od men-casual-2
+  });
+
+  it('po ostatnim stroju wraca pierwszy i odwrotnie (cykl), a 21 kroków w jedną stronę to ten sam strój', () => {
+    expect(stepOutfit(look('special-women-soldier'), 1).outfit).toBe('men-casual-hoodie');
+    expect(stepOutfit(look('men-casual-hoodie'), -1).outfit).toBe('special-women-soldier');
+    for (const dir of [1, -1] as const) {
+      let at = look('women-suit');
+      for (let i = 0; i < OUTFIT_ORDER.length; i++) at = stepOutfit(at, dir);
+      expect(at).toEqual(look('women-suit'));
+    }
+  });
+
+  it('każdy krok daje poprawny wygląd (isCashierLook) i nie zmienia przekazanego obiektu', () => {
+    const start = look('men-beach', 'kasjer-a');
+    const frozen = JSON.stringify(start);
+    for (const outfit of OUTFIT_ORDER) {
+      for (const dir of [1, -1] as const) expect(isCashierLook(stepOutfit(look(outfit), dir))).toBe(true);
+    }
+    stepOutfit(start, 1);
+    expect(JSON.stringify(start)).toBe(frozen);
+  });
+});
+
+describe('rollCashierLook: przycisk „Losuj” ekranu startowego', () => {
+  /** Źródło liczb 32-bitowych z deterministycznego rng (zamiast crypto). */
+  const source = (seed: string): (() => number) => { const rng = createRng(seed); return () => rng.int(0, 2 ** 32); };
+
+  it('poprawny wygląd; to samo źródło daje ten sam wygląd, inne źródło inny', () => {
+    const a = rollCashierLook(true, source('a'));
+    expect(isCashierLook(a)).toBe(true);
+    expect(rollCashierLook(true, source('a'))).toEqual(a);
+    expect(rollCashierLook(true, source('b'))).not.toEqual(a);
+  });
+
+  it('z wyłączonym przełącznikiem nigdy nie wypada strój specjalny, z włączonym ok. 20% losowań', () => {
+    const next = source('rzuty');
+    const looks = Array.from({ length: 1000 }, () => rollCashierLook(true, next));
+    const share = looks.filter((l) => isSpecialOutfit(l.outfit)).length / looks.length;
+    expect(share).toBeGreaterThan(0.15);
+    expect(share).toBeLessThan(0.25);
+    const nextPlain = source('rzuty-zwykle');
+    expect(Array.from({ length: 1000 }, () => rollCashierLook(false, nextPlain)).every((l) => !isSpecialOutfit(l.outfit))).toBe(true);
+  });
+
+  it('domyślne źródło (crypto) daje poprawne, różne wyglądy', () => {
+    const looks = Array.from({ length: 30 }, () => rollCashierLook(true));
+    for (const l of looks) expect(isCashierLook(l)).toBe(true);
+    expect(new Set(looks.map((l) => l.appearanceSeed)).size).toBe(30);
   });
 });

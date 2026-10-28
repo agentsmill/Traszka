@@ -2,6 +2,8 @@ import { MINUTES_PER_DAY, OPEN_FROM } from '@/sim/economy/catalog';
 import type { EconomyState } from '@/sim/economy/economy';
 import { LIMITS } from '@/sim/economy/sanitize';
 import { isRec, num, whole } from '@/sim/guards';
+import { DEFAULT_CASHIER_LOOK, isCashierLook, type CashierLook } from './cashier';
+import { normalizeNick } from './nick';
 
 /**
  * Postęp ponad pojedynczym sklepem (localStorage, wspólny dla wszystkich seedów): sieć sklepów z poprzednich rozgrywek,
@@ -9,6 +11,15 @@ import { isRec, num, whole } from '@/sim/guards';
  * startuje z premią i dochodem z sieci.
  */
 export interface NetworkStore { seed: string; income: number; level: number; margin: number }
+
+/** Gracz z ekranu startowego „Twój kasjer”: nazwa, wygląd kasjera za ladą i przełącznik strojów specjalnych w losowaniu. */
+export interface Player {
+  /** Nazwa po `normalizeNick` (1–20 znaków). */
+  nick: string;
+  look: CashierLook;
+  /** „Stroje specjalne w losowaniu” (domyślnie włączone). */
+  specialOutfits: boolean;
+}
 
 export interface Meta {
   /** Wersja formatu mety: znacznik schematu. Wyższa niż ta, którą umiemy czytać, znaczy „zapisała nowsza wersja gry”. */
@@ -19,6 +30,11 @@ export interface Meta {
   lastSeen: number;
   sound: boolean;
   vibration: boolean;
+  /**
+   * Gracz z ekranu startowego. Brak pola to pierwsze wejście (albo meta sprzed ekranu startowego): wtedy ekran startowy się
+   * pokazuje. Stara meta bez tego pola działa jak dotąd, a gra używa wtedy domyślnego kasjera (`DEFAULT_CASHIER_LOOK`).
+   */
+  player?: Player;
   /**
    * Meta zapisana przez nowszą wersję gry: w tej karcie działają wartości domyślne, a pod kluczem mety nic się nie zapisuje,
    * żeby nie zjeść cudzej sieci sklepów i punktów. Zwykła meta nie ma tego pola w ogóle.
@@ -65,6 +81,7 @@ export function sanitizeMeta(data: unknown): Meta {
         margin: num(n.margin, 0, 0, LIMITS.money),
       }] : []
   )).slice(0, LIMITS.network) : d.network;
+  const player = sanitizePlayer(data.player);
   return {
     version: 1,
     partnerPoints: num(data.partnerPoints, 0, 0, LIMITS.partnerPoints),
@@ -73,6 +90,24 @@ export function sanitizeMeta(data: unknown): Meta {
     lastSeen: num(data.lastSeen, 0, 0, MAX_TIME_MS),
     sound: typeof data.sound === 'boolean' ? data.sound : d.sound,
     vibration: typeof data.vibration === 'boolean' ? data.vibration : d.vibration,
+    ...(player ? { player } : {}),
+  };
+}
+
+/**
+ * Gracz z zapisu bez zaufania: nick przechodzi `normalizeNick` (zły nick to brak gracza, a ekran startowy pokaże się jeszcze raz,
+ * bo bez nicka nie ma kogo zapisać), wygląd kasjera `isCashierLook` (zły to wygląd domyślny, własna kopia, bez obcych pól),
+ * przełącznik strojów specjalnych musi być wartością logiczną (inaczej włączony).
+ */
+function sanitizePlayer(raw: unknown): Player | undefined {
+  if (!isRec(raw) || typeof raw.nick !== 'string') return undefined;
+  const nick = normalizeNick(raw.nick);
+  if (!('nick' in nick)) return undefined;
+  const look = isCashierLook(raw.look) ? raw.look : DEFAULT_CASHIER_LOOK;
+  return {
+    nick: nick.nick,
+    look: { outfit: look.outfit, appearanceSeed: look.appearanceSeed },
+    specialOutfits: typeof raw.specialOutfits === 'boolean' ? raw.specialOutfits : true,
   };
 }
 
@@ -158,6 +193,13 @@ export function welcomeOffer(meta: Meta, s: EconomyState, now: Date): WelcomeOff
   const daily = streak !== null ? dailyReward(streak, s.level) : null;
   return offline > 0 || daily ? { hours, offline, streak, daily } : null;
 }
+
+/**
+ * Czy przy wejściu na stronę pokazać ekran startowy „Twój kasjer”: gdy nie ma jeszcze gracza (pierwsze wejście albo meta sprzed
+ * ekranu startowego). Meta z nowszej wersji gry go nie dostaje: tamta wersja miała już swojego gracza, a ta karta nie umie go
+ * zapisać, więc ekran wracałby co wejście. Wciąż można go otworzyć z ⚙ („Nowy sklep”).
+ */
+export const needsStartScreen = (meta: Meta): boolean => !meta.readOnly && meta.player === undefined;
 
 /** Co pokazać po otwarciu sklepu: ekran powitalny nowej gry albo okno „Witaj z powrotem”. */
 export interface StartupWindow { intro: boolean; welcome: WelcomeOffer | null }

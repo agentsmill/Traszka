@@ -7,6 +7,7 @@ import { openStore, type OpenRequest } from './openStore';
 import {
   BROKEN_SAVE_NOTICE, NEWER_SAVE_NOTICE, UNBUILDABLE_SAVE_NOTICE, createSession, lastSavedSeed, saveSession, type GameSession,
 } from './session';
+import { openRequestFor, submitStart } from './start';
 
 /**
  * Otwieranie sklepu przy starcie: `build` to budowa świata w scenie (w grze main.ts `load`), tu zastąpiona funkcją, która
@@ -305,5 +306,67 @@ describe('openStore: sklep zastępczy nigdy nie siada na cudzym zapisie', () => 
     expect(s.seed).toBe('losowy-2');
     expect(s.ephemeral).toBe(true);
     expect(storage.getItem(key('losowy-1'))).toBe(other);
+  });
+});
+
+describe('openStore: sklep wybrany na ekranie startowego ("Nowy sklep") nigdy nie nadpisuje zapisu spod tego seeda', () => {
+  const newer = JSON.stringify({ schema: 5, seed: 'nowy-9', econ: { przyszłość: true } });
+  const form = (seed: string) => ({ nick: 'Ala', seed, look: { outfit: 'men-suit' as const, appearanceSeed: 'kasjer-a' }, specialOutfits: true });
+  /** To samo złożenie, które robi gra: wybór z ekranu → prośba bez `fresh` → `openStore`. */
+  const openChosen = (seed: string, build: OpenRequest['build']): GameSession => {
+    const result = submitStart(form(seed));
+    if (!result.ok) throw new Error('nick jest poprawny');
+    nextRandom = 0;
+    return openStore(openRequestFor(result.choice, { randomSeed: () => `losowy-${++nextRandom}`, build }));
+  };
+
+  it('zapis z nowszej wersji gry pod wpisanym seedem: sklep tymczasowy z komunikatem, zapis bajt w bajt, bez kopii', () => {
+    storage.setItem(key('nowy-9'), newer);
+    const { build, built } = builder();
+    const s = openChosen('Nowy-9', build);
+    expect(built).toEqual([s]);
+    expect(s.seed).toBe('nowy-9');
+    expect(s.ephemeral).toBe(true);
+    expect(s.loadNotice).toBe(NEWER_SAVE_NOTICE);
+    saveSession(s);   // persist() po otwarciu
+    expect(storage.getItem(key('nowy-9'))).toBe(newer);
+    expect(storage.getItem(`${key('nowy-9')}:broken`)).toBeNull();
+  });
+
+  it('zapis, którego świata nie dało się zbudować: sklep zastępczy (tymczasowy) bez zapisywania, zapis nietknięty', () => {
+    const raw = savedGame('nowy-9');
+    const { build, built } = builder((x) => x.seed === 'nowy-9');
+    const s = openChosen('NOWY-9', build);
+    expect(built.map((x) => x.seed)).toEqual(['nowy-9', 'nowy-9', 'nowy-9', 'losowy-1']);   // zapis, układ z seeda, tymczasowy tego seeda, zastępczy
+    expect(s.seed).toBe('losowy-1');
+    expect(s.ephemeral).toBe(true);
+    expect(s.loadNotice).toBe(UNBUILDABLE_SAVE_NOTICE);
+    saveSession(s);
+    expect(storage.getItem(key('nowy-9'))).toBe(raw);
+    expect(storage.getItem(key('losowy-1'))).toBeNull();
+    expect(storage.getItem(`${key('nowy-9')}:broken`)).toBeNull();
+  });
+
+  it('generator nie składa układu dla seeda z dobrym zapisem (v1 nie niesie układu): zapis zostaje, gracz dostaje zastępczy sklep tymczasowy', () => {
+    const raw = JSON.stringify((JSON.parse(savedGame('nowy-9')) as { econ: object }).econ);
+    storage.setItem(key('nowy-9'), raw);
+    faults.generatorThrowsFor.add('nowy-9');
+    const s = openChosen('nowy-9', builder().build);
+    expect(s.ephemeral).toBe(true);
+    expect(s.loadNotice).toBe(UNBUILDABLE_SAVE_NOTICE);
+    expect(s.seed).not.toBe('nowy-9');
+    saveSession(s);
+    expect(storage.getItem(key('nowy-9'))).toBe(raw);
+  });
+
+  it('seed bez zapisu: zwykła nowa gra pod wpisanym seedem (zapisywana), cudze zapisy nietknięte', () => {
+    const other = savedGame('cudzy-3');
+    const s = openChosen('Mój Sklep', builder().build);
+    expect(s.seed).toBe('mój sklep');
+    expect(s.ephemeral).toBe(false);
+    expect(s.fromSave).toBe(false);
+    saveSession(s);
+    expect(storage.getItem(key('mój sklep'))).not.toBeNull();
+    expect(storage.getItem(key('cudzy-3'))).toBe(other);
   });
 });

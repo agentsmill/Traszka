@@ -7,7 +7,8 @@ export const SEED_WORDS: readonly string[] = [
   'szarlotka', 'krowka', 'kefir', 'maslanka', 'twarog', 'smietana', 'grzaniec', 'kompot', 'herbata', 'kawa',
 ];
 
-const randomUint32 = (): number => crypto.getRandomValues(new Uint32Array(1))[0]!;
+/** Liczba całkowita 0…2³²−1 z `crypto` (nieprzewidywalna przy każdym wejściu na stronę). */
+export const randomUint32 = (): number => crypto.getRandomValues(new Uint32Array(1))[0]!;
 
 /**
  * Losowy, czytelny seed: słowo z listy i liczba 100–999. Losowość z `crypto.getRandomValues` (nie Math.random:
