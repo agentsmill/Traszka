@@ -18,15 +18,21 @@ import {
 import { MILESTONES } from './milestones';
 import { XP, levelReward, xpToNext } from './progress';
 import { QUESTS_ACTIVE, newQuest, questDone, type Quest, type QuestScale } from './quests';
-import { rollWeather, type HallState } from './tycoon/cleanliness';
+import {
+  cleaningDemand, cleanHall, cleanlinessEffects, closeHallMonth, rollWeather, sampleHall, soilHall, type HallState,
+} from './tycoon/cleanliness';
 import { closeKpiWeek, type KpiMetrics, type KpiScale } from './tycoon/kpi';
 import { createShift, peopleOnShift, type ShiftState } from './tycoon/shift';
 import {
   PEOPLE_PER_PALLET, normalizePins, restockDemand, serveTill, stepStaff, tillDemand, unloadDemand, zeroTasks, type RobotFleet,
 } from './tycoon/staff';
 import { createTycoon, type TycoonState } from './tycoon/state';
+import { dayTrafficMult } from './tycoon/sunday';
 import { dateOfGameDay } from './tycoon/time';
 import { TRUST, addTrust, closeTrustMonth, trustTerminates, trustTier, turnoverBonusShare, type TrustReason } from './tycoon/trust';
+import {
+  addWaste, closeWasteMonth, hallObstacle, palletBags, removeWaste, settleWaste, wasteDemand, wasteSpots, wasteMinute,
+} from './tycoon/waste';
 
 // Ekonomia jednego sklepu (spec §6–§8) jako czysta symulacja z krokiem jednej minuty gry. Klienci są modelowani
 // zbiorczo (strumień przyjść, kolejka, przepustowość kas), a tłum w 3D to ich obraz, a nie źródło liczb.
@@ -45,6 +51,8 @@ export interface Pallet {
   since: number;
   /** Złota paleta: po rozładunku premia (losowa nagroda w dostawie). */
   golden?: boolean;
+  /** Worki śmieci po rozładunku (`palletBags` ze składu z dostawy). Palety ze starych zapisów nie mają pola: wtedy jeden worek. */
+  bags?: number;
 }
 
 export interface Counters {
@@ -332,6 +340,8 @@ export function stepMinute(s: EconomyState, info: StoreInfo, out: EconEvent[]): 
   if (s.gameOver) return;
   if (s.minute >= s.giftAt + GIFT_OPEN) scheduleGift(s);   // okno paczki nie odebrane na czas wygasa
   const mod = minuteOfDay(s.minute);
+  // pogoda dnia losuje się o północy (zaczep: później ustawi ją system pogody); dzień 0 ma pogodę z `createEconomy`
+  if (mod === 0) s.tycoon.hall.weather = rollWeather(s.seedHash, dayOf(s.minute), dateOfGameDay(dayOf(s.minute)).month);
   const fx = effects(s, info);
   const open = isStoreOpen(s);
 
@@ -343,10 +353,15 @@ export function stepMinute(s: EconomyState, info: StoreInfo, out: EconEvent[]): 
   for (const d of s.deliveries.filter((x) => x.at <= s.minute)) deliver(s, info, d.count, out);
   s.deliveries = s.deliveries.filter((x) => x.at > s.minute);
 
-  if (open) arrive(s, info, fx, mod);
+  let arrivals = 0;
+  if (open) arrivals = arrive(s, info, fx);
   else s.queue = 0;
   // ludzie pracują w godzinach otwarcia, także w czasie remontu (wtedy nikt nie stoi na kasie); automatyka całą dobę
   runStaff(s, info, fx, open, out);
+  // brud z przyjść i worków w sali, licznik worków, średnia czystości z minut otwarcia
+  soilHall(s.tycoon.hall, arrivals, s.tycoon.waste.hall);
+  wasteMinute(s.tycoon.waste);
+  if (open) sampleHall(s.tycoon.hall);
   if (mod >= 8 * 60 && mod < 20 * 60) checkFine(s, fx, out);
   if (mod === ORDER_DEADLINE) placeOrder(s, info, fx, out);
   if (mod === OPEN_TO) closeDay(s, info, out);
@@ -356,18 +371,31 @@ export function stepMinute(s: EconomyState, info: StoreInfo, out: EconEvent[]): 
   s.minute++;
 }
 
-/** Przyjście klientów w jednej minucie; ci, którzy widzą długą kolejkę, rezygnują (spec §6.1). Obsługa idzie przez pulę ludzi (`runStaff`). */
-function arrive(s: EconomyState, info: StoreInfo, fx: Effects, mod: number): void {
-  const hour = Math.floor(mod / 60);
+/**
+ * Oczekiwani klienci w tej minucie (lambda przed losowaniem): krzywa godzin, reputacja, marketing i remont, paczka „szał
+ * zakupów”, przeszkody w sali (palety i worki śmieci) oraz niedziela, kiedy duże sklepy stoją zamknięte (tycoon/sunday.ts).
+ * Jedyne miejsce, gdzie liczy się ten wzór: korzysta z niego `stepMinute`, a testy i karty pytają o to samo.
+ */
+export function arrivalRate(s: EconomyState, info: StoreInfo, fx: Effects = effects(s, info)): number {
+  const hour = Math.floor(minuteOfDay(s.minute) / 60);
   const floorPallets = s.pallets.filter((p) => p.loc === 'floor').length;
   const boost = s.minute < s.boostUntil ? 1.3 : 1;
-  const lambda = (baseTraffic(info) * (HOUR_CURVE[hour] ?? 0) / 60) * reputationFactor(s.reputation)
-    * fx.traffic * boost * Math.max(0.5, 1 - 0.08 * floorPallets);
-  s.arrivalAcc += lambda * (0.75 + 0.5 * rand01(s.seedHash, s.minute, 1));
+  return (baseTraffic(info) * (HOUR_CURVE[hour] ?? 0) / 60) * reputationFactor(s.reputation)
+    * fx.traffic * boost * Math.max(0.5, 1 - 0.08 * (floorPallets + hallObstacle(s.tycoon.waste))) * dayTrafficMult(dayOf(s.minute));
+}
+
+/**
+ * Przyjście klientów w jednej minucie; ci, którzy widzą długą kolejkę, rezygnują (spec §6.1). Obsługa idzie przez pulę ludzi
+ * (`runStaff`). Zwraca liczbę przyjść z tej minuty (brud sali liczy się od przychodzących, nie od obsłużonych).
+ */
+function arrive(s: EconomyState, info: StoreInfo, fx: Effects): number {
+  s.arrivalAcc += arrivalRate(s, info, fx) * (0.75 + 0.5 * rand01(s.seedHash, s.minute, 1));
   const arrivals = Math.floor(s.arrivalAcc);
   s.arrivalAcc -= arrivals;
 
-  const over = s.queue - Math.max(1, fx.patience);
+  // cierpliwość: ulepszenia i palety w sali (fx), brud sali i worki w sali odejmują się dodatkowo
+  const patience = fx.patience + cleanlinessEffects(s.tycoon.hall.cleanliness).patience - hallObstacle(s.tycoon.waste);
+  const over = s.queue - Math.max(1, patience);
   const balk = over < 0 ? 0 : Math.min(1, 0.35 * (over + 1));
   const lost = arrivals * balk;
   s.queue += arrivals - lost;
@@ -375,6 +403,7 @@ function arrive(s: EconomyState, info: StoreInfo, fx: Effects, mod: number): voi
     s.reputation -= lost * 0.03;
     for (const c of [s.today, s.month, s.total]) c.lost += lost;
   }
+  return arrivals;
 }
 
 /** Sprzedaż `served` klientów: koszyk z półek, marża, strefa hot, ubytki na SCO, reputacja. */
@@ -401,6 +430,7 @@ function sell(s: EconomyState, fx: Effects, served: number, scoShare: number): n
 
   const missing = want > 0 ? 1 - got / want : 0;
   s.reputation += served * (0.0025 * (1 - missing) - 0.02 * missing);
+  s.reputation += served * cleanlinessEffects(s.tycoon.hall.cleanliness).repPerCustomer;   // brudna sala: do −0,003 na klienta
   s.cash += margin;
   s.ogonkiAcc += (served / 250) * fx.ogonkiMult;
   if (s.ogonkiAcc >= 1) { const n = Math.floor(s.ogonkiAcc); s.ogonki += n; s.ogonkiAcc -= n; }
@@ -419,12 +449,19 @@ function sell(s: EconomyState, fx: Effects, served: number, scoShare: number): n
 const PALLET_ORDER: Record<PalletLoc, number> = { sidewalk: 0, floor: 1, backroom: 2 };
 
 /**
- * Automatyka z warsztatu dla puli ludzi (tycoon/staff.ts): poziomy taśmociągu i wykładacza oraz eDward. Prasa do śmieci
- * dojdzie z własnym ulepszeniem w zadaniu 3 (do tego czasu zero).
+ * Automatyka z warsztatu dla puli ludzi (tycoon/staff.ts): poziomy taśmociągu i wykładacza, prasa do kartonów (nie zastępuje
+ * ludzi, tylko skraca wynoszenie worków) oraz eDward.
  */
 export const robotFleet = (s: EconomyState): RobotFleet => ({
-  tasmociag: level(s, 'tasmociag'), wykladacz: level(s, 'wykladacz'), prasa: 0, edward: level(s, 'humanoid') > 0 ? 1 : 0,
+  tasmociag: level(s, 'tasmociag'), wykladacz: level(s, 'wykladacz'), prasa: level(s, 'prasa'), edward: level(s, 'humanoid') > 0 ? 1 : 0,
 });
+
+/**
+ * Miejsca na zapleczu, których nie zajmują palety (te, które w ogóle zostają: rozładowana paleta odejdzie z końcem minuty).
+ * Na tyle miejsc mieszczą się worki; reszta idzie do sali (waste.ts).
+ */
+const wasteRoom = (s: EconomyState, fx: Effects): number =>
+  Math.max(0, fx.backroomSpots - s.pallets.filter((p) => p.loc === 'backroom' && p.total >= 0.5).length);
 
 /** Wolne miejsce na towar: zaplecze i półki. Bez niego nie ma co rozładowywać. */
 const stockRoom = (s: EconomyState, info: StoreInfo, fx: Effects): number =>
@@ -434,11 +471,14 @@ const unloadRate = (fx: Effects, p: Pallet): number => UNLOAD_RATE * fx.unloadMu
 
 /**
  * Praca jednej minuty: zapotrzebowanie czterech zadań w osobominutach, przydział z puli ludzi i automatyki, a potem kasa,
- * rozładunek i wykładanie z tym, co zadanie dostało. Kto stoi na kasie, to wynik przydziału (profil i przypięci gracza),
- * a nie osobna reguła. Sprzątania i śmieci jeszcze nie ma (zadanie 3), więc zapotrzebowanie sprzątania to zero.
+ * rozładunek, wykładanie i sprzątanie z tym, co zadanie dostało. Kto stoi na kasie, to wynik przydziału (profil i przypięci
+ * gracza), a nie osobna reguła. Sprzątanie to worki (najpierw z sali) i mycie podłogi (waste.ts, cleanliness.ts).
  */
 function runStaff(s: EconomyState, info: StoreInfo, fx: Effects, open: boolean, out: EconEvent[]): void {
   const staff = peopleOnShift(s);
+  const robots = robotFleet(s);
+  const press = robots.prasa > 0;
+  const { waste, hall } = s.tycoon;
   const tillRate = TILL_RATE * fx.tillSpeed;
   const till = tillDemand({
     queue: open ? s.queue : 0, tills: fx.tills, tillRate, sco: fx.sco, scoRate: SCO_RATE * fx.scoSpeed, scoAccept: fx.scoAccept,
@@ -452,7 +492,8 @@ function runStaff(s: EconomyState, info: StoreInfo, fx: Effects, open: boolean, 
   demand.wykladanie = restockDemand(
     CATS.reduce((n, c) => n + Math.max(0, Math.min(info.shelfCap[c] - s.shelf[c], s.backroom[c])), 0), RESTOCK_RATE,
   );
-  const alloc = stepStaff(s.tycoon.staff, { staff, demand, robots: robotFleet(s), scoFreed: till.freed });
+  demand.sprzatanie = wasteDemand(waste, press) + cleaningDemand(hall);
+  const alloc = stepStaff(s.tycoon.staff, { staff, demand, robots, scoFreed: till.freed });
 
   // kasa: najpierw potwierdzenia wieku na SCO, potem kolejka; klient SCO bez potwierdzenia zostaje w kolejce
   if (open) {
@@ -474,6 +515,10 @@ function runStaff(s: EconomyState, info: StoreInfo, fx: Effects, open: boolean, 
   }
   restock(s, info, 1, alloc.total.wykladanie * RESTOCK_RATE);
   removeEmptyPallets(s);
+
+  // sprzątanie: najpierw worki (z sali, potem z zaplecza), reszta minut na podłogę
+  const sweep = alloc.total.sprzatanie;
+  cleanHall(hall, sweep - removeWaste(waste, sweep, press));
 
   s.shift = { staff, human: alloc.human };
   s.lastCashiers = alloc.human.kasa;
@@ -520,6 +565,7 @@ function unloadPallet(s: EconomyState, info: StoreInfo, fx: Effects, p: Pallet, 
   if (before >= 0.5 && p.total < 0.5 && moved > 0) {
     for (const k of [s.today, s.month, s.total]) k.palletsUnloaded++;
     s.xp += XP.pallet;
+    addWaste(s.tycoon.waste, p.bags ?? 1, wasteRoom(s, fx));   // kartony i folia po palecie
     if (p.golden) {
       const prize = Math.round(Math.max(400, estimatedDailyMargin(s, info) * 0.4));
       income(s, prize);
@@ -537,15 +583,24 @@ function removeEmptyPallets(s: EconomyState): void {
 
 // --- Dostawy, zamówienia, mandaty -----------------------------------------------------------------------
 
+/** Miejsca w lokalizacji; na zapleczu zajmują je też worki ze śmieciami (cztery worki to jedno miejsce). */
+function spotLimit(s: EconomyState, info: StoreInfo, loc: PalletLoc): number {
+  return loc === 'backroom' ? effects(s, info).backroomSpots : info.spots[loc].length;
+}
+
 function freeSpot(s: EconomyState, info: StoreInfo, loc: PalletLoc): number {
-  const limit = loc === 'backroom' ? effects(s, info).backroomSpots : info.spots[loc].length;
-  const used = new Set(s.pallets.filter((p) => p.loc === loc).map((p) => p.spot));
+  const limit = spotLimit(s, info, loc);
+  const there = s.pallets.filter((p) => p.loc === loc);
+  // worki zajmują miejsca zaplecza, więc palet zmieści się o tyle mniej (liczy się liczba palet, a nie który indeks jest wolny)
+  const bagSpots = loc === 'backroom' ? wasteSpots(s.tycoon.waste) : 0;
+  if (bagSpots > 0 && there.length >= limit - bagSpots) return -1;
+  const used = new Set(there.map((p) => p.spot));
   for (let i = 0; i < limit; i++) if (!used.has(i)) return i;
   return -1;
 }
 
 export function freeSpots(s: EconomyState, info: StoreInfo, loc: PalletLoc): number {
-  const limit = loc === 'backroom' ? effects(s, info).backroomSpots : info.spots[loc].length;
+  const limit = spotLimit(s, info, loc) - (loc === 'backroom' ? wasteSpots(s.tycoon.waste) : 0);
   return Math.max(0, limit - s.pallets.filter((p) => p.loc === loc).length);
 }
 
@@ -578,9 +633,12 @@ function deliver(s: EconomyState, info: StoreInfo, count: number, out: EconEvent
     const items = palletMix(s, info);
     const id = s.nextPalletId++;
     const golden = s.total.customers > 0 && rand01(s.seedHash, id, 3) < GOLDEN_CHANCE;
-    s.pallets.push({ id, loc, spot: freeSpot(s, info, loc), items, total: sum(items), initial: sum(items), since: s.minute, golden });
+    s.pallets.push({
+      id, loc, spot: freeSpot(s, info, loc), items, total: sum(items), initial: sum(items), since: s.minute, golden, bags: palletBags(items),
+    });
     placed[loc]++;
   }
+  settleWaste(s.tycoon.waste, wasteRoom(s, fx));   // palety na zapleczu (rampa) mogły zająć miejsca worków
   const where = (['sidewalk', 'backroom', 'floor'] as const).filter((l) => placed[l] > 0)
     .map((l) => `${placed[l]} ${LOC_LABEL[l].toLowerCase()}`).join(', ');
   if (count - returned > 0) out.push({ kind: 'delivery', text: `Dostawa: ${count - returned} ${plPallets(count - returned)} (${where}).` });
@@ -736,8 +794,10 @@ function closeMonth(s: EconomyState, day: number, out: EconEvent[]): void {
     s.gameOver = true;
     out.push({ kind: 'gameover', text: 'Centrala wypowiada umowę franczyzową. Dziękujemy za współpracę.' });
   }
-  // Tymczasowo tu: zadanie 6 weźmie podsumowanie zaufania do raportu. Zmiana z wyniku jest już w tym miesiącu.
+  // Tymczasowo tu: zadanie 6 weźmie podsumowania zaufania, czystości i śmieci do raportu. Zmiana z wyniku jest już w tym miesiącu.
   closeTrustMonth(s.tycoon.trust);
+  closeHallMonth(s.tycoon.hall);
+  closeWasteMonth(s.tycoon.waste);
   // zero w środku miesiąca to tylko ostrzeżenie; umowę wypowiada się przy zamknięciu miesiąca
   if (!s.gameOver && trustTerminates(s.tycoon.trust.value)) {
     s.gameOver = true;
@@ -856,6 +916,7 @@ export function movePallet(s: EconomyState, info: StoreInfo, id: number, loc: Pa
   p.loc = loc;
   p.spot = spot;
   p.since = s.minute;
+  settleWaste(s.tycoon.waste, wasteRoom(s, effects(s, info)));
   return { ok: true };
 }
 
@@ -1003,6 +1064,7 @@ export function relayout(s: EconomyState, info: StoreInfo): void {
   const back = sum(s.backroom);
   if (back > fx.backroomCap) for (const c of CATS) s.backroom[c] *= fx.backroomCap / back;
   for (const c of CATS) s.shelf[c] = Math.min(s.shelf[c], info.shelfCap[c]);
+  settleWaste(s.tycoon.waste, wasteRoom(s, fx));
 }
 
 export function campaign(s: EconomyState): CommandResult {

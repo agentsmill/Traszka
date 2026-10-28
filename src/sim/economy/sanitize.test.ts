@@ -390,6 +390,35 @@ describe('sanitizeEconomy: napraw to, co da się naprawić', () => {
     expect(out.nextPalletId).toBe(41);
   });
 
+  it('worki na palecie: liczba całkowita od 1 wraca z zapisu, a śmieć usuwa pole (rozładunek weźmie wtedy jeden worek)', () => {
+    const s = defaults();
+    const p = json(s.pallets[0]) as Record<string, unknown>;
+    const bagsOf = (bags: unknown): unknown => {
+      const out = sanitizeEconomy({ ...json(s), pallets: [{ ...p, bags }] }, defaults(), info)!;
+      return out.pallets[0]!.bags;
+    };
+    expect(bagsOf(2)).toBe(2);
+    expect(bagsOf(1)).toBe(1);
+    expect(bagsOf(2.4)).toBe(2);       // całkowite
+    expect(bagsOf(0)).toBe(1);         // od 1
+    expect(bagsOf(-3)).toBe(1);
+    expect(bagsOf(1e308)).toBeLessThanOrEqual(8);   // mała górna granica, nie nieskończoność
+    expect(bagsOf(1e308)).toBeGreaterThanOrEqual(2);
+    for (const bad of ['dwa', null, {}, [2], true]) expect('bags' in sanitizeEconomy({ ...json(s), pallets: [{ ...p, bags: bad }] }, defaults(), info)!.pallets[0]!).toBe(false);
+  });
+
+  it('paleta bez worków (zapis sprzed tej zmiany) nie dostaje pola bags, a z workami wraca co do bajta', () => {
+    const s = defaults();
+    const old = json(s) as { pallets: Record<string, unknown>[] };
+    for (const p of old.pallets) delete p.bags;
+    const out = sanitizeEconomy(old, defaults(), info)!;
+    expect(out.pallets.every((p) => !('bags' in p))).toBe(true);
+    expect(JSON.stringify(out.pallets)).toBe(JSON.stringify(old.pallets));
+    // paleta z workami, także z polem golden, zachowuje kolejność kluczy (porównanie stanów po bajtach)
+    expect(s.pallets.every((p) => typeof p.bags === 'number')).toBe(true);
+    expect(JSON.stringify(sanitizeEconomy(json(s), defaults(), info))).toBe(JSON.stringify(s));
+  });
+
   it('tryb gry po zepsuciu enuma wraca do domyślnego', () => {
     const out = sanitizeEconomy({ ...json(defaults()), order: { auto: 'tak', manual: null } }, defaults(), info)!;
     expect(out.order).toEqual({ auto: true, manual: 4 });

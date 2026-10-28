@@ -1,16 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import { generateStore } from '@/sim/store/generateStore';
-import { BANKRUPTCY_AT, CATS, MINUTES_PER_DAY, OPEN_FROM, START_CASH, TILL_RATE, UNLOAD_AT, UNLOAD_RATE, WAGE_PER_DAY } from './catalog';
+import { BANKRUPTCY_AT, CATS, CAT_INFO, MINUTES_PER_DAY, OPEN_FROM, START_CASH, TILL_RATE, UNLOAD_AT, UNLOAD_RATE, WAGE_PER_DAY } from './catalog';
 import { dateOfDay, formatDate, isLastDayOfMonth } from './calendar';
 import { advanceEconomy } from './clock';
 import {
-  buyEquipment, buyUpgrade, changeTrust, claimGift, claimQuest, createEconomy, effects, estimatedDailyMargin, expectedDailyCustomers, fire,
-  kpiMetricsOf, kpiScaleOf, movePallet, relayout, returnPallet, robotFleet, slotFree, startRemont, stepMinute, tapPallet, tapTill,
-  unlocksAt, upgradeBlocker, workshopUnlocked, type CommandResult, type EconEvent, type EconomyState,
+  arrivalRate, buyEquipment, buyUpgrade, changeTrust, claimGift, claimQuest, createEconomy, effects, estimatedDailyMargin,
+  expectedDailyCustomers, fire, freeSpots, kpiMetricsOf, kpiScaleOf, movePallet, relayout, returnPallet, robotFleet, slotFree,
+  startRemont, stepMinute, tapPallet, tapTill, unlocksAt, upgradeBlocker, workshopUnlocked, type CommandResult, type EconEvent,
+  type EconomyState,
 } from './economy';
+import { rand01 } from './rand';
 import { computeStoreInfo, type StoreInfo } from './storeInfo';
+import { rollWeather } from './tycoon/cleanliness';
 import { pinStaff, setStaffProfile } from './tycoon/staff';
+import { dateOfGameDay, isSunday } from './tycoon/time';
 import { TRUST, trustTier } from './tycoon/trust';
+import { hallObstacle, palletBags } from './tycoon/waste';
 import { UPGRADE_BY_ID } from './upgrades';
 
 const SEED = 'kiełbasa-42';   // blok z 1 slotem SCO i 3 slotami 2×2
@@ -675,5 +680,312 @@ describe('zaufanie Centrali przez moduł tycoona', () => {
     const restored = JSON.parse(JSON.stringify(s)) as EconomyState;
     expect(restored.total.fineCount).toBe(1);
     expect(restored.tycoon.trust.month.mandaty).toBe(-1);
+  });
+});
+
+describe('śmieci z palet, czystość sali, pogoda, niedziela i prasa', () => {
+  const emptyItems = () => Object.fromEntries(CATS.map((c) => [c, 0])) as Record<(typeof CATS)[number], number>;
+  const NOON = 12 * 60;
+
+  /** Sklep bez palet, dostaw i zamówień, o danej minucie dnia (kolejne dni od `day`). */
+  const quiet = (day = 1, mod = NOON): EconomyState => {
+    const s = createEconomy(SEED, info);
+    s.pallets = [];
+    s.order = { auto: false, manual: 0 };
+    s.minute = day * MINUTES_PER_DAY + mod;
+    return s;
+  };
+
+  /** Paleta z `total` sztuk napojów (nic poza tym), do ręcznego ustawienia na miejscu. */
+  const drinkPallet = (id: number, loc: 'sidewalk' | 'floor' | 'backroom', spot: number, total: number, bags?: number) => ({
+    id, loc, spot, items: { ...emptyItems(), napoje: total }, total, initial: total, since: 0, ...(bags === undefined ? {} : { bags }),
+  });
+
+  /** Półki i zaplecze pełne wszystkiego poza napojami: najbliższa dostawa to prawie same napoje. */
+  const drinksSoldOut = (s: EconomyState): void => {
+    const backroomCap = effects(s, info).backroomCap;
+    for (const c of CATS) {
+      s.shelf[c] = c === 'napoje' ? 0 : info.shelfCap[c];
+      s.backroom[c] = c === 'napoje' ? 0 : 0.6 * backroomCap * CAT_INFO[c].basket;
+    }
+  };
+
+  it('dostawa: paleta niesie worki liczone z jej składu, a zwykła ma jeden', () => {
+    const s = createEconomy(SEED, info);
+    expect(s.pallets.length).toBeGreaterThan(0);
+    for (const p of s.pallets) expect(p.bags).toBe(palletBags(p.items));
+    expect(s.pallets[0]!.bags).toBe(1);
+
+    const t = quiet(1, 6 * 60);
+    drinksSoldOut(t);
+    t.deliveries = [{ at: t.minute, count: 1 }];
+    stepMinute(t, info, []);
+    expect(t.pallets).toHaveLength(1);
+    expect(palletBags(t.pallets[0]!.items)).toBe(2);   // zgrzewki w folii: ponad 40% to napoje
+    expect(t.pallets[0]!.bags).toBe(2);
+  });
+
+  it('rozładowana paleta zostawia worki: ponad 40% napojów to dwa, zwykła jeden', () => {
+    const bagsAfterDelivery = (soldOut: boolean): number => {
+      const s = quiet(1, 6 * 60);
+      s.staff = 0;                   // nikt nie wynosi worków
+      s.upgrades.tasmociag = 3;      // paletę rozładuje automatyka, także bez ludzi
+      if (soldOut) drinksSoldOut(s);
+      s.deliveries = [{ at: s.minute, count: 1 }];
+      for (let i = 0; i < 600 && (i === 0 || s.pallets.length > 0); i++) stepMinute(s, info, []);
+      expect(s.pallets).toHaveLength(0);
+      expect(s.tycoon.waste.hall).toBe(0);
+      return s.tycoon.waste.backroom;
+    };
+    expect(bagsAfterDelivery(true)).toBe(2);
+    expect(bagsAfterDelivery(false)).toBe(1);
+  });
+
+  it('paleta ze starego zapisu (bez pola bags) zostawia jeden worek', () => {
+    const s = quiet(1, 8 * 60);
+    setStaffProfile(s.tycoon.staff, 'dostawa');   // ludzie najpierw przy paletach
+    s.pallets = [drinkPallet(900, 'sidewalk', 0, 5)];
+    expect(s.pallets[0]!.bags).toBeUndefined();
+    stepMinute(s, info, []);
+    expect(s.pallets).toHaveLength(0);
+    expect(s.tycoon.waste.month.produced).toBe(1);
+  });
+
+  it('worki zajmują miejsca palet na zapleczu: cztery worki to jedno miejsce mniej', () => {
+    const s = quiet();
+    const free = freeSpots(s, info, 'backroom');
+    expect(free).toBeGreaterThanOrEqual(2);
+    s.tycoon.waste.backroom = 4;
+    expect(freeSpots(s, info, 'backroom')).toBe(free - 1);
+    s.tycoon.waste.backroom = 5;   // piąty worek zaczyna kolejne miejsce
+    expect(freeSpots(s, info, 'backroom')).toBe(free - 2);
+    expect(freeSpots(s, info, 'sidewalk')).toBe(info.spots.sidewalk.length);   // chodnik i sala bez zmian
+  });
+
+  it('worki blokują też przestawienie palety na zaplecze, a sama paleta zmieści się, gdy worków nie ma', () => {
+    const s = quiet();
+    const spots = effects(s, info).backroomSpots;
+    s.pallets = [drinkPallet(900, 'backroom', 0, 100)];
+    s.nextPalletId = 901;
+    for (let i = 1; i < spots - 1; i++) s.pallets.push(drinkPallet(900 + i, 'backroom', i, 100));
+    s.pallets.push(drinkPallet(990, 'sidewalk', 0, 100));   // ta chce na zaplecze: zostaje jedno wolne miejsce
+    s.tycoon.waste.backroom = 4;
+    const r = movePallet(s, info, 990, 'backroom');
+    expect(r.ok).toBe(false);
+    s.tycoon.waste.backroom = 0;
+    expect(movePallet(s, info, 990, 'backroom').ok).toBe(true);
+  });
+
+  it('pełne zaplecze wyrzuca worki do sali i skraca cierpliwość', () => {
+    // zaplecze zajęte paletami: worki z nowo rozładowanej palety trafiają do sali
+    const s = quiet(1, 8 * 60);
+    setStaffProfile(s.tycoon.staff, 'dostawa');
+    const spots = effects(s, info).backroomSpots;
+    s.pallets = Array.from({ length: spots }, (_, i) => drinkPallet(900 + i, 'backroom', i, 200));
+    s.pallets.push(drinkPallet(990, 'sidewalk', 0, 5, 2));
+    s.nextPalletId = 1000;
+    stepMinute(s, info, []);
+    expect(s.pallets.some((p) => p.id === 990)).toBe(false);   // rozładowana
+    expect(s.tycoon.waste.hall).toBe(2);
+    expect(s.tycoon.waste.backroom).toBe(0);
+
+    // worki w sali liczą się jak palety w sali: kolejka tej samej długości już zniechęca klientów
+    const lostWith = (hallBags: number): number => {
+      const c = quiet();
+      c.arrivalAcc = 0.99;   // pewne przyjście w tej minucie
+      c.tycoon.waste.hall = hallBags;
+      c.queue = effects(c, info).patience - 0.5;
+      stepMinute(c, info, []);
+      return c.total.lost;
+    };
+    expect(hallObstacle({ ...s.tycoon.waste, hall: 4 })).toBe(1);
+    expect(lostWith(0)).toBe(0);
+    expect(lostWith(4)).toBeGreaterThan(0);
+  });
+
+  it('worki w sali zmniejszają też ruch, jak palety w sali (nie mniej niż połowa)', () => {
+    const s = quiet();
+    const base = arrivalRate(s, info);
+    s.tycoon.waste.hall = 8;   // dwa „miejsca” przeszkody
+    expect(arrivalRate(s, info)).toBeCloseTo(base * (1 - 0.08 * 2), 9);
+    s.tycoon.waste.hall = 1000;
+    expect(arrivalRate(s, info)).toBeCloseTo(base * 0.5, 9);
+  });
+
+  it('brudna sala skraca cierpliwość: ta sama kolejka zniechęca klientów dopiero przy niskiej czystości', () => {
+    const lostAt = (cleanliness: number): number => {
+      const c = quiet();
+      c.arrivalAcc = 0.99;
+      c.tycoon.hall.cleanliness = cleanliness;
+      c.queue = effects(c, info).patience - 1.5;   // czystość 20 to −2 do cierpliwości, 60 i więcej to 0
+      stepMinute(c, info, []);
+      return c.total.lost;
+    };
+    expect(lostAt(100)).toBe(0);
+    expect(lostAt(60)).toBe(0);
+    expect(lostAt(20)).toBeGreaterThan(0);
+  });
+
+  it('sprzątanie najpierw wynosi worki, i to z sali', () => {
+    const s = quiet(1, 8 * 60);
+    s.staff = 2;
+    setStaffProfile(s.tycoon.staff, 'porzadek');
+    s.tycoon.waste.hall = 2;
+    s.tycoon.waste.backroom = 6;
+    run(s, info, 30);
+    const w = s.tycoon.waste;
+    expect(w.hall).toBe(0);
+    expect(w.backroom).toBeLessThan(6);
+    expect(w.hall + w.backroom).toBeLessThan(8);
+    expect(w.month.removed).toBeGreaterThan(2);
+  });
+
+  it('prasa do kartonów skraca wynoszenie worka z pięciu osobominut do dwóch', () => {
+    const removed = (press: boolean): number => {
+      const s = quiet(1, 8 * 60);
+      s.staff = 1;
+      s.upgrades.prasa = press ? 1 : 0;
+      setStaffProfile(s.tycoon.staff, 'porzadek');
+      s.tycoon.waste.backroom = 10;
+      run(s, info, 10);
+      return 10 - s.tycoon.waste.backroom;
+    };
+    expect(removed(false)).toBeCloseTo(2, 9);   // 10 osobominut / 5
+    expect(removed(true)).toBeCloseTo(5, 9);    // 10 osobominut / 2
+    const s = quiet();
+    s.upgrades.prasa = 1;
+    expect(robotFleet(s).prasa).toBe(1);
+  });
+
+  it('prasa to ulepszenie warsztatu za 6000 zł, jeden poziom', () => {
+    const def = UPGRADE_BY_ID.prasa;
+    expect(def.group).toBe('warsztat');
+    expect(def.names).toEqual(['Prasa do kartonów z imadła po dziadku']);
+    expect(def.maxLevel).toBe(1);
+    expect(def.baseCost).toBe(6000);
+    expect(def.costMult).toBe(1);
+    const s = quiet();
+    s.cash = 100_000;
+    expect(buyUpgrade(s, 'prasa').ok).toBe(false);   // warsztat zamknięty na starcie
+    s.level = 10;
+    expect(buyUpgrade(s, 'prasa').ok).toBe(true);
+    expect(s.cash).toBe(100_000 - 6000);
+    expect(buyUpgrade(s, 'prasa').ok).toBe(false);   // maksymalny poziom
+  });
+
+  it('niedziela ma więcej klientów: arrivalRate o 12:00 to ×1,35 soboty przy tym samym stanie', () => {
+    let saturday = 0;
+    while (dateOfGameDay(saturday).date > 0 && (saturday + 2) % 7 !== 6) saturday++;
+    expect(isSunday(saturday + 1)).toBe(true);
+    const base = createEconomy(SEED, info);
+    const at = (day: number): number => arrivalRate({ ...base, minute: day * MINUTES_PER_DAY + NOON }, info);
+    expect(at(saturday)).toBeGreaterThan(0);
+    expect(at(saturday + 1)).toBeCloseTo(1.35 * at(saturday), 9);
+    expect(at(saturday - 1)).toBeCloseTo(at(saturday), 9);   // piątek jak sobota
+  });
+
+  it('stepMinute losuje przyjścia z arrivalRate (niedziela też): ułamek przyjść po minucie zgadza się z lambdą', () => {
+    for (const day of [4, 5]) {   // sobota i niedziela
+      const s = quiet(day);
+      s.arrivalAcc = 0;
+      const lambda = arrivalRate(s, info);
+      const expected = lambda * (0.75 + 0.5 * rand01(s.seedHash, s.minute, 1));
+      stepMinute(s, info, []);
+      expect(s.arrivalAcc).toBeCloseTo(expected - Math.floor(expected), 9);
+    }
+  });
+
+  it('pogoda losuje się o północy: po przejściu przez 0:00 jest taka, jaką daje rollWeather dla tego dnia', () => {
+    const s = createEconomy(SEED, info);
+    expect(s.tycoon.hall.weather).toBe(rollWeather(s.seedHash, 0, dateOfGameDay(0).month));
+    let changes = 0;
+    for (let day = 1; day <= 40; day++) {
+      s.minute = day * MINUTES_PER_DAY - 1;
+      const before = s.tycoon.hall.weather;
+      const wrong = (['sucho', 'upal', 'deszcz', 'snieg'] as const).find((w) => w !== rollWeather(s.seedHash, day, dateOfGameDay(day).month))!;
+      s.tycoon.hall.weather = wrong;   // dzień wcześniej coś innego: o północy ma się zmienić
+      run(s, info, 2);
+      expect(s.tycoon.hall.weather).toBe(rollWeather(s.seedHash, day, dateOfGameDay(day).month));
+      if (s.tycoon.hall.weather !== before) changes++;
+    }
+    expect(changes).toBeGreaterThan(0);
+    // w ciągu dnia pogoda nie zmienia się
+    const w = s.tycoon.hall.weather;
+    run(s, info, 600);
+    expect(s.tycoon.hall.weather).toBe(w);
+  });
+
+  it('klienci brudzą salę, deszcz bardziej niż sucho, a bez sprzątania czystość tylko spada', () => {
+    const cleanlinessAfter = (weather: 'sucho' | 'deszcz'): number => {
+      const s = quiet(1, 8 * 60);
+      s.staff = 0;
+      s.tycoon.hall.weather = weather;
+      run(s, info, 4 * 60);
+      return s.tycoon.hall.cleanliness;
+    };
+    const dry = cleanlinessAfter('sucho');
+    const rain = cleanlinessAfter('deszcz');
+    expect(dry).toBeLessThan(100);
+    expect(rain).toBeLessThan(dry);
+  });
+
+  it('ludzie sprzątają salę: przy profilu „porządek” czystość wraca do 100', () => {
+    const s = quiet(1, 8 * 60);
+    s.tycoon.hall.cleanliness = 40;
+    setStaffProfile(s.tycoon.staff, 'porzadek');
+    run(s, info, 2 * 60);
+    expect(s.tycoon.hall.cleanliness).toBeGreaterThan(90);
+  });
+
+  it('średnia czystości liczy tylko minuty otwarcia, a koniec miesiąca zeruje jej licznik i worki miesiąca', () => {
+    const s = createEconomy(SEED, info);
+    run(s, info, MINUTES_PER_DAY);   // od 6:00 do 6:00 następnego dnia
+    expect(s.tycoon.hall.monthMinutes).toBe(17 * 60);
+    expect(s.tycoon.hall.totalMinutes).toBe(17 * 60);
+    expect(s.tycoon.waste.month.produced).toBeGreaterThan(0);
+    // dociągamy do zamknięcia ostatniego dnia września (23:00 dnia 29)
+    while (!(dateOfGameDay(Math.floor(s.minute / MINUTES_PER_DAY)).date === 30 && s.minute % MINUTES_PER_DAY === 23 * 60 + 1)) stepMinute(s, info, []);
+    expect(s.lastReport).not.toBeNull();
+    expect(s.tycoon.hall.monthMinutes).toBe(0);
+    expect(s.tycoon.hall.monthSum).toBe(0);
+    expect(s.tycoon.hall.totalMinutes).toBeGreaterThan(17 * 60);   // średnia „od początku gry” (KPI) zostaje
+    expect(s.tycoon.waste.month).toEqual({ produced: 0, removed: 0, hallBagMinutes: 0 });
+  });
+
+  it('reputacja za obsłużonego klienta spada o brud w sali: czystość 0 to −0,003 na klienta, od 70 nic', () => {
+    const repAfterTaps = (cleanliness: number): number => {
+      const s = quiet();
+      s.tycoon.hall.cleanliness = cleanliness;
+      s.queue = 10;
+      const r = tapTill(s, info, 5);
+      expect(r.ok).toBe(true);
+      return s.reputation;
+    };
+    const clean = repAfterTaps(100);
+    expect(repAfterTaps(70)).toBe(clean);
+    expect(repAfterTaps(0)).toBeCloseTo(clean - 5 * 0.003, 9);
+  });
+
+  it('relayout z workami na zapleczu: palety i worki razem nie przekraczają miejsc zaplecza', () => {
+    const s = quiet();
+    const spots = effects(s, info).backroomSpots;
+    s.pallets = Array.from({ length: spots }, (_, i) => drinkPallet(900 + i, 'backroom', i, 100));
+    s.tycoon.waste.backroom = 4;   // stan sprzed poprawki układu: jedno miejsce jest podwójnie zajęte
+    relayout(s, info);
+    const inBackroom = s.pallets.filter((p) => p.loc === 'backroom').length;
+    expect(s.pallets).toHaveLength(spots);   // żadna paleta nie przepadła
+    expect(inBackroom + Math.ceil(s.tycoon.waste.backroom / 4)).toBeLessThanOrEqual(spots);
+    expect(s.tycoon.waste.backroom + s.tycoon.waste.hall).toBe(4);   // worki nie przepadły, najwyżej wylądowały w sali
+  });
+
+  it('zapis JSON w środku gry z workami wznawia grę bez różnic', () => {
+    const s = createEconomy(SEED, info);
+    s.upgrades.prasa = 1;
+    run(s, info, 3 * MINUTES_PER_DAY);
+    expect(s.tycoon.waste.month.produced).toBeGreaterThan(0);
+    const restored = JSON.parse(JSON.stringify(s)) as EconomyState;
+    run(s, info, 2 * MINUTES_PER_DAY);
+    run(restored, info, 2 * MINUTES_PER_DAY);
+    expect(JSON.stringify(restored)).toBe(JSON.stringify(s));
   });
 });

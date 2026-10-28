@@ -19,7 +19,7 @@ export type UpgradeId =
   | 'szkolenie' | 'drugaKasa' | 'scoSoft' | 'klima'
   | 'wozek' | 'regaly' | 'asystent' | 'nocne' | 'rampa' | 'dostawy2'
   | 'ulotki' | 'kawa' | 'traszkapka' | 'kamery'
-  | 'tasmociag' | 'wykladacz' | 'humanoid';
+  | 'tasmociag' | 'wykladacz' | 'prasa' | 'humanoid';
 
 export interface UpgradeDef {
   id: UpgradeId;
@@ -86,6 +86,8 @@ export const UPGRADES: readonly UpgradeDef[] = [
   { id: 'wykladacz', group: 'warsztat', names: ['Wykładacz z drukarki 3D', 'Ramię robota z wyprzedaży', 'Wykładacz z czujnikiem pustej półki'],
     effect: 'Sam wykłada towar z zaplecza na półki, także nocą (+12 szt./min)', flavor: 'Wydrukowany w 37 godzin. Działa w 3 na 4 przypadkach.', maxLevel: 3, baseCost: 15000, costMult: 2.4,
     requires: { upgrade: [['tasmociag', 1]] } },
+  { id: 'prasa', group: 'warsztat', names: ['Prasa do kartonów z imadła po dziadku'],
+    effect: 'Worek śmieci wynosi się w 2 osobominuty zamiast 5', flavor: 'Imadło wreszcie się przydało. Dziadek byłby dumny, Centrala mniej.', maxLevel: 1, baseCost: 6000, costMult: 1 },
   { id: 'humanoid', group: 'warsztat', names: ['Humanoid eDward'],
     effect: 'eDward pracuje za trzech, 24 h na dobę, bez pensji', flavor: 'Złożony z odkurzacza, wycieraczek i starego laptopa. Mówi „dzień dobry” o każdej porze.', maxLevel: 1, baseCost: 220_000, costMult: 1,
     requires: { upgrade: [['tasmociag', 3], ['wykladacz', 2]], remont: 2, level: 25 } },

@@ -53,6 +53,8 @@ export const LIMITS = {
   stockPerCat: 100_000,
   /** Sztuk na palecie: PALLET_ITEMS i sztuka zapasu na zaokrąglenia (suma składu palety wychodzi z ułamków). */
   palletItems: PALLET_ITEMS + 1,
+  /** Worków z jednej palety: gra liczy 1 albo 2 (`palletBags`), reszta to zapas na przyszłe rodzaje palet. */
+  palletBags: 8,
   /**
    * Kolejka przy kasie: ruch rośnie z Punktami Partnera, więc w 4000 dniach gry kolejka sięgała 538 osób przy 5,3 tys. punktów
    * i 2799 przy 40 tys. Granica przycina tylko chwilowe zaległości (kolejka zeruje się co wieczór po zamknięciu sklepu).
@@ -227,6 +229,8 @@ function pallet(v: unknown, minute: number): Pallet | null {
     since: whole(v.since, minute, 0, minute),
   };
   if (typeof v.golden === 'boolean') out.golden = v.golden;
+  // paleta z zapisu sprzed worków nie ma pola: rozładunek bierze wtedy jeden worek, a zapis wraca co do bajta
+  if (isNum(v.bags)) out.bags = whole(v.bags, 1, 1, LIMITS.palletBags);
   return out;
 }
 
