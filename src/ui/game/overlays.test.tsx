@@ -229,6 +229,42 @@ describe('paczka od Centrali: okno z symulacji, a nie timer interfejsu (L1)', ()
     expect(game.dispatch).toHaveBeenCalledWith({ type: 'claimGift' });
     expect(onClaim).not.toHaveBeenCalled();
   });
+
+  it('klik już po zamknięciu okna (stan poszedł dalej od ostatniej publikacji): bez polecenia, bez napisu, paczka znika', () => {
+    vi.stubGlobal('window', { innerWidth: 1000, innerHeight: 800 });
+    const game = fakeGame();
+    const onClaim = vi.fn();
+    const s = at(6000 + 1, 6000);
+    const drop = GiftDrop({ game, onClaim }) as VNode<Record<string, unknown>>;
+    expect(drop.type).toBe('button');   // paczka wyrenderowana, okno jeszcze otwarte
+
+    // symulacja przesuwa ten sam obiekt stanu, a interfejs dostaje go dopiero przy następnej publikacji (co najwyżej co 200 ms)
+    s.minute = 6000 + GIFT_OPEN;
+    click(drop);
+
+    expect(game.dispatch).not.toHaveBeenCalled();   // bez polecenia, więc bez czerwonego toastu i dźwięku błędu
+    expect(onClaim).not.toHaveBeenCalled();
+    expect(GiftDrop({ game, onClaim })).toBeNull();
+
+    // paczka schowana dla tej sesji i tego okna (zegar cofnięty tylko po to, żeby pokazać, że chowa ją znacznik, a nie sam zegar)...
+    s.minute = 6000 + 1;
+    expect(GiftDrop({ game, onClaim })).toBeNull();
+    // ...ale nie dla nowej gry z tym samym `giftAt` (np. „Zacznij od nowa”: okno wylicza się z seeda)
+    at(6000 + 1, 6000);
+    expect(GiftDrop({ game, onClaim })).not.toBeNull();
+  });
+
+  it('klik w oknie, które jeszcze trwa, nadal wysyła claimGift (stan odczytany w chwili kliknięcia)', () => {
+    vi.stubGlobal('window', { innerWidth: 1000, innerHeight: 800 });
+    const game = fakeGame({ ok: true, text: 'ok' });
+    const onClaim = vi.fn();
+    const s = at(7000 + 1, 7000);
+    const drop = GiftDrop({ game, onClaim }) as VNode<Record<string, unknown>>;
+    s.minute = 7000 + GIFT_OPEN - 1;   // ostatnia minuta okna
+    click(drop);
+    expect(game.dispatch).toHaveBeenCalledWith({ type: 'claimGift' });
+    expect(onClaim).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('combo stukania: z tapCombo stanu symulacji, nie z timera interfejsu (L3)', () => {

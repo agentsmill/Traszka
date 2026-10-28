@@ -7,6 +7,7 @@ import { xpToNext } from '@/sim/economy/progress';
 import { questMetric } from '@/sim/economy/quests';
 import { UPGRADES } from '@/sim/economy/upgrades';
 import { layoutFor } from '@/sim/store/layoutFor';
+import * as layoutModule from '@/sim/store/layoutFor';
 import { replayRun, type LogEntry } from '@/sim/run';
 import * as ui from '@/ui/state';
 import { AFTER, createShell, dispatchCommand, markOffLog, type CommandEffects, type GameShell, type ShellEffects, type ShellScene } from './actions';
@@ -19,6 +20,7 @@ import {
 
 const SEED = 'traszka-1';
 const REBUILD_NOTICE = 'Nie udało się przebudować sklepu po remoncie. Postęp jest zapisany — odśwież stronę.';
+const REBUILD_NOTICE_EPHEMERAL = 'Nie udało się przebudować sklepu po remoncie. Ten sklep jest tymczasowy — odśwież stronę, żeby wrócić do swojego.';
 
 /** Atrapa efektów: zapisuje każde wywołanie (nazwa i argumenty) w kolejności; `over` podmienia wybrane efekty. */
 type Call = [name: string, ...args: unknown[]];
@@ -314,6 +316,20 @@ describe('kroki po poleceniu', () => {
       expect(errorLog).toHaveBeenCalledOnce();
       expect(errorLog.mock.calls[0]).toContain(boom);
       expect(s.layoutLevel).toBe(1);   // sesja ma nowy układ mimo błędu sceny
+    });
+
+    it('rebuildScene rzuca w sklepie tymczasowym: komunikat bez obietnicy zapisu, reszta jak w zwykłym', () => {
+      const s = readyForRemont();
+      s.ephemeral = true;
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      const rec = recorder({ rebuildScene: () => { throw new Error('scena się nie zbudowała'); } });
+
+      expect(dispatchCommand(s, { type: 'startRemont' }, rec.fx).ok).toBe(true);
+
+      expect(rec.named('notice')).toEqual([['notice', REBUILD_NOTICE_EPHEMERAL]]);
+      expect(REBUILD_NOTICE_EPHEMERAL).not.toMatch(/zapisan/);   // ten sklep się nie zapisuje, więc tekst tego nie obiecuje
+      expect(rec.names().at(-1)).toBe('refresh');
+      expect(s.layoutLevel).toBe(1);
     });
   });
 });
@@ -670,14 +686,40 @@ describe('powłoka gry (createShell)', () => {
       expect(errorLog).toHaveBeenCalledTimes(4);   // dwa razy: nowy sklep i odtworzenie poprzedniego
     });
 
-    it('seed bez sklepu w generatorze: sesja nie powstaje, zostaje poprzedni sklep i adres', () => {
+    it('świeża gra (fresh), której świat się nie buduje: zostaje poprzedni sklep i adres, nic nie zapisano pod nowym seedem', () => {
       const h = harness();
       const old = open(h, 'traszka-1');
       vi.spyOn(console, 'error').mockImplementation(() => {});
       h.scene.failing.add('zepsuty');
-      h.shell.setSeed('zepsuty', true);
+      expect(h.shell.setSeed('zepsuty', true)).toBe(false);
       expect(h.shell.session).toBe(old);
       expect(h.urls).toEqual([]);
+      expect(hasStoredSave('zepsuty')).toBe(false);
+    });
+
+    it('generator nie daje sklepu dla seeda (createSession rzuca): zostaje poprzedni sklep z odtworzoną sceną, komunikat, adres bez zmian', () => {
+      const h = harness();
+      const old = open(h, 'traszka-1');
+      const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const generatorError = new Error('generateStore: brak poprawnego układu');
+      const realLayoutFor = layoutModule.layoutFor;
+      vi.spyOn(layoutModule, 'layoutFor').mockImplementation((seed, level) => {
+        if (seed === 'bez-generatora') throw generatorError;   // tak rzuca generator po dziesięciu nieudanych próbach
+        return realLayoutFor(seed, level);
+      });
+
+      expect(h.shell.setSeed('bez-generatora', true)).toBe(false);
+
+      expect(h.shell.session).toBe(old);   // sesja nowego sklepu nie powstała
+      expect(h.scene.loads).toEqual([{ seed: 'traszka-1', session: old }]);   // nowego świata nie próbowano; poprzedni zbudowany od nowa
+      expect(h.scene.seed).toBe('traszka-1');
+      expect(h.urls).toEqual([]);
+      expect(ui.seed.value).toBe('traszka-1');
+      expect(h.notices).toEqual(['Nie udało się otworzyć sklepu „bez-generatora”. Zostajesz w poprzednim.']);
+      expect(hasStoredSave('traszka-1')).toBe(true);   // poprzedni sklep zapisany przed przejściem
+      expect(hasStoredSave('bez-generatora')).toBe(false);
+      expect(errorLog).toHaveBeenCalledOnce();
+      expect(errorLog.mock.calls[0]).toContain(generatorError);
     });
 
     it('nowy sklep z `ephemeral` jest tymczasowy: nic go nie zapisze', () => {
@@ -1010,6 +1052,19 @@ describe('powłoka gry (createShell)', () => {
       h.scene.failing.add(s.seed);
       expect(h.shell.game.dispatch({ type: 'startRemont' }).ok).toBe(true);
       expect(h.notices).toEqual([REBUILD_NOTICE]);
+    });
+
+    it('przebudowa po remoncie, która rzuca, w sklepie tymczasowym: komunikat o tymczasowym sklepie, nic nie zapisane', () => {
+      const h = harness();
+      const s = open(h);
+      s.ephemeral = true;
+      s.econ.cash = 1e6;
+      s.econ.level = 8;
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      h.scene.failing.add(s.seed);
+      expect(h.shell.game.dispatch({ type: 'startRemont' }).ok).toBe(true);
+      expect(h.notices).toEqual([REBUILD_NOTICE_EPHEMERAL]);
+      expect(hasStoredSave(s.seed)).toBe(false);   // odświeżenie nie przywróci tego sklepu, więc komunikat nie mówił o zapisie
     });
 
     it('handleEvents: dzień zapisuje, raport miesiąca idzie do interfejsu, reszta do toastów z dźwiękiem', () => {

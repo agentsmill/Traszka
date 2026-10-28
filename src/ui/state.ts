@@ -11,8 +11,9 @@ import type { CommandResult, EconEventKind, EconomyState, MonthReport } from '@/
 import type { StoreInfo } from '@/sim/economy/storeInfo';
 
 /*
- * Stan widoczny w interfejsie. Zmienia go i przycisk, i klawisz, a czyta interfejs. Sterowanie światem jest w main.ts
- * (obiekt `Controls`), więc jedno wywołanie aktualizuje i świat, i sygnał.
+ * Stan widoczny w interfejsie. Zmienia go i przycisk, i klawisz, a czyta interfejs. Sterowanie światem to obiekt `Controls`
+ * (składa go main.ts ze sceny, `src/game/scene.ts`, i powłoki gry, `src/game/actions.ts`; klawisze podpina `src/game/controls.ts`),
+ * więc jedno wywołanie aktualizuje i świat, i sygnał.
  */
 export const seed: Signal<string> = signal('');
 export const preset: Signal<QualityPresetId> = signal<QualityPresetId>('srednia');
@@ -25,7 +26,7 @@ export const bench: Signal<BenchProgress | null> = signal<BenchProgress | null>(
 /** Komunikat dla gracza z `traszka:notice` albo null. */
 export const notice: Signal<string | null> = signal<string | null>(null);
 
-/** Akcje, które interfejs wywołuje w grze. Implementuje je main.ts, wspólnie z klawiszami. */
+/** Akcje, które interfejs wywołuje w grze. Te same funkcje wołają klawisze (`src/game/controls.ts`); realizują je scena (`src/game/scene.ts`) i powłoka gry (`src/game/actions.ts`). */
 export interface Controls {
   setSpeed(next: Speed): void;
   /** −1 w lewo (Q), +1 w prawo (E). */

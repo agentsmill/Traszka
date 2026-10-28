@@ -1,6 +1,7 @@
+import { signal } from '@preact/signals';
 import { useEffect, useState } from 'preact/hooks';
 import { RETURN_FEE } from '@/sim/economy/catalog';
-import { effects, giftOpen, isStoreOpen, slotFree, slotUsage, tapCombo, type MonthReport } from '@/sim/economy/economy';
+import { effects, giftOpen, isStoreOpen, slotFree, slotUsage, tapCombo, type EconomyState, type MonthReport } from '@/sim/economy/economy';
 import { EQUIPMENT, EQUIPMENT_BY_ID, equipmentCost } from '@/sim/economy/upgrades';
 import type { QualityPresetId } from '@/render/quality';
 import { networkIncomeOf, prestigePoints } from '@/game/meta';
@@ -326,19 +327,35 @@ function spotFor(giftAt: number): { x: number; y: number } {
 }
 
 /**
+ * Okno paczki, w którym gracz kliknął już po jego zamknięciu (patrz `GiftDrop`): schowane od razu, bez czekania na następną publikację
+ * stanu. Klucz to sesja (`s`) i `giftAt`: samo `giftAt` powtarza się po „Zacznij od nowa” w tym samym sklepie (wylicza się z seeda).
+ */
+const lateGift = signal<{ s: EconomyState; giftAt: number } | null>(null);
+
+/**
  * Paczka od Centrali. Okno paczki daje symulacja, nie timer interfejsu: `giftOpen` jest prawdą od minuty `giftAt` przez
  * `GIFT_OPEN` minut gry (ok. 9 s przy ×1, krócej przy większej prędkości), więc paczka stoi w pauzie, a po wczytaniu zapisu
  * wraca tam, gdzie była. Interfejs losuje tylko miejsce nad sceną, raz na okno (klucz `giftAt`; `Math.random` w `ui` jest
  * dozwolony, bo to nie symulacja). Odbiór to polecenie `claimGift`: symulacja zamyka okno i planuje następne. Nie pokazuje się
  * przy otwartym raporcie, ekranie startowym, powitaniu ani ustawieniach.
+ *
+ * Stan w `econ` odświeża się co najwyżej co 200 ms, więc paczka potrafi stać na ekranie chwilę po zamknięciu okna. Klik w tej
+ * chwili nie wysyła polecenia (symulacja odmówiłaby: czerwony toast i dźwięk błędu dla paczki, którą gracz widział), tylko
+ * chowa paczkę. `view.s` to ten sam obiekt co stan sesji, więc `giftOpen` w obsłudze kliknięcia widzi bieżącą minutę gry.
  */
 export function GiftDrop({ game, onClaim }: { game: GameActions; onClaim: (x: number, y: number, text: string) => void }) {
   const view = econ.value;
+  const late = lateGift.value;
   if (!view || !giftOpen(view.s) || report.value || start.value || welcome.value || showSettings.value) return null;
+  if (late && late.s === view.s && late.giftAt === view.s.giftAt) return null;
   const spot = spotFor(view.s.giftAt);
   return (
     <button type="button" class="tt-gift" style={{ left: `${spot.x}%`, top: `${spot.y}%` }} aria-label="Paczka od Centrali"
       onClick={() => {
+        if (!giftOpen(view.s)) {
+          lateGift.value = { s: view.s, giftAt: view.s.giftAt };   // zmiana sygnału odświeża komponent: paczka znika od razu
+          return;
+        }
         const r = game.dispatch({ type: 'claimGift' });
         if (r.ok) onClaim(window.innerWidth * spot.x / 100, window.innerHeight * spot.y / 100, r.text ?? '');
       }}>

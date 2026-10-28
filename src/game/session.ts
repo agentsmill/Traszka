@@ -25,8 +25,12 @@ export interface RunLog {
   seq: number;
 }
 
-/** Ile wpisów dziennik trzyma najwyżej. Dłuższa gra zwykła (`casual`) traci dziennik (`run` = null): rósłby bez końca, a gracz nic z niego nie ma. */
-export const RUN_LOG_MAX = 100_000;
+/**
+ * Ile wpisów dziennik trzyma najwyżej (ok. 1,8 MB pamięci: wpis `{minute, seq, cmd}` to ok. 90 bajtów). Dłuższa gra zwykła (`casual`)
+ * traci dziennik (`run` = null): rósłby bez końca, a gracz nic z niego nie ma. O formie trwałego dziennika (co zostaje, jak kodowany)
+ * zdecyduje B2; do tego czasu limit ma tylko chronić pamięć telefonu.
+ */
+export const RUN_LOG_MAX = 20_000;
 
 /** Rozgrywka jednego sklepu: stan ekonomii i układ, w którym się toczy (po remoncie układ się zmienia). */
 export interface GameSession {

@@ -6,7 +6,6 @@ import {
 import { rankFor } from '@/sim/economy/progress';
 import type { Sfx } from '@/ui/sfx';
 import * as ui from '@/ui/state';
-import type { ToastKind } from '@/ui/state';
 import type { CashierLook } from './cashier';
 import { addToNetwork, claimDaily, partnerOf, saveMeta, startupWindow, type Meta } from './meta';
 import { openStore } from './openStore';
@@ -32,7 +31,7 @@ import { initialStartForm, noticeAfterOpen, openChosen, openRequestFor, playerOf
 export interface CommandEffects {
   play(sfx: Sfx): void;
   buzz(pattern: number | number[]): void;
-  toast(text: string, kind: ToastKind): void;
+  toast(text: string, kind: ui.ToastKind): void;
   /** `fx` i `fy` to ułamki szerokości i wysokości okna (wołający przelicza je na piksele). */
   confetti(fx: number, fy: number, count: number): void;
   handleEvents(events: EconEvent[]): void;
@@ -80,6 +79,8 @@ export const AFTER: Record<Command['type'], AfterStep> = {
 const NO_STEPS: AfterStep = { okToast: false };
 
 const REBUILD_FAILED = 'Nie udało się przebudować sklepu po remoncie. Postęp jest zapisany — odśwież stronę.';
+/** Sklep tymczasowy się nie zapisuje (`saveSession`), więc odświeżenie nie przywróci tego sklepu, tylko gracza do jego własnego. */
+const REBUILD_FAILED_EPHEMERAL = 'Nie udało się przebudować sklepu po remoncie. Ten sklep jest tymczasowy — odśwież stronę, żeby wrócić do swojego.';
 
 /**
  * Wyłącza dziennik sesji: stan zmienił się poza poleceniami (nagroda powitalna za nieobecność, `skip`), więc odtworzenie
@@ -101,12 +102,15 @@ export function markOffLog(session: GameSession): void {
  * 8. zaznaczenie zdjęte po poleceniu (`clearSelection: 'after'`);
  * 9. odświeżenie sceny i interfejsu.
  *
- * Wyjątek z `rebuildScene` nie wychodzi stąd (scena zostaje pusta, ale gracz dostaje komunikat, a postęp jest zapisany).
+ * Wyjątek z `rebuildScene` nie wychodzi stąd: scena zostaje pusta, a gracz dostaje komunikat (w sklepie zwykłym z obietnicą
+ * zapisu, w tymczasowym bez niej: ten się nie zapisuje). Po takiej porażce czas gry stoi, bo pętla klatek potrzebuje załadowanej
+ * sceny (`scene.loaded`), a panele dalej przyjmują polecenia. To zamierzony, bezpieczny stan: nic nie przepada niewidocznie, a
+ * zwykły sklep jest już zapisany na nowym układzie, więc odświeżenie strony go wczytuje.
  * Każdy inny wyjątek (np. z `applyCommand`) leci dalej: to błąd w kodzie, którego nie wolno połknąć.
  */
 export function dispatchCommand(session: GameSession, cmd: Command, fx: CommandEffects): CommandResult {
   // Kopia płytka, raz: dziennik, `applyCommand` i tabela czytają to samo polecenie, a późniejsza zmiana obiektu interfejsu
-  // (albo getter) niczego w dzienniku nie zmieni.
+  // (albo getter) niczego w dzienniku nie zmieni. Płytka wystarcza, bo pola poleceń są płaskie (komentarz nad `Command`).
   const command = { ...cmd };
   const after = Object.hasOwn(AFTER, command.type) ? AFTER[command.type] : NO_STEPS;
 
@@ -143,7 +147,7 @@ export function dispatchCommand(session: GameSession, cmd: Command, fx: CommandE
       fx.rebuildScene();
     } catch (error) {
       console.error('Przebudowa sklepu po remoncie nie powiodła się.', error);
-      fx.notice(REBUILD_FAILED);
+      fx.notice(session.ephemeral ? REBUILD_FAILED_EPHEMERAL : REBUILD_FAILED);
     }
   }
 
