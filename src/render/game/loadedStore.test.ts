@@ -165,11 +165,14 @@ describe('loadStore / unloadStore', () => {
     expect(crowdParent.children).toHaveLength(1);
   });
 
-  it('unloadStore zdejmuje sklep ze sceny i zwalnia wszystkie części (tłum zostaje, bo należy do gry)', () => {
+  it('unloadStore zdejmuje sklep ze sceny i zwalnia wszystkie części, także geometrię i materiał kasy do stukania (tłum zostaje, bo należy do gry)', () => {
     const loaded = loadStore(source());
+    const till = watchTill(loaded);
+    expect(till).toEqual([]);   // nic nie zwolniono przed sprzątaniem
     unloadStore(loaded);
     expect(stores()).toBe(0);
     expect(mocks.disposed.sort()).toEqual(['cashier', 'crowd', 'equipment', 'pallets', 'view']);
+    expect(till.sort()).toEqual(['geometry', 'material']);
     expect(crowdParent.parent).toBe(scene);
     expect(crowdParent.children).toHaveLength(1);
   });

@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { formatMonth, isLastDayOfMonth } from '@/sim/economy/calendar';
 import { CAT_INFO, CATS, CREDIT_LIMIT, MINUTES_PER_DAY, OPEN_FROM, PALLET_ITEMS } from '@/sim/economy/catalog';
 import {
   buyEquipment, buyUpgrade, effects, emptyCounters, startRemont, stepMinute, tapPallet, type Counters, type EconEvent, type EconomyState,
@@ -425,6 +426,42 @@ describe('granice wartości z zapisu (LIMITS) nie schodzą poniżej tego, co pot
     expect(most.queue * 4).toBeLessThanOrEqual(LIMITS.queue);
     expect(most.deliveries * 2).toBeLessThanOrEqual(LIMITS.deliveries);
     expect(most.pallets * 2).toBeLessThanOrEqual(LIMITS.pallets);
+  });
+});
+
+describe('minuty i historia z długiej, ale możliwej gry wracają z zapisu bez zmian (granice nie schodzą niżej)', () => {
+  /** Jeden wiersz na każdy miesiąc od początku gry, tak jak go dopisuje `closeMonth`: etykieta z kalendarza, wynik i obrót. */
+  function monthlyHistory(days: number): EconomyState['history'] {
+    const rows: EconomyState['history'] = [];
+    for (let day = 0; day < days; day++) {
+      if (isLastDayOfMonth(day)) rows.push({ label: formatMonth(day), profit: 12_000 + rows.length * 37, revenue: 180_000 + rows.length * 211 });
+    }
+    return rows;
+  }
+  const savedEcon = (): EconomyState => (JSON.parse(storage.getItem(key(BLOK))!) as { econ: EconomyState }).econ;
+
+  // 100 lat gry to ok. 3 doby przy ×8 bez przerwy (tysiąc lat, czyli granica, to ok. 30 dób); sim niczego nie obcina, więc
+  // historia ma wiersz za każdy miesiąc. Sto lat, a nie dziesięć: granica obniżona do dziesięciu lat przepuściłaby jeszcze dziesięć.
+  it('sto lat gry i 1200 wierszy historii: zapis → wczytanie → zapis bez zmian, a gra się toczy dalej', () => {
+    const played = playedSession(BLOK);
+    const days = Math.round(100 * 365.2425);
+    played.econ.minute = days * MINUTES_PER_DAY + OPEN_FROM;
+    played.econ.history = monthlyHistory(days);
+    expect(played.econ.history).toHaveLength(1200);
+    saveSession(played);
+    const before = savedEcon();
+
+    const loaded = createSession(BLOK);
+    expect(loaded.fromSave).toBe(true);
+    expect(loaded.loadNotice).toBeNull();
+    expect(loaded.econ.minute).toBe(played.econ.minute);
+    expect(loaded.econ.history).toEqual(played.econ.history);
+    saveSession(loaded);
+    expect(savedEcon()).toEqual(before);
+
+    play(loaded, 3);   // kalendarz i losowanie z `minute` tej wielkości nadal działają
+    expect(loaded.econ.minute).toBe(played.econ.minute + 3 * MINUTES_PER_DAY);
+    expect(nonFinite(loaded.econ)).toEqual([]);
   });
 });
 
