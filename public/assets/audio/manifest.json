@@ -1,0 +1,37 @@
+{
+  "tap": [
+    "tap-0.mp3",
+    "tap-1.mp3",
+    "tap-2.mp3",
+    "tap-3.mp3",
+    "tap-4.mp3",
+    "tap-5.mp3"
+  ],
+  "cash": [
+    "cash-0.mp3"
+  ],
+  "coins": [
+    "coins-0.mp3"
+  ],
+  "levelup": [
+    "levelup-0.mp3"
+  ],
+  "gift": [
+    "gift-0.mp3"
+  ],
+  "golden": [
+    "golden-0.mp3"
+  ],
+  "delivery": [
+    "delivery-0.mp3"
+  ],
+  "fine": [
+    "fine-0.mp3"
+  ],
+  "error": [
+    "error-0.mp3"
+  ],
+  "pop": [
+    "pop-0.mp3"
+  ]
+}
