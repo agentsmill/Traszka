@@ -309,11 +309,13 @@ describe('openStore: sklep zastępczy nigdy nie siada na cudzym zapisie', () => 
   });
 });
 
-describe('openStore: sklep wybrany na ekranie startowego ("Nowy sklep") nigdy nie nadpisuje zapisu spod tego seeda', () => {
+// Pierwsze wejście na stronę: gra otwiera wybrany sklep przez `openStore(openRequestFor(...))`. ⚙ „Nowy sklep” i „Otwórz” idą inną drogą
+// (`setSeed` w main.ts, przez `openChosen`), więc ich zasadę „nigdy `fresh`” sprawdza start.test.ts (`openChosen`), nie te testy.
+describe('openStore: sklep wybrany na ekranie startowym przy pierwszym wejściu na stronę nigdy nie nadpisuje zapisu spod tego seeda', () => {
   const newer = JSON.stringify({ schema: 5, seed: 'nowy-9', econ: { przyszłość: true } });
   const form = (seed: string) => ({ nick: 'Ala', seed, look: { outfit: 'men-suit' as const, appearanceSeed: 'kasjer-a' }, specialOutfits: true });
-  /** To samo złożenie, które robi gra: wybór z ekranu → prośba bez `fresh` → `openStore`. */
-  const openChosen = (seed: string, build: OpenRequest['build']): GameSession => {
+  /** To samo złożenie, które robi gra przy pierwszym wejściu: wybór z ekranu → prośba bez `fresh` → `openStore`. */
+  const openFirstEntry = (seed: string, build: OpenRequest['build']): GameSession => {
     const result = submitStart(form(seed));
     if (!result.ok) throw new Error('nick jest poprawny');
     nextRandom = 0;
@@ -323,7 +325,7 @@ describe('openStore: sklep wybrany na ekranie startowego ("Nowy sklep") nigdy ni
   it('zapis z nowszej wersji gry pod wpisanym seedem: sklep tymczasowy z komunikatem, zapis bajt w bajt, bez kopii', () => {
     storage.setItem(key('nowy-9'), newer);
     const { build, built } = builder();
-    const s = openChosen('Nowy-9', build);
+    const s = openFirstEntry('Nowy-9', build);
     expect(built).toEqual([s]);
     expect(s.seed).toBe('nowy-9');
     expect(s.ephemeral).toBe(true);
@@ -336,7 +338,7 @@ describe('openStore: sklep wybrany na ekranie startowego ("Nowy sklep") nigdy ni
   it('zapis, którego świata nie dało się zbudować: sklep zastępczy (tymczasowy) bez zapisywania, zapis nietknięty', () => {
     const raw = savedGame('nowy-9');
     const { build, built } = builder((x) => x.seed === 'nowy-9');
-    const s = openChosen('NOWY-9', build);
+    const s = openFirstEntry('NOWY-9', build);
     expect(built.map((x) => x.seed)).toEqual(['nowy-9', 'nowy-9', 'nowy-9', 'losowy-1']);   // zapis, układ z seeda, tymczasowy tego seeda, zastępczy
     expect(s.seed).toBe('losowy-1');
     expect(s.ephemeral).toBe(true);
@@ -351,7 +353,7 @@ describe('openStore: sklep wybrany na ekranie startowego ("Nowy sklep") nigdy ni
     const raw = JSON.stringify((JSON.parse(savedGame('nowy-9')) as { econ: object }).econ);
     storage.setItem(key('nowy-9'), raw);
     faults.generatorThrowsFor.add('nowy-9');
-    const s = openChosen('nowy-9', builder().build);
+    const s = openFirstEntry('nowy-9', builder().build);
     expect(s.ephemeral).toBe(true);
     expect(s.loadNotice).toBe(UNBUILDABLE_SAVE_NOTICE);
     expect(s.seed).not.toBe('nowy-9');
@@ -361,7 +363,7 @@ describe('openStore: sklep wybrany na ekranie startowego ("Nowy sklep") nigdy ni
 
   it('seed bez zapisu: zwykła nowa gra pod wpisanym seedem (zapisywana), cudze zapisy nietknięte', () => {
     const other = savedGame('cudzy-3');
-    const s = openChosen('Mój Sklep', builder().build);
+    const s = openFirstEntry('Mój Sklep', builder().build);
     expect(s.seed).toBe('mój sklep');
     expect(s.ephemeral).toBe(false);
     expect(s.fromSave).toBe(false);

@@ -21,7 +21,7 @@ import {
 } from '@/game/session';
 import { openStore } from '@/game/openStore';
 import { addToNetwork, claimDaily, loadMeta, needsStartScreen, partnerOf, saveMeta, startupWindow, type Meta } from '@/game/meta';
-import { initialStartForm, openRequestFor, playerOf, type StartChoice } from '@/game/start';
+import { initialStartForm, noticeAfterOpen, openChosen, openRequestFor, playerOf, type StartChoice, type StoreSwitch } from '@/game/start';
 import { rankFor } from '@/sim/economy/progress';
 import { play, buzz, setSound, setVibration, type Sfx } from '@/ui/sfx';
 import { confetti } from '@/ui/fx';
@@ -635,17 +635,25 @@ function startGame(
     },
   };
 
+  /** Przejście na sklep dla `openChosen` (start.ts): `setSeed` z argumentami z wyboru, bieżąca sesja i komunikat u góry ekranu. */
+  const storeSwitch: StoreSwitch = {
+    setSeed: (seed, fresh) => setSeed(seed, fresh),
+    session: () => session,
+    toast: (text) => ui.pushToast(text, 'info'),
+  };
+
   /**
    * Wybór gracza z ekranu „Nowy sklep”: nick i wygląd kasjera do meta (w pamięci także wtedy, gdy meta jest tylko do odczytu), a
-   * sklep otwiera `setSeed` bez `fresh`: seed z zapisem wczytuje ten zapis, a zapisu z nowszej wersji gry ani takiego, którego
-   * świata nie dało się zbudować, nic nie nadpisze. Wygląd idzie do `cashierLook` przed `setSeed`: każdy sklep (także poprzedni,
-   * odtworzony, gdy nowy się nie otworzył) stawia kasjera z tej zmiennej, więc `CashierView.setLook` na żywo nie jest tu potrzebne.
+   * sklep otwiera `openChosen` (start.ts, z testem): przez `setSeed` zawsze bez `fresh`, więc seed z zapisem wczytuje ten zapis, a
+   * zapisu z nowszej wersji gry ani takiego, którego świata nie dało się zbudować, nic nie nadpisze (`createSession`). Wygląd idzie
+   * do `cashierLook` przed `setSeed`: każdy sklep (także poprzedni, odtworzony, gdy nowy się nie otworzył) stawia kasjera z tej
+   * zmiennej, więc `CashierView.setLook` na żywo nie jest tu potrzebne.
    */
   function openChosenStore(choice: StartChoice): void {
     meta.player = playerOf(choice);
     saveMeta(meta);
     cashierLook = choice.look;
-    if (setSeed(choice.seed) && choice.notice) ui.pushToast(choice.notice, 'info');
+    openChosen(choice, storeSwitch);
   }
 
   /** Stuknięcie w scenę: paleta (rozładunek), kasa (obsługa klienta), slot (karta zakupu) albo nic (zamyka kartę). */
@@ -718,10 +726,8 @@ function startGame(
       ctx.setPreset(next);
       ui.preset.value = ctx.preset;   // bez AO renderer schodzi niżej i sam o tym informuje (traszka:notice)
     },
-    generate: (text) => {
-      const choice = chooseStore(text);   // te same zasady co na ekranie startowym: zapis pod seedem wygrywa, dziwny tekst też daje sklep
-      if (setSeed(choice.seed) && choice.notice) ui.pushToast(choice.notice, 'info');
-    },
+    // te same zasady co na ekranie startowym: zapis pod seedem wygrywa, dziwny tekst też daje sklep, a otwiera go to samo `openChosen`
+    generate: (text) => { openChosen(chooseStore(text), storeSwitch); },
     randomize: () => setSeed(randomSeed()),
   };
 
@@ -743,7 +749,8 @@ function startGame(
       return;
     }
     ui.seed.value = session.seed;
-    if (entry?.choice.notice) ui.pushToast(entry.choice.notice, 'info');
+    const chosenNotice = entry ? noticeAfterOpen(entry.choice, session) : null;   // „Wczytujemy…” tylko, gdy zapis wczytał się normalnie
+    if (chosenNotice) ui.pushToast(chosenNotice, 'info');
     if (session.loadNotice) postNotice(session.loadNotice);   // po komunikacie z ekranu: ten o zapisie zostaje na wierzchu
   }
   if (session) {

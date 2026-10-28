@@ -2,7 +2,8 @@ import { DEFAULT_CASHIER_LOOK, type CashierLook } from './cashier';
 import type { Meta, Player } from './meta';
 import { normalizeNick } from './nick';
 import type { OpenRequest } from './openStore';
-import { chooseStore, type SeedDeps } from './seeds';
+import { EXISTING_STORE_NOTICE, chooseStore, type SeedDeps } from './seeds';
+import type { GameSession } from './session';
 
 /**
  * Ekran startowy „Twój kasjer”: co z niego wychodzi. Czysta logika bez DOM i three (widok: ui/start/StartScreen.tsx), żeby
@@ -80,3 +81,41 @@ export const playerOf = (choice: StartChoice): Player => ({
  */
 export const openRequestFor = (choice: StartChoice, rest: Omit<OpenRequest, 'seed' | 'fresh'>): OpenRequest =>
   ({ ...rest, seed: choice.seed, fresh: false });
+
+/** Pola sesji, od których zależy, czy komunikat z wyboru sklepu jest prawdziwy (cała `GameSession` nie jest tu potrzebna). */
+type OpenedStore = Pick<GameSession, 'seed' | 'fromSave' | 'ephemeral' | 'loadNotice'>;
+
+/**
+ * Komunikat z wyboru sklepu (`ResolvedStore.notice`), o ile po otwarciu sklepu nadal jest prawdziwy; inaczej null. Wybór powstaje
+ * PRZED otwarciem, więc nie wie, czy zapis się wczytał: „Wczytujemy Twój sklep spod tego seeda” pada tylko wtedy, gdy sklep wstał
+ * z zapisu normalnie (nie sklep tymczasowy, nie uszkodzony zapis poszedł do kopii, nie sklep, którego nie dało się zbudować, i nie
+ * inny sklep niż wybrany), bo inaczej stałby obok „Zapis sklepu był uszkodzony” albo „odśwież stronę”. Pozostałe komunikaty (sąsiedni
+ * lokal) są prawdziwe, dopóki otworzył się właśnie wybrany sklep; obok nich mogą stać komunikaty o zapisie, bo się nie wykluczają.
+ */
+export function noticeAfterOpen(choice: Pick<StartChoice, 'seed' | 'notice'>, session: OpenedStore | null): string | null {
+  if (session === null || session.seed !== choice.seed) return null;
+  if (choice.notice === EXISTING_STORE_NOTICE && !(session.fromSave && !session.ephemeral && session.loadNotice === null)) return null;
+  return choice.notice;
+}
+
+/** Co `openChosen` potrzebuje od gry: przejście na sklep (`setSeed` w main.ts), bieżąca sesja i krótki komunikat dla gracza. */
+export interface StoreSwitch {
+  /** Przechodzi do sklepu `seed` (zapis obecnego, budowa świata nowego, powrót do poprzedniego, gdy nowy się nie otworzy); zwraca, czy się udało. */
+  setSeed(seed: string, fresh: boolean): boolean;
+  /** Sesja otwartego sklepu (po udanym `setSeed` to nowy sklep). */
+  session(): GameSession | null;
+  toast(text: string): void;
+}
+
+/**
+ * Otwiera w trakcie gry sklep wybrany na ekranie „Nowy sklep” albo wpisany w ⚙ („Otwórz”): jedno miejsce, przez które idą oba,
+ * żeby zasada R46/R47 miała test. NIGDY `fresh`: seed z zapisem wczytuje ten zapis, a zapisu z nowszej wersji gry (sklep tymczasowy)
+ * ani uszkodzonego (kopia `:broken`) nic nie nadpisze; od nowa zaczyna się tylko przez ⚙ w danym sklepie. Gdy nowy sklep się nie
+ * otworzy, `setSeed` zostawia gracza w poprzednim (ruling R55) i nie ma komunikatu. Zwraca, czy sklep się otworzył.
+ */
+export function openChosen(choice: Pick<StartChoice, 'seed' | 'notice'>, game: StoreSwitch): boolean {
+  if (!game.setSeed(choice.seed, false)) return false;
+  const notice = noticeAfterOpen(choice, game.session());
+  if (notice) game.toast(notice);
+  return true;
+}

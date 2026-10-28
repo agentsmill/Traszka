@@ -6,8 +6,12 @@ import { loadMeta, needsStartScreen, type Meta, type Player } from './meta';
 import { NICK_ERRORS } from './nick';
 import type { OpenRequest } from './openStore';
 import { EXISTING_STORE_NOTICE, NEIGHBOUR_STORE_NOTICE, entrySeed } from './seeds';
-import { createSession, lastSavedSeed, saveSession } from './session';
-import { initialStartForm, openRequestFor, playerOf, submitStart, type StartChoice, type StartForm } from './start';
+import {
+  BROKEN_SAVE_NOTICE, NEWER_SAVE_NOTICE, UNBUILDABLE_SAVE_NOTICE, createSession, lastSavedSeed, saveSession, type GameSession,
+} from './session';
+import {
+  initialStartForm, noticeAfterOpen, openChosen, openRequestFor, playerOf, submitStart, type StartChoice, type StartForm, type StoreSwitch,
+} from './start';
 
 let storage: MemoryStorage;
 beforeEach(() => {
@@ -188,5 +192,130 @@ describe('wejście na stronę (to samo złożenie, które robi main.ts): kto wid
     expect(loadMeta().player).toEqual(PLAYER);
     storage.setItem(META_KEY, JSON.stringify({ version: 2, player: { przyszlosc: true } }));
     expect(entry(null).show).toBe(false);
+  });
+});
+
+// --- „Nowy sklep” i „Otwórz” z ⚙ oraz komunikat po otwarciu sklepu -----------------------------------------------------
+
+describe('openChosen: ⚙ „Nowy sklep” i „Otwórz” (to samo przejście, które robi main.ts po wyborze sklepu)', () => {
+  const key = (seed: string): string => `traszka:save:${seed}`;
+  /** Przejście na sklep w atrapie gry: prawdziwe `createSession` na prawdziwym (pamięciowym) zapisie, z zapisem argumentów, które dostało. */
+  function game() {
+    const calls: { seed: string; fresh: boolean }[] = [];
+    const toasts: string[] = [];
+    let session: GameSession | null = null;
+    const host: StoreSwitch = {
+      setSeed: (seed, fresh) => {
+        calls.push({ seed, fresh });
+        session = createSession(seed, fresh);      // tak robi setSeed w main.ts: createSession(next, fresh, …), potem budowa świata
+        return true;
+      },
+      session: () => session,
+      toast: (text) => { toasts.push(text); },
+    };
+    return { host, calls, toasts, session: (): GameSession => session! };
+  }
+  const choose = (seed: string): StartChoice => {
+    const result = submitStart(form({ seed }));
+    if (!result.ok) throw new Error('nick jest poprawny');
+    return result.choice;
+  };
+
+  it('sklep z zapisem otwiera się z zapisu, bez `fresh`: ten sam postęp, komunikat „Wczytujemy…”, a następny zapis go nie kasuje', () => {
+    const played = createSession('kielbasa-42', true);
+    played.econ.cash = 123_456;
+    saveSession(played);
+    const { host, calls, toasts, session } = game();
+    expect(openChosen(choose('  Kielbasa-42 '), host)).toBe(true);
+    expect(calls).toEqual([{ seed: 'kielbasa-42', fresh: false }]);
+    expect(session().fromSave).toBe(true);
+    expect(session().econ.cash).toBe(123_456);
+    expect(toasts).toEqual([EXISTING_STORE_NOTICE]);
+    saveSession(session());
+    expect(createSession('kielbasa-42', false).econ.cash).toBe(123_456);
+  });
+
+  it('żaden wybór nie otwiera sklepu jako nowej gry (`fresh: false` zawsze): z zapisem, bez zapisu, sąsiedni lokal, dziwny tekst', () => {
+    saveSession(createSession('kielbasa-42', true));
+    const { host, calls } = game();
+    for (const seed of ['kielbasa-42', 'Nowy Sklep', '', '🍕', 'x'.repeat(200)]) openChosen(choose(seed), host);
+    openChosen({ seed: 'bigos-1·1', notice: NEIGHBOUR_STORE_NOTICE }, host);
+    expect(calls).toHaveLength(6);
+    expect(calls.every((c) => c.fresh === false)).toBe(true);
+  });
+
+  it('zapis z nowszej wersji gry: sklep tymczasowy, zapis bajt w bajt, a „Wczytujemy…” nie pada obok komunikatu o nowszej wersji', () => {
+    const newer = JSON.stringify({ schema: 9, seed: 'nowy-9', econ: { przyszłość: true } });
+    storage.setItem(key('nowy-9'), newer);
+    const { host, toasts, session } = game();
+    openChosen(choose('Nowy-9'), host);
+    expect(session().ephemeral).toBe(true);
+    expect(session().loadNotice).toBe(NEWER_SAVE_NOTICE);
+    saveSession(session());
+    expect(storage.getItem(key('nowy-9'))).toBe(newer);
+    expect(toasts).toEqual([]);
+  });
+
+  it('uszkodzony zapis: idzie do kopii, sklep zaczyna od nowa z komunikatem o uszkodzeniu, a „Wczytujemy…” nie pada obok niego', () => {
+    storage.setItem(key('zepsuty-1'), '{"ucięty');
+    const { host, toasts, session } = game();
+    openChosen(choose('zepsuty-1'), host);
+    expect(session().fromSave).toBe(false);
+    expect(session().loadNotice).toBe(BROKEN_SAVE_NOTICE);
+    expect(storage.getItem(`${key('zepsuty-1')}:broken`)).toBe('{"ucięty');
+    expect(toasts).toEqual([]);
+  });
+
+  it('seed bez zapisu: nowa gra bez komunikatu; sąsiedni lokal: komunikat o sąsiednim lokalu (jest prawdziwy)', () => {
+    const { host, toasts, session } = game();
+    openChosen(choose('Mój sklep'), host);
+    expect(session().seed).toBe('mój sklep');
+    expect(session().fromSave).toBe(false);
+    expect(toasts).toEqual([]);
+    openChosen({ seed: 'bigos-1·1', notice: NEIGHBOUR_STORE_NOTICE }, host);
+    expect(toasts).toEqual([NEIGHBOUR_STORE_NOTICE]);
+  });
+
+  it('sklep, który się nie otworzył (setSeed zwraca false): nie ma komunikatu i openChosen mówi, że się nie udało', () => {
+    const toasts: string[] = [];
+    const host: StoreSwitch = { setSeed: () => false, session: () => createSession('stary-1', true), toast: (t) => { toasts.push(t); } };
+    expect(openChosen({ seed: 'kielbasa-42', notice: EXISTING_STORE_NOTICE }, host)).toBe(false);
+    expect(toasts).toEqual([]);
+  });
+});
+
+describe('noticeAfterOpen: komunikat z wyboru sklepu pada tylko wtedy, gdy po otwarciu nadal jest prawdziwy', () => {
+  /** Sesja w tym stanie, w jakim zostawia ją `createSession`/`openStore` (tylko pola, które liczy komunikat). */
+  const opened = (over: Partial<Pick<GameSession, 'seed' | 'fromSave' | 'ephemeral' | 'loadNotice'>> = {}) =>
+    ({ seed: 'kielbasa-42', fromSave: true, ephemeral: false, loadNotice: null, ...over });
+  const existing = { seed: 'kielbasa-42', notice: EXISTING_STORE_NOTICE };
+  const neighbour = { seed: 'bigos-1·1', notice: NEIGHBOUR_STORE_NOTICE };
+
+  it('zapis wczytał się normalnie: „Wczytujemy Twój sklep spod tego seeda”', () => {
+    expect(noticeAfterOpen(existing, opened())).toBe(EXISTING_STORE_NOTICE);
+  });
+
+  it('nigdy razem z komunikatem o uszkodzonym zapisie, zapisie z nowszej wersji gry ani o sklepie, którego nie dało się zbudować', () => {
+    expect(noticeAfterOpen(existing, opened({ fromSave: false, loadNotice: BROKEN_SAVE_NOTICE }))).toBeNull();
+    expect(noticeAfterOpen(existing, opened({ fromSave: false, ephemeral: true, loadNotice: NEWER_SAVE_NOTICE }))).toBeNull();
+    expect(noticeAfterOpen(existing, opened({ fromSave: false, ephemeral: true, loadNotice: UNBUILDABLE_SAVE_NOTICE }))).toBeNull();
+  });
+
+  it('nie pada też wtedy, gdy otwarł się inny sklep niż wybrany (zastępczy) albo zapis się nie wczytał (nowa gra pod seedem z zapisem)', () => {
+    expect(noticeAfterOpen(existing, opened({ seed: 'losowy-1', fromSave: false, ephemeral: true }))).toBeNull();
+    expect(noticeAfterOpen(existing, opened({ fromSave: false }))).toBeNull();
+    expect(noticeAfterOpen(existing, opened({ ephemeral: true }))).toBeNull();
+    expect(noticeAfterOpen(existing, opened({ loadNotice: 'inny komunikat o zapisie' }))).toBeNull();   // każdy komunikat o zapisie wyklucza „Wczytujemy…”
+  });
+
+  it('komunikat o sąsiednim lokalu jest prawdziwy, dopóki otworzył się właśnie ten sąsiedni lokal; także obok komunikatu o zapisie', () => {
+    expect(noticeAfterOpen(neighbour, opened({ seed: 'bigos-1·1', fromSave: false }))).toBe(NEIGHBOUR_STORE_NOTICE);
+    expect(noticeAfterOpen(neighbour, opened({ seed: 'bigos-1·1', fromSave: false, loadNotice: BROKEN_SAVE_NOTICE }))).toBe(NEIGHBOUR_STORE_NOTICE);
+    expect(noticeAfterOpen(neighbour, opened({ seed: 'losowy-1', fromSave: false, ephemeral: true }))).toBeNull();   // zastępczy sklep: nie „sąsiedni”
+  });
+
+  it('bez komunikatu w wyborze albo bez sesji: nic', () => {
+    expect(noticeAfterOpen({ seed: 'x', notice: null }, opened({ seed: 'x' }))).toBeNull();
+    expect(noticeAfterOpen(existing, null)).toBeNull();
   });
 });
