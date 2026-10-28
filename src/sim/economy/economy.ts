@@ -755,9 +755,10 @@ export function scheduleGift(s: EconomyState): void {
 
 /**
  * Gracz stuka w paletę: franczyzobiorca sam rozładowuje kawałek. Bez `id` bierze najpilniejszą. `combo` to mnożnik
- * za szybkie stukanie (liczy go interfejs). Wynik: rozładowane sztuki, a przy złotej palecie także komunikat.
+ * za szybkie stukanie (liczy go wołający). Wynik: rozładowane sztuki, a przy złotej palecie także komunikat: w `text`,
+ * a gdy podano `events`, jako zdarzenie `golden` dopisane do tej tablicy (wtedy `text` zostaje pusty).
  */
-export function tapPallet(s: EconomyState, info: StoreInfo, id?: number, combo = 1): CommandResult {
+export function tapPallet(s: EconomyState, info: StoreInfo, id?: number, combo = 1, events?: EconEvent[]): CommandResult {
   const fx = effects(s, info);
   const p = id !== undefined ? s.pallets.find((x) => x.id === id)
     : [...s.pallets].sort((a, b) => Number(!!b.golden) - Number(!!a.golden) || PALLET_ORDER[a.loc] - PALLET_ORDER[b.loc] || a.since - b.since)[0];
@@ -765,9 +766,10 @@ export function tapPallet(s: EconomyState, info: StoreInfo, id?: number, combo =
   const out: EconEvent[] = [];
   const moved = unloadPallet(s, info, fx, p, TAP_ITEMS * (1 + 0.25 * level(s, 'wozek')) * combo * tapBoost(s), out);
   removeEmptyPallets(s);
+  events?.push(...out);   // premia już wypłacona, więc zdarzenie nie przepada nawet przy odmowie
   if (moved <= 1e-6) return { ok: false, text: 'Zaplecze i półki pełne: nie ma gdzie wyłożyć towaru.' };
   for (const k of [s.today, s.month, s.total]) k.taps++;
-  return { ok: true, value: moved, text: out[0]?.text };
+  return events ? { ok: true, value: moved } : { ok: true, value: moved, text: out[0]?.text };
 }
 
 /** Gracz stuka w kasę: franczyzobiorca obsługuje klienta z kolejki (z combo kilku naraz). Zwraca zarobioną marżę. */
