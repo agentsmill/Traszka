@@ -24,7 +24,7 @@ export interface Submission { key: string; nick: string; nickKey: string; run: R
 /** Typ polecenia: krótki identyfikator (jak `tapPallet`), bez spacji i znaków spoza ASCII. */
 const COMMAND_TYPE = /^[A-Za-z][A-Za-z0-9]{0,31}$/;
 /** Znaki, których nie wolno pokazać w rankingu: sterujące, formatujące (kierunek tekstu, zerowej szerokości, BOM) i separatory wierszy. Spójnik emoji (U+200D) zostaje. */
-const HIDDEN = /[\p{Cc}\p{Zl}\p{Zp}]|(?!‍)\p{Cf}/u;
+const HIDDEN = /[\p{Cc}\p{Zl}\p{Zp}]|(?!\u200d)\p{Cf}/u;
 const isWhole = (v: unknown, min: number, max: number): v is number => Number.isInteger(v) && (v as number) >= min && (v as number) <= max;
 
 /** Klucz gracza i nick wspólne dla wszystkich zgłoszeń z nickiem (bieg, sprawdzenie nicka). Brak pola to zły formularz, zły klucz to `bad-key`. */

@@ -63,6 +63,31 @@ describe('kod odzyskiwania: zapis i odczyt', () => {
     expect(parseRecoveryCode('Ｋ７ＱＸ９ＭＢＤ２ＨＦＡＰ３ＷＮ８ＲＴＥ')).toBe(KEY);
   });
 
+  it('znaki niewidoczne dopisane przy wklejaniu (spacja zerowej szerokości, znaczniki kierunku, miękki łącznik, BOM…) nic nie znaczą', () => {
+    const invisible: Record<string, string> = {
+      'U+200B spacja zerowej szerokości': '\u200b', 'U+200E znacznik lewo-prawo': '\u200e', 'U+00AD miękki łącznik': '\u00ad',
+      'U+200F znacznik prawo-lewo': '\u200f', 'U+2060 łącznik słów': '\u2060', 'U+FEFF BOM': '\ufeff', 'U+202E nadpisanie kierunku': '\u202e',
+      'U+2066 izolat kierunku': '\u2066', 'U+200D spójnik zerowej szerokości': '\u200d', 'U+061C znak arabski': '\u061c',
+    };
+    for (const [name, c] of Object.entries(invisible)) {
+      expect(parseRecoveryCode(`${c}K7QX-9MBD-2HFA-P3WN-8RTE`), `${name} na początku`).toBe(KEY);
+      expect(parseRecoveryCode(`K7QX-9MBD-2HFA-P3WN-8RTE${c}`), `${name} na końcu`).toBe(KEY);
+      expect(parseRecoveryCode(`K7QX${c}-9MBD-2HFA${c} P3WN-8${c}RTE`), `${name} w środku`).toBe(KEY);
+      expect(parseRecoveryCode(`${c}K${c}7${c}Q${c}X${c}9MBD2HFAP3WN8RTE${c}`), `${name} między znakami`).toBe(KEY);
+      expect(parseRecoveryCode(`k7qx ${c}9mbd${c}-2hfa ${c}${c} p3wn-8rte`), `${name} i małe litery`).toBe(KEY);
+    }
+    expect(parseRecoveryCode('\u200bK7QX\u200e-9MBD-\u00ad2HFA-P3WN-8RTE')).toBe(KEY);   // trzy naraz, tak jak z komunikatora
+  });
+
+  it('znaki niewidoczne nie robią z błędnego kodu poprawnego: zła długość, litera spoza alfabetu i limit długości wejścia dalej obowiązują', () => {
+    expect(parseRecoveryCode('K7QX-9MBD-2HFA-P3WN-8RT\u200b')).toBeNull();            // 19 znaków
+    expect(parseRecoveryCode('K7QX-9MBD-2HFA-P3WN-8RTE\u200b0')).toBeNull();          // 21 znaków
+    expect(parseRecoveryCode('U7QX-9MBD-2HFA-P3WN-8RTE\u200b')).toBeNull();           // U poza alfabetem
+    expect(parseRecoveryCode('K7QX-9MBD-2HFA-P3WN-8RT\u200b!')).toBeNull();
+    expect(parseRecoveryCode('\u200b'.repeat(10_000) + KEY)).toBeNull();
+    expect(parseRecoveryCode('\u200b\u200e\u00ad')).toBeNull();
+  });
+
   it('za krótki, za długi, z literą spoza alfabetu (U) albo z innym znakiem: null', () => {
     expect(parseRecoveryCode('K7QX-9MBD-2HFA-P3WN')).toBeNull();
     expect(parseRecoveryCode(KEY + '0')).toBeNull();

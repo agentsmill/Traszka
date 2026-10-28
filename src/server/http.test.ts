@@ -239,6 +239,16 @@ describe('POST /api/player: moje nicki i miejsca (po wpisaniu kodu, przed sezone
     expect(await body(await handlePlayer(post('/api/player', { key: KEY_B }), deps))).toEqual({ ok: true, nicks: [] });
   });
 
+  it('kod odzyskiwania wklejony z niewidocznymi znakami (U+200B, U+200E, U+00AD) to ten sam gracz', async () => {
+    const { deps } = setup();
+    await submit(deps, KEY_A, 'Mateusz');
+    const pasted = `\u200b${formatRecoveryCode(KEY_A).slice(0, 9)}\u200e${formatRecoveryCode(KEY_A).slice(9)}\u00ad`;
+    expect(await body(await handlePlayer(post('/api/player', { key: pasted }), deps))).toEqual({ ok: true, nicks: ['Mateusz'] });
+    const save = testBundle();
+    expect((await handleSaveUpload(post('/api/save/upload', { key: pasted, save }), deps)).status).toBe(200);
+    expect(await body(await handleSaveDownload(post('/api/save/download', { key: KEY_A }), deps))).toEqual({ ok: true, save, savedAt: NOW });
+  });
+
   it('nick spoza reguł gry: status invalid z komunikatem (wulgarny, ale poprawny nick jest wolny); zły klucz: 400', async () => {
     const { deps } = setup();
     expect((await body(await handlePlayer(post('/api/player', { key: KEY_A, nick: 'Admin' }), deps))).nick)

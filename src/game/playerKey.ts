@@ -39,17 +39,22 @@ export function generatePlayerKey(random: RandomBytes = cryptoBytes): string {
 const MAX_INPUT = 64;
 /** Spacje i łączniki dowolnego rodzaju (z klawiatury telefonu przychodzą półpauza i minus) nic nie znaczą. */
 const SEPARATORS = /[\s\-‐-―−]/g;
+/**
+ * Znaki formatujące (kategoria Cf: spacja zerowej szerokości U+200B, znaczniki kierunku tekstu U+200E, miękki łącznik U+00AD, BOM…).
+ * Komunikatory i notatniki dopisują je do wklejonego tekstu, a w kodzie nic nie znaczą, więc znikają przed liczeniem znaków.
+ */
+const FORMAT_CHARS = /\p{Cf}/gu;
 /** Znaki podobne z alfabetu Crockforda: O to zero, I i L to jedynka. */
 const LOOKALIKE: Readonly<Record<string, string>> = { O: '0', I: '1', L: '1' };
 
 /**
  * Kod odzyskiwania wpisany przez gracza (albo klucz z zapisu, albo pole z żądania do serwera) → klucz w postaci kanonicznej albo
- * null. Wielkość liter, spacje i łączniki nie mają znaczenia, znaki pełnej szerokości przechodzą przez NFKC, a O, I i L
- * czytamy jak 0, 1 i 1. Litera spoza alfabetu (U) albo zła długość to null.
+ * null. Wielkość liter, spacje i łączniki nie mają znaczenia, znaki pełnej szerokości przechodzą przez NFKC, znaki niewidoczne
+ * dopisane przy wklejaniu (kategoria Cf) znikają, a O, I i L czytamy jak 0, 1 i 1. Litera spoza alfabetu (U) albo zła długość to null.
  */
 export function parseRecoveryCode(raw: unknown): string | null {
   if (typeof raw !== 'string' || raw.length > MAX_INPUT) return null;
-  const chars = Array.from(raw.normalize('NFKC').replace(SEPARATORS, '').toUpperCase(), (c) => LOOKALIKE[c] ?? c);
+  const chars = Array.from(raw.normalize('NFKC').replace(FORMAT_CHARS, '').replace(SEPARATORS, '').toUpperCase(), (c) => LOOKALIKE[c] ?? c);
   if (chars.length !== KEY_LENGTH || !chars.every((c) => CROCKFORD.includes(c))) return null;
   return chars.join('');
 }

@@ -15,6 +15,9 @@ export type VerifyRun = (run: RunRecord) => VerifyResult | Promise<VerifyResult>
 /** Domyślny sędzia, zanim strumień A dostarczy `replayRun`. */
 export const replayNotAvailable: VerifyRun = () => ({ ok: false, reason: 'replay-unavailable' });
 
+/** Tekst do logu: jedna linia i najwyżej 200 znaków (treść błędu bywa złożona z tekstu zgłoszonego biegu). */
+const oneLine = (text: string): string => text.replace(/\s+/g, ' ').trim().slice(0, 200);
+
 /** Co sędzia musi wiedzieć o symulacji: odtworzenie biegu, koniec sezonu i wynik. */
 export interface SeasonJudge<S> {
   replay: (run: RunRecord, untilMinute: number) => S;
@@ -24,15 +27,20 @@ export interface SeasonJudge<S> {
 
 /**
  * Sędzia z odtwarzaniem: bieg odtworzony do końca sezonu; wyjątek przy odtwarzaniu (nieznane polecenie, zepsuty dziennik) albo
- * wynik, który nie jest liczbą, to `replay-failed`. Bieg zakończony wypowiedzeniem umowy przed końcem listopada liczy się z raportami,
- * które zdążyły powstać (decyzja właściciela gry, 2026-10-28).
+ * wynik, który nie jest liczbą, to `replay-failed`. Wyjątek idzie też do logu (`[ranking] replay`, nazwa i treść błędu), żeby
+ * błąd sędziego przy uczciwym biegu nie znikał bez śladu. Bieg zakończony wypowiedzeniem umowy przed końcem listopada liczy się
+ * z raportami, które zdążyły powstać (decyzja właściciela gry, 2026-10-28).
  */
 export function makeReplayVerifier<S>(judge: SeasonJudge<S>): VerifyRun {
   return (run) => {
     let state: S;
     try {
       state = judge.replay(run, judge.endMinute);
-    } catch {
+    } catch (err) {
+      // Ślad w logu Vercela, żeby uczciwy bieg z błędem sędziego (różnica silników, błąd w applyCommand) nie znikał bez wieści.
+      // Tylko nazwa i treść błędu, w jednej linii i krótko: bez klucza gracza i bez dziennika poleceń.
+      const [name, message] = err instanceof Error ? [err.name, err.message] : ['nieznany błąd', ''];
+      console.error('[ranking] replay', oneLine(name), oneLine(message));
       return { ok: false, reason: 'replay-failed' };
     }
     const score = judge.score(state);

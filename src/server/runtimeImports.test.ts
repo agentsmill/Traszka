@@ -72,3 +72,30 @@ describe('funkcje serwerowe: importy, które Vercel uruchomi', () => {
     expect(reachable).toEqual(Array.from({ length: SEED_NEIGHBOURS }, (_, i) => i + 1));
   });
 });
+
+describe('kod serwera i klucza gracza: znaki niewidoczne tylko jako zapis \\uXXXX, nigdy dosłownie', () => {
+  // Dosłowny niewidoczny znak w wyrażeniu regularnym ginie przy kopiowaniu i edycji i po cichu zmienia jego sens: z `(?!<ZWJ>)\p{Cf}`
+  // zostaje `(?!)\p{Cf}` i serwer wpuszcza wszystkie znaki formatujące (dosłowny U+200D był w `runs.ts`). Zapis \u200d tego nie traci.
+  const INVISIBLE = /[\u00ad\u061c\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff\u{e0000}-\u{e007f}]/u;
+
+  it('api/**, src/server/**, src/ui/ranking/** i playerKey.ts (bez testów) nie zawierają dosłownych znaków niewidocznych', () => {
+    const sources = [
+      ...files(join(ROOT, 'api')), ...files(join(ROOT, 'src/server')), ...files(join(ROOT, 'src/ui/ranking')),
+      join(ROOT, 'src/game/playerKey.ts'),
+    ];
+    expect(sources.length).toBeGreaterThan(20);
+    const found: string[] = [];
+    for (const file of sources) {
+      readFileSync(file, 'utf8').split('\n').forEach((line, i) => {
+        const m = INVISIBLE.exec(line);
+        if (m) found.push(`${relative(ROOT, file)}:${i + 1} U+${m[0].codePointAt(0)!.toString(16).toUpperCase().padStart(4, '0')}`);
+      });
+    }
+    expect(found).toEqual([]);
+  });
+
+  it('wykrywacz łapie wstawiony znak (inaczej test powyżej niczego nie pilnuje)', () => {
+    for (const c of ['\u200d', '\u200b', '\u00ad', '\ufeff', '\u202e', '\u{e0067}']) expect(INVISIBLE.test(`const x = /(?!${c})/u;`), c.codePointAt(0)!.toString(16)).toBe(true);
+    expect(INVISIBLE.test('const x = /(?!\\u200d)\\p{Cf}/u;')).toBe(false);
+  });
+});

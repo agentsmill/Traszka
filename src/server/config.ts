@@ -73,6 +73,9 @@ export const RUN_MAX_SEED_CHARS = 48;
 export const SMALL_BODY_BYTES = 4_096;
 export const SAVE_BODY_BYTES = SAVE_MAX_BYTES * 2 + 1_024;
 
+/** Ile najwyżej czeka się na odpowiedź Upstash (ms): zawieszona baza nie ma trzymać funkcji do limitu platformy. */
+export const UPSTASH_TIMEOUT_MS = 5_000;
+
 /** Okno limitu i liczba zgłoszeń w oknie: na klucz gracza i na adres (adres jako skrót z solą, która ginie razem z oknem). */
 export interface RateLimit { window: number; perKey: number; perAddress: number }
 export type RateAction = 'runs' | 'player' | 'saveUp' | 'saveDown';

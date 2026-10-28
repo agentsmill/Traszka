@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { UPSTASH_TIMEOUT_MS } from './config';
 import { RedisError } from './redis';
 import { createUpstash } from './upstash';
 
@@ -53,5 +54,52 @@ describe('klient Upstash REST (fetch, bez zależności)', () => {
       expect(String((err as Error).message)).not.toContain(TOKEN);
       expect(String((err as Error).message)).not.toContain('upstash.test');
     }
+  });
+
+  it('limit czasu: zapytanie dostaje sygnał z 5 s (AbortSignal.timeout), a konfiguracja mówi dokładnie 5000 ms', async () => {
+    expect(UPSTASH_TIMEOUT_MS).toBe(5000);
+    const timeout = vi.spyOn(AbortSignal, 'timeout');
+    const { fetchFn, calls } = fakeFetch(() => Response.json([{ result: 'OK' }]));
+    await createUpstash({ url: URL_, token: TOKEN, fetch: fetchFn }).exec([['SET', 'a', '1']]);
+    expect(timeout).toHaveBeenCalledWith(5000);
+    const signal = calls[0]!.init.signal;
+    expect(signal).toBeInstanceOf(AbortSignal);
+    expect(signal!.aborted).toBe(false);
+    timeout.mockRestore();
+  });
+
+  it('zawieszona baza: po limicie czasu RedisError „przekroczono czas”, bez adresu i tokenu w komunikacie', async () => {
+    const hang = ((_input: RequestInfo | URL, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(init.signal!.reason));
+    })) as typeof fetch;
+    const started = Date.now();
+    const err = await createUpstash({ url: URL_, token: TOKEN, fetch: hang, timeoutMs: 30 }).exec([['GET', 'a']]).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(RedisError);
+    expect((err as Error).message).toBe('Upstash: przekroczono czas oczekiwania');
+    expect(Date.now() - started).toBeLessThan(2000);
+    expect((err as Error).message).not.toContain(TOKEN);
+    expect((err as Error).message).not.toContain('upstash.test');
+  });
+
+  it('odpowiedź, której treść wisi po nagłówkach, też kończy się limitem czasu (sygnał obejmuje odczyt)', async () => {
+    const stalledBody = ((_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          init?.signal?.addEventListener('abort', () => controller.error(init.signal!.reason));
+        },
+      });
+      return Promise.resolve(new Response(body, { status: 200 }));
+    }) as typeof fetch;
+    const err = await createUpstash({ url: URL_, token: TOKEN, fetch: stalledBody, timeoutMs: 30 }).exec([['GET', 'a']]).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(RedisError);
+    expect((err as Error).message).toBe('Upstash: przekroczono czas oczekiwania');
+  });
+
+  it('szybka odpowiedź w limicie czasu przechodzi, a zwykły błąd sieci to nadal „brak połączenia”', async () => {
+    const { fetchFn } = fakeFetch(() => Response.json([{ result: 'OK' }]));
+    expect(await createUpstash({ url: URL_, token: TOKEN, fetch: fetchFn, timeoutMs: 1000 }).exec([['GET', 'a']])).toEqual(['OK']);
+    const offline = (async () => { throw new TypeError('fetch failed'); }) as typeof fetch;
+    const err = await createUpstash({ url: URL_, token: TOKEN, fetch: offline, timeoutMs: 1000 }).exec([['GET', 'a']]).catch((e: unknown) => e);
+    expect((err as Error).message).toBe('Upstash: brak połączenia');
   });
 });
