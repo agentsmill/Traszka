@@ -1,4 +1,6 @@
+import { MINUTES_PER_DAY } from '@/sim/economy/catalog';
 import type { EconomyState } from '@/sim/economy/economy';
+import { LIMITS } from '@/sim/economy/sanitize';
 import { isRec, num, whole } from '@/sim/guards';
 
 /**
@@ -33,21 +35,33 @@ export function loadMeta(): Meta {
   }
 }
 
-/** Meta z zapisu bez zaufania (jak zapis sklepu): zły typ pola daje wartość domyślną, uszkodzony wpis sieci wypada. */
+/** Najdalszy czas, jaki rozumie `Date` (ms): `lastSeen` spoza tego zakresu to nie data. */
+const MAX_TIME_MS = 8.64e15;
+
+/**
+ * Meta z zapisu bez zaufania (jak zapis sklepu): zły typ pola daje wartość domyślną, uszkodzony wpis sieci wypada, a liczby
+ * mają te same granice co stan sklepu (`LIMITS`): dwa wpisy sieci po 1e308 zł dochodu dawały `Infinity` w kasie sklepu.
+ */
 export function sanitizeMeta(data: unknown): Meta {
   const d = defaults();
   if (!isRec(data) || data.version !== 1) return d;
-  const daily = isRec(data.daily) && typeof data.daily.date === 'string' ? { date: data.daily.date, streak: whole(data.daily.streak, 0, 0) } : d.daily;
+  const daily = isRec(data.daily) && typeof data.daily.date === 'string'
+    ? { date: data.daily.date, streak: whole(data.daily.streak, 0, 0, LIMITS.minute / MINUTES_PER_DAY) } : d.daily;
   const network = Array.isArray(data.network) ? data.network.flatMap((n): NetworkStore[] => (
     isRec(n) && typeof n.seed === 'string' && Number.isFinite(n.income) && Number.isFinite(n.level) && Number.isFinite(n.margin)
-      ? [{ seed: n.seed, income: n.income as number, level: n.level as number, margin: n.margin as number }] : []
-  )) : d.network;
+      ? [{
+        seed: n.seed,
+        income: num(n.income, 0, 0, LIMITS.money),
+        level: whole(n.level, 1, 1, LIMITS.level),
+        margin: num(n.margin, 0, 0, LIMITS.money),
+      }] : []
+  )).slice(0, LIMITS.network) : d.network;
   return {
     version: 1,
-    partnerPoints: num(data.partnerPoints, 0, 0),
+    partnerPoints: num(data.partnerPoints, 0, 0, LIMITS.partnerPoints),
     network,
     daily,
-    lastSeen: num(data.lastSeen, 0, 0),
+    lastSeen: num(data.lastSeen, 0, 0, MAX_TIME_MS),
     sound: typeof data.sound === 'boolean' ? data.sound : d.sound,
     vibration: typeof data.vibration === 'boolean' ? data.vibration : d.vibration,
   };

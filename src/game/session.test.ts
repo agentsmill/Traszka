@@ -1,7 +1,10 @@
 import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { MINUTES_PER_DAY, OPEN_FROM } from '@/sim/economy/catalog';
+import { CAT_INFO, CATS, CREDIT_LIMIT, MINUTES_PER_DAY, OPEN_FROM, PALLET_ITEMS } from '@/sim/economy/catalog';
 import { buyEquipment, buyUpgrade, startRemont, stepMinute, tapPallet, type EconEvent, type EconomyState } from '@/sim/economy/economy';
+import { LIMITS } from '@/sim/economy/sanitize';
+import { computeStoreInfo } from '@/sim/economy/storeInfo';
+import { REMONTS } from '@/sim/economy/upgrades';
 import { GENERATOR_VERSION, generateStore } from '@/sim/store/generateStore';
 import { MemoryStorage } from './memoryStorage';
 import {
@@ -345,5 +348,51 @@ describe('zamknięty sklep nie wraca do zapisów (otwarcie kolejnej Traszki)', (
     play(old, 1);
     saveSession(old);
     expect(createSession(BLOK).econ).toEqual(old.econ);
+  });
+});
+
+describe('granice wartości z zapisu (LIMITS) nie schodzą poniżej tego, co potrafi gra', () => {
+  const seeds = [BLOK, PAWILON, 'bench', 'kiełbasa-12', ...Array.from({ length: 20 }, (_, i) => `granice-${i}`)];
+  const infos = seeds.flatMap((seed) => REMONTS.map((r) => computeStoreInfo(layoutFor(seed, r.level))).concat(computeStoreInfo(layoutFor(seed, 0))));
+
+  it('miejsca na palety, sloty sprzętu i zapasy największych sklepów z generatora mieszczą się z zapasem', () => {
+    const pallets = Math.max(...infos.map((i) => i.spots.sidewalk.length + i.spots.floor.length + i.spots.backroom.length));
+    const equipment = Math.max(...infos.map((i) => i.slots.reduce((n, slot) => n + slot.capacity, 0)));
+    const shelf = Math.max(...infos.flatMap((i) => CATS.map((c) => i.shelfCap[c])));
+    const backroom = Math.max(...infos.map((i) => i.backroomCap)) * 2.5;   // regały magazynowe na maksymalnym poziomie: +150%
+    expect(pallets * 2).toBeLessThanOrEqual(LIMITS.pallets);
+    expect(equipment * 4).toBeLessThanOrEqual(LIMITS.equipment);
+    expect(Math.max(shelf, backroom) * 4).toBeLessThanOrEqual(LIMITS.stockPerCat);
+  });
+
+  it('największe zamówienie: limit kredytu na ostatnim remoncie mieści mniej palet niż granica dostawy', () => {
+    const avgPrice = CATS.reduce((n, c) => n + CAT_INFO[c].price * CAT_INFO[c].basket, 0);
+    const room = Math.floor((CREDIT_LIMIT * (1 + 0.5 * REMONTS.length)) / (PALLET_ITEMS * avgPrice));
+    expect(room).toBeLessThanOrEqual(LIMITS.orderPallets);
+    expect(30).toBeLessThanOrEqual(LIMITS.orderPallets);   // zamówienie ręczne
+  });
+
+  it('w długiej grze największego sklepu kolejka, dostawy w drodze i palety nie sięgają granic', () => {
+    const s = createSession(BLOK, true);
+    s.econ.cash = 5e6;
+    s.econ.level = 30;
+    s.econ.remontLevel = 3;
+    s.econ.upgrades.dostawy2 = 1;
+    s.econ.order = { auto: false, manual: 30 };
+    s.layout = layoutFor(BLOK, 3);
+    s.info = computeStoreInfo(s.layout);
+    const most = { queue: 0, deliveries: 0, pallets: 0, xp: 0 };
+    const events: EconEvent[] = [];
+    for (let i = 0; i < 40 * MINUTES_PER_DAY; i++) {
+      stepMinute(s.econ, s.info, events);
+      most.queue = Math.max(most.queue, s.econ.queue);
+      most.deliveries = Math.max(most.deliveries, s.econ.deliveries.length);
+      most.pallets = Math.max(most.pallets, s.econ.pallets.length);
+    }
+    expect(most.deliveries).toBeGreaterThan(0);
+    expect(most.pallets).toBeGreaterThan(5);
+    expect(most.queue * 4).toBeLessThanOrEqual(LIMITS.queue);
+    expect(most.deliveries * 2).toBeLessThanOrEqual(LIMITS.deliveries);
+    expect(most.pallets * 2).toBeLessThanOrEqual(LIMITS.pallets);
   });
 });

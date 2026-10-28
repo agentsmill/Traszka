@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { generateStore } from '@/sim/store/generateStore';
-import { createEconomy } from '@/sim/economy/economy';
+import { MINUTES_PER_DAY } from '@/sim/economy/catalog';
+import { createEconomy, stepMinute, type EconEvent } from '@/sim/economy/economy';
 import { computeStoreInfo } from '@/sim/economy/storeInfo';
 import { MemoryStorage } from './memoryStorage';
 import {
@@ -166,5 +167,53 @@ describe('meta z uszkodzonego zapisu', () => {
     const good: Meta = { version: 1, partnerPoints: 4, network: [{ seed: 'a', income: 300, level: 12, margin: 90_000 }], daily: { date: '2026-10-27', streak: 3 }, lastSeen: 12345, sound: false, vibration: true };
     expect(load(good)).toEqual(good);
     expect(load({ ...good, network: [...good.network, { seed: 'b', income: null }] }).network).toEqual(good.network);
+  });
+});
+
+describe('meta ze skrajnymi liczbami', () => {
+  const load = (blob: unknown): Meta => {
+    storage.setItem(META_KEY, JSON.stringify(blob));
+    return loadMeta();
+  };
+  const entry = (seed: string, income: number, level: number, margin: number) => ({ seed, income, level, margin });
+
+  it('punkty, dochód sieci, poziom, seria i czas wyjścia mają granice (nic nie przechodzi w nieskończoność)', () => {
+    const m = load({
+      version: 1, partnerPoints: 1e308, daily: { date: '2026-10-27', streak: 1e308 }, lastSeen: 1e308, sound: true, vibration: true,
+      network: [entry('a', 1e308, 1e308, 1e308), entry('b', 1e308, 7, 5), entry('c', -1e308, -3, -9)],
+    });
+    expect(m.partnerPoints).toBe(1e7);
+    expect(m.daily.streak).toBeLessThanOrEqual(366_000);
+    expect(m.lastSeen).toBeLessThanOrEqual(8.64e15);
+    expect(m.network.map((n) => n.income)).toEqual([1e12, 1e12, 0]);
+    expect(m.network.map((n) => n.level)).toEqual([1000, 7, 1]);
+    expect(m.network.map((n) => n.margin)).toEqual([1e12, 5, 0]);
+    const p = partnerOf(m);
+    expect(Number.isFinite(p.networkIncome)).toBe(true);
+    expect(p.networkIncome).toBeLessThanOrEqual(3e12);
+  });
+
+  it('sieć ma najwyżej tysiąc sklepów', () => {
+    const m = load({ version: 1, partnerPoints: 1, network: Array.from({ length: 5000 }, (_, i) => entry(`s${i}`, 1, 1, 1)), daily: { date: '', streak: 0 }, lastSeen: 0, sound: true, vibration: true });
+    expect(m.network).toHaveLength(1000);
+  });
+
+  it('nowy sklep z taką premią gra się normalnie: trzy dni bez NaN', () => {
+    const m = load({
+      version: 1, partnerPoints: 1e308, lastSeen: 0, daily: { date: '', streak: 0 }, sound: true, vibration: true,
+      network: [entry('a', 1e308, 1, 1), entry('b', 1e308, 1, 1)],
+    });
+    const s = createSession('sklep-z-siecia', true, partnerOf(m));
+    const events: EconEvent[] = [];
+    for (let i = 0; i < 3 * MINUTES_PER_DAY; i++) stepMinute(s.econ, s.info, events);
+    for (const v of [s.econ.cash, s.econ.reputation, s.econ.queue, s.econ.total.margin, s.econ.xp]) expect(Number.isFinite(v)).toBe(true);
+  });
+
+  it('poprawna meta z dużymi, ale prawdopodobnymi liczbami wraca bez zmian', () => {
+    const good: Meta = {
+      version: 1, partnerPoints: 5000, network: [entry('a', 90_000, 60, 5e9)], daily: { date: '2026-10-27', streak: 400 },
+      lastSeen: Date.UTC(2026, 9, 27), sound: true, vibration: false,
+    };
+    expect(load(good)).toEqual(good);
   });
 });
