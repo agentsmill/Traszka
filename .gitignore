@@ -5,3 +5,4 @@ assets-src
 .DS_Store
 .playwright-mcp/
 .claude/launch.json
+.claude/worktrees/

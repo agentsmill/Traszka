@@ -326,10 +326,12 @@ describe('paczka modular: stroje, klipy, tabela OUTFIT_PAINT', () => {
     }
   }, 60_000);
 
-  it('plik każdego stroju ma budżet trójkątów z potoku: 3 tys., a kosmonauta, król i poszukiwacz przygód (m) 5 tys.', async () => {
+  it('plik każdego stroju ma budżet trójkątów z potoku: 3 tys., król i poszukiwacz przygód (m) 5 tys., kosmonauta 8 tys.', async () => {
     // Uproszczenie permissive schodzi dokładnie do celu zadania. „Sloppy” zostawiał stroje zwykłe na 2,7–2,9 tys. trójkątów i z dziurami
-    // (kamizelka i kask robotnika, spodnie robotnicy), a kosmonaucie przy 3 tys. rwał się pancerz, królowi i poszukiwaczowi znikały oczy.
-    const target = (file: OutfitFile): number => (['special-men-spacesuit', 'special-men-king', 'special-men-adventurer'].includes(file) ? 5000 : 3000);
+    // (kamizelka i kask robotnika, spodnie robotnicy), królowi i poszukiwaczowi przy 3 tys. znikały oczy, a kosmonaucie przy 3 tys. rwał
+    // się pancerz, przy 5 tys. zostawały cienkie kremowe szczeliny wzdłuż szwów płyt (R44: 1,5 tys. px dziur w 16 widokach, przy 8 tys. 17).
+    const budget: Partial<Record<OutfitFile, number>> = { 'special-men-spacesuit': 8000, 'special-men-king': 5000, 'special-men-adventurer': 5000 };
+    const target = (file: OutfitFile): number => budget[file] ?? 3000;
     for (const url of urls) {
       const file = outfitName(url);
       let triangles = 0;

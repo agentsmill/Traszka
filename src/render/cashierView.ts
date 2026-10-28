@@ -26,12 +26,12 @@ export function releaseCharacter(character: CharacterInstance): void {
 
 /**
  * Czy `createWithOutfit` zbuduje ten strój od razu: zwykły zawsze, specjalny tylko, gdy fabryka już go ma (po `ensureOutfit`).
- * Wspólne dla kasjera w sklepie i podglądu na ekranie startowego: czekają na `ensureOutfit` tylko wtedy, gdy trzeba.
+ * Wspólne dla kasjera w sklepie i podglądu na ekranie startowym: czekają na `ensureOutfit` tylko wtedy, gdy trzeba.
  */
 export const isOutfitReady = (factory: CharacterFactory, outfit: OutfitFile): boolean => !isSpecialOutfit(outfit) || factory.hasOutfit(outfit);
 
 /**
- * Postać kasjera w danym wyglądzie: jedna reguła dla sklepu (`CashierView`) i dla podglądu na ekranie startowego, więc gracz
+ * Postać kasjera w danym wyglądzie: jedna reguła dla sklepu (`CashierView`) i dla podglądu na ekranie startowym, więc gracz
  * widzi w podglądzie dokładnie tego kasjera, który stanie za ladą. O mundurze decyduje strój, który faktycznie powstał, nie
  * poproszony: strój specjalny zostaje sobą, a każdy inny (zwykły podstawiony przez fabrykę, gdy plik stroju specjalnego się nie
  * wczytał, albo postać zastępcza) to personel w brand.green, więc budowany jest jeszcze raz z mundurem, a próba bez munduru jest

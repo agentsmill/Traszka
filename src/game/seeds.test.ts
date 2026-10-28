@@ -3,10 +3,10 @@ import { createRng } from '@/sim/rng';
 import { generateStore } from '@/sim/store/generateStore';
 import { MemoryStorage } from './memoryStorage';
 import {
-  EXISTING_STORE_NOTICE, NEIGHBOUR_STORE_NOTICE, SEED_MAX, chooseStore, entrySeed, freeSeed, normalizeSeed, resolveStore,
+  EXISTING_STORE_NOTICE, NEIGHBOUR_STORE_NOTICE, SEED_MAX, chooseStore, clipSeedInput, entrySeed, freeSeed, normalizeSeed, resolveStore,
 } from './seeds';
 import { randomSeed } from './seedWords';
-import { BROKEN_SAVE_NOTICE, NEWER_SAVE_NOTICE, createSession, hasStoredSave, saveSession } from './session';
+import { BROKEN_SAVE_NOTICE, NEWER_SAVE_NOTICE, createSession, hasStoredSave, lastSavedSeed, saveSession } from './session';
 
 /** Losowanie, które oddaje kolejne seedy z listy (po ostatnim ciągle ostatni) i liczy wywołania. */
 function draws(seeds: string[]): { draw: () => string; count: () => number } {
@@ -139,17 +139,31 @@ describe('normalizeSeed: przycięcie, małe litery, zwinięte spacje, najwyżej 
     for (let i = 0; i < 20; i++) expect(normalizeSeed('')).toMatch(/^[a-z]+-[1-9]\d{2}$/);
   });
 
-  it('znaki sterujące znikają z tekstu, a litery z akcentem składają się (NFC), więc ten sam napis to ten sam seed', () => {
+  it('znaki sterujące znikają z tekstu', () => {
     expect(normalizeSeed('ab\u0000c', draw)).toBe('abc');
-    expect(normalizeSeed('zȧ́', draw)).toBe(normalizeSeed('zȧ́', draw));
-    expect(normalizeSeed('ą', draw)).toBe('ą');       // „a” + ogonek = „ą”
-    expect(normalizeSeed('ą', draw)).toBe(normalizeSeed('ą', draw));
+    expect(normalizeSeed('a\u0007b\u001fc\u007fd', draw)).toBe('abcd');
   });
 
-  it('idempotentny: ponowna normalizacja niczego nie zmienia (także dla dziwnych tekstów)', () => {
+  it('litery z akcentem składają się (NFC), więc ten sam napis w dwóch zapisach to ten sam seed', () => {
+    // rozłożone („a” + kropka nad + ostry) po lewej, złożone („ȧ” U+0227 + ostry) po prawej: w teście nie ma żadnego NFC
+    expect(normalizeSeed('za\u0307\u0301', draw)).toBe('z\u0227\u0301');
+    expect(normalizeSeed('a\u0328', draw)).toBe('\u0105');                  // „a” + ogonek = „ą” (U+0105)
+    expect(normalizeSeed('A\u0328', draw)).toBe('\u0105');                  // wielka litera po małej też składa się
+    expect(normalizeSeed('e\u0301', draw)).toBe('\u00e9');                  // „é”
+  });
+
+  it('znaki łączące w innej kolejności to ten sam napis po NFC (porządek kanoniczny), więc ten sam seed', () => {
+    const lowerFirst = normalizeSeed('a\u0323\u0307', draw);   // kropka pod, potem kropka nad
+    const upperFirst = normalizeSeed('a\u0307\u0323', draw);   // kropka nad, potem kropka pod: NFC ustawia je tak samo
+    expect(upperFirst).toBe(lowerFirst);
+    expect(lowerFirst).toBe('\u1ea1\u0307');
+  });
+
+  it('idempotentny: ponowna normalizacja niczego nie zmienia (także dla dziwnych tekstów, niewidocznych znaków i spójników emoji)', () => {
     const rng = createRng('normalizeSeed-idempotent');
-    const alphabet = ['a', 'B', ' ', '\t', 'Ż', '🍕', '\u0000', '-', '9', '́', ' ', 'ß', 'İ'];
-    const samples = ['', '  ', 'Ala ma kota', '🍕'.repeat(60), 'x'.repeat(200), ...Array.from({ length: 200 }, () =>
+    const alphabet = ['a', 'B', ' ', '\t', 'Ż', '🍕', '\u0000', '-', '9', '\u0301', '\u00a0', 'ß', 'İ', '\u200b', '\u200d', '\u202e', '\ufeff', '👩', '💻', '\ufe0f', '🏽'];
+    const cuts = ['a'.repeat(38) + '👩\u200d💻', 'a'.repeat(39) + '👩\u200d💻', 'a'.repeat(39) + '\u200d', 'a'.repeat(40) + '\u200d💻', '👩\u200d'.repeat(30)];
+    const samples = ['', '  ', 'Ala ma kota', '🍕'.repeat(60), 'x'.repeat(200), ...cuts, ...Array.from({ length: 300 }, () =>
       Array.from({ length: rng.int(0, 90) }, () => rng.pick(alphabet)).join(''))];
     for (const raw of samples) {
       const once = normalizeSeed(raw, draw);
@@ -157,7 +171,89 @@ describe('normalizeSeed: przycięcie, małe litery, zwinięte spacje, najwyżej 
       expect(hasLoneSurrogate(once)).toBe(false);
       expect(codePoints(once)).toBeLessThanOrEqual(SEED_MAX);
       expect(once.length).toBeGreaterThan(0);
+      expect(once.startsWith('\u200d') || once.endsWith('\u200d'), `spójnik na brzegu: ${JSON.stringify(raw)}`).toBe(false);
+      expect(/[\u200b\u200c\u200e\u200f\u202a-\u202e\u2060\u2066-\u2069\ufeff]/.test(once), `niewidoczny znak: ${JSON.stringify(raw)}`).toBe(false);
     }
+  });
+});
+
+/** Znaki, które nic nie rysują: spacje zerowej szerokości, łączniki, BOM i sterowanie kierunkiem tekstu (seed trafia do rankingu). */
+const INVISIBLE = [
+  ['U+200B spacja zerowej szerokości', '\u200b'], ['U+200C łącznik zerowej szerokości (ZWNJ)', '\u200c'], ['U+200D spójnik zerowej szerokości (ZWJ)', '\u200d'],
+  ['U+2060 łącznik słów', '\u2060'], ['U+FEFF BOM', '\ufeff'],
+  ['U+200E znak lewo-prawo', '\u200e'], ['U+200F znak prawo-lewo', '\u200f'],
+  ['U+202A LRE', '\u202a'], ['U+202B RLE', '\u202b'], ['U+202C PDF', '\u202c'], ['U+202D LRO', '\u202d'], ['U+202E RLO (nadpisanie kierunku)', '\u202e'],
+  ['U+2066 LRI', '\u2066'], ['U+2067 RLI', '\u2067'], ['U+2068 FSI', '\u2068'], ['U+2069 PDI', '\u2069'],
+] as const;
+
+describe('normalizeSeed: znaki niewidoczne (zerowej szerokości i sterujące kierunkiem tekstu) nie trafiają do seeda', () => {
+  const draw = (): string => 'losowy-777';
+
+  it.each(INVISIBLE)('%s znika z tekstu: w środku, na brzegach i obok spacji', (_name, c) => {
+    expect(normalizeSeed(`ab${c}cd`, draw)).toBe('abcd');
+    expect(normalizeSeed(`${c}ab${c}`, draw)).toBe('ab');
+    expect(normalizeSeed(`a ${c} b`, draw)).toBe('a b');            // spacja, niewidoczny, spacja: jedna spacja
+    expect(normalizeSeed(`ab${c}${c}${c}cd`, draw)).toBe('abcd');
+  });
+
+  it.each(INVISIBLE)('seed złożony wyłącznie z %s to seed losowy, a nie niewidzialny', (_name, c) => {
+    expect(normalizeSeed(c, draw)).toBe('losowy-777');
+    expect(normalizeSeed(c.repeat(40), draw)).toBe('losowy-777');
+    expect(normalizeSeed(` ${c} `, draw)).toBe('losowy-777');
+  });
+
+  it('nadpisanie kierunku tekstu nie trafia do seeda (do adresu i pola w ⚙): wynik to czysty tekst', () => {
+    const seed = normalizeSeed('\u202ekcab\u202c-1', draw);
+    expect(seed).toBe('kcab-1');
+    expect(/[\u200b-\u200f\u202a-\u202e\u2060\u2066-\u2069\ufeff]/.test(seed)).toBe(false);
+  });
+
+  it('spójnik ZWJ zostaje tylko tam, gdzie skleja emoji (rodzina, zawód), a luzem, między literami albo na brzegu znika', () => {
+    expect(normalizeSeed('👨\u200d👩\u200d👧', draw)).toBe('👨\u200d👩\u200d👧');         // rodzina to jedno emoji
+    expect(normalizeSeed('👩\u200d💻', draw)).toBe('👩\u200d💻');                        // programistka
+    expect(normalizeSeed('👩🏽\u200d💻', draw)).toBe('👩🏽\u200d💻');                      // z odcieniem skóry
+    expect(normalizeSeed('❤\ufe0f\u200d🔥', draw)).toBe('❤\ufe0f\u200d🔥');            // z selektorem wariantu przed spójnikiem
+    expect(normalizeSeed('a\u200d👩', draw)).toBe('a👩');                               // litera, ZWJ, emoji: nic nie skleja
+    expect(normalizeSeed('👩\u200da', draw)).toBe('👩a');
+    expect(normalizeSeed('👩\u200d', draw)).toBe('👩');
+    expect(normalizeSeed('\u200d👩', draw)).toBe('👩');
+    expect(normalizeSeed('👩\u200d\u200d💻', draw)).toBe('👩💻');                         // dwa spójniki z rzędu nie skleją niczego
+  });
+
+  it('inne znaki formatujące, których gra nie wymienia, zostają (np. selektor wariantu emoji)', () => {
+    expect(normalizeSeed('❤\ufe0f', draw)).toBe('❤\ufe0f');
+  });
+
+  it('niewidoczne znaki nie zmieniają tego, czy to ten sam seed: z nimi i bez nich wychodzi ten sam tekst', () => {
+    expect(normalizeSeed('\u200bMoja\u200c PIZZA\u202e', draw)).toBe(normalizeSeed('Moja PIZZA', draw));
+  });
+});
+
+describe('clipSeedInput: limit pola seeda liczy punkty kodowe (emoji to jeden znak), a nie jednostki UTF-16', () => {
+  it('tekst do 40 punktów kodowych przechodzi bez zmian, także ze spacjami, wielkimi literami i niewidocznymi znakami (to nie normalizacja)', () => {
+    for (const text of ['', 'Ala', '  Moja   PIZZA ', 'a'.repeat(40), '🍕'.repeat(40), `a\u200b${'b'.repeat(38)}`]) expect(clipSeedInput(text)).toBe(text);
+  });
+
+  it('40 emoji (80 jednostek UTF-16) mieści się w całości, a 41. i dalsze są obcinane (maxLength=40 ucinałoby po 20 emoji)', () => {
+    expect(clipSeedInput('🍕'.repeat(40))).toBe('🍕'.repeat(40));
+    expect(clipSeedInput('🍕'.repeat(41))).toBe('🍕'.repeat(40));
+    expect(clipSeedInput('🍕'.repeat(200))).toBe('🍕'.repeat(40));
+    expect(clipSeedInput('🍕'.repeat(40)).length).toBe(80);
+  });
+
+  it('zwykły tekst obcina się na 40 znakach, a obcięcie nigdy nie dzieli emoji na pojedynczy surogat', () => {
+    expect(clipSeedInput('x'.repeat(200))).toBe('x'.repeat(40));
+    expect(clipSeedInput(`${'x'.repeat(39)}🍕🍕`)).toBe(`${'x'.repeat(39)}🍕`);
+    for (let n = 0; n < 90; n++) {
+      const clipped = clipSeedInput(`${'a'.repeat(n)}${'😀'.repeat(60)}`);
+      expect(hasLoneSurrogate(clipped), String(n)).toBe(false);
+      expect(codePoints(clipped)).toBeLessThanOrEqual(SEED_MAX);
+    }
+  });
+
+  it('limit pola i limit normalizacji to ta sama liczba: po przycięciu normalizacja niczego już nie ucina (dla tekstu bez spacji)', () => {
+    const typed = clipSeedInput('ż'.repeat(200));
+    expect(normalizeSeed(typed)).toBe(typed);
   });
 });
 
@@ -302,6 +398,42 @@ describe('chooseStore: seed z ekranu startowego (wpisany tekst → sklep, który
       expect(() => generateStore(choice.seed)).not.toThrow();
     }
   });
+
+  it('nowy sklep powstaje z tego samego tekstu, który daje normalizeSeed (jedna reguła): żaden nieznormalizowany wpis nie trafia do sklepu', () => {
+    const rng = createRng('chooseStore-vs-normalizeSeed');
+    const alphabet = ['a', 'B', ' ', '\t', 'Ż', '🍕', '\u0000', '-', '9', '\u0301', 'ß', 'İ', '\u200b', '\u200d', '\u202e', '\ufeff', '\u2060'];
+    const samples = ['  Moja   PIZZA ', '\u200bpizza\u200b', '\u202ekcab', 'a\u200db', ...Array.from({ length: 150 }, () =>
+      Array.from({ length: rng.int(1, 60) }, () => rng.pick(alphabet)).join(''))];
+    for (const raw of samples) {
+      const fixed = normalizeSeed(raw, () => 'losowy-x');
+      if (fixed === 'losowy-x') continue;                                                     // pusty po czyszczeniu: losowy, sprawdza go test niżej
+      expect(chooseStore(raw, deps().deps).seed, JSON.stringify(raw)).toBe(fixed);
+    }
+  });
+
+  it('wpis złożony z samych niewidocznych znaków to losowy wolny seed (jak pusty), a nie niewidzialny sklep', () => {
+    for (const text of ['\u200b', '\u200b'.repeat(40), ' \u202e ', '\ufeff\u2060']) {
+      expect(chooseStore(text, deps(['losowy-1']).deps), JSON.stringify(text)).toEqual({ seed: 'losowy-2', notice: null });
+    }
+  });
+
+  it('niewidoczne znaki we wpisie nie zmieniają sklepu: zapis pod czystym seedem wczytuje się', () => {
+    expect(chooseStore('kielbasa\u200b-42\u202e', deps(['kielbasa-42']).deps)).toEqual({ seed: 'kielbasa-42', notice: EXISTING_STORE_NOTICE });
+  });
+
+  it('stary zapis pod seedem ze spacją na brzegu (ręcznie edytowany ?seed=%20x) też się znajduje, pod tekstem wpisanym dosłownie', () => {
+    expect(chooseStore(' bigos-7', { hasSave: (s) => s === ' bigos-7' })).toEqual({ seed: ' bigos-7', notice: EXISTING_STORE_NOTICE });
+    expect(chooseStore('bigos-7 ', { hasSave: (s) => s === 'bigos-7 ' })).toEqual({ seed: 'bigos-7 ', notice: EXISTING_STORE_NOTICE });
+    expect(chooseStore('  Bigos-7  ', { hasSave: (s) => s === '  Bigos-7  ' })).toEqual({ seed: '  Bigos-7  ', notice: EXISTING_STORE_NOTICE });
+  });
+
+  it('kolejność szukania zapisu: tekst dosłownie, potem przycięty, potem znormalizowany', () => {
+    const all = ['  Bigos-7  ', 'Bigos-7', 'bigos-7'];
+    expect(chooseStore('  Bigos-7  ', { hasSave: (s) => all.includes(s) }).seed).toBe('  Bigos-7  ');
+    expect(chooseStore('  Bigos-7  ', { hasSave: (s) => all.slice(1).includes(s) }).seed).toBe('Bigos-7');
+    expect(chooseStore('  Bigos-7  ', { hasSave: (s) => s === 'bigos-7' }).seed).toBe('bigos-7');
+    expect(chooseStore('  Bigos-7  ', { hasSave: noSaves })).toEqual({ seed: 'bigos-7', notice: null });
+  });
 });
 
 describe('chooseStore z prawdziwymi zapisami w przeglądarce: seed z ekranu nigdy nie nadpisuje cudzej gry', () => {
@@ -347,6 +479,16 @@ describe('chooseStore z prawdziwymi zapisami w przeglądarce: seed z ekranu nigd
     expect(opened.fromSave).toBe(false);
     expect(opened.loadNotice).toBe(BROKEN_SAVE_NOTICE);
     expect(storage.getItem(`${key('zepsuty-1')}:broken`)).toBe('{"ucięty');
+  });
+
+  it('gracz, którego ostatni zapis leży pod seedem ze spacją na brzegu (stary adres), dostaje ten sam sklep, a nie nowy pusty', () => {
+    const played = createSession(' bigos-7', true);
+    played.econ.cash = 55_555;
+    saveSession(played);
+    expect(lastSavedSeed()).toBe(' bigos-7');
+    const choice = chooseStore(entrySeed(null, lastSavedSeed()));   // pole ekranu startowego wypełnia ostatni zapis, „Otwieramy sklep!” idzie przez chooseStore
+    expect(choice).toEqual({ seed: ' bigos-7', notice: EXISTING_STORE_NOTICE });
+    expect(createSession(choice.seed, false).econ.cash).toBe(55_555);
   });
 
   it('seed bez zapisu: nowa gra, a cudze zapisy leżą nietknięte', () => {

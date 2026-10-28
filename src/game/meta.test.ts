@@ -377,13 +377,33 @@ describe('gracz w meta: nick i wygląd kasjera (ekran startowy)', () => {
     expect(withPlayer({ ...PLAYER, nick: 'ŁuKasz' }).player!.nick).toBe('ŁuKasz');
   });
 
-  it('uszkodzony nick (pusty, emoji, za długi, zarezerwowany, zły typ) to brak gracza: ekran startowy pokaże się jeszcze raz', () => {
+  it('uszkodzony nick (pusty, emoji, za długi, zarezerwowany, zły typ) odbiera tylko nick: wygląd i przełącznik zostają, ekran startowy pokaże się jeszcze raz', () => {
     for (const nick of ['', '   ', '🍕', 'x'.repeat(21), 'Centrala', 'ADMIN', 5, null, undefined, [], {}, true]) {
       const meta = withPlayer({ ...PLAYER, nick });
-      expect(meta.player, JSON.stringify(nick)).toBeUndefined();
-      expect(needsStartScreen(meta)).toBe(true);
+      expect(meta.player, JSON.stringify(nick)).toEqual({ nick: null, look: PLAYER.look, specialOutfits: PLAYER.specialOutfits });
+      expect(needsStartScreen(meta), JSON.stringify(nick)).toBe(true);   // bez poprawnego nicka nie ma kogo zapisać, więc ekran pyta o niego
       expect(meta.partnerPoints).toBe(4);   // reszta mety jest cała
     }
+  });
+
+  it('każde pole gracza wraca do domyślnego osobno: zły nick, zły wygląd i zły przełącznik naraz dają nick brak, wygląd domyślny i przełącznik włączony', () => {
+    const meta = withPlayer({ nick: 'Centrala', look: 'zepsuty', specialOutfits: 'tak' });
+    expect(meta.player).toEqual({ nick: null, look: DEFAULT_CASHIER_LOOK, specialOutfits: true });
+    expect(needsStartScreen(meta)).toBe(true);
+    expect(withPlayer({ nick: 5 }).player).toEqual({ nick: null, look: DEFAULT_CASHIER_LOOK, specialOutfits: true });
+    expect(withPlayer({}).player).toEqual({ nick: null, look: DEFAULT_CASHIER_LOOK, specialOutfits: true });
+  });
+
+  it('wygląd z mety bez poprawnego nicka jest własną kopią, a po zapisie i odczycie nadal czeka na nick', () => {
+    const meta = withPlayer({ ...PLAYER, nick: '🍕' });
+    expect(meta.player!.look).not.toBe(PLAYER.look);
+    saveMeta(meta);
+    const again = loadMeta();
+    expect(again.player).toEqual({ nick: null, look: PLAYER.look, specialOutfits: false });
+    expect(needsStartScreen(again)).toBe(true);
+    saveMeta({ ...again, player: PLAYER });   // gracz wybrał nick na ekranie startowym
+    expect(loadMeta().player).toEqual(PLAYER);
+    expect(needsStartScreen(loadMeta())).toBe(false);
   });
 
   it('gracz, który nie jest obiektem, to brak gracza', () => {
@@ -446,6 +466,7 @@ describe('gracz w meta: nick i wygląd kasjera (ekran startowy)', () => {
     const none = loadMeta();
     expect(needsStartScreen(none)).toBe(true);
     expect(needsStartScreen({ ...none, player: PLAYER })).toBe(false);
+    expect(needsStartScreen({ ...none, player: { ...PLAYER, nick: null } })).toBe(true);   // wygląd jest, nicka brak
     expect(needsStartScreen({ ...none, readOnly: true })).toBe(false);
     expect(needsStartScreen({ ...none, readOnly: true, player: PLAYER })).toBe(false);
   });

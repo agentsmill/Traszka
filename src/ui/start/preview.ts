@@ -1,6 +1,6 @@
 import {
   CylinderGeometry, DirectionalLight, Group, HemisphereLight, MathUtils, Mesh, NeutralToneMapping, PCFShadowMap, PerspectiveCamera,
-  Scene, SRGBColorSpace, WebGLRenderer, type BufferGeometry, type Camera,
+  Scene, SRGBColorSpace, Texture, WebGLRenderer, type BufferGeometry, type Camera, type Material, type Object3D,
 } from 'three';
 import type { CashierLook } from '@/game/cashier';
 import { createCashierCharacter, isOutfitReady, releaseCharacter } from '@/render/cashierView';
@@ -11,7 +11,17 @@ import { LIGHT_PRESETS, PALETTE, material } from '@/render/style';
  * Podgląd kasjera na ekranie startowym: własny, lekki renderer three.js na własnej kanwie (bez postprocessingu, AO i bloomu,
  * z jedną małą mapą cienia), kasjer na obrotowym podeście, animacja `Idle`. Nie dzieli kontekstu z grą: powstaje przy
  * otwarciu ekranu, a `dispose` zwalnia renderer i kontekst WebGL, zanim ruszy gra. Fabryka postaci jest WSPÓLNA z grą (przekazuje
- * ją wołający): podgląd zwalnia tylko swoją postać, nigdy fabrykę ani jej geometrie. Kasjera buduje ta sama funkcja co w sklepie
+ * ją wołający): podgląd zwalnia tylko swoją postać, nigdy fabrykę ani jej geometrie.
+ *
+ * Podgląd rysuje WYŁĄCZNIE to, co sam zwalnia. Three zapisuje renderer na zdarzenie `dispose` każdej geometrii i każdego materiału,
+ * które narysuje, a jego własne `dispose()` tych zapisów nie zdejmuje. Gdyby podgląd rysował geometrię wspólną z grą albo materiał
+ * z pamięci stylu, każde otwarcie ekranu zostawiałoby w nim nasłuch, który trzyma przy życiu cały renderer (jeden `WebGLRenderer`
+ * wycieka na otwarcie). Dlatego podest ma własne materiały (kopie z pamięci stylu), a pod siatkę każdej postaci podgląd podstawia
+ * własną kopię geometrii (`ownGeometries`) i zwalnia ją razem z postacią. Materiał postaci jest jej własny (zwalnia go `dispose`
+ * postaci). Trzeci taki obiekt nie leży w scenie: three 0.186 daje każdemu materiałowi fizycznemu GLOBALNĄ teksturę DFG LUT (jedną na
+ * stronę, `getDFGLUT()`) i każdy renderer zapisuje się na jej `dispose`, więc po zwolnionym rendererze zostaje w niej nasłuch, który
+ * trzyma jego programy, a przez nie jego samego (`dfgLutOf`, zwalniana w `dispose`; graczowi, którego renderer żyje dalej, zostaje
+ * jedna ponowna klatka z wgraniem 16×16 px). Kasjera buduje ta sama funkcja co w sklepie
  * (`createCashierCharacter`: mundur dla stroju zwykłego, strój specjalny zostaje sobą), więc podgląd pokazuje dokładnie tego
  * kasjera, który stanie za ladą. Strój specjalny dociąga się dopiero przy pokazaniu (`ensureOutfit`, ruling R40).
  */
@@ -50,6 +60,8 @@ export interface PreviewRenderer {
   dispose(): void;
   /** Oddaje kontekst WebGL od razu (przeglądarka ma ich ograniczoną liczbę), a nie dopiero po zbiórce śmieci. */
   forceContextLoss(): void;
+  /** Właściwości, które renderer zapisał przy obiektach (`WebGLRenderer.properties`): stąd podgląd bierze globalną teksturę three (`dfgLutOf`). */
+  readonly properties: { get(object: unknown): unknown };
 }
 
 export interface PreviewOptions {
@@ -95,6 +107,46 @@ function createWebglRenderer(canvas: HTMLCanvasElement): WebGLRenderer {
 
 const sameLook = (a: CashierLook, b: CashierLook): boolean => a.outfit === b.outfit && a.appearanceSeed === b.appearanceSeed;
 
+/**
+ * Podstawia pod każdą siatkę postaci własną kopię jej geometrii i oddaje te kopie (do zwolnienia razem z postacią). Fabryka dzieli
+ * geometrię wariantu z grą i klientami, więc renderer podglądu nie może jej narysować (patrz nagłówek pliku). Kopia ma te same
+ * atrybuty (położenie, normalne, wagi i kości skinu, region), indeks i kulę otaczającą; siatka skinowana (`SkinnedMesh`) zostaje
+ * podpięta do tego samego szkieletu.
+ */
+function ownGeometries(object: Object3D): BufferGeometry[] {
+  const owned: BufferGeometry[] = [];
+  object.traverse((child) => {
+    const mesh = child as Mesh;
+    if (!mesh.isMesh) return;
+    const copy = mesh.geometry.clone();
+    mesh.geometry = copy;
+    owned.push(copy);
+  });
+  return owned;
+}
+
+/**
+ * Globalna tekstura DFG LUT three 0.186 (`getDFGLUT()` w `renderers/shaders/DFGLUTData.js`): jedna na stronę, w uniformie `dfgLUT`
+ * każdego materiału fizycznego, który renderer narysował (nie ma jej w scenie). Zwraca ją albo null, gdy renderer niczego jeszcze
+ * nie narysował. Trzeba ją wziąć, ZANIM materiały zostaną zwolnione: zwolnienie materiału kasuje jego właściwości w rendererze.
+ */
+function dfgLutOf(renderer: PreviewRenderer, scene: Object3D): Texture | null {
+  let lut: Texture | null = null;
+  scene.traverse((object) => {
+    const mesh = object as Mesh;
+    if (lut || !mesh.isMesh) return;
+    for (const surface of [mesh.material].flat()) {
+      const uniforms = (renderer.properties.get(surface) as { uniforms?: Record<string, { value?: unknown } | undefined> } | undefined)?.uniforms;
+      const value = uniforms?.dfgLUT?.value;
+      if (value instanceof Texture) {
+        lut = value;
+        return;
+      }
+    }
+  });
+  return lut;
+}
+
 export function createStartPreview(canvas: HTMLCanvasElement, factory: CharacterFactory, options: PreviewOptions = {}): StartPreview {
   const renderer = options.renderer ?? createWebglRenderer(canvas);
 
@@ -115,10 +167,13 @@ export function createStartPreview(canvas: HTMLCanvasElement, factory: Character
   turntable.name = 'turntable';
   scene.add(turntable);
   const geometries: BufferGeometry[] = [];
+  const materials: Material[] = [];
   for (const part of PEDESTAL) {
     const geometry = new CylinderGeometry(part.radius, part.radius, part.height, 48);
     geometries.push(geometry);
-    const mesh = new Mesh(geometry, material('plasticMatte', part.color));   // materiały ze wspólnej pamięci stylu: nie zwalniamy ich
+    const surface = material('plasticMatte', part.color).clone();   // własna kopia: materiał z pamięci stylu przeżywa podgląd, więc go nie zwalniamy
+    materials.push(surface);
+    const mesh = new Mesh(geometry, surface);
     mesh.name = 'pedestal';
     mesh.position.y = part.top - part.height / 2;
     mesh.receiveShadow = true;
@@ -135,7 +190,13 @@ export function createStartPreview(canvas: HTMLCanvasElement, factory: Character
     camera.updateProjectionMatrix();
   };
 
-  let current: { look: CashierLook; character: CharacterInstance } | null = null;
+  /** Kasjer na podeście: postać z fabryki i kopie geometrii, które podgląd narysował zamiast wspólnych (zwalnia je razem z postacią). */
+  interface Standing { look: CashierLook; character: CharacterInstance; geometries: BufferGeometry[] }
+  const release = ({ character, geometries: owned }: Standing): void => {
+    releaseCharacter(character);
+    for (const geometry of owned) geometry.dispose();
+  };
+  let current: Standing | null = null;
   let request = 0;
   let disposed = false;
   let raf = 0;
@@ -213,12 +274,15 @@ export function createStartPreview(canvas: HTMLCanvasElement, factory: Character
       }
       if (disposed || mine !== request) return;
     }
+    let next: CharacterInstance | null = null;
     try {
-      const next = createCashierCharacter(factory, wanted);
+      next = createCashierCharacter(factory, wanted);
+      const standing: Standing = { look: wanted, character: next, geometries: ownGeometries(next.object) };
       turntable.add(next.object);
-      if (current) releaseCharacter(current.character);
-      current = { look: wanted, character: next };
+      if (current) release(current);
+      current = standing;
     } catch (error) {
+      if (next && current?.character !== next) releaseCharacter(next);   // nowa postać się nie ustawiła: nie zostaje po niej nic
       console.error('Nie udało się zbudować kasjera w podglądzie.', error);   // poprzedni kasjer zostaje
     }
   }
@@ -239,12 +303,15 @@ export function createStartPreview(canvas: HTMLCanvasElement, factory: Character
       canvas.removeEventListener('pointermove', onMove);
       canvas.removeEventListener('pointerup', onUp);
       canvas.removeEventListener('pointercancel', onUp);
-      if (current) releaseCharacter(current.character);
+      const lut = dfgLutOf(renderer, scene);                 // zanim materiały odejdą razem z właściwościami, z których ją czytamy
+      if (current) release(current);
       current = null;
       turntable.removeFromParent();
       for (const geometry of geometries) geometry.dispose();
+      for (const surface of materials) surface.dispose();
       key.dispose();
       hemi.dispose();
+      lut?.dispose();                                        // zdejmuje z niej nasłuch tego renderera (żywe renderery zapiszą się znowu)
       renderer.dispose();
       renderer.forceContextLoss();
     },

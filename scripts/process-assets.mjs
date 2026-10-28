@@ -86,9 +86,14 @@ const JOBS = [
   { src: join(WOMEN, 'Worker.gltf'), out: 'characters/women-worker.glb', ...CHARACTER },
   { src: join(WOMEN, 'Punk.gltf'), out: 'characters/women-punk.glb', ...CHARACTER },
   // Stroje specjalne (ASSETS.characters.special): tylko kasjer gracza, klienci ich nie dostają.
-  // `triangles: 5000`: przy 3000 kosmonaucie rwie się pancerz (12,1 tys. px przezroczystych dziur w 16 widokach, przy 5000: 1,5 tys.),
-  // a królowi i poszukiwaczowi (m) oczy giną pod skórą twarzy (widoczność oczu od frontu 0% i 43%, przy 5000: 48% i 75%; źródło: 45% i 75%).
-  { src: join(MEN, 'Spacesuit.gltf'), out: 'characters/special-men-spacesuit.glb', ...CHARACTER, triangles: 5000 },
+  // `triangles: 8000` (kosmonauta, źródło 10,6 tys.): przy 3000 rwie się pancerz (12,1 tys. px przezroczystych dziur w 16 widokach), przy
+  // 5000 zostaje 1,5 tys. px (cienkie kremowe szczeliny wzdłuż szwów płyt, widać je w dużym podglądzie na ekranie startowym), przy 5500
+  // 835, przy 6500 162 px (pod progiem 200 px, ale szczeliny dalej widać w zbliżeniu 2× DPR z przodu i z tyłu), przy 8000 17 px i
+  // zbliżenie jest czyste (potok: 7992 trójkąty, 358 KB wobec 261 KB przy 5000; źródło 0 px, 439 KB). Metoda: skrypty z przeglądu K1,
+  // rzut ortogonalny źródła i wyniku z 16 kierunków z odcinaniem tylnych ścian, dziura = piksel pokryty w źródle, a niepokryty w wyniku.
+  // `triangles: 5000` (król, poszukiwacz przygód m): przy 3000 oczy giną pod skórą twarzy (widoczność oczu od frontu 0% i 43%, przy 5000:
+  // 48% i 75%; źródło: 45% i 75%).
+  { src: join(MEN, 'Spacesuit.gltf'), out: 'characters/special-men-spacesuit.glb', ...CHARACTER, triangles: 8000 },
   { src: join(MEN, 'King.gltf'), out: 'characters/special-men-king.glb', ...CHARACTER, triangles: 5000 },
   { src: join(MEN, 'Swat.gltf'), out: 'characters/special-men-swat.glb', ...CHARACTER, drop: ['Pistol'] },
   { src: join(MEN, 'Adventurer.gltf'), out: 'characters/special-men-adventurer.glb', ...CHARACTER, triangles: 5000 },
