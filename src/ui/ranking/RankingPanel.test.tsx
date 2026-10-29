@@ -208,7 +208,7 @@ describe('ranking: panel', () => {
     const seedTab = await ready({ seed: { ok: true, board: 'seed', seed: 'pierogi-731', week: WEEK, rows: [] } }, undefined, {}, 'seed');
     expect(textOf(RankingPanel({ model: seedTab, onClose: () => undefined }))).toContain('pierogi-731');
     const weekTab = await ready({ week: { ok: true, board: 'week', seed: WEEK.seed, week: WEEK, rows: [] } }, undefined, {}, 'week');
-    const text = textOf(RankingPanel({ model: weekTab, onClose: () => undefined }));
+    const text = textOf(RankingPanel({ model: weekTab, onClose: () => undefined, now: () => NOW }));   // bez `now` panel bierze zegar i test czerwieni się z upływem dni
     expect(text).toContain('babka-834');
     expect(text).toContain(weekLeft(WEEK.endsAt, NOW));
   });
