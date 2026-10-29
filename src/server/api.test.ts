@@ -165,6 +165,8 @@ describe('bramka limitu w pamięci instancji: route tworzy ją raz na instancję
     method: 'POST', headers: { 'content-type': 'application/json', 'x-real-ip': ip }, body: JSON.stringify({ key }),
   });
   const envOf = () => ({ RANKING_ENABLED: '1', KV_REST_API_URL: URL_, KV_REST_API_TOKEN: RW });
+  // Stała chwila, sekunda po początku okna (okna to wielokrotności 600 s od epoki): seria żądań nie może przeskoczyć granicy okna i przerwać odliczania.
+  const T0 = Date.UTC(2026, 9, 29, 12, 0, 1);
   const KEY3 = 'W0XY-M2N3-P4Q5-R6S7-T8V9';
   const exhaust = async (handler: (r: Request) => Promise<Response>, key = KEY2): Promise<void> => {
     for (let i = 0; i < RATE_LIMITS.player.perKey; i++) expect((await handler(playerReq(`192.0.2.${i}`, key))).status, `żądanie ${i + 1}`).toBe(200);
@@ -172,7 +174,7 @@ describe('bramka limitu w pamięci instancji: route tworzy ją raz na instancję
   };
 
   it('po odmowie bazy kolejne żądania przez ten sam route (nowe adresy, ten sam klucz) nie wołają fetch: 429 z Retry-After', async () => {
-    const handler = route(handlePlayer, { env: envOf, fetch: fetchSpy });
+    const handler = route(handlePlayer, { env: envOf, now: () => T0, fetch: fetchSpy });
     await exhaust(handler);
     const [sent, logged] = [fetchSpy.mock.calls.length, upstash.log.length];
     for (let i = 0; i < 100; i++) {
@@ -184,14 +186,14 @@ describe('bramka limitu w pamięci instancji: route tworzy ją raz na instancję
   });
 
   it('osobne wywołanie route to osobna pamięć (własna bramka), a bramka z RouteOptions może być wspólna', async () => {
-    await exhaust(route(handlePlayer, { env: envOf, fetch: fetchSpy, rateGate: createRateGate() }));
+    await exhaust(route(handlePlayer, { env: envOf, now: () => T0, fetch: fetchSpy, rateGate: createRateGate() }));
     const calls = () => fetchSpy.mock.calls.length;
     const before = calls();
-    expect((await route(handlePlayer, { env: envOf, fetch: fetchSpy })(playerReq('192.0.4.1'))).status).toBe(429);
+    expect((await route(handlePlayer, { env: envOf, now: () => T0, fetch: fetchSpy })(playerReq('192.0.4.1'))).status).toBe(429);
     expect(calls() - before).toBe(2);   // nowa instancja pyta bazę (sól, liczniki) i dopiero tę odmowę zapamiętuje
     const shared = createRateGate();
-    await exhaust(route(handlePlayer, { env: envOf, fetch: fetchSpy, rateGate: shared }), KEY3);
-    const other = route(handlePlayer, { env: envOf, fetch: fetchSpy, rateGate: shared });
+    await exhaust(route(handlePlayer, { env: envOf, now: () => T0, fetch: fetchSpy, rateGate: shared }), KEY3);
+    const other = route(handlePlayer, { env: envOf, now: () => T0, fetch: fetchSpy, rateGate: shared });
     const again = calls();
     expect((await other(playerReq('192.0.4.2', KEY3))).status).toBe(429);
     expect(calls()).toBe(again);

@@ -74,7 +74,7 @@ export interface RateSeen { address: number; key: number | null }
  * Do pamięci trafia tylko to, co baza faktycznie odpowiedziała (`record` po udanym `exec`), więc błąd bazy niczego nie psuje.
  *
  * Pamięć jest tylko przyspieszeniem i jest ograniczona (`maxEntries`): wpisy z minionych okien wypadają, przy przepełnieniu
- * wypada najstarszy (odświeżany wpis jest najmłodszy), a wypadnięty wpis oznacza jedno zapytanie do bazy więcej, nie inną decyzję.
+ * wypada ten, którego odpowiedź z bazy zapisano najdawniej, a wypadnięty wpis oznacza jedno zapytanie do bazy więcej, nie inną decyzję.
  * Adresy nie leżą w pamięci wprost: nazwa wpisu to skrót `sha256` z losową solą instancji, wylosowaną przy tworzeniu bramki.
  */
 export interface RateGate {
@@ -115,7 +115,7 @@ export function createRateGate(opts: RateGateOptions = {}): RateGate {
 
   function remember(name: string, seen: number, end: number, now: number): void {
     const previous = slots.get(name);
-    if (previous) slots.delete(name);   // zapis odświeża kolejność: aktywny wpis wypada ostatni
+    if (previous) slots.delete(name);   // zapis z bazy odświeża kolejność (odmowy z pamięci jej nie ruszają: wpis bywa wyrzucony mimo użycia, to tylko jedno zapytanie więcej)
     else {
       if (now >= earliestEnd) purge(now);
       while (slots.size >= max) slots.delete(slots.keys().next().value as string);
