@@ -10,11 +10,11 @@ import { GENERATOR_VERSION } from '@/sim/store/generateStore';
 import { dispatchCommand, markOffLog, type CommandEffects } from './actions';
 import { MemoryStorage } from './memoryStorage';
 import {
-  RANKED_KEYS, clearFinished, createRankedSession, discardRanked, finishRun, getPlayMode, loadFinished, loadRanked, saveFinished, saveRanked,
-  seasonOver, setPlayMode, type FinishedRun,
+  RANKED_KEYS, clearFinished, createRankedSession, discardRanked, finishRun, getPlayMode, loadFinished, loadRanked, rankedRunStale, saveFinished,
+  saveRanked, seasonOver, setPlayMode, type FinishedRun,
 } from './rankedRun';
 import { GAME_VERSION } from './version';
-import { SAVE_SCHEMA, createSession, deleteSave, newRunLog, saveSession, type GameSession } from './session';
+import { SAVE_SCHEMA, createSession, deleteSave, discardSave, newRunLog, retireSession, reviveSession, saveSession, type GameSession } from './session';
 
 const SEED = 'kiełbasa-42';
 const END = RANKED_SEASON_END_MINUTE;
@@ -94,9 +94,12 @@ describe('zapis i wznawianie biegu', () => {
 
     const raw = storage.getItem(RANKED_KEYS.active)!;
     const stored = JSON.parse(raw) as { schema: number; seed: string; savedAt: number; save: { schema: number }; run: { log: unknown[]; seq: number } };
-    expect(stored).toMatchObject({ schema: 1, seed: SEED, save: { schema: SAVE_SCHEMA }, run: { seq: s.run!.seq } });
+    expect(stored).toMatchObject({
+      schema: 1, seed: SEED, save: { schema: SAVE_SCHEMA, gameVersion: GAME_VERSION, generatorVersion: GENERATOR_VERSION },
+      run: { seq: s.run!.seq, simVersion: SIM_VERSION },
+    });
     expect(Number.isFinite(stored.savedAt)).toBe(true);
-    expect(Object.keys(stored.run).sort()).toEqual(['log', 'seq']);
+    expect(Object.keys(stored.run).sort()).toEqual(['log', 'seq', 'simVersion']);
 
     const loaded = loadRanked();
     expect(loaded.status).toBe('ok');
@@ -212,8 +215,8 @@ describe('uszkodzony zapis biegu', () => {
     schema: unknown;
     seed: unknown;
     savedAt: number;
-    save: { schema: unknown; seed: unknown; econ: { minute: number; partner?: unknown } | unknown };
-    run?: { log: Record<string, unknown>[]; seq: unknown } | unknown;
+    save: { schema: unknown; seed: unknown; gameVersion?: unknown; generatorVersion?: unknown; econ: { minute: number; partner?: unknown } | unknown };
+    run?: { log: Record<string, unknown>[]; seq: unknown; simVersion?: unknown } | unknown;
   }
   /** Prawdziwy zapis po dobie gry (kilkadziesiąt wpisów), do zepsucia na różne sposoby. */
   function genuine(): Doc {
@@ -222,7 +225,7 @@ describe('uszkodzony zapis biegu', () => {
     expect(saveRanked(s)).toBe(true);
     return JSON.parse(storage.getItem(RANKED_KEYS.active)!) as Doc;
   }
-  const run = (d: Doc) => d.run as { log: Record<string, unknown>[]; seq: unknown };
+  const run = (d: Doc) => d.run as { log: Record<string, unknown>[]; seq: unknown; simVersion?: unknown };
   const minuteOf = (d: Doc) => (d.save.econ as { minute: number }).minute;
 
   const CASES: [string, (d: Doc) => void][] = [
@@ -246,7 +249,16 @@ describe('uszkodzony zapis biegu', () => {
     ['seq nie większy od seq ostatniego wpisu', (d) => { run(d).seq = run(d).log.at(-1)!.seq; }],
     ['seq ułamkowy', (d) => { run(d).seq = (run(d).seq as number) + 0.5; }],
     ['seq nie jest liczbą', (d) => { run(d).seq = '12'; }],
-    ['zły schemat zapisu biegu', (d) => { d.schema = 2; }],
+    ['schemat zapisu biegu 0', (d) => { d.schema = 0; }],
+    ['schemat zapisu biegu nie jest liczbą', (d) => { d.schema = 'x'; }],
+    ['brak simVersion w run', (d) => { delete run(d).simVersion; }],
+    ['simVersion nie jest liczbą', (d) => { run(d).simVersion = '2'; }],
+    ['simVersion ułamkowy', (d) => { run(d).simVersion = 1.5; }],
+    ['simVersion ujemny', (d) => { run(d).simVersion = -1; }],
+    ['simVersion null', (d) => { run(d).simVersion = null; }],
+    ['gameVersion koperty nie jest napisem', (d) => { d.save.gameVersion = 5; }],
+    ['brak generatorVersion w kopercie', (d) => { delete d.save.generatorVersion; }],
+    ['generatorVersion koperty ułamkowy', (d) => { d.save.generatorVersion = GENERATOR_VERSION + 0.5; }],
     ['brak schematu zapisu biegu', (d) => { delete (d as Partial<Doc>).schema; }],
     ['seed zapisu biegu różny od seedu koperty', (d) => { d.seed = 'inny-seed'; }],
     ['seed koperty różny od seedu zapisu biegu', (d) => { d.save.seed = 'inny-seed'; }],
@@ -308,6 +320,167 @@ describe('uszkodzony zapis biegu', () => {
     expect(loadRanked()).toEqual({ status: 'broken' });
     expect(storage.getItem(RANKED_KEYS.active)).toBeNull();
     expect(storage.getItem(RANKED_KEYS.broken)).toBeNull();
+  });
+});
+
+describe('bieg zapisany w innej wersji gry', () => {
+  interface Stored {
+    schema: number;
+    seed: string;
+    save: { schema: number; gameVersion: string; generatorVersion: number };
+    run: { log: { cmd: unknown }[]; seq: number; simVersion: number };
+  }
+  /** Prawdziwy zapis po dobie gry, do przepisania na zapis z innej wersji. */
+  function stored(): Stored {
+    const s = createRankedSession(SEED);
+    play(s, MINUTES_PER_DAY);
+    expect(saveRanked(s)).toBe(true);
+    return JSON.parse(storage.getItem(RANKED_KEYS.active)!) as Stored;
+  }
+  /** Wkłada zapis do pamięci i zwraca jego surowy tekst. */
+  const put = (d: unknown): string => {
+    const raw = JSON.stringify(d);
+    storage.setItem(RANKED_KEYS.active, raw);
+    return raw;
+  };
+  /** Zapis ma zostać dokładnie taki, jaki był, i bez kopii w :broken (nic nie zostało zniszczone ani przeniesione). */
+  const expectUntouched = (raw: string): void => {
+    expect(storage.getItem(RANKED_KEYS.active)).toBe(raw);
+    expect(storage.getItem(RANKED_KEYS.broken)).toBeNull();
+  };
+  const ok = (): GameSession => {
+    const l = loadRanked();
+    expect(l.status).toBe('ok');
+    return (l as { status: 'ok'; session: GameSession }).session;
+  };
+
+  it.each([[GENERATOR_VERSION + 1], [GENERATOR_VERSION - 1]])('generator %i w zapisie: incompatible, klucz nietknięty, nic w :broken', (generatorVersion) => {
+    const d = stored();
+    d.save.generatorVersion = generatorVersion;
+    const raw = put(d);
+    expect(loadRanked()).toEqual({ status: 'incompatible' });
+    expectUntouched(raw);
+    expect(loadRanked()).toEqual({ status: 'incompatible' });   // i za drugim razem, i za trzecim: nic się nie zużywa
+    expectUntouched(raw);
+  });
+
+  it('inny generator wygrywa z dziennikiem, którego ten kod nie rozumie: zapis z innej wersji nie idzie do :broken', () => {
+    const d = stored();
+    d.save.generatorVersion = GENERATOR_VERSION + 1;
+    d.run.log[0]!.cmd = { type: 'polecenie-z-przyszlosci' };
+    d.run.seq = 'śmieci' as unknown as number;
+    const raw = put(d);
+    expect(loadRanked()).toEqual({ status: 'incompatible' });
+    expectUntouched(raw);
+  });
+
+  it.each([2, 3, 99, 1.5])('nowszy schemat zapisu biegu (%s): incompatible, klucz nietknięty, nic w :broken', (schema) => {
+    const raw = put({ schema, seed: SEED, cośNowego: { zupełnie: 'inny kształt' } });
+    expect(loadRanked()).toEqual({ status: 'incompatible' });
+    expectUntouched(raw);
+  });
+
+  it('schemat 1e999 (JSON.parse daje Infinity) to też nowszy zapis', () => {
+    const raw = '{"schema":1e999,"seed":"kiełbasa-42"}';
+    storage.setItem(RANKED_KEYS.active, raw);
+    expect(loadRanked()).toEqual({ status: 'incompatible' });
+    expectUntouched(raw);
+  });
+
+  it('nowszy schemat koperty stanu: incompatible, klucz nietknięty, nic w :broken', () => {
+    const d = stored();
+    d.save.schema = SAVE_SCHEMA + 1;
+    (d.save as Record<string, unknown>).cośNowego = [1, 2, 3];
+    const raw = put(d);
+    expect(loadRanked()).toEqual({ status: 'incompatible' });
+    expectUntouched(raw);
+  });
+
+  it('zapis ze starszym simVersion wraca jako ok ze starym simVersion; finishRun niesie go do biegu, a ponowny zapis go nie nadpisuje', () => {
+    const d = stored();
+    d.run.simVersion = SIM_VERSION - 1;
+    put(d);
+    const r = ok();
+
+    expect(r.run!.record.simVersion).toBe(SIM_VERSION - 1);
+    expect(r.run!.record).toMatchObject({ generatorVersion: GENERATOR_VERSION, gameVersion: GAME_VERSION, mode: 'ranked' });
+    expect(rankedRunStale(r)).toBe(true);
+
+    play(r, 20, 5);   // gra toczy się dalej, a ponowny zapis nie przepisuje wersji na bieżącą
+    expect(saveRanked(r)).toBe(true);
+    expect((JSON.parse(storage.getItem(RANKED_KEYS.active)!) as Stored).run.simVersion).toBe(SIM_VERSION - 1);
+    expect(rankedRunStale(ok())).toBe(true);
+
+    const f = finishRun(r, 77)!;
+    expect(f.record.simVersion).toBe(SIM_VERSION - 1);
+    expect(saveFinished(f)).toBe(true);
+    expect(loadFinished()!.record.simVersion).toBe(SIM_VERSION - 1);
+  });
+
+  it('gameVersion i generatorVersion rekordu pochodzą z zapisu, także po ponownym zapisie', () => {
+    const d = stored();
+    d.save.gameVersion = 'stara-wersja+abc123';
+    put(d);
+    const r = ok();
+    expect(r.run!.record.gameVersion).toBe('stara-wersja+abc123');
+    expect(r.run!.record.generatorVersion).toBe(GENERATOR_VERSION);
+    expect(r.run!.record.simVersion).toBe(SIM_VERSION);
+    expect(rankedRunStale(r)).toBe(false);   // sama wersja gry niczego nie unieważnia
+
+    expect(saveRanked(r)).toBe(true);
+    expect((JSON.parse(storage.getItem(RANKED_KEYS.active)!) as Stored).save).toMatchObject({ gameVersion: 'stara-wersja+abc123', generatorVersion: GENERATOR_VERSION });
+    expect(ok().run!.record.gameVersion).toBe('stara-wersja+abc123');
+  });
+
+  it('bieg w bieżących wersjach nie jest nieaktualny; sesja bez dziennika też nie', () => {
+    const s = createRankedSession(SEED);
+    expect(rankedRunStale(s)).toBe(false);
+    play(s, 100);
+    saveRanked(s);
+    expect(rankedRunStale(ok())).toBe(false);
+    expect(rankedRunStale(createSession(SEED, true))).toBe(false);
+
+    s.run!.record.simVersion = SIM_VERSION + 1;   // także nowsza wersja niż bieżąca to nie ta, którą liczy sędzia
+    expect(rankedRunStale(s)).toBe(true);
+    s.run!.record.simVersion = SIM_VERSION - 1;
+    expect(rankedRunStale(s)).toBe(true);
+    markOffLog(s);
+    expect(rankedRunStale(s)).toBe(false);
+  });
+
+  it('szuflada z biegiem w innej wersji symulacji zostaje: loadFinished go oddaje i niczego nie czyści', () => {
+    const f: FinishedRun = {
+      v: 1, seed: SEED, record: { ...newRunLog(SEED, 'ranked').record, simVersion: SIM_VERSION - 1, generatorVersion: GENERATOR_VERSION - 1, gameVersion: 'stara' },
+      score: 321, finishedAt: 9,
+    };
+    expect(saveFinished(f)).toBe(true);
+    const raw = storage.getItem(RANKED_KEYS.done);
+    expect(loadFinished()).toEqual(f);
+    expect(storage.getItem(RANKED_KEYS.done)).toBe(raw);
+  });
+});
+
+describe('sesja rankingowa a zapisy zwykłego sklepu', () => {
+  it('saveSession, discardSave, retireSession i reviveSession na prawdziwej sesji rankingowej nie ruszają traszka:save:<seed> ani traszka:last', () => {
+    const casual = createSession(SEED, true);
+    saveSession(casual);
+    storage.setItem('traszka:last', 'inny-sklep');
+    const casualRaw = storage.getItem(`traszka:save:${SEED}`);
+
+    const ranked = createRankedSession(SEED);
+    play(ranked, 100);
+    saveSession(ranked);
+    discardSave(ranked);
+    retireSession(ranked);
+    reviveSession(ranked);
+    expect(storage.getItem(`traszka:save:${SEED}`)).toBe(casualRaw);
+    expect(storage.getItem('traszka:last')).toBe('inny-sklep');
+    expect(storage.keys().sort()).toEqual(['traszka:last', `traszka:save:${SEED}`].sort());
+
+    saveRanked(ranked);
+    saveSession(ranked);
+    discardRanked();
+    expect(storage.getItem(`traszka:save:${SEED}`)).toBe(casualRaw);
   });
 });
 

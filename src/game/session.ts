@@ -115,9 +115,13 @@ export const envelopeOf = (s: GameSession): SaveEnvelope => ({
   schema: SAVE_SCHEMA, gameVersion: GAME_VERSION, generatorVersion: GENERATOR_VERSION, seed: s.seed, layout: s.layout, econ: s.econ,
 });
 
-/** Zapis w przeglądarce (localStorage). Błędy (tryb prywatny, brak miejsca) są ciche: gra działa dalej bez zapisu. */
+/**
+ * Zapis w przeglądarce (localStorage). Błędy (tryb prywatny, brak miejsca) są ciche: gra działa dalej bez zapisu. Sesja rankingowa
+ * (`mode: 'ranked'`) nie ma tu zapisu: jej bieg żyje pod własnym kluczem (`saveRanked` w `rankedRun.ts`), a zwykły sklep o tym samym
+ * seedzie i `traszka:last` zostają, jak były.
+ */
 export function saveSession(s: GameSession): void {
-  if (s.retired || s.ephemeral) return;
+  if (s.retired || s.ephemeral || s.mode === 'ranked') return;
   const envelope = envelopeOf(s);
   try {
     localStorage.setItem(SAVE_PREFIX + s.seed, JSON.stringify(envelope));
@@ -153,9 +157,12 @@ export function retireSession(s: GameSession): void {
   discardSave(s);
 }
 
-/** Kasuje zapis sklepu sesji („zacznij od nowa”, zamknięcie w sieci). Sklep tymczasowy nie ma własnego zapisu, więc cudzego nie rusza. */
+/**
+ * Kasuje zapis sklepu sesji („zacznij od nowa”, zamknięcie w sieci). Sklep tymczasowy nie ma własnego zapisu, więc cudzego nie rusza;
+ * sesja rankingowa też nie (jej bieg kasuje `discardRanked`), więc zwykły sklep o tym samym seedzie zostaje.
+ */
 export function discardSave(s: GameSession): void {
-  if (!s.ephemeral) deleteSave(s.seed);
+  if (!s.ephemeral && s.mode !== 'ranked') deleteSave(s.seed);
 }
 
 export function reviveSession(s: GameSession): void {

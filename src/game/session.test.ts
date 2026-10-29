@@ -619,6 +619,58 @@ describe('zamknięty sklep nie wraca do zapisów (otwarcie kolejnej Traszki)', (
   });
 });
 
+describe('sesja rankingowa (mode ranked) nie rusza zapisów zwykłego sklepu', () => {
+  /** Sesja rankingowa o tym samym seedzie co zwykły sklep; ma `ephemeral: false`, więc o zapisach decyduje wyłącznie `mode`. */
+  const ranked = (seed: string): GameSession => ({ ...createSession(seed, true), mode: 'ranked' });
+
+  it('saveSession, discardSave, retireSession i reviveSession zostawiają traszka:save:<seed> i traszka:last tak, jak były', () => {
+    const casual = playedSession(BLOK);
+    storage.setItem('traszka:last', 'inny-sklep');
+    const saved = storage.getItem(key(BLOK));
+    expect(saved).not.toBeNull();
+
+    const r = ranked(BLOK);
+    play(r, 1);
+    saveSession(r);
+    expect(storage.getItem(key(BLOK))).toBe(saved);
+    expect(lastSavedSeed()).toBe('inny-sklep');
+    discardSave(r);
+    expect(storage.getItem(key(BLOK))).toBe(saved);
+    retireSession(r);
+    expect(r.retired).toBe(true);
+    expect(storage.getItem(key(BLOK))).toBe(saved);
+    reviveSession(r);
+    expect(r.retired).toBe(false);
+    expect(storage.getItem(key(BLOK))).toBe(saved);
+    expect(lastSavedSeed()).toBe('inny-sklep');
+    expect(storage.keys().sort()).toEqual([key(BLOK), 'traszka:last'].sort());
+    expect(createSession(BLOK).econ).toEqual(casual.econ);   // zwykły sklep wraca z zapisu bez zmian
+  });
+
+  it('bez zwykłego zapisu sesja rankingowa niczego nie tworzy w pamięci', () => {
+    const r = ranked(BLOK);
+    saveSession(r);
+    reviveSession(r);
+    retireSession(r);
+    discardSave(r);
+    expect(storage.keys()).toEqual([]);
+  });
+
+  it('zwykła sesja zachowuje się jak dawniej: zapisuje, ustawia „ostatni sklep”, kasuje i przywraca', () => {
+    const s = createSession(BLOK, true);
+    saveSession(s);
+    expect(storage.getItem(key(BLOK))).not.toBeNull();
+    expect(lastSavedSeed()).toBe(BLOK);
+    discardSave(s);
+    expect(storage.getItem(key(BLOK))).toBeNull();
+    saveSession(s);
+    retireSession(s);
+    expect(storage.getItem(key(BLOK))).toBeNull();
+    reviveSession(s);
+    expect(storage.getItem(key(BLOK))).not.toBeNull();
+  });
+});
+
 describe('granice wartości z zapisu (LIMITS) nie schodzą poniżej tego, co potrafi gra', () => {
   const seeds = [BLOK, PAWILON, 'bench', 'kiełbasa-12', ...Array.from({ length: 20 }, (_, i) => `granice-${i}`)];
   const infos = seeds.flatMap((seed) => REMONTS.map((r) => computeStoreInfo(layoutFor(seed, r.level))).concat(computeStoreInfo(layoutFor(seed, 0))));
