@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { MINUTES_PER_DAY } from '../catalog';
+import { MARGIN_PER_CUSTOMER, MINUTES_PER_DAY } from '../catalog';
 import { BOTS, BOT_NAMES, chooseProfile, runBot, type BotName, type BotView } from './bots';
 import { FATIGUE, dailyTapCeiling } from './fatigue';
 import {
-  MARGIN_PER_CUSTOMER, TWO_MONTHS, createSandbox, sandboxEnv, sandboxScale, stepPassive, stepSandbox, summarize, SANDBOX_DEFAULT,
+  TWO_MONTHS, createSandbox, sandboxEnv, sandboxScale, stepPassive, stepSandbox, summarize, SANDBOX_DEFAULT,
   type SandboxConfig, type SandboxState, type SandboxSummary,
 } from './sandbox';
 import { NO_ROBOTS } from './staff';

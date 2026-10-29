@@ -1,8 +1,9 @@
 import { hashString } from '@/sim/rng';
 import {
-  CATS, CAT_INFO, DELIVERY_AT, FINE_BASE, FINE_PER_PALLET, FRANCHISE_FEE_FIXED, FRANCHISE_FEE_SHARE, HOT, HOUR_CURVE,
-  ITEMS_PER_CUSTOMER, MEDIA_PER_DAY, MINUTES_PER_DAY, OPEN_FROM, OPEN_TO, PALLET_ITEMS, PATIENCE, RESTOCK_RATE, SCO_ACCEPT,
-  SCO_RATE, TILL_RATE, UNLOAD_AT, UNLOAD_RATE, WAGE_PER_DAY,
+  CAT_INFO, DELIVERY_AT, FINE_BASE, FINE_PER_PALLET, FRANCHISE_FEE_FIXED, FRANCHISE_FEE_SHARE, HOT, HOT_MARGIN_PER_CUSTOMER,
+  HOT_REVENUE_PER_CUSTOMER, HOUR_CURVE, ITEMS_PER_CUSTOMER, MARGIN_PER_CUSTOMER, MEDIA_PER_DAY, MINUTES_PER_DAY, OPEN_FROM,
+  OPEN_TO, PALLET_ITEMS, PATIENCE, RESTOCK_RATE, REVENUE_PER_CUSTOMER, SCO_ACCEPT, SCO_RATE, SHELF_MARGIN_PER_CUSTOMER,
+  SHELF_REVENUE_PER_CUSTOMER, TILL_RATE, UNLOAD_AT, UNLOAD_RATE, WAGE_PER_DAY,
 } from '../catalog';
 import { rand01 } from '../rand';
 import type { BotCommand, BotEnv, BotView } from './bots';
@@ -56,13 +57,6 @@ export const SANDBOX_DEFAULT: SandboxConfig = {
   robots: NO_ROBOTS,
 };
 
-/** Średni koszyk z `catalog.ts`: marża i obrót na klienta (towar z półki i strefa hot). */
-const SHELF_MARGIN = CATS.reduce((n, c) => n + CAT_INFO[c].price * CAT_INFO[c].margin * CAT_INFO[c].basket, 0) * ITEMS_PER_CUSTOMER;
-const SHELF_REVENUE = CATS.reduce((n, c) => n + CAT_INFO[c].price * CAT_INFO[c].basket, 0) * ITEMS_PER_CUSTOMER;
-const HOT_MARGIN = HOT.chance * HOT.price * HOT.margin;
-const HOT_REVENUE = HOT.chance * HOT.price;
-export const MARGIN_PER_CUSTOMER = SHELF_MARGIN + HOT_MARGIN;
-export const REVENUE_PER_CUSTOMER = SHELF_REVENUE + HOT_REVENUE;
 const CURVE_SUM = Object.values(HOUR_CURVE).reduce((n, v) => n + v, 0);
 
 /** Typowy dzień sklepu o danym ruchu (skala kart i KPI). */
@@ -169,8 +163,8 @@ function sell(s: SandboxState, served: number, scoShare = 0): void {
   s.shelf -= got;
   const share = want > 0 ? got / want : 1;
   const mods = cardModifiers(s.tycoon.cards, s.minute);
-  const margin = served * (SHELF_MARGIN * share + HOT_MARGIN) * mods.margin;
-  const revenue = served * (SHELF_REVENUE * share + HOT_REVENUE);
+  const margin = served * (SHELF_MARGIN_PER_CUSTOMER * share + HOT_MARGIN_PER_CUSTOMER) * mods.margin;
+  const revenue = served * (SHELF_REVENUE_PER_CUSTOMER * share + HOT_REVENUE_PER_CUSTOMER);
   s.cash += margin;
   book(s, 'margin', margin);
   book(s, 'revenue', revenue);

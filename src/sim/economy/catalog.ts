@@ -36,6 +36,17 @@ export const ITEMS_PER_CUSTOMER = 3.4;
 /** Hot-dog albo kawa „przy okazji”: szansa na klienta, cena i marża. Bez zapasu (strefa hot jest w każdym sklepie). */
 export const HOT = { chance: 0.18, price: 8.5, margin: 0.45 } as const;
 
+/**
+ * Przeciętny klient w złotówkach (jedno miejsce, z którego liczą ekonomia, karty, KPI i makieta): koszyk z półek (sztuki
+ * z `ITEMS_PER_CUSTOMER` w proporcjach `basket`) i strefa hot. Marża to przychód franczyzobiorcy, obrót to wartość sprzedanego towaru.
+ */
+export const SHELF_MARGIN_PER_CUSTOMER = CATS.reduce((n, c) => n + CAT_INFO[c].price * CAT_INFO[c].margin * CAT_INFO[c].basket, 0) * ITEMS_PER_CUSTOMER;
+export const SHELF_REVENUE_PER_CUSTOMER = CATS.reduce((n, c) => n + CAT_INFO[c].price * CAT_INFO[c].basket, 0) * ITEMS_PER_CUSTOMER;
+export const HOT_MARGIN_PER_CUSTOMER = HOT.chance * HOT.price * HOT.margin;
+export const HOT_REVENUE_PER_CUSTOMER = HOT.chance * HOT.price;
+export const MARGIN_PER_CUSTOMER = SHELF_MARGIN_PER_CUSTOMER + HOT_MARGIN_PER_CUSTOMER;
+export const REVENUE_PER_CUSTOMER = SHELF_REVENUE_PER_CUSTOMER + HOT_REVENUE_PER_CUSTOMER;
+
 /** Pojemność mebli (sztuk na kratkę obrysu) i zaplecza (sztuk na kratkę podłogi zaplecza). */
 export const CAPACITY = { gondola: 36, wallShelf: 45, fridge: 35, backroom: 18 } as const;
 

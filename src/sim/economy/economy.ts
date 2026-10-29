@@ -3,9 +3,9 @@ import {
   BANKRUPTCY_AT, CATS, CAT_INFO, COMBO_WINDOW, CREDIT_LIMIT, DELIVERY_AT, DELIVERY_AT_AFTERNOON, DELIVERY_AT_NIGHT,
   FINE_BASE, FINE_PER_PALLET, FRANCHISE_FEE_FIXED, FRANCHISE_FEE_SHARE,
   HIRE_COST, HOT, HOUR_CURVE, ITEMS_PER_CUSTOMER,
-  LOT_TRAFFIC, MEDIA_PER_DAY, MINUTES_PER_DAY, OPEN_FROM, OPEN_TO, ORDER_DEADLINE, PALLET_FEE, PALLET_ITEMS, PALLETS_FREE, PATIENCE,
-  RESTOCK_RATE, RETURN_FEE, SCO_ACCEPT, SCO_RATE, STAFF_MAX, STAFF_START, START_CASH, TILL_RATE, TRAFFIC_PER_SHELF_ITEM,
-  TRAFFIC_RANGE, UNLOAD_AT, UNLOAD_RATE, WAGE_PER_DAY, type Cat,
+  LOT_TRAFFIC, MARGIN_PER_CUSTOMER, MEDIA_PER_DAY, MINUTES_PER_DAY, OPEN_FROM, OPEN_TO, ORDER_DEADLINE, PALLET_FEE, PALLET_ITEMS,
+  PALLETS_FREE, PATIENCE, RESTOCK_RATE, RETURN_FEE, REVENUE_PER_CUSTOMER, SCO_ACCEPT, SCO_RATE, STAFF_MAX, STAFF_START, START_CASH,
+  TILL_RATE, TRAFFIC_PER_SHELF_ITEM, TRAFFIC_RANGE, UNLOAD_AT, UNLOAD_RATE, WAGE_PER_DAY, type Cat,
 } from './catalog';
 import { dayOf, formatMonth, isLastDayOfMonth, isOpenAt, minuteOfDay } from './calendar';
 import { FINE_PALLET_POW } from './exactMath';
@@ -403,6 +403,13 @@ export function arrivalRate(s: EconomyState, info: StoreInfo, fx: Effects = effe
 }
 
 /**
+ * Ilu ludzi w kolejce klient jeszcze toleruje: ulepszenia i palety w sali (`fx.patience`), a brud sali i worki w sali odejmują
+ * się dodatkowo. Jedyne miejsce tego wzoru: kolejka (`arrive`) i widok botów (`tycoon/economyEnv.ts`) pytają o to samo.
+ */
+export const patienceOf = (s: EconomyState, fx: Effects): number =>
+  fx.patience + cleanlinessEffects(s.tycoon.hall.cleanliness).patience - hallObstacle(s.tycoon.waste);
+
+/**
  * Przyjście klientów w jednej minucie; ci, którzy widzą długą kolejkę, rezygnują (spec §6.1). Obsługa idzie przez pulę ludzi
  * (`runStaff`). Zwraca liczbę przyjść z tej minuty (brud sali liczy się od przychodzących, nie od obsłużonych).
  */
@@ -411,9 +418,7 @@ function arrive(s: EconomyState, info: StoreInfo, fx: Effects): number {
   const arrivals = Math.floor(s.arrivalAcc);
   s.arrivalAcc -= arrivals;
 
-  // cierpliwość: ulepszenia i palety w sali (fx), brud sali i worki w sali odejmują się dodatkowo
-  const patience = fx.patience + cleanlinessEffects(s.tycoon.hall.cleanliness).patience - hallObstacle(s.tycoon.waste);
-  const over = s.queue - Math.max(1, patience);
+  const over = s.queue - Math.max(1, patienceOf(s, fx));
   const balk = over < 0 ? 0 : Math.min(1, 0.35 * (over + 1));
   const lost = arrivals * balk;
   s.queue += arrivals - lost;
@@ -846,12 +851,8 @@ const figuresOf = (m: Counters): MonthFigures => ({
   wut: m.wut, logistics: m.logistics, customers: m.customers, lost: m.lost,
 });
 
-/** Średnia marża na klienta z katalogu: koszyk z półek i strefa hot (jak `MARGIN_PER_CUSTOMER` w makiecie). */
-const CATALOG_MARGIN_PER_CUSTOMER = CATS.reduce((n, c) => n + CAT_INFO[c].price * CAT_INFO[c].margin * CAT_INFO[c].basket, 0) * ITEMS_PER_CUSTOMER
-  + HOT.chance * HOT.price * HOT.margin;
-
 /** Marża z jednego klienta w miesiącu (do wyceny klientów odstraszonych kolejką w raporcie); bez klientów średnia z katalogu. */
-const marginPerCustomer = (m: Counters): number => (m.customers > 0 ? m.margin / m.customers : CATALOG_MARGIN_PER_CUSTOMER);
+const marginPerCustomer = (m: Counters): number => (m.customers > 0 ? m.margin / m.customers : MARGIN_PER_CUSTOMER);
 
 function closeMonth(s: EconomyState, day: number, out: EconEvent[]): void {
   const m = s.month;
@@ -1177,8 +1178,8 @@ export function rushRemont(s: EconomyState): CommandResult {
 
 // --- Karty decyzji i okólniki ----------------------------------------------------------------------------
 
-/** Średni obrót na klienta: koszyk z półek i strefa hot (te same liczby co `REVENUE_PER_CUSTOMER` w makiecie, ale z katalogu). */
-const REVENUE_PER_CUSTOMER = CATS.reduce((n, c) => n + CAT_INFO[c].price * CAT_INFO[c].basket, 0) * ITEMS_PER_CUSTOMER + HOT.chance * HOT.price;
+/** Obrót, jakiego sklep spodziewa się w typowy dzień (oczekiwani klienci razy średni obrót na klienta z katalogu). */
+export const estimatedDailyRevenue = (s: EconomyState, info: StoreInfo): number => expectedDailyCustomers(s, info) * REVENUE_PER_CUSTOMER;
 
 /**
  * Co karta wie o sklepie przy losowaniu (INTEGRATION.md, §5): dostawy w kolejce na dziś, personel, zaufanie, sala, pogoda i
@@ -1200,7 +1201,7 @@ export function cardContext(s: EconomyState, info: StoreInfo): CardContext {
     sidewalkPallets: s.pallets.filter((p) => p.loc === 'sidewalk').length,
     weather: s.tycoon.hall.weather,
     dailyMargin: estimatedDailyMargin(s, info),
-    dailyRevenue: expectedDailyCustomers(s, info) * REVENUE_PER_CUSTOMER,
+    dailyRevenue: estimatedDailyRevenue(s, info),
   };
 }
 
@@ -1233,8 +1234,7 @@ export function answerCard(s: EconomyState, seq: number, answer: number, out: Ec
 
 /** Marża, jakiej sklep spodziewa się w typowy dzień (do skali nagród). */
 export function estimatedDailyMargin(s: EconomyState, info: StoreInfo): number {
-  const avgMargin = CATS.reduce((n, c) => n + CAT_INFO[c].price * CAT_INFO[c].margin * CAT_INFO[c].basket, 0) * ITEMS_PER_CUSTOMER;
-  return expectedDailyCustomers(s, info) * avgMargin * effects(s, info).marginMult;
+  return expectedDailyCustomers(s, info) * MARGIN_PER_CUSTOMER * effects(s, info).marginMult;
 }
 
 /** Wejście na kolejne poziomy: nagroda i odblokowania (komunikat `levelup` z listą). */

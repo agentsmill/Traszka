@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { generateStore } from '@/sim/store/generateStore';
 import {
-  BANKRUPTCY_AT, CATS, CAT_INFO, HOT, ITEMS_PER_CUSTOMER, MINUTES_PER_DAY, OPEN_FROM, OPEN_TO, START_CASH, TILL_RATE, UNLOAD_AT, UNLOAD_RATE,
-  WAGE_PER_DAY,
+  BANKRUPTCY_AT, CATS, CAT_INFO, HOT, ITEMS_PER_CUSTOMER, MARGIN_PER_CUSTOMER, MINUTES_PER_DAY, OPEN_FROM, OPEN_TO, REVENUE_PER_CUSTOMER,
+  START_CASH, TILL_RATE, UNLOAD_AT, UNLOAD_RATE, WAGE_PER_DAY,
 } from './catalog';
 import { dateOfDay, formatDate, isLastDayOfMonth } from './calendar';
 import { advanceEconomy } from './clock';
@@ -419,6 +419,24 @@ describe('miejsca na palety', () => {
         for (const c of [{ x: s.x, y: s.y }, { x: s.x + 1, y: s.y + 1 }]) expect(layout.cells[c.y * layout.width + c.x]).toBe('floor');
       }
     }
+  });
+});
+
+describe('średni klient z katalogu', () => {
+  it('marża i obrót na klienta z catalog.ts to dokładnie to, co sprzedaż liczy przy pełnych półkach (bez partnera i kart)', () => {
+    const s = createEconomy(SEED, info);
+    const served = 10;
+    const margin = sell(s, effects(s, info), served, 0);
+    expect(margin / served).toBeCloseTo(MARGIN_PER_CUSTOMER, 9);
+    expect(s.total.revenue / served).toBeCloseTo(REVENUE_PER_CUSTOMER, 9);
+    expect(s.total.missingItems).toBe(0);
+  });
+
+  it('skala sklepu (estimatedDailyMargin, cardContext) liczy z tej samej pary, razem ze strefą hot', () => {
+    const s = createEconomy(SEED, info);
+    const customers = expectedDailyCustomers(s, info);
+    expect(estimatedDailyMargin(s, info)).toBeCloseTo(customers * MARGIN_PER_CUSTOMER * effects(s, info).marginMult, 6);
+    expect(cardContext(s, info).dailyRevenue).toBeCloseTo(customers * REVENUE_PER_CUSTOMER, 6);
   });
 });
 
