@@ -57,6 +57,8 @@ export interface Toast { id: number; text: string; kind: ToastKind }
 export const toasts: Signal<Toast[]> = signal<Toast[]>([]);
 export const report: Signal<MonthReport | null> = signal<MonthReport | null>(null);
 export const showSettings: Signal<boolean> = signal(false);
+/** Okno „Jak grać” (`ui/howto/HowTo.tsx`): otwiera się po ekranie startowym i z ⚙, a dopóki jest otwarte, gra stoi (`isModalOpen`). Nie jest częścią zapisu. */
+export const howTo: Signal<boolean> = signal(false);
 /** Sklep tymczasowy (zapis się nie zbudował albo jest z nowszej wersji gry): nic się w nim nie zapisuje, więc ekran gry to pokazuje. */
 export const ephemeral: Signal<boolean> = signal(false);
 

@@ -860,10 +860,15 @@ const figuresOf = (m: Counters): MonthFigures => ({
 /** Marża z jednego klienta w miesiącu (do wyceny klientów odstraszonych kolejką w raporcie); bez klientów średnia z katalogu. */
 const marginPerCustomer = (m: Counters): number => (m.customers > 0 ? m.margin / m.customers : MARGIN_PER_CUSTOMER);
 
+/** Opłata franczyzowa za miesiąc z obrotem `revenue`: stała część plus udział w obrocie (pobierana przy zamknięciu miesiąca). */
+export function franchiseFee(revenue: number): number {
+  return Math.round(FRANCHISE_FEE_FIXED + FRANCHISE_FEE_SHARE * revenue);
+}
+
 function closeMonth(s: EconomyState, day: number, out: EconEvent[]): void {
   const m = s.month;
   const t = s.tycoon;
-  const fee = Math.round(FRANCHISE_FEE_FIXED + FRANCHISE_FEE_SHARE * m.revenue);
+  const fee = franchiseFee(m.revenue);
   charge(s, 'fee', fee, 'month');
   bonus(s, Math.round(turnoverBonusShare(t.trust.value) * m.revenue), 'month');
   // WUT: ubytki miesiąca (naturalne, z SCO i z kart) do progu pokrywa Centrala, nadwyżkę płaci franczyzobiorca; ubytki liczą się od zera

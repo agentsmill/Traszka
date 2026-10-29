@@ -8,6 +8,7 @@ import {
   StoreBadge, StoryModal, Toasts, WelcomeModal,
 } from './game/overlays';
 import { Sheet, TabBar } from './game/panels';
+import { HowTo } from './howto/HowTo';
 import { Notice } from './Notice';
 import { PerfOverlay } from './PerfOverlay';
 import { StartHost } from './start/StartScreen';
@@ -27,7 +28,7 @@ const brandVars = {
  * Cała nakładka. Bez `controls` (renderer nie wstał, benchmark albo gra jeszcze nie ruszyła) zostaje komunikat, wyniki benchmarku
  * i ekran startowy „Twój kasjer”, który otwiera się przy pierwszym wejściu, zanim powstanie gra. W grze: górny pasek, zakładki
  * z arkuszami, karta zaznaczenia, przyciski klikera, podpowiedzi pierwszego dnia, komunikaty i okna. Kolejność okien to ich
- * warstwy: karta decyzji leży nad panelami, a pod raportem miesiąca, powitaniem i ustawieniami.
+ * warstwy: karta decyzji leży nad panelami, a pod raportem miesiąca, „Jak grać”, powitaniem i ustawieniami.
  */
 export function App({ controls, game }: { controls: Controls | null; game: GameActions | null }) {
   return (
@@ -51,6 +52,7 @@ export function App({ controls, game }: { controls: Controls | null; game: GameA
           <CardDesk game={game} />
           <StoryModal />
           <ReportModal game={game} />
+          <HowTo />
           <WelcomeModal game={game} />
           <PrestigeModal game={game} />
           <CelebrationBanner />

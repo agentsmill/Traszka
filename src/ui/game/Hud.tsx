@@ -7,7 +7,8 @@ import { trustTier } from '@/sim/economy/tycoon/trust';
 import { econ, showSettings, speed, tab, type Controls } from '../state';
 import { int, zl } from './format';
 
-const SPEEDS: { value: Speed; label: string; title: string }[] = [
+/** Przyciski prędkości w pasku (pierwszy to pauza); „Jak grać” podaje z nich zakres tempa. */
+export const SPEEDS: { value: Speed; label: string; title: string }[] = [
   { value: 0, label: '❚❚', title: 'Pauza (spacja)' },
   { value: 1, label: '×1', title: 'Czas normalnie' },
   { value: 2, label: '×2', title: 'Czas ×2' },

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { WAGE_PER_DAY } from '@/sim/economy/catalog';
-import { createEconomy, kpiScaleOf, nextRemont, upgradeBlocker, type CommandResult, type EconomyState } from '@/sim/economy/economy';
+import { createEconomy, franchiseFee, kpiScaleOf, nextRemont, upgradeBlocker, type CommandResult, type EconomyState } from '@/sim/economy/economy';
 import type { Command } from '@/sim/economy/commands';
 import { KPI, KPI_FLAVOR, kpiTitle } from '@/sim/economy/tycoon/kpi';
 import { dayOfMinute, roundNice } from '@/sim/economy/tycoon/time';
@@ -273,7 +273,7 @@ describe('panele wysyłają polecenia przez game.dispatch, a nie wołają symula
   it('cele: premie Centrali wchodzą do marży i do wyniku miesiąca (osobny licznik bonus)', () => {
     const { s, info } = rich();
     Object.assign(s.today, { margin: 1000, other: 200, bonus: 300 });
-    Object.assign(s.month, { margin: 10_000, other: 500, bonus: 700, wages: 2000, media: 600, fines: 100, logistics: 200, wut: 150 });
+    Object.assign(s.month, { revenue: 90_000, margin: 10_000, other: 500, bonus: 700, wages: 2000, media: 600, fines: 100, logistics: 200, wut: 150 });
     const tree = GoalsPanel({ s, info, game: fakeGame(), v: 1 });
     const value = (section: string, label: string): string => {
       const row = walk(sectionTitled(tree, section)).find((v) => v.props.label === label);
@@ -282,7 +282,36 @@ describe('panele wysyłają polecenia przez game.dispatch, a nie wołają symula
     expect(value('Dziś', 'Marża i premie (Twój przychód)')).toBe('1500zł');
     expect(value('Ten miesiąc', 'Marża i premie')).toBe('11200zł');
     expect(value('Ten miesiąc', 'WUT ponad próg')).toBe('−150zł');
-    expect(value('Ten miesiąc', 'Wynik (przed opłatą franczyzową)')).toBe('+8150zł');
+  });
+
+  describe('cele: opłata franczyzowa w trakcie miesiąca', () => {
+    /** Panel „Ten miesiąc” dla miesiąca z obrotem `revenue` i wynikiem przed opłatą 8150 zł (11 200 − 3 050). */
+    const month = (revenue: number): { value: (label: string) => string; text: string } => {
+      const { s, info } = rich();
+      Object.assign(s.month, { revenue, margin: 10_000, other: 500, bonus: 700, wages: 2000, media: 600, fines: 100, logistics: 200, wut: 150 });
+      const section = sectionTitled(GoalsPanel({ s, info, game: fakeGame(), v: 1 }), 'Ten miesiąc');
+      const value = (label: string): string => textOf(walk(section).find((v) => v.props.label === label)!).replace(/[\s\u00a0\u202f]/g, '');
+      return { value, text: textOf(section) };
+    };
+
+    it('wiersz opłaty pokazuje franchiseFee od obrotu do dziś, a wynik jest już po opłacie', () => {
+      const { value } = month(90_000);
+      const fee = franchiseFee(90_000);
+      expect(value('Opłata franczyzowa (naliczona do dziś)')).toBe(`−${fee}zł`);
+      expect(value('Wynik po opłacie (do dziś)')).toBe(`${8150 - fee >= 0 ? '+' : '−'}${Math.abs(8150 - fee)}zł`);
+    });
+
+    it('opłata rośnie z obrotem, a przy zerowym obrocie to sama część stała', () => {
+      expect(month(0).value('Opłata franczyzowa (naliczona do dziś)')).toBe(`−${franchiseFee(0)}zł`);
+      expect(month(300_000).value('Opłata franczyzowa (naliczona do dziś)')).toBe(`−${franchiseFee(300_000)}zł`);
+      expect(franchiseFee(300_000)).toBeGreaterThan(franchiseFee(90_000));
+    });
+
+    it('stary napis „przed opłatą” zniknął, a podpowiedź każe zostawić gotówkę na opłatę', () => {
+      const { text } = month(90_000);
+      expect(text).not.toContain('przed opłatą');
+      expect(text).toContain('Opłatę franczyzową i premię od obrotu Centrala rozlicza przy zamknięciu miesiąca. Zostaw na nią gotówkę.');
+    });
   });
 });
 

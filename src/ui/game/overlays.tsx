@@ -9,7 +9,7 @@ import { EQUIPMENT, EQUIPMENT_BY_ID, equipmentCost } from '@/sim/economy/upgrade
 import type { QualityPresetId } from '@/render/quality';
 import { networkIncomeOf, prestigePoints } from '@/game/meta';
 import {
-  celebration, dismissStory, ephemeral, econ, hints, metaView, nextHint, preset, report, selection, seed, showPerf, showPrestige,
+  celebration, dismissStory, ephemeral, econ, hints, howTo, metaView, nextHint, preset, report, selection, seed, showPerf, showPrestige,
   showSettings, story, tab, toasts, welcome, type Controls, type GameActions,
 } from '../state';
 import { int, people, signedPts, signedZl, zl } from './format';
@@ -323,6 +323,13 @@ export function StoreActions({ ephemeral: temporary, onNewStore, onRestart }: { 
   );
 }
 
+/** Przycisk „Jak grać” w ⚙: zamyka ustawienia i otwiera okno z instrukcją (gra stoi, dopóki gracz nie kliknie „Zaczynamy”). */
+export function HowToButton() {
+  return (
+    <button type="button" class="tt-btn" onClick={() => { showSettings.value = false; howTo.value = true; }}>Jak grać</button>
+  );
+}
+
 const PRESETS: { value: QualityPresetId; label: string }[] = [
   { value: 'niska', label: 'Niska' },
   { value: 'srednia', label: 'Średnia' },
@@ -350,6 +357,8 @@ export function Settings({ controls, game }: { controls: Controls; game: GameAct
         </form>
         <StoreActions ephemeral={ephemeral.value} onNewStore={() => { close(); game.newStore(); }}
           onRestart={() => { if (confirm(RESTART_CONFIRM)) { game.restart(); close(); } }} />
+        <h3>Pomoc</h3>
+        <HowToButton />
         <h3>Grafika</h3>
         <div class="tt-seg wide" role="group" aria-label="Jakość grafiki">
           {PRESETS.map((p) => (
@@ -369,12 +378,12 @@ export function Settings({ controls, game }: { controls: Controls; game: GameAct
 
 /**
  * Czy jest otwarte okno, które baner nagrody (warstwa wyżej niż okna) zasłoniłby razem z jego przyciskami: raport miesiąca albo
- * koniec gry, ważne zdarzenie czekające na „OK”, karta decyzji na biurku i powitanie. Ten sam poziom z odblokowaniami ma
+ * koniec gry, ważne zdarzenie czekające na „OK”, karta decyzji na biurku, powitanie i „Jak grać”. Ten sam poziom z odblokowaniami ma
  * zresztą własne okno „Poziom N”, więc baner nie jest tam potrzebny.
  */
 export function windowBlocksBanner(): boolean {
   const view = econ.value;
-  return !!report.value || story.value.length > 0 || !!welcome.value || !!view?.s.gameOver
+  return !!report.value || story.value.length > 0 || !!welcome.value || howTo.value || !!view?.s.gameOver
     || (!!view && visibleCards(view.s.tycoon.cards, view.s.minute).length > 0);
 }
 

@@ -407,13 +407,14 @@ export function createShell(deps: ShellDeps): GameShell {
    * sklep otwiera `openChosen` (start.ts, z testem): przez `setSeed` zawsze bez `fresh`, więc seed z zapisem wczytuje ten zapis, a
    * zapisu z nowszej wersji gry ani takiego, którego świata nie dało się zbudować, nic nie nadpisze (`createSession`). Wygląd idzie
    * do sceny przed `setSeed`: każdy sklep (także poprzedni, odtworzony, gdy nowy się nie otworzył) stawia kasjera z tego wyglądu,
-   * więc `CashierView.setLook` na żywo nie jest tu potrzebne.
+   * więc `CashierView.setLook` na żywo nie jest tu potrzebne. Po otwarciu sklepu wstaje okno „Jak grać” (gra czeka na „Zaczynamy”);
+   * gdy sklep się nie otworzył, gracz zostaje w poprzednim i nic się nie otwiera.
    */
   function openChosenStore(choice: StartChoice): void {
     shell.meta.player = playerOf(choice);
     saveMeta(shell.meta);
     scene.setCashierLook(choice.look);
-    openChosen(choice, storeSwitch);
+    if (openChosen(choice, storeSwitch)) ui.howTo.value = true;
   }
 
   const game: ui.GameActions = {
@@ -528,6 +529,7 @@ export function createShell(deps: ShellDeps): GameShell {
       const start = startupWindow(shell.meta, session.econ, session.ephemeral, new Date());
       ui.showHints(start.intro ? deps.firstDayHints : []);   // nowa gra: wskazówki pierwszego dnia w krótkich dymkach
       ui.welcome.value = start.welcome;
+      if (choice) ui.howTo.value = true;   // pierwsze wejście przez ekran startowy: instrukcja, a gra czeka na „Zaczynamy”
       persist();
       return true;
     },

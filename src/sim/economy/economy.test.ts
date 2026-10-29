@@ -1,14 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { generateStore } from '@/sim/store/generateStore';
 import {
-  BANKRUPTCY_AT, CATS, CAT_INFO, HOT, ITEMS_PER_CUSTOMER, MARGIN_PER_CUSTOMER, MINUTES_PER_DAY, OPEN_FROM, OPEN_TO, REVENUE_PER_CUSTOMER,
+  BANKRUPTCY_AT, CATS, CAT_INFO, FRANCHISE_FEE_FIXED, FRANCHISE_FEE_SHARE, HOT, ITEMS_PER_CUSTOMER, MARGIN_PER_CUSTOMER, MINUTES_PER_DAY, OPEN_FROM, OPEN_TO, REVENUE_PER_CUSTOMER,
   START_CASH, TILL_RATE, UNLOAD_AT, UNLOAD_RATE, WAGE_PER_DAY,
 } from './catalog';
 import { dateOfDay, formatDate, isLastDayOfMonth } from './calendar';
 import { advanceEconomy } from './clock';
 import {
   answerCard, arrivalRate, awaitingDecision, buyEquipment, buyUpgrade, cardContext, changeTrust, createEconomy, effects,
-  estimatedDailyMargin, expectedDailyCustomers, fire, freeSpots, GOLDEN_PRIZE, isOpenForCustomers, kpiMetricsOf, kpiScaleOf, movePallet, relayout,
+  estimatedDailyMargin, expectedDailyCustomers, fire, franchiseFee, freeSpots, GOLDEN_PRIZE, isOpenForCustomers, kpiMetricsOf, kpiScaleOf, movePallet, relayout,
   returnPallet, robotFleet, sell, slotFree, startRemont, stepMinute, tapPallet, tapTill, unlocksAt, upgradeBlocker, workshopUnlocked,
   type CommandResult, type EconEvent, type EconomyState, type MonthReport,
 } from './economy';
@@ -403,6 +403,21 @@ describe('ostatni raport miesięczny w stanie', () => {
     expect(restored.gameOver).toBe(true);
     expect(restored.lastReport?.label).toBe('wrzesień 2026');
     expect(restored.lastReport?.cash).toBeLessThan(BANKRUPTCY_AT);
+  });
+});
+
+describe('opłata franczyzowa', () => {
+  it('stała część plus udział w obrocie, w pełnych złotych', () => {
+    expect(franchiseFee(0)).toBe(FRANCHISE_FEE_FIXED);
+    expect(franchiseFee(200_000)).toBe(Math.round(FRANCHISE_FEE_FIXED + FRANCHISE_FEE_SHARE * 200_000));
+    expect(franchiseFee(123_456.78)).toBe(Math.round(FRANCHISE_FEE_FIXED + FRANCHISE_FEE_SHARE * 123_456.78));
+  });
+
+  it('zamknięcie miesiąca nalicza dokładnie tyle, ile pokazuje franchiseFee dla obrotu tego miesiąca', () => {
+    const s = createEconomy(SEED, info);
+    const report = run(s, info, 30 * MINUTES_PER_DAY).find((e) => e.kind === 'month')!.report!;
+    expect(report.counters.revenue).toBeGreaterThan(0);
+    expect(report.counters.fee).toBe(franchiseFee(report.counters.revenue));
   });
 });
 

@@ -14,11 +14,11 @@ import type { GameSession } from './session';
 
 /**
  * Czy na wierzchu jest okno, które zatrzymuje grę: raport miesiąca, ważne zdarzenie czekające na „OK” (`ui.story`), ekran
- * startowy, powitanie, prestiż albo koniec gry (ten ostatni czyta się z `session`, bez sesji go nie ma). Karta decyzji
+ * startowy, powitanie, prestiż, „Jak grać” albo koniec gry (ten ostatni czyta się z `session`, bez sesji go nie ma). Karta decyzji
  * zatrzymuje grę sama, w symulacji (`cardsBlocking`). Pauza z klawisza to osobna sprawa: nią steruje prędkość.
  */
 export const isModalOpen = (session: Pick<GameSession, 'econ'> | null = null): boolean =>
-  !!ui.report.value || ui.story.value.length > 0 || !!ui.start.value || !!ui.welcome.value || ui.showPrestige.value
+  !!ui.report.value || ui.story.value.length > 0 || !!ui.start.value || !!ui.welcome.value || ui.showPrestige.value || ui.howTo.value
   || !!session?.econ.gameOver;
 
 /**

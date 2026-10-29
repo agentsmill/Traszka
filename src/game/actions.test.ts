@@ -502,6 +502,7 @@ describe('powłoka gry (createShell)', () => {
     ui.selection.value = null;
     ui.tab.value = null;
     ui.showSettings.value = false;
+    ui.howTo.value = false;
     ui.toasts.value = [];
     ui.story.value = [];
     ui.picked.value = null;
@@ -640,6 +641,18 @@ describe('powłoka gry (createShell)', () => {
       expect(h.shell.session!.fromSave).toBe(true);
       expect(h.shell.session!.econ.cash).toBe(4242);
       expect(ui.toasts.value.map((t) => t.text)).toEqual(['Wczytujemy Twój sklep spod tego seeda']);
+    });
+
+    it('pierwsze wejście przez ekran startowy otwiera okno „Jak grać”; wejście bez ekranu (adres, zapis) nie', () => {
+      const look = { outfit: 'normal', appearanceSeed: 'abc' } as unknown as CashierLook;
+      const withChoice = harness();
+      withChoice.shell.open({ seed: 'traszka-1', fresh: false, choice: { nick: 'Kasia', seed: 'traszka-1', look, specialOutfits: true, notice: null } });
+      expect(ui.howTo.value).toBe(true);
+
+      ui.howTo.value = false;
+      const without = harness();
+      without.shell.open({ seed: 'traszka-2', fresh: false, choice: null });
+      expect(ui.howTo.value).toBe(false);
     });
 
     it('świat zapisanego sklepu się nie buduje: sklep tymczasowy o losowym seedzie, adres zostaje, komunikat o bezpiecznym zapisie', () => {
@@ -1042,6 +1055,29 @@ describe('powłoka gry (createShell)', () => {
       expect(h.shell.session).not.toBe(old);
       expect(h.shell.session!.seed).toBe('traszka-5');
       expect(h.urls).toEqual(['traszka-5']);
+    });
+
+    it('newStore: okno „Jak grać” otwiera się dopiero po zamknięciu ekranu startowego i gdy sklep się otworzył', () => {
+      const h = harness({ seeds: ['wolny-1'] });
+      open(h, 'traszka-1');
+      h.shell.game.newStore();
+      expect(ui.howTo.value).toBe(false);   // ekran startowy jeszcze stoi
+      const request = ui.start.value!;
+      request.onStart({ nick: 'Kasia', seed: 'traszka-5', look: request.form.look, specialOutfits: true, notice: null });
+      expect(h.shell.session!.seed).toBe('traszka-5');
+      expect(ui.howTo.value).toBe(true);
+    });
+
+    it('newStore: sklep, który się nie zbudował, zostawia gracza w poprzednim i nie otwiera instrukcji', () => {
+      const h = harness({ seeds: ['wolny-1'] });
+      const old = open(h, 'traszka-1');
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      h.scene.failing.add('zepsuty');
+      h.shell.game.newStore();
+      const request = ui.start.value!;
+      request.onStart({ nick: 'Kasia', seed: 'zepsuty', look: request.form.look, specialOutfits: true, notice: null });
+      expect(h.shell.session).toBe(old);
+      expect(ui.howTo.value).toBe(false);
     });
 
     it('newStore w benchmarku nie robi nic', () => {

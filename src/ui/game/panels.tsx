@@ -2,7 +2,7 @@ import type { ComponentChildren } from 'preact';
 import { CATS, CAT_INFO, HIRE_COST, HOUR_CURVE, ORDER_DEADLINE, RESTOCK_RATE, RETURN_FEE, SCO_RATE, STAFF_MAX, TILL_RATE, UNLOAD_RATE, WAGE_PER_DAY } from '@/sim/economy/catalog';
 import { formatClock, minuteOfDay } from '@/sim/economy/calendar';
 import {
-  LOC_LABEL, assistantSuggestion, effects, expectedDailyCustomers, freeSpots, isClosedForRemont, kpiMetricsOf, kpiScaleOf, level, nextRemont,
+  LOC_LABEL, assistantSuggestion, effects, expectedDailyCustomers, franchiseFee, freeSpots, isClosedForRemont, kpiMetricsOf, kpiScaleOf, level, nextRemont,
   plPallets, robotFleet, slotFree, slotUsage, upgradeBlocker, workshopUnlocked, type EconomyState,
 } from '@/sim/economy/economy';
 import { MILESTONES } from '@/sim/economy/milestones';
@@ -430,6 +430,8 @@ export function GoalsPanel({ s, info }: { s: EconomyState; info: StoreInfo; game
   const kpiXp = KPI.xpBase + KPI.xpPerLevel * Math.max(1, s.level);
   const goals = MILESTONES.filter((x) => !s.milestones.includes(x.id)).slice(0, 3);
   const best = Math.max(1, ...s.history.map((h) => Math.abs(h.profit)));
+  // w trakcie miesiąca `m.fee` jest zerem (opłata schodzi dopiero przy zamknięciu), więc pokazujemy, ile naliczy się od dzisiejszego obrotu
+  const fee = franchiseFee(m.revenue);
   const nextRank = nextRankAt(s.level);
   const meta = metaView.value;
   return (
@@ -483,8 +485,10 @@ export function GoalsPanel({ s, info }: { s: EconomyState; info: StoreInfo; game
         <Row label="Mandaty">−{zl(m.fines)}</Row>
         <Row label="Logistyka">−{zl(m.logistics)}</Row>
         <Row label="WUT ponad próg">−{zl(m.wut)}</Row>
-        <Row label="Wynik (przed opłatą franczyzową)"><b>{signedZl(profit(m))}</b></Row>
+        <Row label="Opłata franczyzowa (naliczona do dziś)">−{zl(fee)}</Row>
+        <Row label="Wynik po opłacie (do dziś)"><b>{signedZl(profit(m) - fee)}</b></Row>
         <Row label="Inwestycje">{zl(m.investments)}</Row>
+        <p class="tt-hint">Opłatę franczyzową i premię od obrotu Centrala rozlicza przy zamknięciu miesiąca. Zostaw na nią gotówkę.</p>
       </Section>
       {s.history.length > 0 && (
         <Section title="Poprzednie miesiące">

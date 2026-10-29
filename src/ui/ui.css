@@ -1905,3 +1905,13 @@
   line-height: 1.5;
   white-space: pre-line;
 }
+
+/* „Jak grać”: ok. pół tysiąca słów w zwartych akapitach; okno przewija się całe, a „Zaczynamy” zostaje na dole (tt-modal-foot). */
+.tt-howto p,
+.tt-howto .tt-list {
+  margin: 0 0 8px;
+}
+
+.tt-howto .tt-list li {
+  margin: 0 0 6px;
+}

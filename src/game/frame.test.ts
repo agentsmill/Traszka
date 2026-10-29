@@ -126,6 +126,7 @@ describe('isModalOpen', () => {
     ui.start.value = null;
     ui.welcome.value = null;
     ui.showPrestige.value = false;
+    ui.howTo.value = false;
     ui.story.value = [];
   });
 
@@ -153,6 +154,18 @@ describe('isModalOpen', () => {
     ui.showPrestige.value = false;
 
     expect(isModalOpen()).toBe(false);
+  });
+
+  it('okno „Jak grać” zatrzymuje grę (z sesją i bez), a po „Zaczynamy” gra rusza', () => {
+    ui.howTo.value = true;
+    expect(isModalOpen()).toBe(true);
+    expect(isModalOpen(fresh())).toBe(true);
+    const s = fresh();
+    expect(advanceSession(s, 1, 1, isModalOpen(s), [])).toBe(0);   // pętla klatek: okno na wierzchu, więc ani minuty
+    expect(s.econ.minute).toBe(OPEN_FROM);
+    ui.howTo.value = false;
+    expect(isModalOpen(s)).toBe(false);
+    expect(advanceSession(s, 1, 1, isModalOpen(s), [])).toBeGreaterThan(0);
   });
 
   it('ważne zdarzenie czekające na „OK” zatrzymuje grę, a po „OK” (pusta kolejka) gra rusza', () => {

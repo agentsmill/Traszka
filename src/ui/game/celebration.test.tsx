@@ -3,7 +3,7 @@ import { createEconomy, type MonthReport } from '@/sim/economy/economy';
 import type { CardInstance } from '@/sim/economy/tycoon/cards';
 import { computeStoreInfo } from '@/sim/economy/storeInfo';
 import { layoutFor } from '@/sim/store/layoutFor';
-import { celebration, econ, pushStory, report, story, welcome, type Celebration } from '../state';
+import { celebration, econ, howTo, pushStory, report, story, welcome, type Celebration } from '../state';
 import { CelebrationBanner, windowBlocksBanner } from './overlays';
 import { textOf, walk, type Vnode } from './vnodeTree';
 
@@ -34,6 +34,7 @@ const reset = (): void => {
   econ.value = null;
   report.value = null;
   welcome.value = null;
+  howTo.value = false;
   story.value = [];
 };
 beforeEach(() => { reset(); effects.length = 0; });
@@ -108,6 +109,15 @@ describe('baner nagrody (nowy poziom)', () => {
     publishWithCard(2000);
     econ.value!.s.gameOver = true;
     expect(CelebrationBanner()).toBeNull();
+  });
+
+  it('nie zasłania okna „Jak grać” z jego przyciskiem „Zaczynamy”', () => {
+    celebration.value = LEVEL_UP;
+    howTo.value = true;
+    expect(windowBlocksBanner()).toBe(true);
+    expect(CelebrationBanner()).toBeNull();
+    howTo.value = false;
+    expect(CelebrationBanner()).not.toBeNull();
   });
 
   it('windowBlocksBanner: bez okien i bez gry jest fałszem', () => {
