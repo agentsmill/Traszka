@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { NICK_ERRORS } from '@/game/nick';
+import { normalizeSeed } from '@/game/seeds';
 import { KNOWN_GAME_VERSIONS, KNOWN_GENERATOR_VERSIONS, RUN_MAX_COMMAND_BYTES, RUN_MAX_LOG_ENTRIES, SEASON_END_MINUTE } from './config';
 import { parseSubmission, type RunRecord } from './runs';
 
@@ -75,6 +76,38 @@ describe('zgłoszenie biegu: kształt i granice', () => {
     // emoji ze spójnikiem, polskie litery i sąsiedni lokal są w porządku
     for (const seed of ['👩‍🍳 kuchnia', 'kiełbasa-42', 'pierogi-731·2', 'x'.repeat(48)]) {
       expect(parseSubmission(body({}, { seed })).ok, seed).toBe(true);
+    }
+  });
+
+  it('seed z flagą Anglii, Szkocji albo Walii (cała sekwencja z Unicode) przechodzi, tak jak go przyjmuje gra', () => {
+    const flag = (code: string): string => `\u{1f3f4}${Array.from(code, (c) => String.fromCodePoint(0xe0000 + c.charCodeAt(0))).join('')}\u{e007f}`;
+    for (const seed of [flag('gbeng'), flag('gbsct'), flag('gbwls'), `moja ${flag('gbeng')} flaga`, `${flag('gbwls')}-7`]) {
+      expect(parseSubmission(body({}, { seed })).ok, Array.from(seed).map((c) => c.codePointAt(0)!.toString(16)).join(' ')).toBe(true);
+    }
+  });
+
+  it('seed z miękkim łącznikiem, obcą flagą, znacznikami bez flagi albo osamotnionym surogatem: bad-seed (nie da się go pokazać ani zapisać w adresie)', () => {
+    const tags = (letters: string): string => Array.from(letters, (c) => String.fromCodePoint(0xe0000 + c.charCodeAt(0))).join('');
+    const bad = [
+      'pie\u{00ad}rogi', 'pie\u{061c}rogi', 'pie\u{180e}rogi', 'pie\u{2062}rogi', 'pie\u{fff9}rogi', 'pie\u{1d173}rogi',
+      `\u{1f3f4}${tags('gbxxx')}\u{e007f}`, `\u{1f3f4}${tags('gbeng')}`, `${tags('gbeng')}\u{e007f}`, `hej${tags('tajne')}`, `a${tags('gbeng')}\u{e007f}`,
+      'pie\ud83drogi', 'pie\ude00rogi', '\ud83d', '\ude00',
+      'pie\u{200d}rogi', '\u{200d}pierogi', 'pierogi\u{200d}', '👩\u{200d}',
+    ];
+    for (const seed of bad) {
+      expect(parseSubmission(body({}, { seed })), Array.from(seed).map((c) => c.codePointAt(0)!.toString(16)).join(' ')).toMatchObject({ ok: false, error: 'bad-seed' });
+    }
+  });
+
+  it('seed, który gra zostawia po normalizacji, serwer zawsze przyjmuje (także gdy gracz wkleił niewidoczne znaki i flagi)', () => {
+    const tags = (letters: string): string => Array.from(letters, (c) => String.fromCodePoint(0xe0000 + c.charCodeAt(0))).join('');
+    const pasted = [
+      'pie\u{00ad}rogi', `Moja \u{1f3f4}${tags('gbeng')}\u{e007f} FLAGA`, `\u{1f3f4}${tags('gbxxx')}\u{e007f}`, `${'a'.repeat(34)}\u{1f3f4}${tags('gbwls')}\u{e007f}`,
+      'a\u{200d}b', '\ud83d\u{2062}\ude00', '  pie\trogi\n', 'x'.repeat(200),
+    ];
+    for (const raw of pasted) {
+      const seed = normalizeSeed(raw, () => 'pierogi-731');
+      expect(parseSubmission(body({}, { seed })).ok, Array.from(raw).map((c) => c.codePointAt(0)!.toString(16)).join(' ')).toBe(true);
     }
   });
 

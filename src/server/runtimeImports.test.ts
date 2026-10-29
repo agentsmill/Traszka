@@ -51,6 +51,12 @@ describe('funkcje serwerowe: importy, które Vercel uruchomi', () => {
     expect([...seen].some((f) => f.includes(`${join('src', 'game', 'nick.ts')}`))).toBe(true);
   });
 
+  it('wspólny walidator seeda (src/game/seedText.ts) jest osiągalny z serwera i nie ma żadnych importów', () => {
+    const file = join(ROOT, 'src/game/seedText.ts');
+    expect(readFileSync(join(ROOT, 'src/server/runs.ts'), 'utf8')).toContain("from '../game/seedText.js'");
+    expect(readFileSync(file, 'utf8')).not.toMatch(/^\s*import\b/m);
+  });
+
   it('serwer zna bieżącą wersję gry i generatora (inaczej odrzuci każdy bieg jako „nieaktualna wersja”)', () => {
     expect(KNOWN_GAME_VERSIONS).toContain(GAME_VERSION);
     expect(KNOWN_GENERATOR_VERSIONS).toContain(GENERATOR_VERSION);
@@ -81,7 +87,7 @@ describe('kod serwera i klucza gracza: znaki niewidoczne tylko jako zapis \\uXXX
   it('api/**, src/server/**, src/ui/ranking/** i playerKey.ts (bez testów) nie zawierają dosłownych znaków niewidocznych', () => {
     const sources = [
       ...files(join(ROOT, 'api')), ...files(join(ROOT, 'src/server')), ...files(join(ROOT, 'src/ui/ranking')),
-      join(ROOT, 'src/game/playerKey.ts'),
+      join(ROOT, 'src/game/playerKey.ts'), join(ROOT, 'src/game/seedText.ts'),
     ];
     expect(sources.length).toBeGreaterThan(20);
     const found: string[] = [];

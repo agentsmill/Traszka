@@ -1,5 +1,6 @@
 import { nickKey, normalizeNick } from '../game/nick.js';
 import { parseRecoveryCode } from '../game/playerKey.js';
+import { isShowableSeed as isShowableSeedText } from '../game/seedText.js';
 import { isRec } from '../sim/guards.js';
 import {
   KNOWN_GAME_VERSIONS, KNOWN_GENERATOR_VERSIONS, RUN_MAX_COMMAND_BYTES, RUN_MAX_LOG_ENTRIES, RUN_MAX_SEED_CHARS, SEASON_END_MINUTE,
@@ -23,8 +24,6 @@ export interface Submission { key: string; nick: string; nickKey: string; run: R
 
 /** Typ polecenia: krótki identyfikator (jak `tapPallet`), bez spacji i znaków spoza ASCII. */
 const COMMAND_TYPE = /^[A-Za-z][A-Za-z0-9]{0,31}$/;
-/** Znaki, których nie wolno pokazać w rankingu: sterujące, formatujące (kierunek tekstu, zerowej szerokości, BOM) i separatory wierszy. Spójnik emoji (U+200D) zostaje. */
-const HIDDEN = /[\p{Cc}\p{Zl}\p{Zp}]|(?!\u200d)\p{Cf}/u;
 const isWhole = (v: unknown, min: number, max: number): v is number => Number.isInteger(v) && (v as number) >= min && (v as number) <= max;
 
 /** Klucz gracza i nick wspólne dla wszystkich zgłoszeń z nickiem (bieg, sprawdzenie nicka). Brak pola to zły formularz, zły klucz to `bad-key`. */
@@ -37,10 +36,14 @@ export function parseKeyAndNick(key: unknown, nick: unknown): Checked<{ key: str
   return { ok: true, value: { key: parsedKey, nick: n.nick, nickKey: nickKey(n.nick) } };
 }
 
-/** Seed z biegu, który da się pokazać w rankingu: 1–48 znaków, bez spacji na brzegach i bez znaków niewidocznych. */
+/**
+ * Seed z biegu, który da się pokazać w rankingu: 1–48 znaków (`RUN_MAX_SEED_CHARS`), bez spacji na brzegach i bez niedozwolonych znaków.
+ * Które znaki są niedozwolone, rozstrzyga `src/game/seedText.ts`, ta sama definicja, według której gra czyści seed (`normalizeSeed`),
+ * więc seed zapisany przez grę serwer przyjmuje. Odrzuca znaki sterujące i formatujące, znaczniki (poza trzema flagami Anglii,
+ * Szkocji i Walii), osamotnione surogaty, separatory wierszy i ZWJ poza emoji.
+ */
 export function isShowableSeed(seed: string): boolean {
-  const chars = Array.from(seed).length;
-  return chars >= 1 && chars <= RUN_MAX_SEED_CHARS && seed === seed.trim() && !HIDDEN.test(seed);
+  return isShowableSeedText(seed, RUN_MAX_SEED_CHARS);
 }
 
 function parseLog(raw: unknown[]): Checked<LogEntry[]> {
