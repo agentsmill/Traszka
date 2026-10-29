@@ -288,7 +288,7 @@ export const STEPS = [
   },
   {
     id: 'gracz-nowy',
-    name: 'nowy klucz nie ma jeszcze nicków (SMEMBERS; limit: SET NX PX, INCR, PEXPIRE)',
+    name: 'nowy klucz nie ma jeszcze nicków (SMEMBERS; limit: INCR + PEXPIRE, bez RANKING_SALT też SET NX PX soli okna)',
     async run(t) {
       const body = expectOk(await t.post('/api/player', { key: t.key }));
       same(body.nicks, [], 'nicks');
@@ -449,7 +449,7 @@ export const STEPS = [
   },
   {
     id: 'zapis-wyslij',
-    name: 'wysłanie zapisu gry (SET EX, budżet dzienny: INCR + EXPIRE)',
+    name: 'wysłanie zapisu gry (SET EX; budżet dzienny: SET NX EX + INCR)',
     async run(t) {
       t.save = saveBundle(t);
       const body = expectOk(await t.post('/api/save/upload', { key: t.key, save: t.save }));
