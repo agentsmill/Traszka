@@ -310,7 +310,7 @@ export const rankedRunStale = (s: GameSession): boolean => s.run !== null && s.r
  * Dlaczego bieg zakończony grą (bankructwo: granica debetu albo wypowiedzenie umowy) nie trafia do rankingu. Taki tekst dostaje gracz
  * w komunikacie, gdy bieg się kończy, i w raporcie końca współpracy; serwer odrzuca takie biegi jako `season-bankrupt` (`src/server/verify.ts`).
  */
-export const RANKED_BANKRUPT_TEXT = 'Ten bieg nie trafi do rankingu: sezon zakończony bankructwem.';
+export const RANKED_BANKRUPT_TEXT = 'Ten bieg nie trafi do rankingu: Centrala wypowiedziała umowę.';
 
 /** Czy sezon się skończył: pierwsza minuta po zamknięciu 30 listopada (`RANKED_SEASON_END_MINUTE`) i każda późniejsza. */
 export const seasonOver = (econ: Pick<EconomyState, 'minute'>): boolean => econ.minute >= RANKED_SEASON_END_MINUTE;

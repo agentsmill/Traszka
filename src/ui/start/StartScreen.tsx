@@ -44,7 +44,7 @@ const OUTFIT_LABEL: Record<OutfitFile, string> = {
 const PENDING_NOTE_MS = 160;
 
 /** Podpis pod „Start rankingowy”. */
-export const RANKED_NOTE = 'Trzy miesiące na jednym seedzie, bez premii z sieci. Wynik wyślesz po sezonie; gdy ranking nie działa, bieg poczeka w przeglądarce. Bankructwo przed końcem sezonu wyklucza z rankingu.';
+export const RANKED_NOTE = 'Trzy miesiące na jednym seedzie, bez premii z sieci. Wynik wyślesz po sezonie; gdy ranking nie działa, bieg poczeka w przeglądarce. Bieg zakończony bankructwem nie trafia do rankingu.';
 
 /**
  * Pytanie w ekranie startowym, gdy nowy bieg rankingowy porzuciłby coś, co jeszcze żyje (niewysłany bieg, trwający bieg): zamiast

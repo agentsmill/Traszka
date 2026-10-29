@@ -710,7 +710,7 @@ describe('okno raportu miesiąca', () => {
     const found = notes(tree);
     expect(found).toHaveLength(2);   // powód końca współpracy i akapit o rankingu, w tej kolejności
     expect(found[0]).toMatch(/^Powód: /);
-    expect(found[1]).toBe('Ten bieg nie trafi do rankingu: sezon zakończony bankructwem.');
+    expect(found[1]).toBe('Ten bieg nie trafi do rankingu: Centrala wypowiedziała umowę.');
     expect(found[1]).toBe(RANKED_BANKRUPT_TEXT);
     expect(labels(tree)).toEqual(['Wróć do zwykłej gry']);   // przycisk zostaje
 

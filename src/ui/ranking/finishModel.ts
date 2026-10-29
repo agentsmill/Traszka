@@ -36,12 +36,12 @@ const REJECTED_CODES: ReadonlySet<string> = new Set(['bad-request', 'bad-log', '
 const placeOf = (x: unknown): number | null => (typeof x === 'number' && Number.isFinite(x) ? x : null);
 
 /**
- * Czy odpowiedź `ok` jest naprawdę przyjęciem biegu: ma wynik (liczbę skończoną) i nick, które policzył i zapisał serwer. Goły `{ ok: true }`
+ * Czy odpowiedź `ok` jest naprawdę przyjęciem biegu: ma wynik i najlepszy wynik (liczby skończone) oraz nick, które policzył i zapisał serwer. Goły `{ ok: true }`
  * (strona pośrednia, proxy, serwer w pół drogi) nie dowodzi, że bieg jest w rankingu, a przyjęcie kasuje bieg z szuflady, więc taka
  * odpowiedź to „spróbuj później”: bieg zostaje.
  */
 function isAcceptance(res: { ok: true } & Partial<RunAccepted>): res is { ok: true } & RunAccepted {
-  return typeof res.score === 'number' && Number.isFinite(res.score) && typeof res.nick === 'string';
+  return typeof res.score === 'number' && Number.isFinite(res.score) && typeof res.best === 'number' && Number.isFinite(res.best) && typeof res.nick === 'string';
 }
 
 function acceptedOf(res: { ok: true } & RunAccepted): RunAccepted {
