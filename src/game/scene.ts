@@ -191,6 +191,7 @@ export function createSceneHost(deps: SceneDeps): SceneHost {
   let generation = 0;               // odrzuca wyniki asynchroniczne, które wróciły po zmianie seeda
   let payingId: number | null = null;   // klient obsługiwany przy kasie w poprzedniej klatce (kasjer: gest przy sprzedaży)
   let lastVisual = -1;
+  let staffSyncFailed = false;           // błąd synchronizacji załogi zgłaszamy raz, a nie co ~100 ms
 
   ctx.setTimeOfDay(tod);
   ui.timeOfDay.value = tod;
@@ -239,7 +240,13 @@ export function createSceneHost(deps: SceneDeps): SceneHost {
     setCrowdRate(loaded.world.crowd, crowdRateFor(session, ctx.preset));
     // załoga: kto jest na zmianie i co robi, oraz palety (przeszkody i cele rozładunku); scena tylko to odgrywa
     // (wymiana na etap 2C2: `staffFromEconomy(s, info)` → `staffOnShift(s)`, nic więcej)
-    loaded.staffView?.sync({ people: staffFromEconomy(s, info), minute: s.minute, pallets: palletRefsOf(s, info) });
+    // Błąd w teatrze załogi nie może przerwać reszty tej metody (pora dnia, znaczniki, nakładka kasy) ani klatki: raz do konsoli.
+    try {
+      loaded.staffView?.sync({ people: staffFromEconomy(s, info), minute: s.minute, pallets: palletRefsOf(s, info) });
+    } catch (error) {
+      if (!staffSyncFailed) console.error('Nie udało się zsynchronizować załogi z ekonomią.', error);
+      staffSyncFailed = true;
+    }
 
     // pora dnia z zegara gry, chyba że zrzut wymusza noc
     if (!forcedNight) {
