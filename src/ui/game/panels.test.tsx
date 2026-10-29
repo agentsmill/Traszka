@@ -11,7 +11,7 @@ import { WEATHER_LABEL } from '@/sim/economy/tycoon/cleanliness';
 import { computeStoreInfo, type PalletLoc, type StoreInfo } from '@/sim/economy/storeInfo';
 import { EQUIPMENT, UPGRADES } from '@/sim/economy/upgrades';
 import { layoutFor } from '@/sim/store/layoutFor';
-import { metaView, type GameActions } from '../state';
+import { metaView, speed, type GameActions } from '../state';
 import { Bar, GoalsPanel, PalletItem, PalletsPanel, PeoplePanel, ShopPanel, StorePanel } from './panels';
 import { plural, zl } from './format';
 import { buttonAria, buttonLabelled, buttonsOf, click, labels, sectionTitled, textOf, walk, type Vnode } from './vnodeTree';
@@ -34,7 +34,10 @@ function rich(): { s: EconomyState; info: StoreInfo } {
   return { s, info };
 }
 
-afterEach(() => { metaView.value = { points: 0, stores: 0, networkIncome: 0, network: [], sound: true, vibration: true }; });
+afterEach(() => {
+  metaView.value = { points: 0, stores: 0, networkIncome: 0, network: [], sound: true, vibration: true };
+  speed.value = 1;
+});
 
 describe('panele wysyłają polecenia przez game.dispatch, a nie wołają symulacji', () => {
   it('paleta: „Rozładuj” wysyła tapPallet z id, przesunięcia movePallet z miejscem, „Odeślij” returnPallet', () => {
@@ -55,6 +58,36 @@ describe('panele wysyłają polecenia przez game.dispatch, a nie wołają symula
     expect(game.dispatch).toHaveBeenLastCalledWith({ type: 'returnPallet', palletId: p.id });
     expect(game.dispatch).toHaveBeenCalledTimes(4);
     expect(labels(PalletItem({ s, info, id: p.id, game, compact: true }))).not.toContain('Odeślij');   // karta zaznaczenia nie odsyła
+  });
+
+  it('„Rozładuj” ma tę samą blokadę co przycisk klikera: brak sił, pauza i karta czekająca na odpowiedź', () => {
+    const { s, info } = rich();
+    const p = s.pallets[0]!;
+    const unload = (): Vnode => buttonLabelled(PalletItem({ s, info, id: p.id, game: fakeGame() }), 'Rozładuj');
+    expect(unload().props.disabled).toBe(false);   // pełne siły, gra idzie, brak karty
+    expect(unload().props.title).toBeUndefined();
+
+    s.tycoon.fatigue.energy = 1;   // paleta kosztuje 2,5
+    expect(unload().props.disabled).toBe(true);
+    expect(unload().props.title).toBe('Ręce odmawiają, odpocznij do jutra');
+    s.tycoon.fatigue.energy = 100;
+
+    speed.value = 0;
+    expect(unload().props.disabled).toBe(true);
+    expect(unload().props.title).toBe('Gra wstrzymana: wznów czas');
+    speed.value = 1;
+
+    s.tycoon.cards.pending.push({ seq: 1, id: 'fefo', day: 0, showAt: s.minute, params: {}, answers: [], defaultAnswer: 0 });
+    expect(unload().props.disabled).toBe(true);
+    expect(unload().props.title).toBe('Najpierw odpowiedz na kartę decyzji');
+  });
+
+  it('blokada „Rozładuj” nie rusza przycisków przenoszenia i odsyłania (to nie są stuknięcia)', () => {
+    const { s, info } = rich();
+    s.tycoon.fatigue.energy = 0;
+    const tree = PalletItem({ s, info, id: s.pallets[0]!.id, game: fakeGame() });
+    expect(buttonLabelled(tree, 'Rozładuj').props.disabled).toBe(true);
+    expect(buttonLabelled(tree, 'Odeślij').props.disabled).toBeUndefined();
   });
 
   it('zamówienie: asystent, ręcznie (z bieżącą liczbą) i krok − / + wysyłają setOrder', () => {
@@ -372,6 +405,16 @@ describe('panel Sklep: zaufanie Centrali, WUT w miesiącu i czystość sali', ()
     const over = sectionTitled(StorePanel({ s, info, v: 1 }), 'WUT w tym miesiącu');
     expect(walk(over).find((v) => v.type === Bar)!.props.warn).toBe(true);
     expect(plain(textOf(over))).toContain(plain(zl(200)));   // nadwyżka do zapłaty
+  });
+
+  it('nadwyżka WUT to stan „na dziś”: obrót jeszcze rośnie, więc to nie opłata ostateczna', () => {
+    const { s, info } = rich();
+    s.month.revenue = 50_000;
+    s.tycoon.wut.month.pomylki = 800;   // 800 > 600
+    const hint = textOf(sectionTitled(StorePanel({ s, info, v: 1 }), 'WUT w tym miesiącu'));
+    expect(hint).toContain('na dziś');
+    expect(hint).toContain('obrót jeszcze rośnie');
+    expect(hint).not.toContain('Tyle zapłacisz');   // dawne brzmienie obiecywało kwotę, która do końca miesiąca się zmienia
   });
 
   it('WUT na początku miesiąca (obrót 0, próg 0) nie daje NaN ani dzielenia przez zero', () => {

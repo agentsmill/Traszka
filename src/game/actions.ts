@@ -253,6 +253,17 @@ const EVENT_SFX: Partial<Record<EconEvent['kind'], Sfx>> = {
   delivery: 'delivery', fine: 'fine', golden: 'golden', milestone: 'coins', warning: 'error', card: 'pop',
 };
 
+/**
+ * Wynik karty dźwięczy monetami tylko przy premii Centrali. Zdarzenie niesie sam tekst (zob. `EconEvent`), więc premię
+ * rozpoznaje słowo „premi…” w tekście; `actions.test.ts` pilnuje, żeby w talii padało ono tylko w odpowiedzi, która ją wypłaca.
+ */
+const PREMIUM_WORD = /premi/i;
+
+function sfxOf(e: EconEvent): Sfx | undefined {
+  if (e.kind === 'card-result') return PREMIUM_WORD.test(e.text) ? 'coins' : undefined;
+  return EVENT_SFX[e.kind];
+}
+
 const money = (n: number): string => `+${n.toLocaleString('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} zł`;
 
 /**
@@ -302,7 +313,7 @@ export function createShell(deps: ShellDeps): GameShell {
         fx.confetti();
         continue;
       }
-      const sfx = EVENT_SFX[e.kind];
+      const sfx = sfxOf(e);
       if (sfx) fx.play(sfx);
       if (e.kind === 'golden' && e.text.startsWith('✨ Złota paleta rozładowana')) fx.confetti(0.5, 0.5, 24);
       ui.pushToast(e.text, e.kind);

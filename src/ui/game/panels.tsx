@@ -20,6 +20,7 @@ import { nextRankAt, rankFor, xpToNext } from '@/sim/economy/progress';
 import { networkIncomeOf, prestigePoints, prestigeReady } from '@/game/meta';
 import { econ, metaView, selection, showPrestige, tab, type GameActions, type TabId } from '../state';
 import { duration, int, pct, people, plural, signedZl, zl } from './format';
+import { tapBlock } from './tapBlock';
 
 // --- Wspólne -----------------------------------------------------------------------------------------
 
@@ -152,7 +153,7 @@ export function StorePanel({ s, info }: { s: EconomyState; info: StoreInfo; v: n
         <Row label="Ubytki (WUT)">{zl(wut)} z {zl(wutLimit)}</Row>
         <Bar value={wutLimit > 0 ? wut / wutLimit : wut > 0 ? 1 : 0} warn={wut > wutLimit} />
         {wutOver > 0
-          ? <p class="tt-hint warn">Ponad progiem: {zl(wutOver)}. Tyle zapłacisz z własnej kieszeni przy zamknięciu miesiąca.</p>
+          ? <p class="tt-hint warn">Ponad progiem na dziś: {zl(wutOver)}. Rozliczenie dopiero przy zamknięciu miesiąca, a obrót jeszcze rośnie, więc kwota może się zmienić.</p>
           : <p class="tt-hint">Ubytki to przeterminowany towar, kradzieże, pomyłki i skutki decyzji dnia. Centrala pokrywa je do {(WUT.threshold * 100).toLocaleString('pl-PL')}% obrotu miesiąca, resztę płacisz Ty.</p>}
       </Section>
       <Section title="Czystość sali">
@@ -222,6 +223,7 @@ export function PalletItem({ s, info, id, game, compact = false }: { s: EconomyS
   if (!p) return <p class="tt-hint">Paleta rozładowana. 💪</p>;
   const age = s.minute - p.since;
   const moves = (['backroom', 'floor', 'sidewalk'] as PalletLoc[]).filter((l) => l !== p.loc);
+  const block = tapBlock(s, 'paleta');
   return (
     <div class={`tt-pallet${p.loc === 'sidewalk' ? ' risk' : ''}`}>
       <div class="tt-row">
@@ -230,7 +232,7 @@ export function PalletItem({ s, info, id, game, compact = false }: { s: EconomyS
       </div>
       <Bar value={p.total / p.initial} />
       <div class="tt-actions">
-        <button type="button" class="tt-btn tt-primary" onClick={() => game.dispatch({ type: 'tapPallet', palletId: p.id })}>Rozładuj</button>
+        <button type="button" class="tt-btn tt-primary" disabled={!!block} title={block} onClick={() => game.dispatch({ type: 'tapPallet', palletId: p.id })}>Rozładuj</button>
         {moves.map((l) => (
           <button key={l} type="button" class="tt-btn" disabled={freeSpots(s, info, l) === 0} onClick={() => game.dispatch({ type: 'movePallet', palletId: p.id, loc: l })}>
             {l === 'backroom' ? 'Na zaplecze' : l === 'floor' ? 'Do sali' : 'Pod sklep'}

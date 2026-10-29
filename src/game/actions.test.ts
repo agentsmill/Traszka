@@ -4,6 +4,7 @@ import { MINUTES_PER_DAY, OPEN_FROM } from '@/sim/economy/catalog';
 import { applyCommand, COMMAND_TYPES, type Command } from '@/sim/economy/commands';
 import { awaitingDecision, stepMinute, type CommandResult, type EconEvent } from '@/sim/economy/economy';
 import { cardDef, visibleCards } from '@/sim/economy/tycoon/cards';
+import { CIRCULARS, DECK } from '@/sim/economy/tycoon/deck';
 import { xpToNext } from '@/sim/economy/progress';
 import { UPGRADES } from '@/sim/economy/upgrades';
 import { layoutFor } from '@/sim/store/layoutFor';
@@ -1161,6 +1162,29 @@ describe('powłoka gry (createShell)', () => {
       h.shell.handleEvents([{ kind: 'card-result', text: 'Naklejki przyklejone.' }]);
       expect(h.calls).toEqual([]);
       expect(ui.toasts.value.map((t) => t.text)).toContain('Naklejki przyklejone.');
+    });
+
+    it('handleEvents: wynik karty z premią Centrali dzwoni monetami, wynik bez premii zostaje samym toastem', () => {
+      const h = harness();
+      open(h);
+      const premium = cardDef('okolnik-premia')!.answers[0]!.result;
+      h.shell.handleEvents([{ kind: 'card-result', text: premium }]);
+      expect(h.calls).toEqual([['play', 'coins']]);
+      expect(ui.toasts.value.map((t) => t.text)).toContain(premium);
+      h.calls.length = 0;
+      h.shell.handleEvents([{ kind: 'card-result', text: 'Centrala przyjęła odmowę ze zrozumieniem.' }]);
+      expect(h.calls).toEqual([]);
+    });
+
+    it('premię w wyniku karty rozpoznaje słowo „premi…”: w całej talii pojawia się tylko w odpowiedzi, która ją wypłaca', () => {
+      // zdarzenie `card-result` niesie sam tekst, więc dźwięk monet zależy od brzmienia; ten test pilnuje, żeby talia go nie rozjechała
+      const withWord: string[] = [];
+      for (const def of [...DECK, ...CIRCULARS]) {
+        def.answers.forEach((a, i) => {
+          for (const text of [a.result, a.risk?.text ?? '']) if (/premi/i.test(text)) withWord.push(`${def.id}#${i}`);
+        });
+      }
+      expect(withWord).toEqual(['okolnik-premia#0']);
     });
 
     it('handleEvents: nowy poziom to feta (tytuł, ranga, odblokowania), dźwięk, wibracja i konfetti, bez toastu', () => {

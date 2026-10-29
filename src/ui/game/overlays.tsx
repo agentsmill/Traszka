@@ -1,32 +1,21 @@
 import { useEffect, useState } from 'preact/hooks';
 import { RETURN_FEE } from '@/sim/economy/catalog';
-import { awaitingDecision, effects, isOpenForCustomers, slotFree, slotUsage, tapCombo, type EconomyState, type MonthReport } from '@/sim/economy/economy';
-import { FATIGUE, tapCost, type TapKind } from '@/sim/economy/tycoon/fatigue';
+import { effects, isOpenForCustomers, slotFree, slotUsage, tapCombo, type MonthReport } from '@/sim/economy/economy';
+import { FATIGUE } from '@/sim/economy/tycoon/fatigue';
 import { EQUIPMENT, EQUIPMENT_BY_ID, equipmentCost } from '@/sim/economy/upgrades';
 import type { QualityPresetId } from '@/render/quality';
 import { networkIncomeOf, prestigePoints } from '@/game/meta';
 import {
   celebration, ephemeral, econ, hints, metaView, nextHint, preset, report, selection, seed, showPerf, showPrestige, showSettings,
-  speed, tab, toasts, welcome, type Controls, type GameActions,
+  tab, toasts, welcome, type Controls, type GameActions,
 } from '../state';
 import { int, people, signedZl, zl } from './format';
 import { Bar, PalletItem } from './panels';
+import { NO_ENERGY_TITLE, tapBlock } from './tapBlock';
 
 export const DISCLAIMER = 'Wszystkie firmy, postacie i zdarzenia są fikcyjne.';
 
-export const NO_ENERGY_TITLE = 'Ręce odmawiają, odpocznij do jutra';
-
-/**
- * Powód, dla którego stuknięcie danego rodzaju jest teraz zablokowane (jako `title` przycisku), albo undefined, gdy wolno:
- * ręce nie mają sił na jego koszt, gra stoi (pauza) albo czeka karta decyzji. Brak sił zasłania resztę, bo to on trwa do jutra.
- * Blokady są też w symulacji (odmowa bez zużycia sił), tu tylko oszczędzają graczowi bezskuteczne stuknięcia.
- */
-function tapBlock(s: EconomyState, kind: TapKind): string | undefined {
-  if (s.tycoon.fatigue.energy < tapCost(kind)) return NO_ENERGY_TITLE;
-  if (speed.value === 0) return 'Gra wstrzymana: wznów czas';
-  if (awaitingDecision(s)) return 'Najpierw odpowiedz na kartę decyzji';
-  return undefined;
-}
+export { NO_ENERGY_TITLE, tapBlock };
 
 /** Karta zaznaczonego obiektu (paleta, slot, kasa) nad dolnym paskiem. */
 export function SelectionCard({ game }: { game: GameActions }) {
