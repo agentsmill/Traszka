@@ -1,4 +1,5 @@
 import { generateStore } from '@/sim/store/generateStore';
+import { stripHiddenSeedChars } from './seedText';
 import { randomSeed } from './seedWords';
 import { hasStoredSave } from './session';
 
@@ -56,47 +57,19 @@ const REAL_DEPS: SeedDeps = { hasSave: hasStoredSave, build: (seed) => generateS
 export interface ResolvedStore { seed: string; notice: string | null }
 
 /**
- * Znaki, które nic nie rysują, a mogłyby zrobić ze seeda niewidzialny albo zmieniony napis w rankingu (seedy będą tam widoczne dla
- * wszystkich): spacje i łączniki zerowej szerokości (U+200B, U+200C), łącznik słów (U+2060), BOM (U+FEFF) i znaki sterujące
- * kierunkiem tekstu (U+200E, U+200F, U+202A–U+202E, U+2066–U+2069), które potrafią odwrócić pozostałą część strony. Spójnik zerowej
- * szerokości (U+200D) też jest niewidoczny, ale skleja emoji (rodzina, zawód), więc zostaje tylko tam (`keepEmojiJoiners`).
- * U+FEFF jest dla `\s` spacją, więc musi zniknąć, zanim spacje zostaną zwinięte (inaczej wychodzi spacja zamiast niczego).
- */
-const INVISIBLE = /[\u200b\u200c\u2060\ufeff\u200e\u200f\u202a-\u202e\u2066-\u2069]/g;
-const JOINER = '\u200d';
-const PICTOGRAPH = /^\p{Extended_Pictographic}$/u;
-/** Co może stać między emoji a spójnikiem: selektor wariantu (❤\ufe0f) i odcień skóry (👩🏽). */
-const EMOJI_TAIL = /^[\ufe0f\p{Emoji_Modifier}]$/u;
-
-/** Zostawia spójnik ZWJ tylko między dwoma emoji (przed nim emoji z ewentualnym selektorem wariantu albo odcieniem skóry, po nim emoji). */
-function keepEmojiJoiners(text: string): string {
-  if (!text.includes(JOINER)) return text;
-  const chars = Array.from(text);
-  let out = '';
-  chars.forEach((c, i) => {
-    if (c !== JOINER) {
-      out += c;
-      return;
-    }
-    let before = i - 1;
-    while (before >= 0 && EMOJI_TAIL.test(chars[before]!)) before--;
-    if (before >= 0 && PICTOGRAPH.test(chars[before]!) && i + 1 < chars.length && PICTOGRAPH.test(chars[i + 1]!)) out += c;
-  });
-  return out;
-}
-
-/**
- * Tekst seeda po czyszczeniu (pusty, gdy nic nie zostało): NFC (ten sam napis to ten sam seed), znaki niewidoczne i sterujące
- * znikają (tabulator i nowy wiersz to spacje; zerowej szerokości, kierunkowe i luźny ZWJ nie liczą się do limitu), spacje
- * zwinięte i przycięte, małe litery, najwyżej `SEED_MAX` znaków. Tnie po punktach kodowych, więc emoji nie rozpada się na pojedynczy
- * surogat, którego nie da się zapisać w adresie ani w kluczu, a obcięcie w środku sklejonego emoji nie zostawia na końcu spójnika.
+ * Tekst seeda po czyszczeniu (pusty, gdy nic nie zostało): NFC (ten sam napis to ten sam seed), niedozwolone znaki znikają
+ * (`stripHiddenSeedChars`: sterujące, formatujące, znaczniki i osamotnione surogaty; ZWJ zostaje tylko między emoji, flagi Anglii,
+ * Szkocji i Walii w całości; tabulator i nowy wiersz to spacje; zerowej szerokości, kierunkowe i luźny ZWJ nie liczą się do limitu),
+ * spacje zwinięte i przycięte, małe litery, najwyżej `SEED_MAX` znaków. Tnie po punktach kodowych, więc emoji nie rozpada się na
+ * pojedynczy surogat, którego nie da się zapisać w adresie ani w kluczu. Po obcięciu czyści jeszcze raz: cięcie w środku sklejonego
+ * emoji nie zostawia na końcu spójnika, a cięcie w środku flagi zostawia samą czarną flagę zamiast urwanych znaczników. To samo
+ * czyszczenie stosuje serwer przy odrzucaniu (`isShowableSeed`), więc to, co zostaje, serwer przyjmie.
  */
 function cleanSeed(raw: string): string {
-  const text = keepEmojiJoiners(raw.normalize('NFC').replace(INVISIBLE, ''))
-    .replace(/\p{Cc}/gu, (c) => (/\s/.test(c) ? ' ' : ''))
+  const text = stripHiddenSeedChars(raw.normalize('NFC'))
     .replace(/\s+/g, ' ').trim()
     .toLowerCase().normalize('NFC');
-  return Array.from(text).slice(0, SEED_MAX).join('').replace(/\u200d+$/, '').trim();
+  return stripHiddenSeedChars(Array.from(text).slice(0, SEED_MAX).join('')).trim();
 }
 
 /**
