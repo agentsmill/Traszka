@@ -35,6 +35,11 @@ export const RUN_LOG_MAX = 20_000;
 /** Rozgrywka jednego sklepu: stan ekonomii i układ, w którym się toczy (po remoncie układ się zmienia). */
 export interface GameSession {
   seed: string;
+  /**
+   * Rodzaj rozgrywki: zwykła (`casual`, zapis pod `traszka:save:<seed>`) albo bieg rankingowy (`ranked`, jeden aktywny zapis pod
+   * `traszka:ranked`, patrz `rankedRun.ts`). Sesja rankingowa ma dziennik poleceń (`run`), z którego serwer odtworzy bieg.
+   */
+  mode: 'casual' | 'ranked';
   econ: EconomyState;
   layout: StoreLayout;
   info: StoreInfo;
@@ -105,13 +110,15 @@ export const BROKEN_SAVE_NOTICE_NO_COPY = 'Zapis sklepu był uszkodzony — zacz
 export const NEWER_SAVE_NOTICE = 'Zapis pochodzi z nowszej wersji gry — odśwież stronę';
 export const UNBUILDABLE_SAVE_NOTICE = 'Nie udało się zbudować Twojego sklepu — zapis jest bezpieczny, spróbuj odświeżyć stronę';
 
+/** Koperta zapisu sesji: seed, wersje gry i generatora, układ i pełny stan. Tę samą kopertę ma zapis biegu rankingowego (`rankedRun.ts`). */
+export const envelopeOf = (s: GameSession): SaveEnvelope => ({
+  schema: SAVE_SCHEMA, gameVersion: GAME_VERSION, generatorVersion: GENERATOR_VERSION, seed: s.seed, layout: s.layout, econ: s.econ,
+});
+
 /** Zapis w przeglądarce (localStorage). Błędy (tryb prywatny, brak miejsca) są ciche: gra działa dalej bez zapisu. */
 export function saveSession(s: GameSession): void {
   if (s.retired || s.ephemeral) return;
-  const envelope: SaveEnvelope = {
-    schema: SAVE_SCHEMA, gameVersion: GAME_VERSION, generatorVersion: GENERATOR_VERSION, seed: s.seed, layout: s.layout,
-    econ: s.econ,
-  };
+  const envelope = envelopeOf(s);
   try {
     localStorage.setItem(SAVE_PREFIX + s.seed, JSON.stringify(envelope));
     localStorage.setItem(LAST_KEY, s.seed);
@@ -204,7 +211,7 @@ function readSave(seed: string, partner?: EconomyState['partner']): ReadResult {
   try {
     const data = JSON.parse(raw) as unknown;
     if (isNewerSchema(data)) return { status: 'newer' };
-    const opened = openSave(data, seed, partner);
+    const opened = restoreSessionFrom(data, seed, partner);
     if (opened.ok) return { status: 'ok', session: opened.session };
     if (opened.reason === 'unbuildable') return { status: 'unbuildable' };
   } catch (error) {
@@ -213,7 +220,7 @@ function readSave(seed: string, partner?: EconomyState['partner']): ReadResult {
   return { status: 'broken', backedUp: moveToBroken(seed, raw) };
 }
 
-type Opened = { ok: true; session: GameSession } | { ok: false; reason: 'invalid' | 'unbuildable' };
+export type Opened = { ok: true; session: GameSession } | { ok: false; reason: 'invalid' | 'unbuildable' };
 
 /**
  * Czy stan ekonomii pasuje do układu: palety i sprzęt stoją w miejscach, które istnieją, a zapas mieści się na półkach i
@@ -236,8 +243,10 @@ function fitsStore(econ: EconomyState, info: StoreInfo): boolean {
  * - `invalid`: zapis nie przeszedł walidacji (zła koperta, cudzy seed, lista tam, gdzie ma być obiekt…);
  * - `unbuildable`: zapis jest poprawny, ale świata z niego nie dało się złożyć (generator, opis układu). Zapisany układ ma
  *   wtedy jedną dodatkową próbę z układem z seeda; gdy i ta zawiedzie, zapis nie jest winny i nikt go nie rusza.
+ * Wyeksportowana dla biegu rankingowego (`rankedRun.ts`), który składa stan z własnego klucza zapisu: sesja wychodzi tu zawsze jako
+ * zwykła (`mode: 'casual'`, `run: null`), a tryb i dziennik ustawia wołający.
  */
-function openSave(data: unknown, seed: string, partner?: EconomyState['partner']): Opened {
+export function restoreSessionFrom(data: unknown, seed: string, partner?: EconomyState['partner']): Opened {
   const invalid: Opened = { ok: false, reason: 'invalid' };
   const unbuildable: Opened = { ok: false, reason: 'unbuildable' };
   if (!isRec(data)) return invalid;
@@ -287,7 +296,7 @@ function openSave(data: unknown, seed: string, partner?: EconomyState['partner']
   return {
     ok: true,
     session: {
-      seed, econ, layout: world.layout, info: world.info, clock: { acc: 0 }, layoutLevel: econ.remontLevel, fromSave: true,
+      seed, mode: 'casual', econ, layout: world.layout, info: world.info, clock: { acc: 0 }, layoutLevel: econ.remontLevel, fromSave: true,
       loadNotice: null, retired: false, ephemeral: false, run: null,   // stan z zapisu nie zaczyna się od świeżego sklepu
     },
   };
@@ -322,7 +331,7 @@ export function createSession(seed: string, fresh = false, partner?: EconomyStat
   const info = computeStoreInfo(layout);
   const econ = createEconomy(seed, info, partner);
   return {
-    seed, econ, layout, info, clock: { acc: 0 }, layoutLevel: 0, fromSave: false, loadNotice, retired: false, ephemeral,
+    seed, mode: 'casual', econ, layout, info, clock: { acc: 0 }, layoutLevel: 0, fromSave: false, loadNotice, retired: false, ephemeral,
     run: noPartner(partner) ? newRunLog(seed) : null,   // `replayRun` startuje bez premii sieci: z nią dziennik nie byłby odtwarzalny
   };
 }
