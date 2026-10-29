@@ -6,11 +6,14 @@ import { MemoryStorage } from '@/game/memoryStorage';
 import { loadMeta, saveMeta, type Meta } from '@/game/meta';
 import { RECOVERY_ERRORS, formatRecoveryCode } from '@/game/playerKey';
 import { createSession, saveSession } from '@/game/session';
+import { closePanel, openPanel, panel } from '../state';
 import type { ApiResult, BoardResponse, PlayerResponse, RankingClient, SaveDownloaded, SaveUploadResult } from './client';
+import * as rankingModelModule from './rankingModel';
 import { NO_SEED } from './rankingModel';
+import * as recoveryModelModule from './recoveryModel';
 import * as transfer from './saveTransfer';
 import { IMPORT_KEY, SAVE_SYNC_KEY, exportTransfer, readSaveSync } from './saveTransfer';
-import { createRankingServices } from './services';
+import { createRankingServices, type RankingServices, type RankingServicesDeps } from './services';
 
 const KEY_A = 'K7QX9MBD2HFAP3WN8RTE';
 const KEY_B = 'M2N3P4Q5R6S7T8V9W0XY';
@@ -18,11 +21,21 @@ const SEED = 'pierogi-731';
 const WEEK = { id: '2026-W44', seed: 'babka-834', endsAt: Date.UTC(2026, 10, 2) };
 
 let storage: MemoryStorage;
+/** Usługi z tego testu: nasłuch na prawdziwym sygnale `panel` (jednym na cały plik) odpinamy po każdym teście, żeby nie przeciekał do następnych. */
+const created: RankingServices[] = [];
+function create(deps: RankingServicesDeps): RankingServices {
+  const services = createRankingServices(deps);
+  created.push(services);
+  return services;
+}
 beforeEach(() => {
   storage = new MemoryStorage();
   vi.stubGlobal('localStorage', storage);
+  panel.value = null;
 });
 afterEach(() => {
+  for (const services of created.splice(0)) services.dispose();
+  panel.value = null;
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -60,7 +73,7 @@ function fakeClient(over: Partial<RankingClient> = {}): RankingClient {
 }
 
 /** Wpisuje kod z innego urządzenia i go zatwierdza, tak jak gracz w panelu „Kod odzyskiwania”. */
-async function adopt(services: ReturnType<typeof createRankingServices>, key: string): Promise<void> {
+async function adopt(services: RankingServices, key: string): Promise<void> {
   const { recoveryModel } = services;
   recoveryModel.setInput(formatRecoveryCode(key));
   await recoveryModel.submitCode();
@@ -71,7 +84,7 @@ describe('createRankingServices: klucz gracza (adoptKey)', () => {
   it('kod z innego urządzenia zmienia klucz w pamięci powłoki i w zapisanej mecie', async () => {
     const shell = makeShell();
     saveMeta(shell.meta);
-    const services = createRankingServices({ shell, client: fakeClient() });
+    const services = create({ shell, client: fakeClient() });
     expect(services.recoveryModel.code()).toBe(formatRecoveryCode(KEY_A));
     await adopt(services, KEY_B);
     expect(services.recoveryModel.error.value).toBeNull();
@@ -85,7 +98,7 @@ describe('createRankingServices: klucz gracza (adoptKey)', () => {
   it('kolejny zapis powłoki (persist przy zamknięciu karty) nie cofa klucza do poprzedniego', async () => {
     const shell = makeShell();
     saveMeta(shell.meta);
-    const services = createRankingServices({ shell, client: fakeClient() });
+    const services = create({ shell, client: fakeClient() });
     await adopt(services, KEY_B);
     shell.persist();
     expect(loadMeta().player?.key).toBe(KEY_B);
@@ -96,13 +109,13 @@ describe('createRankingServices: klucz gracza (adoptKey)', () => {
 
   it('kod odrzucony (bez gracza w mecie, meta z nowszej wersji gry): komunikat dla gracza, klucz i meta bez zmian', async () => {
     const noPlayer = makeShell(meta({ player: undefined }));
-    const withoutPlayer = createRankingServices({ shell: noPlayer, client: fakeClient() });
+    const withoutPlayer = create({ shell: noPlayer, client: fakeClient() });
     await adopt(withoutPlayer, KEY_B);
     expect(withoutPlayer.recoveryModel.error.value).toBe(RECOVERY_ERRORS.noPlayer);
     expect(noPlayer.meta.player).toBeUndefined();
 
     const readOnly = makeShell(meta({ readOnly: true }));
-    const frozen = createRankingServices({ shell: readOnly, client: fakeClient() });
+    const frozen = create({ shell: readOnly, client: fakeClient() });
     await adopt(frozen, KEY_B);
     expect(frozen.recoveryModel.error.value).toBe(RECOVERY_ERRORS.readOnly);
     expect(readOnly.meta.player?.key).toBe(KEY_A);
@@ -112,7 +125,7 @@ describe('createRankingServices: klucz gracza (adoptKey)', () => {
   it('po zmianie klucza model rankingu pyta serwer już nowym kluczem', async () => {
     const shell = makeShell();
     const client = fakeClient();
-    const services = createRankingServices({ shell, client });
+    const services = create({ shell, client });
     await services.rankingModel.select('global');
     expect(client.player).toHaveBeenLastCalledWith(KEY_A, 'Mateusz', SEED);
     await adopt(services, KEY_B);
@@ -125,7 +138,7 @@ describe('createRankingServices: nick (useNick)', () => {
   it('wybrany nick z kodu zapamiętuje powłoka, klucz zostaje, a zapis mety widzi go po odświeżeniu strony', () => {
     const shell = makeShell();
     saveMeta(shell.meta);
-    const services = createRankingServices({ shell, client: fakeClient() });
+    const services = create({ shell, client: fakeClient() });
     services.recoveryModel.chooseNick('Kasjer Roku');
     expect(shell.meta.player).toMatchObject({ nick: 'Kasjer Roku', key: KEY_A });
     expect(loadMeta().player).toMatchObject({ nick: 'Kasjer Roku', key: KEY_A });
@@ -137,7 +150,7 @@ describe('createRankingServices: model rankingu czyta stan gry na bieżąco', ()
   it('gracz z mety powłoki, seed bieżącego sklepu; bez sesji zakładka „Ten seed” podpowiada, co zrobić', async () => {
     const shell = makeShell(meta(), false);
     const client = fakeClient();
-    const services = createRankingServices({ shell, client });
+    const services = create({ shell, client });
     await services.rankingModel.select('seed');
     expect(services.rankingModel.view.value).toMatchObject({ status: 'error', message: NO_SEED });
     expect(client.board).not.toHaveBeenCalled();
@@ -150,7 +163,7 @@ describe('createRankingServices: model rankingu czyta stan gry na bieżąco', ()
   it('gracz bez klucza i nicka nie jest pytany o miejsca', async () => {
     const shell = makeShell(meta({ player: undefined }));
     const client = fakeClient();
-    const services = createRankingServices({ shell, client });
+    const services = create({ shell, client });
     await services.rankingModel.select('global');
     expect(client.player).not.toHaveBeenCalled();
     expect(services.rankingModel.hasPlayer()).toBe(false);
@@ -163,7 +176,7 @@ describe('createRankingServices: zapis gry (exportSave)', () => {
     const shell = { meta: meta(), session: null, persist: () => { order.push('persist'); }, game: { rememberNick: () => undefined } } as unknown as GameShell;
     vi.spyOn(transfer, 'exportTransfer').mockImplementation(() => { order.push('exportTransfer'); return '{"paczka":1}'; });
     const client = fakeClient();
-    const services = createRankingServices({ shell, client });
+    const services = create({ shell, client });
     await services.recoveryModel.upload();
     expect(order).toEqual(['persist', 'exportTransfer']);
     expect(client.uploadSave).toHaveBeenCalledWith(KEY_A, '{"paczka":1}', expect.anything());
@@ -179,7 +192,7 @@ describe('createRankingServices: zapis gry (exportSave)', () => {
     const cashIn = (bundle: string): number => (JSON.parse(bundle) as { save: { econ: { cash: number } } }).save.econ.cash;
     expect(cashIn(exportTransfer()!)).toBe(1_000);   // sam eksport z przeglądarki byłby o dzień wstecz
     const client = fakeClient();
-    const services = createRankingServices({ shell, client });
+    const services = create({ shell, client });
     await services.recoveryModel.upload();
     const sent = vi.mocked(client.uploadSave).mock.calls[0]![1];
     expect(cashIn(sent)).toBe(4_321);
@@ -188,7 +201,7 @@ describe('createRankingServices: zapis gry (exportSave)', () => {
   it('bez sklepu do zapisania nie ma czego wysłać: komunikat zamiast pustej paczki', async () => {
     const shell = makeShell(meta(), false);
     const client = fakeClient();
-    const services = createRankingServices({ shell, client });
+    const services = create({ shell, client });
     await services.recoveryModel.upload();
     expect(client.uploadSave).not.toHaveBeenCalled();
     expect(services.recoveryModel.error.value).toContain('Nie ma jeszcze czego wysłać');
@@ -198,7 +211,7 @@ describe('createRankingServices: zapis gry (exportSave)', () => {
     const shell = makeShell();
     saveMeta(shell.meta);
     const client = fakeClient();
-    const services = createRankingServices({ shell, client });
+    const services = create({ shell, client });
     expect(readSaveSync()).toBeNull();
     await services.recoveryModel.upload();
     expect(readSaveSync()).toBe(777);
@@ -217,7 +230,7 @@ describe('createRankingServices: pobrany zapis (stageSave i reload)', () => {
     saveSession(shell.session!);
     const client = fakeClient({ downloadSave: vi.fn(async () => download(save)) });
     const reload = vi.fn();
-    const services = createRankingServices({ shell, client, reload });
+    const services = create({ shell, client, reload });
     await services.recoveryModel.download();
     await services.recoveryModel.confirmPending();
     return { services, reload, shell };
@@ -249,7 +262,7 @@ describe('createRankingServices: pobrany zapis (stageSave i reload)', () => {
     saveMeta(shell.meta);
     saveSession(shell.session!);
     const client = fakeClient({ downloadSave: vi.fn(async () => download(exportTransfer()!)) });
-    const services = createRankingServices({ shell, client });
+    const services = create({ shell, client });
     await services.recoveryModel.download();
     await services.recoveryModel.confirmPending();
     expect(reload).toHaveBeenCalledTimes(1);
@@ -259,11 +272,137 @@ describe('createRankingServices: pobrany zapis (stageSave i reload)', () => {
 describe('createRankingServices: modele powstają leniwie, raz', () => {
   it('ten sam model przy każdym odczycie, a samo utworzenie usług nie pyta serwera', () => {
     const client = fakeClient();
-    const services = createRankingServices({ shell: makeShell(), client });
+    const services = create({ shell: makeShell(), client });
     expect(services.rankingModel).toBe(services.rankingModel);
     expect(services.recoveryModel).toBe(services.recoveryModel);
     expect(client.board).not.toHaveBeenCalled();
     expect(client.player).not.toHaveBeenCalled();
     expect(client.uploadSave).not.toHaveBeenCalled();
+  });
+});
+
+describe('createRankingServices: otwarcie panelu przygotowuje model (sygnał panel)', () => {
+  it('otwarcie rankingu ładuje wskazaną zakładkę dokładnie raz', () => {
+    const client = fakeClient();
+    const services = create({ shell: makeShell(), client });
+    const select = vi.spyOn(services.rankingModel, 'select');
+    expect(select).not.toHaveBeenCalled();
+    openPanel('ranking', 'week');
+    expect(select).toHaveBeenCalledTimes(1);
+    expect(select).toHaveBeenCalledWith('week');
+    expect(client.board).toHaveBeenCalledTimes(1);
+    expect(client.board).toHaveBeenCalledWith('week');
+  });
+
+  it('bez zakładki w sygnale ładuje „Globalny”; zamknięcie niczego nie ładuje, każde następne otwarcie ładuje od nowa', () => {
+    const services = create({ shell: makeShell(), client: fakeClient() });
+    const select = vi.spyOn(services.rankingModel, 'select');
+    openPanel('ranking');
+    expect(select).toHaveBeenLastCalledWith('global');
+    closePanel();
+    expect(select).toHaveBeenCalledTimes(1);
+    openPanel('ranking', 'seed');
+    expect(select).toHaveBeenCalledTimes(2);
+    expect(select).toHaveBeenLastCalledWith('seed');
+  });
+
+  it('zmiana zakładki w otwartym panelu (gracz klika w panelu) nie ładuje zakładki z sygnału od nowa', async () => {
+    const services = create({ shell: makeShell(), client: fakeClient() });
+    const select = vi.spyOn(services.rankingModel, 'select');
+    openPanel('ranking', 'global');
+    await services.rankingModel.select('week');
+    expect(select.mock.calls.map((c) => c[0])).toEqual(['global', 'week']);
+    expect(services.rankingModel.tab.value).toBe('week');
+  });
+
+  it('panel już otwarty w chwili tworzenia usług też się ładuje (raz)', () => {
+    openPanel('ranking', 'week');
+    const client = fakeClient();
+    create({ shell: makeShell(), client });
+    expect(client.board).toHaveBeenCalledTimes(1);
+    expect(client.board).toHaveBeenCalledWith('week');
+  });
+
+  it('otwarcie kodu odzyskiwania po odsłonięciu kodu zakrywa go z powrotem, czyści pole i zdejmuje pytanie; niczego nie pobiera', async () => {
+    const client = fakeClient();
+    const services = create({ shell: makeShell(), client });
+    const { recoveryModel } = services;
+    const select = vi.spyOn(services.rankingModel, 'select');
+    recoveryModel.toggleReveal();
+    recoveryModel.setInput(formatRecoveryCode(KEY_B));
+    await recoveryModel.submitCode();
+    expect(recoveryModel.revealed.value).toBe(true);
+    expect(recoveryModel.confirm.value).toMatchObject({ kind: 'adopt' });
+    openPanel('recovery');
+    expect(recoveryModel.revealed.value).toBe(false);
+    expect(recoveryModel.input.value).toBe('');
+    expect(recoveryModel.confirm.value).toBeNull();
+    expect(recoveryModel.code()).toBe(formatRecoveryCode(KEY_A));   // klucz tego urządzenia zostaje, tylko znów zakryty
+    expect(select).not.toHaveBeenCalled();
+    expect(client.board).not.toHaveBeenCalled();
+    expect(client.player).not.toHaveBeenCalled();
+  });
+
+  it('kod odsłonięty w poprzednim otwarciu nie czeka na następne: zamknięcie i ponowne otwarcie panelu pokazuje go zakrytego', () => {
+    const services = create({ shell: makeShell(), client: fakeClient() });
+    openPanel('recovery');
+    services.recoveryModel.toggleReveal();
+    expect(services.recoveryModel.revealed.value).toBe(true);
+    closePanel();
+    openPanel('recovery');
+    expect(services.recoveryModel.revealed.value).toBe(false);
+  });
+
+  it('modele powstają dopiero przy pierwszym otwarciu swojego panelu i zostają (raz)', () => {
+    const makeRanking = vi.spyOn(rankingModelModule, 'createRankingModel');
+    const makeRecovery = vi.spyOn(recoveryModelModule, 'createRecoveryModel');
+    create({ shell: makeShell(), client: fakeClient() });
+    expect(makeRanking).not.toHaveBeenCalled();
+    expect(makeRecovery).not.toHaveBeenCalled();
+    openPanel('recovery');
+    expect(makeRecovery).toHaveBeenCalledTimes(1);
+    expect(makeRanking).not.toHaveBeenCalled();
+    openPanel('ranking', 'global');
+    expect(makeRanking).toHaveBeenCalledTimes(1);
+    closePanel();
+    openPanel('ranking', 'global');
+    openPanel('recovery');
+    expect(makeRanking).toHaveBeenCalledTimes(1);
+    expect(makeRecovery).toHaveBeenCalledTimes(1);
+  });
+
+  it('dispose odpina nasłuch: kolejne otwarcia niczego nie ładują ani nie zakrywają', () => {
+    const client = fakeClient();
+    const services = create({ shell: makeShell(), client });
+    const select = vi.spyOn(services.rankingModel, 'select');
+    services.recoveryModel.toggleReveal();
+    services.dispose();
+    openPanel('ranking', 'week');
+    openPanel('recovery');
+    expect(select).not.toHaveBeenCalled();
+    expect(client.board).not.toHaveBeenCalled();
+    expect(services.recoveryModel.revealed.value).toBe(true);
+    services.dispose();   // drugie odpięcie niczego nie psuje
+  });
+
+  it('usługi stworzone po sobie (jak w kolejnych testach) nie przeciekają: otwarcie panelu rusza tylko żywe', () => {
+    const clientA = fakeClient();
+    const first = create({ shell: makeShell(), client: clientA });
+    first.dispose();
+    const clientB = fakeClient();
+    create({ shell: makeShell(), client: clientB });
+    openPanel('ranking', 'global');
+    expect(clientA.board).not.toHaveBeenCalled();
+    expect(clientB.board).toHaveBeenCalledTimes(1);
+  });
+
+  it('dwie żywe usługi naraz każda reaguje na własny model (jedno otwarcie, po jednym ładowaniu)', () => {
+    const clientA = fakeClient();
+    const clientB = fakeClient();
+    create({ shell: makeShell(), client: clientA });
+    create({ shell: makeShell(), client: clientB });
+    openPanel('ranking', 'global');
+    expect(clientA.board).toHaveBeenCalledTimes(1);
+    expect(clientB.board).toHaveBeenCalledTimes(1);
   });
 });

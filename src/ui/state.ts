@@ -236,7 +236,7 @@ export interface PanelState { id: PanelId; tab?: RankingTab }
 /**
  * Otwarty panel rankingu albo kodu odzyskiwania (z HUD-u i z ⚙), albo null. Dopóki jest otwarty, gra stoi (`isWindowOpen`), a panel leży
  * nad arkuszami, kartą decyzji i wpisami „OK”, pod oknem końca sezonu i ustawieniami (kolejność w App.tsx). Każde `openPanel` to nowa
- * wartość, więc host odświeża dane przy każdym otwarciu (`bindPanelOpen`). Zamyka go `closePanel`. Nie jest częścią zapisu.
+ * wartość, więc usługi rankingu przygotowują model przy każdym otwarciu (`createRankingServices` słucha tego sygnału). Zamyka go `closePanel`. Nie jest częścią zapisu.
  */
 export const panel: Signal<PanelState | null> = signal<PanelState | null>(null);
 export function openPanel(id: PanelId, tab?: RankingTab): void {

@@ -23,7 +23,6 @@ import { listenForNotices, postNotice } from '@/ui/Notice';
 import { FIRST_DAY_HINTS } from '@/ui/game/overlays';
 import { createRankingClient } from '@/ui/ranking/client';
 import { bindFinishOpen, createFinishModel } from '@/ui/ranking/finishModel';
-import { bindPanelOpen } from '@/ui/ranking/PanelHost';
 import { applyStagedImport } from '@/ui/ranking/saveTransfer';
 import { createRankingServices } from '@/ui/ranking/services';
 import { weekSeedOf } from '@/ui/start/weekSeed';
@@ -239,9 +238,8 @@ function startGame(
 
   if (!benchMode) {
     // Panele rankingu i kodu odzyskiwania (🏆 w HUD-zie i ⚙): modele z powłoki gry i z tego samego klienta co ekran startowy i okno końca sezonu.
-    // Dane ładują się przy otwarciu panelu (`bindPanelOpen`); nic nie jedzie do serwera, dopóki gracz go nie otworzy.
+    // Usługi same przygotowują model przy każdym otwarciu panelu (słuchają `ui.panel`); nic nie jedzie do serwera, dopóki gracz go nie otworzy.
     const services = createRankingServices({ shell, client: rankingClient });
-    bindPanelOpen(services, ui.panel);
     renderUi(root, controls, shell.game, finishModel, services);   // sterowanie działa od tej chwili; benchmark zostaje z samą nakładką wyników
   }
 }
