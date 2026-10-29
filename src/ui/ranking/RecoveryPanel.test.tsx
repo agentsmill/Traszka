@@ -2,7 +2,7 @@ import type { ComponentChild, VNode } from 'preact';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { MemoryStorage } from '@/game/memoryStorage';
 import { RECOVERY_ERRORS } from '@/game/playerKey';
-import type { ApiResult, RankingClient, SaveDownloaded, SaveUploadOptions, SaveUploadResult } from './client';
+import { NETWORK_ERROR, type ApiResult, type RankingClient, type SaveDownloaded, type SaveUploadOptions, type SaveUploadResult } from './client';
 import { MASKED_CODE, NO_KEY, NOTHING_TO_SEND, RecoveryPanel, SAME_CODE } from './RecoveryPanel';
 import { STAGED_NOTICE, createRecoveryModel, type RecoveryDeps } from './recoveryModel';
 import { SAVE_SYNC_KEY, readSaveSync, writeSaveSync } from './saveTransfer';
@@ -321,5 +321,58 @@ describe('zapis gry: kopia na serwerze, której to urządzenie nie widziało (Dr
     await c.model.download();
     await c.model.confirmPending();
     expect(storage.getItem(SAVE_SYNC_KEY)).toBe('4242');
+  });
+});
+
+describe('kod odzyskiwania: serwer wyłączony albo nieosiągalny (panel działa dalej)', () => {
+  const OFF = { ok: false as const, error: 'ranking-off', message: 'Ranking Centrali jeszcze nie ruszył.' };
+  const NET = { ok: false as const, error: 'network', message: NETWORK_ERROR };
+  const failures = [['ranking-off', OFF], ['network', NET]] as const;
+  const alertLine = (tree: ComponentChild) => walk(tree).find((v) => v.props?.role === 'alert' && v.type === 'p');
+
+  it.each(failures)('„Pobierz zapis” przy odpowiedzi „%s”: komunikat serwera w linii błędu, żadne pytanie, nic nie odłożone', async (_name, failure) => {
+    const { view, deps, model } = setup({}, failure);
+    await (button(view(), 'Pobierz zapis').props.onClick as () => Promise<void>)();
+    expect(textOf(alertLine(view()))).toBe(failure.message);
+    expect(model.confirm.value).toBeNull();
+    expect(deps.stageSave).not.toHaveBeenCalled();
+    expect(deps.reload).not.toHaveBeenCalled();
+  });
+
+  it.each(failures)('„Wyślij zapis” przy odpowiedzi „%s”: ten sam komunikat, a znacznik ostatniej kopii się nie zmienia', async (_name, failure) => {
+    const { view, deps } = setup({}, undefined, vi.fn(async (): Promise<SaveUploadResult> => failure));
+    await (button(view(), 'Wyślij zapis').props.onClick as () => Promise<void>)();
+    expect(textOf(alertLine(view()))).toBe(failure.message);
+    expect(deps.sync.set).not.toHaveBeenCalled();
+  });
+
+  it.each(failures)('po błędzie „%s” przyciski wracają do pracy, kod zostaje do pokazania, a ✕ zamyka panel', async (_name, failure) => {
+    const { model, deps } = setup({}, failure);
+    const onClose = vi.fn();
+    await model.download();
+    const tree = RecoveryPanel({ model, onClose });
+    expect(model.busy.value).toBe(false);
+    for (const label of ['Wyślij zapis', 'Pobierz zapis', 'Użyj kodu']) expect(button(tree, label).props.disabled).toBe(false);
+    expect(labels(tree)).toContain('Pokaż kod');
+    (button(tree, 'Pokaż kod').props.onClick as () => void)();
+    expect(textOf(RecoveryPanel({ model, onClose }))).toContain('K7QX-9MBD-2HFA-P3WN-8RTE');
+    // drugie podejście działa tak samo, a kolejny błąd zastępuje poprzedni zamiast się dopisywać
+    await model.download();
+    expect(model.error.value).toBe(failure.message);
+    expect(deps.stageSave).not.toHaveBeenCalled();
+    (walk(tree).find((v) => v.props?.['aria-label'] === 'Zamknij' && v.type === 'button')!.props.onClick as () => void)();
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('kod przyjęty przy wyłączonym rankingu: klucz się zmienia, a brak nicków z serwera nie wysypuje panelu', async () => {
+    const { view, deps, model, client } = setup();
+    (client.player as ReturnType<typeof vi.fn>).mockResolvedValueOnce(OFF);
+    model.setInput('m2n3-p4q5-r6s7-t8v9-w0xy');
+    await model.submitCode();
+    await model.confirmPending();
+    expect(deps.adoptKey).toHaveBeenCalledWith(OTHER);
+    expect(model.nicks.value).toBeNull();
+    expect(model.error.value).toBeNull();
+    expect(labels(view()).some((l) => l.startsWith('Graj jako'))).toBe(false);
   });
 });

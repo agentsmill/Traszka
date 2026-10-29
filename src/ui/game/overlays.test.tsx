@@ -10,15 +10,19 @@ import { FATIGUE } from '@/sim/economy/tycoon/fatigue';
 import type { CardInstance } from '@/sim/economy/tycoon/cards';
 import { hintText, reportCommentText, type TycoonMonthReport } from '@/sim/economy/tycoon/report';
 import { trustTier } from '@/sim/economy/tycoon/trust';
+import { MemoryStorage } from '@/game/memoryStorage';
+import { RANKED_KEYS, createRankedSession, saveFinished, saveRanked, clearFinished, type FinishedRun } from '@/game/rankedRun';
+import { newRunLog } from '@/game/session';
 import {
-  econ, ephemeral, hints, pushStory, ranked, report, selection, showHints, showSettings, speed, start, story, tab, welcome, type GameActions,
+  econ, ephemeral, hints, panel, pushStory, ranked, report, selection, showHints, showSettings, speed, start, story, tab, unsent, welcome, type GameActions,
 } from '../state';
-import { TrustChip } from './Hud';
+import { RankingButton, TrustChip } from './Hud';
 import { int, zl } from './format';
 import { Bar } from './panels';
 import {
-  ClickerBar, ComboChip, EPHEMERAL_BADGE, EPHEMERAL_NOTE, FIRST_DAY_HINTS, FirstDayHints, RANKED_NOTE, RESTART_CONFIRM, ReportBody, ReportModal,
-  STORY_GRACE_MS, SelectionCard, StoreActions, StoreBadge, StoryModal, WelcomeModal, terminationReason,
+  ClickerBar, ComboChip, EPHEMERAL_BADGE, EPHEMERAL_NOTE, FIRST_DAY_HINTS, FirstDayHints, RANKED_NOTE, RESTART_CONFIRM, RankingSettings, ReportBody,
+  ReportModal, STORY_GRACE_MS, SelectionCard, StoreActions, StoreBadge, StoryModal, WelcomeModal, abandonQuestion, refreshStoredRun, storedRun,
+  storedRunNow, terminationReason,
 } from './overlays';
 import { buttonLabelled, buttonsOf, click, labels, textOf, walk, type Vnode } from './vnodeTree';
 
@@ -33,6 +37,8 @@ const resetSignals = (): void => {
   welcome.value = null;
   start.value = null;
   showSettings.value = false;
+  panel.value = null;
+  unsent.value = null;
   speed.value = 1;
   story.value = [];
   showHints([]);
@@ -915,5 +921,241 @@ describe('„Witaj z powrotem”: wiersz gotówki tylko tam, gdzie jest gotówka
 
   it('bez oferty okna nie ma', () => {
     expect(WelcomeModal({ game: fakeGame() })).toBeNull();
+  });
+});
+
+describe('⚙: sekcja „Ranking”', () => {
+  const gameActions = () => ({ leaveRanked: vi.fn(), resumeRanked: vi.fn(() => true), abandonRanked: vi.fn(), openFinish: vi.fn() });
+  function section(over: Partial<Parameters<typeof RankingSettings>[0]> = {}) {
+    const game = gameActions();
+    const props = { game, stored: null, confirming: false, onConfirming: vi.fn(), onRefresh: vi.fn(), close: vi.fn(), ...over };
+    return { game, props, tree: RankingSettings(props) };
+  }
+  const run = { seed: 'kielbasa-42', day: 12, days: 91, phase: 'playing' as const };
+
+  it('zwykła gra bez biegu: nagłówek „Ranking” i dwa przyciski, nic o biegu ani o niewysłanym wyniku', () => {
+    const { tree } = section();
+    expect(textOf(walk(tree).find((v) => v.type === 'h3'))).toBe('Ranking');
+    expect(labels(tree)).toEqual(['Ranking', 'Kod odzyskiwania i zapis']);
+  });
+
+  it('„Ranking” zamyka ustawienia i otwiera panel: „Globalny” w zwykłej grze, „Ten seed” w biegu rankingowym', () => {
+    const plain = section();
+    click(buttonLabelled(plain.tree, 'Ranking'));
+    expect(plain.props.close).toHaveBeenCalledTimes(1);
+    expect(panel.value).toEqual({ id: 'ranking', tab: 'global' });
+
+    panel.value = null;
+    ranked.value = run;
+    const inRun = section();
+    click(buttonLabelled(inRun.tree, 'Ranking'));
+    expect(inRun.props.close).toHaveBeenCalledTimes(1);
+    expect(panel.value).toEqual({ id: 'ranking', tab: 'seed' });
+  });
+
+  it('„Kod odzyskiwania i zapis” zamyka ustawienia i otwiera panel kodu', () => {
+    const { tree, props } = section();
+    click(buttonLabelled(tree, 'Kod odzyskiwania i zapis'));
+    expect(props.close).toHaveBeenCalledTimes(1);
+    expect(panel.value).toEqual({ id: 'recovery' });
+  });
+
+  it('wiersz „Wyślij niewysłany bieg (wynik …)” jest tylko wtedy, gdy szuflada ma bieg; prowadzi do okna wysyłki', () => {
+    expect(labels(section().tree).some((l) => l.startsWith('Wyślij'))).toBe(false);
+    unsent.value = { seed: 'pierogi-731', score: 12_345 };
+    const { tree, game, props } = section();
+    const label = `Wyślij niewysłany bieg (wynik ${zl(12_345)})`;
+    expect(labels(tree)).toContain(label);
+    click(buttonLabelled(tree, label));
+    expect(props.close).toHaveBeenCalledTimes(1);
+    expect(game.openFinish).toHaveBeenCalledTimes(1);
+    expect(panel.value).toBeNull();   // okno wysyłki, nie panel rankingu
+    unsent.value = null;
+    expect(labels(section().tree).some((l) => l.startsWith('Wyślij'))).toBe(false);
+  });
+
+  it('w biegu rankingowym: „Wróć do zwykłej gry” i „Porzuć bieg”, bez „Kontynuuj”', () => {
+    ranked.value = run;
+    const { tree, game, props } = section();
+    expect(labels(tree)).toEqual(['Ranking', 'Kod odzyskiwania i zapis', 'Wróć do zwykłej gry', 'Porzuć bieg']);
+    click(buttonLabelled(tree, 'Wróć do zwykłej gry'));
+    expect(props.close).toHaveBeenCalledTimes(1);
+    expect(game.leaveRanked).toHaveBeenCalledTimes(1);
+    expect(game.abandonRanked).not.toHaveBeenCalled();
+  });
+
+  it('„Porzuć bieg” nie porzuca od razu, tylko pyta (dwa kroki, bez window.confirm)', () => {
+    const confirmDialog = vi.fn(() => true);
+    vi.stubGlobal('confirm', confirmDialog);
+    ranked.value = run;
+    const { tree, game, props } = section();
+    click(buttonLabelled(tree, 'Porzuć bieg'));
+    expect(props.onConfirming).toHaveBeenCalledWith(true);
+    expect(game.abandonRanked).not.toHaveBeenCalled();
+    expect(confirmDialog).not.toHaveBeenCalled();
+  });
+
+  it('pytanie: „Porzucić bieg rankingowy? Dzień N z 91 przepadnie.”, „Porzuć” porzuca i zamyka ustawienia, „Anuluj” wraca', () => {
+    ranked.value = run;
+    const asking = section({ confirming: true });
+    expect(textOf(asking.tree)).toContain('Porzucić bieg rankingowy? Dzień 12 z 91 przepadnie.');
+    expect(labels(asking.tree).slice(-2)).toEqual(['Porzuć', 'Anuluj']);
+    expect(labels(asking.tree)).not.toContain('Porzuć bieg');   // pytanie zastępuje przyciski biegu
+    expect(labels(asking.tree)).not.toContain('Wróć do zwykłej gry');
+    click(buttonLabelled(asking.tree, 'Anuluj'));
+    expect(asking.props.onConfirming).toHaveBeenLastCalledWith(false);
+    expect(asking.game.abandonRanked).not.toHaveBeenCalled();
+    expect(asking.props.close).not.toHaveBeenCalled();
+    click(buttonLabelled(asking.tree, 'Porzuć'));
+    expect(asking.game.abandonRanked).toHaveBeenCalledTimes(1);
+    expect(asking.props.onConfirming).toHaveBeenLastCalledWith(false);
+    expect(asking.props.close).toHaveBeenCalledTimes(1);
+  });
+
+  it('pytanie ma rolę alertu (czytnik ekranu odczyta je od razu)', () => {
+    ranked.value = run;
+    const alert = walk(section({ confirming: true }).tree).find((v) => v.props?.role === 'alert');
+    expect(textOf(alert)).toContain('Porzucić bieg rankingowy?');
+  });
+
+  it('poza biegiem, z zapisanym biegiem w przeglądarce: „Kontynuuj bieg rankingowy” i „Porzuć bieg”', () => {
+    const { tree, game, props } = section({ stored: { day: 40 } });
+    expect(labels(tree)).toEqual(['Ranking', 'Kod odzyskiwania i zapis', 'Kontynuuj bieg rankingowy', 'Porzuć bieg']);
+    click(buttonLabelled(tree, 'Kontynuuj bieg rankingowy'));
+    expect(game.resumeRanked).toHaveBeenCalledTimes(1);
+    expect(props.close).toHaveBeenCalledTimes(1);   // bieg ruszył: ustawienia niepotrzebne
+    expect(props.onRefresh).not.toHaveBeenCalled();
+    expect(textOf(section({ stored: { day: 40 }, confirming: true }).tree)).toContain('Porzucić bieg rankingowy? Dzień 40 z 91 przepadnie.');
+  });
+
+  it('wznowienie, które się nie udało, zostawia ustawienia otwarte (komunikat idzie osobno) i odświeża wiersz', () => {
+    const game = { ...gameActions(), resumeRanked: vi.fn(() => false) };
+    const { tree, props } = section({ stored: { day: 40 }, game });
+    click(buttonLabelled(tree, 'Kontynuuj bieg rankingowy'));
+    expect(game.resumeRanked).toHaveBeenCalledTimes(1);
+    expect(props.close).not.toHaveBeenCalled();
+    expect(props.onRefresh).toHaveBeenCalledTimes(1);
+  });
+
+  it('zapisany bieg bez odczytanego dnia (z innej wersji gry): pytanie nie zmyśla dnia', () => {
+    const text = textOf(section({ stored: { day: null }, confirming: true }).tree);
+    expect(text).toContain('Porzucić bieg rankingowy? Zapisany bieg przepadnie.');
+    expect(text).not.toMatch(/Dzień/);
+    expect(abandonQuestion(null)).toBe('Porzucić bieg rankingowy? Zapisany bieg przepadnie.');
+    expect(abandonQuestion(7)).toBe('Porzucić bieg rankingowy? Dzień 7 z 91 przepadnie.');
+  });
+
+  it('bieg na ekranie ma pierwszeństwo przed zapisanym: nie ma „Kontynuuj”, dzień z biegu na ekranie', () => {
+    ranked.value = run;
+    const { tree } = section({ stored: { day: 40 }, confirming: true });
+    expect(labels(tree)).not.toContain('Kontynuuj bieg rankingowy');
+    expect(textOf(tree)).toContain('Dzień 12 z 91');
+  });
+
+  it('bez paneli (nakładka bez usług rankingu) nie ma przycisków „Ranking” i „Kod odzyskiwania i zapis”, wiersze biegu zostają', () => {
+    ranked.value = run;
+    unsent.value = { seed: 'pierogi-731', score: 1_000 };
+    const text = labels(section({ panels: false }).tree);
+    expect(text).not.toContain('Ranking');
+    expect(text).not.toContain('Kod odzyskiwania i zapis');
+    expect(text).toEqual([`Wyślij niewysłany bieg (wynik ${zl(1_000)})`, 'Wróć do zwykłej gry', 'Porzuć bieg']);
+  });
+
+  it('pytanie bez biegu (bieg zniknął, gdy pytanie wisiało): nie pokazuje się, wiersz biegu też nie', () => {
+    const { tree } = section({ confirming: true });
+    expect(labels(tree)).toEqual(['Ranking', 'Kod odzyskiwania i zapis']);
+    expect(textOf(tree)).not.toContain('Porzucić');
+  });
+});
+
+describe('⚙: zapisany bieg rankingowy w przeglądarce', () => {
+  let storage: MemoryStorage;
+  beforeEach(() => {
+    storage = new MemoryStorage();
+    vi.stubGlobal('localStorage', storage);
+    clearFinished();
+  });
+  afterEach(() => clearFinished());
+
+  const finished = (): FinishedRun => ({
+    v: 1, seed: 'kielbasa-42', record: { ...newRunLog('kielbasa-42', 'ranked').record, log: [{ minute: 400, seq: 0, cmd: { type: 'tapTill' } }] }, score: 5_000, finishedAt: 1,
+  });
+  const saveActive = (days: number): void => {
+    const s = createRankedSession('kielbasa-42');
+    s.econ.minute += days * 1440;
+    expect(saveRanked(s)).toBe(true);
+  };
+
+  it('brak zapisu: null (nic do kontynuowania ani porzucania)', () => {
+    expect(storedRunNow()).toBeNull();
+  });
+
+  it('aktywny zapis: dzień sezonu, w którym stoi bieg (od 1)', () => {
+    saveActive(0);
+    expect(storedRunNow()).toEqual({ day: 1 });
+    saveActive(11);
+    expect(storedRunNow()).toEqual({ day: 12 });
+  });
+
+  it('zapis z innej wersji gry: bieg jest, ale dnia nie znamy', () => {
+    storage.setItem(RANKED_KEYS.active, JSON.stringify({ schema: 999, seed: 'x' }));
+    expect(storedRunNow()).toEqual({ day: null });
+  });
+
+  it('niewysłany bieg w szufladzie to nie „bieg do kontynuowania” (jego wysyła osobny wiersz)', () => {
+    saveFinished(finished());
+    expect(storedRunNow()).toBeNull();
+  });
+
+  it('sygnał storedRun liczy się raz na otwarcie ustawień, nie przy każdym odczycie', () => {
+    saveActive(3);
+    const reads = vi.spyOn(storage, 'getItem');
+    expect(storedRun.value).toBeNull();   // ustawienia zamknięte: nie czytamy przeglądarki
+    expect(reads).not.toHaveBeenCalled();
+    showSettings.value = true;
+    expect(storedRun.value).toEqual({ day: 4 });
+    const afterFirst = reads.mock.calls.length;
+    expect(afterFirst).toBeGreaterThan(0);
+    for (let i = 0; i < 5; i++) expect(storedRun.value).toEqual({ day: 4 });
+    expect(reads.mock.calls.length).toBe(afterFirst);   // kolejne rendery tego samego otwarcia nie dotykają przeglądarki
+    showSettings.value = false;
+    expect(storedRun.value).toBeNull();
+    saveActive(5);
+    showSettings.value = true;
+    expect(storedRun.value).toEqual({ day: 6 });        // nowe otwarcie czyta od nowa
+  });
+
+  it('odświeżenie (po nieudanym wznowieniu) czyta zapis jeszcze raz', () => {
+    saveActive(3);
+    showSettings.value = true;
+    expect(storedRun.value).toEqual({ day: 4 });
+    storage.removeItem(RANKED_KEYS.active);
+    expect(storedRun.value).toEqual({ day: 4 });   // bez odświeżenia wiersz jest ten sam
+    refreshStoredRun();
+    expect(storedRun.value).toBeNull();
+  });
+
+  it('w biegu rankingowym zapisu nie czyta wcale (bieg jest na ekranie)', () => {
+    saveActive(3);
+    ranked.value = { seed: 'kielbasa-42', day: 4, days: 91, phase: 'playing' };
+    const reads = vi.spyOn(storage, 'getItem');
+    showSettings.value = true;
+    expect(storedRun.value).toBeNull();
+    expect(reads).not.toHaveBeenCalled();
+  });
+});
+
+describe('HUD: przycisk 🏆', () => {
+  it('ma opis dla czytnika i otwiera ranking: „Globalny” w zwykłej grze, „Ten seed” w biegu rankingowym', () => {
+    const tree = RankingButton();
+    const trophy = buttonsOf(tree)[0]!;
+    expect(textOf(trophy)).toBe('🏆');
+    expect(trophy.props['aria-label']).toBe('Ranking');
+    click(trophy);
+    expect(panel.value).toEqual({ id: 'ranking', tab: 'global' });
+    panel.value = null;
+    ranked.value = { seed: 'kielbasa-42', day: 3, days: 91, phase: 'playing' };
+    click(trophy);
+    expect(panel.value).toEqual({ id: 'ranking', tab: 'seed' });
   });
 });

@@ -1,5 +1,5 @@
 import { render } from 'preact';
-import { plural, signedZl } from '../game/format';
+import { plural, signedZl, zl } from '../game/format';
 import type { RankingTab } from './client';
 import { NO_SEED, type RankingModel } from './rankingModel';
 import './ranking.css';
@@ -8,8 +8,9 @@ export { NO_SEED };
 
 /**
  * Panel rankingu (spec §14.7): ranking globalny, „Ten seed” i seed tygodnia, z własnym wierszem podświetlonym. Komponent bez
- * hooków: cały stan jest w modelu (`createRankingModel`), więc testy wołają go jak zwykłą funkcję. Do HUD-u wpina go dopiero
- * kolejny krok (z ⚙ albo z raportu końca sezonu) przez `mountRankingPanel`.
+ * hooków: cały stan jest w modelu (`createRankingModel`), więc testy wołają go jak zwykłą funkcję. W grze pokazuje go `PanelHost`
+ * (przycisk 🏆 w HUD-zie i ⚙); `mountRankingPanel` wstawia go poza aplikacją. Gdy ranking jest wyłączony albo serwer nie odpowiada,
+ * w widoku stoi komunikat modelu i „Spróbuj jeszcze raz”, a panel zamyka się jak zawsze.
  */
 export const TAB_LABELS: Record<RankingTab, string> = { global: 'Globalny', seed: 'Ten seed', week: 'Seed tygodnia' };
 const TABS: RankingTab[] = ['global', 'seed', 'week'];
@@ -31,6 +32,10 @@ export interface RankingPanelProps {
   onClose: () => void;
   /** Do podpisu „Seed tygodnia” (domyślnie zegar przeglądarki). */
   now?: () => number;
+  /** Bieg, który skończył sezon i czeka na wysłanie (`ui.unsent`); z nim panel ma u góry baner z przyciskiem „Wyślij”. */
+  unsent?: { score: number; seed: string } | null;
+  /** „Wyślij” w banerze niewysłanego biegu (gra zamyka panel i otwiera okno wysyłki). Bez niej baner nie ma przycisku. */
+  onSendUnsent?: () => void;
 }
 
 function subtitle(model: RankingModel, now: number): string {
@@ -42,7 +47,7 @@ function subtitle(model: RankingModel, now: number): string {
   }
 }
 
-export function RankingPanel({ model, onClose, now = Date.now }: RankingPanelProps) {
+export function RankingPanel({ model, onClose, now = Date.now, unsent = null, onSendUnsent }: RankingPanelProps) {
   const v = model.view.value;
   const tab = model.tab.value;
   const mine = model.me.value?.places[tab] ?? null;
@@ -52,6 +57,12 @@ export function RankingPanel({ model, onClose, now = Date.now }: RankingPanelPro
       <div class="tt-modal tt-ranking" role="dialog" aria-label="Ranking">
         <button type="button" class="tt-iconbtn tt-card-close" aria-label="Zamknij" onClick={onClose}>✕</button>
         <h2>Ranking</h2>
+        {unsent && (
+          <div class="tt-rank-unsent" role="status">
+            <p>Masz niewysłany bieg (wynik {zl(unsent.score)}).</p>
+            {onSendUnsent && <button type="button" class="tt-btn tt-primary" onClick={onSendUnsent}>Wyślij</button>}
+          </div>
+        )}
         <div class="tt-seg tt-rank-tabs" role="tablist" aria-label="Rodzaj rankingu">
           {TABS.map((t) => (
             <button key={t} type="button" role="tab" aria-selected={tab === t} class={`tt-btn${tab === t ? ' on' : ''}`} onClick={() => { void model.select(t); }}>

@@ -1,6 +1,7 @@
 import type { ComponentChild, VNode } from 'preact';
 import { describe, expect, it, vi } from 'vitest';
-import type { ApiResult, BoardResponse, PlayerResponse, RankingClient, RankingTab } from './client';
+import { zl } from '../game/format';
+import { NETWORK_ERROR, UNAVAILABLE_ERROR, type ApiResult, type BoardResponse, type PlayerResponse, type RankingClient, type RankingTab } from './client';
 import { EMPTY_BOARD, LOADING, NO_PLAYER, NO_SEED, RankingPanel, TAB_LABELS, weekLeft } from './RankingPanel';
 import { createRankingModel, type RankingDeps } from './rankingModel';
 
@@ -222,5 +223,94 @@ describe('ranking: panel', () => {
     expect(weekLeft(NOW + day, NOW)).toBe('został 1 dzień');
     expect(weekLeft(NOW + 3_600_000, NOW)).toBe('ostatnie godziny');
     expect(weekLeft(NOW - 1, NOW)).toBe('ostatnie godziny');
+  });
+});
+
+describe('ranking: baner niewysłanego biegu', () => {
+  const unsent = { score: 12_345, seed: 'pierogi-731' };
+  const open = async () => {
+    const { client } = fakeClient({});
+    const model = createRankingModel(deps(client));
+    await model.select('global');
+    return model;
+  };
+
+  it('bez niewysłanego biegu banera nie ma (ani z `unsent: null`, ani bez propsa)', async () => {
+    const model = await open();
+    expect(byClass(RankingPanel({ model, onClose: () => undefined }), 'tt-rank-unsent')).toHaveLength(0);
+    expect(byClass(RankingPanel({ model, onClose: () => undefined, unsent: null, onSendUnsent: () => undefined }), 'tt-rank-unsent')).toHaveLength(0);
+    expect(textOf(RankingPanel({ model, onClose: () => undefined, unsent: null }))).not.toContain('niewysłany');
+  });
+
+  it('z niewysłanym biegiem: baner na górze z wynikiem i przyciskiem „Wyślij”, który woła onSendUnsent', async () => {
+    const model = await open();
+    const onSendUnsent = vi.fn();
+    const tree = RankingPanel({ model, onClose: () => undefined, unsent, onSendUnsent });
+    const banner = byClass(tree, 'tt-rank-unsent');
+    expect(banner).toHaveLength(1);
+    expect(textOf(banner[0])).toContain(`Masz niewysłany bieg (wynik ${zl(12_345)}).`);
+    expect(banner[0]!.props.role).toBe('status');
+    const send = buttons(banner[0]).filter((b) => textOf(b) === 'Wyślij');
+    expect(send).toHaveLength(1);
+    click(send[0]!);
+    expect(onSendUnsent).toHaveBeenCalledTimes(1);
+    // baner jest nad zakładkami: pierwszy element po tytule
+    const order = walk(tree).filter((v) => v.type === 'h2' || v.props?.role === 'status' || v.props?.role === 'tablist').map((v) => v.type === 'h2' ? 'h2' : String(v.props.role));
+    expect(order.slice(0, 3)).toEqual(['h2', 'status', 'tablist']);
+  });
+
+  it('wynik ujemny też czytelny, a seed biegu nie wchodzi do napisu (nie jest tu potrzebny)', async () => {
+    const model = await open();
+    const text = textOf(RankingPanel({ model, onClose: () => undefined, unsent: { score: -4_000, seed: 'pierogi-731' }, onSendUnsent: () => undefined }));
+    expect(text).toContain(`Masz niewysłany bieg (wynik ${zl(-4_000)}).`);
+    expect(text).not.toContain('pierogi-731');
+  });
+});
+
+describe('ranking: serwer wyłączony albo nieosiągalny (panel działa dalej)', () => {
+  const failures: [string, ApiResult<BoardResponse>][] = [
+    ['ranking-off', { ok: false, error: 'ranking-off', message: 'Ranking Centrali jeszcze nie ruszył.' }],
+    ['network', { ok: false, error: 'network', message: NETWORK_ERROR }],
+    ['unavailable', { ok: false, error: 'unavailable', message: UNAVAILABLE_ERROR }],
+  ];
+
+  it.each(failures)('odpowiedź „%s”: komunikat dla gracza w widoku, przyciski zostają, ✕ i tło zamykają panel', async (_name, failure) => {
+    const { client } = fakeClient({ global: failure });
+    const model = createRankingModel(deps(client));
+    await model.select('global');
+    const onClose = vi.fn();
+    const tree = RankingPanel({ model, onClose });
+    const message = failure.ok ? '' : failure.message;
+    expect(model.view.value).toMatchObject({ status: 'error', message });
+    expect(textOf(tree)).toContain(message);
+    expect(byClass(tree, 'tt-rank-list')).toHaveLength(0);
+    expect(walk(tree).filter((v) => v.props?.role === 'tab')).toHaveLength(3);   // zakładki działają
+    const retry = vi.spyOn(model, 'refresh');
+    click(buttons(tree).find((b) => textOf(b) === 'Spróbuj jeszcze raz')!);
+    expect(retry).toHaveBeenCalledTimes(1);
+    click(buttons(tree).find((b) => b.props['aria-label'] === 'Zamknij')!);
+    const backdrop = byClass(tree, 'tt-modal-wrap')[0]!;
+    (backdrop.props.onClick as (e: unknown) => void)({ target: backdrop, currentTarget: backdrop });
+    expect(onClose).toHaveBeenCalledTimes(2);
+  });
+
+  it('ranking wraca po ponowieniu, gdy serwer odpowie; wcześniejszy błąd znika z widoku', async () => {
+    const { client } = fakeClient({ global: { ok: false, error: 'ranking-off', message: 'Ranking Centrali jeszcze nie ruszył.' } });
+    const model = createRankingModel(deps(client));
+    await model.select('global');
+    (client.board as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ ok: true, board: 'global', week: WEEK, rows: rows(['Ala', 50]) });
+    await model.refresh();
+    const text = textOf(RankingPanel({ model, onClose: () => undefined }));
+    expect(text).toContain('Ala');
+    expect(text).not.toContain('jeszcze nie ruszył');
+  });
+
+  it('gracz bez nicka i wyłączony ranking: komunikat serwera i wyjaśnienie trybu rankingowego naraz, bez wyjątku', async () => {
+    const { client } = fakeClient({ global: { ok: false, error: 'ranking-off', message: 'Ranking Centrali jeszcze nie ruszył.' } });
+    const model = createRankingModel(deps(client, { player: () => undefined }));
+    await model.select('global');
+    const text = textOf(RankingPanel({ model, onClose: () => undefined }));
+    expect(text).toContain('Ranking Centrali jeszcze nie ruszył.');
+    expect(text).toContain(NO_PLAYER);
   });
 });

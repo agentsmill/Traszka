@@ -6,8 +6,9 @@ export { NO_KEY, NOTHING_TO_SEND, SAME_CODE };
 
 /**
  * Panel „Kod odzyskiwania” (spec §14.7): kod tego urządzenia (zakryty, dopóki gracz go nie odsłoni), wpisanie kodu z innego
- * urządzenia i przeniesienie zapisu. Komponent bez hooków, stan w `createRecoveryModel`. Do ⚙ wpina go kolejny krok przez
- * `mountRecoveryPanel`.
+ * urządzenia i przeniesienie zapisu. Komponent bez hooków, stan w `createRecoveryModel`. W grze pokazuje go `PanelHost` (⚙ → „Kod
+ * odzyskiwania i zapis”); `mountRecoveryPanel` wstawia go poza aplikacją. Gdy ranking jest wyłączony albo serwer nie odpowiada, pod
+ * przyciskami stoi komunikat z serwera, przyciski zostają, a panel zamyka się jak zawsze.
  */
 export const MASKED_CODE = '••••-••••-••••-••••-••••';
 export const RECOVERY_INTRO = 'To Twój klucz do rankingu. Wpisany na innym urządzeniu przenosi nick i zapis gry. Zapisz go i nikomu nie pokazuj: kto ma kod, ten ma Twój nick.';

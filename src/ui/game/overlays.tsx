@@ -1,3 +1,4 @@
+import { computed, signal, untracked, type ReadonlySignal } from '@preact/signals';
 import { useEffect, useState } from 'preact/hooks';
 import { BANKRUPTCY_AT, RETURN_FEE } from '@/sim/economy/catalog';
 import { effects, isOpenForCustomers, slotFree, slotUsage, tapCombo, type EconomyState, type MonthReport } from '@/sim/economy/economy';
@@ -8,9 +9,10 @@ import { TRUST_REASON_LABEL, trustTerminates } from '@/sim/economy/tycoon/trust'
 import { EQUIPMENT, EQUIPMENT_BY_ID, equipmentCost } from '@/sim/economy/upgrades';
 import type { QualityPresetId } from '@/render/quality';
 import { networkIncomeOf, prestigePoints } from '@/game/meta';
+import { RANKED_DAYS, loadRanked, rankedDayOf, storedRankedBlock } from '@/game/rankedRun';
 import {
-  celebration, dismissStory, ephemeral, econ, hints, howTo, metaView, nextHint, openHowTo, preset, ranked, report, selection, seed, showPerf,
-  showPrestige, showSettings, story, tab, toasts, welcome, type Controls, type GameActions, type RankedView,
+  celebration, dismissStory, ephemeral, econ, hints, howTo, metaView, nextHint, openHowTo, openPanel, openRanking, preset, ranked, report, selection,
+  seed, showPerf, showPrestige, showSettings, story, tab, toasts, unsent, welcome, type Controls, type GameActions, type RankedView,
 } from '../state';
 import { int, people, signedPts, signedZl, zl } from './format';
 import { Bar, PalletItem } from './panels';
@@ -365,16 +367,119 @@ export function HowToButton() {
   );
 }
 
+/**
+ * Zapisany bieg rankingowy, do którego da się wrócić z ⚙, choć nie toczy się na ekranie (gracz wyszedł z niego do zwykłej gry albo odświeżył
+ * stronę): `day` to dzień sezonu, w którym stoi, albo null, gdy zapis jest z innej wersji gry i dnia nie czytamy.
+ */
+export interface StoredRun { day: number | null }
+
+/**
+ * Czyta z przeglądarki, czy czeka aktywny bieg rankingowy (`storedRankedBlock`; niewysłany bieg w szufladzie to nie to: ma własny wiersz).
+ * Kosztuje odczyt zapisu biegu, więc woła się to raz na otwarcie ustawień (`storedRun`), nie przy każdym rysowaniu.
+ */
+export function storedRunNow(): StoredRun | null {
+  if (storedRankedBlock() !== 'active') return null;
+  const loaded = loadRanked();
+  return { day: loaded.status === 'ok' ? rankedDayOf(loaded.session.econ) : null };
+}
+
+const storedStamp = signal(0);
+/** Czyta zapisany bieg jeszcze raz przy otwartych ustawieniach (po wznowieniu, które się nie udało: zapis mógł zniknąć). */
+export function refreshStoredRun(): void {
+  storedStamp.value += 1;
+}
+/**
+ * Zapisany bieg rankingowy dla ⚙: liczy się raz, gdy ustawienia się otwierają (sygnał `showSettings`), i zostaje do zamknięcia; poza
+ * ustawieniami i w trakcie biegu rankingowego (jest na ekranie) nie czyta przeglądarki wcale.
+ */
+export const storedRun: ReadonlySignal<StoredRun | null> = computed(() => {
+  void storedStamp.value;
+  if (!showSettings.value || untracked(() => ranked.value)) return null;
+  return storedRunNow();
+});
+
+/** Pytanie przed porzuceniem biegu rankingowego (dwa kroki w ⚙ zamiast `window.confirm`); `day` null, gdy dnia zapisanego biegu nie znamy. */
+export const abandonQuestion = (day: number | null): string =>
+  `Porzucić bieg rankingowy? ${day === null ? 'Zapisany bieg' : `Dzień ${day} z ${RANKED_DAYS}`} przepadnie.`;
+
+export interface RankingSettingsProps {
+  game: Pick<GameActions, 'leaveRanked' | 'resumeRanked' | 'abandonRanked' | 'openFinish'>;
+  /** Zapisany bieg, który nie toczy się na ekranie (`storedRun`), albo null. Bieg na ekranie (`ranked`) ma pierwszeństwo. */
+  stored: StoredRun | null;
+  /** Czy ⚙ pyta, czy na pewno porzucić bieg (stan trzyma `Settings`, zeruje się przy każdym otwarciu). */
+  confirming: boolean;
+  onConfirming(on: boolean): void;
+  /** Po wznowieniu, które się nie udało: wiersz biegu trzeba odczytać od nowa. */
+  onRefresh(): void;
+  close(): void;
+  /** Czy gra ma panele rankingu i kodu odzyskiwania (nakładka bez nich nie pokazuje ich przycisków). */
+  panels?: boolean;
+}
+
+/**
+ * Sekcja „Ranking” w ⚙: panel rankingu i panel kodu odzyskiwania (zamykają ustawienia i otwierają panel), wiersz niewysłanego biegu (gdy
+ * szuflada coś trzyma) i wiersz biegu rankingowego: w biegu „Wróć do zwykłej gry” (zapisuje bieg) i „Porzuć bieg”, poza biegiem z zapisem
+ * w przeglądarce „Kontynuuj bieg rankingowy” i „Porzuć bieg”. Porzucenie kasuje zapis, więc pyta jeszcze raz w tym samym miejscu.
+ * Komponent bez hooków (stan pytania i odczyt zapisu daje `Settings`), więc testy wołają go jak funkcję.
+ */
+export function RankingSettings({ game, stored, confirming, onConfirming, onRefresh, close, panels = true }: RankingSettingsProps) {
+  const run = ranked.value;
+  const waiting = unsent.value;
+  const day = run ? run.day : stored ? stored.day : null;
+  const hasRun = !!run || !!stored;
+  return (
+    <>
+      <h3>Ranking</h3>
+      {panels && (
+        <div class="tt-store-actions">
+          <button type="button" class="tt-btn" onClick={() => { close(); openRanking(); }}>Ranking</button>
+          <button type="button" class="tt-btn" onClick={() => { close(); openPanel('recovery'); }}>Kod odzyskiwania i zapis</button>
+        </div>
+      )}
+      {waiting && (
+        <div class="tt-store-actions">
+          <button type="button" class="tt-btn tt-primary" onClick={() => { close(); game.openFinish(); }}>
+            {`Wyślij niewysłany bieg (wynik ${zl(waiting.score)})`}
+          </button>
+        </div>
+      )}
+      {hasRun && confirming && (
+        <div class="tt-ranked-ask">
+          <p class="tt-ranked-ask-text" role="alert">{abandonQuestion(day)}</p>
+          <div class="tt-store-actions">
+            <button type="button" class="tt-btn" onClick={() => { onConfirming(false); game.abandonRanked(); close(); }}>Porzuć</button>
+            <button type="button" class="tt-btn tt-primary" onClick={() => onConfirming(false)}>Anuluj</button>
+          </div>
+        </div>
+      )}
+      {hasRun && !confirming && (
+        <div class="tt-store-actions">
+          {run
+            ? <button type="button" class="tt-btn tt-primary" onClick={() => { close(); game.leaveRanked(); }}>Wróć do zwykłej gry</button>
+            : <button type="button" class="tt-btn tt-primary" onClick={() => { if (game.resumeRanked()) close(); else onRefresh(); }}>Kontynuuj bieg rankingowy</button>}
+          <button type="button" class="tt-btn" onClick={() => onConfirming(true)}>Porzuć bieg</button>
+          <p class="tt-hint">{run ? 'Wyjście zapisuje bieg: wznowisz go stąd. Porzucenie kasuje zapis.' : 'W przeglądarce czeka zapisany bieg rankingowy. Porzucenie kasuje zapis.'}</p>
+        </div>
+      )}
+    </>
+  );
+}
+
 const PRESETS: { value: QualityPresetId; label: string }[] = [
   { value: 'niska', label: 'Niska' },
   { value: 'srednia', label: 'Średnia' },
   { value: 'wysoka', label: 'Wysoka' },
 ];
 
-/** Ustawienia: seed sklepu, nowy sklep i nowa gra, jakość grafiki, nakładka wydajności, zastrzeżenie. */
-export function Settings({ controls, game }: { controls: Controls; game: GameActions }) {
+/**
+ * Ustawienia: seed sklepu, nowy sklep i nowa gra, ranking i bieg rankingowy, jakość grafiki, nakładka wydajności, zastrzeżenie.
+ * `panels`: czy gra ma panele rankingu i kodu odzyskiwania (bez nich ich przyciski się nie pokazują).
+ */
+export function Settings({ controls, game, panels = true }: { controls: Controls; game: GameActions; panels?: boolean }) {
   const [draft, setDraft] = useState(seed.value);
+  const [asking, setAsking] = useState(false);
   useEffect(() => { setDraft(seed.value); }, [seed.value, showSettings.value]);
+  useEffect(() => { setAsking(false); }, [showSettings.value]);   // pytanie o porzucenie biegu nie przeżywa zamknięcia ustawień
   if (!showSettings.value) return null;
   const close = (): void => { showSettings.value = false; };
   return (
@@ -392,6 +497,8 @@ export function Settings({ controls, game }: { controls: Controls; game: GameAct
         </form>
         <StoreActions ephemeral={ephemeral.value} ranked={!!ranked.value} onNewStore={() => { close(); game.newStore(); }}
           onRestart={() => { if (confirm(RESTART_CONFIRM)) { game.restart(); close(); } }} />
+        <RankingSettings game={game} stored={storedRun.value} confirming={asking} onConfirming={setAsking} onRefresh={refreshStoredRun} close={close}
+          panels={panels} />
         <h3>Pomoc</h3>
         <HowToButton />
         <h3>Grafika</h3>

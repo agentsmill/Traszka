@@ -317,13 +317,23 @@
   .tt-trust-tier { display: inline-block; }
 }
 
-/* Wąski telefon (390 px): ciaśniejsze znaczki, żeby gotówka, ⭐, 🦎, 🤝 i ⚙ zmieściły się w jednym rzędzie. */
+/*
+ * Wąski telefon (390 px): ciaśniejsze znaczki i przyciski, żeby gotówka, ⭐, 🦎, 🤝, 🏆 i ⚙ zmieściły się w jednym rzędzie. Zapas jest na
+ * milion złotych na 360 px i kilkanaście milionów na 375 px (tyle co przed dojściem 🏆): ⚙ nie może wypaść poza ekran.
+ */
 @media (max-width: 440px) {
-  .tt-hud-row { gap: 6px; }
-  .tt-stat { padding: 4px 6px; }
+  .tt-hud-row { gap: 4px; }
+  .tt-stat { padding: 4px 5px; }
+  .tt-cash { font-size: 17px; }
+  .tt-hud-tools { gap: 4px; }
+  .tt-hud-tools .tt-iconbtn { min-width: 32px; padding: 0 5px; }
 }
 
-.tt-gear {
+/* 🏆 i ⚙ razem na prawym końcu rzędu (bez rankingu w grze zostaje sam ⚙) */
+.tt-hud-tools {
+  display: flex;
+  flex: none;
+  gap: 6px;
   margin-left: auto;
 }
 
@@ -361,7 +371,7 @@
   .tt-hud2 { flex-direction: row; align-items: center; gap: 14px; }
   .tt-hud-row:first-child { flex: 0 0 auto; }
   .tt-hud-row:last-child { flex: 1; }
-  .tt-gear { order: 10; }
+  .tt-hud-tools { order: 10; }
 }
 
 /* --- Dolne zakładki ---------------------------------------------------------------------------------- */

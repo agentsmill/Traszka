@@ -10,6 +10,7 @@ import type { Command } from '@/sim/economy/commands';
 import { awaitingDecision, type CommandResult, type EconEventKind, type EconomyState, type MonthReport } from '@/sim/economy/economy';
 import type { StoreInfo } from '@/sim/economy/storeInfo';
 import { readMs } from '@/sim/economy/tycoon/notices';
+import type { RankingTab } from './ranking/client';
 
 /*
  * Stan widoczny w interfejsie. Zmienia go i przycisk, i klawisz, a czyta interfejs. Sterowanie światem to obiekt `Controls`
@@ -228,6 +229,27 @@ export function closeFinish(game: Pick<GameActions, 'leaveRanked'>): void {
   if (ranked.value?.phase === 'over') game.leaveRanked();
 }
 
+/** Panel rankingu (`ui/ranking/RankingPanel.tsx`) albo kodu odzyskiwania i zapisu (`RecoveryPanel.tsx`). */
+export type PanelId = 'ranking' | 'recovery';
+/** Otwarty panel; `tab` ma sens tylko dla rankingu (którą zakładkę załadować na wejściu). */
+export interface PanelState { id: PanelId; tab?: RankingTab }
+/**
+ * Otwarty panel rankingu albo kodu odzyskiwania (z HUD-u i z ⚙), albo null. Dopóki jest otwarty, gra stoi (`isWindowOpen`), a panel leży
+ * nad arkuszami, kartą decyzji i wpisami „OK”, pod oknem końca sezonu i ustawieniami (kolejność w App.tsx). Każde `openPanel` to nowa
+ * wartość, więc host odświeża dane przy każdym otwarciu (`bindPanelOpen`). Zamyka go `closePanel`. Nie jest częścią zapisu.
+ */
+export const panel: Signal<PanelState | null> = signal<PanelState | null>(null);
+export function openPanel(id: PanelId, tab?: RankingTab): void {
+  panel.value = tab === undefined ? { id } : { id, tab };
+}
+export function closePanel(): void {
+  panel.value = null;
+}
+/** Ranking z przycisku w HUD-zie i z ⚙: w biegu rankingowym zaczyna od „Ten seed” (tam jest bieg), w zwykłej grze od rankingu globalnego. */
+export function openRanking(): void {
+  openPanel('ranking', ranked.value ? 'seed' : 'global');
+}
+
 /**
  * Prośba o decyzję gracza: start nowego biegu rankingowego na `seed` porzuciłby coś, co jeszcze żyje. `unsent`: szuflada niewysłanego
  * biegu jest pełna; `active`: trwa bieg rankingowy (też taki z innej wersji gry, którego nie da się wznowić). Pytanie zadaje
@@ -273,11 +295,11 @@ export interface GameActions {
 
 /**
  * Czy otwarte jest okno, które zatrzymuje grę i ma swój sygnał: raport miesiąca, ważne zdarzenie czekające na „OK”, ekran startowy,
- * powitanie, prestiż, „Jak grać” albo okno końca sezonu (`finish`). Czyta to `isModalOpen` (game/frame.ts: pętla klatek) i `hintsHeld`.
+ * powitanie, prestiż, „Jak grać”, okno końca sezonu (`finish`) albo panel rankingu i kodu odzyskiwania (`panel`). Czyta to `isModalOpen` (game/frame.ts: pętla klatek) i `hintsHeld`.
  * Karta decyzji i koniec gry nie mają sygnału okna: wynikają ze stanu gry.
  */
 export const isWindowOpen = (): boolean =>
-  !!report.value || story.value.length > 0 || !!start.value || !!welcome.value || showPrestige.value || howTo.value || !!finish.value;
+  !!report.value || story.value.length > 0 || !!start.value || !!welcome.value || showPrestige.value || howTo.value || !!finish.value || !!panel.value;
 
 /**
  * Czy dymki pierwszego dnia mają czekać: pod każdym oknem, które zatrzymuje grę (`isWindowOpen`), pod kartą decyzji, która ją trzyma

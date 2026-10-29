@@ -4,7 +4,7 @@ import { dayOf, formatClock, formatDate } from '@/sim/economy/calendar';
 import { isClosedForRemont } from '@/sim/economy/economy';
 import { rankFor, xpToNext } from '@/sim/economy/progress';
 import { trustTier } from '@/sim/economy/tycoon/trust';
-import { econ, showSettings, speed, tab, type Controls } from '../state';
+import { econ, openRanking, showSettings, speed, tab, type Controls } from '../state';
 import { int, zl } from './format';
 
 /** Przyciski prędkości w pasku (pierwszy to pauza); „Jak grać” podaje z nich zakres tempa. */
@@ -60,8 +60,19 @@ export function TrustChip({ value }: { value: number }) {
   );
 }
 
-/** Górny pasek: poziom z pierścieniem XP, gotówka, reputacja, Ogonki, zaufanie Centrali, data i godzina, prędkość czasu, ustawienia. */
-export function Hud({ controls }: { controls: Controls }) {
+/**
+ * „🏆” obok ⚙: otwiera panel rankingu (w biegu rankingowym od zakładki „Ten seed”, w zwykłej grze od globalnego). Gra stoi, dopóki panel
+ * jest otwarty.
+ */
+export function RankingButton() {
+  return <button type="button" class="tt-iconbtn tt-trophy" aria-label="Ranking" title="Ranking" onClick={openRanking}>🏆</button>;
+}
+
+/**
+ * Górny pasek: poziom z pierścieniem XP, gotówka, reputacja, Ogonki, zaufanie Centrali, data i godzina, prędkość czasu, ranking
+ * i ustawienia. `ranking`: czy gra ma panele rankingu (bez nich przycisku „🏆” nie ma, bo nie miałby czego otworzyć).
+ */
+export function Hud({ controls, ranking = false }: { controls: Controls; ranking?: boolean }) {
   const view = econ.value;
   const [cash, rising] = useTweened(view?.s.cash ?? 0);
   if (!view) return null;
@@ -80,7 +91,10 @@ export function Hud({ controls }: { controls: Controls }) {
         <span class="tt-stat" title="Reputacja sklepu (0–100): ściąga klientów">⭐ {int(s.reputation)}</span>
         <span class="tt-stat" title="Ogonki: nagrody za cele, wydajesz w Ulepszeniach">🦎 {int(s.ogonki)}</span>
         <TrustChip value={s.tycoon.trust.value} />
-        <button type="button" class="tt-iconbtn tt-gear" aria-label="Ustawienia" onClick={() => { showSettings.value = true; }}>⚙</button>
+        <span class="tt-hud-tools">
+          {ranking && <RankingButton />}
+          <button type="button" class="tt-iconbtn tt-gear" aria-label="Ustawienia" onClick={() => { showSettings.value = true; }}>⚙</button>
+        </span>
       </div>
       <div class="tt-hud-row">
         <span class="tt-clock">

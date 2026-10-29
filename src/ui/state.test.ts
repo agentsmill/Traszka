@@ -6,8 +6,8 @@ import { awaitingDecision, createEconomy, stepMinute, type EconomyState, type Mo
 import { computeStoreInfo } from '@/sim/economy/storeInfo';
 import { visibleCards } from '@/sim/economy/tycoon/cards';
 import {
-  HINT_MS, closeFinish, closeHowTo, dismissStory, econ, finish, hints, howTo, isWindowOpen, nextHint, openHowTo, pushStory, pushToast, ranked,
-  report, showHints, showPrestige, start, story, toasts, welcome, type GameActions,
+  HINT_MS, closeFinish, closeHowTo, closePanel, dismissStory, econ, finish, hints, howTo, isWindowOpen, nextHint, openHowTo, openPanel, openRanking,
+  panel, pushStory, pushToast, ranked, report, showHints, showPrestige, start, story, toasts, welcome, type GameActions,
 } from './state';
 
 /** Wszystko, co zatrzymuje grę albo dymki, do stanu wyjściowego. */
@@ -21,6 +21,7 @@ const clearWindows = (): void => {
   story.value = [];
   finish.value = null;
   ranked.value = null;
+  panel.value = null;
 };
 
 beforeEach(() => {
@@ -350,5 +351,64 @@ describe('closeFinish: zamknięcie okna końca sezonu', () => {
     let seenWhenLeaving: unknown = 'nie wywołano';
     closeFinish({ leaveRanked: () => { seenWhenLeaving = finish.value; } });
     expect(seenWhenLeaving).toBeNull();
+  });
+});
+
+describe('panele rankingu: sygnał panel', () => {
+  it('openPanel ustawia panel (zakładka tylko, gdy podana), closePanel go czyści', () => {
+    expect(panel.value).toBeNull();
+    openPanel('recovery');
+    expect(panel.value).toEqual({ id: 'recovery' });
+    expect('tab' in panel.value!).toBe(false);
+    openPanel('ranking', 'week');
+    expect(panel.value).toEqual({ id: 'ranking', tab: 'week' });
+    closePanel();
+    expect(panel.value).toBeNull();
+    closePanel();   // zamykanie zamkniętego niczego nie psuje
+    expect(panel.value).toBeNull();
+  });
+
+  it('otwarcie tego samego panelu drugi raz to nowa wartość sygnału (host odświeża dane przy każdym otwarciu)', () => {
+    openPanel('ranking', 'global');
+    const first = panel.value;
+    closePanel();
+    openPanel('ranking', 'global');
+    expect(panel.value).toEqual(first);
+    expect(panel.value).not.toBe(first);
+  });
+
+  it('otwarty panel zatrzymuje grę (isWindowOpen), zamknięty nie', () => {
+    expect(isWindowOpen()).toBe(false);
+    openPanel('ranking', 'global');
+    expect(isWindowOpen()).toBe(true);
+    closePanel();
+    expect(isWindowOpen()).toBe(false);
+    openPanel('recovery');
+    expect(isWindowOpen()).toBe(true);
+  });
+
+  it('dymki pierwszego dnia czekają pod panelem, a po jego zamknięciu dostają pełny czas', () => {
+    showHints(['a', 'b']);
+    vi.advanceTimersByTime(HINT_MS - 100);
+    openPanel('recovery');
+    expect(vi.getTimerCount()).toBe(0);
+    vi.advanceTimersByTime(HINT_MS * 10);
+    expect(hints.value).toEqual(['a', 'b']);
+    closePanel();
+    vi.advanceTimersByTime(HINT_MS - 1);
+    expect(hints.value).toEqual(['a', 'b']);
+    vi.advanceTimersByTime(1);
+    expect(hints.value).toEqual(['b']);
+  });
+
+  it('openRanking: w biegu rankingowym zakładka „Ten seed”, w zwykłej grze „Globalny”', () => {
+    openRanking();
+    expect(panel.value).toEqual({ id: 'ranking', tab: 'global' });
+    ranked.value = { seed: 'pierogi-731', day: 4, days: 91, phase: 'playing' };
+    openRanking();
+    expect(panel.value).toEqual({ id: 'ranking', tab: 'seed' });
+    ranked.value = null;
+    openRanking();
+    expect(panel.value).toEqual({ id: 'ranking', tab: 'global' });
   });
 });

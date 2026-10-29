@@ -8,6 +8,26 @@
   gap: 6px;
 }
 
+.tt-rank-unsent {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 10px 0 0;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 2px solid var(--tt-orange, #f39200);
+  background: rgba(243, 146, 0, 0.14);
+}
+
+.tt-rank-unsent p {
+  flex: 1 1 14ch;
+  margin: 0;
+  font-weight: 800;
+  color: #1a1a1a;
+}
+
 .tt-rank-list {
   list-style: none;
   margin: 8px 0 0;
