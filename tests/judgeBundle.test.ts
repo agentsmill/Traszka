@@ -118,7 +118,7 @@ describe('buildJudge: jeden samodzielny plik z aktualnej symulacji', () => {
     expect(out.types).toEqual({ SIM_VERSION: 'number', GENERATOR_VERSION: 'number', RANKED_SEASON_END_MINUTE: 'number', seasonScore: 'function', replayRun: 'function' });
     expect([out.SIM_VERSION, out.GENERATOR_VERSION, out.END]).toEqual([SIM_VERSION, GENERATOR_VERSION, RANKED_SEASON_END_MINUTE]);
     expect(out.score).toBe(direct(RUN));   // ten sam wynik z czystego Node i z kodu źródłowego w Vitest
-  });
+  }, 60_000);   // dwa pełne sezony (w osobnym Node i tutaj): w CI dłużej niż domyślne 5 s
 
   it('eksporty bundla to dokładnie te z wejścia (scripts/judge-entry.ts) i te z src: wersje i koniec sezonu równe', async () => {
     const mod = await load() as typeof entry;
