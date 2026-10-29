@@ -36,6 +36,10 @@ export interface Agent {
   ghost: boolean;
   appearanceSeed: string;           // subSeed(seed, `agent:${id}`)
   speed: number;                    // kratki/s, 2.2–3.0
+  /** Ilu klientów gry reprezentuje ta postać (tryb lustra, `CrowdOptions.mirror`); brak to 1. */
+  weight?: number;
+  /** Wyszedł zdenerwowany (tryb lustra: klient utracony przez długą kolejkę albo pustą półkę); od tego momentu do końca wizyty. */
+  angry?: 'queue' | 'shelf';
 }
 
 export interface CrowdOptions {
@@ -45,9 +49,29 @@ export interface CrowdOptions {
    * Sklep zamknięty (noc, remont, karta „zamknij na godzinę”): nikt nowy nie wchodzi, kto jest w wejściu, zawraca, kto ogląda, idzie
    * prosto do kasy (albo wychodzi, gdy kolejka jest pełna), a marsz i płacenie są przyspieszone (`CLOSING_SPEED`, `CLOSING_PAY_SPEEDUP`),
    * więc po chwili w sali nie ma nikogo. Zwykła symulacja dokańcza wtedy cykl klienta (oglądanie, kolejka, płacenie 3–6 s po kolei)
-   * i noc mija, zanim ostatni wyjdzie. Brak pola to sklep otwarty.
+   * i część nocy mija, zanim ostatni wyjdzie. Brak pola to sklep otwarty.
    */
   closing?: boolean;
+  /**
+   * Tryb lustra: tłum pokazuje to, co liczy ekonomia, grupami (jedna postać to `weight` klientów). Nikogo nie wpuszcza tempo
+   * `spawnPerMinute`, tylko `feedCrowdMirror` (przyjścia), po oglądaniu postać idzie do kolejki, gdy jej długość jest poniżej celu
+   * z ekonomii albo gdy ekonomia ma kredyt obsłużonych, płaci przy kasie dopiero za ten kredyt, a utraceni wychodzą zdenerwowani z
+   * końca kolejki albo od półki. Bez tego pola tłum jest sam sobie panem (benchmark, testy ruchu).
+   */
+  mirror?: boolean;
+}
+
+/** Co ekonomia mówi tłumowi w trybie lustra (jedno wywołanie `feedCrowdMirror` na odświeżenie widoku). */
+export interface MirrorFeed {
+  /** Ile nowych postaci (grup) wchodzi w drzwi, każda o wadze `weight`. */
+  spawn: number;
+  weight: number;
+  /** Klienci obsłużeni od poprzedniego wywołania: kredyt na płacenie przy kasie (postać płaci `weight` z kredytu). */
+  serve: number;
+  /** Klienci utraceni od poprzedniego wywołania: kredyt na wyjście ze złością. */
+  lose: number;
+  /** Ile postaci ma stać w kolejce (`ceil(kolejka / N)`, przycięte do miejsc w kolejce). */
+  queueTarget: number;
 }
 
 export interface Crowd {
@@ -74,11 +98,18 @@ const RELEASE_AT = 0.6;             // po tylu krawędzi agent zwalnia kratkę, 
 const STEP_EPSILON = 1e-9;
 const MAX_WALK_ITERATIONS = 8;      // bezpiecznik pętli ruchu w jednym kroku
 const STAFF_LANE_MAX = 2;           // pas personelu ma 1–2 kratki (walidator układu)
-/** Zamknięcie sklepu (`CrowdOptions.closing`): mnożnik tempa marszu i płacenia, żeby wyjść w kilka sekund (doba nocna to ok. 5 s czasu gry). */
+/** Zamknięcie sklepu (`CrowdOptions.closing`): mnożnik tempa marszu i płacenia, żeby wyjść w kilka sekund (noc trwa 30 s czasu symulacji przy każdej prędkości, ale sala ma pustoszeć od razu, nie dopiero rano). */
 export const CLOSING_SPEED = 3.5;
 export const CLOSING_PAY_SPEEDUP = 20;
 /** Po zamknięciu zablokowany agent przechodzi „na ducha” już po tylu sekundach (zwykle `GHOST_AFTER`): dwoje wychodzących twarzą w twarz nie odsuwa się w kółko. */
 const CLOSING_GHOST_AFTER = 1;
+/** Lustro: kredyt obsłużonych i utraconych nie rośnie bez końca, a zadłużenie (płatność ponad kredyt, gdy kolejka w grze jest krótsza niż na ekranie) ma twardy dół. */
+export const MIRROR_CREDIT_CAP = 80;
+const MIRROR_DEBT_MAX = 40;
+/** Postać-grupa płaci krócej niż pojedynczy klient (3–6 s): jedna kasa ma nadążyć za ruchem, który reprezentuje. */
+export const MIRROR_PAY_SCALE = 0.4;
+/** Ile wchodzących grup czeka na wolny punkt pojawiania się (reszta przepada: ekran nie goni ekonomii bez końca). */
+const MIRROR_PENDING_MAX = 6;
 
 const BROWSABLE_KINDS: readonly FixtureKind[] = ['gondola', 'wallShelf', 'fridge'];
 const STAFF_BLOCK_KINDS: readonly FixtureKind[] = ['checkout', 'hotFood', 'coffee'];
@@ -144,6 +175,17 @@ interface CrowdInternals {
   nextId: number;
   spawnCredit: number;              // 1 = czas na kolejnego klienta
   pending: number;                  // s dt jeszcze nie zużyte na kroki
+  mirror: MirrorState;
+}
+
+/** Stan trybu lustra (`CrowdOptions.mirror`): to, co ekonomia kazała pokazać, a postacie jeszcze nie pokazały. */
+interface MirrorState {
+  queueTarget: number;
+  /** Klienci obsłużeni, za których nikt jeszcze nie zapłacił przy kasie (może zejść poniżej zera: zapłacono z góry). */
+  serveCredit: number;
+  loseCredit: number;
+  /** Wagi grup, które mają wejść, a punkt pojawiania się był zajęty. */
+  incoming: number[];
 }
 
 // --- Siatka nawigacyjna ------------------------------------------------------------------------------
@@ -247,8 +289,9 @@ export function createCrowd(layout: StoreLayout, seed: string, opts: CrowdOption
     agents,
     rng: createRng(subSeed(seed, 'crowd')),
     nextId: 1,
-    spawnCredit: opts.spawnPerMinute > 0 ? 1 : 0,   // pierwszy klient od razu
+    spawnCredit: opts.spawnPerMinute > 0 && !opts.mirror ? 1 : 0,   // pierwszy klient od razu (nie w lustrze)
     pending: 0,
+    mirror: { queueTarget: 0, serveCredit: 0, loseCredit: 0, incoming: [] },
   };
   return { seed, time: 0, agents, internal };
 }
@@ -276,7 +319,7 @@ export function stepCrowd(crowd: Crowd, layout: StoreLayout, dt: number): void {
 /** Zmienia tempo napływu i docelową liczbę klientów (ekonomia gry steruje gęstością tłumu). */
 export function setCrowdRate(crowd: Crowd, opts: CrowdOptions): void {
   const o = crowd.internal.opts;
-  if (o.targetCount === opts.targetCount && o.spawnPerMinute === opts.spawnPerMinute && !!o.closing === !!opts.closing) return;
+  if (o.targetCount === opts.targetCount && o.spawnPerMinute === opts.spawnPerMinute && !!o.closing === !!opts.closing && !!o.mirror === !!opts.mirror) return;
   crowd.internal.opts = { ...opts };
 }
 
@@ -298,6 +341,7 @@ export function setCrowdExtras(crowd: Crowd, obstacles: readonly Cell[], payPoin
 export const payLook = (facing: Facing): number => lookHeading(facing);
 
 function simStep(s: CrowdInternals): void {
+  if (s.opts.mirror) mirrorStep(s);
   for (let i = 0; i < s.agents.length; i++) stepAgent(s, s.agents[i]!);
   spawnStep(s);
 }
@@ -321,6 +365,19 @@ function removeGone(s: CrowdInternals): void {
 
 function spawnStep(s: CrowdInternals): void {
   const { spawnPerMinute, targetCount, closing } = s.opts;
+  if (s.opts.mirror) {
+    // wchodzą tylko grupy z `feedCrowdMirror`, po jednej na wolny punkt pojawiania się
+    if (closing || s.mirror.incoming.length === 0) return;
+    const points = s.nav.layout.spawnPoints;
+    const first = s.rng.int(0, points.length);
+    for (let k = 0; k < points.length; k++) {
+      const index = (first + k) % points.length;
+      if (s.occ[cellAt(s, points[index]!)] !== -1) continue;
+      spawnAgent(s, index, s.mirror.incoming.shift()!);
+      return;
+    }
+    return;
+  }
   if (spawnPerMinute <= 0 || closing) return;
   s.spawnCredit = Math.min(s.spawnCredit + (SIM_STEP * spawnPerMinute) / 60, 1);
   if (s.spawnCredit < 1) return;
@@ -340,7 +397,7 @@ function spawnStep(s: CrowdInternals): void {
   }
 }
 
-function spawnAgent(s: CrowdInternals, spawnIndex: number): void {
+function spawnAgent(s: CrowdInternals, spawnIndex: number, weight = 1): void {
   const points = s.nav.layout.spawnPoints;
   const cell = points[spawnIndex]!;
   const id = s.nextId++;
@@ -357,6 +414,7 @@ function spawnAgent(s: CrowdInternals, spawnIndex: number): void {
     appearanceSeed: subSeed(s.seed, `agent:${id}`),
     speed: rng.range(SPEED_MIN, SPEED_MAX),
   };
+  if (weight !== 1) agent.weight = weight;
   const brain: Brain = {
     rng,
     exitIndex: (spawnIndex + 1) % points.length,
@@ -380,6 +438,8 @@ function spawnAgent(s: CrowdInternals, spawnIndex: number): void {
   s.occ[cellAt(s, cell)] = id;
   s.brains.set(id, brain);
   s.agents.push(agent);
+  // lustro: kolejka w grze jest dłuższa niż na ekranie, a rośnie od nowo przybyłych, więc ten idzie od razu do kolejki
+  if (s.opts.mirror && queueCount(s) < s.mirror.queueTarget) brain.visitsLeft = 0;
   chooseNextGoal(s, agent, brain);
   const first = brain.path[1];
   if (first) agent.heading = Math.atan2(first.y - cell.y, first.x - cell.x);
@@ -536,7 +596,7 @@ function reachGoal(s: CrowdInternals, a: Agent, b: Brain): boolean {
     case 'sco': {
       const point = s.nav.payPoints.find((p) => sameCell(p.cell, b.cell));
       a.state = 'paying';
-      b.timer = b.payTime * 1.3;
+      b.timer = b.payTime * 1.3 * (s.opts.mirror ? MIRROR_PAY_SCALE : 1);
       if (point) a.heading = point.look;
       return true;
     }
@@ -549,7 +609,8 @@ function reachGoal(s: CrowdInternals, a: Agent, b: Brain): boolean {
 
 /** Po wejściu i po każdym obejrzanym meblu: kolejny mebel albo koniec kolejki. */
 function chooseNextGoal(s: CrowdInternals, a: Agent, b: Brain): void {
-  const wantsMore = b.visitsLeft > 0 || !queueHasRoom(s);   // pełna kolejka: rozglądamy się dalej
+  // pełna kolejka (albo, w lustrze, kolejka dłuższa niż w grze i brak kredytu obsłużonych): rozglądamy się dalej
+  const wantsMore = b.visitsLeft > 0 || !queueHasRoom(s) || !mirrorMayQueue(s, a);
   if (wantsMore && s.nav.spots.length > 0) {
     const { spot, cell } = pickDestination(s, b);
     if (routeTo(s, a, b, cell, 'fixture')) {
@@ -685,6 +746,109 @@ function replanAround(s: CrowdInternals, a: Agent, b: Brain): void {
   }
 }
 
+// --- Lustro ekonomii ---------------------------------------------------------------------------------
+
+/** Postaci w kolejce albo idących do niej (także tych, które dopiero wchodzą, ale idą prosto do kolejki). */
+const queueCount = (s: CrowdInternals): number => {
+  let n = 0;
+  for (const a of s.agents) {
+    if (a.state === 'toQueue' || a.state === 'queueing' || a.state === 'paying') n++;
+    else if (a.state === 'entering' && s.brains.get(a.id)?.goal === 'queue') n++;
+  }
+  return n;
+};
+
+const weightOf = (a: Agent): number => a.weight ?? 1;
+
+/**
+ * Czy postać po oglądaniu ma iść do kolejki: poza lustrem zawsze. W lustrze kolejka na ekranie ma odpowiadać grze: do celu z ekonomii
+ * (`queueTarget`) wchodzą wszyscy, a ponad cel tylko za kredyt obsłużonych klientów, który nie jest już zajęty przez idących do kasy
+ * (każdy ponad cel „rezerwuje” swoją wagę). Dzięki temu tempo płacenia na ekranie dorównuje tempu obsługi w grze, a przy pustej kolejce
+ * w grze przy kasie jest tylu, ilu ekonomia już obsłużyła, a reszta ogląda dalej.
+ */
+function mirrorMayQueue(s: CrowdInternals, a: Agent): boolean {
+  if (!s.opts.mirror || s.opts.closing) return true;
+  const inLine = queueCount(s);
+  if (inLine < s.mirror.queueTarget) return true;
+  const reserved = inLine - s.mirror.queueTarget;   // idą do kasy ponad cel: kredyt na nich już czeka
+  return s.mirror.serveCredit >= weightOf(a) * (reserved + 1);
+}
+
+/**
+ * Czy pierwsza w kolejce postać zaczyna płacić. W lustrze: gdy ekonomia obsłużyła tylu klientów, ile ona reprezentuje, albo gdy w
+ * kolejce stoi więcej postaci, niż każe gra (zapłaci „na kredyt”, który ekonomia spłaci później). Zapłata odejmuje wagę od kredytu.
+ */
+function mirrorMayPay(s: CrowdInternals, a: Agent): boolean {
+  if (!s.opts.mirror || s.opts.closing) return true;
+  const m = s.mirror;
+  if (m.serveCredit < weightOf(a) && s.queue.length <= m.queueTarget) return false;
+  m.serveCredit = Math.max(-MIRROR_DEBT_MAX, m.serveCredit - weightOf(a));
+  return true;
+}
+
+/**
+ * Krok lustra: utraceni klienci z gry wychodzą ze złością. W grze to ci, którzy przyszli, zobaczyli długą kolejkę (albo puste półki) i
+ * odeszli, więc kredyt utraconych płaci najpierw za nowych i oglądających, a z kolejki zabiera tylko nadmiar ponad jej cel z ekonomii
+ * (inaczej długa kolejka w grze nigdy nie byłaby długa na ekranie). Kredyt płaci za całą postać; gdy nikogo do wyproszenia nie ma, czeka.
+ */
+function mirrorStep(s: CrowdInternals): void {
+  const m = s.mirror;
+  if (s.opts.closing) {
+    m.incoming.length = 0;
+    m.serveCredit = 0;
+    m.loseCredit = 0;
+    return;
+  }
+  if (m.loseCredit < 1) return;
+  let victim: Agent | undefined;
+  let from: 'queue' | 'shelf' = m.queueTarget >= 1 ? 'queue' : 'shelf';   // kolejka w grze jest długa: o nią chodzi, inaczej o puste półki
+  if (queueCount(s) > m.queueTarget) {
+    for (let i = s.queue.length - 1; i >= 1 && !victim; i--) {   // [0] płaci albo zaraz zapłaci: nie ruszamy
+      const a = s.agents.find((x) => x.id === s.queue[i]);
+      if (a && a.state === 'queueing') victim = a;
+    }
+    victim ??= s.agents.find((a) => a.state === 'toQueue');
+    if (victim) from = 'queue';
+  }
+  victim ??= s.agents.find((a) => a.state === 'browsing' && s.brains.get(a.id)?.goal === 'fixture');
+  victim ??= s.agents.find((a) => a.state === 'entering');
+  if (!victim || m.loseCredit < weightOf(victim)) return;
+  m.loseCredit -= weightOf(victim);
+  const b = s.brains.get(victim.id)!;
+  const place = s.queue.indexOf(victim.id);
+  if (place >= 0) s.queue.splice(place, 1);
+  victim.angry = from;
+  b.timer = 0;
+  b.visitsLeft = 0;
+  b.spot = null;
+  b.rushed = true;
+  if (!leaveNow(s, victim, b)) victim.state = 'gone';
+}
+
+/**
+ * Ekonomia mówi tłumowi, co ma pokazać (tryb `CrowdOptions.mirror`): nowe grupy w drzwiach, kredyt obsłużonych i utraconych, ile
+ * postaci ma stać w kolejce. Wołane co odświeżenie widoku; poza trybem lustra nic nie robi. Kredyty mają górną granicę
+ * (`MIRROR_CREDIT_CAP`), a kolejka czekających na wejście `MIRROR_PENDING_MAX`: po długiej przerwie ekran nie odrabia zaległości.
+ */
+export function feedCrowdMirror(crowd: Crowd, feed: MirrorFeed): void {
+  const s = crowd.internal;
+  if (!s.opts.mirror) return;
+  const m = s.mirror;
+  m.queueTarget = Math.max(0, Math.floor(feed.queueTarget));
+  if (s.opts.closing) return;
+  m.serveCredit = Math.min(MIRROR_CREDIT_CAP, m.serveCredit + Math.max(0, feed.serve));
+  m.loseCredit = Math.min(MIRROR_CREDIT_CAP, m.loseCredit + Math.max(0, feed.lose));
+  const weight = Math.max(1, Math.round(feed.weight));
+  for (let i = 0; i < Math.floor(feed.spawn) && m.incoming.length < MIRROR_PENDING_MAX; i++) m.incoming.push(weight);
+}
+
+/** Ile postaci jest w sklepie i czeka na wejście (do pilnowania limitu `CROWD_MAX`). */
+export function crowdHeadcount(crowd: Crowd): number {
+  let n = crowd.internal.mirror.incoming.length;
+  for (const a of crowd.agents) if (a.state !== 'gone') n++;
+  return n;
+}
+
 // --- Zamknięcie sklepu -------------------------------------------------------------------------------
 
 /**
@@ -766,9 +930,10 @@ function stepQueueing(s: CrowdInternals, a: Agent, b: Brain): void {
   }
 
   if (place === 0) {
-    a.state = 'paying';
-    b.timer = b.payTime;
     a.heading = s.nav.tillLook;
+    if (!mirrorMayPay(s, a)) return;   // w lustrze płaci dopiero, gdy ekonomia obsłużyła klientów (albo kolejka na ekranie jest dłuższa niż w grze)
+    a.state = 'paying';
+    b.timer = b.payTime * (s.opts.mirror ? MIRROR_PAY_SCALE : 1);
   } else {
     const ahead = line[place - 1]!;
     a.heading = Math.atan2(ahead.y - slot.y, ahead.x - slot.x);

@@ -15,8 +15,8 @@ import { STAFF_WALK_SPEED, StaffWalker } from './walker';
 /** Najdłużej (s czasu widoku) ktoś idzie do wyjścia: potem znika, choćby nie doszedł (np. paleta zamknęła mu drogę). */
 const LEAVE_TIMEOUT_S = 20;
 /**
- * Wychodzący idzie tylekroć szybciej (czas jego marszu płynie szybciej): noc w grze to ok. 5 s czasu widoku, a z zaplecza na chodnik
- * idzie się 6–10 s, więc bez pośpiechu załoga wychodziłaby dopiero rano (i zawracała). Tak samo spieszą się klienci (`CLOSING_SPEED`).
+ * Wychodzący idzie tylekroć szybciej (czas jego marszu płynie szybciej): noc w grze to 30 s czasu widoku, a z zaplecza na koniec ulicy
+ * idzie się 6–10 s, więc bez pośpiechu załoga wychodziłaby długo po zamknięciu (a po karcie „zamknij na godzinę” w ogóle). Tak samo spieszą się klienci (`CLOSING_SPEED`).
  */
 export const LEAVE_RUSH = 3.5;
 
@@ -103,7 +103,7 @@ function streetPoint(layout: StoreLayout): Cell {
 
 /**
  * Kratka tuż za progiem, na której wychodzący znika: wiersz chodnika przy ścianie frontowej, w kolumnie pierwszego wejścia. Noc w grze
- * trwa ok. 5 s czasu widoku, więc marsz na koniec ulicy (kilkanaście kratek więcej) nie mieści się w niej, a w sali ma nie zostać nikt.
+ * trwa 30 s czasu widoku, a zamknięcie kartą jeszcze krócej, więc marsz na koniec ulicy (kilkanaście kratek więcej) tylko wydłuża wyjście, a w sali ma nie zostać nikt.
  * Bez wejścia (albo gdy kratka jest nietypowa) wychodzą tak jak wchodzą: punktem na chodniku.
  */
 export function doorstepPoint(layout: StoreLayout, street: Cell): Cell {

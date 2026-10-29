@@ -5,6 +5,9 @@ import type { StoreLayout } from '@/sim/store/types';
 import { accessCells, isWalkable } from '@/sim/store/validate';
 import {
   CLOSING_PAY_SPEEDUP,
+  MIRROR_CREDIT_CAP,
+  crowdHeadcount,
+  feedCrowdMirror,
   CLOSING_SPEED,
   MAX_DT,
   SIM_STEP,
@@ -574,6 +577,233 @@ describe('zamknięcie sklepu (CrowdOptions.closing)', () => {
       setCrowdRate(sim.crowd, CLOSING);
       run(sim, EMPTY_WITHIN_S);
       expect(live(sim.crowd), seed).toEqual([]);
+    }
+  });
+});
+
+describe('lustro ekonomii (CrowdOptions.mirror)', () => {
+  const MIRROR: CrowdOptions = { targetCount: 0, spawnPerMinute: 0, mirror: true };
+  const feed = (crowd: Crowd, over: Partial<Parameters<typeof feedCrowdMirror>[1]> = {}): void =>
+    feedCrowdMirror(crowd, { spawn: 0, weight: 12, serve: 0, lose: 0, queueTarget: 0, ...over });
+  const live = (crowd: Crowd): Agent[] => crowd.agents.filter((a) => a.state !== 'gone');
+  const inLine = (crowd: Crowd): Agent[] => crowd.agents.filter((a) => a.state === 'toQueue' || a.state === 'queueing' || a.state === 'paying');
+  const mirrorState = (crowd: Crowd) => crowd.internal.mirror;
+
+  it('sam z siebie nikogo nie wpuszcza (ani tempo, ani cel), wchodzą tylko grupy z feedCrowdMirror, każda z wagą', () => {
+    const sim = makeSim(MAIN_SEED, { targetCount: 12, spawnPerMinute: 90, mirror: true });
+    run(sim, 20);
+    expect(sim.crowd.agents).toEqual([]);
+    feed(sim.crowd, { spawn: 2, weight: 14 });
+    run(sim, 1);
+    expect(sim.crowd.agents.length).toBeGreaterThanOrEqual(1);
+    for (const a of sim.crowd.agents) expect(a.weight).toBe(14);
+    run(sim, 3);
+    expect(sim.crowd.agents).toHaveLength(2);
+    const { spawnPoints } = sim.layout;
+    expect(sim.crowd.agents.every((a) => a.state !== 'gone' || spawnPoints.some((p) => `${p.x},${p.y}` === cellOf(a)))).toBe(true);
+  });
+
+  it('wchodzące grupy czekają na wolny punkt pojawiania się, a kolejka oczekujących jest ograniczona', () => {
+    const sim = makeSim(MAIN_SEED, MIRROR);
+    feed(sim.crowd, { spawn: 50 });
+    expect(crowdHeadcount(sim.crowd)).toBeLessThanOrEqual(6);   // MIRROR_PENDING_MAX: reszta przepada
+    expect(crowdHeadcount(sim.crowd)).toBeGreaterThan(0);
+    run(sim, 20);
+    expect(live(sim.crowd).length + 0).toBeGreaterThan(0);
+    expect(crowdHeadcount(sim.crowd)).toBeLessThanOrEqual(6);
+  });
+
+  it('bez kredytu obsłużonych i bez kolejki w grze nikt nie idzie do kasy; kredyt wystarcza, by zapłacić i wyjść', () => {
+    const sim = makeSim(MAIN_SEED, MIRROR);
+    feed(sim.crowd, { spawn: 1, weight: 12 });
+    run(sim, 90);
+    expect(live(sim.crowd)).toHaveLength(1);
+    expect(inLine(sim.crowd)).toEqual([]);   // ogląda dalej, bo nikt nie został obsłużony
+    feed(sim.crowd, { serve: 12 });
+    let t = 0;
+    while (live(sim.crowd).length > 0 && t < 60) { run(sim, SIM_STEP); t += SIM_STEP; }
+    expect(live(sim.crowd)).toEqual([]);
+    expect(mirrorState(sim.crowd).serveCredit).toBeCloseTo(0, 9);   // zapłacił dokładnie za swoją grupę
+  });
+
+  it('nowo przybyły idzie od razu do kolejki, gdy ta w grze jest dłuższa niż na ekranie (kolejka rośnie od przyjść), a inaczej ogląda', () => {
+    const queued = makeSim(MAIN_SEED, MIRROR);
+    feed(queued.crowd, { spawn: 3, weight: 12, queueTarget: 3 });
+    run(queued, 12);   // za mało na oglądanie kilku mebli, wystarczy na dojście do kolejki
+    expect(inLine(queued.crowd)).toHaveLength(3);
+    const calm = makeSim(MAIN_SEED, MIRROR);
+    feed(calm.crowd, { spawn: 3, weight: 12, queueTarget: 0 });
+    run(calm, 12);
+    expect(inLine(calm.crowd)).toEqual([]);
+  });
+
+  it('przy pustej kolejce w grze do kasy idzie tylu, ile ekonomia już obsłużyła (kredyt), a reszta ogląda; dopłata kredytu wpuszcza kolejnych', () => {
+    const sim = makeSim(MAIN_SEED, MIRROR);
+    feed(sim.crowd, { spawn: 6, weight: 10, serve: 20, queueTarget: 0 });
+    run(sim, 1);   // pierwszy krok: grupy wchodzą
+    let most = 0;
+    for (let t = 0; t < 90; t += SIM_STEP) {
+      run(sim, SIM_STEP);
+      most = Math.max(most, inLine(sim.crowd).length);
+    }
+    expect(most).toBeGreaterThanOrEqual(1);
+    expect(most).toBeLessThanOrEqual(2);                       // kredyt na 20 klientów to dwie grupy po 10
+    expect(live(sim.crowd)).toHaveLength(4);                   // dwie zapłaciły i wyszły, cztery czekają na obsługę w grze
+    expect(mirrorState(sim.crowd).serveCredit).toBeCloseTo(0, 9);
+    feed(sim.crowd, { serve: 80 });
+    let t = 0;
+    while (live(sim.crowd).length > 0 && t < 120) { run(sim, SIM_STEP); t += SIM_STEP; }
+    expect(live(sim.crowd)).toEqual([]);
+  });
+
+  it('kolejka na ekranie dąży do celu z ekonomii: tyle postaci w kolejce, ile kazała gra, reszta ogląda', () => {
+    const sim = makeSim(MAIN_SEED, MIRROR);
+    feed(sim.crowd, { spawn: 5, weight: 12, queueTarget: 3 });
+    run(sim, 60);
+    expect(live(sim.crowd)).toHaveLength(5);
+    expect(inLine(sim.crowd)).toHaveLength(3);
+    // pierwsza czeka przy kasie, ale nie płaci: nikt nie został obsłużony, a w kolejce nie ma więcej postaci niż w grze
+    const queue = sim.crowd.internal.queue;
+    const waiting = queue.map((id) => sim.crowd.agents.find((a) => a.id === id)!.state);
+    expect(waiting).not.toContain('paying');
+    run(sim, 20);
+    expect(inLine(sim.crowd)).toHaveLength(3);
+  });
+
+  it('gdy kolejka w grze jest krótsza niż na ekranie, nadmiar płaci „na kredyt” i wychodzi, a ekonomia spłaca go później', () => {
+    const sim = makeSim(MAIN_SEED, MIRROR);
+    feed(sim.crowd, { spawn: 4, weight: 12, queueTarget: 4 });
+    run(sim, 60);
+    expect(inLine(sim.crowd)).toHaveLength(4);
+    feed(sim.crowd, { queueTarget: 1 });
+    run(sim, 30);
+    expect(inLine(sim.crowd).length + 0).toBeLessThanOrEqual(1 + 0);   // nadmiar zapłacił i wyszedł; ostatnia czeka na kredyt
+    expect(mirrorState(sim.crowd).serveCredit).toBeLessThan(0);        // zapłacono z góry
+    const debt = mirrorState(sim.crowd).serveCredit;
+    feed(sim.crowd, { serve: 30 });
+    expect(mirrorState(sim.crowd).serveCredit).toBeCloseTo(debt + 30, 9);
+  });
+
+  it('kredyt i zadłużenie mają granice (po długiej przerwie ekran nie odrabia zaległości)', () => {
+    const sim = makeSim(MAIN_SEED, MIRROR);
+    feed(sim.crowd, { serve: 100000, lose: 100000 });
+    expect(mirrorState(sim.crowd).serveCredit).toBe(MIRROR_CREDIT_CAP);
+    expect(mirrorState(sim.crowd).loseCredit).toBe(MIRROR_CREDIT_CAP);
+    feed(sim.crowd, { serve: -50, lose: Number.NaN as number });
+    expect(mirrorState(sim.crowd).serveCredit).toBe(MIRROR_CREDIT_CAP);   // ujemne i NaN nic nie zabierają
+  });
+
+  it('utracony wychodzi zdenerwowany: najpierw z końca kolejki (angry = queue), a bez kolejki od półki (angry = shelf)', () => {
+    const sim = makeSim(MAIN_SEED, MIRROR);
+    feed(sim.crowd, { spawn: 4, weight: 12, queueTarget: 3 });
+    run(sim, 60);
+    const line = [...sim.crowd.internal.queue];
+    expect(line.length).toBe(3);
+    feed(sim.crowd, { lose: 12, queueTarget: 2 });
+    run(sim, 1);
+    const tail = sim.crowd.agents.find((a) => a.id === line[2])!;
+    expect(tail.angry).toBe('queue');
+    expect(['leaving', 'gone']).toContain(tail.state);
+    expect(sim.crowd.internal.queue).toEqual(line.slice(0, 2));       // przód kolejki nietknięty
+    expect(mirrorState(sim.crowd).loseCredit).toBeCloseTo(0, 9);
+    // nikt już nie stoi poza przodem, a kredyt czeka: złość spada na oglądającego
+    const sim2 = makeSim(MAIN_SEED, MIRROR);
+    feed(sim2.crowd, { spawn: 1, weight: 12, queueTarget: 0 });
+    run(sim2, 20);
+    expect(live(sim2.crowd)).toHaveLength(1);
+    feed(sim2.crowd, { lose: 12 });
+    run(sim2, 1);
+    const a = sim2.crowd.agents[0]!;
+    expect(a.angry).toBe('shelf');
+    let t = 0;
+    while (a.state !== 'gone' && t < 60) { run(sim2, SIM_STEP); t += SIM_STEP; }
+    expect(a.state).toBe('gone');
+  });
+
+  it('kolejka na poziomie celu z ekonomii nie traci ogona: utraceni wychodzą spośród oglądających (nowo przybyli, którzy zobaczyli kolejkę)', () => {
+    const sim = makeSim(MAIN_SEED, MIRROR);
+    feed(sim.crowd, { spawn: 6, weight: 12, queueTarget: 3 });
+    run(sim, 60);
+    const line = [...sim.crowd.internal.queue];
+    expect(line).toHaveLength(3);
+    const browsers = live(sim.crowd).filter((a) => !line.includes(a.id));
+    expect(browsers.length).toBeGreaterThan(0);
+    feed(sim.crowd, { lose: 12, queueTarget: 3 });
+    run(sim, 2);
+    expect(sim.crowd.internal.queue).toEqual(line);                              // kolejka stoi
+    const angry = sim.crowd.agents.filter((a) => a.angry);
+    expect(angry).toHaveLength(1);
+    expect(line.includes(angry[0]!.id)).toBe(false);
+    expect(angry[0]!.angry).toBe('queue');                                       // długa kolejka w grze: o nią mu chodziło
+  });
+
+  it('kredyt utraconych mniejszy niż waga postaci nikogo nie wyprasza (czeka na resztę)', () => {
+    const sim = makeSim(MAIN_SEED, MIRROR);
+    feed(sim.crowd, { spawn: 1, weight: 30 });
+    run(sim, 20);
+    feed(sim.crowd, { lose: 10 });
+    run(sim, 2);
+    expect(sim.crowd.agents[0]!.angry).toBeUndefined();
+    feed(sim.crowd, { lose: 20 });
+    run(sim, 1);
+    expect(sim.crowd.agents[0]!.angry).toBe('shelf');
+  });
+
+  it('zamknięcie w lustrze: nowi nie wchodzą, kredyty znikają, a sala pustoszy niezależnie od kredytu obsłużonych', () => {
+    const sim = makeSim(MAIN_SEED, MIRROR);
+    feed(sim.crowd, { spawn: 5, weight: 12, queueTarget: 3 });
+    run(sim, 60);
+    expect(inLine(sim.crowd).length).toBeGreaterThan(0);
+    setCrowdRate(sim.crowd, { ...MIRROR, closing: true });
+    feed(sim.crowd, { spawn: 3, serve: 50, lose: 50 });
+    let t = 0;
+    while (live(sim.crowd).length > 0 && t < 10) { run(sim, SIM_STEP); t += SIM_STEP; }
+    expect(live(sim.crowd)).toEqual([]);
+    expect(mirrorState(sim.crowd).incoming).toEqual([]);
+    expect(mirrorState(sim.crowd).serveCredit).toBe(0);
+  });
+
+  it('crowdHeadcount liczy postaci w sklepie i czekające na wejście, bez tych, którzy już wyszli', () => {
+    const sim = makeSim(MAIN_SEED, MIRROR);
+    expect(crowdHeadcount(sim.crowd)).toBe(0);
+    feed(sim.crowd, { spawn: 3 });
+    expect(crowdHeadcount(sim.crowd)).toBe(3);
+    run(sim, 5);
+    expect(crowdHeadcount(sim.crowd)).toBe(3);
+    feed(sim.crowd, { serve: 100 });
+    run(sim, 90);
+    expect(live(sim.crowd)).toEqual([]);
+    expect(crowdHeadcount(sim.crowd)).toBe(0);
+  });
+
+  it('poza trybem lustra feedCrowdMirror nic nie robi, a zwykły tłum działa jak dawniej', () => {
+    const sim = makeSim(MAIN_SEED, { targetCount: 6, spawnPerMinute: 60 });
+    feed(sim.crowd, { spawn: 5, serve: 10, lose: 10, queueTarget: 5 });
+    expect(sim.crowd.internal.mirror.incoming).toEqual([]);
+    run(sim, 10);
+    expect(sim.crowd.agents.length).toBeGreaterThan(0);
+    for (const a of sim.crowd.agents) expect(a.weight).toBeUndefined();
+  });
+
+  it('przełączenie na lustro w trakcie (te same liczby, inny tryb) jest widoczne dla setCrowdRate', () => {
+    const sim = makeSim(MAIN_SEED, { targetCount: 4, spawnPerMinute: 30 });
+    setCrowdRate(sim.crowd, { targetCount: 4, spawnPerMinute: 30, mirror: true });
+    expect(sim.crowd.internal.opts.mirror).toBe(true);
+  });
+
+  it('ruch nadal jest płynny i bez kolizji w lustrze (agenci nie wchodzą w siebie ani w ściany)', () => {
+    const sim = makeSim('traszka-7', MIRROR);
+    for (let i = 0; i < 12; i++) {
+      feed(sim.crowd, { spawn: 1, weight: 14, queueTarget: 2, serve: i % 3 === 0 ? 14 : 0 });
+      run(sim, 6, () => {
+        const seen = new Set<string>();
+        for (const a of sim.crowd.agents) {
+          if (a.state === 'gone') continue;
+          const c = `${Math.floor(a.x)},${Math.floor(a.y)}`;
+          expect(isWalkable(sim.layout, Math.floor(a.x), Math.floor(a.y)), `agent ${a.id} na ${c}`).toBe(true);
+          if (!a.ghost) { expect(seen.has(c) && a.state !== 'leaving', `dwóch na ${c}`).toBe(false); seen.add(c); }
+        }
+      });
     }
   });
 });
