@@ -2,6 +2,7 @@ import { cardDef, fillText, visibleCards, type CardInstance } from '@/sim/econom
 import { econ, picked, report, story, type GameActions, type PickedAnswer } from '../state';
 import { deltaLines } from './cardText';
 import { int, people } from './format';
+import { SpendNote, answerCashCost } from './spend';
 
 /**
  * Wybór gracza na wyświetlonej karcie (numer karty i zaznaczona odpowiedź) żyje w `state.ts`, jak reszta stanu okien:
@@ -70,6 +71,7 @@ export function CardDesk({ game }: { game: GameActions }) {
                     : <span class="tt-chip none">bez skutków</span>}
                   {i === card.defaultAnswer && <span class="tt-chip tag">domyślnie</span>}
                 </span>
+                <SpendNote s={view.s} price={answerCashCost(a)} always />
               </button>
             );
           })}
