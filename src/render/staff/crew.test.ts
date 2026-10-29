@@ -4,7 +4,7 @@ import { manhattan, type Cell } from '@/sim/grid';
 import { findPath } from '@/sim/nav/astar';
 import { generateStore } from '@/sim/store/generateStore';
 import type { StoreLayout } from '@/sim/store/types';
-import { StaffCrew, type CrewInput, type CrewMember } from './crew';
+import { StaffCrew, staffSpeedFactor, type CrewInput, type CrewMember } from './crew';
 import { buildStaffNav, type StaffNav } from './staffNav';
 import { pickStaffSpots } from './targets';
 import { QUARTER_MIN, TASK_DWELL_S } from './taskHold';
@@ -36,6 +36,8 @@ beforeEach(() => {   // klamry: zwrócona funkcja byłaby uznana za sprzątanie
 const SEEDS = ['alfa', 'beta-12', 'kamienica-3', 'seed-6', 'seed-11'];
 /** Krok czasu widoku: potęga dwójki, więc sumy kroków (np. 20 s = 320 kroków) są dokładne. */
 const DT = 1 / 16;
+/** Odległość (kratki), poniżej której dwie osoby uważamy za nakładające się. */
+const OVERLAP = 0.3;
 const MINUTE = 8 * 60;
 const DUTIES: StaffDuty[] = ['kasa', 'rozladunek', 'wykladanie', 'sprzatanie', 'wolny'];
 const MIX: StaffDuty[] = ['kasa', 'rozladunek', 'wykladanie', 'sprzatanie', 'wolny', 'kasa', 'wykladanie', 'rozladunek'];
@@ -142,10 +144,9 @@ describe('StaffCrew: pierwszy sync', () => {
     crew.sync(input([], pallets));
     expect(crew.members).toEqual([]);
     crew.sync(input(people(2), pallets));
-    for (const m of crew.members) {
-      expect(pos(m)).toEqual(centre(street));
-      expect(m.walker.atGoal).toBe(false);
-    }
+    expect(pos(member(crew, 0))).toEqual(centre(street));       // pierwszy przybysz stoi na punkcie chodnika, drugi obok niego
+    expect(pos(member(crew, 1))).not.toEqual(centre(street));
+    for (const m of crew.members) expect(m.walker.atGoal).toBe(false);
   });
 
   it('wyjątek w liczeniu miejsc nie sprawia, że kolejny sync z tą samą listą pomija liczenie', () => {
@@ -269,7 +270,7 @@ describe('StaffCrew: zatrudnienie i zwolnienie', () => {
       expect(hire.walker.heading).toBe(spot.heading);
       const route = findPath(layout.width, layout.depth, navFor(layout, pallets).blocked, street, spot.cell)!;
       expect(route.length).toBeGreaterThan(8);
-      expect(Math.abs(elapsed - (route.length - 1) / STAFF_WALK_SPEED)).toBeLessThanOrEqual(2 * DT);
+      expect(Math.abs(elapsed - (route.length - 1) / (STAFF_WALK_SPEED * staffSpeedFactor(2)))).toBeLessThanOrEqual(2 * DT);
       expect(crew.members.slice(0, 2).map(pos)).toEqual(resting);
     });
 
@@ -294,6 +295,20 @@ describe('StaffCrew: zatrudnienie i zwolnienie', () => {
       expect(pos(leaver)).toEqual(centre(street));
       expect([pos(member(crew, 0)), pos(member(crew, 2))]).toEqual(resting);
     });
+  });
+
+  it.each(SCENES)('$seed: wychodzący, który doszedł na chodnik, stoi tam jeszcze jeden krok i znika w następnym (widok widzi go na wyjściu)', ({ layout, pallets, street }) => {
+    const crew = new StaffCrew(layout);
+    crew.sync(input(assign([0, 'kasa'], [1, 'sprzatanie']), pallets));
+    const leaver = member(crew, 1);
+    crew.sync(input(assign([0, 'kasa']), pallets));
+    until(crew, () => leaver.walker.atGoal, 40);
+    expect(leaver.walker.atGoal).toBe(true);
+    expect(pos(leaver)).toEqual(centre(street));
+    expect(crew.members).toContain(leaver);           // doszedł w ostatnim kroku, ale jeszcze nie zniknął
+    crew.step(DT);
+    expect(crew.members).not.toContain(leaver);
+    expect(idsOf(crew)).toEqual([0]);
   });
 
   it('wychodzący, który nie może dojść na chodnik (wejście zastawione), znika po 20 s czasu widoku od początku wychodzenia', () => {
@@ -388,6 +403,154 @@ describe('StaffCrew: wymiana osób w jednym sync', () => {
     until(crew, () => fresh.walker.atGoal && !crew.members.includes(old), 60);
     expect(idsOf(crew)).toEqual([0, 2, 3]);
     expect(fresh.walker.atGoal).toBe(true);
+  });
+});
+
+describe('StaffCrew: kilku przybyłych w jednym sync', () => {
+  // Kto przychodzi w jednym `sync` (zatrudnienie kilku osób naraz, masowe przyjście o 6:00), nie może wejść do sklepu jako jedna
+  // nakładająca się postać: k-ty przybysz startuje k kratek od punktu na chodniku w stronę wejścia, a każdy ma własne tempo.
+  const LANE_SEEDS = ['alfa', 'seed-2', 'seed-6', 'seed-16', 'seed-29'];   // po ≥ 7 kratek chodnika od punktu do kolumny wejścia
+  const LANE_SCENES = LANE_SEEDS.map(scene);
+
+  /** Wzorzec: kratki wiersza chodnika od punktu pojawiania się do kolumny wejścia włącznie. */
+  const laneOf = (sc: Scene): Cell[] => {
+    const door = sc.layout.entrance[0]!;
+    const dir = Math.sign(door.x - sc.street.x);
+    return Array.from({ length: Math.abs(door.x - sc.street.x) + 1 }, (_, i) => ({ x: sc.street.x + dir * i, y: sc.street.y }));
+  };
+  const hire = (sc: Scene, ids: readonly number[], pallets: readonly PalletRef[] = []): StaffCrew => {
+    const crew = new StaffCrew(sc.layout);
+    crew.sync(input(people(1), pallets));              // pierwszy sync: id 0 od razu na miejscu, reszta wchodzi później
+    crew.sync(input([...people(1), ...ids.map((id): StaffAssignment => ({ id, task: MIX[id % MIX.length]! }))], pallets));
+    return crew;
+  };
+  const gap = (a: CrewMember, b: CrewMember): number => Math.hypot(a.walker.x - b.walker.x, a.walker.y - b.walker.y);
+  /** Pary osób, które jeszcze idą (nie stoją na celu), z ich odległością. */
+  const walkingPairs = (crew: StaffCrew): [string, number][] => {
+    const walking = crew.members.filter((m) => !m.walker.atGoal);
+    const out: [string, number][] = [];
+    for (let i = 0; i < walking.length; i++) for (let j = i + 1; j < walking.length; j++) out.push([`${walking[i]!.id}-${walking[j]!.id}`, gap(walking[i]!, walking[j]!)]);
+    return out;
+  };
+
+  describe.each(LANE_SCENES)('$seed', (sc) => {
+    it('siedmiu przybyłych w jednym sync startuje z siedmiu różnych kratek chodnika, k-ty k kratek od punktu w stronę wejścia', () => {
+      const lane = laneOf(sc);
+      expect(lane).toHaveLength(7);
+      const ids = [1, 2, 3, 4, 5, 6, 7];
+      const crew = hire(sc, ids);
+      const starts = ids.map((id) => pos(member(crew, id)));
+      expect(new Set(starts.map((p) => `${p.x},${p.y}`)).size).toBe(7);
+      ids.forEach((id, k) => {
+        expect(pos(member(crew, id))).toEqual(centre(lane[k]!));
+        const door = sc.layout.entrance[0]!;
+        expect(member(crew, id).walker.heading).toBeCloseTo(Math.atan2(door.y - lane[k]!.y, door.x - lane[k]!.x), 9);
+        expect(member(crew, id).walker.atGoal).toBe(false);
+      });
+      expect(pos(member(crew, 0))).not.toEqual(centre(lane[0]!));   // dotychczasowy nie jest przybyszem
+    });
+
+    it('osiem osób zatrudnionych naraz nie idzie jako jedna nakładająca się postać: po rozciągnięciu grupy nikt nie jest bliżej niż 0,3 kratki', () => {
+      // Dojście z jednej kratki w tym samym tempie dawało przez cały marsz (8 s i dłużej) zerową odległość między wszystkimi.
+      // Teraz szybsi doganiają wolniejszych z przodu i krótko się z nimi mijają (u najgorszych układów do ~2 s), ale od 4,5 s
+      // marszu do dojścia ostatniego najmniejsza odległość to ≥ 0,40 kratki (zmierzone na 10 układach).
+      const crew = new StaffCrew(sc.layout);
+      crew.sync(input([]));
+      crew.sync(input(people(8)));
+      expect(crew.members).toHaveLength(8);
+      const runs = new Map<string, number>();
+      let longestOverlap = 0;
+      let minLate = Infinity;
+      let walkingLate = 0;
+      for (let i = 0; i <= 20 / DT; i++) {
+        const pairs = walkingPairs(crew);
+        const near = new Set(pairs.filter(([, d]) => d < OVERLAP).map(([k]) => k));
+        for (const k of [...runs.keys()]) if (!near.has(k)) runs.delete(k);
+        for (const k of near) {
+          runs.set(k, (runs.get(k) ?? 0) + DT);
+          longestOverlap = Math.max(longestOverlap, runs.get(k)!);
+        }
+        if (i * DT >= 4.5) {
+          for (const [, d] of pairs) minLate = Math.min(minLate, d);
+          if (i * DT === 4.5) walkingLate = pairs.length;
+        }
+        crew.step(DT);
+      }
+      expect(walkingLate).toBeGreaterThanOrEqual(10);        // po 4,5 s nadal idzie co najmniej 5 osób, więc sprawdzenie nie jest puste
+      expect(minLate).toBeGreaterThanOrEqual(OVERLAP);
+      expect(longestOverlap).toBeLessThan(2.5);               // wcześniej: cały marsz
+    });
+
+    it('pierwszy sync jest bez zmian: wszyscy od razu na swoich miejscach, nikt nie stoi na chodniku', () => {
+      const crew = new StaffCrew(sc.layout);
+      const who = people(7);
+      crew.sync(input(who));
+      const expected = pickStaffSpots(sc.layout, navFor(sc.layout, []), [], who);
+      for (const m of crew.members) {
+        expect(pos(m)).toEqual(centre(expected.get(m.id)!.cell));
+        expect(m.walker.atGoal).toBe(true);
+      }
+    });
+  });
+
+  it('gdy chodnik jest krótszy niż liczba przybyłych, kolejni dzielą ostatnią kratkę i nigdy nie startują dalej niż kolumna wejścia', () => {
+    const sc = SCENES[1]!;                               // beta-12: sześć kratek od punktu do kolumny wejścia
+    const lane = laneOf(sc);
+    expect(lane).toHaveLength(6);
+    const crew = new StaffCrew(sc.layout);
+    crew.sync(input([]));
+    crew.sync(input(people(8)));
+    for (let k = 0; k < 8; k++) expect(pos(member(crew, k))).toEqual(centre(lane[Math.min(k, lane.length - 1)]!));
+  });
+
+  it('kratki zastawione paletą są pomijane: nikt nie pojawia się w palecie, a przybyli nadal startują w rosnącej odległości od punktu', () => {
+    const sc = SCENES[0]!;                               // alfa: paleta (3,1) zajmuje kratki x = 3-4 wiersza chodnika
+    const blockedCells = new Set(sc.pallets.flatMap((p) => spotCells(p.spot)).map((c) => `${c.x},${c.y}`));
+    expect(blockedCells.has('3,1') && blockedCells.has('4,1')).toBe(true);
+    const ids = [1, 2, 3, 4, 5, 6, 7];
+    const crew = hire(sc, ids, sc.pallets);
+    const starts = ids.map((id) => cellOf(member(crew, id)));
+    for (const c of starts) expect(blockedCells.has(`${c.x},${c.y}`)).toBe(false);
+    expect(starts.map((c) => c.x)).toEqual([0, 1, 2, 5, 6, 6, 6]);   // wolne kratki wiersza 1 w stronę wejścia (6,4), potem ostatnia
+    expect(new Set(starts.map((c) => c.y))).toEqual(new Set([sc.street.y]));
+  });
+
+  it('tempo marszu zależy od id: mnożnik jest stały dla id, mieści się w 0,92-1,08, a pięć kolejnych id ma pięć różnych temp', () => {
+    for (let id = 0; id < 300; id++) {
+      const f = staffSpeedFactor(id);
+      expect(f).toBeGreaterThanOrEqual(0.92 - 1e-12);
+      expect(f).toBeLessThanOrEqual(1.08 + 1e-12);
+      expect(staffSpeedFactor(id)).toBe(f);
+    }
+    for (let id = 0; id < 20; id++) {
+      const five = [0, 1, 2, 3, 4].map((i) => staffSpeedFactor(id + i).toFixed(6));
+      expect(new Set(five).size).toBe(5);
+    }
+    expect(staffSpeedFactor(0)).toBeCloseTo(0.92, 12);
+    expect(staffSpeedFactor(1)).toBeCloseTo(1, 12);
+    expect(staffSpeedFactor(2)).toBeCloseTo(1.08, 12);
+  });
+
+  it('każdy idzie swoim tempem: przesunięcie w pierwszym kroku to STAFF_WALK_SPEED × mnożnik jego id', () => {
+    const sc = LANE_SCENES[0]!;
+    const ids = [1, 2, 3, 4, 5];
+    const crew = hire(sc, ids);
+    const before = new Map(ids.map((id) => [id, pos(member(crew, id))]));
+    crew.step(0.25);
+    for (const id of ids) {
+      const m = member(crew, id);
+      const from = before.get(id)!;
+      expect(Math.hypot(m.walker.x - from.x, m.walker.y - from.y)).toBeCloseTo(STAFF_WALK_SPEED * staffSpeedFactor(id) * 0.25, 9);
+    }
+    expect(new Set(ids.map((id) => staffSpeedFactor(id).toFixed(6))).size).toBe(5);
+  });
+
+  it('wychodzący idą do jednego punktu na chodniku, niezależnie od tego, gdzie startowali', () => {
+    const sc = LANE_SCENES[0]!;
+    const crew = new StaffCrew(sc.layout);
+    crew.sync(input(people(4)));
+    crew.sync(input([]));
+    for (const m of crew.members) expect(m.walker.goal).toEqual(sc.street);
   });
 });
 
@@ -638,7 +801,8 @@ describe('StaffCrew: twardy limit ciał na ekranie', () => {
     crew.sync(input(team(range(0, 7)), pallets));
     expect(idsOf(crew)).toEqual(range(0, 7));
     expect(olds.every((m) => m.leaving && !crew.members.includes(m))).toBe(true);
-    for (const m of crew.members) expect(pos(m)).toEqual(centre(street));
+    expect(pos(member(crew, 0))).toEqual(centre(street));
+    for (const m of crew.members) expect(m.walker.atGoal).toBe(false);   // wszyscy nowi dopiero wchodzą z chodnika
     expect(cashiers(crew)).toEqual([0]);              // stary kasjer (8) oddał ciało najmniejszemu id spośród nowych
   });
 

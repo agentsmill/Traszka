@@ -5,7 +5,7 @@ import { buildStaffNav, type StaffNav } from './staffNav';
 import { pickStaffSpots } from './targets';
 import { TaskHold } from './taskHold';
 import { STAFF_VIEW_MAX, type PalletRef, type StaffAssignment, type StaffDuty, type StaffSpot } from './types';
-import { StaffWalker } from './walker';
+import { STAFF_WALK_SPEED, StaffWalker } from './walker';
 
 // Załoga na ekranie: kto jest w sklepie, gdzie ma stanąć i jak tam dochodzi. Ekonomia mówi tylko, kto jest na zmianie i czego
 // chce od niego w tej chwili; tutaj te informacje zamieniają się w ludzi, którzy wchodzą z chodnika, dochodzą na miejsce,
@@ -56,6 +56,14 @@ class Person implements CrewMember {
   }
 }
 
+/**
+ * Mnożnik tempa marszu osoby o danym id: stały dla id, od 0,92 do 1,08, a pięć kolejnych id ma pięć różnych. Bez niego grupa
+ * przybyła w jednym `sync` idzie w identycznym tempie tą samą drogą i ciągle się nakłada; z nim rozciąga się po drodze.
+ */
+export function staffSpeedFactor(id: number): number {
+  return 1 + (((id * 7) % 5) - 2) * 0.04;
+}
+
 /** Gdzie i z jakim zadaniem osoba stanęła przy ostatnim liczeniu miejsc: podstawa dla `previous` w `pickStaffSpots`. */
 interface Placed { task: StaffDuty; spot: StaffSpot }
 
@@ -87,9 +95,8 @@ function streetPoint(layout: StoreLayout): Cell {
 export class StaffCrew {
   /** Własna kopia układu: wołający może go dalej używać (a nawet zmieniać) bez wpływu na ludzi na ekranie. */
   private readonly layout: StoreLayout;
-  /** Punkt na chodniku (wejście i wyjście ludzi) i kierunek, w którym stoi się tam twarzą do drzwi. */
+  /** Punkt na chodniku, którym ludzie wchodzą i wychodzą (wychodzą zawsze do tego jednego punktu). */
   private readonly street: Cell;
-  private readonly streetHeading: number;
   /** Histereza i zegar należą do załogi razem: zegar nigdy nie startuje od nowa osobno (histereza zakłada, że idzie tylko w górę). */
   private readonly hold = new TaskHold();
   private elapsed = 0;
@@ -106,8 +113,6 @@ export class StaffCrew {
   constructor(layout: StoreLayout) {
     this.layout = structuredClone(layout);
     this.street = streetPoint(this.layout);
-    const door = this.layout.entrance[0];
-    this.streetHeading = door ? Math.atan2(door.y - this.street.y, door.x - this.street.x) : 0;
     this.nav = buildStaffNav(this.layout, []);
   }
 
@@ -160,13 +165,18 @@ export class StaffCrew {
   step(dt: number): void {
     if (!(dt > 0) || !Number.isFinite(dt)) return;
     this.elapsed += dt;
-    // Klatka bez wychodzącego, który skończył, niczego nie alokuje: tablicę budujemy od nowa dopiero, gdy ktoś znika.
+    // Wychodzący znika dopiero w kroku po tym, w którym doszedł na chodnik (albo gdy minął limit czasu): widok zdąży pokazać go
+    // na wyjściu, a o tym, czy droga do celu mieści się jeszcze w budżecie jednego kroku, nie decyduje zaokrąglenie liczb
+    // zmiennoprzecinkowych. Klatka bez nikogo do usunięcia niczego nie alokuje: tablicę budujemy od nowa dopiero, gdy ktoś znika.
     let someoneLeft = false;
     for (const p of this.list) {
-      p.walker.step(dt, this.nav);
-      if (this.hasLeft(p)) someoneLeft = true;
+      if (this.hasLeft(p)) {
+        someoneLeft = true;
+        break;
+      }
     }
     if (someoneLeft) this.list = this.list.filter((p) => !this.hasLeft(p));
+    for (const p of this.list) p.walker.step(dt, this.nav);
   }
 
   /** Wychodzący, który doszedł na chodnik albo wychodzi już `LEAVE_TIMEOUT_S` (np. droga zastawiona): znika ze sklepu. */
@@ -211,6 +221,7 @@ export class StaffCrew {
     // żeby ciało miała najwyżej jedna osoba. Zwolniony kasjer, po którego ciało nikt nie przychodzi, wychodzi z nim do końca.
     // Środkowy dzień: nowo zatrudniony nie odbiera ciała kasjerowi, który zostaje, nawet gdy ma mniejsze id.
     let cashierTaken = this.list.some((p) => p.isCashier && !p.leaving);
+    let lane: readonly Cell[] | undefined;   // kratki startowe przybyszów; liczone dopiero przy pierwszym z nich
     for (const { id, task } of active) {
       const spot = spots.get(id)!;   // `pickStaffSpots` daje miejsce każdemu id z ekipy
       this.placed.set(id, { task, spot });
@@ -218,7 +229,9 @@ export class StaffCrew {
       if (person) {
         person.walker.setGoal(spot.cell, spot.heading, this.nav);
       } else {
-        arrivals.push(this.arrive(id, task, spot, !cashierTaken));
+        lane ??= this.entryLane();
+        // Przybysze jednego sync startują kolejno k kratek od punktu w stronę wejścia (`active` rośnie po id).
+        arrivals.push(this.arrive(id, task, spot, !cashierTaken, lane[Math.min(arrivals.length, lane.length - 1)]!));
         cashierTaken = true;
       }
     }
@@ -248,12 +261,30 @@ export class StaffCrew {
   }
 
   /**
-   * Nowa osoba. Przy pierwszym `sync` w ogóle (start gry, po przebudowie sklepu) stoi od razu na swoim miejscu: nikt wtedy nie
-   * wchodzi z ulicy. Później pojawia się na chodniku, twarzą do drzwi, i idzie na miejsce. `teleport` przed `setGoal`, żeby
-   * droga nie była liczona od ulicy tam, gdzie osoba i tak od razu stoi u celu.
+   * Kratki, z których wchodzą kolejni przybysze jednego `sync`: wiersz chodnika od punktu pojawiania się w stronę wejścia, do
+   * kolumny wejścia włącznie (nie dalej). Pierwsza to sam punkt. Kratki zastawione paletą pomijamy, żeby nikt nie pojawiał
+   * się w palecie. Gdy przybyszów jest więcej niż kratek, ostatni dzielą ostatnią kratkę (tempo i tak ich rozciągnie).
    */
-  private arrive(id: number, task: StaffDuty, spot: StaffSpot, isCashier: boolean): Person {
-    const walker = new StaffWalker(this.street, this.streetHeading);
+  private entryLane(): Cell[] {
+    const lane: Cell[] = [this.street];
+    const door = this.layout.entrance[0];
+    const dir = door ? Math.sign(door.x - this.street.x) : 0;
+    if (!door || dir === 0) return lane;
+    for (let x = this.street.x + dir; (door.x - x) * dir >= 0; x += dir) {
+      if (!this.nav.blocked(x, this.street.y)) lane.push({ x, y: this.street.y });
+    }
+    return lane;
+  }
+
+  /**
+   * Nowa osoba. Przy pierwszym `sync` w ogóle (start gry, po przebudowie sklepu) stoi od razu na swoim miejscu: nikt wtedy nie
+   * wchodzi z ulicy. Później pojawia się na chodniku w kratce `start`, twarzą do drzwi, i idzie na miejsce własnym tempem.
+   * `teleport` przed `setGoal`, żeby droga nie była liczona od ulicy tam, gdzie osoba i tak od razu stoi u celu.
+   */
+  private arrive(id: number, task: StaffDuty, spot: StaffSpot, isCashier: boolean, start: Cell): Person {
+    const door = this.layout.entrance[0];
+    const heading = door ? Math.atan2(door.y - start.y, door.x - start.x) : 0;
+    const walker = new StaffWalker(start, heading, STAFF_WALK_SPEED * staffSpeedFactor(id));
     if (!this.synced) walker.teleport(spot.cell);
     walker.setGoal(spot.cell, spot.heading, this.nav);
     return new Person(id, task, walker, isCashier);
