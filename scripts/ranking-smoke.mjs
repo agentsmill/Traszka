@@ -152,9 +152,9 @@ const at = (day, hour, minute = 0) => day * 1440 + hour * 60 + minute;
  * domyślnego profilu załogi (przechodzi przez parser i symulację, nie zmieniając wyniku). Kształt wpisów jak w `RunRecord.log`:
  * minuta, numer, polecenie. Wynik z tym dziennikiem różni się od biegu pustego (sprawdza to krok biegu B), więc próba widzi, że sędzia
  * naprawdę odtwarza dziennik, a ulotki (więcej ruchu za 800 zł) sprawiają, że raz wypada lepiej, raz gorzej (test sprawdza zachowanie
- * próby w obu przypadkach). Sędzia odrzuca bieg, który bankrutuje przed końcem sezonu (422 `season-bankrupt`), a w ok. jednym z pięciu
- * losowych sklepów bierny bieg schodzi poniżej granicy debetu (z `SMOKE_LOG` rzadziej), więc taki seed próby skrypt zamienia na nowy
- * (`UnluckySeed`, `MAX_ATTEMPTS`). Dawniej było tu zatrudnienie, ale od SIM_VERSION 4 trzecia osoba w sklepie na start się nie zwraca
+ * próby w obu przypadkach). Sędzia odrzuca bieg zakończony grą przed ostatnim raportem (422 `season-bankrupt`; bieg z trzema raportami
+ * wchodzi także z debetem z ostatniego zamknięcia), co przy biernej grze i `SMOKE_LOG` zdarza się rzadko, więc taki seed próby skrypt
+ * zamienia na nowy (`UnluckySeed`, `MAX_ATTEMPTS`). Dawniej było tu zatrudnienie, ale od SIM_VERSION 4 trzecia osoba w sklepie na start się nie zwraca
  * i dziennik z nią wypadał gorzej na każdym sklepie.
  * Gdyby polecenia w grze zmieniły nazwy (jak przy C2: zniknęły `setPriority`, `claimGift` i `claimQuest`), symulacja je odrzuci,
  * wynik się zrówna z pustym i krok B zgłosi, że ten dziennik trzeba odświeżyć.
@@ -583,7 +583,7 @@ function planLines(origin, simVersion) {
     `UWAGA: ${DATABASE_WARNING}`,
     'Próba zapisze w bazie wskazanego wdrożenia: rezerwację nicka „Smoke…”, wyniki w rankingach (globalnym, seeda próby i seeda tygodnia)',
     'i zapis gry (żyje 30 dni). Nic na dysku. Nick, seed i klucz gracza losują się przy każdym uruchomieniu; klucza skrypt nie wypisuje',
-    `Sędzia odrzuca bieg, który bankrutuje przed końcem sezonu (422 season-bankrupt); gdy trafi się taki seed, skrypt losuje nowe dane (najwyżej ${MAX_ATTEMPTS} razy).`,
+    `Sędzia odrzuca bieg zakończony grą przed ostatnim raportem (422 season-bankrupt); gdy trafi się taki seed, skrypt losuje nowe dane (najwyżej ${MAX_ATTEMPTS} razy).`,
     `(tylko ostatnie 4 znaki). Zgłoszeń biegu jest ${submissions}, a limit biegów liczy się na adres w oknie godzinnym (RATE_LIMITS.runs`,
     'w src/server/config.ts), więc nie puszczaj próby w kółko.',
     'Puszczaj wyłącznie na osobnej bazie testowej. Domeny produkcyjne projektu (PROTECTED_HOSTS) są zablokowane, ale wdrożenia podglądu',

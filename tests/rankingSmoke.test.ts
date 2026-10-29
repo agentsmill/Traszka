@@ -13,7 +13,7 @@ import {
 } from '../scripts/ranking-smoke.mjs';
 import { CROCKFORD, parseRecoveryCode } from '@/game/playerKey';
 import { normalizeNick } from '@/game/nick';
-import { RANKED_SEASON_END_MINUTE, seasonScore } from '@/sim/ranked';
+import { RANKED_SEASON_END_MINUTE, seasonBankrupt, seasonScore } from '@/sim/ranked';
 import { replayRun } from '@/sim/run';
 import { SIM_VERSION } from '@/sim/simVersion';
 import { GENERATOR_VERSION } from '@/sim/store/generateStore';
@@ -207,13 +207,13 @@ function runCli(args: string[], opts: { blockNetwork?: boolean } = {}): Promise<
 const scoreOf = (seed: string, log: readonly unknown[]): number =>
   seasonScore(replayRun({ seed, gameVersion: 'test', generatorVersion: GENERATOR_VERSION, simVersion: SIM_VERSION, mode: 'ranked', log } as never, RANKED_SEASON_END_MINUTE));
 
-/** Czy bieg (seed, dziennik) przeżywa sezon: tylko taki przyjmuje sędzia (bankruta odrzuca jako season-bankrupt). */
+/** Czy bieg (seed, dziennik) jest przyjmowany przez sędziego: bankruta (koniec gry przed ostatnim raportem) odrzuca jako season-bankrupt. */
 const survives = (seed: string, log: readonly unknown[]): boolean =>
-  !replayRun({ seed, gameVersion: 'test', generatorVersion: GENERATOR_VERSION, simVersion: SIM_VERSION, mode: 'ranked', log } as never, RANKED_SEASON_END_MINUTE).gameOver;
+  !seasonBankrupt(replayRun({ seed, gameVersion: 'test', generatorVersion: GENERATOR_VERSION, simVersion: SIM_VERSION, mode: 'ranked', log } as never, RANKED_SEASON_END_MINUTE));
 
 /**
  * Numer strumienia losowości (`stream`), z którego próba losuje seed, którego bieg A (bez poleceń) i bieg B (`SMOKE_LOG`) przeżywają sezon,
- * i który spełnia `want`. W pozostałych seedach (ok. 1 na 5) sędzia odrzuca bieg jako bankructwo, a skrypt losuje wtedy nowe dane: liczba
+ * i który spełnia `want`. W pozostałych (rzadkich) seedach sędzia odrzuca bieg jako bankructwo, a skrypt losuje wtedy nowe dane: liczba
  * zgłoszeń i kluczy w teście zależałaby od losu, więc testy, które ją liczą, biorą seed z tego strumienia.
  */
 function luckyNumber(want: (id: { seed: string }) => boolean = () => true, from = 1): number {
@@ -443,33 +443,49 @@ describe('pełny przebieg na lokalnym serwerze ze sędzią z bundla', () => {
     expect(readGeneratorVersion()).toBe(GENERATOR_VERSION);
   }, 60_000);
 
-  describe('sędzia odrzuca bankruta (422 season-bankrupt): wylosowany seed może nie przeżywać sezonu', () => {
+  describe('sędzia odrzuca bankruta (422 season-bankrupt): skrypt losuje nowe dane', () => {
+    // Bankrut w sensie sędziego (koniec gry przed ostatnim raportem) jest rzadki, więc odmowę wymusza `fetch`: zgłoszenie wybrane przez `match`
+    // dostaje 422 z kodem i komunikatem serwera i nie dociera do bazy (tak samo jak prawdziwa odmowa, która nic nie zapisuje).
+    const BANKRUPT_BODY = { ok: false, error: 'season-bankrupt', message: 'Sezon zakończony bankructwem nie trafia do rankingu.' };
+    const rejecting = (match: (run: Json, index: number) => boolean): { fetch: typeof fetch; rejected: Json[] } => {
+      const rejected: Json[] = [];
+      let index = 0;
+      const wrapped: typeof fetch = async (input, init) => {
+        const url = new URL(input instanceof Request ? input.url : String(input));
+        if (url.pathname === '/api/runs' && init?.method === 'POST' && typeof init.body === 'string') {
+          const body = JSON.parse(init.body) as Json;
+          if (match(body, index++)) {
+            rejected.push(body);
+            return new Response(JSON.stringify(BANKRUPT_BODY), { status: 422, headers: { 'content-type': 'application/json' } });
+          }
+        }
+        return localFetch(input, init);
+      };
+      return { fetch: wrapped, rejected };
+    };
     /** Strumień losowości, który po kolei daje identyfikatory z podanych strumieni (`newIdentity` bierze cztery wywołania `random` na próbę). */
     const sequence = (numbers: number[]): RandomBytes => {
       const streams = numbers.map((n) => stream(n));
       let calls = 0;
       return (len) => streams[Math.min(Math.floor(calls++ / 4), streams.length - 1)]!(len);
     };
-    /** Numery strumieni, z których seed próby bankrutuje już w biernym biegu A. */
-    const unluckyNumbers = (count: number): number[] => {
-      const found: number[] = [];
-      for (let n = 1; found.length < count && n < 2_000; n++) if (!survives(newIdentity(stream(n)).seed, [])) found.push(n);
-      return found;
-    };
 
     it('bieg A odrzucony jako bankructwo: nic nie trafia do bazy, skrypt losuje nowe dane i kończy próbę; wynik niesie liczbę prób', async () => {
-      const [bad] = unluckyNumbers(1);
+      const lucky = luckyNumber();
+      const bad = lucky + 1;   // inny strumień niż drugiej próby: pierwsza próba ma własny seed, klucz i nick
       const server = await startServer();
       const out = collect();
-      const result = await runSmoke({ baseUrl: server.url, write: true, fetch: localFetch, log: out.log, random: sequence([bad!, luckyNumber()]) });
+      const gate = rejecting((_run, index) => index === 0);   // tylko bieg A pierwszej próby
+      const result = await runSmoke({ baseUrl: server.url, write: true, fetch: gate.fetch, log: out.log, random: sequence([bad, lucky]) });
       expect(result).toMatchObject({ ok: true, attempts: 2 });
       expect(result.steps.map((st) => st.id)).toEqual(STEPS.map((st) => st.id));
+      expect(gate.rejected).toHaveLength(1);
       const runs = runBodies(server);
-      expect(runs).toHaveLength(6);   // odrzucony A pierwszej próby i pięć zgłoszeń drugiej
-      const [rejected, ...rest] = runs;
-      expect(rejected!.run.seed).toBe(newIdentity(stream(bad!)).seed);
-      expect(rejected!.key).not.toBe(rest[0]!.key);   // druga próba ma nowy klucz, nick i seed
-      expect(rejected!.nick).not.toBe(rest[0]!.nick);
+      expect(runs).toHaveLength(5);   // pięć zgłoszeń drugiej próby; odrzucony A pierwszej nie dotarł do bazy
+      const [rejected] = gate.rejected;
+      expect(rejected!.run.seed).toBe(newIdentity(stream(bad)).seed);
+      expect(rejected!.key).not.toBe(runs[0]!.key);   // druga próba ma nowy klucz, nick i seed
+      expect(rejected!.nick).not.toBe(runs[0]!.nick);
       // po odmowie bankruta nick nie jest zarezerwowany, a seed pierwszej próby nie ma rankingu
       expect(server.redis.keys().filter((k) => k.startsWith('tr:nick:smoke'))).toHaveLength(1);
       expect(server.redis.keys().filter((k) => k.startsWith('tr:lb:seed:'))).toHaveLength(2);   // seed drugiej próby i seed tygodnia
@@ -478,34 +494,33 @@ describe('pełny przebieg na lokalnym serwerze ze sędzią z bundla', () => {
       expect(text).toMatch(/season-bankrupt/);
       expect(text).toMatch(/losuję nowe dane/);
       expect(text).toMatch(new RegExp(`Próba 2 z ${MAX_ATTEMPTS}`));
-      expect(text).not.toContain(rejected!.key);
+      expect(text).not.toContain(rejected!.key as string);
     }, 60_000);
 
-    it(`${MAX_ATTEMPTS} seedów z rzędu odrzuconych jako bankructwo: porażka kroku biegu A z kodem season-bankrupt, bez zapisu w rankingu`, async () => {
+    it(`${MAX_ATTEMPTS} prób z rzędu odrzuconych jako bankructwo: porażka kroku biegu A z kodem season-bankrupt, bez zapisu w rankingu`, async () => {
       const server = await startServer();
       const out = collect();
-      const result = await runSmoke({ baseUrl: server.url, write: true, fetch: localFetch, log: out.log, random: sequence(unluckyNumbers(MAX_ATTEMPTS)) });
+      const gate = rejecting(() => true);
+      const result = await runSmoke({ baseUrl: server.url, write: true, fetch: gate.fetch, log: out.log, random: sequence(Array.from({ length: MAX_ATTEMPTS }, (_, k) => k + 100)) });
       expect(result).toMatchObject({ ok: false, attempts: MAX_ATTEMPTS });
       expect(result.steps.at(-1)).toMatchObject({ id: 'bieg-a', ok: false });
       expect(result.steps.at(-1)!.error).toMatch(/season-bankrupt/);
-      expect(runBodies(server)).toHaveLength(MAX_ATTEMPTS);
+      expect(gate.rejected).toHaveLength(MAX_ATTEMPTS);
+      expect(runBodies(server)).toHaveLength(0);
       expect(server.redis.keys().filter((k) => k.startsWith('tr:nick:') || k.startsWith('tr:lb:') || k.startsWith('tr:entry:'))).toEqual([]);
       expect(out.lines.filter((l) => /losuję nowe dane/.test(l))).toHaveLength(MAX_ATTEMPTS - 1);
       expect(out.lines.at(-1)).toMatch(/Zatrzymano na kroku/);
     }, 120_000);
 
-    it('seed tygodnia, którego bierny bieg bankrutuje: skrypt zgłasza bieg na jego lokalu (seed·N) i ranking tygodnia dostaje wynik', async () => {
-      // tydzień z seedem, który nie przeżywa sezonu (szukamy go po numerze tygodnia; pierwszy bankrut wśród najbliższych)
-      let now = NOW;
-      for (let i = 0; i < 200 && survives(weekOf(now).seed, []); i++) now += 7 * 86_400_000;
-      expect(survives(weekOf(now).seed, []), 'wśród kolejnych tygodni jest taki, którego seed bankrutuje').toBe(false);
-      const week = weekOf(now);
-      const server = await startServer({ now });
-      const result = await runSmoke({ baseUrl: server.url, write: true, fetch: localFetch, log: () => undefined });
+    it('seed tygodnia odrzucony jako bankrut: skrypt zgłasza bieg na jego lokalu (seed·N) i ranking tygodnia dostaje wynik', async () => {
+      const week = weekOf(NOW);
+      const server = await startServer({ now: NOW });
+      const gate = rejecting((run) => run.run.seed === week.seed);   // odmowa tylko dla samego seeda tygodnia
+      const result = await runSmoke({ baseUrl: server.url, write: true, fetch: gate.fetch, log: () => undefined });
       expect(result).toMatchObject({ ok: true, attempts: 1 });
-      const weekRuns = runBodies(server).filter((r) => r.run.seed === week.seed || String(r.run.seed).startsWith(`${week.seed}·`));
-      expect(weekRuns.length).toBeGreaterThanOrEqual(2);   // odrzucony seed tygodnia i przyjęty lokal
-      expect(weekRuns[0]!.run.seed).toBe(week.seed);
+      expect(gate.rejected.length).toBeGreaterThanOrEqual(1);
+      const weekRuns = runBodies(server).filter((r) => String(r.run.seed).startsWith(`${week.seed}·`));
+      expect(weekRuns.length).toBeGreaterThanOrEqual(1);   // przyjęty lokal
       const accepted = weekRuns.at(-1)!.run.seed as string;
       expect(accepted).toMatch(new RegExp(`^${week.seed}·[1-5]$`));
       expect(survives(accepted, [])).toBe(true);
@@ -518,7 +533,7 @@ describe('pełny przebieg na lokalnym serwerze ze sędzią z bundla', () => {
     const res = await runCli([server.url, '--write']);
     expect(res.stderr).toBe('');
     expect(res.code).toBe(0);
-    // seed z losowania w osobnym procesie bywa odrzucony jako bankrut (ok. 1 na 5): skrypt losuje wtedy nowe dane i zaczyna od początku,
+    // seed z losowania w osobnym procesie bywa odrzucony jako bankrut (rzadko): skrypt losuje wtedy nowe dane i zaczyna od początku,
     // więc krok po kroku liczy się dopiero ostatnia próba
     const lastAttempt = res.stdout.slice(res.stdout.lastIndexOf('Próba '));
     expect(lastAttempt.match(/^\s*PASS\b/gm)).toHaveLength(STEPS.length);
