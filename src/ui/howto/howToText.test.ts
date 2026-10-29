@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
-  ASSISTANT_UNLOAD_MIN, BANKRUPTCY_AT, CATS, CAT_INFO, DELIVERY_AT, FRANCHISE_FEE_FIXED, FRANCHISE_FEE_SHARE, HOT, MINUTES_PER_DAY, MINUTES_PER_SECOND_CLOSED,
+  ASSISTANT_UNLOAD_MIN, CATS, CAT_INFO, DEBT_LIMIT, DELIVERY_AT, FRANCHISE_FEE_FIXED, FRANCHISE_FEE_SHARE, HOT, MINUTES_PER_DAY, MINUTES_PER_SECOND_CLOSED,
   MINUTES_PER_SECOND_OPEN, OPEN_FROM, OPEN_TO, ORDER_DEADLINE, PALLETS_FREE, PALLET_FEE, PALLET_ITEMS, RETURN_FEE, STAFF_MAX, STRAZ, TAP_ITEMS,
   TILL_TAP_QUEUE_MIN,
 } from '@/sim/economy/catalog';
@@ -201,7 +201,7 @@ describe('treść okna „Jak grać”', () => {
     expect(t).toContain(`mandat (−${-TRUST.fine}), miesiąc na minusie (−${-TRUST.monthLoss}) i palety odesłane (−${-TRUST.returnedPallet}) lub zabrane (−${-TRUST.driverReturned})`);
     expect([turnoverBonusShare(69), turnoverBonusShare(70), turnoverBonusShare(84), turnoverBonusShare(85)]).toEqual([0, 0.02, 0.02, 0.03]);
     expect(t).toContain('Od 70 punktów Centrala oddaje premię od obrotu: 2%, od 85 punktów 3%.');
-    expect(t).toContain(`Umowę stracisz przy zerze na koniec miesiąca albo gdy dwa raporty z rzędu zastaną Cię z gotówką poniżej −${pl(-BANKRUPTCY_AT)} zł`);
+    expect(t).toContain(`Umowę stracisz przy zerze na koniec miesiąca albo od razu, gdy gotówka spadnie poniżej −${pl(-DEBT_LIMIT)} zł`);
     expect(t).toContain(`nietrafiony odbiera zaufanie (−${-KPI.trustMiss})`);
   });
 

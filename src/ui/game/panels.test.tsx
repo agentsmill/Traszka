@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { BANKRUPTCY_AT, WAGE_PER_DAY } from '@/sim/economy/catalog';
-import { createEconomy, franchiseFee, kpiScaleOf, nextRemont, upgradeBlocker, type CommandResult, type EconomyState, type MonthReport } from '@/sim/economy/economy';
+import { DEBT_LIMIT, WAGE_PER_DAY } from '@/sim/economy/catalog';
+import { DEBT_WARN, createEconomy, debtWarningText, franchiseFee, kpiScaleOf, nextRemont, upgradeBlocker, type CommandResult, type EconomyState, type MonthReport } from '@/sim/economy/economy';
 import type { Command } from '@/sim/economy/commands';
 import { KPI, KPI_FLAVOR, kpiTitle } from '@/sim/economy/tycoon/kpi';
 import { dayOfMinute, roundNice } from '@/sim/economy/tycoon/time';
@@ -307,29 +307,29 @@ describe('panele wysyłają polecenia przez game.dispatch, a nie wołają symula
       expect(franchiseFee(300_000)).toBeGreaterThan(franchiseFee(90_000));
     });
 
-    describe('ostrzeżenie przed wypowiedzeniem umowy (ostatni raport zastał dług)', () => {
+    describe('ostrzeżenie o debecie (gotówka poniżej połowy granicy, za którą gra się kończy)', () => {
       const plain = (text: string): string => text.replace(/[\s\u00a0\u202f]/g, ' ');
-      const warning = `Poprzedni raport zastał Cię z gotówką poniżej ${plain(`−${zl(-BANKRUPTCY_AT)}`)}. Jeśli ten też, Centrala wypowie umowę.`;
-      const monthWith = (lastCash: number | null): { text: string; warn: Vnode[] } => {
+      const monthWith = (cash: number): { text: string; warn: Vnode[] } => {
         const { s, info } = rich();
-        s.lastReport = lastCash === null ? null : { label: 'wrzesień 2026', counters: s.month, profit: -1000, cash: lastCash, comment: '', detail: null } as MonthReport;
+        s.cash = cash;
         const section = sectionTitled(GoalsPanel({ s, info, game: fakeGame(), v: 1 }), 'Ten miesiąc');
         return { text: plain(textOf(section)), warn: walk(section).filter((v) => v.type === 'p' && String(v.props.class).includes('warn')) };
       };
 
-      it('ostatni raport poniżej BANKRUPTCY_AT: wiersz ostrzeżenia z kwotą ze stałej, w stylu innych ostrzeżeń (tt-hint warn)', () => {
-        const { text, warn } = monthWith(BANKRUPTCY_AT - 1);
-        expect(text).toContain(warning);
+      it('gotówka poniżej DEBT_WARN: wiersz ostrzeżenia z kwotą do granicy, w stylu innych ostrzeżeń (tt-hint warn)', () => {
+        const cash = DEBT_WARN - 1200;
+        const { text, warn } = monthWith(cash);
         expect(warn).toHaveLength(1);
-        expect(plain(textOf(warn[0]))).toBe(warning);
+        expect(plain(textOf(warn[0]))).toBe(plain(debtWarningText(cash)));
+        expect(text).toContain(`zostało ${plain((cash - DEBT_LIMIT).toLocaleString('pl-PL'))} zł`);
         expect(warn[0].props.class).toBe('tt-hint warn');
       });
 
-      it('gotówka równa granicy, powyżej niej albo brak raportu: bez ostrzeżenia', () => {
-        for (const cash of [BANKRUPTCY_AT, 0, 250_000, null]) {
+      it('gotówka równa progowi, powyżej niego albo dodatnia: bez ostrzeżenia', () => {
+        for (const cash of [DEBT_WARN, DEBT_WARN + 1, 0, 250_000]) {
           const { text, warn } = monthWith(cash);
-          expect(text, `ostatni raport: ${cash}`).not.toContain('Poprzedni raport');
-          expect(warn, `ostatni raport: ${cash}`).toHaveLength(0);
+          expect(text, `gotówka ${cash}`).not.toContain('granicy debetu');
+          expect(warn, `gotówka ${cash}`).toHaveLength(0);
         }
       });
     });

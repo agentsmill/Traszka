@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'preact/hooks';
-import { BANKRUPTCY_AT, RETURN_FEE } from '@/sim/economy/catalog';
-import { effects, slotFree, slotUsage, tapCombo, tillTapBlock, type EconomyState, type MonthReport } from '@/sim/economy/economy';
+import { DEBT_LIMIT, RETURN_FEE } from '@/sim/economy/catalog';
+import {
+  DEBT_WARN, debtWarningText, effects, slotFree, slotUsage, tapCombo, tillTapBlock, type EconomyState, type MonthReport,
+} from '@/sim/economy/economy';
 import { visibleCards } from '@/sim/economy/tycoon/cards';
 import { FATIGUE } from '@/sim/economy/tycoon/fatigue';
 import { REPORT_LINE_LABEL, hintText, reportCommentText } from '@/sim/economy/tycoon/report';
@@ -173,6 +175,7 @@ export function ReportBody({ r, closing }: { r: MonthReport; closing?: string })
         <div class="tt-row total"><span>Wynik miesiąca</span><span>{signedZl(r.profit)}</span></div>
         <div class="tt-row"><span>Inwestycje</span><span>{zl(c.investments)}</span></div>
         <div class="tt-row"><span>Gotówka na koniec</span><span>{zl(r.cash)}</span></div>
+        {r.cash < DEBT_WARN && <p class="tt-hint warn">{debtWarningText(r.cash)}</p>}
         {centralaQuote(closing ?? r.comment)}
       </>
     );
@@ -189,6 +192,7 @@ export function ReportBody({ r, closing }: { r: MonthReport; closing?: string })
         <span class="tt-muted">Obrót {zl(d.revenue)} · klienci {int(c.customers)} (utraceni: {int(c.lost)})</span>
         <span class="tt-muted">Gotówka na koniec: {zl(r.cash)} · inwestycje: {zl(c.investments)}</span>
       </div>
+      {r.cash < DEBT_WARN && <p class="tt-hint warn">{debtWarningText(r.cash)}</p>}
       <div class="tt-report-lines">
         {d.lines.map((l) => (
           <div key={l.key} class="tt-row"><span>{REPORT_LINE_LABEL[l.key]}</span><span class={Math.round(l.amount) < 0 ? 'tt-neg' : undefined}>{lineAmount(l.amount)}</span></div>
@@ -216,16 +220,16 @@ export function ReportBody({ r, closing }: { r: MonthReport; closing?: string })
 const TERMINATION = 'Centrala dziękuje za współpracę. Rozliczenie końcowe: inwentaryzacja jutro o 6:00.';
 
 /**
- * Dlaczego Centrala wypowiedziała umowę, odczytane ze stanu (okno wraca po przeładowaniu, a toast z powodem nie): dług, czyli
- * ostatni raport zastał gotówkę poniżej `BANKRUPTCY_AT` (umowę kończy dopiero drugi taki raport z rzędu), albo zaufanie zero.
+ * Dlaczego Centrala wypowiedziała umowę, odczytane ze stanu (okno wraca po przeładowaniu, a toast z powodem nie): za duży debet,
+ * czyli gotówka poniżej `DEBT_LIMIT` (gra staje w tej minucie, więc gotówka w stanie to ta z chwili końca), albo zaufanie zero.
  * Gdy zachodzi jedno i drugie, nie zgadujemy, które rozstrzygnęło: tekst mówi o obu. Bez żadnego z nich (stary zapis) null.
  */
 export function terminationReason(s: EconomyState): string | null {
-  const debt = s.lastReport !== null && s.lastReport.cash < BANKRUPTCY_AT;
+  const debt = s.cash < DEBT_LIMIT;
   const distrust = trustTerminates(s.tycoon.trust.value);
-  const floor = signedZl(BANKRUPTCY_AT);
-  if (debt && distrust) return `Powód: zaufanie Centrali spadło do zera, a gotówka po raporcie była poniżej ${floor}.`;
-  if (debt) return `Powód: dług. Dwa raporty z rzędu zastały Cię z gotówką poniżej ${floor}, a Centrala nie doczekała się opłaty.`;
+  const floor = signedZl(DEBT_LIMIT);
+  if (debt && distrust) return `Powód: zaufanie Centrali spadło do zera, a gotówka spadła poniżej granicy debetu ${floor}.`;
+  if (debt) return `Powód: za duży debet. Gotówka spadła do ${signedZl(s.cash)}, poniżej granicy ${floor}, a wtedy Centrala od razu kończy współpracę.`;
   if (distrust) return 'Powód: zaufanie Centrali spadło do zera.';
   return null;
 }

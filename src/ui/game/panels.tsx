@@ -1,10 +1,10 @@
 import type { ComponentChildren } from 'preact';
 import {
-  BANKRUPTCY_AT, CATS, CAT_INFO, HIRE_COST, HOUR_CURVE, ORDER_DEADLINE, RESTOCK_RATE, RETURN_FEE, SCO_RATE, STAFF_MAX, TILL_RATE, UNLOAD_RATE, WAGE_PER_DAY,
+  CATS, CAT_INFO, HIRE_COST, HOUR_CURVE, ORDER_DEADLINE, RESTOCK_RATE, RETURN_FEE, SCO_RATE, STAFF_MAX, TILL_RATE, UNLOAD_RATE, WAGE_PER_DAY,
 } from '@/sim/economy/catalog';
 import { formatClock, minuteOfDay } from '@/sim/economy/calendar';
 import {
-  LOC_LABEL, assistantSuggestion, effects, expectedDailyCustomers, franchiseFee, freeSpots, isClosedForRemont, kpiMetricsOf, kpiScaleOf, level, nextRemont,
+  DEBT_WARN, LOC_LABEL, assistantSuggestion, debtWarningText, effects, expectedDailyCustomers, franchiseFee, freeSpots, isClosedForRemont, kpiMetricsOf, kpiScaleOf, level, nextRemont,
   plPallets, robotFleet, slotFree, slotUsage, upgradeBlocker, workshopUnlocked, type EconomyState,
 } from '@/sim/economy/economy';
 import { MILESTONES } from '@/sim/economy/milestones';
@@ -491,10 +491,8 @@ export function GoalsPanel({ s, info }: { s: EconomyState; info: StoreInfo; game
         <Row label="Wynik po opłacie (do dziś)"><b>{signedZl(profit(m) - fee)}</b></Row>
         <Row label="Inwestycje">{zl(m.investments)}</Row>
         <p class="tt-hint">Opłatę franczyzową, ubytki ponad limit Centrali i premię od obrotu Centrala rozlicza przy zamknięciu miesiąca. Zostaw gotówkę na opłaty.</p>
-        {/* ostrzeżenie wynika ze stanu (ostatni raport), więc wraca po przeładowaniu, a okno „OK” z dnia raportu nie jest zapisywane */}
-        {s.lastReport !== null && s.lastReport.cash < BANKRUPTCY_AT && (
-          <p class="tt-hint warn">Poprzedni raport zastał Cię z gotówką poniżej {signedZl(BANKRUPTCY_AT)}. Jeśli ten też, Centrala wypowie umowę.</p>
-        )}
+        {/* ostrzeżenie wynika ze stanu (gotówka), więc wraca po przeładowaniu, a okno „OK” z chwili zejścia pod próg nie jest zapisywane */}
+        {s.cash < DEBT_WARN && <p class="tt-hint warn">{debtWarningText(s.cash)}</p>}
       </Section>
       {s.history.length > 0 && (
         <Section title="Poprzednie miesiące">

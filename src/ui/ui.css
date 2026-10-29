@@ -278,6 +278,14 @@
   color: #ffb3a1;
 }
 
+/* debet poniżej progu ostrzeżenia (`DEBT_WARN`): do granicy, za którą gra się kończy, zostało niewiele */
+.tt-cash.debt {
+  color: #fff;
+  background: #c0392b;
+  border-radius: 8px;
+  padding: 0 6px;
+}
+
 .tt-cash.up {
   color: #ffe08a;
   text-shadow: 0 0 10px rgba(255, 209, 102, 0.55);

@@ -1,5 +1,5 @@
 import {
-  ASSISTANT_UNLOAD_MIN, BANKRUPTCY_AT, CATS, CAT_INFO, DELIVERY_AT, FRANCHISE_FEE_FIXED, FRANCHISE_FEE_SHARE, HOT, MINUTES_PER_DAY, MINUTES_PER_SECOND_CLOSED,
+  ASSISTANT_UNLOAD_MIN, CATS, CAT_INFO, DEBT_LIMIT, DELIVERY_AT, FRANCHISE_FEE_FIXED, FRANCHISE_FEE_SHARE, HOT, MINUTES_PER_DAY, MINUTES_PER_SECOND_CLOSED,
   MINUTES_PER_SECOND_OPEN, OPEN_FROM, OPEN_TO, ORDER_DEADLINE, PALLETS_FREE, PALLET_FEE, RETURN_FEE, STAFF_MAX, STRAZ, TILL_TAP_QUEUE_MIN, type Cat,
 } from '@/sim/economy/catalog';
 import { nextRankAt, rankFor } from '@/sim/economy/progress';
@@ -146,7 +146,7 @@ export function howToDetails(): HowToSection[] {
       paragraphs: [
         `Zaufanie startuje od ${num(TRUST.start)} punktów, rośnie za trafione KPI (${signedPts(KPI.trustHit)}) i miesiąc na plusie (${signedPts(TRUST.monthProfit)}), a spada za mandat (${signedPts(TRUST.fine)}), miesiąc na minusie (${signedPts(TRUST.monthLoss)}) i palety odesłane (${signedPts(TRUST.returnedPallet)}) lub zabrane (${signedPts(TRUST.driverReturned)}).`,
         ...bonus,
-        `Umowę stracisz przy zerze na koniec miesiąca albo gdy dwa raporty z rzędu zastaną Cię z gotówką poniżej ${signedZl(BANKRUPTCY_AT)}.`,
+        `Umowę stracisz przy zerze na koniec miesiąca albo od razu, gdy gotówka spadnie poniżej ${signedZl(DEBT_LIMIT)}.`,
       ],
     },
     {

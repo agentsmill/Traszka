@@ -1,8 +1,8 @@
 import type { VNode } from 'preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { BANKRUPTCY_AT } from '@/sim/economy/catalog';
+import { DEBT_LIMIT } from '@/sim/economy/catalog';
 import type { Command } from '@/sim/economy/commands';
-import { createEconomy, emptyCounters, type CommandResult, type EconomyState, type MonthReport } from '@/sim/economy/economy';
+import { DEBT_WARN, createEconomy, debtWarningText, emptyCounters, type CommandResult, type EconomyState, type MonthReport } from '@/sim/economy/economy';
 import { EQUIPMENT } from '@/sim/economy/upgrades';
 import { computeStoreInfo, type StoreInfo } from '@/sim/economy/storeInfo';
 import { layoutFor } from '@/sim/store/layoutFor';
@@ -654,61 +654,67 @@ describe('okno raportu miesiąca', () => {
 
 describe('okno końca współpracy podaje powód ze stanu gry', () => {
   const plain = (text: string): string => text.replace(/[\s\u00a0\u202f]/g, ' ');
-  const floor = plain(`−${zl(-BANKRUPTCY_AT)}`);
-  /** Gra zakończona; `cash` to gotówka z ostatniego raportu, `trust` zaufanie w chwili wypowiedzenia. */
-  const ended = (cash: number | null, trust: number): ReturnType<typeof base> => {
+  const floor = plain(`−${zl(-DEBT_LIMIT)}`);
+  /** Gra zakończona; `cash` to gotówka w chwili końca (gra staje w tej minucie), `trust` zaufanie w chwili wypowiedzenia. */
+  const ended = (cash: number, trust: number, withReport = true): ReturnType<typeof base> => {
     const b = base();
     b.s.gameOver = true;
-    b.s.lastReport = cash === null ? null : monthReport(detailed(), { cash });
+    b.s.cash = cash;
+    b.s.lastReport = withReport ? monthReport(detailed()) : null;
     b.s.tycoon.trust.value = trust;
     publishState(b.s, b.info);
     return b;
   };
   const modalText = (): string => plain(textOf(ReportModal({ game: fakeGame() })));
 
-  it('dług: ostatni raport poniżej BANKRUPTCY_AT, a zaufanie w porządku; kwota granicy ze stałej', () => {
-    ended(BANKRUPTCY_AT - 1, 55);
-    expect(modalText()).toContain(`Powód: dług. Dwa raporty z rzędu zastały Cię z gotówką poniżej ${floor}`);
+  it('debet: gotówka poniżej DEBT_LIMIT, a zaufanie w porządku; kwota granicy ze stałej i gotówka z chwili końca', () => {
+    ended(DEBT_LIMIT - 1234, 55);
+    expect(modalText()).toContain(`Powód: za duży debet. Gotówka spadła do ${plain(`−${zl(1234 - DEBT_LIMIT)}`)}, poniżej granicy ${floor}`);
     expect(modalText()).not.toContain('zaufanie Centrali spadło do zera');
   });
 
   it('zaufanie zero: gotówka powyżej granicy', () => {
-    ended(BANKRUPTCY_AT + 5000, 0);
+    ended(DEBT_LIMIT + 5000, 0);
     expect(modalText()).toContain('Powód: zaufanie Centrali spadło do zera.');
-    expect(modalText()).not.toContain('dług');
+    expect(modalText()).not.toContain('debet');
   });
 
-  it('gotówka równa granicy nie jest długiem (granica jest ostra: poniżej)', () => {
-    ended(BANKRUPTCY_AT, 0);
+  it('gotówka równa granicy nie jest za dużym debetem (granica jest ostra: poniżej)', () => {
+    ended(DEBT_LIMIT, 0);
     expect(modalText()).toContain('Powód: zaufanie Centrali spadło do zera.');
-    expect(modalText()).not.toContain('dług');
+    expect(modalText()).not.toContain('debet');
   });
 
-  it('dług i zaufanie zero naraz: tekst mówi o obu i nie rozstrzyga, które zakończyło umowę', () => {
-    ended(BANKRUPTCY_AT - 10_000, 0);
-    expect(modalText()).toContain(`Powód: zaufanie Centrali spadło do zera, a gotówka po raporcie była poniżej ${floor}.`);
+  it('debet i zaufanie zero naraz: tekst mówi o obu i nie rozstrzyga, które zakończyło umowę', () => {
+    ended(DEBT_LIMIT - 10_000, 0);
+    expect(modalText()).toContain(`Powód: zaufanie Centrali spadło do zera, a gotówka spadła poniżej granicy debetu ${floor}.`);
   });
 
-  it('powód wynika ze stanu, nie z toastu ani z okna raportu: jest po przeładowaniu (raport z zapisu, brak sygnału report)', () => {
-    const { s } = ended(BANKRUPTCY_AT - 1, 55);
+  it('powód wynika ze stanu, nie z toastu ani z okna raportu: jest po przeładowaniu (brak sygnału report), także bez raportu w zapisie', () => {
+    const { s } = ended(DEBT_LIMIT - 1, 55, false);
     expect(report.value).toBeNull();
-    expect(terminationReason(s)).toContain('dług');
-    expect(modalText()).toContain('Powód: dług');
+    expect(terminationReason(s)).toContain('za duży debet');
+    expect(modalText()).toContain('Powód: za duży debet');
   });
 
-  it('zapis sprzed raportu i bez zera zaufania: samo wypowiedzenie, bez zgadywania powodu', () => {
-    const { s } = ended(null, 55);
+  it('zapis bez debetu i bez zera zaufania: samo wypowiedzenie, bez zgadywania powodu', () => {
+    const { s } = ended(1000, 55, false);
     expect(terminationReason(s)).toBeNull();
     expect(modalText()).not.toContain('Powód');
   });
 
-  it('zwykły raport miesiąca (gra trwa) nie ma powodu, nawet gdy to pierwszy miesiąc z długiem', () => {
+  it('zwykły raport miesiąca (gra trwa) nie ma powodu; przy gotówce pod progiem ostrzeżenia mówi, ile zostało do granicy', () => {
     const { s, info } = base();
-    s.lastReport = monthReport(detailed(), { cash: BANKRUPTCY_AT - 1 });
+    s.lastReport = monthReport(detailed(), { cash: DEBT_WARN - 500 });
     publishState(s, info);
     report.value = s.lastReport;
     expect(modalText()).toContain('Raport: wrzesień 2026');
     expect(modalText()).not.toContain('Powód');
+    // ostrzeżenie stoi w treści raportu (ReportBody), w obu jego wersjach: ze szczegółami i ze starego zapisu
+    const bodyText = (r: MonthReport): string => plain(textOf(ReportBody({ r })));
+    expect(bodyText(s.lastReport)).toContain(plain(debtWarningText(DEBT_WARN - 500)));
+    expect(bodyText(monthReport(null, { cash: DEBT_WARN - 500 }))).toContain(plain(debtWarningText(DEBT_WARN - 500)));
+    expect(bodyText({ ...s.lastReport, cash: DEBT_WARN })).not.toContain('granicy debetu');
   });
 });
 
