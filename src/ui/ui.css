@@ -872,6 +872,25 @@
   cursor: default;
 }
 
+/* Przycisk kasy z powodem, dla którego jest nieaktywny: krótki napis po lewej stronie, nad sceną (stukanie w kasę tylko gdy pomaga). */
+.tt-fab-slot {
+  position: relative;
+}
+
+.tt-fab-note {
+  position: absolute;
+  top: 50%;
+  right: 70px;
+  transform: translateY(-50%);
+  padding: 3px 8px;
+  border-radius: 10px;
+  background: rgba(19, 40, 28, 0.78);
+  color: var(--tt-cream);
+  font-size: 11px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
 .tt-fab .tt-badge {
   top: -2px;
   right: -2px;

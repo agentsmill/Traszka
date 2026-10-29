@@ -2,10 +2,11 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
-  BANKRUPTCY_AT, CATS, CAT_INFO, DELIVERY_AT, FRANCHISE_FEE_FIXED, FRANCHISE_FEE_SHARE, HOT, MINUTES_PER_DAY, MINUTES_PER_SECOND_CLOSED,
-  MINUTES_PER_SECOND_OPEN, OPEN_FROM, OPEN_TO, ORDER_DEADLINE, PALLETS_FREE, PALLET_FEE, RETURN_FEE, STAFF_MAX,
+  ASSISTANT_UNLOAD_MIN, BANKRUPTCY_AT, CATS, CAT_INFO, DELIVERY_AT, FRANCHISE_FEE_FIXED, FRANCHISE_FEE_SHARE, HOT, MINUTES_PER_DAY, MINUTES_PER_SECOND_CLOSED,
+  MINUTES_PER_SECOND_OPEN, OPEN_FROM, OPEN_TO, ORDER_DEADLINE, PALLETS_FREE, PALLET_FEE, RETURN_FEE, STAFF_MAX, STRAZ, TILL_TAP_QUEUE_MIN,
 } from '@/sim/economy/catalog';
 import { nextRankAt, rankFor } from '@/sim/economy/progress';
+import { FATIGUE } from '@/sim/economy/tycoon/fatigue';
 import { KPI } from '@/sim/economy/tycoon/kpi';
 import { PROFILE_LABEL, PROFILE_ORDER, STAFF_PROFILES } from '@/sim/economy/tycoon/staff';
 import { SUNDAY_TRAFFIC } from '@/sim/economy/tycoon/sunday';
@@ -99,14 +100,14 @@ describe('treść okna „Jak grać”', () => {
   });
 
   it('szczegóły to zwinięte sekcje w ustalonej kolejności, każda z treścią', () => {
-    expect(howToDetails().map((s) => s.title)).toEqual(['Pieniądze i ubytki', 'Palety i dostawy', 'Ludzie', 'Zaufanie Centrali', 'Czas i cele']);
+    expect(howToDetails().map((s) => s.title)).toEqual(['Pieniądze i ubytki', 'Palety i dostawy', 'Twoje ręce', 'Ludzie', 'Zaufanie Centrali', 'Czas i cele']);
     for (const s of howToDetails()) expect(s.paragraphs.length, s.title).toBeGreaterThan(0);
   });
 
-  it('punkty i szczegóły razem mają najwyżej ok. 350 słów (z nagłówkami)', () => {
+  it('punkty i szczegóły razem mają najwyżej ok. 450 słów (z nagłówkami)', () => {
     const n = words(text());
     expect(n).toBeGreaterThanOrEqual(200);
-    expect(n).toBeLessThanOrEqual(350);
+    expect(n).toBeLessThanOrEqual(450);
   });
 
   it('żadnych śladów po szablonie, wykrzykników ani sklejonych spacji; każdy punkt i akapit kończy się kropką', () => {
@@ -161,6 +162,15 @@ describe('treść okna „Jak grać”', () => {
     expect(t).toContain(`Najwięcej zatrudnisz ${STAFF_MAX} ${plural(STAFF_MAX, 'osobę', 'osoby', 'osób')}`);
     expect(t).toContain(`Doba trwa ok. 3 min 20 s przy ${SPEEDS[1]!.label}, a sklep działa od ${OPEN_FROM / 60}:00 do ${OPEN_TO / 60}:00`);
     expect(t).toContain(`W niedzielę ruch rośnie ×${pl(SUNDAY_TRAFFIC)}`);
+  });
+
+  it('Straż, limit asystenta i stukanie: liczby ze stałych (zmiany z 29.10.2026)', () => {
+    const t = detailsText();
+    expect(t).toContain(`rozładują w ${pl(ASSISTANT_UNLOAD_MIN / 60)} godzin: więcej ludzi, więcej towaru`);
+    expect(t).toContain(`Straż Miejska zagląda od ${STRAZ.from / 60}:00, gdy palety stoją pod sklepem dłużej niż ${pl(STRAZ.graceMin / 60)} godziny`);
+    expect(t).toContain('Najpierw upomina, a mandat daje przy kolejnym obchodzie tego dnia');
+    expect(t).toContain(`kolejka czekałaby dłużej niż ${TILL_TAP_QUEUE_MIN} minuty`);
+    expect(t).toContain(`masz ich ${FATIGUE.pool} na dobę, a noc oddaje ${FATIGUE.nightRecovery}`);
   });
 
   it('każda liczba w szczegółach to stała gry: zaufanie, umowa i cele', () => {

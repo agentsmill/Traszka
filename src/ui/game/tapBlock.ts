@@ -1,4 +1,5 @@
-import { awaitingDecision, type EconomyState } from '@/sim/economy/economy';
+import { awaitingDecision, tillTapBlock, type EconomyState } from '@/sim/economy/economy';
+import type { StoreInfo } from '@/sim/economy/storeInfo';
 import { tapCost, type TapKind } from '@/sim/economy/tycoon/fatigue';
 import { speed } from '../state';
 
@@ -16,4 +17,12 @@ export function tapBlock(s: EconomyState, kind: TapKind): string | undefined {
   if (speed.value === 0) return 'Gra wstrzymana: wznów czas';
   if (awaitingDecision(s)) return 'Najpierw odpowiedz na kartę decyzji';
   return undefined;
+}
+
+/**
+ * Powód, dla którego stuknięcie w kasę jest teraz nieaktywne (albo undefined): najpierw blokady wspólne (`tapBlock`), potem te z
+ * symulacji (`tillTapBlock`: sklep zamknięty, nikt nie czeka, kasjer nadąża z kolejką).
+ */
+export function tillReason(s: EconomyState, info: StoreInfo): string | undefined {
+  return tapBlock(s, 'kasa') ?? tillTapBlock(s, info) ?? undefined;
 }

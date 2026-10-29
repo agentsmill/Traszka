@@ -1,8 +1,9 @@
 import {
-  BANKRUPTCY_AT, CATS, CAT_INFO, DELIVERY_AT, FRANCHISE_FEE_FIXED, FRANCHISE_FEE_SHARE, HOT, MINUTES_PER_DAY, MINUTES_PER_SECOND_CLOSED,
-  MINUTES_PER_SECOND_OPEN, OPEN_FROM, OPEN_TO, ORDER_DEADLINE, PALLETS_FREE, PALLET_FEE, RETURN_FEE, STAFF_MAX, type Cat,
+  ASSISTANT_UNLOAD_MIN, BANKRUPTCY_AT, CATS, CAT_INFO, DELIVERY_AT, FRANCHISE_FEE_FIXED, FRANCHISE_FEE_SHARE, HOT, MINUTES_PER_DAY, MINUTES_PER_SECOND_CLOSED,
+  MINUTES_PER_SECOND_OPEN, OPEN_FROM, OPEN_TO, ORDER_DEADLINE, PALLETS_FREE, PALLET_FEE, RETURN_FEE, STAFF_MAX, STRAZ, TILL_TAP_QUEUE_MIN, type Cat,
 } from '@/sim/economy/catalog';
 import { nextRankAt, rankFor } from '@/sim/economy/progress';
+import { FATIGUE } from '@/sim/economy/tycoon/fatigue';
 import { KPI } from '@/sim/economy/tycoon/kpi';
 import { PROFILE_LABEL, PROFILE_ORDER, STAFF_PROFILES, type StaffTask } from '@/sim/economy/tycoon/staff';
 import { SUNDAY_TRAFFIC } from '@/sim/economy/tycoon/sunday';
@@ -119,8 +120,17 @@ export function howToDetails(): HowToSection[] {
       title: 'Palety i dostawy',
       paragraphs: [
         `Zamówienie na jutro zamyka się o ${hourOf(ORDER_DEADLINE)}, a dostawa przyjeżdża zwykle o ${hourOf(DELIVERY_AT)}. Domyślnie zamawia Asystent Traszki, ręcznie ustawisz je w zakładce Palety.`,
+        `Asystent zamawia najwyżej tyle palet, ile ludzie poza kasą rozładują w ${num(ASSISTANT_UNLOAD_MIN / 60)} godzin: więcej ludzi, więcej towaru.`,
+        `Straż Miejska zagląda od ${hourOf(STRAZ.from)}, gdy palety stoją pod sklepem dłużej niż ${num(STRAZ.graceMin / 60)} godziny. Najpierw upomina, a mandat daje przy kolejnym obchodzie tego dnia.`,
         `Palety ponad ${PALLETS_FREE} w zamówieniu kosztują po ${zl(PALLET_FEE)}, a gdy brakuje miejsca, kierowca zabiera paletę i liczy ${zl(RETURN_FEE)}.`,
         'Paleta przestawiona „Do sali” przeszkadza klientom. Worki po rozładunku ktoś musi wynieść, inaczej zajmą zaplecze.',
+      ],
+    },
+    {
+      title: 'Twoje ręce',
+      paragraphs: [
+        `Stuknięcie w paletę przyspiesza rozładunek. W kasę stukasz tylko wtedy, gdy przy kasie nikogo nie ma albo kolejka czekałaby dłużej niż ${num(TILL_TAP_QUEUE_MIN)} minuty.`,
+        `Każde stuknięcie zużywa siły: masz ich ${num(FATIGUE.pool)} na dobę, a noc oddaje ${num(FATIGUE.nightRecovery)}.`,
       ],
     },
     {

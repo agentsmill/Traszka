@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'preact/hooks';
 import { BANKRUPTCY_AT, RETURN_FEE } from '@/sim/economy/catalog';
-import { effects, isOpenForCustomers, slotFree, slotUsage, tapCombo, type EconomyState, type MonthReport } from '@/sim/economy/economy';
+import { effects, slotFree, slotUsage, tapCombo, tillTapBlock, type EconomyState, type MonthReport } from '@/sim/economy/economy';
 import { visibleCards } from '@/sim/economy/tycoon/cards';
 import { FATIGUE } from '@/sim/economy/tycoon/fatigue';
 import { REPORT_LINE_LABEL, hintText, reportCommentText } from '@/sim/economy/tycoon/report';
@@ -14,7 +14,7 @@ import {
 } from '../state';
 import { int, people, signedPts, signedZl, zl } from './format';
 import { Bar, PalletItem } from './panels';
-import { NO_ENERGY_TITLE, tapBlock } from './tapBlock';
+import { NO_ENERGY_TITLE, tapBlock, tillReason } from './tapBlock';
 
 export const DISCLAIMER = 'Wszystkie firmy, postacie i zdarzenia są fikcyjne.';
 
@@ -42,9 +42,9 @@ export function SelectionCard({ game }: { game: GameActions }) {
       <>
         <h3>Kasa</h3>
         <p>Kolejka: <b>{int(s.queue)}</b> · na kasie: {people(s.lastCashiers)} os. · SCO: {fx.sco}</p>
-        <button type="button" class="tt-btn tt-primary big" disabled={!isOpenForCustomers(s) || s.queue < 1 || !!tapBlock(s, 'kasa')} title={tapBlock(s, 'kasa')}
+        <button type="button" class="tt-btn tt-primary big" disabled={!!tillReason(s, info)} title={tillReason(s, info)}
           onClick={() => game.dispatch({ type: 'tapTill' })}>Obsłuż klienta</button>
-        <p class="tt-hint">Stuknięcie w kasę w sklepie też obsługuje klienta. Ty też umiesz kasować.</p>
+        <p class="tt-hint">{tillTapBlock(s, info) ?? 'Kolejka przerasta kasjera: staniesz przy drugiej kasie.'} Stukanie pomaga tylko, gdy przy kasie nikogo nie ma albo kolejka rośnie.</p>
       </>
     );
   } else {
@@ -83,8 +83,8 @@ export const LOW_ENERGY = 20;
 
 /**
  * Duże przyciski klikera nad dolnym paskiem: rozładuj najpilniejszą paletę, obsłuż klienta; nad nimi pasek sił franczyzobiorcy.
- * Blokady stuknięcia opisuje `tapBlock`; kasa dodatkowo wymaga otwartego sklepu (`isOpenForCustomers`, także karta „zamknij na
- * godzinę”) i klienta w kolejce.
+ * Blokady stuknięcia opisuje `tapBlock`; kasa dodatkowo działa tylko wtedy, gdy pomaga (`tillTapBlock`: sklep otwarty, ktoś
+ * czeka, a przy kasie nikogo nie ma albo kolejka przerasta kasjera), i wtedy przy przycisku stoi krótki powód.
  */
 export function ClickerBar({ game, onFloat }: { game: GameActions; onFloat: (x: number, y: number, text: string, kind: 'money' | 'work') => void }) {
   const view = econ.value;
@@ -94,7 +94,8 @@ export function ClickerBar({ game, onFloat }: { game: GameActions; onFloat: (x: 
   const q = Math.round(s.queue);
   const energy = s.tycoon.fatigue.energy;
   const palletBlock = tapBlock(s, 'paleta');
-  const tillBlock = tapBlock(s, 'kasa');
+  const tillBlock = tillReason(s, view.info);
+  const tillNote = tillTapBlock(s, view.info)?.replace(/\.$/, '');
   const at = (e: MouseEvent): [number, number] => [e.clientX || window.innerWidth - 60, e.clientY || window.innerHeight - 140];
   return (
     <div class="tt-clicker">
@@ -106,10 +107,13 @@ export function ClickerBar({ game, onFloat }: { game: GameActions; onFloat: (x: 
         onClick={(e) => { const r = game.dispatch({ type: 'tapPallet' }); if (r.ok) onFloat(...at(e), `+${Math.round(r.value ?? 0)} szt.`, 'work'); }}>
         <span aria-hidden="true">📦</span>{pallets > 0 && <span class="tt-badge">{pallets}</span>}
       </button>
-      <button type="button" class="tt-fab" disabled={q < 1 || !isOpenForCustomers(s) || !!tillBlock} title={tillBlock} aria-label={`Obsłuż klienta (${q} w kolejce)`}
-        onClick={(e) => { const r = game.dispatch({ type: 'tapTill' }); if (r.ok) onFloat(...at(e), `+${(r.value ?? 0).toLocaleString('pl-PL', { maximumFractionDigits: 2 })} zł`, 'money'); }}>
-        <span aria-hidden="true">🧾</span>{q > 0 && <span class="tt-badge">{q}</span>}
-      </button>
+      <div class="tt-fab-slot">
+        {tillNote && <span class="tt-fab-note">{tillNote}</span>}
+        <button type="button" class="tt-fab" disabled={!!tillBlock} title={tillBlock} aria-label={`Obsłuż klienta (${q} w kolejce)`}
+          onClick={(e) => { const r = game.dispatch({ type: 'tapTill' }); if (r.ok) onFloat(...at(e), `+${(r.value ?? 0).toLocaleString('pl-PL', { maximumFractionDigits: 2 })} zł`, 'money'); }}>
+          <span aria-hidden="true">🧾</span>{q > 0 && <span class="tt-badge">{q}</span>}
+        </button>
+      </div>
     </div>
   );
 }

@@ -216,7 +216,7 @@ describe('przyciski nakładek wysyłają polecenia', () => {
 
   it('karta kasy: „Obsłuż klienta” jest nieaktywny bez sił, na pauzie i przy zamkniętym sklepie, a w przeciwnym razie aktywny', () => {
     const { s, info } = base();
-    s.queue = 2;
+    s.queue = 10;   // kolejka przerasta jednego kasjera, więc stukanie pomaga (`tillTapBlock`)
     publishState(s, info);
     selection.value = { kind: 'till' };
     const till = (): Vnode => buttonsOf(SelectionCard({ game: fakeGame() })).find((b) => textOf(b) === 'Obsłuż klienta')!;
@@ -230,6 +230,31 @@ describe('przyciski nakładek wysyłają polecenia', () => {
     s.tycoon.fatigue.energy = 100;
     s.minute = 3 * 60;
     expect(till().props.disabled).toBe(true);
+  });
+
+  it('kasa nie proponuje stukania, gdy kasjer nadąża: przycisk wyszarzony z krótkim powodem obok (decyzja z 29.10.2026)', () => {
+    const { s, info } = base();
+    s.queue = 1;
+    s.lastCashiers = 1;
+    publishState(s, info);
+    const till = (): Vnode => buttonsOf(ClickerBar({ game: fakeGame(), onFloat: vi.fn() }))[1]!;
+    const note = (): string | undefined => {
+      const v = walk(ClickerBar({ game: fakeGame(), onFloat: vi.fn() }) as Vnode).find((x) => x.props.class === 'tt-fab-note');
+      return v ? textOf(v) : undefined;
+    };
+    expect(till().props.disabled).toBe(true);
+    expect(note()).toBe('Kasjer nadąża z kolejką');
+    s.queue = 10;   // kolejka przerasta kasjera: przycisk działa i nie ma podpisu
+    publishState(s, info);
+    expect(till().props.disabled).toBe(false);
+    expect(note()).toBeUndefined();
+    s.queue = 1;
+    s.lastCashiers = 0;   // przy kasie nikogo: stukanie pomaga przy każdej kolejce
+    publishState(s, info);
+    expect(till().props.disabled).toBe(false);
+    s.queue = 0;
+    publishState(s, info);
+    expect(note()).toBe('Nikt nie czeka przy kasie');
   });
 
   it('karta slotu: zakup sprzętu wysyła buyEquipment z id slotu', () => {
