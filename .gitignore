@@ -8,3 +8,9 @@ assets-src
 .claude/worktrees/
 # Bundle sędziego rankingu: generowany przez `npm run build:judge` (scripts/build-judge.mjs), nie commitowany
 src/server/judgeBundle.js
+# Repozytorium jest publiczne: pliki środowiskowe (klucze, tokeny) i dane połączenia z Vercelem (`vercel link` / `vercel pull` tworzą
+# .vercel/ z identyfikatorami projektu i zespołu) nie mogą trafić do commita. Wyjątek: wzorzec .env.example.
+.env
+.env.*
+!.env.example
+.vercel
