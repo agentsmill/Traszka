@@ -12,8 +12,8 @@ import type { CashierLook } from './cashier';
 import { addToNetwork, claimDaily, partnerOf, saveMeta, startupWindow, type Meta } from './meta';
 import { openStore } from './openStore';
 import {
-  RANKED_DAYS, clearFinished, createRankedSession, discardRanked, finishRun, getPlayMode, holdFinished, loadRanked, pendingFinished, rankedDayOf,
-  rankedRunStale, saveFinished, saveRanked, seasonOver, setPlayMode, storedRankedBlock, type FinishedRun,
+  RANKED_BANKRUPT_TEXT, RANKED_DAYS, clearFinished, createRankedSession, discardRanked, finishRun, getPlayMode, holdFinished, loadRanked, pendingFinished,
+  rankedDayOf, rankedRunStale, saveFinished, saveRanked, seasonOver, setPlayMode, storedRankedBlock, type FinishedRun,
 } from './rankedRun';
 import type { ScenePick } from './scene';
 import { chooseStore, freeSeed } from './seeds';
@@ -98,6 +98,7 @@ export function markOffLog(session: GameSession): void {
 }
 
 const SEASON_OVER_TEXT = 'Sezon dobiegł końca.';
+const TERMINATED_TEXT = 'Umowa wypowiedziana: bieg się zakończył.';
 const LOG_FULL_TEXT = 'Dziennik biegu rankingowego jest pełny.';
 const TAP_LOG_FULL_TEXT = 'Dziennik biegu jest prawie pełny: ręczne stukanie się skończyło. Zakupy i decyzje działają dalej.';
 
@@ -105,13 +106,14 @@ const TAP_LOG_FULL_TEXT = 'Dziennik biegu jest prawie pełny: ręczne stukanie s
 const TAP_COMMANDS: ReadonlySet<Command['type']> = new Set<Command['type']>(['tapPallet', 'tapTill']);
 
 /**
- * Czy sesja rankingowa nie przyjmuje polecenia `type` i dlaczego: sezon się skończył (`seasonOver`) albo umowa została wypowiedziana
- * (`gameOver`: bieg też się wtedy zamyka), albo dziennik jest pełny. Stuknięcia kończą się już na `RANKED_TAP_LOG_MAX` wpisach (rezerwa
+ * Czy sesja rankingowa nie przyjmuje polecenia `type` i dlaczego: umowa została wypowiedziana (`gameOver`: bieg się zakończył, własny
+ * komunikat), sezon się skończył (`seasonOver`) albo dziennik jest pełny. Stuknięcia kończą się już na `RANKED_TAP_LOG_MAX` wpisach (rezerwa
  * `RANKED_LOG_RESERVE` zostaje na zakupy i karty), reszta poleceń na `RUN_LOG_MAX`. Bieg rankingowy bez dziennika byłby nie do wysłania,
  * więc polecenie przepada, zamiast po cichu go unieważnić. Tekst to to, co zobaczy gracz.
  */
 function rankedRefusal(session: GameSession, type: Command['type']): string | null {
-  if (seasonOver(session.econ) || session.econ.gameOver) return SEASON_OVER_TEXT;
+  if (session.econ.gameOver) return TERMINATED_TEXT;
+  if (seasonOver(session.econ)) return SEASON_OVER_TEXT;
   if (session.run === null) return null;
   const entries = session.run.record.log.length;
   if (entries >= RUN_LOG_MAX) return LOG_FULL_TEXT;
@@ -480,20 +482,33 @@ export function createShell(deps: ShellDeps): GameShell {
   }
 
   /**
-   * Koniec sezonu w biegu rankingowym (`seasonOver`) albo wypowiedzenie umowy przed jego końcem (`gameOver`: wynik liczy się z raportów,
-   * które powstały): zamyka bieg dokładnie raz. `finishRun` odtwarza cały sezon z dziennika (około sekundy), więc gra staje na ten czas;
-   * to cena za wynik liczony tym samym kodem co serwer. Gotowy bieg trafia do szuflady (`saveFinished`), a gdy przeglądarka jej nie przyjmie,
-   * zostaje w pamięci karty (`holdFinished`) z jednym ostrzeżeniem. Bieg bez dziennika (`run === null`: unieważniony) nie daje szuflady.
-   * Aktywny zapis znika dopiero, gdy bieg jest bezpieczny w szufladzie (`saveFinished` zwróciło true) albo nie ma czego ratować (bieg bez dziennika);
-   * `persist` sesji zamkniętej go nie odnawia. Gdy szuflada bieg odrzuci albo `finishRun` rzuci (błąd w kodzie, nie w dzienniku), aktywny zapis
-   * zostaje, a po przeładowaniu bieg wznowi się z końca sezonu i zamknie ponownie (to samo wejście, ten sam wynik). Bieg do wysłania
-   * (w szufladzie albo w pamięci karty) otwiera okno końca sezonu (`ui.finish`): gracz widzi wynik i wysyła go albo zamyka okno.
+   * Koniec biegu rankingowego: sezon się skończył (`seasonOver`) albo bieg zakończył się grą przed jego końcem (`gameOver`: granica
+   * debetu albo wypowiedzenie umowy). Zamyka bieg dokładnie raz.
+   * - Bankrut (`gameOver`) nie wchodzi do rankingu: serwer odrzuciłby go jako `season-bankrupt`, a lokalnie wiadomo to samo, więc nie ma
+   *   odtwarzania (`finishRun`) ani szuflady. Aktywny zapis przepada, gracz dostaje jeden komunikat, a okno końca współpracy
+   *   (`ReportModal`) mówi to samo pod powodem; okna końca sezonu nie ma.
+   * - Sezon doigrany do końca: `finishRun` odtwarza cały sezon z dziennika (około sekundy), więc gra staje na ten czas; to cena za
+   *   wynik liczony tym samym kodem co serwer. Gotowy bieg trafia do szuflady (`saveFinished`), a gdy przeglądarka jej nie przyjmie,
+   *   zostaje w pamięci karty (`holdFinished`) z jednym ostrzeżeniem. Bieg bez dziennika (`run === null`: unieważniony) nie daje szuflady.
+   *   Aktywny zapis znika dopiero, gdy bieg jest bezpieczny w szufladzie (`saveFinished` zwróciło true) albo nie ma czego ratować
+   *   (bieg bez dziennika); `persist` sesji zamkniętej go nie odnawia. Gdy szuflada bieg odrzuci albo `finishRun` rzuci (błąd w kodzie,
+   *   nie w dzienniku), aktywny zapis zostaje: przeładowanie strony przed „Zamknij” wznowi bieg z końca sezonu i zamknie go ponownie
+   *   (to samo wejście, ten sam wynik), a po „Zamknij” (`leaveRanked` ustawia tryb `casual`) bieg wraca przez wiersz „Kontynuuj bieg
+   *   rankingowy” w ustawieniach. Bieg do wysłania (w szufladzie albo w pamięci karty) otwiera okno końca sezonu (`ui.finish`): gracz
+   *   widzi wynik i wysyła go albo zamyka okno.
    */
   function concludeSeason(): void {
     const { session } = shell;
     if (!session || session.mode !== 'ranked' || concluded.has(session)) return;
     if (!seasonOver(session.econ) && !session.econ.gameOver) return;
     concluded.add(session);   // przed `finishRun`: ani wyjątek, ani następna klatka nie powtórzy kosztownego odtwarzania
+    if (session.econ.gameOver) {
+      discardRanked();   // bankrut nie wraca w żadnej postaci: ani w szufladzie, ani z aktywnego zapisu
+      syncUnsent();
+      publish();   // faza `over` od razu
+      fx.notice(RANKED_BANKRUPT_TEXT);
+      return;
+    }
     let finished: FinishedRun | null;
     try {
       finished = finishRun(session, Date.now());
@@ -509,7 +524,7 @@ export function createShell(deps: ShellDeps): GameShell {
     } else if (saveFinished(finished)) {
       discardRanked();   // szuflada ma bieg: aktywny zapis kasujemy dopiero teraz
     } else {
-      holdFinished(finished);   // aktywny zapis zostaje: po przeładowaniu bieg wznowi się z końca sezonu i zamknie się ponownie
+      holdFinished(finished);   // aktywny zapis zostaje: bieg czeka w pamięci karty, a przeładowanie przed „Zamknij” wznowi go z końca sezonu
       fx.notice(RANKED_RESULT_NOT_SAVED_NOTICE);
     }
     syncUnsent();

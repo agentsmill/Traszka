@@ -7,7 +7,7 @@ import { newRunLog } from '@/game/session';
 import { API_ERRORS } from '@/server/errors';
 import { NETWORK_ERROR, createRankingClient, type ApiResult, type RankingClient, type RunAccepted } from './client';
 import {
-  ACCEPTED_TEXT, LATER_TEXT, NICK_TAKEN_TEXT, NOTHING_TO_SEND_TEXT, NO_KEY_TEXT, OLD_VERSION_TEXT, READY_TEXT, REJECTED_TEXT, SENDING_TEXT,
+  ACCEPTED_TEXT, BANKRUPT_TEXT, LATER_TEXT, NICK_TAKEN_TEXT, NOTHING_TO_SEND_TEXT, NO_KEY_TEXT, OLD_VERSION_TEXT, READY_TEXT, REJECTED_TEXT, SENDING_TEXT,
   bindFinishOpen, classify, createFinishModel, type FinishDeps, type SendOutcome,
 } from './finishModel';
 
@@ -52,6 +52,13 @@ describe('classify: odpowiedź serwera na wysłany bieg', () => {
 
   it.each(['bad-request', 'bad-log', 'bad-seed', 'not-ranked', 'bad-nick', 'bad-key', 'too-large'])('%s: Centrala odrzuciła bieg', (code) => {
     expect(classify(failure(code))).toEqual({ kind: 'rejected', message: REJECTED_TEXT });
+  });
+
+  it('season-bankrupt: odrzucenie z własnym tekstem o bankructwie (tym samym co komunikat serwera), a nie ogólnym „Centrala odrzuciła”', () => {
+    expect(classify(failure('season-bankrupt'))).toEqual({ kind: 'rejected', message: BANKRUPT_TEXT });
+    expect(BANKRUPT_TEXT).toBe('Sezon zakończony bankructwem nie trafia do rankingu.');
+    expect(BANKRUPT_TEXT).toBe(API_ERRORS['season-bankrupt'].message);
+    expect(BANKRUPT_TEXT).not.toBe(REJECTED_TEXT);
   });
 
   it.each([
@@ -173,6 +180,7 @@ describe('model okna końca sezonu', () => {
       ['brak sieci', failure('network', NETWORK_ERROR), 'later'],
       ['serwer odrzucił dziennik', failure('bad-log'), 'rejected'],
       ['zły klucz', failure('bad-key'), 'rejected'],
+      ['bankructwo w sezonie', failure('season-bankrupt'), 'rejected'],
     ];
     it.each(cases)('%s', async (_name, reply, kind) => {
       const { model, clear, rememberNick } = setup({ replies: [reply] });
@@ -322,6 +330,19 @@ describe('model okna końca sezonu', () => {
       expect(pendingFinished()).toBeNull();
       expect(model.confirming.value).toBe(false);
       expect(model.score.value).toBeNull();
+    });
+
+    it('bieg odrzucony jako bankructwo: faza „rejected” z tekstem o bankructwie, a „Odrzuć bieg” (discard) opróżnia szufladę', async () => {
+      const { model, clear } = setup({ replies: [failure('season-bankrupt', API_ERRORS['season-bankrupt'].message)] });
+      await model.send();
+      expect(model.phase.value).toBe('rejected');
+      expect(model.message.value).toBe(BANKRUPT_TEXT);
+      expect(loadFinished()).not.toBeNull();   // sam wynik odpowiedzi niczego nie kasuje
+      model.askDiscard();
+      model.discard();
+      expect(clear).toHaveBeenCalledTimes(1);
+      expect(loadFinished()).toBeNull();
+      expect(pendingFinished()).toBeNull();
     });
 
     it('odrzucenie nie rusza serwera ani nicka', () => {

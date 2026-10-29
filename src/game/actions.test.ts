@@ -2524,7 +2524,9 @@ describe('powłoka gry (createShell)', () => {
       const SEASON_OVER_TEXT = 'Sezon dobiegł końca.';
       const LOG_FULL_TEXT = 'Dziennik biegu rankingowego jest pełny.';
       const TAP_LOG_FULL_TEXT = 'Dziennik biegu jest prawie pełny: ręczne stukanie się skończyło. Zakupy i decyzje działają dalej.';
+      const TERMINATED_TEXT = 'Umowa wypowiedziana: bieg się zakończył.';
       const NOT_COUNTED_NOTICE = 'Ten bieg nie liczy się do rankingu.';
+      const BANKRUPT_NOTICE = 'Ten bieg nie trafi do rankingu: sezon zakończony bankructwem.';
       const RESULT_NOT_SAVED_NOTICE = 'Przeglądarka nie ma miejsca na zapis wyniku. Wyślij go teraz, zanim zamkniesz kartę.';
       const NO_NETWORK_NOTICE = 'W biegu rankingowym nie ma sieci sklepów.';
       const NO_RESTART_NOTICE = 'W biegu rankingowym nie zaczyna się od nowa. Porzuć bieg w ustawieniach.';
@@ -2593,26 +2595,75 @@ describe('powłoka gry (createShell)', () => {
           expect(h.shell.session).toBe(s);   // gracz zostaje w sesji: okno końca pokaże kolejny krok
         }, FULL_SEASON_MS);
 
-        it('bieg przerwany wypowiedzeniem umowy przed końcem listopada też się zamyka, z wynikiem z raportów, które powstały; dziennik zawiera polecenia gracza', () => {
+        it('bankrut (gameOver przed końcem sezonu) nie trafia do szuflady: bez odtwarzania, aktywny zapis skasowany, jeden komunikat, bez ui.unsent i bez okna końca sezonu', () => {
           const h = harness();
           h.shell.startRanked(RANKED_SEED);
           const s = h.shell.session!;
           expect(h.shell.game.dispatch({ type: 'setOrder', auto: false, manual: 4 }).ok).toBe(true);
+          h.shell.persist();
+          expect(storage.getItem('traszka:ranked')).not.toBeNull();   // aktywny zapis jest, zanim bieg się skończy
           s.econ.minute = 40 * MINUTES_PER_DAY + OPEN_FROM;
           s.econ.gameOver = true;
+          const finish = vi.spyOn(rankedRunModule, 'finishRun');
+          const writes = vi.spyOn(storage, 'setItem');
 
           h.shell.handleEvents([{ kind: 'gameover', text: 'Koniec współpracy' }]);
+          h.shell.handleEvents([]);   // następna klatka niczego nie powtarza
 
-          const drawer = loadFinished()!;
-          expect(drawer.seed).toBe(RANKED_SEED);
-          expect(drawer.record.log.map((e) => e.cmd.type)).toEqual(['setOrder']);
+          expect(finish).not.toHaveBeenCalled();
+          expect(drawerWrites(writes)).toBe(0);
+          expect(loadFinished()).toBeNull();
+          expect(pendingFinished()).toBeNull();
+          expect(storage.getItem('traszka:ranked:done')).toBeNull();
           expect(storage.getItem('traszka:ranked')).toBeNull();
-          expect(ui.unsent.value).toEqual({ seed: RANKED_SEED, score: drawer.score });
-          expect(ui.ranked.value?.phase).toBe('over');
-          expect(ui.ranked.value?.day).toBe(41);
+          expect(ui.unsent.value).toBeNull();
+          expect(ui.finish.value).toBeNull();
+          expect(ui.ranked.value).toMatchObject({ phase: 'over', day: 41 });
+          expect(h.notices).toEqual([BANKRUPT_NOTICE]);
+
+          // sesja zamknięta nie odnawia aktywnego zapisu, a nowy bieg rusza bez pytania o „niewysłany bieg”
+          h.shell.persist();
+          h.shell.handleEvents([{ kind: 'day', text: 'Dzień' }]);
+          expect(storage.getItem('traszka:ranked')).toBeNull();
+          expect(h.shell.startRanked('nowy-bieg')).toBe(true);
+          expect(ui.confirmRankedStart.value).toBeNull();
+          expect(h.shell.session).not.toBe(s);
+        });
+
+        it('bankrut w tej samej klatce co ostatni raport sezonu (gameOver na końcu sezonu): też bez szuflady i bez okna', () => {
+          const h = harness();
+          const s = rankedNearEnd(h, 1);
+          s.econ.minute = END;
+          s.econ.gameOver = true;
+          const finish = vi.spyOn(rankedRunModule, 'finishRun');
+
           h.shell.handleEvents([]);
-          expect(loadFinished()).toEqual(drawer);
-        }, FULL_SEASON_MS);
+
+          expect(finish).not.toHaveBeenCalled();
+          expect(loadFinished()).toBeNull();
+          expect(ui.finish.value).toBeNull();
+          expect(h.notices).toEqual([BANKRUPT_NOTICE]);
+        });
+
+        it('po bankructwie „Wróć do zwykłej gry” (leaveRanked) otwiera zwykły sklep, a ranking nie ma czego wznawiać ani wysyłać', () => {
+          const h = harness();
+          casualOpen(h, 'traszka-1', 4242);
+          h.shell.startRanked(RANKED_SEED);
+          const s = h.shell.session!;
+          s.econ.minute = 40 * MINUTES_PER_DAY + OPEN_FROM;
+          s.econ.gameOver = true;
+          h.shell.handleEvents([{ kind: 'gameover', text: 'Koniec współpracy' }]);
+
+          h.shell.leaveRanked();
+
+          expect(h.shell.session).toMatchObject({ seed: 'traszka-1', mode: 'casual' });
+          expect(h.shell.session!.econ.cash).toBe(4242);
+          expect(getPlayMode()).toBe('casual');
+          expect(loadRanked().status).toBe('none');
+          expect(loadFinished()).toBeNull();
+          expect(ui.ranked.value).toBeNull();
+          expect(ui.unsent.value).toBeNull();
+        });
 
         it('sesja z run === null (po markOffLog) nie tworzy szuflady: aktywny zapis zdjęty, komunikat, faza over, bez ui.unsent', () => {
           const h = harness();
@@ -2842,16 +2893,16 @@ describe('powłoka gry (createShell)', () => {
           stop();
         }, FULL_SEASON_MS);
 
-        it('wypowiedzenie umowy przed końcem sezonu też otwiera okno z wynikiem', () => {
+        it('wypowiedzenie umowy przed końcem sezonu (bankructwo) nie otwiera okna końca sezonu: nie ma wyniku do wysłania', () => {
           const h = harness();
           h.shell.startRanked(RANKED_SEED);
           const s = h.shell.session!;
           s.econ.minute = 40 * MINUTES_PER_DAY + OPEN_FROM;
           s.econ.gameOver = true;
           h.shell.handleEvents([{ kind: 'gameover', text: 'Koniec współpracy' }]);
-          expect(ui.finish.value).toEqual({ open: true });
-          expect(ui.unsent.value?.seed).toBe(RANKED_SEED);
-        }, FULL_SEASON_MS);
+          expect(ui.finish.value).toBeNull();
+          expect(ui.unsent.value).toBeNull();
+        });
 
         it('szuflada nie przyjęła biegu (bieg tylko w pamięci karty): okno też się otwiera', () => {
           const h = harness();
@@ -3004,12 +3055,15 @@ describe('powłoka gry (createShell)', () => {
           expect(JSON.stringify(s.econ)).toBe(before);
         });
 
-        it('wypowiedzenie umowy przed końcem sezonu też zamyka polecenia; tuż przed końcem polecenie jeszcze przechodzi', () => {
+        it('wypowiedzenie umowy przed końcem sezonu też zamyka polecenia, z własnym komunikatem (nie „Sezon dobiegł końca”); tuż przed końcem polecenie jeszcze przechodzi', () => {
           const rec = recorder();
           const over = createRankedSession(RANKED_SEED);
           over.econ.gameOver = true;
-          expect(dispatchCommand(over, { type: 'setOrder', auto: false }, rec.fx)).toEqual({ ok: false, text: SEASON_OVER_TEXT });
+          expect(dispatchCommand(over, { type: 'setOrder', auto: false }, rec.fx)).toEqual({ ok: false, text: TERMINATED_TEXT });
+          expect(rec.named('toast')).toEqual([['toast', TERMINATED_TEXT, 'error']]);
           expect(over.run!.record.log).toEqual([]);
+          over.econ.minute = END;   // gameOver wygrywa także po końcu sezonu: bieg się zakończył umową, a nie sezonem
+          expect(dispatchCommand(over, { type: 'setOrder', auto: false }, rec.fx).text).toBe(TERMINATED_TEXT);
 
           const last = createRankedSession(RANKED_SEED);
           last.econ.minute = END - 1;

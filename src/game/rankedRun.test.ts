@@ -16,7 +16,8 @@ import {
 import { GAME_VERSION } from './version';
 import { SAVE_SCHEMA, createSession, deleteSave, discardSave, newRunLog, retireSession, reviveSession, saveSession, type GameSession } from './session';
 
-const SEED = 'kiełbasa-42';
+/** Sklep, w którym bierny bieg przeżywa sezon (np. w kiełbasa-42 gotówka spada poniżej granicy debetu w ostatniej minucie): tylko taki bieg `finishRun` oddaje do wysłania. */
+const SEED = 'szarlotka-380';
 const END = RANKED_SEASON_END_MINUTE;
 
 /** Efekty poleceń bez skutków: te testy sprawdzają dziennik i zapis, nie dźwięk ani scenę. */
@@ -625,6 +626,22 @@ describe('finishRun', () => {
     expect(f.score).toBe(seasonScore(replayRun(f.record, END)));
     expect(log(s)).toHaveLength(played + 3);
     expect(s.run!.record.mode).toBe('ranked');
+  });
+
+  it('bieg, który po odtworzeniu kończy się grą (bankructwo przed końcem sezonu): null, bo sędzia odrzuciłby go jako season-bankrupt', () => {
+    const s = createRankedSession(SEED);
+    expect(dispatch(s, { type: 'setOrder', auto: false, manual: 30 })).toBe(true);   // zamówienia bez końca: gotówka schodzi poniżej granicy debetu
+    s.econ.minute = END - 1;   // „na skróty”: stan żywej gry nie ma tu znaczenia, finishRun liczy z dziennika
+    const record = { ...s.run!.record, log: log(s).map((e) => ({ ...e })) };
+    const state = replayRun(record, END);
+    expect(state.gameOver, 'dziennik naprawdę kończy grę').toBe(true);
+    expect(state.minute).toBeLessThan(END);
+    expect(finishRun(s, 1)).toBeNull();
+
+    // ten sam sklep bez zamówień na kredyt: bieg przeżywa sezon i jest do wysłania
+    const alive = createRankedSession(SEED);
+    alive.econ.minute = END - 1;
+    expect(finishRun(alive, 1)).toMatchObject({ v: 1, seed: SEED });
   });
 
   it('wynik jest kopią: późniejsza gra nie zmienia gotowego biegu', () => {

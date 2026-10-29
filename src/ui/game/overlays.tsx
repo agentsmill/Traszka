@@ -11,7 +11,7 @@ import { TRUST_REASON_LABEL, trustTerminates } from '@/sim/economy/tycoon/trust'
 import { EQUIPMENT, EQUIPMENT_BY_ID, equipmentCost } from '@/sim/economy/upgrades';
 import type { QualityPresetId } from '@/render/quality';
 import { networkIncomeOf, prestigePoints } from '@/game/meta';
-import { RANKED_DAYS, loadRanked, rankedDayOf, storedRankedBlock } from '@/game/rankedRun';
+import { RANKED_BANKRUPT_TEXT, RANKED_DAYS, loadRanked, rankedDayOf, storedRankedBlock } from '@/game/rankedRun';
 import {
   celebration, dismissStory, ephemeral, econ, hints, howTo, metaView, nextHint, openHowTo, openPanel, openRanking, preset, ranked, report, selection,
   seed, showPerf, showPrestige, showSettings, story, tab, toasts, unsent, welcome, type Controls, type GameActions, type RankedView,
@@ -237,8 +237,8 @@ export function terminationReason(s: EconomyState): string | null {
 }
 
 /**
- * Raport miesięczny (pauzuje grę). Przy wypowiedzeniu umowy: koniec gry i nowy start (w biegu rankingowym wyjście do zwykłej gry, a bieg
- * czeka w szufladzie niewysłanych). Okno końca gry wynika ze stanu
+ * Raport miesięczny (pauzuje grę). Przy wypowiedzeniu umowy: koniec gry i nowy start (w biegu rankingowym wyjście do zwykłej gry; taki bieg
+ * nie trafia do rankingu ani do szuflady niewysłanych, o czym mówi akapit pod powodem). Okno końca gry wynika ze stanu
  * (`gameOver` i ostatni raport w zapisie), więc wraca po przeładowaniu strony; zapis sprzed tej poprawki nie ma raportu
  * i pokazuje samo wypowiedzenie.
  */
@@ -254,11 +254,12 @@ export function ReportModal({ game }: { game: GameActions }) {
       <div class="tt-modal" role="dialog" aria-modal="true" aria-label={title}>
         <h2>{title}</h2>
         {reason && <p class="tt-end-reason" role="note"><b>{reason}</b></p>}
+        {over && ranked.value && <p class="tt-end-reason" role="note">{RANKED_BANKRUPT_TEXT}</p>}
         {r ? <ReportBody r={r} closing={over ? TERMINATION : undefined} /> : centralaQuote(TERMINATION)}
         <div class="tt-modal-foot">
           {over
             ? ranked.value
-              // bieg rankingowy nie zaczyna się od nowa (`restart` odmawia): wyjście do zwykłej gry, bieg czeka w szufladzie niewysłanych
+              // bieg rankingowy nie zaczyna się od nowa (`restart` odmawia): wyjście do zwykłej gry (bankrut nie ma czego wysyłać)
               ? <button type="button" class="tt-btn tt-primary big" onClick={() => game.leaveRanked()}>Wróć do zwykłej gry</button>
               : <button type="button" class="tt-btn tt-primary big" onClick={() => game.restart()}>Zacznij od nowa</button>
             : <button type="button" class="tt-btn tt-primary big" onClick={() => { report.value = null; }}>Dalej</button>}

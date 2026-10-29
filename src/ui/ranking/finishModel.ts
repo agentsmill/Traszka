@@ -17,6 +17,7 @@ export const NICK_TAKEN_TEXT = 'Ten nick jest zajęty. Wybierz inny — bieg zos
 export const OLD_VERSION_TEXT = 'Ta wersja gry jest nieaktualna. Odśwież stronę. Bieg zostaje w przeglądarce jako niewysłany.';
 export const LATER_TEXT = 'Spróbuj później. Bieg zostaje w przeglądarce, a wysłać go możesz z panelu rankingu i z ustawień.';
 export const REJECTED_TEXT = 'Centrala odrzuciła ten bieg. Możesz go odrzucić albo spróbować jeszcze raz.';
+export const BANKRUPT_TEXT = 'Sezon zakończony bankructwem nie trafia do rankingu.';
 export const NO_KEY_TEXT = 'Brak klucza gracza. Odśwież stronę i spróbuj jeszcze raz.';
 export const NOTHING_TO_SEND_TEXT = 'Nie ma biegu do wysłania.';
 
@@ -44,14 +45,15 @@ function acceptedOf(res: { ok: true } & RunAccepted): RunAccepted {
 
 /**
  * Odpowiedź serwera → wynik wysłania. `ok` to przyjęcie, zajęty nick i stara wersja gry mają własne wyniki, a błędy po stronie
- * zgłoszenia (`REJECTED_CODES`) to odrzucenie. Wszystko inne (ranking wyłączony, baza niepodłączona, sędzia niegotowy albo nieudany,
- * limit zapytań, błąd serwera, brak sieci, odpowiedź spoza API i każdy nieznany kod) to „spróbuj później”: z tym samym biegiem za chwilę
- * może pójść.
+ * zgłoszenia (`REJECTED_CODES`) to odrzucenie; `season-bankrupt` (bieg zakończony bankructwem) to też odrzucenie, z własnym tekstem.
+ * Wszystko inne (ranking wyłączony, baza niepodłączona, sędzia niegotowy albo nieudany, limit zapytań, błąd serwera, brak sieci,
+ * odpowiedź spoza API i każdy nieznany kod) to „spróbuj później”: z tym samym biegiem za chwilę może pójść.
  */
 export function classify(res: ApiResult<RunAccepted>): SendOutcome {
   if (res.ok) return { kind: 'accepted', accepted: acceptedOf(res) };
   if (res.error === 'nick-taken') return { kind: 'nick-taken', message: NICK_TAKEN_TEXT };
   if (res.error === 'old-version') return { kind: 'old-version', message: OLD_VERSION_TEXT };
+  if (res.error === 'season-bankrupt') return { kind: 'rejected', message: BANKRUPT_TEXT };
   if (REJECTED_CODES.has(res.error)) return { kind: 'rejected', message: REJECTED_TEXT };
   return { kind: 'later', message: LATER_TEXT };
 }

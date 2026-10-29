@@ -11,7 +11,7 @@ import type { CardInstance } from '@/sim/economy/tycoon/cards';
 import { hintText, reportCommentText, type TycoonMonthReport } from '@/sim/economy/tycoon/report';
 import { trustTier } from '@/sim/economy/tycoon/trust';
 import { MemoryStorage } from '@/game/memoryStorage';
-import { RANKED_KEYS, createRankedSession, saveFinished, saveRanked, clearFinished, type FinishedRun } from '@/game/rankedRun';
+import { RANKED_BANKRUPT_TEXT, RANKED_KEYS, createRankedSession, saveFinished, saveRanked, clearFinished, type FinishedRun } from '@/game/rankedRun';
 import { newRunLog } from '@/game/session';
 import {
   econ, ephemeral, hints, panel, pushStory, ranked, report, selection, showHints, showSettings, speed, start, story, tab, unsent, welcome, type GameActions,
@@ -696,6 +696,42 @@ describe('okno raportu miesiąca', () => {
     click(closeButton(casualTree, 'Zacznij od nowa'));
     expect(casual.restart).toHaveBeenCalledTimes(1);
     expect(casual.leaveRanked).not.toHaveBeenCalled();
+  });
+
+  it('koniec gry w biegu rankingowym: pod powodem jeden akapit (role=note), że bieg nie trafi do rankingu; zwykły sklep i raport miesiąca go nie mają', () => {
+    const notes = (tree: Vnode): string[] => walk(tree).filter((v) => v.props.role === 'note' && v.props.class === 'tt-end-reason').map((v) => textOf(v));
+    const { s, info } = base();
+    s.gameOver = true;
+    s.cash = DEBT_LIMIT - 500;
+    s.lastReport = monthReport(detailed());
+    publishState(s, info);
+    ranked.value = { seed: s.seed, day: 41, days: 91, phase: 'over' };
+    const tree = ReportModal({ game: fakeGame() }) as Vnode;
+    const found = notes(tree);
+    expect(found).toHaveLength(2);   // powód końca współpracy i akapit o rankingu, w tej kolejności
+    expect(found[0]).toMatch(/^Powód: /);
+    expect(found[1]).toBe('Ten bieg nie trafi do rankingu: sezon zakończony bankructwem.');
+    expect(found[1]).toBe(RANKED_BANKRUPT_TEXT);
+    expect(labels(tree)).toEqual(['Wróć do zwykłej gry']);   // przycisk zostaje
+
+    // zapis sprzed powodu (bez powodu) też mówi o rankingu
+    s.cash = 0;
+    s.tycoon.trust.value = 50;
+    publishState(s, info);
+    expect(notes(ReportModal({ game: fakeGame() }) as Vnode)).toEqual([RANKED_BANKRUPT_TEXT]);
+
+    ranked.value = null;   // zwykły sklep: tylko powód
+    s.cash = DEBT_LIMIT - 500;
+    publishState(s, info);
+    expect(notes(ReportModal({ game: fakeGame() }) as Vnode)).toHaveLength(1);
+    expect(textOf(ReportModal({ game: fakeGame() }) as Vnode)).not.toContain('rankingu');
+
+    // raport miesiąca w trwającym biegu: bez akapitu
+    s.gameOver = false;
+    publishState(s, info);
+    ranked.value = { seed: s.seed, day: 30, days: 91, phase: 'playing' };
+    report.value = monthReport(detailed());
+    expect(notes(ReportModal({ game: fakeGame() }) as Vnode)).toEqual([]);
   });
 
   it('raport miesiąca w biegu rankingowym nadal ma „Dalej” (przycisk wyjścia dotyczy tylko końca współpracy)', () => {
