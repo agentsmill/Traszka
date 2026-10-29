@@ -7,7 +7,7 @@ import { computeStoreInfo, type StoreInfo } from '@/sim/economy/storeInfo';
 import { layoutFor } from '@/sim/store/layoutFor';
 import { App } from '../App';
 import { econ, pushStory, report, story, type Controls, type GameActions } from '../state';
-import { CardDesk, picked } from './cards';
+import { CardDesk, picked, selectedAnswer } from './cards';
 import { deltaLines } from './cardText';
 import { int, people } from './format';
 import { PrestigeModal, ReportModal, Settings, StoryModal, WelcomeModal } from './overlays';
@@ -66,6 +66,9 @@ function publish(...cards: CardInstance[]): EconomyState {
 const answerButtons = (tree: Vnode): Vnode[] => buttonsOf(tree).filter((b) => b.props.role === 'radio');
 const checked = (tree: Vnode): boolean[] => answerButtons(tree).map((b) => b.props['aria-checked'] === true);
 const desk = (game: GameActions): Vnode => CardDesk({ game }) as Vnode;
+/** Chipy skutków jednej odpowiedzi (bez „domyślnie”): klasa wskazuje ocenę, `key` jest numerem wiersza. */
+const chipsOf = (button: Vnode): Vnode[] => walk(button).filter((v) => String(v.props?.class ?? '').split(' ').includes('tt-chip') && !String(v.props.class).includes('tag'));
+const toneOfChip = (chip: Vnode): string => String(chip.props.class).split(' ').filter((c) => c !== 'tt-chip').join(' ');
 
 beforeEach(() => { picked.value = null; });
 afterEach(() => { econ.value = null; report.value = null; picked.value = null; story.value = []; });
@@ -146,7 +149,7 @@ describe('okno karty dnia: treść', () => {
     expect(buttons).toHaveLength(3);
     card.answers.forEach((a, i) => {
       expect(textOf(buttons[i])).toContain(def.answers[i]!.label);
-      for (const line of deltaLines(a, people)) expect(textOf(buttons[i]), line).toContain(line);
+      for (const line of deltaLines(a, people)) expect(textOf(buttons[i]), line.text).toContain(line.text);
     });
     expect(textOf(buttons[0])).toContain('−320 zł');
     expect(textOf(buttons[2])).toContain('ryzyko 75%');
@@ -244,6 +247,94 @@ describe('okno karty dnia: wybór i zatwierdzenie', () => {
     s.tycoon.cards.pending = [];   // powłoka zaksięgowała odpowiedź, okno jeszcze się nie odświeżyło
     click(stale);
     expect(game.dispatch).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('okno karty dnia: zaznaczona odpowiedź pod ochroną', () => {
+  it('odpowiedź domyślna poza zakresem (zepsuty zapis) nie zostawia okna bez zaznaczenia: pierwsza odpowiedź', () => {
+    for (const bad of [3, 9, -1, 1.5, Number.NaN]) {
+      publish({ ...fefo(1, 900), defaultAnswer: bad });
+      expect(checked(desk(fakeGame())), String(bad)).toEqual([true, false, false]);
+    }
+  });
+
+  it('po „Zatwierdź” z takiej karty leci odpowiedź 0, nie liczba spoza zakresu', () => {
+    publish({ ...fefo(7, 900), defaultAnswer: 9 });
+    const game = fakeGame();
+    click(buttonLabelled(desk(game), 'Zatwierdź'));
+    expect(game.dispatch).toHaveBeenCalledWith({ type: 'answerCard', seq: 7, answer: 0 });
+  });
+
+  it('wybór ze starej gry (ten sam numer karty, odpowiedź spoza zakresu) jest ignorowany: zaznaczona zostaje domyślna', () => {
+    publish(premia(1, 900));   // karta o dwóch odpowiedziach, domyślna druga
+    picked.value = { seq: 1, answer: 2 };   // w poprzedniej grze karta nr 1 miała trzy odpowiedzi
+    const game = fakeGame();
+    expect(checked(desk(game))).toEqual([false, true]);
+    click(buttonLabelled(desk(game), 'Zatwierdź'));
+    expect(game.dispatch).toHaveBeenCalledWith({ type: 'answerCard', seq: 1, answer: 1 });
+  });
+
+  it('wybór cudzej karty albo odpowiedzi ujemnej, ułamkowej lub NaN też jest ignorowany', () => {
+    publish(fefo(4, 900));
+    for (const stale of [{ seq: 3, answer: 0 }, { seq: 5, answer: 1 }, { seq: 4, answer: -1 }, { seq: 4, answer: 0.5 }, { seq: 4, answer: Number.NaN }]) {
+      picked.value = stale;
+      expect(checked(desk(fakeGame())), JSON.stringify(stale)).toEqual([false, false, true]);
+    }
+    picked.value = { seq: 4, answer: 1 };   // ważny wybór tej karty działa
+    expect(checked(desk(fakeGame()))).toEqual([false, true, false]);
+  });
+
+  it('selectedAnswer: ważny wybór, domyślna, a gdy i ona jest poza zakresem, zero', () => {
+    const card = { seq: 2, answers: [answer({}), answer({}), answer({})], defaultAnswer: 2 };
+    expect(selectedAnswer(card, null)).toBe(2);
+    expect(selectedAnswer(card, { seq: 2, answer: 0 })).toBe(0);
+    expect(selectedAnswer(card, { seq: 1, answer: 0 })).toBe(2);
+    expect(selectedAnswer(card, { seq: 2, answer: 3 })).toBe(2);
+    expect(selectedAnswer({ ...card, defaultAnswer: 7 }, null)).toBe(0);
+    expect(selectedAnswer({ ...card, defaultAnswer: 7 }, { seq: 2, answer: 9 })).toBe(0);
+  });
+});
+
+describe('okno karty dnia: „Zatwierdź” zawsze działa', () => {
+  // `click` z vnodeTree nie zna `disabled`, więc stan przycisku sprawdzamy wprost
+  it('nigdy nie jest wyłączony: na starcie, po wyborze innej odpowiedzi i przy odpowiedzi domyślnej spoza zakresu', () => {
+    publish(fefo(7, 900));
+    const game = fakeGame();
+    expect(buttonLabelled(desk(game), 'Zatwierdź').props.disabled).toBeFalsy();
+    for (let i = 0; i < 3; i++) {
+      click(answerButtons(desk(game))[i]!);
+      expect(buttonLabelled(desk(game), 'Zatwierdź').props.disabled, `po wyborze ${i}`).toBeFalsy();
+    }
+    publish({ ...fefo(8, 900), defaultAnswer: 9 });
+    expect(buttonLabelled(desk(game), 'Zatwierdź').props.disabled).toBeFalsy();
+  });
+});
+
+describe('okno karty dnia: chipy skutków', () => {
+  it('koszty są czerwone, zyski zielone (klasa oceny obok .tt-chip), także gdy stoją obok siebie', () => {
+    publish(premia(1, 900), fefo(2, 950));
+    const buttons = answerButtons(desk(fakeGame()));   // okólnik: premia +800, czas ludzi 45 min, WUT +400
+    const tones = Object.fromEntries(chipsOf(buttons[0]!).map((c) => [textOf(c), toneOfChip(c)]));
+    expect(tones).toEqual({ [`+${nbsp(800)} zł`]: 'gain', 'czas ludzi 45 min': 'cost', [`WUT +${nbsp(400)} zł`]: 'cost' });
+    publish(fefo(2, 950));
+    const fefoChips = chipsOf(answerButtons(desk(fakeGame()))[1]!);   // −490 zł, czas ludzi 25 min, reputacja +0,5, Ogonki +2
+    expect(fefoChips.map((c) => [textOf(c), toneOfChip(c)])).toEqual([
+      ['−490 zł', 'cost'], ['czas ludzi 25 min', 'cost'], ['reputacja +0,5', 'gain'], ['Ogonki +2', 'gain'],
+    ]);
+    expect(toneOfChip(chipsOf(answerButtons(desk(fakeGame()))[2]!)[0]!)).toBe('cost');   // ryzyko 75%: WUT +1 080 zł
+  });
+
+  it('odpowiedź bez skutków pokazuje „bez skutków” bez oceny kolorem', () => {
+    publish(premia(1, 900));
+    const none = chipsOf(answerButtons(desk(fakeGame()))[1]!);
+    expect(none.map((c) => [textOf(c), toneOfChip(c)])).toEqual([['bez skutków', 'none']]);
+  });
+
+  it('dwa wiersze o tym samym napisie dostają różne klucze (numer wiersza), więc oba się rysują', () => {
+    publish({ ...fefo(1, 900), answers: [answer({ cash: -100, fine: -100 }), answer({}), answer({})], defaultAnswer: 1 });
+    const chips = chipsOf(answerButtons(desk(fakeGame()))[0]!);
+    expect(chips.map((c) => textOf(c))).toEqual(['−100 zł', '−100 zł']);
+    expect(chips.map((c) => c.key)).toEqual([0, 1]);
   });
 });
 

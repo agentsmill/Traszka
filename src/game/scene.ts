@@ -18,7 +18,7 @@ import { palletRefsOf } from './palletRefs';
 import { SIM_STEP, payLook, setCrowdExtras, setCrowdRate, stepCrowd, type CrowdOptions } from '@/sim/crowd/crowd';
 import { CATS, HOUR_CURVE } from '@/sim/economy/catalog';
 import { minuteOfDay } from '@/sim/economy/calendar';
-import { effects, expectedDailyCustomers, isClosedForRemont, isStoreOpen, slotUsage } from '@/sim/economy/economy';
+import { effects, expectedDailyCustomers, isClosedForRemont, isOpenForCustomers, slotUsage } from '@/sim/economy/economy';
 import { slotUnits } from '@/sim/economy/slots';
 import { staffOnShift } from '@/sim/economy/tycoon/shift';
 import { spotCells } from '@/sim/economy/storeInfo';
@@ -100,12 +100,12 @@ export function writeSeedToUrl(seed: string): void {
 export const CROWD_MAX: Record<QualityPresetId, number> = { niska: 10, srednia: 16, wysoka: 22 };
 
 /**
- * Tłum, jakiego chce ekonomia: ile postaci naraz i ile nowych na minutę. Zamknięty sklep (noc, remont) nie wpuszcza nikogo,
+ * Tłum, jakiego chce ekonomia: ile postaci naraz i ile nowych na minutę. Zamknięty sklep (noc, remont, karta „zamknij na godzinę”) nie wpuszcza nikogo,
  * otwarty liczy ruch z bieżącej godziny (klientów na godzinę), ograniczony presetem grafiki (`CROWD_MAX`) i widełkami 4–… oraz 3–24.
  */
 export function crowdRateFor(session: Pick<GameSession, 'econ' | 'info'>, preset: QualityPresetId): CrowdOptions {
   const { econ: s, info } = session;
-  if (!isStoreOpen(s)) return { targetCount: 0, spawnPerMinute: 0 };
+  if (!isOpenForCustomers(s)) return { targetCount: 0, spawnPerMinute: 0 };
   const perHour = expectedDailyCustomers(s, info) / 15.6 * (HOUR_CURVE[Math.floor(minuteOfDay(s.minute) / 60)] ?? 0);
   return { targetCount: Math.max(4, Math.min(CROWD_MAX[preset], Math.round(perHour * 0.35))), spawnPerMinute: Math.max(3, Math.min(24, perHour * 0.3)) };
 }
@@ -264,7 +264,7 @@ export function createSceneHost(deps: SceneDeps): SceneHost {
       else if (p.loc === 'sidewalk' && s.minute - p.since >= 60) marks.push({ key: `r${p.id}`, world: at, text: '⚠️', kind: 'risk' as const });
     }
     overlay?.setMarkers(marks);
-    const open = isStoreOpen(s);
+    const open = isOpenForCustomers(s);
     const closed = isClosedForRemont(s) ? 'REMONT' : !open ? 'ZAMKNIĘTE' : null;
     const q = Math.round(s.queue);
     overlay?.setTill(loaded.tillTop, closed ?? (q > 0 ? `👥 ${q}` : '🙂'), !closed && s.queue >= effects(s, info).patience);
@@ -381,7 +381,7 @@ export function createSceneHost(deps: SceneDeps): SceneHost {
       const current = loaded;
       if (!current) return;
       const s = session.econ;
-      if (!isStoreOpen(s)) return;
+      if (!isOpenForCustomers(s)) return;
       const agents = current.world.crowd.agents.filter((a) => a.state === 'browsing' || a.state === 'queueing' || a.state === 'paying' || a.state === 'toQueue');
       if (agents.length === 0) return;
       const agent = agents[Math.floor(Math.random() * agents.length)]!;

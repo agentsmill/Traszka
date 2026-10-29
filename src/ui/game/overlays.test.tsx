@@ -17,7 +17,7 @@ import { int, zl } from './format';
 import { Bar } from './panels';
 import {
   ClickerBar, ComboChip, EPHEMERAL_BADGE, EPHEMERAL_NOTE, FIRST_DAY_HINTS, FirstDayHints, RESTART_CONFIRM, ReportBody, ReportModal,
-  SelectionCard, StoreActions, StoreBadge, StoryModal,
+  STORY_GRACE_MS, SelectionCard, StoreActions, StoreBadge, StoryModal,
 } from './overlays';
 import { buttonsOf, click, labels, textOf, walk, type Vnode } from './vnodeTree';
 
@@ -446,7 +446,7 @@ describe('raport miesięczny z danymi tycoona (detail)', () => {
     const head = byClass(tree(), 'tt-report-result');
     expect(plain(textOf(head))).toBe(`+${z(2950)}`);
     expect(head.props.class).toContain('pos');
-    const loss = detailed({ result: -12_340 });
+    const loss = detailed({ lines: [{ key: 'oplata', amount: -12_340 }], result: -12_340 });   // nagłówek liczy się z pozycji, więc fixture je zgadza
     const negative = byClass(tree(loss), 'tt-report-result');
     expect(plain(textOf(negative))).toBe('−12 340 zł');
     expect(negative.props.class).toContain('neg');
@@ -532,6 +532,21 @@ describe('raport miesięczny z danymi tycoona (detail)', () => {
     expect(plain(textOf(byClass(tree(d), 'tt-report-result')))).toBe(`+${z(2950)}`);
   });
 
+  it('pozycje z groszami: wynik w nagłówku to suma pozycji tak, jak je widać, nie zaokrąglona suma (bez 1 zł różnicy)', () => {
+    // 10 000,5 → 10 001 (zaokrąglenie w górę), −450,5 → −450 (połówki w stronę plusa); suma dokładna 9 550, suma widocznych pozycji 9 551
+    const d = detailed({ lines: [{ key: 'marza', amount: 10_000.5 }, { key: 'wut', amount: -450.5 }], result: 9550 });
+    const rows = walk(tree(d)).filter((v) => v.props.class === 'tt-row')
+      .map((v) => [textOf((v.props.children as Vnode[])[0]), plain(textOf((v.props.children as Vnode[])[1]))] as const);
+    expect(rows.slice(0, 2)).toEqual([['Marża ze sprzedaży', z(10_001)], ['WUT ponad próg', `−${z(450)}`]]);
+    expect(plain(textOf(byClass(tree(d), 'tt-report-result')))).toBe(`+${z(9551)}`);
+  });
+
+  it('pozycje z groszami na minusie: wynik ujemny też bierze się z widocznych pozycji', () => {
+    // −100,4 → −100, −200,4 → −200: suma widoczna −300, dokładna −300,8 (zaokrąglona −301)
+    const d = detailed({ lines: [{ key: 'oplata', amount: -100.4 }, { key: 'media', amount: -200.4 }], result: -300.8 });
+    expect(plain(textOf(byClass(tree(d), 'tt-report-result')))).toBe(`−${z(300)}`);
+  });
+
   it('bez porady o zatrudnianiu przy kolejce: wskazówka o kolejce odsyła do profilu i kasy samoobsługowej', () => {
     const d = detailed({ hint: { id: 'kolejka', value: 80, impact: 900 } });
     const text = textOf(byClass(tree(d), 'tt-report-hint'));
@@ -609,6 +624,10 @@ describe('okno raportu miesiąca', () => {
 });
 
 describe('okno ważnego zdarzenia (StoryModal): gra czeka na „OK”', () => {
+  // „OK” przez pierwsze STORY_GRACE_MS po pojawieniu się wpisu nic nie robi (czas rzeczywisty), więc testy sterują zegarem
+  beforeEach(() => { vi.useFakeTimers(); });
+  const waitGrace = (): void => { vi.advanceTimersByTime(STORY_GRACE_MS); };
+
   it('bez wpisów nic nie widać', () => {
     expect(StoryModal()).toBeNull();
   });
@@ -629,13 +648,80 @@ describe('okno ważnego zdarzenia (StoryModal): gra czeka na „OK”', () => {
   it('„OK” zdejmuje wpis: pokazuje się następny, a po ostatnim okno znika', () => {
     pushStory('Zaufanie Centrali', 'Zaufanie Centrali: W porządku.');
     pushStory('Remont zakończony', 'Sklep otwarty.');
-    click(buttonsOf(StoryModal())[0]!);
+    const first = StoryModal() as Vnode;
+    waitGrace();
+    click(buttonsOf(first)[0]!);
     expect(story.value.map((e) => e.title)).toEqual(['Remont zakończony']);
     const second = StoryModal() as Vnode;
     expect(textOf(second)).toContain('Remont zakończony');
+    waitGrace();
     click(buttonsOf(second)[0]!);
     expect(story.value).toEqual([]);
     expect(StoryModal()).toBeNull();
+  });
+
+  it('podwójne stuknięcie nie odrzuca nieprzeczytanego drugiego wpisu: „OK” czeka 400 ms od jego pojawienia się', () => {
+    pushStory('Zaufanie Centrali', 'Pierwszy.');
+    pushStory('Remont zakończony', 'Drugi.');
+    const first = StoryModal() as Vnode;
+    const ok = buttonsOf(first)[0]!;
+    click(ok);   // zbyt wcześnie także dla pierwszego wpisu
+    expect(story.value).toHaveLength(2);
+    waitGrace();
+    click(ok);   // pierwsze stuknięcie zdejmuje pierwszy wpis
+    expect(story.value.map((e) => e.title)).toEqual(['Remont zakończony']);
+    click(ok);   // drugie stuknięcie w to samo, spóźnione okno nic nie robi
+    expect(story.value).toHaveLength(1);
+    const second = StoryModal() as Vnode;   // okno odświeża się na drugi wpis
+    expect(textOf(second)).toContain('Drugi.');
+    vi.advanceTimersByTime(STORY_GRACE_MS - 1);
+    click(buttonsOf(second)[0]!);   // tuż przed końcem karencji
+    expect(story.value).toHaveLength(1);
+    vi.advanceTimersByTime(1);
+    click(buttonsOf(second)[0]!);   // 400 ms od pojawienia się
+    expect(story.value).toEqual([]);
+  });
+
+  it('karencja liczy się od pojawienia się wpisu na ekranie, a nie od jego dodania do kolejki', () => {
+    pushStory('Zaufanie Centrali', 'Tekst.');
+    vi.advanceTimersByTime(5000);   // wpis czekał w kolejce, nikt go jeszcze nie widział
+    const tree = StoryModal() as Vnode;
+    click(buttonsOf(tree)[0]!);
+    expect(story.value).toHaveLength(1);
+    waitGrace();
+    click(buttonsOf(tree)[0]!);
+    expect(story.value).toEqual([]);
+  });
+
+  it('wpis zasłonięty raportem dostaje karencję od nowa, gdy raport się zamknie (podwójne „Dalej” nie zdejmie go od razu)', () => {
+    pushStory('Zaufanie Centrali', 'Tekst.');
+    const before = StoryModal() as Vnode;
+    waitGrace();
+    report.value = monthReport(detailed());
+    expect(StoryModal()).toBeNull();
+    vi.advanceTimersByTime(30_000);   // gracz czyta raport
+    report.value = null;
+    const after = StoryModal() as Vnode;
+    click(buttonsOf(after)[0]!);
+    expect(story.value).toHaveLength(1);
+    click(buttonsOf(before)[0]!);   // stare okno tego samego wpisu liczy się tak samo: karencja trwa
+    expect(story.value).toHaveLength(1);
+    waitGrace();
+    click(buttonsOf(after)[0]!);
+    expect(story.value).toEqual([]);
+  });
+
+  it('każdy wpis to osobne okno: okno ma key z id wpisu, więc kolejny wpis nie dziedziczy stanu poprzedniego', () => {
+    pushStory('Zaufanie Centrali', 'Pierwszy.');
+    pushStory('Remont zakończony', 'Drugi.');
+    const dialogKey = (tree: Vnode): unknown => walk(tree).find((v) => v.props.role === 'dialog')!.key;
+    const first = StoryModal() as Vnode;
+    expect(dialogKey(first)).toBe(story.value[0]!.id);
+    waitGrace();
+    click(buttonsOf(first)[0]!);
+    const second = StoryModal() as Vnode;
+    expect(dialogKey(second)).toBe(story.value[0]!.id);
+    expect(dialogKey(second)).not.toBe(dialogKey(first));
   });
 
   it('raport miesiąca i koniec gry mają pierwszeństwo: okno czeka za nimi', () => {

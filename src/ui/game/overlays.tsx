@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'preact/hooks';
 import { RETURN_FEE } from '@/sim/economy/catalog';
 import { effects, isOpenForCustomers, slotFree, slotUsage, tapCombo, type MonthReport } from '@/sim/economy/economy';
+import { visibleCards } from '@/sim/economy/tycoon/cards';
 import { FATIGUE } from '@/sim/economy/tycoon/fatigue';
 import { REPORT_LINE_LABEL, hintText, reportCommentText } from '@/sim/economy/tycoon/report';
 import { TRUST_REASON_LABEL } from '@/sim/economy/tycoon/trust';
@@ -172,7 +173,8 @@ export function ReportBody({ r, closing }: { r: MonthReport; closing?: string })
       </>
     );
   }
-  const result = Math.round(d.result);
+  // wynik w nagłówku to suma pozycji tak, jak je widać (każda zaokrąglona do złotych): zaokrąglenie samej sumy bywa o 1 zł obok
+  const result = d.lines.reduce((n, l) => n + Math.round(l.amount), 0);
   const t = d.trust;
   const kpiWeeks = d.kpi.hit + d.kpi.miss;
   return (
@@ -235,20 +237,36 @@ export function ReportModal({ game }: { game: GameActions }) {
   );
 }
 
+/** Tyle ms po pojawieniu się wpisu „OK” nic nie robi: podwójne stuknięcie nie może zdjąć następnego wpisu, zanim ktoś go przeczyta. */
+export const STORY_GRACE_MS = 400;
+/** Który wpis jest na ekranie i od kiedy (czas rzeczywisty; okno nie ma haków, więc stan trzyma moduł). Zero to „żaden”. */
+let storyShown = { id: 0, at: 0 };
+
 /**
  * Ważne zdarzenie, które czeka na „OK” (nowy próg zaufania, koniec remontu, poziom z odblokowaniami): pokazuje pierwszy wpis
  * kolejki `story`, a dopóki kolejka nie jest pusta, gra stoi (`isModalOpen`). Raport miesiąca i koniec gry mają pierwszeństwo
- * (własne okna), wpis czeka za nimi. Tekst może mieć kilka wierszy (lista odblokowań).
+ * (własne okna), wpis czeka za nimi. Tekst może mieć kilka wierszy (lista odblokowań). Każdy wpis to osobne okno (`key`), a „OK”
+ * w pierwszych `STORY_GRACE_MS` po jego pojawieniu się (także po zamknięciu raportu, który go zasłaniał) nic nie robi: drugie
+ * stuknięcie w „Dalej” albo „OK” nie może od razu odrzucić wpisu, którego nikt nie zdążył zobaczyć.
  */
 export function StoryModal() {
   const entry = story.value[0];
-  if (!entry || report.value || econ.value?.s.gameOver) return null;
+  if (!entry || report.value || econ.value?.s.gameOver) {
+    storyShown = { id: 0, at: 0 };   // ukryte okno pokaże się potem od nowa, z własnym czasem karencji
+    return null;
+  }
+  if (storyShown.id !== entry.id) storyShown = { id: entry.id, at: Date.now() };
+  const ok = (): void => {
+    if (story.value[0]?.id !== entry.id) return;   // spóźnione stuknięcie w okno poprzedniego wpisu
+    if (Date.now() - storyShown.at < STORY_GRACE_MS) return;
+    dismissStory();
+  };
   return (
     <div class="tt-modal-wrap">
-      <div class="tt-modal tt-story" role="dialog" aria-modal="true" aria-label={entry.title}>
+      <div key={entry.id} class="tt-modal tt-story" role="dialog" aria-modal="true" aria-label={entry.title}>
         <h2>{entry.title}</h2>
         <p class="tt-story-text">{entry.text}</p>
-        <button type="button" class="tt-btn tt-primary big" onClick={dismissStory}>OK</button>
+        <button type="button" class="tt-btn tt-primary big" onClick={ok}>OK</button>
       </div>
     </div>
   );
@@ -349,7 +367,21 @@ export function Settings({ controls, game }: { controls: Controls; game: GameAct
   );
 }
 
-/** Wielki baner nagrody (nowy poziom): konfetti robi main.ts, baner znika sam albo po stuknięciu. */
+/**
+ * Czy jest otwarte okno, które baner nagrody (warstwa wyżej niż okna) zasłoniłby razem z jego przyciskami: raport miesiąca albo
+ * koniec gry, ważne zdarzenie czekające na „OK”, karta decyzji na biurku i powitanie. Ten sam poziom z odblokowaniami ma
+ * zresztą własne okno „Poziom N”, więc baner nie jest tam potrzebny.
+ */
+export function windowBlocksBanner(): boolean {
+  const view = econ.value;
+  return !!report.value || story.value.length > 0 || !!welcome.value || !!view?.s.gameOver
+    || (!!view && visibleCards(view.s.tycoon.cards, view.s.minute).length > 0);
+}
+
+/**
+ * Wielki baner nagrody (nowy poziom): konfetti robi main.ts, baner znika sam albo po stuknięciu. Nie pokazuje się nad
+ * oknami (`windowBlocksBanner`); jego czas biegnie dalej, więc po ich zamknięciu stary baner już nie wraca.
+ */
 export function CelebrationBanner() {
   const c = celebration.value;
   useEffect(() => {
@@ -357,7 +389,7 @@ export function CelebrationBanner() {
     const t = setTimeout(() => { if (celebration.value === c) celebration.value = null; }, 3200);
     return () => clearTimeout(t);
   }, [c]);
-  if (!c) return null;
+  if (!c || windowBlocksBanner()) return null;
   return (
     <div class="tt-celebrate" role="status" onClick={() => { celebration.value = null; }}>
       <div class="tt-celebrate-card">

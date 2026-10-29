@@ -1772,6 +1772,22 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* skutki odpowiedzi: strata czerwienią (jak .tt-neg w raporcie), zysk zielenią (jak .tt-pos), reszta szarością */
+.tt-chip.cost {
+  background: rgba(179, 38, 30, 0.1);
+  color: #b3261e;
+}
+
+.tt-chip.gain {
+  background: rgba(29, 107, 58, 0.12);
+  color: var(--tt-green-dark);
+}
+
+.tt-chip.neutral {
+  background: rgba(34, 48, 42, 0.08);
+  color: #4a5650;
+}
+
 .tt-chip.none {
   padding-left: 0;
   background: transparent;

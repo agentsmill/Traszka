@@ -370,6 +370,7 @@ export function createShell(deps: ShellDeps): GameShell {
     deps.writeSeedToUrl(next);
     ui.seed.value = next;
     ui.story.value = [];   // wpisy z poprzedniego sklepu (także po „Zacznij od nowa”) nie mają czego czekać w nowym
+    ui.picked.value = null;   // numery kart zaczynają się w nowej grze od 1: zaznaczona odpowiedź ze starej nie może wskoczyć na nową kartę
     publish();
     persist();
     if (shell.session?.loadNotice) fx.notice(shell.session.loadNotice);

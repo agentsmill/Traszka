@@ -142,6 +142,14 @@ export function dismissStory(): void {
   if (story.value.length > 0) story.value = story.value.slice(1);
 }
 
+/**
+ * Wybór gracza na wyświetlonej karcie decyzji: numer karty (`seq`) i zaznaczona odpowiedź. Wybór dotyczy jednej karty, a numery
+ * kart zaczynają się w każdej grze od 1, więc `setSeed` (nowy sklep, „Zacznij od nowa”) czyści ten sygnał. Okno karty
+ * (`game/cards.tsx`) i tak ignoruje wybór cudzej karty albo spoza zakresu odpowiedzi. Nie jest częścią zapisu.
+ */
+export interface PickedAnswer { seq: number; answer: number }
+export const picked: Signal<PickedAnswer | null> = signal<PickedAnswer | null>(null);
+
 /** Wielki komunikat nagrody na środku ekranu (nowy poziom). Znika sam. */
 export interface Celebration { title: string; subtitle: string; lines: string[] }
 export const celebration: Signal<Celebration | null> = signal<Celebration | null>(null);

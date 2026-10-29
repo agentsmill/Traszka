@@ -1,15 +1,25 @@
-import { signal, type Signal } from '@preact/signals';
-import { cardDef, fillText, visibleCards } from '@/sim/economy/tycoon/cards';
-import { econ, report, story, type GameActions } from '../state';
+import { cardDef, fillText, visibleCards, type CardInstance } from '@/sim/economy/tycoon/cards';
+import { econ, picked, report, story, type GameActions, type PickedAnswer } from '../state';
 import { deltaLines } from './cardText';
 import { int, people } from './format';
 
 /**
- * Wybór gracza na wyświetlonej karcie: numer karty i zaznaczona odpowiedź. Wybór dotyczy jednej karty (`seq`), więc kolejna
- * karta zaczyna od własnej odpowiedzi domyślnej, a po zatwierdzeniu stan się czyści. Zwykły sygnał, jak reszta stanu okien,
- * dzięki czemu okno nie ma haków i da się je testować `vnodeTree`.
+ * Wybór gracza na wyświetlonej karcie (numer karty i zaznaczona odpowiedź) żyje w `state.ts`, jak reszta stanu okien:
+ * zwykły sygnał, dzięki czemu okno nie ma haków i da się je testować `vnodeTree`. Wybór dotyczy jednej karty (`seq`),
+ * więc kolejna karta zaczyna od własnej odpowiedzi domyślnej, po zatwierdzeniu stan się czyści, a nowa gra (`setSeed`) też.
  */
-export const picked: Signal<{ seq: number; answer: number } | null> = signal(null);
+export { picked };
+
+/**
+ * Zaznaczona odpowiedź karty: wybór gracza tylko wtedy, gdy dotyczy właśnie tej karty (`seq`) i mieści się w jej odpowiedziach;
+ * inaczej odpowiedź domyślna, a gdy i ta jest poza zakresem (zepsuty zapis), pierwsza. Numery kart zaczynają się w każdej
+ * grze od 1, więc samo `seq` nie wystarczy, by uznać wybór za ważny.
+ */
+export function selectedAnswer(card: Pick<CardInstance, 'seq' | 'answers' | 'defaultAnswer'>, choice: PickedAnswer | null): number {
+  const valid = (i: number): boolean => Number.isInteger(i) && i >= 0 && i < card.answers.length;
+  if (choice && choice.seq === card.seq && valid(choice.answer)) return choice.answer;
+  return valid(card.defaultAnswer) ? card.defaultAnswer : 0;
+}
 
 export const OKOLNIK_BADGE = 'Okólnik Centrali';
 
@@ -29,7 +39,7 @@ export function CardDesk({ game }: { game: GameActions }) {
   if (!card) return null;
   const def = cardDef(card.id);
   const title = def?.title ?? 'Decyzja';
-  const chosen = picked.value?.seq === card.seq ? picked.value.answer : card.defaultAnswer;
+  const chosen = selectedAnswer(card, picked.value);
   const confirm = (): void => {
     // powłoka mogła już zaksięgować odpowiedź, a okno jeszcze się nie odświeżyło: drugie stuknięcie nic nie wysyła
     const now = econ.value;
@@ -55,7 +65,9 @@ export function CardDesk({ game }: { game: GameActions }) {
                 onClick={() => { picked.value = { seq: card.seq, answer: i }; }}>
                 <span class="tt-answer-label">{def?.answers[i]?.label ?? `Odpowiedź ${i + 1}`}</span>
                 <span class="tt-answer-fx">
-                  {lines.length > 0 ? lines.map((l) => <span key={l} class="tt-chip">{l}</span>) : <span class="tt-chip none">bez skutków</span>}
+                  {lines.length > 0
+                    ? lines.map((l, k) => <span key={k} class={`tt-chip ${l.tone}`}>{l.text}</span>)   // klucz to numer: dwa wiersze mogą wyglądać tak samo
+                    : <span class="tt-chip none">bez skutków</span>}
                   {i === card.defaultAnswer && <span class="tt-chip tag">domyślnie</span>}
                 </span>
               </button>

@@ -504,11 +504,12 @@ describe('powłoka gry (createShell)', () => {
     ui.showSettings.value = false;
     ui.toasts.value = [];
     ui.story.value = [];
+    ui.picked.value = null;
     ui.econ.value = null;
     ui.ephemeral.value = false;
     ui.seed.value = '';
   });
-  afterEach(() => { vi.useRealTimers(); ui.story.value = []; });
+  afterEach(() => { vi.useRealTimers(); ui.story.value = []; ui.picked.value = null; });
 
   describe('rozruch', () => {
     it('dźwięk i wibracja z mety, widok mety dla interfejsu, bez komunikatu', () => {
@@ -1264,6 +1265,17 @@ describe('powłoka gry (createShell)', () => {
       h.shell.handleEvents([{ kind: 'remont', text: 'Remont zakończony!' }]);
       expect(h.shell.setSeed('inny-sklep', true)).toBe(true);
       expect(ui.story.value).toEqual([]);
+    });
+
+    it('nowy sklep (setSeed) i „zacznij od nowa” czyszczą też zaznaczoną odpowiedź karty: numery kart zaczynają się w nowej grze od 1', () => {
+      const h = harness();
+      open(h);
+      ui.picked.value = { seq: 1, answer: 1 };
+      h.shell.game.restart();
+      expect(ui.picked.value).toBeNull();
+      ui.picked.value = { seq: 1, answer: 1 };
+      expect(h.shell.setSeed('inny-sklep', true)).toBe(true);
+      expect(ui.picked.value).toBeNull();
     });
 
     it('handleEvents: złota paleta rozładowana to konfetti na środku ekranu, inne złote tylko dźwięk', () => {
