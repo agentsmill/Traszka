@@ -500,3 +500,56 @@ describe('regał z papierosami tnie się razem ze ścianą, przy której stoi (R
     view.dispose();
   });
 });
+
+describe('drzwi na zaplecze: skrzydło na zawiasie otwiera się przed idącym i wraca do ściany', () => {
+  const view = buildStore(layout);
+  const door = layout.fixtures.find((f) => f.kind === 'backroomDoor')!;
+  const FRAME = 1 / 60;
+  const person = (x: number, y: number, moving = true): { walker: { x: number; y: number; moving: boolean } } => ({ walker: { x, y, moving } });
+  const run = (people: ReturnType<typeof person>[], seconds: number): void => {
+    for (let t = 0; t < seconds; t += FRAME) view.updateDoor(FRAME, people);
+  };
+  const hinge = (): Object3D | undefined => view.root.getObjectByName(`${door.id}:leaf`);
+  /** Wierzchołki rysowane przez scalone siatki ściany działowej (z zakresem rysowania, bez skrzydła na zawiasie). */
+  const drawnMid = (): number => view.root.getObjectByName('wall:mid:high')!.children
+    .filter((c): c is Mesh => (c as Mesh).isMesh && c.visible)
+    .reduce((n, m) => n + Math.min(m.geometry.drawRange.count, m.geometry.getAttribute('position').count), 0);
+  /** Lico ściany działowej od strony sali (z świata); zaplecze leży dalej w +z. */
+  const front = cellToWorld(layout, door.x, door.y).z - CELL_SIZE_M / 2;
+  view.setCutaway(0);
+
+  it('zamknięte: skrzydło jest w scalonej ścianie, a jego kopia na zawiasie ukryta (bez dodatkowych draw calls)', () => {
+    expect(view.doorAngle).toBe(0);
+    expect(hinge()).toBeDefined();
+    expect(hinge()!.visible).toBe(false);
+    hinge()!.rotation.y = 0;
+    const closed = new Box3().setFromObject(hinge()!);
+    expect(closed.min.z).toBeGreaterThanOrEqual(front - 1e-6);
+    expect(closed.max.z).toBeLessThanOrEqual(front + 0.22 + 1e-6);   // w grubości ściany
+  });
+
+  it('idący w przejściu otwiera je na zaplecze: kopia na zawiasie widoczna, skrzydło w ścianie wyłączone zakresem rysowania', () => {
+    const full = drawnMid();
+    run([person(door.x + 0.5, door.y + 0.5)], 0.5);
+    expect(view.doorAngle).toBeGreaterThan(Math.PI / 2);
+    expect(hinge()!.visible).toBe(true);
+    expect(drawnMid()).toBeLessThan(full);
+    const open = new Box3().setFromObject(hinge()!);
+    expect(open.min.z).toBeGreaterThanOrEqual(front - 1e-6);
+    expect(open.max.z).toBeGreaterThan(front + 0.8);   // skrzydło stoi w głąb zaplecza
+    // ściana obniżona w przekroju chowa drzwi razem ze skrzydłem na zawiasie
+    view.setCutaway(1);
+    expect(hinge()).toBeUndefined();
+    view.setCutaway(0);
+    expect(hinge()).toBeDefined();
+  });
+
+  it('po przejściu zamyka się i wraca do ściany; stojący obok na zapleczu go nie otwiera', () => {
+    run([person(door.x + 0.5, door.y + 0.5)], 0.5);
+    const open = drawnMid();
+    run([person(door.x - 0.5, door.y + 1.5, false)], 1.5);
+    expect(view.doorAngle).toBe(0);
+    expect(hinge()!.visible).toBe(false);
+    expect(drawnMid()).toBeGreaterThan(open);
+  });
+});

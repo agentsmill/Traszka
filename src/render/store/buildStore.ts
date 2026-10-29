@@ -6,6 +6,7 @@ import { BRAND, M, glow, type Category, type ShelfSlotLocal, type Vec3 } from '.
 import { FIXTURE_BUILDERS, type FixtureBuilder } from './fixtures';
 import { loweredWalls, splitAtHeight, wallBehind, type Cutaway, type YawIndex } from './cutaway';
 import { LAMP_EMISSIVE, WALL_SIDES, buildShell, type WallSide } from './shell';
+import { DoorSwing, nearestMover, type DoorMover, type DoorRect } from './doorSwing';
 
 export { FIXTURE_BUILDERS, type FixtureBuilder };
 export { makeSignTexture } from './signTexture';
@@ -43,6 +44,14 @@ export interface StoreView {
    * natężenie: zmiana liczby świateł przekompilowałaby przy pierwszym przełączeniu wszystkie materiały (przycięcie klatki).
    */
   setTimeOfDay(t: 'day' | 'night'): void;
+  /**
+   * Drzwi na zaplecze, krok o `dt` s czasu widoku (pauza: 0): skrzydło otwiera się samo przed idącym z `people` (załoga, środki w
+   * kratkach) i zamyka po chwili pustki (doorSwing.ts). Zamknięte jest w scalonej ścianie działowej i nic nie kosztuje; tylko w ruchu
+   * i otwarte rysuje się osobna siatka na zawiasie (kilka draw calls), a kopia w ścianie jest wtedy wyłączona zakresem rysowania.
+   */
+  updateDoor(dt: number, people: readonly { readonly walker: DoorMover }[]): void;
+  /** Kąt skrzydła drzwi na zaplecze (rad, 0 zamknięte, otwiera się na zaplecze). */
+  readonly doorAngle: number;
   dispose(): void;
 }
 
@@ -55,11 +64,23 @@ interface Bucket { material: Material; cast: boolean; receive: boolean; geometri
 interface CutSource { source: Object3D; height: number }
 
 /**
- * Siatka, której końcowy odcinek bufora to górna część mebla z przekrojem: wierzchołki [0, `head`) są zawsze, [`head`, `total`)
- * tylko przy pełnej ścianie. Przełącza je sam zakres rysowania (bez kopii geometrii, bez dodatkowego draw calla), a siatka,
- * w której zostałaby sama góra, jest wtedy ukryta (zerowy zakres też kosztuje wywołanie rysowania).
+ * Siatka, której końcowy odcinek bufora da się wyłączyć: górna część mebla z przekrojem (rysowana tylko przy pełnej ścianie) albo
+ * zamknięte skrzydło drzwi na zaplecze (rysowane tylko, gdy drzwi są zamknięte). Wierzchołki [0, `head`) są zawsze, [`head`, `total`)
+ * tylko wtedy. Przełącza je sam zakres rysowania (bez kopii geometrii, bez dodatkowego draw calla), a siatka, w której zostałby
+ * sam końcowy odcinek, jest wtedy ukryta (zerowy zakres też kosztuje wywołanie rysowania).
  */
 interface Switchable { mesh: Mesh; head: number; total: number }
+
+/** Drzwi na zaplecze: zamknięte skrzydło w ścianie (`closed`), jego kopia na zawiasie (`hinge`) i stan ruchu skrzydła. */
+interface HingedDoor { rect: DoorRect; closed: Object3D; hinge: Group; swing: DoorSwing; open: boolean }
+
+/** Wyłącza (`on` = false) albo włącza końcowe odcinki siatek `Switchable`. */
+function setTails(switchable: readonly Switchable[], on: boolean): void {
+  for (const s of switchable) {
+    s.mesh.geometry.setDrawRange(0, on ? s.total : s.head);
+    s.mesh.visible = on || s.head > 0;
+  }
+}
 
 function isUnder(o: Object3D, ancestor: Object3D): boolean {
   for (let p: Object3D | null = o; p; p = p.parent) if (p === ancestor) return true;
@@ -71,9 +92,11 @@ function isUnder(o: Object3D, ancestor: Object3D): boolean {
  * do tymczasowego rodzica w początku świata, więc ich macierze są już w układzie świata. Geometrie źródeł są
  * współdzielone (cache w parts.ts) i zostają nietknięte; zwalnia się tylko wynik, zapisany w `owned`.
  * Siatki `cut.source` są cięte na wysokości `cut.height` (cutaway.ts): dolne kawałki idą do bufora jak reszta, górne na jego
- * koniec, a `switchable` opisuje, które siatki mają taki odcinek.
+ * koniec, a `switchable` opisuje, które siatki mają taki odcinek. Siatki pod `tail` idą na koniec bufora w całości (skrzydło drzwi).
  */
-function mergeSources(name: string, sources: Object3D[], owned: BufferGeometry[], cut?: CutSource): { meshes: Mesh[]; switchable: Switchable[] } {
+function mergeSources(
+  name: string, sources: Object3D[], owned: BufferGeometry[], cut?: CutSource, tail?: Object3D,
+): { meshes: Mesh[]; switchable: Switchable[] } {
   const scratch = new Group();
   scratch.add(...sources);
   scratch.updateMatrixWorld(true);
@@ -92,7 +115,8 @@ function mergeSources(name: string, sources: Object3D[], owned: BufferGeometry[]
       g.dispose();
       if (below) b.geometries.push(below);
       if (above) b.upper.push(above);
-    } else b.geometries.push(g);
+    } else if (tail && isUnder(mesh, tail)) b.upper.push(g);
+    else b.geometries.push(g);
   });
   const meshes: Mesh[] = [];
   const switchable: Switchable[] = [];
@@ -145,6 +169,10 @@ export function buildStore(layout: StoreLayout): StoreView {
   // mała siatka widoczna tylko w przekroju. Zakres rysowania obsługuje jeden taki mebel (generator daje jeden regał z papierosami):
   // kolejne zostają w całości.
   let cut: (CutSource & { wall: WallSide; cap: Object3D; id: string }) | null = null;
+  // Drzwi na zaplecze: zamknięte skrzydło (`closed`) zostaje w scalonej ścianie działowej, na końcu buforów; do ruchu jest jego
+  // scalona kopia na zawiasie (`hinge`), pokazywana tylko wtedy, gdy skrzydło nie jest zamknięte. Generator daje jedne drzwi: kolejne
+  // stałyby zamknięte.
+  let door = null as HingedDoor | null;
   const shelfSlots: ShelfSlot[] = [];
   const anchors = new Group();
   anchors.name = 'fixtures';
@@ -165,6 +193,15 @@ export function buildStore(layout: StoreLayout): StoreView {
     if (cutaway && !cut) {
       cutaway.cap.position.copy(obj.position);
       cut = { source: obj, height: cutaway.height, wall: wallBehind(f.facing), cap: cutaway.cap, id: f.id };
+    }
+    const leaf = obj.userData.leaf as Object3D | undefined;
+    if (leaf && !door) {
+      const moving = leaf.clone();
+      moving.position.set(0, 0, 0);   // scalona w układzie zawiasu: obrót grupy to obrót wokół zawiasu
+      const hinge = mergedGroup(`${f.id}:leaf`, [moving], owned);
+      hinge.position.copy(obj.position).add(leaf.position);
+      hinge.visible = false;
+      door = { rect: f, closed: leaf, hinge, swing: new DoorSwing(), open: false };
     }
     (f.kind === 'backroomDoor' ? midSources : staticSources).push(obj);
     const anchor = new Group();
@@ -190,16 +227,20 @@ export function buildStore(layout: StoreLayout): StoreView {
 
   // ściany: low zawsze, high (pełna) albo cap (przekrój) zależnie od kamery
   const walls = {} as Record<WallSide, { group: Group; high: Group; cap: Group }>;
+  // ściana działowa z drzwiami: zamknięte skrzydło na końcu buforów, a skrzydło na zawiasie w tej samej grupie (przekrój chowa oba)
+  const mid = mergeSources('wall:mid:high', midSources, owned, undefined, door?.closed);
   for (const side of WALL_SIDES) {
     const parts = shell.walls[side];
     const group = new Group();
     group.name = `wall:${side}`;
     group.add(mergedGroup(`wall:${side}:low`, [parts.low], owned));
-    walls[side] = {
-      group,
-      high: mergedGroup(`wall:${side}:high`, side === 'mid' ? midSources : [parts.high], owned),
-      cap: mergedGroup(`wall:${side}:cap`, [parts.cap], owned),
-    };
+    let high: Group;
+    if (side === 'mid') {
+      high = new Group();
+      high.name = 'wall:mid:high';
+      high.add(...mid.meshes, ...(door ? [door.hinge] : []));
+    } else high = mergedGroup(`wall:${side}:high`, [parts.high], owned);
+    walls[side] = { group, high, cap: mergedGroup(`wall:${side}:cap`, [parts.cap], owned) };
     group.add(walls[side].high);
   }
 
@@ -229,10 +270,7 @@ export function buildStore(layout: StoreLayout): StoreView {
     }
     // mebel z przekrojem tnie się razem ze ścianą za nim: ściana obniżona = góra mebla wyłączona, a przekrój zamknięty płytą
     const full = !(cut && lowered.includes(cut.wall));
-    for (const s of staticMerge.switchable) {
-      s.mesh.geometry.setDrawRange(0, full ? s.total : s.head);
-      s.mesh.visible = full || s.head > 0;
-    }
+    setTails(staticMerge.switchable, full);
     if (cutCap) cutCap.visible = !full;
   };
   applyWalls();
@@ -249,6 +287,17 @@ export function buildStore(layout: StoreLayout): StoreView {
       if (lampMesh) lampMesh.material = night ? lampNight : lampDay;
       windowGlow.visible = night;
     },
+    updateDoor(dt, people) {
+      if (!door) return;
+      const angle = door.swing.step(nearestMover(door.rect, people), dt);
+      door.hinge.rotation.y = -angle;   // ujemny obrót wokół y: skrzydło idzie w +z, czyli na zaplecze
+      const open = angle > 0;
+      if (open === door.open) return;
+      door.open = open;
+      door.hinge.visible = open;
+      setTails(mid.switchable, !open);
+    },
+    get doorAngle() { return door?.swing.angle ?? 0; },
     dispose() {
       if (disposed) return;
       disposed = true;
