@@ -122,8 +122,8 @@ describe('treść okna „Jak grać”', () => {
     expect(t).toContain(`od ${Math.round(CAT_INFO.alkohol.margin * 100)}% (alkohol) do ${Math.round(CAT_INFO.slodycze.margin * 100)}% (słodycze)`);
     expect(t).toContain(`z półek, a hot-dogi i kawa dają więcej: ${Math.round(HOT.margin * 100)}%`);
     expect(HOT.margin).toBeGreaterThan(marginRange().high.margin);   // „dają więcej” jest prawdą
-    // media zależą od wielkości sklepu (economy.ts: MEDIA_PER_DAY × powierzchnia sprzedaży), więc tekst obiecuje tylko dolną granicę
-    expect(t).toContain(`Płacisz ${WAGE_PER_DAY} zł dziennie za osobę, a za media od ok. ${MEDIA_PER_DAY} zł dziennie (im większy sklep, tym więcej)`);
+    // media zależą od wielkości sklepu (economy.ts: MEDIA_PER_DAY × powierzchnia sprzedaży), więc tekst podaje kwotę dla przeciętnego sklepu
+    expect(t).toContain(`Płacisz ${WAGE_PER_DAY} zł dziennie za osobę, a za media ok. ${MEDIA_PER_DAY} zł dziennie w przeciętnym sklepie (mały płaci mniej, duży więcej)`);
     expect(t).toContain(`opłatę franczyzową: ${FRANCHISE_FEE_FIXED} zł plus ${Math.round(FRANCHISE_FEE_SHARE * 100)}% obrotu`);
   });
 

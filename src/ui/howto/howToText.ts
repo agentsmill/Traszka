@@ -116,7 +116,7 @@ export function howToSections(): HowToSection[] {
     {
       title: 'Pieniądze',
       paragraphs: [
-        `Zarabiasz marżę, nie obrót: od ${percent(margins.low.margin)} (${margins.low.label}) do ${percent(margins.high.margin)} (${margins.high.label}) ceny towaru z półek, a hot-dogi i kawa dają więcej: ${percent(HOT.margin)}. Płacisz ${zl(WAGE_PER_DAY)} dziennie za osobę, a za media od ok. ${zl(MEDIA_PER_DAY)} dziennie (im większy sklep, tym więcej).`,
+        `Zarabiasz marżę, nie obrót: od ${percent(margins.low.margin)} (${margins.low.label}) do ${percent(margins.high.margin)} (${margins.high.label}) ceny towaru z półek, a hot-dogi i kawa dają więcej: ${percent(HOT.margin)}. Płacisz ${zl(WAGE_PER_DAY)} dziennie za osobę, a za media ok. ${zl(MEDIA_PER_DAY)} dziennie w przeciętnym sklepie (mały płaci mniej, duży więcej).`,
         `Na koniec miesiąca Centrala pobiera opłatę franczyzową: ${zl(FRANCHISE_FEE_FIXED)} plus ${percent(FRANCHISE_FEE_SHARE)} obrotu. Zostaw na nią gotówkę: zakładka Cele, sekcja „Ten miesiąc”, pokazuje, ile już się naliczyło.`,
         'Raport miesiąca pokazuje pozycje, zmianę zaufania i jedną wskazówkę.',
       ],

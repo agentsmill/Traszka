@@ -1890,11 +1890,12 @@
   font-size: 13px;
 }
 
-/* Raport jest długi (na telefonie przewija się): „Dalej” zostaje przy dolnej krawędzi okna, a treść przesuwa się pod nim. */
+/* Raport jest długi (na telefonie przewija się): „Dalej” zostaje przy dolnej krawędzi okna, a treść przesuwa się pod nim.
+   Ujemne `bottom` o dolny padding `.tt-modal` (16 px) zakrywa pasek, w którym treść prześwitywała pod przyciskiem. */
 .tt-modal-foot {
   position: sticky;
-  bottom: 0;
-  padding-bottom: 8px;
+  bottom: -16px;
+  padding-bottom: 24px;
   background: var(--tt-cream);
 }
 
