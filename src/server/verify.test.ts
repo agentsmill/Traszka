@@ -1,16 +1,17 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createEconomy, stepMinute, type EconomyState } from '@/sim/economy/economy';
 import { computeStoreInfo } from '@/sim/economy/storeInfo';
+import type { Command } from '@/sim/economy/commands';
 import { RANKED_SEASON_END_MINUTE, seasonScore } from '@/sim/ranked';
 import { generateStore } from '@/sim/store/generateStore';
-import type { RunRecord } from './runs';
-import { makeReplayVerifier, replayNotAvailable } from './verify';
+import type { SubmittedRun } from './runs';
+import { makeReplayVerifier, replayNotAvailable, type VerifyFailure, type VerifyResult } from './verify';
 
-const RUN: RunRecord = { seed: 'kiełbasa-42', gameVersion: '0.0.0', generatorVersion: 1, mode: 'ranked', log: [] };
+const RUN: SubmittedRun = { seed: 'kiełbasa-42', gameVersion: '0.0.0+abc123def456', generatorVersion: 1, simVersion: 1, mode: 'ranked', log: [] };
 const state = (...profits: number[]): Pick<EconomyState, 'history'> => ({
   history: profits.map((profit, i) => ({ label: `m${i}`, profit, revenue: 0 })),
 });
-const judge = (replay: (run: RunRecord, until: number) => Pick<EconomyState, 'history'>) =>
+const judge = (replay: (run: SubmittedRun, until: number) => Pick<EconomyState, 'history'>) =>
   makeReplayVerifier({ replay, endMinute: RANKED_SEASON_END_MINUTE, score: seasonScore });
 
 describe('sędzia biegu (verifyRun)', () => {
@@ -18,8 +19,14 @@ describe('sędzia biegu (verifyRun)', () => {
     expect(await replayNotAvailable(RUN)).toEqual({ ok: false, reason: 'replay-unavailable' });
   });
 
+  it('sędzia może odmówić trzema powodami, w tym „old-version” (bieg z innej wersji symulacji niż sędzia)', () => {
+    const reasons: VerifyFailure[] = ['replay-unavailable', 'replay-failed', 'old-version'];
+    const verdicts: VerifyResult[] = reasons.map((reason) => ({ ok: false, reason }));
+    expect(verdicts.map((v) => !v.ok && v.reason)).toEqual(['replay-unavailable', 'replay-failed', 'old-version']);
+  });
+
   it('odtworzenie do końca sezonu daje wynik policzony przez serwer, a nie przez grę', async () => {
-    const calls: [RunRecord, number][] = [];
+    const calls: [SubmittedRun, number][] = [];
     const verify = judge((run, until) => {
       calls.push([run, until]);
       return state(10_000, 20_000, -5_000);
@@ -41,9 +48,9 @@ describe('sędzia biegu (verifyRun)', () => {
 
   describe('wyjątek sędziego zostawia ślad w logu Vercela (inaczej uczciwy bieg znika bez wieści)', () => {
     afterEach(() => vi.restoreAllMocks());
-    const secretRun: RunRecord = {
+    const secretRun: SubmittedRun = {
       ...RUN, seed: 'tajny-seed-777',
-      log: [{ minute: 400, seq: 0, cmd: { type: 'tapTill', tajne: 'DZIENNIK-GRACZA' } }],
+      log: [{ minute: 400, seq: 0, cmd: { type: 'tapTill', tajne: 'DZIENNIK-GRACZA' } as Command }],
     };
 
     it('console.error z oznaczeniem, nazwą i treścią błędu, a bez klucza, seeda i dziennika poleceń', async () => {

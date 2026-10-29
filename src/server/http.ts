@@ -136,7 +136,9 @@ export const handleLeaderboard: Handler = async (request, deps) => {
 
 /**
  * `POST /api/runs` z `{ key, nick, run }`: sprawdza zgłoszenie i limit, odrzuca cudzy nick, zanim sędzia odtworzy bieg, a wynik
- * policzony przez sędziego wpisuje do rankingów (globalnego, seeda i, dla seeda tygodnia, tygodnia) i rezerwuje nick.
+ * policzony przez sędziego wpisuje do rankingów (globalnego, seeda i, dla seeda tygodnia, tygodnia) i rezerwuje nick. Odmowa sędziego
+ * (`old-version`: bieg z innej wersji symulacji, `replay-failed`, `replay-unavailable`) wraca do gracza pod własnym kodem i statusem
+ * z `errors.ts`, a do bazy nie trafia nic: ani nick, ani wynik.
  */
 export const handleRuns: Handler = async (request, deps) => {
   const bad = wrongMethod(request, 'POST');

@@ -1,15 +1,16 @@
 /**
- * Liczby serwera rankingu w jednym miejscu: wersje gry, które serwer umie sprawdzić, granice rozmiarów, czasy życia w bazie
+ * Liczby serwera rankingu w jednym miejscu: wersja generatora, którą serwer rozpoznaje, granice rozmiarów, czasy życia w bazie
  * i limity zgłoszeń. Wszystkie czasy w sekundach (Redis), chyba że nazwa mówi inaczej.
  */
 
 /**
- * Wersje gry, których biegi serwer przyjmuje: tylko te, które odtworzy ta sama symulacja co w grze (wynik liczy serwer, więc bieg
- * z innej wersji dałby inny wynik). Test pilnuje, żeby lista miała bieżącą wersję z `package.json` (podbicie wersji bez dopisania
- * jej tutaj nie przejdzie testów).
+ * Wersje generatora sklepu (`GENERATOR_VERSION`), które serwer rozpoznaje przy zgłoszeniu: tani wczesny odrzut, zanim ruszy sędzia.
+ * Sędzia i tak odtwarza bieg generatorem ze swojego bundla i rzuca przy innej wersji (`replay-failed`).
+ *
+ * Listy wersji gry tu nie ma. `gameVersion` z gry (`<package.json>+<12 znaków commita>`) zmienia się przy każdym wdrożeniu, więc
+ * nie może decydować o przyjęciu biegu. Decyduje `simVersion` biegu: sędzia (`verify.ts`) przyjmuje go tylko wtedy, gdy równa się
+ * `SIM_VERSION` z jego bundla, bo wtedy odtworzenie daje ten sam stan co w grze. Parser (`runs.ts`) tylko sprawdza kształt pola.
  */
-export const KNOWN_GAME_VERSIONS: readonly string[] = ['0.0.0'];
-/** Wersje generatora sklepu (`GENERATOR_VERSION`), z których serwer odtworzy sklep. */
 export const KNOWN_GENERATOR_VERSIONS: readonly number[] = [1];
 
 /**
@@ -67,6 +68,8 @@ export const BOARD_LIMIT_MAX = Math.max(...BOARD_LIMITS);
 export const RUN_MAX_BODY_BYTES = 4_000_000;
 export const RUN_MAX_LOG_ENTRIES = 100_000;
 export const RUN_MAX_COMMAND_BYTES = 512;
+/** Najdłuższa `gameVersion` (znaki): informacyjna, jedzie z biegiem, więc ma tylko rozsądną granicę (prawdziwa ma kilkanaście znaków). */
+export const RUN_MAX_GAME_VERSION_CHARS = 100;
 /** Najdłuższy seed (punkty kodowe): 40 z pola na ekranie startowym i zapas na sąsiedni lokal (`seed·5`). */
 export const RUN_MAX_SEED_CHARS = 48;
 /** Ciało pozostałych żądań (klucz, nick, seed; zapis gry ma własny limit plus zapas na kopertę JSON). */

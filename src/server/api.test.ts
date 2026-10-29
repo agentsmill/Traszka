@@ -6,7 +6,7 @@ import { POST as player } from '../../api/player';
 import { POST as runs } from '../../api/runs';
 import { POST as download } from '../../api/save/download';
 import { POST as upload } from '../../api/save/upload';
-import { KNOWN_GAME_VERSIONS, KNOWN_GENERATOR_VERSIONS } from './config';
+import { KNOWN_GENERATOR_VERSIONS } from './config';
 import { depsFromEnv, route } from './env';
 import { API_ERRORS } from './errors';
 import { fakeUpstash, type FakeUpstash } from './fakeUpstash';
@@ -45,7 +45,7 @@ afterEach(() => {
 const post = (path: string, body: unknown): Request => new Request(`${ORIGIN}${path}`, {
   method: 'POST', headers: { 'content-type': 'application/json', 'x-real-ip': '203.0.113.7' }, body: JSON.stringify(body),
 });
-const run = { seed: 'pierogi-731', gameVersion: KNOWN_GAME_VERSIONS[0], generatorVersion: KNOWN_GENERATOR_VERSIONS[0], mode: 'ranked', log: [] };
+const run = { seed: 'pierogi-731', gameVersion: '0.0.0+abc123def456', generatorVersion: KNOWN_GENERATOR_VERSIONS[0], simVersion: 1, mode: 'ranked', log: [] };
 
 describe('api/** na Vercelu (atrapa Upstash przez fetch)', () => {
   it('ranking czyta tylko tokenem do odczytu', async () => {

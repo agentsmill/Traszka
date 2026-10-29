@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { CROCKFORD, formatRecoveryCode } from '@/game/playerKey';
 import { API_ERRORS } from './errors';
 import {
-  BOARD_LIMIT_DEFAULT, BOARD_LIMIT_MAX, BOARD_LIMITS, KNOWN_GAME_VERSIONS, KNOWN_GENERATOR_VERSIONS, RATE_LIMITS, RUN_MAX_BODY_BYTES,
+  BOARD_LIMIT_DEFAULT, BOARD_LIMIT_MAX, BOARD_LIMITS, KNOWN_GENERATOR_VERSIONS, RATE_LIMITS, RUN_MAX_BODY_BYTES,
   SAVE_BODY_BYTES, SAVE_BUNDLE_FORMAT, SAVE_DAILY_BUDGET, SAVE_MAX_BYTES, SMALL_BODY_BYTES, type RateAction,
 } from './config';
 import {
@@ -11,7 +11,7 @@ import {
 import { KEYS, ownerOf } from './keys';
 import { MemoryRedis } from './memoryRedis';
 import { run as runCommand } from './redis';
-import type { RunRecord } from './runs';
+import type { SubmittedRun } from './runs';
 import { testBundle } from './testBundle';
 import { replayNotAvailable, type VerifyResult } from './verify';
 import { weekOf } from './week';
@@ -21,16 +21,16 @@ const KEY_A = 'K7QX9MBD2HFAP3WN8RTE';
 const KEY_B = 'M2N3P4Q5R6S7T8V9W0XY';
 const ORIGIN = 'https://traszka.test';
 
-function setup(verdict: VerifyResult | ((run: RunRecord) => VerifyResult) = { ok: true, score: 25_000 }) {
+function setup(verdict: VerifyResult | ((run: SubmittedRun) => VerifyResult) = { ok: true, score: 25_000 }) {
   const clock = { now: NOW };
   const redis = new MemoryRedis(() => clock.now);
-  const verifyRun = vi.fn((run: RunRecord) => (typeof verdict === 'function' ? verdict(run) : verdict));
+  const verifyRun = vi.fn((run: SubmittedRun) => (typeof verdict === 'function' ? verdict(run) : verdict));
   const deps: ServerDeps = { redis, readRedis: redis, verifyRun, now: () => clock.now };
   return { clock, redis, deps, verifyRun };
 }
 
-const run = (seed = 'pierogi-731'): RunRecord => ({
-  seed, gameVersion: KNOWN_GAME_VERSIONS[0]!, generatorVersion: KNOWN_GENERATOR_VERSIONS[0]!, mode: 'ranked',
+const run = (seed = 'pierogi-731'): SubmittedRun => ({
+  seed, gameVersion: '0.0.0+abc123def456', generatorVersion: KNOWN_GENERATOR_VERSIONS[0]!, simVersion: 1, mode: 'ranked',
   log: [{ minute: 400, seq: 0, cmd: { type: 'tapTill' } }],
 });
 const post = (path: string, body: unknown, headers: Record<string, string> = {}): Request => new Request(`${ORIGIN}${path}`, {
@@ -77,6 +77,50 @@ describe('POST /api/runs: zgłoszenie biegu', () => {
     expect((await body(failed)).error).toBe('replay-failed');
   });
 
+  it('sędzia odrzuca bieg z innej wersji symulacji (old-version): 409 z prośbą o odświeżenie strony, a w bazie nie ma ani nicka, ani wyniku', async () => {
+    const { deps, redis, verifyRun } = setup({ ok: false, reason: 'old-version' });
+    const res = await submit(deps, KEY_A, 'Mateusz');
+    expect(res.status).toBe(409);
+    expect(res.headers.get('cache-control')).toBe('no-store');
+    const answer = await body(res);
+    expect(answer).toEqual({ ok: false, error: 'old-version', message: API_ERRORS['old-version'].message });
+    expect(answer.message).toContain('Odśwież stronę');
+    expect(verifyRun).toHaveBeenCalledTimes(1);
+    expect(verifyRun).toHaveBeenCalledWith(run());
+    // ani rezerwacji nicka, ani wpisu w żadnym rankingu (zostają tylko liczniki limitu zgłoszeń)
+    expect(redis.keys().filter((k) => !k.startsWith('tr:rl:') && !k.startsWith('tr:salt:'))).toEqual([]);
+    expect(await body(await handlePlayer(post('/api/player', { key: KEY_B, nick: 'Mateusz' }), deps))).toEqual({ ok: true, nicks: [], nick: { nick: 'Mateusz', status: 'free' } });
+    expect((await body(await handleLeaderboard(get('/api/leaderboard'), deps))).rows).toEqual([]);
+  });
+
+  it('każda odmowa sędziego ma swój kod i status: old-version 409, replay-failed 422, replay-unavailable 503', async () => {
+    const reasons = { 'old-version': 409, 'replay-failed': 422, 'replay-unavailable': 503 } as const;
+    for (const [reason, status] of Object.entries(reasons) as [keyof typeof reasons, number][]) {
+      const res = await submit(setup({ ok: false, reason }).deps, KEY_A, 'Ala');
+      expect([reason, res.status]).toEqual([reason, status]);
+      expect((await body(res)).error).toBe(reason);
+    }
+  });
+
+  it('bieg bez simVersion (z gry sprzed tej reguły) to 409 old-version już w parserze: sędzia nie jest wołany, w bazie nic nie przybywa', async () => {
+    const { deps, redis, verifyRun } = setup();
+    const { simVersion: _brak, ...stary } = run();
+    const res = await handleRuns(post('/api/runs', { key: KEY_A, nick: 'Ala', run: stary }), deps);
+    expect(res.status).toBe(409);
+    expect(await body(res)).toEqual({ ok: false, error: 'old-version', message: API_ERRORS['old-version'].message });
+    expect(verifyRun).not.toHaveBeenCalled();
+    expect(redis.keys()).toEqual([]);
+  });
+
+  it('wersja gry w biegu (z commitem, „test”, dowolny napis do 100 znaków) nie rozstrzyga o przyjęciu: bieg trafia do sędziego', async () => {
+    const { deps, verifyRun } = setup();
+    for (const [i, gameVersion] of ['0.0.0+abc123def456', 'test', '0.0.1-stara'].entries()) {
+      const res = await handleRuns(post('/api/runs', { key: KEY_A, nick: `Gracz${i}`.slice(0, 20), run: { ...run(), gameVersion } }, { 'x-real-ip': `10.0.0.${i}` }), deps);
+      expect(res.status, gameVersion).toBe(200);
+    }
+    expect(verifyRun.mock.calls.map(([r]) => r.gameVersion)).toEqual(['0.0.0+abc123def456', 'test', '0.0.1-stara']);
+  });
+
   it('seed tygodnia trafia też do rankingu tygodnia; wulgarny seed i nick przechodzą jak każde inne (filtra słów nie ma)', async () => {
     const week = weekOf(NOW);
     const { deps } = setup((r) => ({ ok: true, score: r.seed === week.seed ? 30_000 : 20_000 }));
@@ -106,7 +150,11 @@ describe('POST /api/runs: zgłoszenie biegu', () => {
       [post('/api/runs', 'to nie JSON'), 400, 'bad-request'],
       [post('/api/runs', { key: KEY_A, nick: 'Centrala', run: run() }), 400, 'bad-nick'],
       [post('/api/runs', { key: 'zły', nick: 'Ala', run: run() }), 400, 'bad-key'],
-      [post('/api/runs', { key: KEY_A, nick: 'Ala', run: { ...run(), gameVersion: '0.0.1-stara' } }), 409, 'old-version'],
+      [post('/api/runs', { key: KEY_A, nick: 'Ala', run: { ...run(), simVersion: undefined } }), 409, 'old-version'],
+      [post('/api/runs', { key: KEY_A, nick: 'Ala', run: { ...run(), generatorVersion: 99 } }), 409, 'old-version'],
+      [post('/api/runs', { key: KEY_A, nick: 'Ala', run: { ...run(), simVersion: '1' } }), 400, 'bad-request'],
+      [post('/api/runs', { key: KEY_A, nick: 'Ala', run: { ...run(), simVersion: -1 } }), 400, 'bad-request'],
+      [post('/api/runs', { key: KEY_A, nick: 'Ala', run: { ...run(), gameVersion: 'x'.repeat(101) } }), 400, 'bad-request'],
       [post('/api/runs', `{"x":"${'a'.repeat(4_000_000)}"}`), 413, 'too-large'],
       [get('/api/runs'), 405, 'method'],
     ];

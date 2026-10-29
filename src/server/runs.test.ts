@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { NICK_ERRORS } from '@/game/nick';
 import { normalizeSeed } from '@/game/seeds';
-import { KNOWN_GAME_VERSIONS, KNOWN_GENERATOR_VERSIONS, RUN_MAX_COMMAND_BYTES, RUN_MAX_LOG_ENTRIES, SEASON_END_MINUTE } from './config';
-import { parseSubmission, type RunRecord } from './runs';
+import type { RunRecord } from '@/sim/run';
+import { KNOWN_GENERATOR_VERSIONS, RUN_MAX_COMMAND_BYTES, RUN_MAX_LOG_ENTRIES, SEASON_END_MINUTE } from './config';
+import { parseSubmission, type SubmittedRun } from './runs';
 
 const KEY = 'K7QX9MBD2HFAP3WN8RTE';
-const run = (over: Partial<Record<keyof RunRecord, unknown>> = {}): Record<string, unknown> => ({
-  seed: 'pierogi-731', gameVersion: KNOWN_GAME_VERSIONS[0], generatorVersion: KNOWN_GENERATOR_VERSIONS[0], mode: 'ranked',
+/** Tak wygląda wersja z prawdziwej gry: wersja z `package.json` i 12 znaków commita (`src/game/version.ts`). */
+const GAME_VERSION = '0.0.0+abc123def456';
+const run = (over: Partial<Record<keyof SubmittedRun, unknown>> = {}): Record<string, unknown> => ({
+  seed: 'pierogi-731', gameVersion: GAME_VERSION, generatorVersion: KNOWN_GENERATOR_VERSIONS[0], simVersion: 1, mode: 'ranked',
   log: [
     { minute: 360, seq: 0, cmd: { type: 'tapPallet', palletId: 3 } },
     { minute: 360, seq: 1, cmd: { type: 'tapTill' } },
@@ -14,18 +17,18 @@ const run = (over: Partial<Record<keyof RunRecord, unknown>> = {}): Record<strin
   ],
   ...over,
 });
-const body = (over: Record<string, unknown> = {}, runOver: Partial<Record<keyof RunRecord, unknown>> = {}): unknown => ({
+const body = (over: Record<string, unknown> = {}, runOver: Partial<Record<keyof SubmittedRun, unknown>> = {}): unknown => ({
   key: 'k7qx-9mbd-2hfa-p3wn-8rte', nick: '  Mateusz ', run: run(runOver), ...over,
 });
 
 describe('zgłoszenie biegu: kształt i granice', () => {
-  it('poprawne zgłoszenie: klucz kanoniczny, nick po normalizacji, czysty RunRecord bez obcych pól', () => {
+  it('poprawne zgłoszenie: klucz kanoniczny, nick po normalizacji, czysty bieg bez obcych pól', () => {
     const res = parseSubmission(body({ extra: 1 }, { coś: 'obcego' } as never));
     expect(res).toEqual({
       ok: true,
       value: {
         key: KEY, nick: 'Mateusz', nickKey: 'mateusz',
-        run: { seed: 'pierogi-731', gameVersion: KNOWN_GAME_VERSIONS[0], generatorVersion: KNOWN_GENERATOR_VERSIONS[0], mode: 'ranked', log: run().log },
+        run: { seed: 'pierogi-731', gameVersion: GAME_VERSION, generatorVersion: KNOWN_GENERATOR_VERSIONS[0], simVersion: 1, mode: 'ranked', log: run().log },
       },
     });
   });
@@ -61,12 +64,43 @@ describe('zgłoszenie biegu: kształt i granice', () => {
     }
   });
 
-  it('nieznana wersja gry albo generatora: old-version; tryb zwykły: not-ranked', () => {
-    expect(parseSubmission(body({}, { gameVersion: '9.9.9' }))).toMatchObject({ ok: false, error: 'old-version' });
+  it('nieznana wersja generatora: old-version; tryb zwykły: not-ranked', () => {
     expect(parseSubmission(body({}, { generatorVersion: 99 }))).toMatchObject({ ok: false, error: 'old-version' });
-    expect(parseSubmission(body({}, { gameVersion: 5 }))).toMatchObject({ ok: false, error: 'bad-request' });
     expect(parseSubmission(body({}, { mode: 'casual' }))).toMatchObject({ ok: false, error: 'not-ranked' });
     expect(parseSubmission(body({}, { mode: 'turbo' }))).toMatchObject({ ok: false, error: 'bad-request' });
+  });
+
+  it('wersja gry jest tylko informacją: bieg z prawdziwej gry (wersja z commitem), z testu i z serwera deweloperskiego przechodzi', () => {
+    for (const gameVersion of [GAME_VERSION, '0.0.0', '1.4.2+0123456789ab', 'test', 'dev', 'x'.repeat(100)]) {
+      expect(parseSubmission(body({}, { gameVersion })), gameVersion).toMatchObject({ ok: true, value: { run: { gameVersion } } });
+    }
+  });
+
+  it('wersja gry, która nie jest napisem albo ma ponad 100 znaków: bad-request (nie old-version)', () => {
+    for (const gameVersion of [undefined, null, 5, ['0.0.0'], { v: 1 }, 'x'.repeat(101), '0.0.0+'.padEnd(500, 'a')]) {
+      expect(parseSubmission(body({}, { gameVersion })), JSON.stringify(gameVersion)?.slice(0, 30)).toMatchObject({ ok: false, error: 'bad-request' });
+    }
+  });
+
+  it('brak simVersion (bieg ze starej wersji gry): old-version, także gdy reszta biegu jest w porządku', () => {
+    const { simVersion: _brak, ...stary } = run();
+    expect(parseSubmission({ key: KEY, nick: 'Ala', run: stary })).toMatchObject({ ok: false, error: 'old-version' });
+    expect(parseSubmission(body({}, { simVersion: undefined }))).toMatchObject({ ok: false, error: 'old-version' });
+    expect(parseSubmission(body({}, { simVersion: undefined, gameVersion: '0.0.0' }))).toMatchObject({ ok: false, error: 'old-version' });
+  });
+
+  it('simVersion to liczba całkowita nieujemna (bezpieczna); każda inna wartość: bad-request', () => {
+    for (const simVersion of [0, 1, 2, 42, Number.MAX_SAFE_INTEGER]) {
+      expect(parseSubmission(body({}, { simVersion })), String(simVersion)).toMatchObject({ ok: true, value: { run: { simVersion } } });
+    }
+    const odd = [null, '1', '', true, false, [], [1], {}, 1.5, -1, -0.5, NaN, Infinity, -Infinity, Number.MAX_SAFE_INTEGER + 1, 2 ** 53, 1e300];
+    for (const simVersion of odd) {
+      expect(parseSubmission(body({}, { simVersion })), String(simVersion)).toMatchObject({ ok: false, error: 'bad-request' });
+    }
+  });
+
+  it('simVersion o nieznanej wartości parser przepuszcza: porównanie z SIM_VERSION robi sędzia (parser nie zna bundla)', () => {
+    expect(parseSubmission(body({}, { simVersion: 999_999 }))).toMatchObject({ ok: true, value: { run: { simVersion: 999_999 } } });
   });
 
   it('seed: pusty, za długi, ze znakami sterującymi albo niewidocznymi (ranking widzą wszyscy): bad-seed', () => {
@@ -129,5 +163,24 @@ describe('zgłoszenie biegu: kształt i granice', () => {
     const log = Array.from({ length: RUN_MAX_LOG_ENTRIES + 1 }, (_, i) => ({ minute: 360, seq: i, cmd: { type: 'tapTill' } }));
     expect(parseSubmission(body({}, { log }))).toMatchObject({ ok: false, error: 'too-large' });
     expect(parseSubmission(body({}, { log: log.slice(1) })).ok).toBe(true);
+  });
+});
+
+describe('typy zgłoszenia pochodzą z gry (src/sim/run.ts), a nie z kopii w serwerze', () => {
+  // Kompilator pilnuje tego, co sprawdzają przypisania niżej: dopisanie wymaganego pola do `RunRecord` w `run.ts` albo zmiana typu pola
+  // zatrzymuje `tsc` w tym teście i w parserze (`runs.ts`), więc serwer nie rozjedzie się z grą po cichu. `Omit<…, 'simVersion'>`,
+  // bo pole `simVersion` dojdzie do `RunRecord` dopiero w części B2b: do tego czasu dopisuje je zgłoszenie (`SubmittedRun`).
+  const fromGame: Omit<RunRecord, 'simVersion'> = {
+    seed: 'pierogi-731', gameVersion: GAME_VERSION, generatorVersion: KNOWN_GENERATOR_VERSIONS[0]!, mode: 'ranked',
+    log: [{ minute: 360, seq: 0, cmd: { type: 'tapPallet', palletId: 3 } }, { minute: 700, seq: 1, cmd: { type: 'setOrder', auto: false, manual: 5 } }],
+  };
+
+  it('bieg z gry z dopisanym simVersion to zgłoszenie, a to, co zwraca parser, to bieg, który przyjmuje replayRun', () => {
+    const submitted: SubmittedRun = { ...fromGame, simVersion: 3 };
+    const parsed = parseSubmission({ key: KEY, nick: 'Ala', run: JSON.parse(JSON.stringify(submitted)) });
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    const forReplay: RunRecord = parsed.value.run;   // wejście `replayRun(run: RunRecord, …)`
+    expect(forReplay).toEqual(submitted);
   });
 });

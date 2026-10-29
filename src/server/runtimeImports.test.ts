@@ -4,8 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { resolveStore } from '@/game/seeds';
 import { GENERATOR_VERSION } from '@/sim/store/generateStore';
 import { RANKED_SEASON_END_MINUTE } from '@/sim/ranked';
-import { version as GAME_VERSION } from '../../package.json';
-import { KNOWN_GAME_VERSIONS, KNOWN_GENERATOR_VERSIONS, SEASON_END_MINUTE, SEED_NEIGHBOURS } from './config';
+import { KNOWN_GENERATOR_VERSIONS, SEASON_END_MINUTE, SEED_NEIGHBOURS } from './config';
 
 const ROOT = resolve(__dirname, '../..');
 
@@ -25,30 +24,54 @@ function runtimeImports(src: string): string[] {
   return out;
 }
 
+/**
+ * Pliki, które Vercel załaduje w czasie działania, idąc od `api/**` i `src/server/**` po importach (bez `import type`), oraz importy,
+ * których funkcja nie rozwiąże (nie względne, bez `.js`, do nieistniejącego pliku).
+ */
+function runtimeGraph(): { seen: Set<string>; bad: string[] } {
+  const seen = new Set<string>();
+  const bad: string[] = [];
+  const queue = [...files(join(ROOT, 'api')), ...files(join(ROOT, 'src/server'))];
+  while (queue.length > 0) {
+    const file = queue.pop()!;
+    if (seen.has(file)) continue;
+    seen.add(file);
+    for (const spec of runtimeImports(readFileSync(file, 'utf8'))) {
+      const where = `${relative(ROOT, file)} → ${spec}`;
+      if (!spec.startsWith('.') || !spec.endsWith('.js')) {
+        bad.push(where);
+        continue;
+      }
+      const target = resolve(dirname(file), spec.replace(/\.js$/, '.ts'));
+      if (!existsSync(target)) bad.push(`${where} (brak pliku)`);
+      else queue.push(target);
+    }
+  }
+  return { seen, bad };
+}
+
 describe('funkcje serwerowe: importy, które Vercel uruchomi', () => {
   it('api/** i src/server/** (i wszystko, co importują) mają tylko względne importy z rozszerzeniem .js do istniejących plików .ts', () => {
     // Vercel kompiluje każdy plik osobno do ESM: bez `.js` Node nie znajdzie modułu, a alias `@/` nie jest rozwiązywany wcale
     // (build przechodzi, funkcja pada przy pierwszym wywołaniu; sprawdzone `vercel build` na kopii repozytorium).
-    const seen = new Set<string>();
-    const bad: string[] = [];
-    const queue = [...files(join(ROOT, 'api')), ...files(join(ROOT, 'src/server'))];
-    while (queue.length > 0) {
-      const file = queue.pop()!;
-      if (seen.has(file)) continue;
-      seen.add(file);
-      for (const spec of runtimeImports(readFileSync(file, 'utf8'))) {
-        const where = `${relative(ROOT, file)} → ${spec}`;
-        if (!spec.startsWith('.') || !spec.endsWith('.js')) {
-          bad.push(where);
-          continue;
-        }
-        const target = resolve(dirname(file), spec.replace(/\.js$/, '.ts'));
-        if (!existsSync(target)) bad.push(`${where} (brak pliku)`);
-        else queue.push(target);
-      }
-    }
+    const { seen, bad } = runtimeGraph();
     expect(bad).toEqual([]);
     expect([...seen].some((f) => f.includes(`${join('src', 'game', 'nick.ts')}`))).toBe(true);
+  });
+
+  it('typy biegu z gry (src/sim/run.ts, src/sim/economy/commands.ts) serwer bierze tylko przez import type: w czasie działania ich nie ma', () => {
+    // `import type` znika przy kompilacji, więc plik z aliasem `@/` w środku (jak run.ts) nie trafia do funkcji i jej nie wywraca.
+    const typeOnly = (file: string, from: string): boolean => {
+      const src = readFileSync(join(ROOT, file), 'utf8');
+      return new RegExp(`^import type \\{[^}]*\\} from '${from.replace(/\./g, '\\.')}';`, 'm').test(src) && !runtimeImports(src).includes(from);
+    };
+    expect(typeOnly('src/server/runs.ts', '../sim/run.js')).toBe(true);
+    expect(typeOnly('src/server/runs.ts', '../sim/economy/commands.js')).toBe(true);
+    const { seen } = runtimeGraph();
+    const loaded = [...seen].map((f) => relative(ROOT, f));
+    expect(loaded).not.toContain(join('src', 'sim', 'run.ts'));
+    expect(loaded).not.toContain(join('src', 'sim', 'economy', 'commands.ts'));
+    expect(loaded).toContain(join('src', 'server', 'runs.ts'));   // graf jest prawdziwy, a nie pusty
   });
 
   it('wspólny walidator seeda (src/game/seedText.ts) jest osiągalny z serwera i nie ma żadnych importów', () => {
@@ -57,8 +80,7 @@ describe('funkcje serwerowe: importy, które Vercel uruchomi', () => {
     expect(readFileSync(file, 'utf8')).not.toMatch(/^\s*import\b/m);
   });
 
-  it('serwer zna bieżącą wersję gry i generatora (inaczej odrzuci każdy bieg jako „nieaktualna wersja”)', () => {
-    expect(KNOWN_GAME_VERSIONS).toContain(GAME_VERSION);
+  it('serwer zna bieżącą wersję generatora (inaczej odrzuci każdy bieg jako „nieaktualna wersja”); wersji gry nie sprawdza, bo o przyjęciu decyduje simVersion', () => {
     expect(KNOWN_GENERATOR_VERSIONS).toContain(GENERATOR_VERSION);
   });
 
