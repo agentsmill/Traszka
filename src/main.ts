@@ -8,12 +8,13 @@ import { entrySeed } from '@/game/seeds';
 import { lastSavedSeed } from '@/game/session';
 import { createShell, dropUnsentRun } from '@/game/actions';
 import { openAtBoot } from '@/game/boot';
+import { bootMeta } from '@/game/bootMeta';
 import { bindControls } from '@/game/controls';
 import { advanceSession, debugHandleEnabled, debugHandleOf, installDebugHandle, isModalOpen, isSceneHeld } from '@/game/frame';
 import { loadMeta, needsStartScreen, saveMeta } from '@/game/meta';
 import { pendingFinished, storedRankedBlock } from '@/game/rankedRun';
 import { clearSeedFromUrl, createSceneHost, startTestScene, writeSeedToUrl } from '@/game/scene';
-import { initialStartForm, playerOf, type StartChoice } from '@/game/start';
+import { initialStartForm, type StartChoice } from '@/game/start';
 import { play, buzz, setSound, setVibration } from '@/ui/sfx';
 import { confetti } from '@/ui/fx';
 import type { EconEvent } from '@/sim/economy/economy';
@@ -60,8 +61,9 @@ const rankingClient = createRankingClient();
  * Ekonomia ma własny zegar (advanceEconomy): minuta gry na krok, noc mija szybciej niż dzień.
  *
  * `entry` to wybór gracza z ekranu startowego (pierwsze wejście) wraz z fabryką postaci, której używał podgląd: nick i wygląd
- * kasjera idą do meta, sklep otwiera się z wybranego seeda i nigdy jako nowa gra (nie nadpisze zapisu). Bez niego (gracz już jest
- * w meta, meta z nowszej wersji gry, benchmark) sklep otwiera się z `initialSeed`, a kasjer ma wygląd z meta albo domyślny.
+ * kasjera idą do meta (`bootMeta`: z kluczem do rankingu poprzedniego gracza, a pierwszy gracz dostaje nowy), sklep otwiera się z wybranego
+ * seeda i nigdy jako nowa gra (nie nadpisze zapisu). Bez niego (gracz już jest w meta, meta z nowszej wersji gry, benchmark) sklep otwiera się
+ * z `initialSeed`, a kasjer ma wygląd z meta albo domyślny; gracz sprzed rankingu dostaje wtedy klucz w rozruchu (benchmark nie tworzy gracza ani klucza).
  * Nakładka z komunikatami (`listenForNotices`, `renderUi`) wstaje przed tą funkcją, razem z ekranem startowym.
  *
  * Bieg rankingowy: gdy zapamiętany tryb to `ranked`, a adres nie ma `?seed=`, rozruch wznawia aktywny bieg zamiast otwierać zwykły sklep
@@ -88,11 +90,11 @@ function startGame(
   // Liczniki z całej klatki (cienie, AO, postprocessing), a nie z ostatniego `render()`. Zerowane raz na klatkę w pętli.
   ctx.renderer.info.autoReset = false;
   const benchMode = benchKit !== null;
-  const meta = loadMeta();
-  if (entry) {
-    meta.player = playerOf(entry.choice);   // meta z nowszej wersji gry tego nie zapisze (saveMeta pomija ją), ale ta karta ma gracza
-    saveMeta(meta);
-  }
+  // Gracz z ekranu startowego (z kluczem poprzedniego) albo klucz dla gracza sprzed rankingu: `bootMeta`. Meta z nowszej wersji gry tego
+  // nie zapisze (`saveMeta` pomija ją), ale ta karta ma gracza. Benchmark nie tworzy ani gracza, ani klucza.
+  const loaded = loadMeta();
+  const meta = benchMode ? loaded : bootMeta(loaded, entry?.choice ?? null);
+  if (meta !== loaded) saveMeta(meta);
   const zoom = Number(params.get('zoom'));
   const overlay = benchMode ? null : createWorldOverlay(document.body);
   const scene = createSceneHost({

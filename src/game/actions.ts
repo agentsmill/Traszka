@@ -7,6 +7,7 @@ import { rankFor } from '@/sim/economy/progress';
 import { noticeLevel } from '@/sim/economy/tycoon/notices';
 import type { Sfx } from '@/ui/sfx';
 import * as ui from '@/ui/state';
+import { bootMeta } from './bootMeta';
 import type { CashierLook } from './cashier';
 import { addToNetwork, claimDaily, partnerOf, saveMeta, startupWindow, type Meta } from './meta';
 import { openStore } from './openStore';
@@ -20,7 +21,7 @@ import {
   NEWER_SAVE_NOTICE, RUN_LOG_MAX, UNBUILDABLE_SAVE_NOTICE, createSession, discardSave, hasStoredSave, lastSavedSeed, retireSession, reviveSession,
   saveSession, type GameSession,
 } from './session';
-import { initialStartForm, noticeAfterOpen, openChosen, openRequestFor, playerOf, type StartChoice, type StartForm, type StoreSwitch } from './start';
+import { initialStartForm, noticeAfterOpen, openChosen, openRequestFor, type StartChoice, type StartForm, type StoreSwitch } from './start';
 
 /**
  * Warstwa gry nad `applyCommand`: każde polecenie gracza przechodzi tędy. Dyspozytor stosuje je do stanu (czysta symulacja),
@@ -728,7 +729,8 @@ export function createShell(deps: ShellDeps): GameShell {
   };
 
   /**
-   * Wybór gracza z ekranu „Nowy sklep”: nick i wygląd kasjera do meta (w pamięci także wtedy, gdy meta jest tylko do odczytu), a
+   * Wybór gracza z ekranu „Nowy sklep”: nick i wygląd kasjera do meta (w pamięci także wtedy, gdy meta jest tylko do odczytu), z kluczem
+   * do rankingu poprzedniego gracza (zmiana nicka, kasjera albo seeda go nie gubi; gracz sprzed rankingu dostaje klucz tutaj, `bootMeta`), a
    * sklep otwiera `openChosen` (start.ts, z testem): przez `setSeed` zawsze bez `fresh`, więc seed z zapisem wczytuje ten zapis, a
    * zapisu z nowszej wersji gry ani takiego, którego świata nie dało się zbudować, nic nie nadpisze (`createSession`). Wygląd idzie
    * do sceny przed `setSeed`: każdy sklep (także poprzedni, odtworzony, gdy nowy się nie otworzył) stawia kasjera z tego wyglądu,
@@ -742,7 +744,7 @@ export function createShell(deps: ShellDeps): GameShell {
    * wraca z tym samym wyborem i pytaniem. Inna porażka (świat się nie zbudował) zostawia gracza w poprzednim sklepie z komunikatem.
    */
   function openChosenStore(choice: StartChoice, opts?: { replace?: boolean }): void {
-    shell.meta.player = playerOf(choice);
+    shell.meta = bootMeta(shell.meta, choice);   // gracz z wyboru, z kluczem poprzedniego (albo nowym u gracza sprzed rankingu)
     saveMeta(shell.meta);
     scene.setCashierLook(choice.look);
     if (choice.ranked) {

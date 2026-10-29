@@ -33,6 +33,8 @@ import {
 } from './session';
 
 const SEED = 'traszka-1';
+/** Klucz gracza w postaci kanonicznej: 20 znaków base32 Crockforda (`playerKey.ts`). */
+const KEY_FORMAT = /^[0-9A-HJKMNP-TV-Z]{20}$/;
 const REBUILD_NOTICE = 'Nie udało się przebudować sklepu po remoncie. Postęp jest zapisany — odśwież stronę.';
 const REBUILD_NOTICE_EPHEMERAL = 'Nie udało się przebudować sklepu po remoncie. Ten sklep jest tymczasowy — odśwież stronę, żeby wrócić do swojego.';
 
@@ -1095,13 +1097,92 @@ describe('powłoka gry (createShell)', () => {
       const look: CashierLook = { outfit: 'normal', appearanceSeed: 'abc' } as unknown as CashierLook;
       request.onStart({ nick: 'Kasia', seed: 'traszka-5', look, specialOutfits: false, notice: null, ranked: false });
 
-      expect(h.shell.meta.player).toEqual({ nick: 'Kasia', look: { outfit: look.outfit, appearanceSeed: look.appearanceSeed }, specialOutfits: false });
+      expect(h.shell.meta.player).toEqual({
+        nick: 'Kasia', look: { outfit: look.outfit, appearanceSeed: look.appearanceSeed }, specialOutfits: false, key: expect.stringMatching(KEY_FORMAT),
+      });
       expect(savedMeta().player!.nick).toBe('Kasia');
+      expect(savedMeta().player!.key).toBe(h.shell.meta.player!.key);
       expect(h.scene.looks).toEqual([look]);   // wygląd idzie do sceny przed budową sklepu
       expect(h.scene.looks[0]).toBe(look);
       expect(h.shell.session).not.toBe(old);
       expect(h.shell.session!.seed).toBe('traszka-5');
       expect(h.urls).toEqual(['traszka-5']);
+    });
+
+    describe('newStore: klucz gracza do rankingu', () => {
+      const OLD_KEY = 'K7QX9MBD2HFAP3WN8RTE';
+      const OLD_LOOK: CashierLook = { outfit: 'men-suit', appearanceSeed: 'kasjer-a' };
+      const NEW_LOOK: CashierLook = { outfit: 'women-suit', appearanceSeed: 'kasjerka-b' };
+      const playerMeta = (over: Partial<NonNullable<Meta['player']>> = {}, rest: Partial<Meta> = {}): Meta => ({
+        ...loadMeta(), player: { nick: 'Stary', look: OLD_LOOK, specialOutfits: true, key: OLD_KEY, ...over }, ...rest,
+      });
+      const picked = (over: Partial<StartChoice> = {}): StartChoice =>
+        ({ nick: 'Stary', seed: 'traszka-5', look: OLD_LOOK, specialOutfits: true, notice: null, ranked: false, ...over });
+      /** Ekran „Nowy sklep” z ⚙ i zatwierdzenie wyboru (jak robi to `StartScreen`). */
+      function choose(h: Harness, c: StartChoice): void {
+        h.shell.game.newStore();
+        const request = ui.start.value!;
+        ui.start.value = null;
+        request.onStart(c);
+      }
+
+      it('zmiana nicka, kasjera i seeda nie gubi klucza: zostaje w pamięci i w zapisie', () => {
+        const h = harness({ meta: playerMeta(), seeds: ['wolny-1', 'wolny-2', 'wolny-3'] });
+        open(h, 'traszka-1');
+
+        choose(h, picked({ nick: 'Kasia' }));
+        expect(h.shell.meta.player).toEqual({ nick: 'Kasia', look: OLD_LOOK, specialOutfits: true, key: OLD_KEY });
+
+        choose(h, picked({ nick: 'Kasia', look: NEW_LOOK, seed: 'traszka-6' }));
+        expect(h.shell.meta.player).toEqual({ nick: 'Kasia', look: NEW_LOOK, specialOutfits: true, key: OLD_KEY });
+
+        choose(h, picked({ nick: 'Zosia', look: NEW_LOOK, specialOutfits: false, seed: 'traszka-7' }));
+        expect(h.shell.meta.player).toEqual({ nick: 'Zosia', look: NEW_LOOK, specialOutfits: false, key: OLD_KEY });
+        expect(savedMeta().player).toEqual({ nick: 'Zosia', look: NEW_LOOK, specialOutfits: false, key: OLD_KEY });
+        expect(h.shell.session!.seed).toBe('traszka-7');
+      });
+
+      it('gracz sprzed rankingu (meta bez klucza) dostaje klucz przy pierwszym wyborze, a kolejne wybory go nie zmieniają', () => {
+        const noKey = playerMeta();
+        delete noKey.player!.key;
+        const h = harness({ meta: noKey, seeds: ['wolny-1', 'wolny-2'] });
+        open(h, 'traszka-1');
+
+        choose(h, picked({ nick: 'Kasia' }));
+        const key = h.shell.meta.player!.key;
+        expect(key).toMatch(KEY_FORMAT);
+        expect(savedMeta().player).toEqual({ nick: 'Kasia', look: OLD_LOOK, specialOutfits: true, key });
+
+        choose(h, picked({ nick: 'Zosia', look: NEW_LOOK, seed: 'traszka-6' }));
+        expect(h.shell.meta.player!.key).toBe(key);
+        expect(savedMeta().player!.key).toBe(key);
+      });
+
+      it('reszta mety (sieć sklepów, punkty, seria, dźwięk) przechodzi wybór bez zmian, a klucz nie trafia do widoku mety, toastów ani komunikatów', () => {
+        const rest: Partial<Meta> = { partnerPoints: 9, network: [{ seed: 'a', income: 5, level: 2, margin: 1 }], daily: { date: '2026-10-27', streak: 2 }, sound: false };
+        const noKey = playerMeta({}, rest);
+        delete noKey.player!.key;
+        const h = harness({ meta: noKey, seeds: ['wolny-1'] });
+        open(h, 'traszka-1');
+
+        choose(h, picked({ nick: 'Kasia', notice: 'Ten lokal się nie zmieścił, wzięliśmy sąsiedni.' }));
+
+        expect(savedMeta()).toMatchObject(rest);
+        const key = h.shell.meta.player!.key!;
+        expect(key).toMatch(KEY_FORMAT);
+        const seen = JSON.stringify([ui.metaView.value, ui.toasts.value, h.notices, h.calls]);
+        expect(seen).not.toContain(key);
+      });
+
+      it('meta z nowszej wersji gry (tylko do odczytu): gracz jest w pamięci tej karty, ale klucza nie ma i nic się nie zapisuje', () => {
+        const h = harness({ meta: { ...loadMeta(), readOnly: true }, seeds: ['wolny-1'] });
+        open(h, 'traszka-1');
+
+        choose(h, picked({ nick: 'Kasia' }));
+
+        expect(h.shell.meta.player).toEqual({ nick: 'Kasia', look: OLD_LOOK, specialOutfits: true });
+        expect(storage.getItem('traszka:meta')).toBeNull();
+      });
     });
 
     it('newStore: okno „Jak grać” otwiera się dopiero po zamknięciu ekranu startowego i gdy sklep się otworzył', () => {
@@ -1670,13 +1751,31 @@ describe('powłoka gry (createShell)', () => {
 
         expect(h.shell.session).toMatchObject({ seed: RANKED_SEED, mode: 'ranked', fromSave: false });
         expect(h.scene.loads.map((l) => l.seed)).toEqual([RANKED_SEED]);   // jedna budowa świata
-        expect(h.shell.meta.player).toEqual({ nick: 'Kasia', look: LOOK, specialOutfits: false });
+        expect(h.shell.meta.player).toEqual({ nick: 'Kasia', look: LOOK, specialOutfits: false, key: expect.stringMatching(KEY_FORMAT) });
         expect(savedMeta().player!.nick).toBe('Kasia');
         expect(h.scene.looks).toEqual([LOOK]);   // wygląd idzie do sceny przed budową świata
         expect(getPlayMode()).toBe('ranked');
         expect(h.urls).toEqual([]);   // seed biegu nie trafia do adresu
         expect(ui.howTo.value).toBe(false);   // instrukcja otwiera się tylko przy zwykłym zupełnie nowym sklepie
         expect(ui.confirmRankedStart.value).toBeNull();
+      });
+
+      it('start rankingowy nie gubi klucza gracza (zmiana nicka i kasjera) i tworzy go u gracza sprzed rankingu', () => {
+        const KEY = 'K7QX9MBD2HFAP3WN8RTE';
+        const withKey = harness({ meta: { ...loadMeta(), player: { nick: 'Stary', look: DEFAULT_CASHIER_LOOK, specialOutfits: true, key: KEY } } });
+        casualOpen(withKey);
+        openedScreen(withKey).onStart(rankedChoice());
+        expect(withKey.shell.session).toMatchObject({ seed: RANKED_SEED, mode: 'ranked' });
+        expect(withKey.shell.meta.player).toEqual({ nick: 'Kasia', look: LOOK, specialOutfits: false, key: KEY });
+        expect(savedMeta().player!.key).toBe(KEY);
+
+        storage.clear();
+        const noKey = harness({ meta: { ...loadMeta(), player: { nick: 'Stary', look: DEFAULT_CASHIER_LOOK, specialOutfits: true } } });
+        casualOpen(noKey);
+        openedScreen(noKey).onStart(rankedChoice());
+        expect(noKey.shell.session).toMatchObject({ seed: RANKED_SEED, mode: 'ranked' });
+        expect(noKey.shell.meta.player!.key).toMatch(KEY_FORMAT);
+        expect(savedMeta().player!.key).toBe(noKey.shell.meta.player!.key);
       });
 
       it('zwykły zapis tego samego seeda nie zamienia startu w wczytanie sklepu: bieg zaczyna się od zera, zapis stoi nietknięty', () => {
