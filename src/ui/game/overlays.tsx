@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'preact/hooks';
-import { RETURN_FEE } from '@/sim/economy/catalog';
-import { effects, isOpenForCustomers, slotFree, slotUsage, tapCombo, type MonthReport } from '@/sim/economy/economy';
+import { BANKRUPTCY_AT, RETURN_FEE } from '@/sim/economy/catalog';
+import { effects, isOpenForCustomers, slotFree, slotUsage, tapCombo, type EconomyState, type MonthReport } from '@/sim/economy/economy';
 import { visibleCards } from '@/sim/economy/tycoon/cards';
 import { FATIGUE } from '@/sim/economy/tycoon/fatigue';
 import { REPORT_LINE_LABEL, hintText, reportCommentText } from '@/sim/economy/tycoon/report';
-import { TRUST_REASON_LABEL } from '@/sim/economy/tycoon/trust';
+import { TRUST_REASON_LABEL, trustTerminates } from '@/sim/economy/tycoon/trust';
 import { EQUIPMENT, EQUIPMENT_BY_ID, equipmentCost } from '@/sim/economy/upgrades';
 import type { QualityPresetId } from '@/render/quality';
 import { networkIncomeOf, prestigePoints } from '@/game/meta';
@@ -212,6 +212,21 @@ export function ReportBody({ r, closing }: { r: MonthReport; closing?: string })
 const TERMINATION = 'Centrala dziękuje za współpracę. Rozliczenie końcowe: inwentaryzacja jutro o 6:00.';
 
 /**
+ * Dlaczego Centrala wypowiedziała umowę, odczytane ze stanu (okno wraca po przeładowaniu, a toast z powodem nie): dług, czyli
+ * ostatni raport zastał gotówkę poniżej `BANKRUPTCY_AT` (umowę kończy dopiero drugi taki raport z rzędu), albo zaufanie zero.
+ * Gdy zachodzi jedno i drugie, nie zgadujemy, które rozstrzygnęło: tekst mówi o obu. Bez żadnego z nich (stary zapis) null.
+ */
+export function terminationReason(s: EconomyState): string | null {
+  const debt = s.lastReport !== null && s.lastReport.cash < BANKRUPTCY_AT;
+  const distrust = trustTerminates(s.tycoon.trust.value);
+  const floor = signedZl(BANKRUPTCY_AT);
+  if (debt && distrust) return `Powód: zaufanie Centrali spadło do zera, a gotówka po raporcie była poniżej ${floor}.`;
+  if (debt) return `Powód: dług. Dwa raporty z rzędu zastały Cię z gotówką poniżej ${floor}, a Centrala nie doczekała się opłaty.`;
+  if (distrust) return 'Powód: zaufanie Centrali spadło do zera.';
+  return null;
+}
+
+/**
  * Raport miesięczny (pauzuje grę). Przy wypowiedzeniu umowy: koniec gry i nowy start. Okno końca gry wynika ze stanu
  * (`gameOver` i ostatni raport w zapisie), więc wraca po przeładowaniu strony; zapis sprzed tej poprawki nie ma raportu
  * i pokazuje samo wypowiedzenie.
@@ -222,10 +237,12 @@ export function ReportModal({ game }: { game: GameActions }) {
   const r = report.value ?? (over ? view?.s.lastReport ?? null : null);
   if (!r && !over) return null;
   const title = over ? 'Koniec współpracy' : `Raport: ${r!.label}`;
+  const reason = over && view ? terminationReason(view.s) : null;
   return (
     <div class="tt-modal-wrap">
       <div class="tt-modal" role="dialog" aria-modal="true" aria-label={title}>
         <h2>{title}</h2>
+        {reason && <p class="tt-end-reason" role="note"><b>{reason}</b></p>}
         {r ? <ReportBody r={r} closing={over ? TERMINATION : undefined} /> : centralaQuote(TERMINATION)}
         <div class="tt-modal-foot">
           {over
@@ -278,7 +295,7 @@ export function StoryModal() {
  */
 export const FIRST_DAY_HINTS: readonly string[] = [
   '🦎 Od dziś prowadzisz franczyzę Traszki. Cel: zbudować sieć Traszek i dojść do rangi Legendarnej Palety.',
-  '📦 Palety przyjeżdżają pod sklep. Stukaj w nie, żeby rozładować, zanim przyjdzie Straż Miejska. Złota paleta to premia.',
+  '📦 Palety pod sklepem grożą mandatem Straży: przenieś je „Na zaplecze” w zakładce Palety. Złota paleta to premia.',
   '🧾 Kolejka za długa? Klienci odchodzą. Stuknij w kasę albo kup kasę samoobsługową.',
   '🎯 Cele: KPI tygodnia od Centrali daje zaufanie, premię i XP, a poziomy odblokowują sprzęt i remonty.',
   '💪 Stukanie męczy: dzienna pula sił się kończy, a noc oddaje tylko część. Resztę robią pracownicy.',
@@ -410,7 +427,7 @@ export function CelebrationBanner() {
   );
 }
 
-/** „Witaj z powrotem”: zarobek kierownika zmiany pod nieobecność i premia za serię dni. */
+/** „Witaj z powrotem”: zarobek kierownika zmiany pod nieobecność i premia za serię dni (same Ogonki; wiersz gotówki tylko, gdy jest ją za co dać). */
 export function WelcomeModal({ game }: { game: GameActions }) {
   const w = welcome.value;
   if (!w) return null;
@@ -426,7 +443,7 @@ export function WelcomeModal({ game }: { game: GameActions }) {
           <>
             <p>Premia Centrali za {w.streak}. dzień z rzędu:</p>
             <div class="tt-streak">{Array.from({ length: 7 }, (_, i) => <span key={i} class={i < Math.min(7, w.streak!) ? 'on' : ''}>{i + 1}</span>)}</div>
-            <span class="tt-big-reward">+{zl(w.daily.cash)} · +{w.daily.ogonki} 🦎</span>
+            <span class="tt-big-reward">{w.daily.cash > 0 && <>+{zl(w.daily.cash)} · </>}+{w.daily.ogonki} 🦎</span>
             <p class="tt-hint">Wróć jutro: premia rośnie do 7. dnia.</p>
           </>
         )}

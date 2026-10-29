@@ -202,7 +202,7 @@ export function hintText(h: Pick<ReportHint, 'id' | 'value'>, fmt: (n: number) =
     case 'wut': return `Ubytki ponad próg WUT: ${v} zł. O 18:00 przeceniaj kanapki (FEFO), zanim trafią do kosza.`;
     case 'logistyka': return `Opłaty logistyczne: ${v} zł. Asystent przesadza z zamówieniem; spróbuj zamawiać ręcznie.`;
     case 'kolejka': return `Kolejka odstraszyła ${v} klientów. W szczycie ustaw profil „Kolejka” albo postaw kasę samoobsługową.`;
-    case 'czystosc': return `Średnia czystość sali: ${v}%. Daj sprzątaniu wyższy priorytet, zanim przyjdzie audyt albo tajemniczy klient.`;
+    case 'czystosc': return `Średnia czystość sali: ${v}%. Ustaw profil „Porządek” albo przypnij kogoś do sprzątania, zanim przyjdzie audyt albo tajemniczy klient.`;
     case 'bezczynnosc': return `Ludzie stali bez zadania przez ${v} godz. Może jedna osoba mniej na zmianie?`;
     case 'braki': return `Zadania czekały na ludzi przez ${v} godz. Zatrudnij kogoś albo kup automatykę z warsztatu.`;
     case 'zmeczenie': return `Ręce odmówiły posłuszeństwa w ${v} dni. Noc odnawia tylko część sił: odpuść stukanie choć dzień w tygodniu.`;

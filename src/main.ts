@@ -8,7 +8,7 @@ import { entrySeed } from '@/game/seeds';
 import { lastSavedSeed } from '@/game/session';
 import { createShell } from '@/game/actions';
 import { bindControls } from '@/game/controls';
-import { advanceSession, debugHandleEnabled, debugHandleOf, installDebugHandle, isModalOpen } from '@/game/frame';
+import { advanceSession, debugHandleEnabled, debugHandleOf, installDebugHandle, isModalOpen, isSceneHeld } from '@/game/frame';
 import { loadMeta, needsStartScreen, saveMeta } from '@/game/meta';
 import { createSceneHost, startTestScene, writeSeedToUrl } from '@/game/scene';
 import { initialStartForm, playerOf, type StartChoice } from '@/game/start';
@@ -168,6 +168,7 @@ function startGame(
     const { session } = shell;
     const { loaded } = scene;
     const modal = isModalOpen(session);
+    const held = isSceneHeld(session, modal);   // okno albo karta decyzji: ekonomia stoi, więc i scena (tłum, ludzie, dymki)
     if (session && loaded) {
       const events: EconEvent[] = [];
       advanceSession(session, realDt, loaded.world.speed, modal, events);
@@ -175,11 +176,11 @@ function startGame(
     }
     scene.syncVisuals(session);
     if (session && now - lastPublish > 200) { lastPublish = now; shell.publish(); }
-    if (session && loaded && !modal && loaded.world.speed > 0 && now > nextSpeech) {
+    if (session && loaded && !held && loaded.world.speed > 0 && now > nextSpeech) {
       nextSpeech = now + 4000 + Math.random() * 5000;
       scene.speak(session);
     }
-    scene.animate(frameDt, realDt, modal);
+    scene.animate(frameDt, realDt, held);
     bench?.beforeRender();
     if (!ui.start.value) ctx.render();   // ekran „Nowy sklep” zasłania scenę: nie rysujemy jej pod nim (podgląd ma własny renderer, a telefon ma dość roboty)
     overlay?.update(ctx.rig.camera);

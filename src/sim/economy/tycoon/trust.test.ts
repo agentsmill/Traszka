@@ -236,4 +236,14 @@ describe('KPI tygodnia', () => {
     const future = newKpiWeek(3, 9, 200, M0, SCALE);
     expect(sanitizeKpi(JSON.parse(JSON.stringify(future)), day100)).toBe(day100);
   });
+
+  it('tydzień, który zaczyna się jutro (zapis po niedzielnym zamknięciu), wczytuje się bez zmian; od pojutrza już nie', () => {
+    const day100 = newKpiWeek(3, 9, 100, M0, SCALE);
+    const tomorrow = newKpiWeek(3, 5, 101, { ...M0, customers: 40 }, SCALE);
+    expect(sanitizeKpi(JSON.parse(JSON.stringify(tomorrow)), day100)).toEqual(tomorrow);
+    const dayAfter = newKpiWeek(3, 5, 102, M0, SCALE);
+    expect(sanitizeKpi(JSON.parse(JSON.stringify(dayAfter)), day100)).toBe(day100);
+    // tydzień sprzed kilku dni (kończy się w niedzielę, dzień 96) już się skończył
+    expect(sanitizeKpi(JSON.parse(JSON.stringify(newKpiWeek(3, 5, 93, M0, SCALE))), day100)).toBe(day100);
+  });
 });

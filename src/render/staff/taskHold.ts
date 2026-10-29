@@ -1,8 +1,8 @@
 import type { StaffAssignment, StaffDuty } from './types';
 
-// Histereza zadań pracowników na ekranie. Gra płynie ok. 20 minut gry na sekundę rzeczywistą, a ekonomia przydziela zadania
-// od nowa co minutę gry (czyli co ~0,05 s), więc „co ekonomia chce teraz” przerzucałoby postać między kasą a półką kilkanaście
-// razy na sekundę. Widz ma zobaczyć ludzi, którzy dochodzą do miejsca i pracują, więc pokazywane zadanie zmienia się rzadko:
+// Histereza zadań pracowników na ekranie. Gra płynie przy ×1 6 minut gry na sekundę rzeczywistą (`MINUTES_PER_SECOND_OPEN`),
+// a ekonomia przydziela zadania od nowa co minutę gry (czyli co ~0,17 s), więc „co ekonomia chce teraz” przerzucałoby postać
+// między kasą a półką kilka razy na sekundę (kwadrans gry to 2,5 s). Widz ma zobaczyć ludzi, którzy dochodzą do miejsca i pracują, więc pokazywane zadanie zmienia się rzadko:
 // tylko na granicy kwadransa gry i dopiero wtedy, gdy osoba trzymała poprzednie co najmniej `TASK_DWELL_S`. Nowa osoba ma ten
 // postój już spełniony (jej pierwsze zadanie bywa przypadkowe), więc pierwsza granica kwadransa może je poprawić; kolejne zmiany
 // podlegają zwykłemu postojowi, liczonemu od faktycznej zmiany.

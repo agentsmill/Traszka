@@ -1,4 +1,4 @@
-import { signal, type Signal } from '@preact/signals';
+import { computed, signal, type Signal } from '@preact/signals';
 import type { Speed } from '@/game/loop';
 import type { StartChoice, StartForm } from '@/game/start';
 import type { CharacterFactory } from '@/render/characters/characterFactory';
@@ -7,7 +7,7 @@ import type { TimeOfDay } from '@/render/lighting';
 import type { BenchProgress } from '@/bench/bench';
 import type { PerfSnapshot } from './perfMeter';
 import type { Command } from '@/sim/economy/commands';
-import type { CommandResult, EconEventKind, EconomyState, MonthReport } from '@/sim/economy/economy';
+import { awaitingDecision, type CommandResult, type EconEventKind, type EconomyState, type MonthReport } from '@/sim/economy/economy';
 import type { StoreInfo } from '@/sim/economy/storeInfo';
 import { readMs } from '@/sim/economy/tycoon/notices';
 
@@ -89,18 +89,17 @@ export const hints: Signal<string[]> = signal<string[]>([]);
 let hintTimer: ReturnType<typeof setTimeout> | undefined;
 function armHint(): void {
   clearTimeout(hintTimer);
-  // pod oknem „Jak grać” dymki czekają: gracz czyta instrukcję, a ich czas liczy się dopiero od „Zaczynamy”
-  hintTimer = hints.value.length > 0 && !howTo.value ? setTimeout(nextHint, HINT_MS) : undefined;
+  // pod oknem, które zatrzymuje grę (w tym „Jak grać” i kartą decyzji), dymki czekają: gracz czyta okno, a ich czas liczy się
+  // dopiero od jego zamknięcia (`hintsHeld` uzbraja zegar od nowa, gdy okno znika)
+  hintTimer = hints.value.length > 0 && !hintsHeld.value ? setTimeout(nextHint, HINT_MS) : undefined;
 }
-/** Otwiera „Jak grać”; zegar podpowiedzi pierwszego dnia staje. */
+/** Otwiera „Jak grać”; zegar podpowiedzi pierwszego dnia staje (`hintsHeld`). */
 export function openHowTo(): void {
   howTo.value = true;
-  armHint();
 }
-/** „Zaczynamy”: zamyka „Jak grać”, a obecna podpowiedź dostaje pełny czas od nowa. */
+/** „Zaczynamy”: zamyka „Jak grać”, a obecna podpowiedź dostaje pełny czas od nowa (`hintsHeld`). */
 export function closeHowTo(): void {
   howTo.value = false;
-  armHint();
 }
 /** Pokazuje podpowiedzi po kolei (lista zastępuje poprzednią; pusta czyści). */
 export function showHints(list: readonly string[]): void {
@@ -198,3 +197,22 @@ export interface GameActions {
   /** „Nowy sklep” z ⚙: otwiera ekran startowy (nick, kasjer, seed). Obecny sklep zostaje zapisany pod swoim seedem. */
   newStore(): void;
 }
+
+/**
+ * Czy otwarte jest okno, które zatrzymuje grę i ma swój sygnał: raport miesiąca, ważne zdarzenie czekające na „OK”, ekran startowy,
+ * powitanie, prestiż albo „Jak grać”. Czyta to `isModalOpen` (game/frame.ts: pętla klatek) i `hintsHeld`. Karta decyzji i koniec
+ * gry nie mają sygnału okna: wynikają ze stanu gry.
+ */
+export const isWindowOpen = (): boolean =>
+  !!report.value || story.value.length > 0 || !!start.value || !!welcome.value || showPrestige.value || howTo.value;
+
+/**
+ * Czy dymki pierwszego dnia mają czekać: pod każdym oknem, które zatrzymuje grę (`isWindowOpen`), pod kartą decyzji, która ją trzyma
+ * (zawsze jest jedna w dniu 0), i po końcu gry. Wartość logiczna zmienia się tylko przy otwarciu i zamknięciu okna, więc zegar
+ * dymków uzbraja się od nowa dokładnie wtedy, a nie przy każdej publikacji stanu.
+ */
+const hintsHeld = computed(() => {
+  const s = econ.value?.s;
+  return isWindowOpen() || (!!s && (s.gameOver || awaitingDecision(s)));
+});
+hintsHeld.subscribe(armHint);

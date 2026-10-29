@@ -1,5 +1,6 @@
 import type { VNode } from 'preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { BANKRUPTCY_AT } from '@/sim/economy/catalog';
 import type { Command } from '@/sim/economy/commands';
 import { createEconomy, emptyCounters, type CommandResult, type EconomyState, type MonthReport } from '@/sim/economy/economy';
 import { EQUIPMENT } from '@/sim/economy/upgrades';
@@ -17,9 +18,9 @@ import { int, zl } from './format';
 import { Bar } from './panels';
 import {
   ClickerBar, ComboChip, EPHEMERAL_BADGE, EPHEMERAL_NOTE, FIRST_DAY_HINTS, FirstDayHints, RESTART_CONFIRM, ReportBody, ReportModal,
-  STORY_GRACE_MS, SelectionCard, StoreActions, StoreBadge, StoryModal,
+  STORY_GRACE_MS, SelectionCard, StoreActions, StoreBadge, StoryModal, WelcomeModal, terminationReason,
 } from './overlays';
-import { buttonsOf, click, labels, textOf, walk, type Vnode } from './vnodeTree';
+import { buttonLabelled, buttonsOf, click, labels, textOf, walk, type Vnode } from './vnodeTree';
 
 /** Sygnały, które sterują widocznością nakładek, do stanu wyjściowego (nic nie otwarte, brak gry). */
 const resetSignals = (): void => {
@@ -623,6 +624,66 @@ describe('okno raportu miesiąca', () => {
   });
 });
 
+describe('okno końca współpracy podaje powód ze stanu gry', () => {
+  const plain = (text: string): string => text.replace(/[\s\u00a0\u202f]/g, ' ');
+  const floor = plain(`−${zl(-BANKRUPTCY_AT)}`);
+  /** Gra zakończona; `cash` to gotówka z ostatniego raportu, `trust` zaufanie w chwili wypowiedzenia. */
+  const ended = (cash: number | null, trust: number): ReturnType<typeof base> => {
+    const b = base();
+    b.s.gameOver = true;
+    b.s.lastReport = cash === null ? null : monthReport(detailed(), { cash });
+    b.s.tycoon.trust.value = trust;
+    publishState(b.s, b.info);
+    return b;
+  };
+  const modalText = (): string => plain(textOf(ReportModal({ game: fakeGame() })));
+
+  it('dług: ostatni raport poniżej BANKRUPTCY_AT, a zaufanie w porządku; kwota granicy ze stałej', () => {
+    ended(BANKRUPTCY_AT - 1, 55);
+    expect(modalText()).toContain(`Powód: dług. Dwa raporty z rzędu zastały Cię z gotówką poniżej ${floor}`);
+    expect(modalText()).not.toContain('zaufanie Centrali spadło do zera');
+  });
+
+  it('zaufanie zero: gotówka powyżej granicy', () => {
+    ended(BANKRUPTCY_AT + 5000, 0);
+    expect(modalText()).toContain('Powód: zaufanie Centrali spadło do zera.');
+    expect(modalText()).not.toContain('dług');
+  });
+
+  it('gotówka równa granicy nie jest długiem (granica jest ostra: poniżej)', () => {
+    ended(BANKRUPTCY_AT, 0);
+    expect(modalText()).toContain('Powód: zaufanie Centrali spadło do zera.');
+    expect(modalText()).not.toContain('dług');
+  });
+
+  it('dług i zaufanie zero naraz: tekst mówi o obu i nie rozstrzyga, które zakończyło umowę', () => {
+    ended(BANKRUPTCY_AT - 10_000, 0);
+    expect(modalText()).toContain(`Powód: zaufanie Centrali spadło do zera, a gotówka po raporcie była poniżej ${floor}.`);
+  });
+
+  it('powód wynika ze stanu, nie z toastu ani z okna raportu: jest po przeładowaniu (raport z zapisu, brak sygnału report)', () => {
+    const { s } = ended(BANKRUPTCY_AT - 1, 55);
+    expect(report.value).toBeNull();
+    expect(terminationReason(s)).toContain('dług');
+    expect(modalText()).toContain('Powód: dług');
+  });
+
+  it('zapis sprzed raportu i bez zera zaufania: samo wypowiedzenie, bez zgadywania powodu', () => {
+    const { s } = ended(null, 55);
+    expect(terminationReason(s)).toBeNull();
+    expect(modalText()).not.toContain('Powód');
+  });
+
+  it('zwykły raport miesiąca (gra trwa) nie ma powodu, nawet gdy to pierwszy miesiąc z długiem', () => {
+    const { s, info } = base();
+    s.lastReport = monthReport(detailed(), { cash: BANKRUPTCY_AT - 1 });
+    publishState(s, info);
+    report.value = s.lastReport;
+    expect(modalText()).toContain('Raport: wrzesień 2026');
+    expect(modalText()).not.toContain('Powód');
+  });
+});
+
 describe('okno ważnego zdarzenia (StoryModal): gra czeka na „OK”', () => {
   // „OK” przez pierwsze STORY_GRACE_MS po pojawieniu się wpisu nic nie robi (czas rzeczywisty), więc testy sterują zegarem
   beforeEach(() => { vi.useFakeTimers(); });
@@ -743,5 +804,46 @@ describe('podpowiedź pierwszego dnia o kolejce', () => {
     expect(hint).toBeDefined();
     expect(hint).not.toMatch(/zatrudni/i);
     expect(hint).toContain('kasę samoobsługową');
+  });
+});
+
+describe('„Witaj z powrotem”: wiersz gotówki tylko tam, gdzie jest gotówka', () => {
+  it('seria dni to same Ogonki: bez kwoty w złotych, z serią i przyciskiem odbioru', () => {
+    welcome.value = { hours: 2, offline: 0, streak: 3, daily: { cash: 0, ogonki: 6 } };
+    const game = fakeGame();
+    const tree = WelcomeModal({ game }) as Vnode;
+    const text = textOf(tree);
+    expect(text).toContain('Premia Centrali za 3. dzień z rzędu');
+    expect(text).toContain('+6 🦎');
+    expect(text).not.toContain('zł');
+    expect(text).not.toContain('kierownik zmiany');   // zarobku z nieobecności nie ma, więc i zdania o nim
+    click(buttonLabelled(tree, 'Odbierz!'));
+    expect(game.claimWelcome).toHaveBeenCalledTimes(1);
+  });
+
+  it('zarobek kierownika zmiany ma kwotę, a premia dzienna obok niego dalej tylko Ogonki', () => {
+    welcome.value = { hours: 5.5, offline: 1250, streak: 1, daily: { cash: 0, ogonki: 2 } };
+    const text = textOf(WelcomeModal({ game: fakeGame() }));
+    expect(text).toContain('Przez 5 h Twojej nieobecności kierownik zmiany zarobił');
+    expect(text).toContain(`+${zl(1250)}`);
+    expect(text).toContain('+2 🦎');
+    expect(text.match(/zł/g)).toHaveLength(1);   // jedna kwota: zarobek, nie premia
+  });
+
+  it('sam zarobek bez premii dziennej: żadnych Ogonków w oknie', () => {
+    welcome.value = { hours: 0.5, offline: 125, streak: null, daily: null };
+    const text = textOf(WelcomeModal({ game: fakeGame() }));
+    expect(text).toContain('Przez 30 min');
+    expect(text).toContain(`+${zl(125)}`);
+    expect(text).not.toContain('🦎');
+  });
+
+  it('premia z gotówką (zapis okna z innej wersji) nadal pokazuje kwotę przed Ogonkami', () => {
+    welcome.value = { hours: 1, offline: 0, streak: 2, daily: { cash: 800, ogonki: 4 } };
+    expect(textOf(WelcomeModal({ game: fakeGame() }))).toContain(`+${zl(800)} · +4 🦎`);
+  });
+
+  it('bez oferty okna nie ma', () => {
+    expect(WelcomeModal({ game: fakeGame() })).toBeNull();
   });
 });

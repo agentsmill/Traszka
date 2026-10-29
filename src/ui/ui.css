@@ -1003,6 +1003,12 @@
   font-style: italic;
 }
 
+/* powód wypowiedzenia umowy pod tytułem okna końca współpracy */
+.tt-end-reason {
+  margin: 4px 0 8px;
+  color: #c2410c;
+}
+
 .tt-disclaimer2 {
   margin: 10px 0 0;
   color: #6b766f;

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { MINUTES_PER_SECOND_OPEN } from '@/sim/economy/catalog';
 import { QUARTER_MIN, TASK_DWELL_S, TaskHold } from './taskHold';
 import type { StaffAssignment, StaffDuty } from './types';
 
@@ -166,7 +167,7 @@ describe('TaskHold: zmiana zadania tylko na granicy kwadransa', () => {
     const duties: StaffDuty[] = ['kasa', 'rozladunek', 'wykladanie', 'sprzatanie', 'wolny'];
     let seed = 12345;
     const rand = (): number => { seed = (seed * 1664525 + 1013904223) % 4294967296; return seed / 4294967296; };
-    const MIN_PER_S = 20;   // tempo gry: ~20 minut gry na sekundę rzeczywistą
+    const MIN_PER_S = MINUTES_PER_SECOND_OPEN;   // tempo gry przy ×1: 6 minut gry na sekundę rzeczywistą
     let changes = 0;
     let lastChangeClock = -Infinity;
     let prev: StaffDuty | undefined;

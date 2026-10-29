@@ -18,8 +18,10 @@ To uproszczona wersja §6–§8 specu, zrobiona tak, żeby gra była grywalna na
   Asystent liczy zapas docelowy (półki + 60% zaplecza w proporcji do sprzedaży) i mnoży wynik przez 1,3.
   Palety stoją pod sklepem (mandat Straży Miejskiej po godzinie tolerancji), w sali (korek) albo na zapleczu.
   Gdy nie ma gdzie ich postawić, kierowca je zabiera za opłatą.
-- **Ludzie.** Osoby na zmianie dzielą się na kasę i palety według priorytetu (kasa, po równo, palety). Kto nie stoi
-  na kasie, rozładowuje (6 szt./min, wózek +40%) i wykłada towar (20 szt./min). Gracz pomaga stukaniem (8 szt.).
+- **Ludzie.** Czas osób na zmianie to wspólna pula osobominut dla czterech zadań: kasy, rozładunku palet (6 szt./min,
+  wózek +40%), wykładania towaru (20 szt./min) i sprzątania z workami. Gracz wybiera profil („Kolejka”, „Dostawa”,
+  „Porządek”) albo układa kolejność sam i może przypiąć osobę do zadania (bez pracy wraca do puli). Zadanie, na które
+  nie starcza ludzi, czeka. Gracz pomaga stukaniem (8 szt.).
 - **Koszty.** Płace 340 zł dziennie na osobę na zmianie, media, opłata franczyzowa 2000 zł + 12% obrotu (`FRANCHISE_FEE_*`),
   mandaty (400 zł + 120 zł za każdą dalszą paletę), opłaty logistyczne i WUT ponad próg. Franczyzobiorca, któremu Centrala ufa
   (zaufanie od 70), dostaje z powrotem 3% obrotu miesiąca, od 85 trzy i pół (`turnoverBonusShare`). Gotówka poniżej −30 000 zł
@@ -35,10 +37,10 @@ Cel: nagroda w każdej skali czasu, a gra bez końca.
 | Skala | Nagroda | Kod |
 |---|---|---|
 | sekunda | stuknięcie w paletę albo kasę: liczba nad palcem, dźwięk, wibracja; combo co 4 szybkie stuknięcia (do ×5), a każde zużywa dzienną pulę sił (100; noc oddaje 70) | `tapPallet`, `tapTill`, `tycoon/fatigue.ts` |
-| minuta | złota paleta (5% palet): premia Centrali po rozładunku, ćwierć marży typowego dnia, nie mniej niż 800 zł | `unloadPallet`, `GOLDEN_PRIZE` |
 | kilka minut | poziom gracza: XP z klientów, palet, zakupów i KPI; nagroda (500 zł + 200 zł za poziom) i odblokowania na poziomach | `progress.ts`, `processLevels`, `unlocksAt` |
+| kilkanaście minut | złota paleta (5% palet, czyli co kilka dni gry): premia Centrali po rozładunku, ćwierć marży typowego dnia, nie mniej niż 800 zł | `unloadPallet`, `GOLDEN_PRIZE` |
 | tydzień | KPI tygodnia (jeden cel do niedzieli 23:00): zaufanie, premia (30% marży dnia) i XP (40 + 10 × poziom) | `tycoon/kpi.ts`, `closeDay` |
-| powrót | kierownik zmiany: 25% ostatniego dnia na godzinę nieobecności (do 8 h); seria dni do 7. dnia | `game/meta.ts` |
+| powrót | kierownik zmiany: 25% średniego dziennego wyniku ostatniego miesiąca (po opłacie franczyzowej) na godzinę nieobecności, do 8 h, nic przy wyniku ≤ 0; seria dni do 7. dnia daje tylko drobne Ogonki | `game/meta.ts` |
 | bez końca | „Otwórz kolejną Traszkę”: sklep dołącza do sieci (10% najlepszego dnia co dzień), Punkty Partnera (+4% marży, +3% ruchu każdy) | `game/meta.ts`, `partner` w stanie ekonomii |
 
 Rangi nie mają rodzaju gramatycznego (to palety): Drewniana, EURO, w Folii, Srebrna, Złota, Platynowa, Diamentowa,

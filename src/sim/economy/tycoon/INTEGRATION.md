@@ -25,7 +25,8 @@ Wzorcem kolejności wywołań jest `sandbox.ts` (`stepSandbox`): to ta sama minu
 ## Zasady wspólne
 
 - **Stan.** Wszystkie kawałki siedzą w jednym obiekcie `TycoonState` (`state.ts`). Proponuję jedno nowe pole
-  `EconomyState.tycoon: TycoonState`, `version: 2` w `EconomyState` i migrację w `sanitize.ts`:
+  `EconomyState.tycoon: TycoonState` i migrację w `sanitize.ts` (`EconomyState.version` zostaje 1, `SAVE_SCHEMA` 2: cofnięcie
+  wdrożenia ma wczytać nowy zapis, a nieznane pole `tycoon` po prostu przepadnie):
   `tycoon: sanitizeTycoon(raw.tycoon, { day, seedHash, trust: raw.trust, staff, metrics, scale })`. Zapis z wersji 1 nie ma
   pola `tycoon`, więc dostaje świeży stan, a zaufanie bierze ze starego `trust` (sprawdzane: `null` albo tekst daje 60,
   nie 0). Dni w zapisie (KPI, karty, efekty kart) są przycinane do dnia wczytania. Test w `sanitize.test.ts` („wynik ma
@@ -177,8 +178,9 @@ Wzorcem kolejności wywołań jest `sandbox.ts` (`stepSandbox`): to ta sama minu
   (`'palety', TRUST.driverReturned`), odesłana paleta (`'palety', TRUST.returnedPallet`), mandat (`'mandaty', TRUST.fine`),
   wynik miesiąca (`'wynik', TRUST.monthProfit / monthLoss`). Premia od obrotu: `turnoverBonusShare(value) × obrót`
   (zamiast „≥ 70 to 1%”). Wypowiedzenie umowy (spec §10, nowy warunek końca gry): w `closeMonth` po
-  `addTrust('wynik')`, gdy `trustTerminates(value)`, tak jak dziś przy bankructwie. Zero w środku miesiąca to tylko
-  ostrzeżenie (decyzja użytkownika).
+  `addTrust('wynik')`, gdy `trustTerminates(value)`. Bankructwo wygląda inaczej: umowę kończy dopiero drugie zamknięcie
+  miesiąca z rzędu z gotówką poniżej `BANKRUPTCY_AT`, a pierwsze to ostrzeżenie (zdarzenie `debt`, okno „OK”). Zero zaufania
+  w środku miesiąca to tylko ostrzeżenie (decyzja użytkownika).
 - **Polecenia:** brak.
 - **Miękkie granice** (zyski powyżej 75 i straty poniżej 30 liczą się w połowie) zaakceptowane przez użytkownika.
   Zmiana progu (`trustTier`) to komunikat `story` (`'trust-tier'`).

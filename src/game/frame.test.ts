@@ -6,7 +6,7 @@ import { awaitingDecision, type EconEvent, type MonthReport } from '@/sim/econom
 import { visibleCards } from '@/sim/economy/tycoon/cards';
 import * as ui from '@/ui/state';
 import type { GameShell } from './actions';
-import { advanceSession, debugHandleEnabled, debugHandleOf, installDebugHandle, isModalOpen } from './frame';
+import { advanceSession, debugHandleEnabled, debugHandleOf, installDebugHandle, isModalOpen, isSceneHeld } from './frame';
 import { MemoryStorage } from './memoryStorage';
 import type { SceneHost } from './scene';
 import { createSession, type GameSession } from './session';
@@ -117,6 +117,43 @@ describe('advanceSession', () => {
     s.econ.gameOver = true;
     expect(advanceSession(s, 1, 1, false, [])).toBe(0);
     expect(s.econ.minute).toBe(OPEN_FROM);
+  });
+});
+
+describe('isSceneHeld (scena stoi pod oknem i pod kartą decyzji)', () => {
+  afterEach(() => { ui.howTo.value = false; });
+
+  it('bez okna i bez karty scena żyje, z sesją i bez niej', () => {
+    expect(isSceneHeld(null, false)).toBe(false);
+    expect(isSceneHeld(fresh(), isModalOpen())).toBe(false);
+  });
+
+  it('okno na wierzchu zatrzymuje scenę, także bez sesji', () => {
+    ui.howTo.value = true;
+    expect(isSceneHeld(null, isModalOpen())).toBe(true);
+    expect(isSceneHeld(fresh(), isModalOpen())).toBe(true);
+  });
+
+  it('karta decyzji, która trzyma grę, zatrzymuje scenę, choć żadne okno nie jest otwarte; po odpowiedzi scena rusza', () => {
+    const s = fresh();
+    const out: EconEvent[] = [];
+    for (let i = 0; i < 200 && !awaitingDecision(s.econ); i++) advanceSession(s, 1, 8, false, out);
+    expect(awaitingDecision(s.econ)).toBe(true);
+    expect(isModalOpen(s)).toBe(false);   // to nie jest okno: tylko karta w symulacji
+    expect(isSceneHeld(s, isModalOpen(s))).toBe(true);
+    for (const c of visibleCards(s.econ.tycoon.cards, s.econ.minute)) applyCommand(s.econ, s.info, { type: 'answerCard', seq: c.seq, answer: c.defaultAnswer });
+    expect(awaitingDecision(s.econ)).toBe(false);
+    expect(isSceneHeld(s, isModalOpen(s))).toBe(false);
+  });
+
+  it('po końcu gry karta nikogo nie czeka: scenę trzyma wtedy okno końca gry (isModalOpen), nie karta', () => {
+    const s = fresh();
+    const out: EconEvent[] = [];
+    for (let i = 0; i < 200 && !awaitingDecision(s.econ); i++) advanceSession(s, 1, 8, false, out);
+    s.econ.gameOver = true;
+    expect(awaitingDecision(s.econ)).toBe(false);
+    expect(isSceneHeld(s, false)).toBe(false);
+    expect(isSceneHeld(s, isModalOpen(s))).toBe(true);
   });
 });
 

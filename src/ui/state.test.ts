@@ -1,19 +1,36 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NOTICE_MAX_READ_MS, NOTICE_MIN_READ_MS, readMs } from '@/sim/economy/tycoon/notices';
-import { HINT_MS, closeHowTo, dismissStory, hints, howTo, nextHint, openHowTo, pushStory, pushToast, showHints, story, toasts } from './state';
+import { generateStore } from '@/sim/store/generateStore';
+import { applyCommand } from '@/sim/economy/commands';
+import { awaitingDecision, createEconomy, stepMinute, type EconomyState, type MonthReport } from '@/sim/economy/economy';
+import { computeStoreInfo } from '@/sim/economy/storeInfo';
+import { visibleCards } from '@/sim/economy/tycoon/cards';
+import {
+  HINT_MS, closeHowTo, dismissStory, econ, hints, howTo, isWindowOpen, nextHint, openHowTo, pushStory, pushToast, report, showHints,
+  showPrestige, start, story, toasts, welcome,
+} from './state';
+
+/** Wszystko, co zatrzymuje grę albo dymki, do stanu wyjściowego. */
+const clearWindows = (): void => {
+  howTo.value = false;
+  report.value = null;
+  welcome.value = null;
+  showPrestige.value = false;
+  start.value = null;
+  econ.value = null;
+  story.value = [];
+};
 
 beforeEach(() => {
   vi.useFakeTimers();
-  howTo.value = false;
+  clearWindows();
   showHints([]);
   toasts.value = [];
-  story.value = [];
 });
 afterEach(() => {
-  howTo.value = false;
+  clearWindows();
   showHints([]);
   toasts.value = [];
-  story.value = [];
   vi.useRealTimers();
 });
 
@@ -200,5 +217,97 @@ describe('ważne zdarzenia czekające na „OK” (story)', () => {
     pushStory('t', 'x');
     expect(story.value).toHaveLength(2);
     expect(story.value[0]!.id).not.toBe(story.value[1]!.id);
+  });
+});
+
+describe('podpowiedzi pierwszego dnia czekają pod każdym oknem, które zatrzymuje grę', () => {
+  const INFO = computeStoreInfo(generateStore('traszka-hints'));
+  const view = (s: EconomyState, v = 1): NonNullable<typeof econ.value> => ({ s, info: INFO, v });
+  /** Gra stojąca na karcie decyzji (dzień 0 zawsze ma kartę). */
+  const onCard = (): EconomyState => {
+    const s = createEconomy('traszka-hints', INFO);
+    for (let i = 0; i < 2000 && !awaitingDecision(s); i++) stepMinute(s, INFO, []);
+    expect(awaitingDecision(s)).toBe(true);
+    return s;
+  };
+  const answerAll = (s: EconomyState): void => {
+    for (const c of visibleCards(s.tycoon.cards, s.minute)) applyCommand(s, INFO, { type: 'answerCard', seq: c.seq, answer: c.defaultAnswer });
+  };
+  const rep = {} as MonthReport;
+
+  /** Otwiera okno, sprawdza, że zegar stoi mimo długiego czekania, zamyka je i sprawdza, że dymek dostaje pełny czas od zamknięcia. */
+  function holdsUntilClosed(open: () => void, close: () => void): void {
+    showHints(['a', 'b']);
+    vi.advanceTimersByTime(HINT_MS - 100);   // dymek jest już prawie na końcu czasu
+    open();
+    expect(vi.getTimerCount()).toBe(0);
+    vi.advanceTimersByTime(HINT_MS * 10);
+    expect(hints.value).toEqual(['a', 'b']);   // pod oknem nic nie wygasa
+    close();
+    vi.advanceTimersByTime(HINT_MS - 1);
+    expect(hints.value).toEqual(['a', 'b']);   // czas liczy się od zamknięcia, a nie z reszty sprzed okna
+    vi.advanceTimersByTime(1);
+    expect(hints.value).toEqual(['b']);
+  }
+
+  it('raport miesiąca', () => holdsUntilClosed(() => { report.value = rep; }, () => { report.value = null; }));
+  it('ważne zdarzenie czekające na „OK”', () => holdsUntilClosed(() => pushStory('Remont zakończony', 'Sklep otwarty.'), () => dismissStory()));
+  it('okno powitalne', () => holdsUntilClosed(
+    () => { welcome.value = { hours: 2, offline: 0, streak: 1, daily: { cash: 0, ogonki: 2 } }; }, () => { welcome.value = null; },
+  ));
+  it('prestiż', () => holdsUntilClosed(() => { showPrestige.value = true; }, () => { showPrestige.value = false; }));
+  it('ekran „Nowy sklep”', () => holdsUntilClosed(
+    () => { start.value = {} as NonNullable<typeof start.value>; }, () => { start.value = null; },
+  ));
+
+  it('karta decyzji, która trzyma grę: dymki czekają, choć żadne okno z sygnałem nie jest otwarte; po odpowiedzi dostają pełny czas', () => {
+    const s = createEconomy('traszka-hints', INFO);
+    econ.value = view(s);
+    const stopped = onCard();
+    holdsUntilClosed(() => { econ.value = view(stopped, 2); }, () => { answerAll(stopped); econ.value = view(stopped, 3); });
+    expect(isWindowOpen()).toBe(false);   // to nie było okno z sygnałem, tylko stan gry
+  });
+
+  it('publikacja stanu (co 200 ms) pod kartą ani w grze bez karty nie przesuwa zegara dymka', () => {
+    const s = createEconomy('traszka-hints', INFO);
+    econ.value = view(s);
+    showHints(['a', 'b']);
+    for (let v = 2, t = 0; t < HINT_MS - 200; v++, t += 200) {
+      vi.advanceTimersByTime(200);
+      econ.value = view(s, v);
+    }
+    vi.advanceTimersByTime(200);
+    expect(hints.value).toEqual(['b']);   // dymek zszedł o czasie, mimo kilkudziesięciu publikacji po drodze
+  });
+
+  it('koniec gry też wstrzymuje dymki (stoi wtedy okno końca współpracy)', () => {
+    const s = createEconomy('traszka-hints', INFO);
+    showHints(['a']);
+    s.gameOver = true;
+    econ.value = view(s);
+    expect(vi.getTimerCount()).toBe(0);
+    vi.advanceTimersByTime(HINT_MS * 3);
+    expect(hints.value).toEqual(['a']);
+  });
+
+  it('dwa okna jedno po drugim: zegar rusza dopiero po zamknięciu ostatniego', () => {
+    showHints(['a', 'b']);
+    report.value = rep;
+    pushStory('Poziom 5', 'Nagroda');
+    report.value = null;
+    expect(vi.getTimerCount()).toBe(0);   // „OK” jeszcze czeka
+    dismissStory();
+    expect(vi.getTimerCount()).toBe(1);
+    vi.advanceTimersByTime(HINT_MS);
+    expect(hints.value).toEqual(['b']);
+  });
+
+  it('lista pokazana przy otwartym oknie nie ma zegara, a pusta lista po zamknięciu nie zostawia go', () => {
+    report.value = rep;
+    showHints(['a']);
+    expect(vi.getTimerCount()).toBe(0);
+    showHints([]);
+    report.value = null;
+    expect(vi.getTimerCount()).toBe(0);
   });
 });

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { WAGE_PER_DAY } from '@/sim/economy/catalog';
-import { createEconomy, franchiseFee, kpiScaleOf, nextRemont, upgradeBlocker, type CommandResult, type EconomyState } from '@/sim/economy/economy';
+import { BANKRUPTCY_AT, WAGE_PER_DAY } from '@/sim/economy/catalog';
+import { createEconomy, franchiseFee, kpiScaleOf, nextRemont, upgradeBlocker, type CommandResult, type EconomyState, type MonthReport } from '@/sim/economy/economy';
 import type { Command } from '@/sim/economy/commands';
 import { KPI, KPI_FLAVOR, kpiTitle } from '@/sim/economy/tycoon/kpi';
 import { dayOfMinute, roundNice } from '@/sim/economy/tycoon/time';
@@ -305,6 +305,33 @@ describe('panele wysyłają polecenia przez game.dispatch, a nie wołają symula
       expect(month(0).value('Opłata franczyzowa (naliczona do dziś)')).toBe(`−${franchiseFee(0)}zł`);
       expect(month(300_000).value('Opłata franczyzowa (naliczona do dziś)')).toBe(`−${franchiseFee(300_000)}zł`);
       expect(franchiseFee(300_000)).toBeGreaterThan(franchiseFee(90_000));
+    });
+
+    describe('ostrzeżenie przed wypowiedzeniem umowy (ostatni raport zastał dług)', () => {
+      const plain = (text: string): string => text.replace(/[\s\u00a0\u202f]/g, ' ');
+      const warning = `Poprzedni raport zastał Cię z gotówką poniżej ${plain(`−${zl(-BANKRUPTCY_AT)}`)}. Jeśli ten też, Centrala wypowie umowę.`;
+      const monthWith = (lastCash: number | null): { text: string; warn: Vnode[] } => {
+        const { s, info } = rich();
+        s.lastReport = lastCash === null ? null : { label: 'wrzesień 2026', counters: s.month, profit: -1000, cash: lastCash, comment: '', detail: null } as MonthReport;
+        const section = sectionTitled(GoalsPanel({ s, info, game: fakeGame(), v: 1 }), 'Ten miesiąc');
+        return { text: plain(textOf(section)), warn: walk(section).filter((v) => v.type === 'p' && String(v.props.class).includes('warn')) };
+      };
+
+      it('ostatni raport poniżej BANKRUPTCY_AT: wiersz ostrzeżenia z kwotą ze stałej, w stylu innych ostrzeżeń (tt-hint warn)', () => {
+        const { text, warn } = monthWith(BANKRUPTCY_AT - 1);
+        expect(text).toContain(warning);
+        expect(warn).toHaveLength(1);
+        expect(plain(textOf(warn[0]))).toBe(warning);
+        expect(warn[0].props.class).toBe('tt-hint warn');
+      });
+
+      it('gotówka równa granicy, powyżej niej albo brak raportu: bez ostrzeżenia', () => {
+        for (const cash of [BANKRUPTCY_AT, 0, 250_000, null]) {
+          const { text, warn } = monthWith(cash);
+          expect(text, `ostatni raport: ${cash}`).not.toContain('Poprzedni raport');
+          expect(warn, `ostatni raport: ${cash}`).toHaveLength(0);
+        }
+      });
     });
 
     it('stary napis „przed opłatą” zniknął, a podpowiedź każe zostawić gotówkę na opłatę', () => {

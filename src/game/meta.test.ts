@@ -1,13 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { generateStore } from '@/sim/store/generateStore';
-import { MINUTES_PER_DAY } from '@/sim/economy/catalog';
+import { MINUTES_PER_DAY, OPEN_FROM, OPEN_TO } from '@/sim/economy/catalog';
 import { createEconomy, stepMinute, type EconEvent } from '@/sim/economy/economy';
 import { computeStoreInfo } from '@/sim/economy/storeInfo';
 import { MemoryStorage } from './memoryStorage';
 import { DEFAULT_CASHIER_LOOK, isCashierLook } from './cashier';
 import {
-  addToNetwork, claimDaily, loadMeta, needsStartScreen, partnerOf, pendingDaily, prestigePoints, saveMeta, startupWindow, welcomeOffer,
-  type Meta, type Player,
+  addToNetwork, claimDaily, dailyReward, loadMeta, needsStartScreen, offlineEarnings, partnerOf, pendingDaily, prestigePoints, saveMeta,
+  startupWindow, welcomeOffer, type Meta, type Player,
 } from './meta';
 import { createSession, retireSession, saveSession } from './session';
 
@@ -26,6 +26,18 @@ const richStore = (seed: string): ReturnType<typeof createEconomy> => {
   s.total.margin = 400_000;
   s.bestDayProfit = 9000;
   s.level = 21;
+  return s;
+};
+
+/**
+ * Sklep po zamknięciu wrześniowego raportu (30 dni): w `history` jest jeden miesiąc z wynikiem `profit` (po opłacie), a zegar stoi
+ * 6 października. `lastDayProfit` zostaje wysoki z założenia: wynik dnia jest sprzed opłaty i nie ma wpływu na nagrodę za nieobecność.
+ */
+const afterSeptember = (seed: string, profit: number): ReturnType<typeof richStore> => {
+  const s = richStore(seed);
+  s.minute = 35 * MINUTES_PER_DAY + OPEN_FROM;
+  s.lastDayProfit = 8000;
+  s.history = [{ label: 'wrzesień 2026', profit, revenue: 150_000 }];
   return s;
 };
 
@@ -110,21 +122,90 @@ describe('seria dni', () => {
     expect(pendingDaily(meta, day4)).toBe(1);   // 30. października nie było
   });
 
-  it('oferta powitalna: zarobek z nieobecności i premia dzienna, a po odebraniu dnia tylko zarobek', () => {
-    const s = richStore('sklep');
-    s.lastDayProfit = 8000;
+  it('oferta powitalna: zarobek z nieobecności i premia dzienna (same Ogonki), a po odebraniu dnia tylko zarobek', () => {
+    const s = afterSeptember('sklep', 30_000);   // 1000 zł dziennie po opłacie
     const meta = fresh();
     meta.lastSeen = day1.getTime() - 3 * 3_600_000;
     const offer = welcomeOffer(meta, s, day1)!;
-    expect(offer.offline).toBe(Math.round(8000 * 0.25 * 3));
+    expect(offer.offline).toBe(Math.round(1000 * 0.25 * 3));
     expect(offer.streak).toBe(1);
-    expect(offer.daily).toEqual({ cash: 300 + 50 * 21, ogonki: 2 });
+    expect(offer.daily).toEqual({ cash: 0, ogonki: 2 });
     expect(welcomeOffer(meta, s, day1)).toEqual(offer);   // to samo po odświeżeniu
     claimDaily(meta, offer.streak!, day1);
     const later = welcomeOffer(meta, s, day1)!;
     expect(later.daily).toBeNull();
     expect(later.streak).toBeNull();
     expect(later.offline).toBe(offer.offline);
+  });
+
+  it('premia za serię dni to tylko drobne Ogonki, bez gotówki, na każdym dniu serii i na każdym poziomie', () => {
+    const rewards = Array.from({ length: 9 }, (_, i) => dailyReward(i + 1));
+    expect(rewards.every((r) => r.cash === 0)).toBe(true);
+    expect(rewards.map((r) => r.ogonki)).toEqual([2, 4, 6, 8, 10, 12, 24, 24, 24]);   // rośnie do 7. dnia, dalej stoi
+    const s = afterSeptember('sklep', 30_000);
+    for (const level of [1, 12, 40]) {
+      s.level = level;
+      expect(welcomeOffer(fresh(), s, day1)!.daily).toEqual({ cash: 0, ogonki: 2 });
+    }
+  });
+
+  describe('zarobek kierownika zmiany (offlineEarnings)', () => {
+    it('ćwierć średniego dziennego wyniku ostatniego miesiąca na godzinę, najwyżej 8 godzin', () => {
+      const s = afterSeptember('sklep', 30_000);   // wrzesień ma 30 dni
+      expect(offlineEarnings(s, 1)).toBe(250);
+      expect(offlineEarnings(s, 3)).toBe(750);
+      expect(offlineEarnings(s, 8)).toBe(2000);
+      expect(offlineEarnings(s, 100)).toBe(2000);   // limit: dwa dni wyniku, nie więcej
+      expect(offlineEarnings(s, 0.01)).toBe(0);     // sekundy nieobecności nie liczą się wcale
+    });
+
+    it('dzieli przez liczbę dni ostatniego zamkniętego miesiąca: październik ma 31, luty 28, a w dniu zamknięcia po 23:00 ten sam miesiąc', () => {
+      const october = afterSeptember('sklep', 31_000);
+      october.minute = 61 * MINUTES_PER_DAY + OPEN_FROM;   // 1 listopada: ostatni zamknięty to październik
+      october.history = [{ label: 'październik 2026', profit: 31_000, revenue: 150_000 }];
+      expect(offlineEarnings(october, 4)).toBe(1000);
+
+      const february = afterSeptember('sklep', 28_000);
+      february.minute = (122 + 31 + 28) * MINUTES_PER_DAY + OPEN_FROM;   // 1 marca 2027
+      february.history = [{ label: 'luty 2027', profit: 28_000, revenue: 150_000 }];
+      expect(offlineEarnings(february, 4)).toBe(1000);
+
+      const closing = afterSeptember('sklep', 30_000);
+      closing.minute = 29 * MINUTES_PER_DAY + OPEN_TO + 1;   // 30 września, tuż po zamknięciu dnia i miesiąca
+      expect(offlineEarnings(closing, 4)).toBe(1000);
+      closing.minute = 29 * MINUTES_PER_DAY + OPEN_TO;       // ten sam dzień przed zamknięciem: raport jeszcze nie istnieje, ale historia nie jest pusta
+      closing.history = [{ label: 'sierpień 2026', profit: 31_000, revenue: 150_000 }];
+      expect(offlineEarnings(closing, 4)).toBe(1000);        // ostatni zamknięty to jeszcze sierpień (31 dni)
+    });
+
+    it('bierze ostatni wpis historii, a nie wynik dnia: wysoki dzień przed opłatą niczego nie dodaje', () => {
+      const s = afterSeptember('sklep', 30_000);
+      s.history = [{ label: 'wrzesień 2026', profit: 90_000, revenue: 1 }, { label: 'październik 2026', profit: 3000, revenue: 1 }];
+      s.minute = 61 * MINUTES_PER_DAY + OPEN_FROM;
+      s.lastDayProfit = 1_000_000;
+      expect(offlineEarnings(s, 8)).toBe(Math.round(3000 / 31 * 0.25 * 8));
+    });
+
+    it('bierny sklep w okolicy zera nie dostaje gotówki za nieobecność, choć jego dzień przed opłatą wygląda dobrze', () => {
+      for (const profit of [0, -755, -3377]) {
+        const s = afterSeptember('sklep', profit);
+        s.lastDayProfit = 1399;   // średni wynik dnia biernego sklepu przed opłatą z przeglądu: opłata zjada go w miesiącu
+        const meta = fresh();
+        meta.lastSeen = day1.getTime() - 8 * 3_600_000;
+        claimDaily(meta, 1, day1);   // premia dzienna odebrana wcześniej: oferta zależy tylko od zarobku
+        expect(offlineEarnings(s, 8), `wynik miesiąca ${profit}`).toBe(0);
+        expect(welcomeOffer(meta, s, day1), `wynik miesiąca ${profit}`).toBeNull();
+      }
+      // sklep, który wyszedł na plus po opłacie, dostaje ćwierć tej średniej na godzinę
+      expect(offlineEarnings(afterSeptember('sklep', 755), 8)).toBe(Math.round(755 / 30 * 2));
+    });
+
+    it('bez zamkniętego miesiąca (pierwsze dni gry) nie ma zarobku, mimo wysokiego dnia', () => {
+      const s = richStore('sklep');
+      s.lastDayProfit = 8000;
+      expect(s.history).toEqual([]);
+      expect(offlineEarnings(s, 8)).toBe(0);
+    });
   });
 
   it('bez zarobku i bez premii nie ma okna powitalnego', () => {
@@ -296,10 +377,8 @@ describe('okno po otwarciu sklepu (startupWindow)', () => {
   const now = new Date(2026, 9, 28, 12, 0);
   const plainMeta = (): Meta => loadMeta();
   const played = (): ReturnType<typeof richStore> => {
-    const s = richStore('sklep');
-    s.minute = 8 * 60 + 1440 * 3;
+    const s = afterSeptember('sklep', 30_000);
     s.total.customers = 800;
-    s.lastDayProfit = 8000;
     return s;
   };
 

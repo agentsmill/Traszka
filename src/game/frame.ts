@@ -1,6 +1,6 @@
 import type { RenderContext } from '@/render/renderer';
 import { advanceEconomy } from '@/sim/economy/clock';
-import type { EconEvent } from '@/sim/economy/economy';
+import { awaitingDecision, type EconEvent } from '@/sim/economy/economy';
 import * as ui from '@/ui/state';
 import type { GameShell } from './actions';
 import type { SceneHost } from './scene';
@@ -17,9 +17,15 @@ import type { GameSession } from './session';
  * startowy, powitanie, prestiż, „Jak grać” albo koniec gry (ten ostatni czyta się z `session`, bez sesji go nie ma). Karta decyzji
  * zatrzymuje grę sama, w symulacji (`cardsBlocking`). Pauza z klawisza to osobna sprawa: nią steruje prędkość.
  */
-export const isModalOpen = (session: Pick<GameSession, 'econ'> | null = null): boolean =>
-  !!ui.report.value || ui.story.value.length > 0 || !!ui.start.value || !!ui.welcome.value || ui.showPrestige.value || ui.howTo.value
-  || !!session?.econ.gameOver;
+export const isModalOpen = (session: Pick<GameSession, 'econ'> | null = null): boolean => ui.isWindowOpen() || !!session?.econ.gameOver;
+
+/**
+ * Czy scena stoi: tłum, ludzie i dymki zamierają pod oknem (`modal`, czyli `isModalOpen`) i pod kartą decyzji, która trzyma grę
+ * (`awaitingDecision`). Bez tego sklep żył własnym życiem, np. w ×8, pod napisem „Gra czeka na Twoją decyzję”. Pauza z klawisza
+ * nie potrzebuje tego warunku: prędkość świata 0 zatrzymuje scenę sama.
+ */
+export const isSceneHeld = (session: Pick<GameSession, 'econ'> | null, modal: boolean): boolean =>
+  modal || (!!session && awaitingDecision(session.econ));
 
 /**
  * Przesuwa ekonomię sesji o czas klatki `realDt` (s) przy prędkości gry `speed`, a zdarzenia dopisuje do `out`.

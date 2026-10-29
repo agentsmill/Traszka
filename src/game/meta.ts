@@ -1,4 +1,5 @@
-import { MINUTES_PER_DAY, OPEN_FROM } from '@/sim/economy/catalog';
+import { dateOfDay, dayOf, isLastDayOfMonth, minuteOfDay } from '@/sim/economy/calendar';
+import { MINUTES_PER_DAY, OPEN_FROM, OPEN_TO } from '@/sim/economy/catalog';
 import type { EconomyState } from '@/sim/economy/economy';
 import { LIMITS } from '@/sim/economy/sanitize';
 import { isRec, num, whole } from '@/sim/guards';
@@ -184,16 +185,34 @@ export function claimDaily(meta: Meta, streak: number, now: Date): void {
   meta.daily = { date: dayKey(now), streak };
 }
 
-/** Nagroda dzienna za `streak` dni z rzędu (rośnie do 7. dnia). */
-export function dailyReward(streak: number, level: number): { cash: number; ogonki: number } {
+/**
+ * Nagroda dzienna za `streak` dni z rzędu (rośnie do 7. dnia): tylko drobne Ogonki, bez gotówki (spec §7.5). Gotówka z serii
+ * dni mnożyłaby się z poziomem i po tygodniu wieczorów przebijała wynik miesiąca, a o pieniądzach gry decyduje sklep.
+ * Kształt `{ cash, ogonki }` zostaje, bo tak czyta go odbiór (`grantDaily`).
+ */
+export function dailyReward(streak: number): { cash: number; ogonki: number } {
   const d = Math.min(7, streak);
-  return { cash: d * (300 + 50 * level), ogonki: 2 * d + (d === 7 ? 10 : 0) };
+  return { cash: 0, ogonki: 2 * d + (d === 7 ? 10 : 0) };
 }
 
-/** Zarobek kierownika zmiany za `hours` nieobecności: ćwierć ostatniego dnia na godzinę, najwyżej 8 godzin. */
+/** Ile dni miał ostatni zamknięty miesiąc: zamknięcie następuje w ostatnim dniu miesiąca o zamknięciu sklepu (`OPEN_TO`). */
+function lastClosedMonthDays(minute: number): number {
+  const day = dayOf(minute);
+  const closedToday = isLastDayOfMonth(day) && minuteOfDay(minute) > OPEN_TO;
+  return dateOfDay(closedToday ? day : day - dateOfDay(day).date).date;
+}
+
+/**
+ * Zarobek kierownika zmiany za `hours` nieobecności (spec §7.5: „mały i z limitem”): ćwierć średniego dziennego wyniku
+ * ostatniego zamkniętego miesiąca na godzinę, najwyżej 8 godzin. Podstawą jest wynik po opłacie franczyzowej, premii od obrotu
+ * i WUT (`history`), a nie wynik dnia (`lastDayProfit`): ten jest sprzed opłaty, która potrafi zabrać prawie wszystko, więc
+ * sklep ledwo wychodzący na zero dostawałby za nieobecność kilka tysięcy złotych. Bez zamkniętego miesiąca albo przy wyniku
+ * nie większym od zera: nic.
+ */
 export function offlineEarnings(s: EconomyState, hours: number): number {
-  if (hours < 0.05 || s.lastDayProfit <= 0) return 0;
-  return Math.round(s.lastDayProfit * 0.25 * Math.min(8, hours));
+  const last = s.history[s.history.length - 1];
+  if (hours < 0.05 || !last || !(last.profit > 0)) return 0;
+  return Math.round(last.profit / lastClosedMonthDays(s.minute) * 0.25 * Math.min(8, hours));
 }
 
 /** Okno „Witaj z powrotem”: zarobek pod nieobecność i premia za serię dni. */
@@ -204,7 +223,7 @@ export function welcomeOffer(meta: Meta, s: EconomyState, now: Date): WelcomeOff
   const hours = meta.lastSeen > 0 ? (now.getTime() - meta.lastSeen) / 3_600_000 : 0;
   const offline = offlineEarnings(s, hours);
   const streak = pendingDaily(meta, now);
-  const daily = streak !== null ? dailyReward(streak, s.level) : null;
+  const daily = streak !== null ? dailyReward(streak) : null;
   return offline > 0 || daily ? { hours, offline, streak, daily } : null;
 }
 

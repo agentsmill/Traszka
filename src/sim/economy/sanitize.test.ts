@@ -163,6 +163,20 @@ describe('sanitizeEconomy: poprawny stan przechodzi bez zmian', () => {
     }
     expect(s.history.length).toBeGreaterThanOrEqual(2);
   });
+
+  it('zapis tuż po niedzielnym zamknięciu tygodnia (23:01, KPI już na poniedziałek) wraca bajt w bajt', () => {
+    // tak zapisuje automatyczny zapis na zdarzeniu „dzień”: gra stoi jeszcze w niedzielę, a nowy tydzień KPI zaczyna się jutro
+    const s = defaults();
+    s.cash = 1e6;
+    const events: EconEvent[] = [];
+    for (const sunday of [5, 12, 19]) {
+      while (s.minute < sunday * MINUTES_PER_DAY + 23 * 60 + 1) stepMinute(s, info, events);
+      expect(s.tycoon.kpi.fromDay, `niedziela ${sunday}`).toBe(sunday + 1);   // tydzień już otwarty na jutro
+      const loaded = sanitizeEconomy(json(s), defaults(), info)!;
+      expect(loaded.tycoon.kpi, `niedziela ${sunday}`).toEqual(s.tycoon.kpi);   // wcześniej: tydzień „z przyszłości” przepadał, a cel, seria i licznik miesiąca wracały do początku
+      expect(JSON.stringify(loaded), `niedziela ${sunday}`).toBe(JSON.stringify(s));
+    }
+  });
 });
 
 describe('sanitizeEconomy: zlecenia zniknęły, raport miesięczny ma szczegóły', () => {

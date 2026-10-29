@@ -598,7 +598,8 @@ describe('powłoka gry (createShell)', () => {
     it('zapis sprzed dłuższej nieobecności: okno „Witaj z powrotem” z zarobkiem, bez wskazówek; nic nie jest odebrane', () => {
       const old = createSession('traszka-1', true);
       for (let i = 0; i < 30; i++) stepMinute(old.econ, old.info, []);
-      old.econ.lastDayProfit = 1000;
+      old.econ.lastDayProfit = 99_999;   // wynik dnia przed opłatą nie liczy się do nagrody; liczy się ostatni zamknięty miesiąc
+      old.econ.history = [{ label: 'sierpień 2026', profit: 31_000, revenue: 150_000 }];   // zegar stoi na 1 września: sierpień ma 31 dni
       saveSession(old);
       const meta: Meta = { ...loadMeta(), lastSeen: Date.now() - 5 * 3_600_000 };
       const h = harness({ meta });
@@ -609,7 +610,7 @@ describe('powłoka gry (createShell)', () => {
       expect(s.fromSave).toBe(true);
       expect(s.econ.minute).toBe(OPEN_FROM + 30);
       expect(ui.hints.value).toEqual([]);
-      expect(ui.welcome.value).toMatchObject({ offline: 1250, streak: 1 });
+      expect(ui.welcome.value).toMatchObject({ offline: 1250, streak: 1, daily: { cash: 0, ogonki: 2 } });   // 1000 zł dziennie × ćwierć × 5 h
       expect(s.econ.cash).toBe(old.econ.cash);   // nagroda czeka na „Odbierz!”
       expect(h.shell.meta.lastSeen).toBe(meta.lastSeen);   // czas wyjścia stoi, dopóki okno czeka
     });

@@ -172,14 +172,15 @@ const metrics = (v: unknown, fallback: KpiMetrics): KpiMetrics => {
 
 /**
  * Wczytanie z zapisu; uszkodzony KPI zaczyna tydzień od nowa (`fresh`, liczony z bieżących liczników od dnia
- * `fresh.fromDay`, czyli dnia wczytania). Tydzień, który już minął albo dopiero się zacznie, też: inaczej niedziela
- * zamknięcia nigdy by nie nadeszła.
+ * `fresh.fromDay`, czyli dnia wczytania). Tydzień, który już minął albo zacznie się później niż jutro, też: inaczej niedziela
+ * zamknięcia nigdy by nie nadeszła. Jutro wolno: zamknięcie niedzieli (23:00) otwiera od razu tydzień od poniedziałku,
+ * a zapis robi się też między 23:00 a północą (automatyczny po zdarzeniu „dzień”, wyjście z karty, raport miesiąca na wierzchu).
  */
 export function sanitizeKpi(raw: unknown, fresh: KpiState): KpiState {
   if (!isRec(raw) || !KPI_KINDS.includes(raw.kind as KpiKind)) return fresh;
   const fromDay = whole(raw.fromDay, fresh.fromDay, 0, 1e7);
   const toDay = whole(raw.toDay, weekEnd(fromDay), fromDay, fromDay + 7);
-  if (fromDay > fresh.fromDay || toDay < fresh.fromDay) return fresh;
+  if (fromDay > fresh.fromDay + 1 || toDay < fresh.fromDay) return fresh;
   const m: Rec = isRec(raw.month) ? raw.month : {};
   return {
     seq: whole(raw.seq, fresh.seq, 0, 1_073_741_824),
