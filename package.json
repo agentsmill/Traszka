@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "assets": "node scripts/process-assets.mjs",
+    "audio": "node scripts/process-audio.mjs",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "test": "vitest run",

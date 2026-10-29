@@ -10,8 +10,11 @@ import { cellToWorld } from './coords';
 /** Największa prędkość obrotu postaci, rad/s (wygładzanie kierunku: wykładnicze doganianie, ale nie szybciej niż to). */
 export const TURN_RATE_MAX = 10;
 const TURN_SMOOTHING = 12;          // 1/s
-/** Tyle sekund agent musi stać, zanim postać przejdzie z chodu w postój (pojedynczy krok bez ruchu nie miga animacją). */
-const IDLE_DELAY_S = 0.15;
+/**
+ * Tyle sekund agent musi stać, zanim postać przejdzie z chodu w postój (pojedynczy krok bez ruchu nie miga animacją).
+ * Wspólne dla tłumu i dla `Gait` (personel i kasjer), żeby wszyscy na ekranie przełączali klipy tak samo.
+ */
+export const IDLE_DELAY_S = 0.15;
 /**
  * Najszybsze tempo animacji względem czasu rzeczywistego. Przy ×8 klip chodu migałby (stroboskop: ~2 kroki na klatkę przy
  * 60 FPS), więc powyżej ×4 nogi chodzą w tempie ×4, a postać przesuwa się dalej z prędkością gry (lekki poślizg stóp).

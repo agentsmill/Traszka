@@ -1,0 +1,127 @@
+/*
+ * Panele rankingu i kodu odzyskiwania. Ramy, przyciski i podpisy z ui.css (tt-modal, tt-btn, tt-hint), tu tylko lista wyników
+ * i pole kodu. Kolory z --tt-* (App.tsx), z zapasem na wypadek panelu wstawionego poza .tt-ui.
+ */
+.tt-rank-tabs {
+  margin: 12px 0 4px;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.tt-rank-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+}
+
+.tt-rank-row {
+  display: grid;
+  grid-template-columns: 3.2em minmax(0, 1fr) auto;
+  grid-template-areas: 'pos nick score' 'pos seed score';
+  column-gap: 8px;
+  align-items: baseline;
+  padding: 6px 8px;
+  border-radius: 8px;
+}
+
+.tt-rank-row:nth-child(odd) {
+  background: rgba(29, 107, 58, 0.06);
+}
+
+.tt-rank-row.me {
+  background: var(--tt-orange, #f39200);
+  color: #1a1a1a;
+  font-weight: 800;
+}
+
+.tt-rank-pos {
+  grid-area: pos;
+  font-variant-numeric: tabular-nums;
+  color: var(--tt-green-dark, #0f4d2a);
+  font-weight: 800;
+}
+
+.tt-rank-row.me .tt-rank-pos {
+  color: inherit;
+}
+
+.tt-rank-nick {
+  grid-area: nick;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tt-rank-seed {
+  grid-area: seed;
+  font-size: 12px;
+  opacity: 0.7;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tt-rank-score {
+  grid-area: score;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+.tt-rank-mine {
+  margin: 8px 0 0;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 2px dashed var(--tt-orange, #f39200);
+  font-weight: 700;
+}
+
+.tt-rank-error {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.tt-recovery-code {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 8px 0;
+}
+
+/* kod zawsze w osobnym wierszu, przyciski razem pod nim (inaczej na szerokim ekranie „Kopiuj” zostaje sam w drugim wierszu) */
+.tt-recovery-code code {
+  flex-basis: 100%;
+  font: 800 18px/1.2 ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+  letter-spacing: 1px;
+  color: var(--tt-green-dark, #0f4d2a);
+  user-select: all;
+}
+
+.tt-recovery-form {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin: 6px 0;
+}
+
+.tt-recovery-form .tt-input {
+  flex: 1 1 16ch;
+  font-family: ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+  text-transform: uppercase;
+  border: 1px solid rgba(29, 107, 58, 0.3);
+}
+
+.tt-recovery-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.tt-recovery-confirm {
+  margin: 8px 0;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(243, 146, 0, 0.15);
+}
