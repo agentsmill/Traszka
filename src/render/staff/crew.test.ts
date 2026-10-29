@@ -1201,6 +1201,28 @@ describe('StaffCrew: palety', () => {
     expect(pickSpy.mock.calls[0]![2]).toEqual([...pallets, extra]);
   });
 
+  it.each(SCENES)('$seed: opróżnienie jednej palety nie rusza rozładowującego, który stał przy drugiej, a brak palet zostawia obu na miejscach', (sc) => {
+    const [floor, sidewalk] = [sc.pallets[1]!, sc.pallets[2]!];   // rozładunek obsługuje chodnik, potem salę
+    const who = assign([0, 'rozladunek'], [1, 'rozladunek']);
+    const crew = new StaffCrew(sc.layout);
+    crew.sync(input(who, [sidewalk, floor]));
+    const [first, second] = [member(crew, 0), member(crew, 1)];
+    const goals = [first.walker.goal, second.walker.goal];
+    expect(goals[0]).not.toEqual(goals[1]);
+
+    crew.sync(input(who, [floor]));                      // paleta na chodniku opróżniona
+    expect(second.walker.goal).toEqual(goals[1]);        // ten przy palecie na sali nie rusza
+    expect(second.walker.atGoal).toBe(true);
+    expect(first.walker.goal).not.toEqual(goals[0]);     // ten przy opróżnionej idzie do pozostałej
+    expect(first.walker.goal).not.toEqual(second.walker.goal);
+    const moved = first.walker.goal;
+
+    crew.sync(input(who, []));                           // nie ma już żadnej palety
+    expect(second.walker.goal).toEqual(goals[1]);
+    expect(first.walker.goal).toEqual(moved);            // zostają, zamiast iść w róg chodnika
+    expect(sc.layout.palletZoneOutside.some((c) => sameCell(c, first.walker.goal!) || sameCell(c, second.walker.goal!))).toBe(false);
+  });
+
   it.each(SCENES)('$seed: paleta, która pojawia się na drodze idącego, zmusza go do obejścia i nie przeszkadza dojść na miejsce', (sc) => {
     const crew = new StaffCrew(sc.layout);
     const base = assign([0, 'kasa']);

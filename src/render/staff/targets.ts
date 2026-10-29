@@ -294,29 +294,61 @@ function place(ctx: Ctx, plan: Plan): StaffSpot {
 /**
  * Zadania, w których osoba nie ma jednego „swojego” miejsca narzuconego przez układ i ekipę, więc caller może chcieć je zachować:
  * wykładanie (kratka zależy od numeru osoby wśród wykładających), sprzątanie (losowanie po zbiorze wolnych kratek) i wolny
- * (odstępy od innych). Kasa idzie według rangi, a rozładunek według listy palet, więc dla nich poprzednie miejsce się nie liczy.
+ * (odstępy od innych). Zachowane miejsce zostaje tu bez zmian (ta sama kratka i ten sam kierunek). Kasa idzie według rangi, więc
+ * poprzednie miejsce się dla niej nie liczy; rozładunek ma własną regułę (`unloadFacing`).
  */
 const STICKY_TASKS: readonly StaffDuty[] = ['wykladanie', 'sprzatanie', 'wolny'];
 
 /**
- * Wstępne obsadzenie: osoby z `STICKY_TASKS`, które mają w `previous` swoje poprzednie miejsce, zajmują je z góry, o ile kratka
- * jest nadal osiągalna, niezablokowana i nikt jej jeszcze nie zajął (w kolejności id, więc przy tej samej kratce u dwóch osób
- * zostaje ta o niższym id). Dzięki temu nikt obsadzany później nie zabierze zachowanej kratki, a kratki nadal są różne.
- * Zachowane miejsce to kopia: ta sama kratka i ten sam kierunek.
+ * Kierunek patrzenia zachowanego miejsca rozładującego albo null, gdy nie ma po co go zachowywać. Rozładunek liczy się według
+ * rangi wśród rozładowujących i listy palet, więc każda opróżniona paleta albo nowa osoba o niższym id przestawiałaby wszystkich;
+ * dlatego poprzednie miejsce zostaje, dopóki jest dobre:
+ * - kratka przylega bokami (osiem kratek wokół kwadratu 2×2, jak w planie rozładunku) do jakiejś palety, która nadal jest na
+ *   liście: kierunek to środek najbliższej takiej palety (remis: wcześniejsza w kolejności rozładunku);
+ * - palet nie ma wcale: miejsce zostaje, bo nie ma przy czym stać, a marsz w róg chodnika i z powrotem do regału byłby
+ *   zmarnowany; kierunek zostaje poprzedni (o ile jest skończony).
+ * Gdy palety są, ale żadna nie przylega do kratki (ta, przy której osoba stała, zniknęła), miejsce jest liczone od nowa.
+ */
+function unloadFacing(order: readonly PalletRef[], cell: Cell, heading: number): number | null {
+  if (order.length === 0) return Number.isFinite(heading) ? heading : null;
+  let nearest: Point | null = null;
+  let best = Infinity;
+  for (const { spot } of order) {
+    if (!sideCells(spot).some((c) => sameCell(c, cell))) continue;
+    const centre: Point = { x: spot.x + 1, y: spot.y + 1 };
+    const d = (centre.x - (cell.x + 0.5)) ** 2 + (centre.y - (cell.y + 0.5)) ** 2;
+    if (d < best) {
+      best = d;
+      nearest = centre;
+    }
+  }
+  return nearest ? headingTo(cell, nearest) : null;
+}
+
+/**
+ * Wstępne obsadzenie: osoby, które mają w `previous` swoje poprzednie miejsce i jest ono nadal dobre, zajmują je z góry, o ile
+ * kratka jest nadal osiągalna, niezablokowana i nikt jej jeszcze nie zajął (w kolejności id, więc przy tej samej kratce u dwóch
+ * osób zostaje ta o niższym id). Dobre znaczy: dla `STICKY_TASKS` zawsze (ten sam kierunek), dla rozładunku wtedy, gdy kratka
+ * nadal przylega do palety z listy albo palet nie ma wcale (`unloadFacing`). Dzięki temu nikt obsadzany później nie zabierze
+ * zachowanej kratki, a kratki nadal są różne. Zachowane miejsce to kopia.
  */
 function keepPrevious(
   ctx: Ctx,
   people: readonly StaffAssignment[],
+  order: readonly PalletRef[],
   previous: ReadonlyMap<number, StaffSpot> | undefined,
 ): Map<number, StaffSpot> {
   const kept = new Map<number, StaffSpot>();
   if (!previous) return kept;
   for (const { id, task } of people) {
     const before = previous.get(id);
-    if (!before?.cell || !STICKY_TASKS.includes(task)) continue;
+    if (!before?.cell) continue;
     const { cell, heading } = before;
-    if (!Number.isFinite(heading) || !isFree(ctx, cell)) continue;   // osiągalna znaczy też niezablokowana w `nav`
-    kept.set(id, claim(ctx, cell, heading));
+    let facing: number | null;
+    if (task === 'rozladunek') facing = unloadFacing(order, cell, heading);
+    else facing = STICKY_TASKS.includes(task) && Number.isFinite(heading) ? heading : null;
+    if (facing === null || !isFree(ctx, cell)) continue;   // osiągalna znaczy też niezablokowana w `nav`
+    kept.set(id, claim(ctx, cell, facing));
   }
   return kept;
 }
@@ -329,11 +361,13 @@ function keepPrevious(
  * tej samej kratki, dopóki starcza innych; gdy kandydaci zadania się skończą, osoba staje na sali (od jej środka), a gdy sali
  * zabraknie, na wejściu. Funkcja nie rzuca, także dla układu bez kasy, zaplecza, mebli albo wejścia.
  *
- * `previous`: miejsca, które caller chce zachować, jeśli nadal są dobre (zwykle wynik poprzedniego wywołania). Liczą się tylko
- * dla osób z zadaniem wykladanie, sprzatanie albo wolny: takie miejsce zostaje (ta sama kratka i ten sam kierunek), gdy jego kratka
- * jest osiągalna, niezablokowana w `nav` i niezajęta przez rezerwację kasjera ani inną zachowaną osobę. Dla kasy i rozładunku
- * `previous` jest pomijane (kasa idzie według rangi, rozładunek według palet), a bez `previous` wynik jest taki sam jak dawniej.
- * Zachowane miejsca są obsadzane przed resztą, więc nikt inny nie zajmie ich kratek. `previous` nie jest zmieniane.
+ * `previous`: miejsca, które caller chce zachować, jeśli nadal są dobre (zwykle wynik poprzedniego wywołania). Dla osób z zadaniem
+ * wykladanie, sprzatanie albo wolny takie miejsce zostaje (ta sama kratka i ten sam kierunek), gdy jego kratka jest osiągalna,
+ * niezablokowana w `nav` i niezajęta przez rezerwację kasjera ani inną zachowaną osobę. Dla rozładunku zostaje (kierunek liczony od
+ * nowa, wg `unloadFacing`), gdy kratka przylega do którejś palety z listy albo palet nie ma wcale; gdy paleta, przy której osoba
+ * stała, zniknęła, a inne są, miejsce jest liczone od nowa. Dla kasy `previous` jest pomijane (kasa idzie według rangi), a bez
+ * `previous` wynik jest taki sam jak dawniej. Zachowane miejsca są obsadzane przed resztą, więc nikt inny nie zajmie ich kratek.
+ * `previous` nie jest zmieniane.
  */
 export function pickStaffSpots(
   layout: StoreLayout,
@@ -358,7 +392,7 @@ export function pickStaffSpots(
   const holdsCashierSpot = firstCashier !== undefined && cashier !== null && isFree(ctx, cashier.cell);
   if (holdsCashierSpot) ctx.taken.add(cellKey(cashier.cell));
 
-  const kept = keepPrevious(ctx, people, previous);
+  const kept = keepPrevious(ctx, people, order, previous);
 
   const served: Record<StaffDuty, number> = { kasa: 0, rozladunek: 0, wykladanie: 0, sprzatanie: 0, wolny: 0 };
   for (const { id, task } of people) {
