@@ -69,10 +69,24 @@ export function RankedConfirm({ question, busy, cancelRef, onReplace, onCancel }
   );
 }
 
-/** Ekran startowy, gdy `start` jest ustawione (pierwsze wejście albo „Nowy sklep” z ⚙); inaczej nic. */
+/** Numery egzemplarzy ekranu: jeden na obiekt prośby, na zawsze ten sam (klucz musi się nie zmieniać między renderami tej samej prośby). */
+const screenKeys = new WeakMap<StartRequest, number>();
+let lastScreenKey = 0;
+const screenKey = (request: StartRequest): number => {
+  let key = screenKeys.get(request);
+  if (key === undefined) screenKeys.set(request, key = ++lastScreenKey);
+  return key;
+};
+
+/**
+ * Ekran startowy, gdy `start` jest ustawione (pierwsze wejście albo „Nowy sklep” z ⚙); inaczej nic. Każda prośba (obiekt) to osobny
+ * egzemplarz ekranu (`key`): ekran trzyma stan, którego nie wolno odziedziczyć po poprzednim, czyli wyrzutnię startu (po starcie
+ * zostaje „zajęta” na zawsze), „Otwieramy…” i zwolniony podgląd 3D. Gdy prośba zamienia się na nową w jednym kroku (ekran zamknięty
+ * i od razu odtworzony, `openChosenStore`), render widzi tylko ostatnią wartość sygnału i bez klucza użyłby starego egzemplarza ponownie.
+ */
 export function StartHost() {
   const request = start.value;
-  return request ? <StartScreen request={request} /> : null;
+  return request ? <StartScreen key={screenKey(request)} request={request} /> : null;
 }
 
 /**

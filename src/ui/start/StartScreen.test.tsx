@@ -5,7 +5,7 @@ import type { StartChoice } from '@/game/start';
 import { zl } from '../game/format';
 import { buttonLabelled, buttonsOf, click, labels, textOf, walk, type Vnode } from '../game/vnodeTree';
 import { confirmRankedStart, ranked, start, unsent, type StartRequest } from '../state';
-import { RANKED_NOTE, RankedConfirm, StartScreen } from './StartScreen';
+import { RANKED_NOTE, RankedConfirm, StartHost, StartScreen } from './StartScreen';
 
 // Ekran ma haki (`useState`, `useRef`…), a poza renderem Preacta ich nie ma jak wołać. Atrapa trzyma stan w „szufladach” po kolei
 // wywołań (jak prawdziwe haki): kolejne wywołanie `StartScreen()` widzi to, co zostawiły poprzednie, więc test może kliknąć,
@@ -321,5 +321,51 @@ describe('ekran startowy: pytanie przed porzuceniem biegu', () => {
     click(buttonLabelled(view(), 'Porzuć i zacznij'));
     await vi.waitFor(() => expect(onStart).toHaveBeenCalledOnce());
     expect(onStart.mock.calls[0]![1]).toEqual({ replace: true });
+  });
+});
+
+describe('StartHost: każda prośba o ekran to osobny egzemplarz ekranu', () => {
+  // Preact nie ma tu DOM, więc oglądamy `key` zwróconego elementu: ten sam klucz między renderami to ten sam egzemplarz ekranu (z jego
+  // stanem, wyrzutnią startu i podglądem 3D), nowy klucz to świeży. Ekran, który po zamknięciu wraca z nową prośbą (`openChosenStore`
+  // odtwarza go, gdy stan biegu zmienił się po sprawdzeniu), nie może odziedziczyć „Otwieramy…” ani zwolnionego podglądu.
+  const requestOf = (): StartRequest => setup().request;
+
+  it('bez prośby nic nie rysuje', () => {
+    start.value = null;
+    expect(StartHost()).toBeNull();
+  });
+
+  it('ta sama prośba ma ten sam klucz przy każdym renderze, także po wizycie innej prośby', () => {
+    const first = requestOf();
+    start.value = first;
+    const key = (StartHost() as Vnode).key;
+    expect(key).toBeDefined();
+    expect((StartHost() as Vnode).key).toBe(key);
+    const second = requestOf();
+    start.value = second;
+    expect((StartHost() as Vnode).key).not.toBe(key);
+    start.value = first;
+    expect((StartHost() as Vnode).key).toBe(key);
+  });
+
+  it('dwie kolejne prośby (ekran zamknięty i odtworzony) dostają różne klucze: nowy egzemplarz zamiast ponownego użycia starego', () => {
+    const closed = requestOf();
+    start.value = closed;
+    const before = (StartHost() as Vnode).key;
+    start.value = null;   // `close()` zdejmuje ekran…
+    const reopened: StartRequest = { ...closed };   // …a `openStartScreen` składa nową prośbę z tych samych pól
+    start.value = reopened;
+    const after = StartHost() as Vnode;
+    expect(after.key).not.toBe(before);
+    expect(after.props.request).toBe(reopened);
+  });
+
+  it('klucz nie zależy od zawartości prośby: dwie prośby o tych samych polach to dwa ekrany', () => {
+    const a = requestOf();
+    const b: StartRequest = { ...a };
+    start.value = a;
+    const keyA = (StartHost() as Vnode).key;
+    start.value = b;
+    expect((StartHost() as Vnode).key).not.toBe(keyA);
   });
 });

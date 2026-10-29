@@ -1759,6 +1759,7 @@ describe('powłoka gry (createShell)', () => {
         expect(loadFinished()).not.toBeNull();   // nic nie skasowane bez potwierdzenia
         expect(ui.confirmRankedStart.value).toEqual({ seed: 'nowy-bieg', reason: 'unsent' });
         const again = ui.start.value!;   // ekran stoi znowu, z tym, co gracz wybrał
+        expect(again).not.toBe(request);   // nowy obiekt prośby: StartHost daje mu nowy egzemplarz ekranu (świeża wyrzutnia i podgląd)
         expect(again.mode).toBe('new');
         expect(again.form).toEqual({ nick: 'Kasia', seed: 'nowy-bieg', look: LOOK, specialOutfits: true });
         expect(again.rankedBlock!()).toBe('unsent');
