@@ -3,6 +3,7 @@ import { cashierSpot } from '@/game/cashier';
 import { createCashierCharacter, releaseCharacter, type CashierPose, type CashierView } from '@/render/cashierView';
 import { characterBlobRadii, setCharacterShadowCasting, type BlobShadows, type BlobSlot } from '@/render/characters/blobShadows';
 import type { CharacterFactory, CharacterInstance } from '@/render/characters/characterFactory';
+import type { OutfitFile } from '@/render/characters/modularPack';
 import { Gait } from '@/render/characters/gait';
 import { cellToWorld } from '@/render/coords';
 import { headingToYaw, turnTowards } from '@/render/crowdView';
@@ -10,6 +11,12 @@ import type { Agent } from '@/sim/crowd/crowd';
 import type { StoreLayout } from '@/sim/store/types';
 import { StaffCrew, type CrewInput, type CrewMember } from './crew';
 import { STAFF_WALK_SPEED, type StaffWalker } from './walker';
+
+/**
+ * Strój pracownika z id: casualowy, jak domyślny kasjer, bo mundur (`top` w zieleni marki) zakrywa w nim całą koszulę. Stroje „worker”
+ * mają zielone tylko rękawy pod brązową kamizelką i nie czytają się jako uniform sieci.
+ */
+const staffOutfit = (id: number): OutfitFile => (id % 2 === 0 ? 'men-casual-2' : 'women-casual');
 
 /** Jedno ciało pracownika wraz z tym, czego potrzeba do jego rysowania klatka po klatce. */
 interface Body {
@@ -199,7 +206,7 @@ export class StaffView {
     let character: CharacterInstance | null = null;
     let slot: BlobSlot | null = null;
     try {
-      character = createCashierCharacter(this.factory, { outfit: id % 2 === 0 ? 'men-worker' : 'women-worker', appearanceSeed: `pracownik-${id}` });
+      character = createCashierCharacter(this.factory, { outfit: staffOutfit(id), appearanceSeed: `pracownik-${id}` });
       const o = character.object;
       o.rotation.y = headingToYaw(walker.heading);
       if (!this.castShadows) setCharacterShadowCasting(o, false);

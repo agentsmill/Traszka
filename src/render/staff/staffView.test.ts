@@ -167,13 +167,13 @@ describe('StaffView: ciała pracowników', () => {
     expect(r.made).toHaveLength(4);                       // kolejne klatki niczego nie dobudowują
   });
 
-  it('mundur jak u kasjera (zieleń marki), strój i seed z id: parzyste men-worker, nieparzyste women-worker', () => {
+  it('mundur jak u kasjera (zieleń marki), strój i seed z id: parzyste men-casual-2, nieparzyste women-casual', () => {
     const r = rig();
     r.staff.sync(input(crowd(6)));
     frame(r);
     expect(employees(r).map((m) => [m.seed, m.outfit])).toEqual([
-      ['pracownik-1', 'women-worker'], ['pracownik-2', 'men-worker'], ['pracownik-3', 'women-worker'],
-      ['pracownik-4', 'men-worker'], ['pracownik-5', 'women-worker'],
+      ['pracownik-1', 'women-casual'], ['pracownik-2', 'men-casual-2'], ['pracownik-3', 'women-casual'],
+      ['pracownik-4', 'men-casual-2'], ['pracownik-5', 'women-casual'],
     ]);
     for (const m of employees(r)) expect(m.overrides, m.seed).toEqual(UNIFORM);
   });
