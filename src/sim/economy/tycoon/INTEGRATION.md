@@ -27,7 +27,7 @@ Wzorcem kolejności wywołań jest `sandbox.ts` (`stepSandbox`): to ta sama minu
 - **Stan.** Wszystkie kawałki siedzą w jednym obiekcie `TycoonState` (`state.ts`). Proponuję jedno nowe pole
   `EconomyState.tycoon: TycoonState` i migrację w `sanitize.ts` (`EconomyState.version` zostaje 1, `SAVE_SCHEMA` 2: cofnięcie
   wdrożenia ma wczytać nowy zapis, a nieznane pole `tycoon` po prostu przepadnie):
-  `tycoon: sanitizeTycoon(raw.tycoon, { day, seedHash, trust: raw.trust, staff, metrics, scale })`. Zapis z wersji 1 nie ma
+  `tycoon: sanitizeTycoon(raw.tycoon, { day, seedHash, trust: raw.trust, staff, metrics, scale })`. Zapis sprzed 2C2 nie ma
   pola `tycoon`, więc dostaje świeży stan, a zaufanie bierze ze starego `trust` (sprawdzane: `null` albo tekst daje 60,
   nie 0). Dni w zapisie (KPI, karty, efekty kart) są przycinane do dnia wczytania. Test w `sanitize.test.ts` („wynik ma
   dokładnie pola `EconomyState`”) trzeba uzupełnić o nowe pole.

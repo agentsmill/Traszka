@@ -185,7 +185,7 @@ describe('TaskHold: zmiana zadania tylko na granicy kwadransa', () => {
       if (prev === undefined) lastChangeClock = clock - TASK_DWELL_S;   // nowa osoba ma postój już spełniony
       prev = now;
     }
-    // 60 s widoku: przy dwellu 6 s zmian jest najwyżej 10, a losowe głosy dają ich na pewno kilka.
+    // granica z tempa: minuty / (minut na sekundę × dwell) zmian najwyżej, a losowe głosy dają ich na pewno kilka.
     expect(changes).toBeGreaterThanOrEqual(3);
     expect(changes).toBeLessThanOrEqual(Math.floor(minutes / MIN_PER_S / TASK_DWELL_S));
   });
