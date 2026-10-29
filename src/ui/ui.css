@@ -296,6 +296,32 @@
   white-space: nowrap;
 }
 
+/* Zaufanie Centrali: na telefonie sama liczba, nazwa progu dopiero od 640 px (podpowiedź i aria-label mówią całość). */
+.tt-stat.warn {
+  background: #c2410c;
+  color: #fff;
+}
+
+.tt-trust-tier {
+  display: none;
+  max-width: 20ch;
+  margin-left: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 600;
+  vertical-align: bottom;
+}
+
+@media (min-width: 640px) {
+  .tt-trust-tier { display: inline-block; }
+}
+
+/* Wąski telefon (390 px): ciaśniejsze znaczki, żeby gotówka, ⭐, 🦎, 🤝 i ⚙ zmieściły się w jednym rzędzie. */
+@media (max-width: 440px) {
+  .tt-hud-row { gap: 6px; }
+  .tt-stat { padding: 4px 6px; }
+}
+
 .tt-gear {
   margin-left: auto;
 }
@@ -694,6 +720,43 @@
   font-size: 18px;
 }
 
+/* Panel Ludzie: liczba osób przy zadaniu i przypięcie (− 📌 N +) w jednym wierszu. */
+.tt-task-n {
+  display: inline-block;
+  min-width: 62px;
+}
+
+.tt-row:has(.tt-pin) {
+  align-items: center;
+}
+
+.tt-pin {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 8px;
+  vertical-align: middle;
+}
+
+.tt-sheet .tt-pin .tt-btn {
+  min-width: 36px;
+  min-height: 36px;
+  padding: 0;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.tt-pin-n {
+  min-width: 34px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.tt-starved {
+  margin: -2px 0 2px;
+  text-align: right;
+}
+
 .tt-actions {
   display: flex;
   flex-wrap: wrap;
@@ -766,6 +829,7 @@
   bottom: calc(var(--tabs-h) + 12px);
   display: flex;
   flex-direction: column;
+  align-items: flex-end;
   gap: 10px;
 }
 
@@ -798,6 +862,26 @@
   right: -2px;
   background: var(--tt-green-dark);
   color: var(--tt-cream);
+}
+
+/* Pasek sił nad przyciskami klikera. */
+.tt-energy {
+  min-width: 62px;
+  padding: 4px 8px 5px;
+  border-radius: 10px;
+  background: rgba(19, 40, 28, 0.78);
+  color: var(--tt-cream);
+  font-size: 11px;
+  font-weight: 700;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.tt-energy .tt-bar {
+  height: 6px;
+  margin: 3px 0 0;
+  background: rgba(255, 243, 223, 0.25);
 }
 
 .tt-rotate {

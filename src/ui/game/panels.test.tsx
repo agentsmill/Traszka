@@ -1,14 +1,20 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { WAGE_PER_DAY } from '@/sim/economy/catalog';
 import { createEconomy, nextRemont, upgradeBlocker, type CommandResult, type EconomyState } from '@/sim/economy/economy';
 import type { Command } from '@/sim/economy/commands';
 import { kpiTitle } from '@/sim/economy/tycoon/kpi';
-import { PROFILE_HINT, PROFILE_LABEL, STAFF_PROFILES } from '@/sim/economy/tycoon/staff';
+import { staffOnShift } from '@/sim/economy/tycoon/shift';
+import { PROFILE_HINT, PROFILE_LABEL, STAFF_PROFILES, STAFF_TASKS, TASK_LABEL, type StaffTask } from '@/sim/economy/tycoon/staff';
+import { trustTier } from '@/sim/economy/tycoon/trust';
+import { WUT, wutTotal } from '@/sim/economy/tycoon/wut';
+import { WEATHER_LABEL } from '@/sim/economy/tycoon/cleanliness';
 import { computeStoreInfo, type PalletLoc, type StoreInfo } from '@/sim/economy/storeInfo';
 import { EQUIPMENT, UPGRADES } from '@/sim/economy/upgrades';
 import { layoutFor } from '@/sim/store/layoutFor';
 import { metaView, type GameActions } from '../state';
-import { GoalsPanel, PalletItem, PalletsPanel, PeoplePanel, ShopPanel } from './panels';
-import { buttonAria, buttonLabelled, buttonsOf, click, labels, sectionTitled, textOf, walk } from './vnodeTree';
+import { Bar, GoalsPanel, PalletItem, PalletsPanel, PeoplePanel, ShopPanel, StorePanel } from './panels';
+import { plural, zl } from './format';
+import { buttonAria, buttonLabelled, buttonsOf, click, labels, sectionTitled, textOf, walk, type Vnode } from './vnodeTree';
 
 /** Atrapa `GameActions`: panele tylko wysyłają polecenia, więc liczy się wyłącznie `dispatch`. */
 function fakeGame(): GameActions & { dispatch: ReturnType<typeof vi.fn<(cmd: Command) => CommandResult>> } {
@@ -187,5 +193,213 @@ describe('panele wysyłają polecenia przez game.dispatch, a nie wołają symula
     expect(value('Ten miesiąc', 'Marża i premie')).toBe('11200zł');
     expect(value('Ten miesiąc', 'WUT ponad próg')).toBe('−150zł');
     expect(value('Ten miesiąc', 'Wynik (przed opłatą franczyzową)')).toBe('+8150zł');
+  });
+});
+
+describe('panel Ludzie: kto co robi, przypięcia i podsumowanie dnia', () => {
+  /** Zmiana czworga ludzi w środku dnia z przydziałem z ostatniej minuty: 2 na kasie, 1 przy paletach, 1 wolny. */
+  function crew(): { s: EconomyState; info: StoreInfo } {
+    const { s, info } = rich();
+    s.staff = 4;
+    s.minute = 12 * 60;
+    s.shift = { staff: 4, human: { kasa: 2, rozladunek: 1, wykladanie: 0, sprzatanie: 0 } };
+    return { s, info };
+  }
+  /** Wiersz zadania w sekcji „Kto co robi teraz” (etykieta wiersza to prop, nie dziecko). */
+  const rowOf = (tree: ReturnType<typeof PeoplePanel>, section: string, label: string): Vnode => {
+    const found = walk(sectionTitled(tree, section)).filter((v) => v.props.label === label);
+    if (found.length !== 1) throw new Error(`Wierszy „${label}” w „${section}”: ${found.length}`);
+    return found[0]!;
+  };
+  const NOW = 'Kto co robi teraz';
+
+  it('sekcje w kolejności: Zmiana, Profil pracy, Kto co robi teraz, Dziś', () => {
+    const { s, info } = crew();
+    const titles = walk(PeoplePanel({ s, info, game: fakeGame(), v: 1 })).filter((v) => typeof v.props.title === 'string').map((v) => v.props.title);
+    expect(titles).toEqual(['Zmiana', 'Profil pracy', NOW, 'Dziś']);
+  });
+
+  it('Zmiana: liczba osób, zatrudnij i zwolnij, płaca dzienna', () => {
+    const { s, info } = crew();
+    const game = fakeGame();
+    const section = sectionTitled(PeoplePanel({ s, info, game, v: 1 }), 'Zmiana');
+    expect(textOf(section)).toContain('4 osoby');
+    expect(textOf(section).replace(/[\s\u00a0\u202f]/g, '')).toContain(zl(s.staff * WAGE_PER_DAY).replace(/[\s\u00a0\u202f]/g, ''));
+    click(buttonAria(section, 'Zatrudnij'));
+    expect(game.dispatch).toHaveBeenLastCalledWith({ type: 'hire' });
+    click(buttonAria(section, 'Zwolnij'));
+    expect(game.dispatch).toHaveBeenLastCalledWith({ type: 'fire' });
+  });
+
+  it('liczby osób przy zadaniach i wolnych zgadzają się ze staffOnShift', () => {
+    const { s, info } = crew();
+    const tree = PeoplePanel({ s, info, game: fakeGame(), v: 1 });
+    const on = staffOnShift(s);
+    expect(on).toHaveLength(4);
+    for (const t of STAFF_TASKS) {
+      const expected = on.filter((x) => x.task === t).length;
+      expect(textOf(rowOf(tree, NOW, TASK_LABEL[t])), t).toContain(`${expected} ${plural(expected, 'osoba', 'osoby', 'osób')}`);
+    }
+    const free = on.filter((x) => x.task === 'wolny').length;
+    expect(textOf(rowOf(tree, NOW, 'Wolni'))).toContain(`${free} ${plural(free, 'osoba', 'osoby', 'osób')}`);
+    // suma osób w wierszach to dokładnie zmiana
+    const total = [...STAFF_TASKS.map((t) => TASK_LABEL[t]), 'Wolni']
+      .reduce((n, label) => n + Number(/^(\d+)/.exec(textOf(rowOf(tree, NOW, label)))![1]), 0);
+    expect(total).toBe(s.staff);
+  });
+
+  it('w nocy (nikogo na zmianie) wszystkie wiersze pokazują 0, a wolnych też nie ma', () => {
+    const { s, info } = crew();
+    s.minute = 3 * 60;
+    expect(staffOnShift(s)).toHaveLength(0);
+    const tree = PeoplePanel({ s, info, game: fakeGame(), v: 1 });
+    for (const label of [...STAFF_TASKS.map((t) => TASK_LABEL[t]), 'Wolni']) expect(textOf(rowOf(tree, NOW, label)), label).toMatch(/^0 osób/);
+  });
+
+  it('przycisk + przy kasie wysyła pinStaff z liczbą przypiętych + 1, a − z liczbą − 1', () => {
+    const { s, info } = crew();
+    s.tycoon.staff.pinned.kasa = 1;
+    const game = fakeGame();
+    const kasa = rowOf(PeoplePanel({ s, info, game, v: 1 }), NOW, TASK_LABEL.kasa);
+    const [minus, plus] = buttonsOf(kasa);
+    expect(textOf(minus!)).toBe('−');
+    expect(textOf(plus!)).toBe('+');
+    click(plus!);
+    expect(game.dispatch).toHaveBeenLastCalledWith({ type: 'pinStaff', task: 'kasa', count: 2 });
+    click(minus!);
+    expect(game.dispatch).toHaveBeenLastCalledWith({ type: 'pinStaff', task: 'kasa', count: 0 });
+    expect(game.dispatch).toHaveBeenCalledTimes(2);
+  });
+
+  it('każde zadanie przypina się samo: + przy sprzątaniu wysyła pinStaff dla sprzątania', () => {
+    const { s, info } = crew();
+    s.tycoon.staff.pinned.sprzatanie = 2;
+    const game = fakeGame();
+    const tree = PeoplePanel({ s, info, game, v: 1 });
+    for (const t of STAFF_TASKS as readonly StaffTask[]) {
+      const [, plus] = buttonsOf(rowOf(tree, NOW, TASK_LABEL[t]));
+      click(plus!);
+      expect(game.dispatch).toHaveBeenLastCalledWith({ type: 'pinStaff', task: t, count: s.tycoon.staff.pinned[t] + 1 });
+    }
+  });
+
+  it('− przy zerze przypiętych jest disabled, a przy dodatniej liczbie nie', () => {
+    const { s, info } = crew();
+    s.tycoon.staff.pinned.rozladunek = 1;
+    const tree = PeoplePanel({ s, info, game: fakeGame(), v: 1 });
+    expect(buttonsOf(rowOf(tree, NOW, TASK_LABEL.kasa))[0]!.props.disabled).toBe(true);
+    expect(buttonsOf(rowOf(tree, NOW, TASK_LABEL.rozladunek))[0]!.props.disabled).toBe(false);
+  });
+
+  it('+ jest disabled, gdy suma przypiętych równa się personelowi (we wszystkich wierszach), a przed tym aktywny', () => {
+    const { s, info } = crew();
+    s.tycoon.staff.pinned.kasa = 2;
+    s.tycoon.staff.pinned.rozladunek = 1;
+    let tree = PeoplePanel({ s, info, game: fakeGame(), v: 1 });
+    for (const t of STAFF_TASKS) expect(buttonsOf(rowOf(tree, NOW, TASK_LABEL[t]))[1]!.props.disabled, `przed: ${t}`).toBe(false);
+    s.tycoon.staff.pinned.wykladanie = 1;   // 2 + 1 + 1 = 4 = s.staff
+    tree = PeoplePanel({ s, info, game: fakeGame(), v: 1 });
+    for (const t of STAFF_TASKS) expect(buttonsOf(rowOf(tree, NOW, TASK_LABEL[t]))[1]!.props.disabled, `po: ${t}`).toBe(true);
+    expect(buttonsOf(rowOf(tree, NOW, TASK_LABEL.kasa))[0]!.props.disabled).toBe(false);   // odpinać wolno zawsze
+  });
+
+  it('wiersz pokazuje, ile osób jest przypiętych do zadania', () => {
+    const { s, info } = crew();
+    s.tycoon.staff.pinned.kasa = 2;
+    const tree = PeoplePanel({ s, info, game: fakeGame(), v: 1 });
+    expect(textOf(rowOf(tree, NOW, TASK_LABEL.kasa))).toContain('2');
+    expect(textOf(rowOf(tree, NOW, TASK_LABEL.kasa))).toContain('📌');
+  });
+
+  it('Dziś: osobominuty wg zadania z day.worked, zaokrąglone', () => {
+    const { s, info } = crew();
+    Object.assign(s.tycoon.staff.day.worked, { kasa: 480.4, rozladunek: 95.6, wykladanie: 0, sprzatanie: 61 });
+    const tree = PeoplePanel({ s, info, game: fakeGame(), v: 1 });
+    const text = (t: StaffTask): string => textOf(rowOf(tree, 'Dziś', TASK_LABEL[t])).replace(/[\s\u00a0\u202f]/g, ' ');
+    expect(text('kasa')).toContain('480 osobomin');
+    expect(text('rozladunek')).toContain('96 osobomin');
+    expect(text('wykladanie')).toContain('0 osobomin');
+    expect(text('sprzatanie')).toContain('61 osobomin');
+  });
+
+  it('Dziś: ostrzeżenie „czekało N min” dopiero powyżej 30 minut czekania i tylko przy tym zadaniu', () => {
+    const { s, info } = crew();
+    Object.assign(s.tycoon.staff.day.starved, { kasa: 30, rozladunek: 31, wykladanie: 95, sprzatanie: 0 });
+    const section = sectionTitled(PeoplePanel({ s, info, game: fakeGame(), v: 1 }), 'Dziś');
+    const warnings = walk(section).filter((v) => String(v.props.class).includes('warn')).map((v) => textOf(v));
+    expect(warnings).toEqual(['czekało 31 min', 'czekało 95 min']);   // kasa na granicy 30 jeszcze nie ostrzega
+    expect(textOf(section)).not.toContain('czekało 30');
+  });
+
+  it('Dziś: automatyka jest wymieniona osobno, gdy zadanie robiły też roboty', () => {
+    const { s, info } = crew();
+    Object.assign(s.tycoon.staff.day.worked, { rozladunek: 200 });
+    Object.assign(s.tycoon.staff.day.robot, { rozladunek: 80 });
+    const tree = PeoplePanel({ s, info, game: fakeGame(), v: 1 });
+    expect(textOf(rowOf(tree, 'Dziś', TASK_LABEL.rozladunek))).toContain('w tym automatyka 80');
+    expect(textOf(rowOf(tree, 'Dziś', TASK_LABEL.kasa))).not.toContain('automatyka');
+  });
+});
+
+describe('panel Sklep: zaufanie Centrali, WUT w miesiącu i czystość sali', () => {
+  it('zaufanie pokazuje próg (nazwę) i jego opis', () => {
+    const { s, info } = rich();
+    s.tycoon.trust.value = 45;
+    const tree = StorePanel({ s, info, v: 1 });
+    const tier = trustTier(45);
+    const section = sectionTitled(tree, 'Opinia');
+    expect(textOf(section)).toContain('45');
+    expect(textOf(section)).toContain(tier.label);
+    expect(textOf(section)).toContain(tier.flavor);
+    s.tycoon.trust.value = 92;
+    expect(textOf(sectionTitled(StorePanel({ s, info, v: 1 }), 'Opinia'))).toContain(trustTier(92).flavor);
+  });
+
+  it('WUT w tym miesiącu: suma ubytków wobec progu (próg × obrót miesiąca), pasek ostrzega po przekroczeniu', () => {
+    const { s, info } = rich();
+    s.month.revenue = 50_000;
+    s.tycoon.wut.month.kradziez = 200;
+    s.tycoon.wut.month.termin = 100;
+    const limit = WUT.threshold * 50_000;   // 600 zł
+    const tree = StorePanel({ s, info, v: 1 });
+    const section = sectionTitled(tree, 'WUT w tym miesiącu');
+    const plain = (x: string): string => x.replace(/[\s\u00a0\u202f]/g, '');
+    expect(plain(textOf(section))).toContain(plain(`${zl(wutTotal(s.tycoon.wut))} z ${zl(limit)}`));
+    const bar = walk(section).find((v) => v.type === Bar)!;
+    expect(bar.props.value).toBeCloseTo(300 / 600);
+    expect(bar.props.warn).toBe(false);
+    s.tycoon.wut.month.pomylki = 500;   // 800 > 600
+    const over = sectionTitled(StorePanel({ s, info, v: 1 }), 'WUT w tym miesiącu');
+    expect(walk(over).find((v) => v.type === Bar)!.props.warn).toBe(true);
+    expect(plain(textOf(over))).toContain(plain(zl(200)));   // nadwyżka do zapłaty
+  });
+
+  it('WUT na początku miesiąca (obrót 0, próg 0) nie daje NaN ani dzielenia przez zero', () => {
+    const { s, info } = rich();
+    s.month.revenue = 0;
+    let section = sectionTitled(StorePanel({ s, info, v: 1 }), 'WUT w tym miesiącu');
+    expect(walk(section).find((v) => v.type === Bar)!.props.value).toBe(0);
+    expect(textOf(section)).not.toMatch(/NaN|Infinity/);
+    s.tycoon.wut.month.termin = 10;   // ubytek bez obrotu: już ponad progiem
+    section = sectionTitled(StorePanel({ s, info, v: 1 }), 'WUT w tym miesiącu');
+    expect(walk(section).find((v) => v.type === Bar)!.props.value).toBe(1);
+    expect(walk(section).find((v) => v.type === Bar)!.props.warn).toBe(true);
+    expect(textOf(section)).not.toMatch(/NaN|Infinity/);
+  });
+
+  it('Czystość sali: zaokrąglony procent i pogoda', () => {
+    const { s, info } = rich();
+    s.tycoon.hall.cleanliness = 63.6;
+    s.tycoon.hall.weather = 'deszcz';
+    const section = sectionTitled(StorePanel({ s, info, v: 1 }), 'Czystość sali');
+    expect(textOf(section)).toContain('64%');
+    expect(textOf(section)).toContain(WEATHER_LABEL.deszcz);
+    expect(walk(section).find((v) => v.type === Bar)!.props.warn).toBe(false);
+    s.tycoon.hall.cleanliness = 22;
+    s.tycoon.hall.weather = 'snieg';
+    const dirty = sectionTitled(StorePanel({ s, info, v: 1 }), 'Czystość sali');
+    expect(textOf(dirty)).toContain('22%');
+    expect(textOf(dirty)).toContain(WEATHER_LABEL.snieg);
+    expect(walk(dirty).find((v) => v.type === Bar)!.props.warn).toBe(true);
   });
 });

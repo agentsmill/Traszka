@@ -5,9 +5,14 @@ import { createEconomy, emptyCounters, type CommandResult, type EconomyState, ty
 import { EQUIPMENT } from '@/sim/economy/upgrades';
 import { computeStoreInfo, type StoreInfo } from '@/sim/economy/storeInfo';
 import { layoutFor } from '@/sim/store/layoutFor';
+import { FATIGUE } from '@/sim/economy/tycoon/fatigue';
+import type { CardInstance } from '@/sim/economy/tycoon/cards';
+import { trustTier } from '@/sim/economy/tycoon/trust';
 import {
-  econ, ephemeral, hints, report, selection, showHints, showSettings, start, tab, welcome, type GameActions,
+  econ, ephemeral, hints, report, selection, showHints, showSettings, speed, start, tab, welcome, type GameActions,
 } from '../state';
+import { TrustChip } from './Hud';
+import { Bar } from './panels';
 import {
   ClickerBar, ComboChip, EPHEMERAL_BADGE, EPHEMERAL_NOTE, FIRST_DAY_HINTS, FirstDayHints, RESTART_CONFIRM, ReportBody, SelectionCard,
   StoreActions, StoreBadge,
@@ -24,6 +29,7 @@ const resetSignals = (): void => {
   welcome.value = null;
   start.value = null;
   showSettings.value = false;
+  speed.value = 1;
   showHints([]);
 };
 beforeEach(resetSignals);
@@ -204,6 +210,24 @@ describe('przyciski nakładek wysyłają polecenia', () => {
     expect(game.dispatch).toHaveBeenCalledWith({ type: 'tapTill' });
   });
 
+  it('karta kasy: „Obsłuż klienta” jest nieaktywny bez sił, na pauzie i przy zamkniętym sklepie, a w przeciwnym razie aktywny', () => {
+    const { s, info } = base();
+    s.queue = 2;
+    publishState(s, info);
+    selection.value = { kind: 'till' };
+    const till = (): Vnode => buttonsOf(SelectionCard({ game: fakeGame() })).find((b) => textOf(b) === 'Obsłuż klienta')!;
+    expect(till().props.disabled).toBe(false);
+    speed.value = 0;
+    expect(till().props.disabled).toBe(true);
+    speed.value = 1;
+    s.tycoon.fatigue.energy = 1;
+    expect(till().props.disabled).toBe(true);
+    expect(till().props.title).toBe('Ręce odmawiają, odpocznij do jutra');
+    s.tycoon.fatigue.energy = 100;
+    s.minute = 3 * 60;
+    expect(till().props.disabled).toBe(true);
+  });
+
   it('karta slotu: zakup sprzętu wysyła buyEquipment z id slotu', () => {
     const { s, info } = base(1);   // po pierwszym remoncie sklep ma sloty
     expect(info.slots.length).toBeGreaterThan(0);
@@ -255,5 +279,122 @@ describe('raport miesięczny: pozycje sumują się do wyniku', () => {
     const v = rows(r);
     expect(v.get('Premie Centrali')).toBe(0);
     expect(LINES.filter((l) => l !== 'Premie Centrali').reduce((n, l) => n + v.get(l)!, 0)).toBe(r.profit);
+  });
+});
+
+describe('pasek sił nad przyciskami klikera', () => {
+  const withEnergy = (energy: number, queue = 3): { s: EconomyState; info: StoreInfo } => {
+    const { s, info } = base();
+    s.queue = queue;
+    s.tycoon.fatigue.energy = energy;
+    publishState(s, info);
+    return { s, info };
+  };
+  const bar = (): Vnode => ClickerBar({ game: fakeGame(), onFloat: vi.fn() }) as Vnode;
+  const tapButtons = (tree: Vnode): Vnode[] => buttonsOf(tree);
+  const OUT_OF_ENERGY = 'Ręce odmawiają, odpocznij do jutra';
+
+  it('pokazuje siły ze stanu jako „Siły N/100” z paskiem', () => {
+    withEnergy(73);
+    const tree = bar();
+    expect(textOf(tree)).toContain(`Siły 73/${FATIGUE.pool}`);
+    const gauge = walk(tree).find((v) => v.type === Bar)!;
+    expect(gauge.props.value).toBeCloseTo(0.73);
+    withEnergy(41.4);
+    expect(textOf(bar())).toContain('Siły 41/100');
+  });
+
+  it('pasek ostrzega poniżej 20 sił, od 20 w górę nie', () => {
+    withEnergy(19);
+    expect(walk(bar()).find((v) => v.type === Bar)!.props.warn).toBe(true);
+    withEnergy(20);
+    expect(walk(bar()).find((v) => v.type === Bar)!.props.warn).toBe(false);
+  });
+
+  it('przy 1 sile oba przyciski są nieaktywne, z podpowiedzią o odpoczynku', () => {
+    withEnergy(1);
+    const [pallet, till] = tapButtons(bar());
+    for (const b of [pallet!, till!]) {
+      expect(b.props.disabled).toBe(true);
+      expect(b.props.title).toBe(OUT_OF_ENERGY);
+    }
+  });
+
+  it('każdy przycisk wymaga siły na swoje stuknięcie: kasa 2, paleta 2,5', () => {
+    withEnergy(2.2);   // kasa (koszt 2) jeszcze działa, paleta (koszt 2,5) już nie
+    const [pallet, till] = tapButtons(bar());
+    expect(till!.props.disabled).toBe(false);
+    expect(pallet!.props.disabled).toBe(true);
+    expect(pallet!.props.title).toBe(OUT_OF_ENERGY);
+    expect(till!.props.title).toBeUndefined();
+  });
+
+  it('z pełnymi siłami, otwartym sklepem i kolejką przycisk kasy jest aktywny, a paleta też (są palety)', () => {
+    const { s } = withEnergy(100);
+    expect(s.pallets.length).toBeGreaterThan(0);
+    const [pallet, till] = tapButtons(bar());
+    expect(pallet!.props.disabled).toBe(false);
+    expect(till!.props.disabled).toBe(false);
+  });
+
+  it('bez klienta w kolejce albo przy zamkniętym sklepie kasa jest nieaktywna', () => {
+    withEnergy(100, 0);
+    expect(tapButtons(bar())[1]!.props.disabled).toBe(true);
+    const { s, info } = withEnergy(100, 3);
+    s.minute = 3 * 60;   // noc
+    publishState(s, info);
+    expect(tapButtons(bar())[1]!.props.disabled).toBe(true);
+  });
+
+  it('karta „zamknij na godzinę” zamyka kasę (isOpenForCustomers), mimo że godziny są otwarte', () => {
+    const { s, info } = withEnergy(100, 3);
+    s.tycoon.cards.active.push({ kind: 'closed', value: 1, from: s.minute - 1, until: s.minute + 60, seq: 1 });
+    publishState(s, info);
+    expect(tapButtons(bar())[1]!.props.disabled).toBe(true);
+  });
+
+  it('pauza wyłącza oba przyciski, a ×1 je włącza', () => {
+    withEnergy(100);
+    speed.value = 0;
+    expect(tapButtons(bar()).map((b) => b.props.disabled)).toEqual([true, true]);
+    speed.value = 1;
+    expect(tapButtons(bar()).map((b) => b.props.disabled)).toEqual([false, false]);
+  });
+
+  it('karta czekająca na odpowiedź wyłącza oba przyciski', () => {
+    const { s, info } = withEnergy(100);
+    s.tycoon.cards.pending.push({ seq: 1, id: 'x', day: 0, showAt: s.minute, params: {}, answers: [], defaultAnswer: 0 } as unknown as CardInstance);
+    publishState(s, info);
+    expect(tapButtons(bar()).map((b) => b.props.disabled)).toEqual([true, true]);
+  });
+
+  it('udane stuknięcie dalej pokazuje dymek (onFloat), a odmowa z pustych sił nic nie rysuje', () => {
+    withEnergy(100);
+    const onFloat = vi.fn();
+    const game = fakeGame({ ok: true, value: 5 });
+    click(buttonsOf(ClickerBar({ game, onFloat }))[0]!, { clientX: 3, clientY: 4 });
+    expect(onFloat).toHaveBeenCalledWith(3, 4, '+5 szt.', 'work');
+  });
+});
+
+describe('znaczek zaufania Centrali w pasku u góry', () => {
+  it('pokazuje wartość i nazwę progu, a pełny opis w podpowiedzi', () => {
+    const chip = TrustChip({ value: 62 }) as Vnode;
+    const tier = trustTier(62);
+    expect(textOf(chip)).toContain('62');
+    expect(textOf(chip)).toContain(tier.label);
+    expect(chip.props['aria-label']).toBe(`Zaufanie ${62}: ${tier.label}`);
+    expect(String(chip.props.title)).toContain(tier.flavor);
+    expect(String(chip.props.title)).toContain('62');
+  });
+
+  it('klasa ostrzeżenia tylko poniżej 30', () => {
+    expect(String((TrustChip({ value: 29 }) as Vnode).props.class).split(' ')).toContain('warn');
+    expect(String((TrustChip({ value: 30 }) as Vnode).props.class).split(' ')).not.toContain('warn');
+    expect(String((TrustChip({ value: 85 }) as Vnode).props.class).split(' ')).not.toContain('warn');
+  });
+
+  it('wartość jest zaokrąglona do całości', () => {
+    expect(textOf(TrustChip({ value: 61.6 }))).toContain('62');
   });
 });

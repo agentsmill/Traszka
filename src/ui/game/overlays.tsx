@@ -1,17 +1,32 @@
 import { useEffect, useState } from 'preact/hooks';
 import { RETURN_FEE } from '@/sim/economy/catalog';
-import { effects, isStoreOpen, slotFree, slotUsage, tapCombo, type MonthReport } from '@/sim/economy/economy';
+import { awaitingDecision, effects, isOpenForCustomers, slotFree, slotUsage, tapCombo, type EconomyState, type MonthReport } from '@/sim/economy/economy';
+import { FATIGUE, tapCost, type TapKind } from '@/sim/economy/tycoon/fatigue';
 import { EQUIPMENT, EQUIPMENT_BY_ID, equipmentCost } from '@/sim/economy/upgrades';
 import type { QualityPresetId } from '@/render/quality';
 import { networkIncomeOf, prestigePoints } from '@/game/meta';
 import {
   celebration, ephemeral, econ, hints, metaView, nextHint, preset, report, selection, seed, showPerf, showPrestige, showSettings,
-  tab, toasts, welcome, type Controls, type GameActions,
+  speed, tab, toasts, welcome, type Controls, type GameActions,
 } from '../state';
 import { int, people, signedZl, zl } from './format';
-import { PalletItem } from './panels';
+import { Bar, PalletItem } from './panels';
 
 export const DISCLAIMER = 'Wszystkie firmy, postacie i zdarzenia są fikcyjne.';
+
+export const NO_ENERGY_TITLE = 'Ręce odmawiają, odpocznij do jutra';
+
+/**
+ * Powód, dla którego stuknięcie danego rodzaju jest teraz zablokowane (jako `title` przycisku), albo undefined, gdy wolno:
+ * ręce nie mają sił na jego koszt, gra stoi (pauza) albo czeka karta decyzji. Brak sił zasłania resztę, bo to on trwa do jutra.
+ * Blokady są też w symulacji (odmowa bez zużycia sił), tu tylko oszczędzają graczowi bezskuteczne stuknięcia.
+ */
+function tapBlock(s: EconomyState, kind: TapKind): string | undefined {
+  if (s.tycoon.fatigue.energy < tapCost(kind)) return NO_ENERGY_TITLE;
+  if (speed.value === 0) return 'Gra wstrzymana: wznów czas';
+  if (awaitingDecision(s)) return 'Najpierw odpowiedz na kartę decyzji';
+  return undefined;
+}
 
 /** Karta zaznaczonego obiektu (paleta, slot, kasa) nad dolnym paskiem. */
 export function SelectionCard({ game }: { game: GameActions }) {
@@ -35,7 +50,8 @@ export function SelectionCard({ game }: { game: GameActions }) {
       <>
         <h3>Kasa</h3>
         <p>Kolejka: <b>{int(s.queue)}</b> · na kasie: {people(s.lastCashiers)} os. · SCO: {fx.sco}</p>
-        <button type="button" class="tt-btn tt-primary big" disabled={!isStoreOpen(s) || s.queue < 1} onClick={() => game.dispatch({ type: 'tapTill' })}>Obsłuż klienta</button>
+        <button type="button" class="tt-btn tt-primary big" disabled={!isOpenForCustomers(s) || s.queue < 1 || !!tapBlock(s, 'kasa')} title={tapBlock(s, 'kasa')}
+          onClick={() => game.dispatch({ type: 'tapTill' })}>Obsłuż klienta</button>
         <p class="tt-hint">Stuknięcie w kasę w sklepie też obsługuje klienta. Ty też umiesz kasować.</p>
       </>
     );
@@ -70,21 +86,35 @@ export function SelectionCard({ game }: { game: GameActions }) {
   );
 }
 
-/** Duże przyciski klikera nad dolnym paskiem: rozładuj najpilniejszą paletę, obsłuż klienta. */
+/** Poniżej tylu sił pasek klikera ostrzega (do końca puli zostaje kilkanaście stuknięć). */
+export const LOW_ENERGY = 20;
+
+/**
+ * Duże przyciski klikera nad dolnym paskiem: rozładuj najpilniejszą paletę, obsłuż klienta; nad nimi pasek sił franczyzobiorcy.
+ * Blokady stuknięcia opisuje `tapBlock`; kasa dodatkowo wymaga otwartego sklepu (`isOpenForCustomers`, także karta „zamknij na
+ * godzinę”) i klienta w kolejce.
+ */
 export function ClickerBar({ game, onFloat }: { game: GameActions; onFloat: (x: number, y: number, text: string, kind: 'money' | 'work') => void }) {
   const view = econ.value;
   if (!view || tab.value || selection.value) return null;
   const { s } = view;
   const pallets = s.pallets.length;
   const q = Math.round(s.queue);
+  const energy = s.tycoon.fatigue.energy;
+  const palletBlock = tapBlock(s, 'paleta');
+  const tillBlock = tapBlock(s, 'kasa');
   const at = (e: MouseEvent): [number, number] => [e.clientX || window.innerWidth - 60, e.clientY || window.innerHeight - 140];
   return (
     <div class="tt-clicker">
-      <button type="button" class="tt-fab" disabled={pallets === 0} aria-label={`Rozładuj paletę (${pallets})`}
+      <div class="tt-energy" title="Siły franczyzobiorcy: każde stuknięcie je zużywa, noc oddaje tylko część">
+        <span>Siły {int(energy)}/{FATIGUE.pool}</span>
+        <Bar value={energy / FATIGUE.pool} warn={energy < LOW_ENERGY} />
+      </div>
+      <button type="button" class="tt-fab" disabled={pallets === 0 || !!palletBlock} title={palletBlock} aria-label={`Rozładuj paletę (${pallets})`}
         onClick={(e) => { const r = game.dispatch({ type: 'tapPallet' }); if (r.ok) onFloat(...at(e), `+${Math.round(r.value ?? 0)} szt.`, 'work'); }}>
         <span aria-hidden="true">📦</span>{pallets > 0 && <span class="tt-badge">{pallets}</span>}
       </button>
-      <button type="button" class="tt-fab" disabled={q < 1 || !isStoreOpen(s)} aria-label={`Obsłuż klienta (${q} w kolejce)`}
+      <button type="button" class="tt-fab" disabled={q < 1 || !isOpenForCustomers(s) || !!tillBlock} title={tillBlock} aria-label={`Obsłuż klienta (${q} w kolejce)`}
         onClick={(e) => { const r = game.dispatch({ type: 'tapTill' }); if (r.ok) onFloat(...at(e), `+${(r.value ?? 0).toLocaleString('pl-PL', { maximumFractionDigits: 2 })} zł`, 'money'); }}>
         <span aria-hidden="true">🧾</span>{q > 0 && <span class="tt-badge">{q}</span>}
       </button>

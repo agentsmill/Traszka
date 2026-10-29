@@ -7,7 +7,11 @@ import {
 } from '@/sim/economy/economy';
 import { MILESTONES } from '@/sim/economy/milestones';
 import { KPI, KPI_FLAVOR, kpiProgress, kpiTitle } from '@/sim/economy/tycoon/kpi';
-import { PROFILE_HINT, PROFILE_LABEL, STAFF_PROFILES } from '@/sim/economy/tycoon/staff';
+import { WEATHER_LABEL } from '@/sim/economy/tycoon/cleanliness';
+import { staffOnShift } from '@/sim/economy/tycoon/shift';
+import { PROFILE_HINT, PROFILE_LABEL, STAFF_PROFILES, STAFF_TASKS, TASK_LABEL } from '@/sim/economy/tycoon/staff';
+import { trustTier } from '@/sim/economy/tycoon/trust';
+import { WUT, wutCharge, wutTotal } from '@/sim/economy/tycoon/wut';
 import type { PalletLoc, StoreInfo } from '@/sim/economy/storeInfo';
 import {
   EQUIPMENT, GROUP_LABEL, UPGRADES, WORKSHOP_LEVEL, equipmentCost, upgradeCost, type UpgradeGroup,
@@ -101,7 +105,7 @@ function capacityPerHour(s: EconomyState, info: StoreInfo): { now: number; max: 
   return { now: s.lastCashiers * till + sco, max: Math.min(s.staff, fx.tills) * till + sco };
 }
 
-function StorePanel({ s, info }: { s: EconomyState; info: StoreInfo; v: number }) {
+export function StorePanel({ s, info }: { s: EconomyState; info: StoreInfo; v: number }) {
   const fx = effects(s, info);
   const cap = capacityPerHour(s, info);
   const hour = Math.floor(minuteOfDay(s.minute) / 60);
@@ -110,6 +114,12 @@ function StorePanel({ s, info }: { s: EconomyState; info: StoreInfo; v: number }
   const backroom = CATS.reduce((n, c) => n + s.backroom[c], 0);
   const usage = slotUsage(s);
   const trust = s.tycoon.trust.value;
+  const tier = trustTier(trust);
+  const wut = wutTotal(s.tycoon.wut);
+  const wutLimit = WUT.threshold * Math.max(0, s.month.revenue);
+  const wutOver = wutCharge(s.tycoon.wut, s.month.revenue);
+  const hall = s.tycoon.hall;
+  const dirty = hall.cleanliness < 50;
   return (
     <>
       <Section title="Kasa i kolejka">
@@ -133,9 +143,23 @@ function StorePanel({ s, info }: { s: EconomyState; info: StoreInfo; v: number }
       <Section title="Opinia">
         <Row label="Reputacja">{int(s.reputation)} / 100</Row>
         <Bar value={s.reputation / 100} warn={s.reputation < 30} />
-        <Row label="Zaufanie Centrali">{int(trust)} / 100</Row>
+        <Row label="Zaufanie Centrali">{int(trust)} / 100 · {tier.label}</Row>
         <Bar value={trust / 100} warn={trust < 30} />
+        <p class="tt-hint tt-flavor">{tier.flavor}</p>
         <p class="tt-hint">Reputacja rośnie, gdy klienci znajdują towar i nie czekają. Spada przez puste półki, kolejki i mandaty.</p>
+      </Section>
+      <Section title="WUT w tym miesiącu">
+        <Row label="Ubytki (WUT)">{zl(wut)} z {zl(wutLimit)}</Row>
+        <Bar value={wutLimit > 0 ? wut / wutLimit : wut > 0 ? 1 : 0} warn={wut > wutLimit} />
+        {wutOver > 0
+          ? <p class="tt-hint warn">Ponad progiem: {zl(wutOver)}. Tyle zapłacisz z własnej kieszeni przy zamknięciu miesiąca.</p>
+          : <p class="tt-hint">Ubytki to przeterminowany towar, kradzieże, pomyłki i skutki decyzji dnia. Centrala pokrywa je do {(WUT.threshold * 100).toLocaleString('pl-PL')}% obrotu miesiąca, resztę płacisz Ty.</p>}
+      </Section>
+      <Section title="Czystość sali">
+        <Row label="Czystość">{Math.round(hall.cleanliness)}%</Row>
+        <Bar value={hall.cleanliness / 100} warn={dirty} />
+        <Row label="Pogoda">{WEATHER_LABEL[hall.weather]}</Row>
+        <p class={`tt-hint${dirty ? ' warn' : ''}`}>{dirty ? 'Brudna sala odstrasza klientów i obniża reputację. Ktoś musi wziąć mopa.' : 'Klienci i deszcz brudzą salę, sprzątanie ją czyści. Zimą i w deszczu brudu jest więcej.'}</p>
       </Section>
       <Section title="Sloty na sprzęt">
         {info.slots.length === 0 && <p class="tt-hint">Ten lokal nie ma slotów. Remont je doda.</p>}
@@ -220,21 +244,29 @@ export function PalletItem({ s, info, id, game, compact = false }: { s: EconomyS
 
 // --- Ludzie ------------------------------------------------------------------------------------------
 
+const osoby = (n: number): string => `${n} ${plural(n, 'osoba', 'osoby', 'osób')}`;
+
+/** Powyżej tylu minut czekania w dniu zadanie dostaje w „Dziś” ostrzeżenie (brakowało rąk). */
+const STARVED_WARN_MIN = 30;
+
 export function PeoplePanel({ s, info, game }: { s: EconomyState; info: StoreInfo; game: GameActions; v: number }) {
   const fx = effects(s, info);
   const robots = robotFleet(s);
-  const profile = s.tycoon.staff.profile;
+  const pool = s.tycoon.staff;
+  const profile = pool.profile;
+  const onShift = staffOnShift(s);
+  const doing = (task: string): number => onShift.filter((x) => x.task === task).length;
+  const pinnedAll = STAFF_TASKS.reduce((n, t) => n + pool.pinned[t], 0);
   return (
     <>
-      <Section title="Zespół na zmianie">
+      <Section title="Zmiana">
         <div class="tt-stepper">
           <button type="button" class="tt-btn" aria-label="Zwolnij" onClick={() => game.dispatch({ type: 'fire' })}>−</button>
-          <b>{s.staff} {plural(s.staff, 'osoba', 'osoby', 'osób')}</b>
+          <b>{osoby(s.staff)}</b>
           <button type="button" class="tt-btn" aria-label="Zatrudnij" disabled={s.staff >= STAFF_MAX} onClick={() => game.dispatch({ type: 'hire' })}>+</button>
         </div>
         <Row label="Płace">{int(s.staff * WAGE_PER_DAY)} zł / dzień</Row>
         <p class="tt-hint">Rekrutacja: {HIRE_COST} zł. Każda osoba na zmianie to {WAGE_PER_DAY} zł dziennie (dwa etaty na 17-godzinny dzień).</p>
-        <Row label="Teraz">{people(s.shift.human.kasa)} na kasie · {people(s.shift.human.rozladunek + s.shift.human.wykladanie + s.shift.human.sprzatanie)} przy paletach i półkach</Row>
       </Section>
       <Section title="Profil pracy">
         <div class="tt-seg wide" role="group" aria-label="Profil pracy">
@@ -244,6 +276,39 @@ export function PeoplePanel({ s, info, game }: { s: EconomyState; info: StoreInf
         </div>
         <p class="tt-hint">{profile === 'wlasny' ? PROFILE_LABEL.wlasny : PROFILE_HINT[profile]}</p>
         <p class="tt-hint">Jedna osoba: kasa ~{int(TILL_RATE * fx.tillSpeed * 60)} klientów/h albo rozładunek ~{int(UNLOAD_RATE * fx.unloadMult * 60)} szt./h, wykładanie ~{int(RESTOCK_RATE * 60)} szt./h.</p>
+      </Section>
+      <Section title="Kto co robi teraz">
+        {STAFF_TASKS.map((t) => {
+          const pinned = pool.pinned[t];
+          return (
+            <Row key={t} label={TASK_LABEL[t]}>
+              <span class="tt-task-n">{osoby(doing(t))}</span>
+              <span class="tt-pin" role="group" aria-label={`Przypięcie: ${TASK_LABEL[t]}`}>
+                <button type="button" class="tt-btn" aria-label={`Odepnij od zadania: ${TASK_LABEL[t]}`} disabled={pinned <= 0}
+                  onClick={() => game.dispatch({ type: 'pinStaff', task: t, count: pinned - 1 })}>−</button>
+                <span class="tt-pin-n">📌 {pinned}</span>
+                <button type="button" class="tt-btn" aria-label={`Przypnij do zadania: ${TASK_LABEL[t]}`} disabled={pinnedAll >= s.staff}
+                  onClick={() => game.dispatch({ type: 'pinStaff', task: t, count: pinned + 1 })}>+</button>
+              </span>
+            </Row>
+          );
+        })}
+        <Row label="Wolni"><span class="tt-task-n">{osoby(doing('wolny'))}</span></Row>
+        <p class="tt-hint">Liczby to zgadnięcie z ostatniej minuty pracy; nocą nikogo nie ma. 📌 przypina osoby do zadania: biorą je najpierw, a gdy nie ma w nim pracy, wracają do puli (przypiętych razem najwyżej {osoby(s.staff)}).</p>
+      </Section>
+      <Section title="Dziś">
+        {STAFF_TASKS.map((t) => {
+          const worked = pool.day.worked[t];
+          const robot = pool.day.robot[t];
+          const waited = pool.day.starved[t];
+          return (
+            <div key={t}>
+              <Row label={TASK_LABEL[t]}>{int(worked)} osobomin{robot > 0 ? ` (w tym automatyka ${int(robot)})` : ''}</Row>
+              {waited > STARVED_WARN_MIN && <div class="tt-muted warn tt-starved">czekało {int(waited)} min</div>}
+            </div>
+          );
+        })}
+        <p class="tt-hint">Osobominuta to minuta pracy jednej osoby. „Czekało” znaczy, że zadanie miało pracę, a nikt jej nie wziął: brakuje rąk albo przypięć.</p>
       </Section>
       {(robots.tasmociag > 0 || robots.wykladacz > 0 || fx.humanoid) && (
         <Section title="Automatyka (warsztat)">

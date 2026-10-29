@@ -9,6 +9,7 @@ import type { PerfSnapshot } from './perfMeter';
 import type { Command } from '@/sim/economy/commands';
 import type { CommandResult, EconEventKind, EconomyState, MonthReport } from '@/sim/economy/economy';
 import type { StoreInfo } from '@/sim/economy/storeInfo';
+import { readMs } from '@/sim/economy/tycoon/notices';
 
 /*
  * Stan widoczny w interfejsie. Zmienia go i przycisk, i klawisz, a czyta interfejs. Sterowanie światem to obiekt `Controls`
@@ -97,11 +98,32 @@ export function nextHint(): void {
 }
 
 let toastId = 0;
-/** Krótki komunikat u góry ekranu; znika sam po kilku sekundach. Najwyżej 2 naraz, ten sam tekst się nie dubluje. */
+const toastTimers = new Map<number, ReturnType<typeof setTimeout>>();
+/** Ile (ms) błąd zostaje na ekranie; zwykły toast tyle, ile potrzeba na przeczytanie (`readMs`). */
+export const ERROR_TOAST_MS = 2200;
+
+/**
+ * Krótki komunikat u góry ekranu; znika sam po czasie czytania (`readMs`: dłuższy tekst zostaje dłużej, najkrócej 4 s, najdłużej 12 s),
+ * a błąd po 2,2 s. Najwyżej 2 naraz. Ten sam tekst się nie dubluje: zostaje ten sam toast (interfejs nie montuje go od nowa, więc nie miga),
+ * a jego czas liczy się od nowa.
+ */
 export function pushToast(text: string, kind: ToastKind = 'info'): void {
-  const toast: Toast = { id: ++toastId, text, kind };
-  toasts.value = [...toasts.value.filter((t) => t.text !== text).slice(-1), toast];
-  setTimeout(() => { toasts.value = toasts.value.filter((t) => t !== toast); }, kind === 'error' ? 2200 : 4000);
+  const same = toasts.value.find((t) => t.text === text && t.kind === kind);
+  const toast: Toast = same ?? { id: ++toastId, text, kind };
+  if (!same) {
+    const kept = toasts.value.filter((t) => t.text !== text).slice(-1);
+    for (const t of toasts.value) if (!kept.includes(t)) forgetToast(t);
+    toasts.value = [...kept, toast];
+  }
+  clearTimeout(toastTimers.get(toast.id));
+  toastTimers.set(toast.id, setTimeout(() => {
+    toastTimers.delete(toast.id);
+    toasts.value = toasts.value.filter((t) => t !== toast);
+  }, kind === 'error' ? ERROR_TOAST_MS : readMs(text)));
+}
+function forgetToast(t: Toast): void {
+  clearTimeout(toastTimers.get(t.id));
+  toastTimers.delete(t.id);
 }
 
 /** Wielki komunikat nagrody na środku ekranu (nowy poziom). Znika sam. */
