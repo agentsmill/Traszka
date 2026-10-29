@@ -6,3 +6,5 @@ assets-src
 .playwright-mcp/
 .claude/launch.json
 .claude/worktrees/
+# Bundle sędziego rankingu: generowany przez `npm run build:judge` (scripts/build-judge.mjs), nie commitowany
+src/server/judgeBundle.js
