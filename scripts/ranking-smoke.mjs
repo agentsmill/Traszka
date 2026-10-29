@@ -163,7 +163,8 @@ async function call(t, method, path, body) {
     });
     text = await res.text();
   } catch (err) {
-    throw new StepError(`brak odpowiedzi od serwera (${method} ${path.split('?')[0]}): ${err instanceof Error ? `${err.name}: ${err.message}` : 'nieznany błąd'}`);
+    const why = err instanceof Error ? `${err.name}: ${err.message}${err.cause instanceof Error ? ` (${err.cause.message})` : ''}` : 'nieznany błąd';
+    throw new StepError(`brak odpowiedzi od serwera (${method} ${path.split('?')[0]}): ${why}`);
   }
   let json = null;
   try { json = JSON.parse(text); } catch { /* treść nie jest JSON-em: zostaje null */ }
@@ -173,7 +174,9 @@ async function call(t, method, path, body) {
 /** Odpowiedź w jednej linii do komunikatu: status, kod i komunikat błędu albo początek treści, która nie jest JSON-em. */
 function summary(res) {
   if (isRec(res.json)) return `status ${res.status}, ok=${show(res.json.ok)}${res.json.error !== undefined ? `, error=${show(res.json.error)}, message=${show(res.json.message)}` : ''}`;
-  return `status ${res.status}, treść nie jest obiektem JSON: ${show(res.text.slice(0, 120))}`;
+  const guard = res.status === 401 || res.status === 403
+    ? ' (wdrożenia podglądu bywają za ochroną Vercela, Deployment Protection: użyj lokalnego `vercel dev` albo wdrożenia bez ochrony)' : '';
+  return `status ${res.status}, treść nie jest obiektem JSON: ${show(res.text.slice(0, 120))}${guard}`;
 }
 const expectOk = (res, status = 200) => {
   check(res.status === status && isRec(res.json) && res.json.ok === true, `oczekiwano statusu ${status} i ok=true, jest ${summary(res)}`);

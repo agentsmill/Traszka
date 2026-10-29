@@ -524,6 +524,16 @@ describe('uszkodzone albo kłamiące odpowiedzi serwera dają FAIL', () => {
     expect(out.lines.some((l) => /\bFAIL\b/.test(l))).toBe(true);
   });
 
+  it('401 ze strony ochrony wdrożenia podglądu: FAIL z podpowiedzią o Deployment Protection', async () => {
+    const result = await runSmoke({
+      baseUrl: 'http://127.0.0.1:9', write: true, log: () => undefined,
+      fetch: async () => new Response('<html>Authentication Required</html>', { status: 401, headers: { 'content-type': 'text/html' } }),
+    });
+    expect(result.ok).toBe(false);
+    expect(result.steps[0]!.error).toMatch(/status 401/);
+    expect(result.steps[0]!.error).toMatch(/Deployment Protection/);
+  });
+
   it('brak połączenia (fetch rzuca) to FAIL, a nie wyjątek', async () => {
     const result = await runSmoke({
       baseUrl: 'http://127.0.0.1:9', write: true, log: () => undefined,
