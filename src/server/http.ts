@@ -73,7 +73,7 @@ export function clientAddress(request: Request): string {
 
 /** Limit zgłoszeń: null, gdy wolno, albo gotowa odpowiedź 429 z `Retry-After`. */
 async function limited(request: Request, deps: ServerDeps, action: RateAction, owner: string | null): Promise<Response | null> {
-  const r = await checkRate(deps.redis, action, { owner, address: clientAddress(request) }, deps.now(), deps.random);
+  const r = await checkRate(deps.redis, action, { owner, address: clientAddress(request) }, deps.now(), { random: deps.random });
   return r.ok ? null : apiError('rate-limited', undefined, { 'retry-after': String(r.retryAfter) });
 }
 

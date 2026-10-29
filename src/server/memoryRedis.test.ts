@@ -30,6 +30,18 @@ describe('MemoryRedis: atrapa Upstash do testów (te same polecenia, te same ksz
     expect(await redis.exec([['GET', 'n'], ['INCR', 'n'], ['PTTL', 'n']])).toEqual([null, 1, -1]);
   });
 
+  it('PEXPIRE: czas życia względny w ms od zegara bazy; brak klucza daje 0, czas minięty usuwa klucz, nowy czas zastępuje stary', async () => {
+    const { redis, clock } = redisAt(5_000);
+    expect(await run(redis, ['PEXPIRE', 'brak', 100])).toBe(0);
+    await redis.exec([['SET', 'a', 'x'], ['SET', 'b', 'x', 'PX', 100]]);
+    expect(await redis.exec([['PEXPIRE', 'a', 700], ['PTTL', 'a'], ['PEXPIRE', 'b', 2_000], ['PTTL', 'b']])).toEqual([1, 700, 1, 2_000]);
+    clock.now = 5_600;
+    expect(await redis.exec([['PTTL', 'a'], ['PEXPIRE', 'a', 700], ['PTTL', 'a']])).toEqual([100, 1, 700]);
+    clock.now = 6_000;
+    expect(await redis.exec([['PEXPIRE', 'a', 0], ['GET', 'a'], ['PTTL', 'b']])).toEqual([1, null, 1_000]);   // 0 usuwa klucz jak w Redisie
+    await expect(run(redis, ['PEXPIRE', 'b', 'x'])).rejects.toBeInstanceOf(RedisError);
+  });
+
   it('zbiór sortowany: ZADD GT CH podnosi tylko w górę, ZREVRANGE z wynikami jako tekst (jak Upstash)', async () => {
     const { redis } = redisAt();
     expect(await redis.exec([

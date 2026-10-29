@@ -3,7 +3,7 @@ import { BUDGET_TTL, RATE_LIMITS } from './config';
 import { KEYS } from './keys';
 import { MemoryRedis } from './memoryRedis';
 import { addressBucket, checkBudget, checkRate, utcDay } from './rateLimit';
-import { run } from './redis';
+import { RedisError, run, type RedisExec } from './redis';
 
 const OWNER = 'a'.repeat(64);
 const OTHER = 'b'.repeat(64);
@@ -63,12 +63,105 @@ describe('limit zgłoszeń na klucz i na adres', () => {
     const { redis, clock } = setup();
     let n = 0;
     const random = (len: number) => Uint8Array.from({ length: len }, () => n++ % 256);
-    await checkRate(redis, 'runs', { owner: null, address: ADDRESS }, clock.now, random);
+    await checkRate(redis, 'runs', { owner: null, address: ADDRESS }, clock.now, { random });
     const first = redis.keys().find((k) => k.includes(':a:'))!.split(':a:')[1];
     clock.now += RATE_LIMITS.runs.window * 1000;
-    await checkRate(redis, 'runs', { owner: null, address: ADDRESS }, clock.now, random);
+    await checkRate(redis, 'runs', { owner: null, address: ADDRESS }, clock.now, { random });
     const second = redis.keys().find((k) => k.includes(':a:'))!.split(':a:')[1];
     expect(second).not.toBe(first);
+  });
+});
+
+/**
+ * Czas życia kluczy limitu jest względny (`PX`, `PEXPIRE`: tyle ms, ile zostało do końca okna według zegara funkcji), a nie
+ * bezwzględny (`PXAT`). Zegar bazy może wyprzedzać zegar funkcji (albo się spóźniać): klucz z bezwzględnym końcem okna powstałby
+ * wtedy przeterminowany (`INCR` zakłada go po cichu bez czasu życia) albo żyłby za długo, i licznik przestawał liczyć w oknie.
+ */
+describe('czas życia kluczy limitu jest względny, więc nie zależy od zegara bazy', () => {
+  const NOON = Date.UTC(2026, 9, 28, 12, 0, 0);
+  const { window } = RATE_LIMITS.runs;
+  const windowEnd = (Math.floor(NOON / (window * 1000)) + 1) * window * 1000;
+  const who = { owner: OWNER, address: ADDRESS };
+
+  async function ttls(redis: MemoryRedis): Promise<Record<string, number>> {
+    const out: Record<string, number> = {};
+    for (const k of redis.keys()) out[k] = Number((await redis.exec([['PTTL', k]]))[0]);
+    return out;
+  }
+
+  for (const [name, skew] of [['zegar bazy zgodny', 0], ['baza wyprzedza o godzinę', 3_600_000], ['baza wyprzedza o dobę', 86_400_000], ['baza spóźnia się o godzinę', -3_600_000]] as const) {
+    it(`${name}: sól i oba liczniki żyją dokładnie do końca okna według zegara funkcji`, async () => {
+      const redis = new MemoryRedis(() => NOON + skew);
+      expect((await checkRate(redis, 'runs', who, NOON)).ok).toBe(true);
+      const found = await ttls(redis);
+      expect(Object.keys(found)).toHaveLength(3);   // sól, licznik adresu, licznik klucza
+      for (const [k, ttl] of Object.entries(found)) expect(ttl, k).toBe(windowEnd - NOON);
+    });
+
+    it(`${name}: licznik naprawdę liczy w oknie (limit działa), a z końcem okna znika i okno zaczyna od zera`, async () => {
+      const t = { fn: NOON };
+      const redis = new MemoryRedis(() => t.fn + skew);
+      for (let i = 0; i < RATE_LIMITS.runs.perKey; i++) expect((await checkRate(redis, 'runs', { owner: OWNER, address: `10.0.0.${i}` }, t.fn)).ok).toBe(true);
+      expect((await checkRate(redis, 'runs', { owner: OWNER, address: '10.0.1.1' }, t.fn)).ok).toBe(false);
+      t.fn = windowEnd - 1;
+      expect(redis.keys().length).toBeGreaterThan(0);
+      t.fn = windowEnd;
+      expect(redis.keys()).toEqual([]);
+      expect((await checkRate(redis, 'runs', { owner: OWNER, address: '10.0.1.1' }, t.fn)).ok).toBe(true);
+    });
+  }
+
+  it('licznik bez czasu życia (np. po dawnym błędzie albo po wygaśnięciu klucza między poleceniami) dostaje go przy kolejnym żądaniu', async () => {
+    const redis = new MemoryRedis(() => NOON);
+    await checkRate(redis, 'runs', who, NOON);
+    const counters = redis.keys().filter((k) => k.startsWith('tr:rl:'));
+    expect(counters).toHaveLength(2);
+    for (const k of counters) await run(redis, ['SET', k, '3']);   // SET bez opcji zrywa czas życia: licznik na zawsze
+    expect(Object.values(await ttls(redis)).filter((t) => t === -1)).toHaveLength(2);
+    await checkRate(redis, 'runs', who, NOON);
+    for (const k of counters) {
+      expect(await run(redis, ['GET', k]), k).toBe('4');
+      expect(Number(await run(redis, ['PTTL', k])), k).toBe(windowEnd - NOON);
+    }
+  });
+
+  it('żadne polecenie nie podaje bezwzględnego końca okna (PXAT, EXAT, PEXPIREAT)', async () => {
+    const seen: string[] = [];
+    const redis = new MemoryRedis(() => NOON);
+    const spy: RedisExec = { exec: (commands) => { for (const c of commands) seen.push(c.map(String).join(' ')); return redis.exec(commands); } };
+    await checkRate(spy, 'runs', who, NOON);
+    expect(seen.length).toBeGreaterThan(0);
+    expect(seen.filter((c) => /\b(PXAT|EXAT|PEXPIREAT)\b/i.test(c))).toEqual([]);
+  });
+
+  it('ostatnia milisekunda okna: czas życia nie spada poniżej 1 ms (zero albo minus usunęłoby klucz od razu)', async () => {
+    const redis = new MemoryRedis(() => NOON);
+    await checkRate(redis, 'runs', who, windowEnd - 1);
+    for (const [k, ttl] of Object.entries(await ttls(redis))) expect(ttl, k).toBe(1);
+    expect(redis.keys()).toHaveLength(3);
+  });
+});
+
+describe('sól okna w bazie jest wymagana', () => {
+  const who = { owner: OWNER, address: ADDRESS };
+  const NOON = Date.UTC(2026, 9, 28, 12, 0, 0);
+
+  it('baza, która nie oddaje soli (GET daje null), to błąd, a nie skrót z pustą solą; liczniki nie powstają', async () => {
+    const seen: string[] = [];
+    const lost: RedisExec = { exec: async (commands) => { for (const c of commands) seen.push(String(c[0])); return commands.map(() => null); } };
+    await expect(checkRate(lost, 'runs', who, NOON)).rejects.toBeInstanceOf(RedisError);
+    expect(seen).toEqual(['SET', 'GET']);   // do liczników nie doszło
+  });
+
+  it('pusta sól to też błąd (skrót z pustą solą byłby tym samym skrótem u wszystkich)', async () => {
+    const empty: RedisExec = { exec: async (commands) => commands.map((c) => (c[0] === 'GET' ? '' : 'OK')) };
+    await expect(checkRate(empty, 'runs', who, NOON)).rejects.toBeInstanceOf(RedisError);
+  });
+
+  it('komunikat błędu nie zawiera adresu klienta', async () => {
+    const lost: RedisExec = { exec: async (commands) => commands.map(() => null) };
+    const err = await checkRate(lost, 'runs', who, NOON).catch((e: unknown) => e);
+    expect(String((err as Error).message)).not.toContain(ADDRESS);
   });
 });
 

@@ -1,13 +1,14 @@
 import { BUDGET_TTL, RATE_LIMITS, type RateAction } from './config.js';
-import { cryptoBytes, randomHex, sha256Hex, type RandomBytes } from './hash.js';
+import { randomHex, sha256Hex, type RandomBytes } from './hash.js';
 import { KEYS } from './keys.js';
-import { asNumber, asString, type RedisExec } from './redis.js';
+import { asNumber, asString, RedisError, type RedisExec } from './redis.js';
 
 /**
  * Limit zgłoszeń w stałych oknach czasu, osobno na klucz gracza i na adres klienta (spec §14.7). Adresu serwer nie przechowuje:
- * w bazie jest tylko jego skrót z solą tego okna, a sól i liczniki giną dokładnie z końcem okna (PXAT), więc po oknie nie da się
- * już powiedzieć, czyj to był skrót. Dwa zapytania do bazy: sól, potem liczniki (drugiego nie da się dołączyć do pierwszego, bo
- * nazwy liczników zależą od soli). Na końcu pliku globalny budżet dzienny (`checkBudget`), niezależny od klucza i adresu.
+ * w bazie jest tylko jego skrót z solą tego okna, a sól i liczniki giną z końcem okna (czas życia względny, patrz `checkRate`),
+ * więc po oknie nie da się już powiedzieć, czyj to był skrót. Dwa zapytania do bazy: sól, potem liczniki (drugiego nie da się
+ * dołączyć do pierwszego, bo nazwy liczników zależą od soli). Na końcu pliku globalny budżet dzienny (`checkBudget`), niezależny
+ * od klucza i adresu.
  */
 export interface RateCheck { ok: boolean; retryAfter: number }
 export interface Requester { owner: string | null; address: string }
@@ -49,19 +50,35 @@ export function addressBucket(address: string): string {
   return `${n.slice(0, 4).map((x) => x.toString(16)).join(':')}/64`;
 }
 
-export async function checkRate(redis: RedisExec, action: RateAction, who: Requester, now: number, random: RandomBytes = cryptoBytes): Promise<RateCheck> {
+export interface RateOptions {
+  /** Losowość do podmiany w testach (sól okna w bazie). */
+  random?: RandomBytes;
+}
+
+/**
+ * Jedno sprawdzenie limitu: `ok: false`, gdy licznik adresu albo klucza w tym oknie przekroczył limit. Dwa zapytania do bazy:
+ * sól okna, potem liczniki. Czas życia kluczy jest względny (`PX`, `PEXPIRE`: tyle ms, ile zostało do końca okna według zegara
+ * funkcji): zegar bazy może się różnić od zegara funkcji, a klucz z bezwzględnym końcem okna (`PXAT`) powstałby wtedy
+ * przeterminowany albo żyłby za długo. Licznik dostaje czas życia przy każdym żądaniu, więc nie zostaje nigdy bez niego,
+ * także gdy klucz wygasł między poleceniami (`INCR` zakłada go wtedy od nowa, a `PEXPIRE` zaraz po nim ustawia czas).
+ * Sól, której baza nie oddała, to błąd: skrót z pustą solą byłby tym samym skrótem u każdego klienta i w każdym oknie.
+ */
+export async function checkRate(redis: RedisExec, action: RateAction, who: Requester, now: number, opts: RateOptions = {}): Promise<RateCheck> {
   const { window, perKey, perAddress } = RATE_LIMITS[action];
   const index = Math.floor(now / (window * 1000));
   const end = (index + 1) * window * 1000;
+  const left = Math.max(1, Math.ceil(end - now));   // ms do końca okna; zero albo minus usunęłoby klucz od razu
   const saltKey = KEYS.salt(window, index);
-  const [, saltRaw] = await redis.exec([['SET', saltKey, randomHex(16, random), 'NX', 'PXAT', end], ['GET', saltKey]]);
-  const address = (await sha256Hex(`${asString(saltRaw) ?? ''}:${addressBucket(who.address)}`)).slice(0, 32);
+  const [, saltRaw] = await redis.exec([['SET', saltKey, randomHex(16, opts.random), 'NX', 'PX', left], ['GET', saltKey]]);
+  const salt = asString(saltRaw);
+  if (!salt) throw new RedisError('Limiter: baza nie oddała soli okna');
+  const address = (await sha256Hex(`${salt}:${addressBucket(who.address)}`)).slice(0, 32);
 
   const counters = [KEYS.rate(action, index, `a:${address}`)];
   if (who.owner !== null) counters.push(KEYS.rate(action, index, `k:${who.owner.slice(0, 32)}`));
-  const results = await redis.exec(counters.flatMap((k) => [['SET', k, '0', 'NX', 'PXAT', end], ['INCR', k]]));
-  const byAddress = asNumber(results[1]) ?? 0;
-  const byKey = who.owner !== null ? asNumber(results[3]) ?? 0 : 0;
+  const results = await redis.exec(counters.flatMap((k) => [['INCR', k], ['PEXPIRE', k, left]]));
+  const byAddress = asNumber(results[0]) ?? 0;
+  const byKey = who.owner !== null ? asNumber(results[2]) ?? 0 : 0;
   const ok = byAddress <= perAddress && byKey <= perKey;
   return { ok, retryAfter: ok ? 0 : Math.max(1, Math.ceil((end - now) / 1000)) };
 }

@@ -56,6 +56,20 @@ describe('api/** na Vercelu (atrapa Upstash przez fetch)', () => {
     expect(upstash.log.every((l) => l.token === 'ro')).toBe(true);
   });
 
+  it('atrapa: token tylko do odczytu odrzuca polecenia zapisu limitu (SET, INCR, PEXPIRE) jako NOPERM, a odczyt przepuszcza', async () => {
+    const ask = async (token: string): Promise<{ result?: unknown; error?: string }[]> => {
+      const res = await upstash.fetch(`${URL_}/pipeline`, {
+        method: 'POST', headers: { authorization: `Bearer ${token}` }, body: JSON.stringify([['SET', 'k', '0'], ['INCR', 'k'], ['PEXPIRE', 'k', '1000'], ['GET', 'k']]),
+      });
+      return await res.json() as { result?: unknown; error?: string }[];
+    };
+    const readOnly = await ask(RO);
+    expect(readOnly.slice(0, 3).every((r) => /^NOPERM/.test(r.error ?? ''))).toBe(true);
+    expect(readOnly[3]).toEqual({ result: null });
+    expect(redis.keys()).toEqual([]);
+    expect(await ask(RW)).toEqual([{ result: 'OK' }, { result: 1 }, { result: 1 }, { result: '1' }]);
+  });
+
   it('bez tokenu do odczytu ranking czyta zwykłym tokenem', async () => {
     vi.stubEnv('KV_REST_API_READ_ONLY_TOKEN', '');
     expect((await leaderboard(new Request(`${ORIGIN}/api/leaderboard`))).status).toBe(200);
@@ -108,6 +122,20 @@ describe('api/** na Vercelu (atrapa Upstash przez fetch)', () => {
     expect(res.status).toBe(503);
     expect(await res.json()).toMatchObject({ ok: false, error: 'not-configured' });
     expect(upstash.log).toEqual([]);
+  });
+
+  it('baza nie oddaje soli okna limitu: 500 „server” i wpis w logu, a do liczników nie dochodzi (ani skrót z pustą solą, ani przepuszczenie)', async () => {
+    const lost = vi.fn<typeof fetch>(async () => Response.json([{ result: null }, { result: null }]));
+    vi.stubGlobal('fetch', lost);
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const res = await player(post('/api/player', { key: KEY, nick: 'Mateusz' }));
+    expect(res.status).toBe(500);
+    expect(await res.json()).toMatchObject({ ok: false, error: 'server' });
+    expect(lost).toHaveBeenCalledTimes(1);   // tylko zapytanie o sól
+    expect(errors).toHaveBeenCalledTimes(1);
+    expect(errors.mock.calls[0]).toEqual(['[ranking]', 'RedisError: Limiter: baza nie oddała soli okna']);
+    expect(JSON.stringify(errors.mock.calls)).not.toContain('203.0.113.7');
+    errors.mockRestore();
   });
 
   it('baza nie odpowiada: 500 z ogólnym komunikatem, a log nie zdradza adresu ani tokenu', async () => {
