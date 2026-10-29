@@ -660,7 +660,7 @@ export function createShell(deps: ShellDeps): GameShell {
    * (porządki, które wolno zrobić dopiero teraz, np. skasowanie tego, co nowy bieg zastępuje; przed zapisem, żeby nie skasować nowego
    * biegu), tryb `ranked`, `?seed=` zdjęty z adresu (decyzja 3: bieg nie wpisuje seeda, a stary seed zwykłego sklepu kazałby odświeżeniu
    * otworzyć ten sklep zamiast wznowić bieg), interfejs sklepu (z zamknięciem zakładki i raportu), bez pytania o start i bez dymków
-   * pierwszego dnia, publikacja i zapis. Bez okna powitalnego i nagród: bieg rankingowy zaczyna się od razu.
+   * pierwszego dnia, publikacja i zapis. Bez okna powitalnego (także tego, które czekało w zwykłym sklepie) i nagród: bieg rankingowy zaczyna się od razu.
    */
   function enterRanked(seed: string, make: () => GameSession, failure: string, onEntered?: () => void): boolean {
     if (!switchSession({ seed, make, failure, restoreWithoutPrevious: false })) return false;
@@ -668,6 +668,7 @@ export function createShell(deps: ShellDeps): GameShell {
     setPlayMode('ranked');
     deps.clearSeedFromUrl();
     resetShopUi(seed, true);
+    ui.welcome.value = null;   // okno „Witaj z powrotem” czekające w zwykłym sklepie: „Odbierz!” dałoby nagrodę poza dziennikiem i unieważniło bieg (`markOffLog`)
     ui.confirmRankedStart.value = null;
     ui.showHints([]);
     publish();

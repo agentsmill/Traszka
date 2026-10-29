@@ -1007,6 +1007,23 @@ describe('powłoka gry (createShell)', () => {
       expect(empty.calls).toEqual([]);
     });
 
+    it('okno powitalne ze zwykłego sklepu znika przy wejściu w bieg rankingowy: „Odbierz!” nie ma już czego dać i bieg zostaje z dziennikiem', () => {
+      const h = harness();
+      open(h);
+      ui.welcome.value = { hours: 3, offline: 1234, streak: 4, daily: { cash: 500, ogonki: 7 } };
+
+      expect(h.shell.startRanked('bieg-z-oknem')).toBe(true);
+      const ranked = h.shell.session!;
+      expect(ui.welcome.value).toBeNull();
+      const cash = ranked.econ.cash;
+
+      h.shell.game.claimWelcome();   // spóźnione kliknięcie (okno już zniknęło)
+
+      expect(ranked.run).not.toBeNull();
+      expect(ranked.econ.cash).toBe(cash);
+      expect(h.shell.meta.daily).toEqual({ date: '', streak: 0 });
+    });
+
     it('poziom, który czekał na przeliczenie, wchodzi po odbiorze (settleOutsideCommand) i dostaje fetę', () => {
       const h = harness();
       const s = open(h);

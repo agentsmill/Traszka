@@ -19,6 +19,8 @@ import { SAVE_SCHEMA, createSession, deleteSave, discardSave, newRunLog, retireS
 /** Sklep, w którym bierny bieg przeżywa sezon (np. w kiełbasa-42 gotówka spada poniżej granicy debetu w ostatniej minucie): tylko taki bieg `finishRun` oddaje do wysłania. */
 const SEED = 'szarlotka-380';
 const END = RANKED_SEASON_END_MINUTE;
+/** Czas na test z pełnym odtworzeniem sezonu w `finishRun` (ok. sekundy, a przy obciążonej maszynie, gdy cały zestaw idzie równolegle, dłużej niż domyślne 5 s); jak w tests/rankedSeason.test.ts. */
+const SEASON_TIMEOUT = 120_000;
 
 /** Efekty poleceń bez skutków: te testy sprawdzają dziennik i zapis, nie dźwięk ani scenę. */
 const NO_EFFECTS: CommandEffects = {
@@ -416,7 +418,7 @@ describe('bieg zapisany w innej wersji gry', () => {
     expect(f.record.simVersion).toBe(SIM_VERSION - 1);
     expect(saveFinished(f)).toBe(true);
     expect(loadFinished()!.record.simVersion).toBe(SIM_VERSION - 1);
-  });
+  }, SEASON_TIMEOUT);
 
   it('gameVersion i generatorVersion rekordu pochodzą z zapisu, także po ponownym zapisie', () => {
     const d = stored();
@@ -626,7 +628,7 @@ describe('finishRun', () => {
     expect(f.score).toBe(seasonScore(replayRun(f.record, END)));
     expect(log(s)).toHaveLength(played + 3);
     expect(s.run!.record.mode).toBe('ranked');
-  });
+  }, SEASON_TIMEOUT);
 
   it('bieg, który po odtworzeniu kończy się grą (bankructwo przed końcem sezonu): null, bo sędzia odrzuciłby go jako season-bankrupt', () => {
     const s = createRankedSession(SEED);
@@ -642,7 +644,7 @@ describe('finishRun', () => {
     const alive = createRankedSession(SEED);
     alive.econ.minute = END - 1;
     expect(finishRun(alive, 1)).toMatchObject({ v: 1, seed: SEED });
-  });
+  }, SEASON_TIMEOUT);
 
   it('wynik jest kopią: późniejsza gra nie zmienia gotowego biegu', () => {
     const s = createRankedSession(SEED);
@@ -658,7 +660,7 @@ describe('finishRun', () => {
     log(s).push({ minute: 1, seq: 1000, cmd: { type: 'hire' } });
     s.run!.record.seed = 'zmieniony';
     expect(JSON.stringify(f)).toBe(snapshot);
-  });
+  }, SEASON_TIMEOUT);
 });
 
 describe('porażki localStorage', () => {
