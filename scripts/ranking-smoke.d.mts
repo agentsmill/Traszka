@@ -9,8 +9,10 @@ export interface SmokeStep {
 export interface SmokeResult {
   /** Wszystkie kroki przeszły (albo to tylko plan bez `--write`). */
   ok: boolean;
-  /** Wykonane kroki, do pierwszego błędu włącznie; pusto przy planie i przy odmowie. */
+  /** Wykonane kroki ostatniej próby, do pierwszego błędu włącznie; pusto przy planie i przy odmowie. */
   steps: SmokeStep[];
+  /** Ile razy losowano dane próby (więcej niż jeden, gdy sędzia odrzucił wylosowany seed jako bankructwo); brak przy planie i odmowie. */
+  attempts?: number;
   /** Bez `--write`: wypisano plan i nic nie wysłano. */
   dryRun?: boolean;
   /** Skrypt odmówił (zły adres albo produkcja) i nic nie wysłał. */
@@ -49,6 +51,8 @@ export const PROTECTED_HOSTS: readonly string[];
 /** Ostrzeżenie o bazie za wskazanym adresem: w planie, na początku przebiegu i w nagłówku skryptu. */
 export const DATABASE_WARNING: string;
 export const SMOKE_LOG: readonly SmokeLogEntry[];
+/** Ile razy najwyżej losuje się nowe dane próby, gdy sędzia odrzuca bieg jako bankructwo (422 season-bankrupt). */
+export const MAX_ATTEMPTS: number;
 /** Kroki próby w kolejności wykonania (bez funkcji `run`); `runs` to liczba zgłoszeń biegu (`POST /api/runs`) w kroku, domyślnie 0. */
 export const STEPS: readonly { id: string; name: string; runs?: number }[];
 export function runSmoke(options: SmokeOptions): Promise<SmokeResult>;

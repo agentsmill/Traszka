@@ -55,6 +55,14 @@ const KEY_LENGTH = 20;
 
 /** Błąd kroku: powód porażki do pokazania człowiekowi (bez klucza gracza). */
 class StepError extends Error {}
+/**
+ * Sędzia odrzucił bieg próby jako bankructwo w sezonie (422 `season-bankrupt`): seed wylosowany do próby nie przeżywa trzech miesięcy
+ * z tym dziennikiem. To nie błąd serwera, tylko pech losowania (w jednym z pięciu sklepów bierny bieg schodzi poniżej granicy debetu),
+ * więc `runSmoke` losuje nowe dane i zaczyna od nowa (najwyżej `MAX_ATTEMPTS` razy). Odmowa nic nie zapisuje w bazie.
+ */
+class UnluckySeed extends StepError {}
+/** Ile razy najwyżej losuje się nowe dane próby, gdy sędzia odrzuca bieg jako bankructwo. */
+export const MAX_ATTEMPTS = 6;
 const check = (condition, message) => {
   if (!condition) throw new StepError(message);
 };
@@ -144,9 +152,10 @@ const at = (day, hour, minute = 0) => day * 1440 + hour * 60 + minute;
  * domyślnego profilu załogi (przechodzi przez parser i symulację, nie zmieniając wyniku). Kształt wpisów jak w `RunRecord.log`:
  * minuta, numer, polecenie. Wynik z tym dziennikiem różni się od biegu pustego (sprawdza to krok biegu B), więc próba widzi, że sędzia
  * naprawdę odtwarza dziennik, a ulotki (więcej ruchu za 800 zł) sprawiają, że raz wypada lepiej, raz gorzej (test sprawdza zachowanie
- * próby w obu przypadkach). Ulotki zmieniają obrót od pierwszego miesiąca, więc wynik różni się także wtedy, gdy bieg kończy się
- * debetem przy wrześniowym raporcie (od SIM_VERSION 4 zdarza się to biernemu na słabszych sklepach). Dawniej było tu zatrudnienie,
- * ale od SIM_VERSION 4 trzecia osoba w sklepie na start się nie zwraca i dziennik z nią wypadał gorzej na każdym sklepie.
+ * próby w obu przypadkach). Sędzia odrzuca bieg, który bankrutuje przed końcem sezonu (422 `season-bankrupt`), a w ok. jednym z pięciu
+ * losowych sklepów bierny bieg schodzi poniżej granicy debetu (z `SMOKE_LOG` rzadziej), więc taki seed próby skrypt zamienia na nowy
+ * (`UnluckySeed`, `MAX_ATTEMPTS`). Dawniej było tu zatrudnienie, ale od SIM_VERSION 4 trzecia osoba w sklepie na start się nie zwraca
+ * i dziennik z nią wypadał gorzej na każdym sklepie.
  * Gdyby polecenia w grze zmieniły nazwy (jak przy C2: zniknęły `setPriority`, `claimGift` i `claimQuest`), symulacja je odrzuci,
  * wynik się zrówna z pustym i krok B zgłosi, że ten dziennik trzeba odświeżyć.
  */
@@ -299,8 +308,17 @@ async function readBoard(t, board, { seed, limits, sees = () => true }) {
 }
 
 /** Zgłoszenie biegu (`POST /api/runs`) ze sprawdzeniem wspólnych pól odpowiedzi; oddaje ciało odpowiedzi. */
-async function submit(t, { seed, log, key = t.key }) {
+const isBankrupt = (res) => res.status === 422 && isRec(res.json) && res.json.ok === false && res.json.error === 'season-bankrupt';
+/**
+ * Bankructwo w sezonie (`season-bankrupt`) to `UnluckySeed`, a z `orBankrupt` zwykła odpowiedź `null`: wołający sam wybiera inny sklep
+ * (seed tygodnia ma lokale `seed·1`…`seed·5`).
+ */
+async function submit(t, { seed, log, key = t.key, orBankrupt = false }) {
   const res = await t.post('/api/runs', { key, nick: t.nick, run: { seed, gameVersion: GAME_VERSION, generatorVersion: t.generatorVersion, simVersion: t.simVersion, mode: 'ranked', log } });
+  if (isBankrupt(res)) {
+    if (orBankrupt) return null;
+    throw new UnluckySeed(`sędzia odrzucił bieg na seedzie ${seed} jako bankructwo w sezonie (${summary(res)}): ten sklep nie przeżywa trzech miesięcy z tym dziennikiem`);
+  }
   const body = expectOk(res);
   same(body.nick, t.nick, 'nick w odpowiedzi');
   check(Number.isFinite(body.score), `score nie jest liczbą: ${show(body.score)}`);
@@ -463,11 +481,19 @@ export const STEPS = [
     runs: 1,
     name: 'bieg na seedzie tygodnia trafia do rankingu tygodnia (ZADD GT CH + EXPIRE)',
     async run(t) {
-      const body = await submit(t, { seed: t.week.seed, log: [] });
+      // seed tygodnia z góry nie wiadomo, czy jego bierny bieg przeżywa sezon: sędzia odrzuca bankruta (`season-bankrupt`, bez zapisu w bazie),
+      // więc po kolei seed tygodnia i jego lokale `seed·1`…`seed·5` (też liczą się do rankingu tygodnia)
+      const candidates = [t.week.seed, ...[1, 2, 3, 4, 5].map((n) => `${t.week.seed}·${n}`)];
+      let body = null;
+      for (const seed of candidates) {
+        body = await submit(t, { seed, log: [], orBankrupt: true });
+        if (body !== null) { t.weekSeed = seed; break; }
+      }
+      check(body !== null, `sędzia odrzucił jako bankructwo bieg bierny na seedzie tygodnia i jego lokalach (${candidates.join(', ')}); poczekaj do następnego tygodnia`);
       t.w = body.score;
       same(body.best, Math.max(t.best, t.w), 'best (rekord globalny to lepszy z wyników)');
       same(body.improved, t.w > t.best, 'improved');
-      t.bestSeed = t.w > t.best ? t.week.seed : t.seed;
+      t.bestSeed = t.w > t.best ? t.weekSeed : t.seed;
       t.best = Math.max(t.best, t.w);
       for (const board of ['global', 'seed', 'week']) check(isRank(body.ranks[board]), `miejsce w rankingu ${board}: ${show(body.ranks[board])}`);
       t.weekRank = body.ranks.week;
@@ -504,7 +530,7 @@ export const STEPS = [
     id: 'gracz-po-tygodniu',
     name: 'mój nick po wszystkich biegach: miejsca w trzech rankingach (ZSCORE, ZCOUNT)',
     async run(t) {
-      const body = expectOk(await t.post('/api/player', { key: t.key, nick: t.nick, seed: t.week.seed }));
+      const body = expectOk(await t.post('/api/player', { key: t.key, nick: t.nick, seed: t.weekSeed }));
       same(body.nicks, [t.nick], 'nicks');
       same(body.nick, { nick: t.nick, status: 'mine' }, 'nick');
       check(isRec(body.ranks), `ranks ma zły kształt: ${show(body.ranks)}`);
@@ -557,6 +583,7 @@ function planLines(origin, simVersion) {
     `UWAGA: ${DATABASE_WARNING}`,
     'Próba zapisze w bazie wskazanego wdrożenia: rezerwację nicka „Smoke…”, wyniki w rankingach (globalnym, seeda próby i seeda tygodnia)',
     'i zapis gry (żyje 30 dni). Nic na dysku. Nick, seed i klucz gracza losują się przy każdym uruchomieniu; klucza skrypt nie wypisuje',
+    `Sędzia odrzuca bieg, który bankrutuje przed końcem sezonu (422 season-bankrupt); gdy trafi się taki seed, skrypt losuje nowe dane (najwyżej ${MAX_ATTEMPTS} razy).`,
     `(tylko ostatnie 4 znaki). Zgłoszeń biegu jest ${submissions}, a limit biegów liczy się na adres w oknie godzinnym (RATE_LIMITS.runs`,
     'w src/server/config.ts), więc nie puszczaj próby w kółko.',
     'Puszczaj wyłącznie na osobnej bazie testowej. Domeny produkcyjne projektu (PROTECTED_HOSTS) są zablokowane, ale wdrożenia podglądu',
@@ -589,6 +616,18 @@ export async function runSmoke({
     return { ok: true, dryRun: true, steps: [] };
   }
 
+  for (let attempt = 1; ; attempt++) {
+    const done = await runAttempt({ target, fetchFn, sim, generator, random, log, attempt });
+    if (!done.unlucky) return done.result;
+  }
+}
+
+/**
+ * Jedno przejście wszystkich kroków na świeżych danych (klucz, nick, seed). Gdy sędzia odrzuci bieg jako bankructwo w sezonie
+ * (`UnluckySeed`) i nie wyczerpano `MAX_ATTEMPTS`, zwraca `{ unlucky: true }`: wołający losuje nowe dane i zaczyna od początku. Dane
+ * porzuconej próby mogą zostać w bazie testowej (przy odmowie bankruta nie zapisuje się nic, ale gdy bankrutuje dopiero bieg B, bieg A już jest).
+ */
+async function runAttempt({ target, fetchFn, sim, generator, random, log, attempt }) {
   const id = newIdentity(random);
   const redact = redactor([id.key, id.otherKey]);
   const say = (line) => log(present(redact, line));
@@ -597,7 +636,7 @@ export async function runSmoke({
     get: (path) => call(t, 'GET', path),
     post: (path, body) => call(t, 'POST', path, body),
   };
-  say(`Próba rankingu na ${target.origin} (symulacja v${sim}, generator v${generator}).`);
+  say(attempt === 1 ? `Próba rankingu na ${target.origin} (symulacja v${sim}, generator v${generator}).` : `Próba ${attempt} z ${MAX_ATTEMPTS} na ${target.origin} (nowe dane).`);
   say(`UWAGA: ${DATABASE_WARNING}`);
   say(`Klucz gracza: …${id.key.slice(-4)} (tylko ostatnie 4 znaki), nick: ${id.nick}, seed: ${id.seed}`);
 
@@ -613,12 +652,16 @@ export async function runSmoke({
       steps.push({ id: step.id, name: step.name, ok: false, error });
       say(` FAIL  ${label}`);
       say(`       ${error}`);
+      if (err instanceof UnluckySeed && attempt < MAX_ATTEMPTS) {
+        say(`Seed ${id.seed} nie przeżywa sezonu (sędzia odrzuca bankruta): losuję nowe dane i zaczynam od początku. Dane tej próby (nick ${id.nick}) mogły zostać w bazie testowej.`);
+        return { unlucky: true };
+      }
       say(`Zatrzymano na kroku ${index + 1} z ${STEPS.length}. Dane próby (nick ${id.nick}, seed ${id.seed}) mogły zostać w bazie testowej.`);
-      return { ok: false, steps };
+      return { result: { ok: false, steps, attempts: attempt } };
     }
   }
   say(`Wszystkie kroki (${STEPS.length}) przeszły. W bazie testowej zostały dane próby: nick ${id.nick}, seed ${id.seed}, zapis gry (30 dni).`);
-  return { ok: true, steps };
+  return { result: { ok: true, steps, attempts: attempt } };
 }
 
 // ——— wiersz poleceń ———

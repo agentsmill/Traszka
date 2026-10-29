@@ -85,7 +85,11 @@ export const REPLAY_BUDGET_MS = 8_000;
 const ATRAPA_URL = 'https://atrapa.upstash.test';
 const TOKEN_RW = 'atrapa-token-zapisu';
 const TOKEN_RO = 'atrapa-token-odczytu';
-const SEED = 'kiełbasa-42';
+/**
+ * Sklep, w którym bierny bieg przeżywa sezon: sędzia odrzuca bieg zakończony bankructwem (`season-bankrupt`), a w wielu sklepach
+ * (np. w `kiełbasa-42`, w ostatniej minucie sezonu) bierny bieg schodzi poniżej granicy debetu. Przy zmianie ekonomii `prepare` to sprawdza.
+ */
+const SEED = 'szarlotka-380';
 const NICK = 'Probnik';
 const GAME_VERSION = 'check-vercel-build';
 const SAVE_TEXT = JSON.stringify({
@@ -345,7 +349,9 @@ async function prepareWorker({ copy, tmp }) {
     const run = await server.ssrLoadModule('/src/sim/run.ts');
     const record = { seed: SEED, gameVersion: GAME_VERSION, generatorVersion: store.GENERATOR_VERSION, simVersion: sim.SIM_VERSION, mode: 'ranked', log: [] };
     const t0 = performance.now();
-    const score = ranked.seasonScore(run.replayRun(record, ranked.RANKED_SEASON_END_MINUTE));
+    const state = run.replayRun(record, ranked.RANKED_SEASON_END_MINUTE);
+    if (state.gameOver) throw new Error(`Bierny bieg w sklepie ${SEED} kończy się bankructwem (minuta ${state.minute}): sędzia odrzuci go jako season-bankrupt. Wybierz w SEED sklep, w którym bierny bieg przeżywa sezon.`);
+    const score = ranked.seasonScore(state);
     direct = {
       simVersion: sim.SIM_VERSION, generatorVersion: store.GENERATOR_VERSION, endMinute: ranked.RANKED_SEASON_END_MINUTE, score,
       replayMs: round(performance.now() - t0),

@@ -306,7 +306,7 @@ describe('proces roboczy prepare (na repozytorium zamiast kopii)', () => {
       direct: { simVersion: number; generatorVersion: number; endMinute: number; score: number };
       atrapaFile: string;
     };
-    const expected = seasonScore(replayRun({ seed: 'kiełbasa-42', gameVersion: 'x', generatorVersion: GENERATOR_VERSION, simVersion: SIM_VERSION, mode: 'ranked', log: [] }, RANKED_SEASON_END_MINUTE));
+    const expected = seasonScore(replayRun({ seed: 'szarlotka-380', gameVersion: 'x', generatorVersion: GENERATOR_VERSION, simVersion: SIM_VERSION, mode: 'ranked', log: [] }, RANKED_SEASON_END_MINUTE));
     expect(out.direct).toMatchObject({ simVersion: SIM_VERSION, generatorVersion: GENERATOR_VERSION, endMinute: RANKED_SEASON_END_MINUTE, score: expected });
     const atrapa = await import(/* @vite-ignore */ pathToFileURL(out.atrapaFile).href) as Record<string, unknown>;
     expect(Object.keys(atrapa).sort()).toEqual(['MemoryRedis', 'fakeUpstash']);

@@ -7,13 +7,17 @@
 // Każdy scenariusz to osobny bieg z 100 000 wpisów zgodnych z regułami parsera (`src/server/runs.ts`): minuty niemalejące i przed
 // końcem sezonu, `seq` rosnące, typ polecenia krótki, polecenie do 512 znaków JSON. Zgodność sprawdza `tests/judgeWorstCase.test.ts`
 // (przepuszcza każdy scenariusz przez `parseSubmission`). Sezon trwa pełne trzy miesiące gry, jeśli bieg nie kończy się bankructwem,
-// więc najdroższe są biegi, które przeżywają: stąd scenariusze z planem zakupów i remontów przyjętych przez ekonomię.
+// więc najdroższe są biegi, które przeżywają. Bieg zakończony bankructwem przed końcem sezonu sędzia i tak odrzuca (`season-bankrupt`),
+// a odtwarzanie staje na minucie bankructwa, więc taki scenariusz niczego nie mierzy: każdy scenariusz ma przeżyć sezon w `SEED`
+// (pilnuje tego `tests/judgeWorstCase.test.ts`). Ekonomia z granicą debetu jest ciasna, dlatego polecenia, które kosztują
+// (zakupy, zatrudnienie, remont), są w scenariuszach jednego typu tak dobrane, żeby ekonomia je odrzucała albo żeby kosztowały mało.
 //
 // Limit z założeń (8 s na jedno zgłoszenie) jest tylko progiem ostrzeżenia: skrypt kończy się kodem 2, gdy go przekroczono.
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
 
-export const SEED = 'kiełbasa-42';
+/** Sklep, w którym bierny bieg przeżywa sezon z zapasem gotówki (w wielu sklepach, np. `kiełbasa-42`, schodzi poniżej granicy debetu w ostatniej minucie). */
+export const SEED = 'szarlotka-380';
 /** Liczba wpisów dziennika w każdym scenariuszu: `RUN_MAX_LOG_ENTRIES` z src/server/config.ts (pilnuje tego test). */
 export const LOG_ENTRIES = 100_000;
 /** Ciało żądania najwyżej tyle bajtów: `RUN_MAX_BODY_BYTES` z src/server/config.ts (pilnuje tego test). */
@@ -26,53 +30,36 @@ const MINUTES_PER_DAY = 24 * 60;
 const at = (day, hour, minute = 0) => day * MINUTES_PER_DAY + hour * 60 + minute;
 
 /**
- * Plan zakupów i decyzji, który ekonomia przyjmuje (ten sam co w `tests/simGolden.test.ts`): ulepszenia, sprzęt, zatrudnienie,
- * profil i przypięcia załogi oraz remont 1 z przyspieszeniem. Bieg z tym planem przeżywa sezon i ma rozbudowany sklep, więc każdy
- * krok minuty jest drogi.
+ * Plan zakupów i decyzji, który ekonomia przyjmuje i który nie wywraca sklepu: profil i przypięcia załogi, przesunięcie palety, ulotki
+ * (800 zł), kampania i zamówienie automatyczne. Droższe zakupy (sprzęt, kolejne ulepszenia, remont) w `SEED` kończą grę poniżej granicy
+ * debetu po pierwszym raporcie, a bieg ma przeżyć sezon i mieć pełny dziennik, więc ich tu nie ma. Przeżywanie sprawdza
+ * `tests/judgeWorstCase.test.ts`.
  */
 const PLAN = [
-  [0, 6, 0, { type: 'setOrder', auto: false, manual: 6 }],
-  [0, 6, 0, { type: 'movePallet', palletId: 1, loc: 'backroom' }],
-  [0, 6, 1, { type: 'returnPallet', palletId: 2 }],
-  [0, 6, 2, { type: 'setStaffProfile', profile: 'dostawa' }],
+  [0, 6, 0, { type: 'setStaffProfile', profile: 'kolejka' }],
+  [0, 6, 1, { type: 'movePallet', palletId: 1, loc: 'backroom' }],
   [0, 6, 3, { type: 'tapPallet', palletId: 1 }],
-  [1, 12, 0, { type: 'buyUpgrade', id: 'szkolenie' }],
-  [2, 9, 0, { type: 'hire' }],
   [2, 12, 0, { type: 'buyUpgrade', id: 'ulotki' }],
   [3, 7, 0, { type: 'setOrder', auto: true }],
-  [4, 12, 0, { type: 'buyEquipment', id: 'sco' }],
-  [5, 12, 0, { type: 'buyUpgrade', id: 'wozek' }],
-  [6, 12, 0, { type: 'campaign' }],
-  [6, 12, 30, { type: 'setStaffProfile', profile: 'porzadek' }],
-  [7, 12, 0, { type: 'buyUpgrade', id: 'regaly' }],
-  [9, 12, 0, { type: 'buyEquipment', id: 'bankomat' }],
-  [10, 12, 0, { type: 'buyUpgrade', id: 'kawa' }],
-  [11, 12, 0, { type: 'setOrder', auto: false, manual: 40 }],
-  [12, 7, 0, { type: 'setOrder', auto: true, manual: 5.5 }],
-  [14, 12, 0, { type: 'buyEquipment', id: 'piec', slotId: 'equipmentSlot-2' }],
-  [16, 12, 0, { type: 'buyUpgrade', id: 'ulotki' }],
-  [18, 12, 0, { type: 'buyUpgrade', id: 'szkolenie' }],
-  [40, 12, 0, { type: 'buyUpgrade', id: 'traszkapka' }],
-  [41, 12, 0, { type: 'buyUpgrade', id: 'asystent' }],
-  [45, 12, 0, { type: 'buyUpgrade', id: 'klima' }],
-  [46, 12, 0, { type: 'hire' }],
+  [20, 12, 0, { type: 'setStaffProfile', profile: 'porzadek' }],
+  [40, 12, 0, { type: 'campaign' }],
   [48, 12, 0, { type: 'pinStaff', task: 'kasa', count: 1 }],
-  [50, 12, 0, { type: 'fire' }],
   [50, 12, 5, { type: 'setStaffProfile', profile: 'kolejka' }],
   [78, 12, 0, { type: 'campaign' }],
-  [84, 7, 0, { type: 'startRemont' }],
-  [84, 7, 5, { type: 'rushRemont' }],
-  [86, 12, 0, { type: 'campaign' }],
-  [87, 12, 0, { type: 'hire' }],
 ].map(([day, hour, minute, cmd]) => ({ minute: at(day, hour, minute), cmd }));
 
-const SLOTS = ['equipmentSlot-1', 'equipmentSlot-2', 'equipmentSlot-3', 'equipmentSlot-4'];
-const UPGRADES = ['szkolenie', 'ulotki', 'wozek', 'regaly', 'kawa', 'klima', 'kamery', 'nocne', 'rampa', 'tasmociag', 'asystent', 'drugaKasa'];
+/**
+ * Ulepszenia, które ekonomia odrzuca w biegu, w którym nikt nie kupuje ich poprzedników (wymagają innego ulepszenia, kasy
+ * samoobsługowej albo poziomu remontu): wpisy dochodzą do `buyUpgrade`, ale nic nie kosztują.
+ */
+const LOCKED_UPGRADES = ['drugaKasa', 'nocne', 'rampa', 'traszkapka', 'scoSoft', 'kamery', 'wykladacz', 'dostawy2', 'humanoid'];
 const EQUIPMENT = ['sco', 'bankomat', 'piec', 'paczkownik'];
 
 /**
  * Każdy typ polecenia osobno: `i` to numer wpisu w scenariuszu. Pola dobrane tak, żeby polecenie przechodziło `isCommand` (nie było
- * odrzucone na wejściu) i dochodziło do logiki ekonomii: numery palet i kart z zakresu, które się trafiają, id z katalogów.
+ * odrzucone na wejściu) i dochodziło do logiki ekonomii: numery palet i kart z zakresu, które się trafiają, id z katalogów. Polecenia,
+ * które kosztowałyby sklep bankructwem przy tysiącach powtórzeń, mają argumenty odrzucane przez ekonomię (zablokowane ulepszenie,
+ * slot, którego nie ma) albo nie zmieniają tego, co kosztuje (`setOrder` zostaje przy zamówieniu automatycznym).
  */
 export const COMMANDS = {
   tapPallet: (i) => ({ type: 'tapPallet', palletId: 1 + (i % 40) }),
@@ -80,21 +67,28 @@ export const COMMANDS = {
   tapTill: () => ({ type: 'tapTill' }),
   movePallet: (i) => ({ type: 'movePallet', palletId: 1 + (i % 6), loc: ['sidewalk', 'backroom', 'floor'][i % 3] }),
   returnPallet: (i) => ({ type: 'returnPallet', palletId: 1 + (i % 6) }),
-  setOrder: (i) => ({ type: 'setOrder', auto: i % 2 === 0, manual: i % 31 }),
+  setOrder: (i) => ({ type: 'setOrder', auto: true, manual: i % 31 }),
   hire: () => ({ type: 'hire' }),
   fire: () => ({ type: 'fire' }),
   setStaffProfile: (i) => ({ type: 'setStaffProfile', profile: ['kolejka', 'dostawa', 'porzadek'][i % 3] }),
   pinStaff: (i) => ({ type: 'pinStaff', task: ['kasa', 'rozladunek', 'wykladanie', 'sprzatanie'][i % 4], count: i % 3 }),
-  buyUpgrade: (i) => ({ type: 'buyUpgrade', id: UPGRADES[i % UPGRADES.length] }),
-  buyEquipment: (i) => ({ type: 'buyEquipment', id: EQUIPMENT[i % EQUIPMENT.length], slotId: SLOTS[i % SLOTS.length] }),
+  buyUpgrade: (i) => ({ type: 'buyUpgrade', id: LOCKED_UPGRADES[i % LOCKED_UPGRADES.length] }),
+  buyEquipment: (i) => ({ type: 'buyEquipment', id: EQUIPMENT[i % EQUIPMENT.length], slotId: 'brak-slotu' }),
   startRemont: () => ({ type: 'startRemont' }),
   campaign: () => ({ type: 'campaign' }),
   rushRemont: () => ({ type: 'rushRemont' }),
   answerCard: (i) => ({ type: 'answerCard', seq: 1 + (i % 120), answer: i % 3 }),
 };
 const COMMAND_NAMES = Object.keys(COMMANDS);
-/** Polecenia, które nie kończą gry bankructwem (zwolnienie i zatrudnienie bez końca, ręczne zamówienia bez zysku zrujnowałyby sklep przed końcem sezonu). */
-const SAFE_NAMES = COMMAND_NAMES.filter((n) => !['setOrder', 'hire', 'fire'].includes(n));
+/**
+ * Polecenia do wypełniacza w mieszance i do scenariusza „jedna minuta”: bez tych, które w `SEED` kończą grę przy tysiącach powtórek
+ * (zatrudnienie bez końca, remont, odsyłanie palet co dostawę).
+ */
+const SAFE_NAMES = COMMAND_NAMES.filter((n) => !['hire', 'startRemont', 'returnPallet'].includes(n));
+/** Dni na końcu sezonu, w które idzie scenariusz „tylko hire”: zatrudnienie do `STAFF_MAX` kosztuje kilka tysięcy, ale nie zdąży zrujnować sklepu. */
+const HIRE_DAYS = 3;
+/** Dni na początku sezonu, w które idzie scenariusz „tylko startRemont”: sklep ma wtedy za mało gotówki i za niski poziom, więc ekonomia odrzuca każdy wpis. */
+const REMONT_DAYS = 5;
 
 /** Dziennik z listy `{ minute, cmd }`: stabilne ułożenie po minucie i kolejne `seq` (parser wymaga rosnących par minuta-`seq`). */
 const logOf = (entries) => entries
@@ -102,15 +96,16 @@ const logOf = (entries) => entries
   .sort((a, b) => a.minute - b.minute || a.order - b.order)
   .map((e, seq) => ({ minute: e.minute, seq, cmd: e.cmd }));
 
-/** `count` wpisów rozłożonych równomiernie na całym sezonie, polecenie z `make(i)`. */
-const spread = (count, endMinute, make, offset = 0) => Array.from({ length: count }, (_, i) => ({ minute: Math.floor((i * (endMinute - 1)) / count), cmd: make(i + offset) }));
+/** `count` wpisów rozłożonych równomiernie między minutami `from` i `endMinute` (domyślnie na całym sezonie), polecenie z `make(i)`. */
+const spread = (count, endMinute, make, from = 0) => Array.from({ length: count }, (_, i) => ({ minute: from + Math.floor((i * (endMinute - 1 - from)) / count), cmd: make(i) }));
 
 /**
  * Scenariusze najgorszego przypadku, jeden po drugim (generator: każdy dziennik to 100 000 obiektów, więc nie trzymamy ich naraz).
  * `bieg bierny` to punkt odniesienia (pusty dziennik); reszta ma `LOG_ENTRIES` wpisów:
- * - `mieszanka z planem`: plan zakupów i remontów, które ekonomia przyjmuje, plus wypełniacz z wszystkich typów poleceń rozłożony na sezon;
- * - `jedna minuta`: wszystkie wpisy w jednej minucie (parser dopuszcza, bo `seq` rośnie), typy po kolei;
- * - `tylko <typ>`: sam jeden typ polecenia na całym sezonie, dla każdego typu osobno.
+ * - `mieszanka z planem`: plan decyzji, które ekonomia przyjmuje, plus wypełniacz z bezpiecznych typów poleceń rozłożony na sezon;
+ * - `jedna minuta`: wszystkie wpisy w jednej minucie (parser dopuszcza, bo `seq` rośnie), bezpieczne typy po kolei;
+ * - `tylko <typ>`: sam jeden typ polecenia na całym sezonie, dla każdego typu osobno (`hire` w ostatnich trzech dniach, `startRemont`
+ *   w pierwszych pięciu: patrz `HIRE_DAYS` i `REMONT_DAYS`).
  * @param {{ generatorVersion: number, simVersion: number, endMinute: number }} opts wersje i koniec sezonu z bundla sędziego
  */
 export function* worstCaseRuns({ generatorVersion, simVersion, endMinute }) {
@@ -126,7 +121,11 @@ export function* worstCaseRuns({ generatorVersion, simVersion, endMinute }) {
     run: run(logOf(Array.from({ length: LOG_ENTRIES }, (_, i) => ({ minute: at(10, 12), cmd: COMMANDS[SAFE_NAMES[i % SAFE_NAMES.length]](i) })))),
   };
   for (const name of COMMAND_NAMES) {
-    yield { name: `tylko ${name}`, run: run(logOf(spread(LOG_ENTRIES, endMinute, COMMANDS[name]))) };
+    // zatrudnienie idzie w ostatnich dniach (wcześniej płace nowych ludzi zjadłyby sklep), remont w pierwszych (potem sklep stać na 25 tys. zł)
+    const log = name === 'hire' ? spread(LOG_ENTRIES, endMinute, COMMANDS.hire, endMinute - HIRE_DAYS * MINUTES_PER_DAY)
+      : name === 'startRemont' ? spread(LOG_ENTRIES, REMONT_DAYS * MINUTES_PER_DAY, COMMANDS.startRemont)
+        : spread(LOG_ENTRIES, endMinute, COMMANDS[name]);
+    yield { name: `tylko ${name}`, run: run(logOf(log)) };
   }
 }
 
