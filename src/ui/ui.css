@@ -356,6 +356,20 @@
   cursor: pointer;
 }
 
+/* „?” (Jak grać) stoi przy ⚙: oba po prawej. Na wąskim telefonie (375 px) węższe przyciski i odstępy, żeby górny wiersz się nie łamał. */
+.tt-help {
+  margin-left: auto;
+}
+
+.tt-help + .tt-gear {
+  margin-left: 0;
+}
+
+@media (max-width: 400px) {
+  .tt-hud-row { gap: 4px; }
+  .tt-hud-row .tt-iconbtn { min-width: 30px; padding: 0 4px; }
+}
+
 @media (min-width: 820px) {
   .tt-ui { --hud-h: 52px; }
   .tt-hud2 { flex-direction: row; align-items: center; gap: 14px; }
@@ -1913,12 +1927,32 @@
   white-space: pre-line;
 }
 
-/* „Jak grać”: ok. pół tysiąca słów w zwartych akapitach; okno przewija się całe, a „Zaczynamy” zostaje na dole (tt-modal-foot). */
+/* „Jak grać”: kilka punktów „co robić” (mieszczą się na jednym ekranie telefonu) i zwinięte szczegóły w <details>; okno przewija się
+   dopiero po ich rozwinięciu, a „Zaczynamy” zostaje na dole (tt-modal-foot). */
 .tt-howto p,
 .tt-howto .tt-list {
   margin: 0 0 8px;
 }
 
+.tt-howto .tt-howto-points {
+  margin-top: 8px;
+}
+
 .tt-howto .tt-list li {
-  margin: 0 0 6px;
+  margin: 0 0 5px;
+}
+
+.tt-howto details {
+  border-top: 1px solid rgba(29, 107, 58, 0.15);
+}
+
+.tt-howto summary {
+  padding: 7px 0;
+  color: var(--tt-green-dark);
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.tt-howto details[open] summary {
+  padding-bottom: 3px;
 }

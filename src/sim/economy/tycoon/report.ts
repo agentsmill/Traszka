@@ -23,7 +23,7 @@ export const REPORT_LINE_LABEL: Record<ReportLineKey, string> = {
   media: 'Media',
   oplata: 'Opłata franczyzowa',
   mandaty: 'Mandaty i kary',
-  wut: 'WUT ponad próg',
+  wut: 'Ubytki ponad limit Centrali',
   logistyka: 'Logistyka',
 };
 
@@ -199,7 +199,7 @@ export function hintText(h: Pick<ReportHint, 'id' | 'value'>, fmt: (n: number) =
   const v = fmt(h.value);
   switch (h.id) {
     case 'mandaty': return `Mandaty kosztowały ${v} zł. Rano ustaw profil „Dostawa”, żeby palety nie stały na chodniku po godzinie tolerancji.`;
-    case 'wut': return `Ubytki ponad próg WUT: ${v} zł. O 18:00 przeceniaj kanapki (FEFO), zanim trafią do kosza.`;
+    case 'wut': return `Ubytki ponad limit Centrali: ${v} zł. O 18:00 przeceniaj kanapki (FEFO), zanim trafią do kosza.`;
     case 'logistyka': return `Opłaty logistyczne: ${v} zł. Asystent przesadza z zamówieniem; spróbuj zamawiać ręcznie.`;
     case 'kolejka': return `Kolejka odstraszyła ${v} klientów. W szczycie ustaw profil „Kolejka” albo postaw kasę samoobsługową.`;
     case 'czystosc': return `Średnia czystość sali: ${v}%. Ustaw profil „Porządek” albo przypnij kogoś do sprzątania, zanim przyjdzie audyt albo tajemniczy klient.`;

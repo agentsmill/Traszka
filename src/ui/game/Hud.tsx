@@ -4,7 +4,7 @@ import { dayOf, formatClock, formatDate } from '@/sim/economy/calendar';
 import { isClosedForRemont } from '@/sim/economy/economy';
 import { rankFor, xpToNext } from '@/sim/economy/progress';
 import { trustTier } from '@/sim/economy/tycoon/trust';
-import { econ, showSettings, speed, tab, type Controls } from '../state';
+import { econ, openHowTo, showSettings, speed, tab, type Controls } from '../state';
 import { int, zl } from './format';
 
 /** Przyciski prędkości w pasku (pierwszy to pauza); „Jak grać” podaje z nich zakres tempa. */
@@ -80,6 +80,7 @@ export function Hud({ controls }: { controls: Controls }) {
         <span class="tt-stat" title="Reputacja sklepu (0–100): ściąga klientów">⭐ {int(s.reputation)}</span>
         <span class="tt-stat" title="Ogonki: nagrody za cele, wydajesz w Ulepszeniach">🦎 {int(s.ogonki)}</span>
         <TrustChip value={s.tycoon.trust.value} />
+        <button type="button" class="tt-iconbtn tt-help" aria-label="Jak grać" onClick={() => openHowTo()}>?</button>
         <button type="button" class="tt-iconbtn tt-gear" aria-label="Ustawienia" onClick={() => { showSettings.value = true; }}>⚙</button>
       </div>
       <div class="tt-hud-row">

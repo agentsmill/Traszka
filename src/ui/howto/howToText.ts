@@ -1,13 +1,10 @@
 import {
-  BANKRUPTCY_AT, CATS, CAT_INFO, DELIVERY_AT, FINE_BASE, FINE_PER_PALLET, FRANCHISE_FEE_FIXED, FRANCHISE_FEE_SHARE, HOT, MEDIA_PER_DAY,
-  MINUTES_PER_DAY, MINUTES_PER_SECOND_CLOSED, MINUTES_PER_SECOND_OPEN, OPEN_FROM, OPEN_TO, ORDER_DEADLINE, PALLETS_FREE, PALLET_FEE,
-  RETURN_FEE, STAFF_MAX, STAFF_START, WAGE_PER_DAY, type Cat,
+  BANKRUPTCY_AT, CATS, CAT_INFO, DELIVERY_AT, FRANCHISE_FEE_FIXED, FRANCHISE_FEE_SHARE, HOT, MINUTES_PER_DAY, MINUTES_PER_SECOND_CLOSED,
+  MINUTES_PER_SECOND_OPEN, OPEN_FROM, OPEN_TO, ORDER_DEADLINE, PALLETS_FREE, PALLET_FEE, RETURN_FEE, STAFF_MAX, type Cat,
 } from '@/sim/economy/catalog';
 import { nextRankAt, rankFor } from '@/sim/economy/progress';
-import { CARDS } from '@/sim/economy/tycoon/cards';
-import { FATIGUE } from '@/sim/economy/tycoon/fatigue';
 import { KPI } from '@/sim/economy/tycoon/kpi';
-import { DEFAULT_PROFILE, PROFILE_LABEL, STAFF_PROFILES } from '@/sim/economy/tycoon/staff';
+import { PROFILE_LABEL, PROFILE_ORDER, STAFF_PROFILES, type StaffTask } from '@/sim/economy/tycoon/staff';
 import { SUNDAY_TRAFFIC } from '@/sim/economy/tycoon/sunday';
 import { TRUST, turnoverBonusShare } from '@/sim/economy/tycoon/trust';
 import { WUT } from '@/sim/economy/tycoon/wut';
@@ -15,15 +12,15 @@ import { plural, signedPts, signedZl, zl } from '../game/format';
 import { SPEEDS } from '../game/Hud';
 
 /*
- * Treść okna „Jak grać”: sekcje z akapitami, w których każda liczba pochodzi ze stałych gry (zmiana stałej zmienia tekst).
- * Nazwy zakładek i przycisków są takie jak w interfejsie. Okno (HowTo.tsx) tylko to wyświetla.
+ * Treść okna „Jak grać”: na górze kilka punktów „co robić” (jedno zdanie: co kliknąć albo ustawić i po co), pod spodem krótkie
+ * rozwijane szczegóły. Każda liczba pochodzi ze stałych gry (zmiana stałej zmienia tekst), nazwy zakładek i przycisków są takie
+ * jak w interfejsie. Okno (HowTo.tsx) tylko to wyświetla.
  */
 
+/** Rozwijana sekcja szczegółów: tytuł w nagłówku `<summary>`, akapity pod spodem. */
 export interface HowToSection {
   title: string;
   paragraphs: string[];
-  /** Akapity jako punkty listy (krótkie wskazówki), a nie ciągły tekst. */
-  list?: boolean;
 }
 
 /** Liczba po polsku, do dwóch miejsc po przecinku, bez zbędnych zer: „100”, „2,5”, „1,35”. */
@@ -75,104 +72,76 @@ export function marginRange(): { low: { label: string; margin: number }; high: {
 
 const persons = (n: number): string => `${num(n)} ${plural(n, 'osobę', 'osoby', 'osób')}`;
 
-/** Sekcje okna „Jak grać” z liczbami z bieżących stałych gry. */
-export function howToSections(): HowToSection[] {
-  const rank = finalRank();
+
+/** Czym ludzie zajmują się najpierw w danym profilu pracy: pierwsze zadanie z kolejki profilu (biernik, po „co ludzie robią najpierw”). */
+const FIRST_TASK: Record<StaffTask, string> = { kasa: 'kasę', rozladunek: 'palety', wykladanie: 'półki', sprzatanie: 'sprzątanie' };
+
+/**
+ * Punkty „co robić” z góry okna: jedno zdanie na punkt, co kliknąć albo ustawić (nazwy jak w interfejsie) i po co. Razem mieszczą się
+ * na jednym ekranie telefonu (okno nie przewija się, gdy szczegóły są zwinięte). O mandatach i stukaniu w kasę tylko ogólnie albo wcale:
+ * ich szczegóły zmienia balans, a opisuje je dopiero `howToDetails`.
+ */
+export function howToPoints(): string[] {
   const running = SPEEDS.filter((s) => s.value > 0);
   const slowest = running[0]!;
   const fastest = running[running.length - 1]!;
+  const profiles = STAFF_PROFILES.map((p) => `„${PROFILE_LABEL[p]}” ${FIRST_TASK[PROFILE_ORDER[p][0]!]}`).join(', ');
+
+  return [
+    `Cel: dojść do rangi „${finalRank().name}” i nie stracić umowy. Centrala wypowie ją przy zerowym zaufaniu.`,
+    'Gdy pojawi się karta decyzji, wybierz odpowiedź: gra czeka, a koszty i zyski widać na przyciskach.',
+    'Po dostawie przenieś palety spod sklepu na zaplecze (zakładka Palety, przycisk „Na zaplecze”), zanim wróci Straż Miejska.',
+    `W zakładce Ludzie ustaw profil pracy, czyli co ludzie robią najpierw: ${profiles}.`,
+    'Gdy kolejka rośnie, kup kasę samoobsługową albo drugą kasę (zakładka Ulepszenia): kasjerów jest tyle, ile stanowisk.',
+    'Na koniec miesiąca Centrala pobiera opłatę franczyzową: zostaw na nią gotówkę (zakładka Cele, sekcja „Ten miesiąc”).',
+    `Tempo zmieniasz u góry (${slowest.label}–${fastest.label}), a Spacja pauzuje.`,
+  ];
+}
+
+/** Szczegóły pod punktami: zwinięte sekcje z liczbami z bieżących stałych gry. */
+export function howToDetails(): HowToSection[] {
+  const slowest = SPEEDS.filter((s) => s.value > 0)[0]!;
   const margins = marginRange();
   const steps = trustBonusSteps();
-  const both = CARDS.none + CARDS.one;
-  const lastCircular = CARDS.circularGapMin + CARDS.circularGapSpan - 1;
-  const profiles = STAFF_PROFILES.map((p) => `„${PROFILE_LABEL[p]}”`).join(', ');
-  const queueProfile = PROFILE_LABEL.kolejka;
-  const queueIsDefault = DEFAULT_PROFILE === 'kolejka' ? ' (domyślny)' : '';
-  const bonus = steps.length === 0 ? '' : `${steps.map((x, i) => (i === 0
-    ? `Od ${x.from} punktów Centrala oddaje premię od obrotu: ${percent(x.share)}` : `od ${x.from} punktów ${percent(x.share)}`)).join(', ')}. `;
+  const bonus = steps.length === 0 ? [] : [`${steps.map((x, i) => (i === 0
+    ? `Od ${x.from} punktów Centrala oddaje premię od obrotu: ${percent(x.share)}` : `od ${x.from} punktów ${percent(x.share)}`)).join(', ')}.`];
 
   return [
     {
-      title: 'Cel gry',
+      title: 'Pieniądze i ubytki',
       paragraphs: [
-        `Prowadzisz franczyzę sklepu Traszka: zarabiasz, zdobywasz poziomy i dochodzisz do rangi „${rank.name}” (poziom ${rank.level}).`,
-        `Centrala wypowiada umowę, gdy zaufanie spadnie do zera przy zamknięciu miesiąca albo gdy dwa raporty z rzędu zastaną Cię z gotówką poniżej ${signedZl(BANKRUPTCY_AT)}.`,
+        `Zarabiasz marżę, nie obrót: od ${percent(margins.low.margin)} (${margins.low.label}) do ${percent(margins.high.margin)} (${margins.high.label}) ceny towaru, a hot-dogi i kawa dają ${percent(HOT.margin)}.`,
+        `Opłata franczyzowa to ${zl(FRANCHISE_FEE_FIXED)} plus ${percent(FRANCHISE_FEE_SHARE)} obrotu.`,
+        `Ubytki to przeterminowany towar, kradzieże, pomyłki i „zapomniane” skany na kasach samoobsługowych. Do ${percent(WUT.threshold)} obrotu miesiąca pokrywa je Centrala, ponad limit płacisz Ty (zakładka Sklep).`,
       ],
     },
     {
-      title: 'Jak mija czas',
+      title: 'Palety i dostawy',
       paragraphs: [
-        `Sklep działa od ${hourOf(OPEN_FROM)} do ${hourOf(OPEN_TO)}. Przy ${slowest.label} doba trwa ok. ${dayLengthText()}, a tempo zmieniasz u góry (${slowest.label}–${fastest.label}). Spacja pauzuje.`,
-        'Gra stoi też przy kartach decyzji, raporcie miesiąca, ważnych zdarzeniach i w tym oknie.',
-      ],
-    },
-    {
-      title: 'Karty decyzji',
-      paragraphs: [
-        `Dzień przynosi zwykle jedną kartę (szanse: ${percent(CARDS.none)} brak, ${percent(CARDS.one)} jedna, ${percent(1 - both)} dwie). Co ${CARDS.circularGapMin}–${lastCircular} dni jedną z kart jest okólnik Centrali z haczykiem.`,
-        'Odpowiedź pokazuje koszt na czerwono i zysk na zielono. Ta z napisem „domyślnie” jest zaznaczona z góry.',
-      ],
-    },
-    {
-      title: 'Pieniądze',
-      paragraphs: [
-        `Zarabiasz marżę, nie obrót: od ${percent(margins.low.margin)} (${margins.low.label}) do ${percent(margins.high.margin)} (${margins.high.label}) ceny towaru z półek, a hot-dogi i kawa dają więcej: ${percent(HOT.margin)}. Płacisz ${zl(WAGE_PER_DAY)} dziennie za osobę, a za media ok. ${zl(MEDIA_PER_DAY)} dziennie w przeciętnym sklepie (mały płaci mniej, duży więcej).`,
-        `Na koniec miesiąca Centrala pobiera opłatę franczyzową: ${zl(FRANCHISE_FEE_FIXED)} plus ${percent(FRANCHISE_FEE_SHARE)} obrotu. Zostaw na nią gotówkę: zakładka Cele, sekcja „Ten miesiąc”, pokazuje, ile już się naliczyło.`,
-        'Raport miesiąca pokazuje pozycje, zmianę zaufania i jedną wskazówkę.',
-      ],
-    },
-    {
-      title: 'Palety',
-      paragraphs: [
-        `Zamówienie na jutro zamyka się o ${hourOf(ORDER_DEADLINE)}. Domyślnie zamawia Asystent Traszki, a ręcznie ustawisz je w zakładce Palety. Dostawa przyjeżdża następnego dnia, zwykle o ${hourOf(DELIVERY_AT)}. Palety ponad ${PALLETS_FREE} w zamówieniu kosztują po ${zl(PALLET_FEE)}; gdy brakuje miejsca, kierowca zabiera paletę i liczy ${zl(RETURN_FEE)}.`,
-        `Paleta pod sklepem grozi mandatem Straży Miejskiej: ${zl(FINE_BASE)} plus ${zl(FINE_PER_PALLET)} za każdą kolejną. Straż patroluje w dzień, a ryzyko rośnie z czasem. Przestaw paletę w zakładce Palety: „Na zaplecze” (miejsc mało) albo „Do sali” (przeszkadza: mniej klientów, krótsza cierpliwość w kolejce).`,
-        'Rozładunek to czas ludzi. Po nim zostają worki ze śmieciami: ktoś musi je wynieść, inaczej zajmą zaplecze, a potem salę.',
+        `Zamówienie na jutro zamyka się o ${hourOf(ORDER_DEADLINE)}, a dostawa przyjeżdża zwykle o ${hourOf(DELIVERY_AT)}. Domyślnie zamawia Asystent Traszki, ręcznie ustawisz je w zakładce Palety.`,
+        `Palety ponad ${PALLETS_FREE} w zamówieniu kosztują po ${zl(PALLET_FEE)}, a gdy brakuje miejsca, kierowca zabiera paletę i liczy ${zl(RETURN_FEE)}.`,
+        'Paleta przestawiona „Do sali” przeszkadza klientom. Worki po rozładunku ktoś musi wynieść, inaczej zajmą zaplecze.',
       ],
     },
     {
       title: 'Ludzie',
       paragraphs: [
-        `Na start masz ${persons(STAFF_START)}, najwięcej zatrudnisz ${STAFF_MAX}. Profil pracy w zakładce Ludzie (${profiles}) mówi, co robią najpierw. Osoby możesz przypiąć do zadania; „Kto co robi teraz” pokazuje, kto jest gdzie.`,
-      ],
-    },
-    {
-      title: 'Twoje siły',
-      paragraphs: [
-        `Stukanie to Twoje ręce. Pula to ${num(FATIGUE.pool)} sił na dobę: stuknięcie w kasę kosztuje ${num(FATIGUE.tapCost.kasa)}, w paletę ${num(FATIGUE.tapCost.paleta)}, a noc oddaje ${num(FATIGUE.nightRecovery)}. Zmęczenie przeniesione na jutro osłabia ręce. Stukanie pomaga, ale decyzji nie zastąpi.`,
+        `Najwięcej zatrudnisz ${persons(STAFF_MAX)}. Osobę możesz przypiąć do zadania, a „Kto co robi teraz” pokazuje, kto gdzie jest.`,
       ],
     },
     {
       title: 'Zaufanie Centrali',
       paragraphs: [
-        `Zaufanie startuje od ${num(TRUST.start)} punktów. Rośnie za trafione KPI (${signedPts(KPI.trustHit)}) i miesiąc na plusie (${signedPts(TRUST.monthProfit)}), a spada za mandat (${signedPts(TRUST.fine)}), miesiąc na minusie (${signedPts(TRUST.monthLoss)}) i odesłaną paletę (${signedPts(TRUST.returnedPallet)}) albo zabraną przez kierowcę (${signedPts(TRUST.driverReturned)}). Zmieniają je też karty decyzji i audyty Centrali.`,
-        `${bonus}Zero na koniec miesiąca oznacza wypowiedzenie umowy.`,
+        `Zaufanie startuje od ${num(TRUST.start)} punktów, rośnie za trafione KPI (${signedPts(KPI.trustHit)}) i miesiąc na plusie (${signedPts(TRUST.monthProfit)}), a spada za mandat (${signedPts(TRUST.fine)}), miesiąc na minusie (${signedPts(TRUST.monthLoss)}) i palety odesłane (${signedPts(TRUST.returnedPallet)}) lub zabrane (${signedPts(TRUST.driverReturned)}).`,
+        ...bonus,
+        `Umowę stracisz przy zerze na koniec miesiąca albo gdy dwa raporty z rzędu zastaną Cię z gotówką poniżej ${signedZl(BANKRUPTCY_AT)}.`,
       ],
     },
     {
-      title: 'WUT (ubytki)',
+      title: 'Czas i cele',
       paragraphs: [
-        `To przeterminowany towar, kradzieże, pomyłki i „zapomniane” skany na kasach samoobsługowych. Do ${percent(WUT.threshold)} obrotu miesiąca pokrywa je Centrala, ponad próg płacisz Ty.`,
-      ],
-    },
-    {
-      title: 'KPI tygodnia',
-      paragraphs: [
-        `W zakładce Cele czeka cel do niedzieli. Trafiony daje premię, zaufanie i XP, a nietrafiony odbiera zaufanie (${signedPts(KPI.trustMiss)}).`,
-      ],
-    },
-    {
-      title: 'Czystość, pogoda, niedziela',
-      paragraphs: [
-        `Brudna sala skraca cierpliwość klientów, a deszcz i śnieg nanoszą więcej błota. W niedzielę duże sklepy są zamknięte, a Traszka działa: ruch rośnie ×${num(SUNDAY_TRAFFIC)}.`,
-      ],
-    },
-    {
-      title: 'Na start',
-      list: true,
-      paragraphs: [
-        'Po dostawie przenieś palety spod sklepu na zaplecze, zanim Straż Miejska zacznie obchód.',
-        `Profil „${queueProfile}”${queueIsDefault} stawia ludzi najpierw przy kasie. Gdy kolejka i tak rośnie, kup kasę samoobsługową albo drugą kasę (zakładka Ulepszenia): kasjerów jest tyle, ile stanowisk, więc samo zatrudnianie nie pomoże.`,
-        'Pilnuj paska WUT (zakładka Sklep) i gotówki na opłatę franczyzową.',
+        `Doba trwa ok. ${dayLengthText()} przy ${slowest.label}, a sklep działa od ${hourOf(OPEN_FROM)} do ${hourOf(OPEN_TO)}. W niedzielę ruch rośnie ×${num(SUNDAY_TRAFFIC)}.`,
+        `W zakładce Cele czeka cel do niedzieli: trafiony daje premię, zaufanie i XP, a nietrafiony odbiera zaufanie (${signedPts(KPI.trustMiss)}).`,
       ],
     },
   ];

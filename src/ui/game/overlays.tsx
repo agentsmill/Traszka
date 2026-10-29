@@ -147,7 +147,7 @@ const centralaQuote = (text: string) => <p class="tt-quote">„{text}”<br /><s
 /**
  * Treść raportu miesięcznego. Z danymi tycoona (`detail`): wynik dużą liczbą, pozycje z `REPORT_LINE_LABEL` (koszty ze znakiem
  * minus), zaufanie Centrali z przyczynami, komentarz, jedna wskazówka i KPI miesiąca. Raport ze starego zapisu (`detail` równe
- * null) zostaje dawnym widokiem: marża i inne przychody, premie Centrali (osobny licznik) i koszty (z WUT ponad próg) sumują się
+ * null) zostaje dawnym widokiem: marża i inne przychody, premie Centrali (osobny licznik) i koszty (z ubytkami ponad limit Centrali) sumują się
  * do wyniku miesiąca. `closing` zastępuje komentarz Centrali (wypowiedzenie umowy przy końcu gry).
  */
 export function ReportBody({ r, closing }: { r: MonthReport; closing?: string }) {
@@ -164,7 +164,7 @@ export function ReportBody({ r, closing }: { r: MonthReport; closing?: string })
         <div class="tt-row"><span>Media</span><span>−{zl(c.media)}</span></div>
         <div class="tt-row"><span>Opłata franczyzowa</span><span>−{zl(c.fee)}</span></div>
         <div class="tt-row"><span>Mandaty</span><span>−{zl(c.fines)}</span></div>
-        <div class="tt-row"><span>WUT ponad próg</span><span>−{zl(c.wut)}</span></div>
+        <div class="tt-row"><span>Ubytki ponad limit Centrali</span><span>−{zl(c.wut)}</span></div>
         <div class="tt-row"><span>Logistyka</span><span>−{zl(c.logistics)}</span></div>
         <div class="tt-row total"><span>Wynik miesiąca</span><span>{signedZl(r.profit)}</span></div>
         <div class="tt-row"><span>Inwestycje</span><span>{zl(c.investments)}</span></div>

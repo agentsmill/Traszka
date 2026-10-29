@@ -152,11 +152,11 @@ export function StorePanel({ s, info }: { s: EconomyState; info: StoreInfo; v: n
         <p class="tt-hint tt-flavor">{tier.flavor}</p>
         <p class="tt-hint">Reputacja rośnie, gdy klienci znajdują towar i nie czekają. Spada przez puste półki, kolejki i mandaty.</p>
       </Section>
-      <Section title="WUT w tym miesiącu">
-        <Row label="Ubytki (WUT)">{zl(wut)} z {zl(wutLimit)}</Row>
+      <Section title="Ubytki w tym miesiącu">
+        <Row label="Ubytki (limit Centrali)">{zl(wut)} z {zl(wutLimit)}</Row>
         <Bar value={wutLimit > 0 ? wut / wutLimit : wut > 0 ? 1 : 0} warn={wut > wutLimit} />
         {wutOver > 0
-          ? <p class="tt-hint warn">Ponad progiem na dziś: {zl(wutOver)}. Rozliczenie dopiero przy zamknięciu miesiąca, a obrót jeszcze rośnie, więc kwota może się zmienić.</p>
+          ? <p class="tt-hint warn">Ubytki ponad limit Centrali na dziś: {zl(wutOver)}. Rozliczenie dopiero przy zamknięciu miesiąca, a obrót jeszcze rośnie, więc kwota może się zmienić.</p>
           : <p class="tt-hint">Ubytki to przeterminowany towar, kradzieże, pomyłki i skutki decyzji dnia. Centrala pokrywa je do {(WUT.threshold * 100).toLocaleString('pl-PL')}% obrotu miesiąca, resztę płacisz Ty.</p>}
       </Section>
       <Section title="Czystość sali">
@@ -486,11 +486,11 @@ export function GoalsPanel({ s, info }: { s: EconomyState; info: StoreInfo; game
         <Row label="Media">−{zl(m.media)}</Row>
         <Row label="Mandaty">−{zl(m.fines)}</Row>
         <Row label="Logistyka">−{zl(m.logistics)}</Row>
-        <Row label="WUT ponad próg">−{zl(m.wut)}</Row>
+        <Row label="Ubytki ponad limit Centrali">−{zl(m.wut)}</Row>
         <Row label="Opłata franczyzowa (naliczona do dziś)">−{zl(fee)}</Row>
         <Row label="Wynik po opłacie (do dziś)"><b>{signedZl(profit(m) - fee)}</b></Row>
         <Row label="Inwestycje">{zl(m.investments)}</Row>
-        <p class="tt-hint">Opłatę franczyzową, WUT ponad próg i premię od obrotu Centrala rozlicza przy zamknięciu miesiąca. Zostaw gotówkę na opłaty.</p>
+        <p class="tt-hint">Opłatę franczyzową, ubytki ponad limit Centrali i premię od obrotu Centrala rozlicza przy zamknięciu miesiąca. Zostaw gotówkę na opłaty.</p>
         {/* ostrzeżenie wynika ze stanu (ostatni raport), więc wraca po przeładowaniu, a okno „OK” z dnia raportu nie jest zapisywane */}
         {s.lastReport !== null && s.lastReport.cash < BANKRUPTCY_AT && (
           <p class="tt-hint warn">Poprzedni raport zastał Cię z gotówką poniżej {signedZl(BANKRUPTCY_AT)}. Jeśli ten też, Centrala wypowie umowę.</p>

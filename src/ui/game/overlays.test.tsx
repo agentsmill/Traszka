@@ -259,7 +259,7 @@ describe('raport miesięczny: pozycje sumują się do wyniku', () => {
     const counters = { ...emptyCounters(), margin: 10_000, other: 500, bonus, wages: 2000, media: 600, fee: 4500, fines: 100, wut, logistics: 200 };
     return { label: 'wrzesień 2026', counters, profit: 10_000 + bonus + 500 - 2000 - 600 - 4500 - 100 - wut - 200, cash: 5000, comment: 'x', detail: null };
   };
-  const LINES = ['Marża i inne przychody', 'Premie Centrali', 'Płace', 'Media', 'Opłata franczyzowa', 'Mandaty', 'WUT ponad próg', 'Logistyka'];
+  const LINES = ['Marża i inne przychody', 'Premie Centrali', 'Płace', 'Media', 'Opłata franczyzowa', 'Mandaty', 'Ubytki ponad limit Centrali', 'Logistyka'];
 
   it('premia Centrali ma własny wiersz, a wiersze razem dają wynik miesiąca', () => {
     const r = report(300);
@@ -270,10 +270,10 @@ describe('raport miesięczny: pozycje sumują się do wyniku', () => {
     expect(v.get('Wynik miesiąca')).toBe(r.profit);
   });
 
-  it('WUT ponad próg ma własny wiersz jako koszt, a wiersze razem dalej dają wynik miesiąca', () => {
+  it('Ubytki ponad limit Centrali mają własny wiersz jako koszt, a wiersze razem dalej dają wynik miesiąca', () => {
     const r = report(300, 450);
     const v = rows(r);
-    expect(v.get('WUT ponad próg')).toBe(-450);
+    expect(v.get('Ubytki ponad limit Centrali')).toBe(-450);
     expect(LINES.reduce((n, label) => n + v.get(label)!, 0)).toBe(r.profit);
     expect(r.profit).toBe(report(300, 0).profit - 450);
   });
@@ -410,7 +410,7 @@ const plain = (text: string): string => text.replace(/[\s\u00a0\u202f]/g, ' ');
 /** Kwota po polsku jak w oknie, spacje zwykłe (pl-PL grupuje dopiero od 5 cyfr: „2950 zł”, ale „10 000 zł”). */
 const z = (n: number): string => plain(zl(n));
 
-/** Raport tycoona: wynik 2 950 zł, zaufanie 62 → 58 (pięć przyczyn), 3 KPI trafione i 1 nietrafione, wskazówka o WUT. */
+/** Raport tycoona: wynik 2 950 zł, zaufanie 62 → 58 (pięć przyczyn), 3 KPI trafione i 1 nietrafione, wskazówka o ubytkach. */
 function detailed(over: Partial<TycoonMonthReport> = {}): TycoonMonthReport {
   return {
     monthIndex: 0,
@@ -459,7 +459,7 @@ describe('raport miesięczny z danymi tycoona (detail)', () => {
     expect(rows.slice(0, 9)).toEqual([
       ['Marża ze sprzedaży', '10 000 zł'], ['Premie Centrali', '300 zł'], ['Inne przychody i koszty', '500 zł'],
       ['Płace', `−${z(2000)}`], ['Media', '−600 zł'], ['Opłata franczyzowa', `−${z(4500)}`],
-      ['Mandaty i kary', '−100 zł'], ['WUT ponad próg', '−450 zł'], ['Logistyka', '−200 zł'],
+      ['Mandaty i kary', '−100 zł'], ['Ubytki ponad limit Centrali', '−450 zł'], ['Logistyka', '−200 zł'],
     ]);
   });
 
@@ -468,7 +468,7 @@ describe('raport miesięczny z danymi tycoona (detail)', () => {
     const text = plain(textOf(tree(d)));
     expect(text).toContain('Inne przychody i koszty−300 zł');
     expect(text).toContain('Premie Centrali0 zł');
-    expect(text).toContain('WUT ponad próg0 zł');
+    expect(text).toContain('Ubytki ponad limit Centrali0 zł');
     expect(text).not.toContain('−0');
   });
 
@@ -509,7 +509,7 @@ describe('raport miesięczny z danymi tycoona (detail)', () => {
     const d = detailed({ hint: { id: 'wut', value: 45_000, impact: 45_000 } });
     const hint = byClass(tree(d), 'tt-report-hint');
     expect(textOf(hint)).toContain(hintText(d.hint, int));
-    expect(plain(textOf(hint))).toContain('Ubytki ponad próg WUT: 45 000 zł');
+    expect(plain(textOf(hint))).toContain('Ubytki ponad limit Centrali: 45 000 zł');
   });
 
   it('KPI w miesiącu: „X trafione, Y nietrafione”; bez rozliczonego tygodnia osobne zdanie', () => {
@@ -538,7 +538,7 @@ describe('raport miesięczny z danymi tycoona (detail)', () => {
     const d = detailed({ lines: [{ key: 'marza', amount: 10_000.5 }, { key: 'wut', amount: -450.5 }], result: 9550 });
     const rows = walk(tree(d)).filter((v) => v.props.class === 'tt-row')
       .map((v) => [textOf((v.props.children as Vnode[])[0]), plain(textOf((v.props.children as Vnode[])[1]))] as const);
-    expect(rows.slice(0, 2)).toEqual([['Marża ze sprzedaży', z(10_001)], ['WUT ponad próg', `−${z(450)}`]]);
+    expect(rows.slice(0, 2)).toEqual([['Marża ze sprzedaży', z(10_001)], ['Ubytki ponad limit Centrali', `−${z(450)}`]]);
     expect(plain(textOf(byClass(tree(d), 'tt-report-result')))).toBe(`+${z(9551)}`);
   });
 
@@ -558,7 +558,7 @@ describe('raport miesięczny z danymi tycoona (detail)', () => {
   it('raport bez detail (stary zapis) zostaje dawnym widokiem: te same wiersze, komentarz ze stanu, bez sekcji tycoona', () => {
     const old = tree(undefined, monthReport(null));
     const labelsOf = walk(old).filter((v) => String(v.props.class).startsWith('tt-row')).map((v) => textOf((v.props.children as Vnode[])[0]));
-    expect(labelsOf).toEqual(['Klienci', 'Obrót', 'Marża i inne przychody', 'Premie Centrali', 'Płace', 'Media', 'Opłata franczyzowa', 'Mandaty', 'WUT ponad próg', 'Logistyka',
+    expect(labelsOf).toEqual(['Klienci', 'Obrót', 'Marża i inne przychody', 'Premie Centrali', 'Płace', 'Media', 'Opłata franczyzowa', 'Mandaty', 'Ubytki ponad limit Centrali', 'Logistyka',
       'Wynik miesiąca', 'Inwestycje', 'Gotówka na koniec']);
     expect(textOf(byClass(old, 'tt-quote'))).toContain('Stary komentarz.');
     expect(walk(old).some((v) => String(v.props.class ?? '').startsWith('tt-report-'))).toBe(false);
@@ -593,7 +593,7 @@ describe('okno raportu miesiąca', () => {
     const game = fakeGame();
     const tree = ReportModal({ game }) as Vnode;
     expect(textOf(tree)).toContain('Koniec współpracy');
-    expect(textWithBody(tree)).toContain('WUT ponad próg');
+    expect(textWithBody(tree)).toContain('Ubytki ponad limit Centrali');
     expect(textWithBody(tree)).toContain('Centrala dziękuje za współpracę');
     expect(textWithBody(tree)).not.toContain(reportCommentText('strata-0'));
     expect(labels(tree)).toEqual(['Zacznij od nowa']);

@@ -22,11 +22,11 @@ describe('deltaLines: skutki odpowiedzi na karcie', () => {
     expect(lineTexts(answer({ cash: 90 }), fmt)).toEqual(['+90 zł']);
   });
 
-  it('zaufanie, WUT, czas ludzi, siły, reputacja i Ogonki', () => {
+  it('zaufanie, ubytki, czas ludzi, siły, reputacja i Ogonki', () => {
     expect(lineTexts(answer({ trust: 2, wut: 120, staffMinutes: 45, energy: -60, reputation: -1.5, ogonki: 3 }), fmt)).toEqual([
-      'zaufanie +2', 'WUT +120 zł', 'czas ludzi 45 min', 'siły −60', 'reputacja −1.5', 'Ogonki +3',
+      'zaufanie +2', 'ubytki +120 zł', 'czas ludzi 45 min', 'siły −60', 'reputacja −1.5', 'Ogonki +3',
     ]);
-    expect(lineTexts(answer({ trust: -1, wut: -50, energy: 10 }), fmt)).toEqual(['zaufanie −1', 'WUT −50 zł', 'siły +10']);
+    expect(lineTexts(answer({ trust: -1, wut: -50, energy: 10 }), fmt)).toEqual(['zaufanie −1', 'ubytki −50 zł', 'siły +10']);
   });
 
   it('liczby idą przez podaną funkcję formatującą (interfejs: polski zapis z odstępem tysięcy)', () => {
@@ -44,7 +44,7 @@ describe('deltaLines: skutki odpowiedzi na karcie', () => {
     const lines = lineTexts(answer({}, { risk: { chance: 0.3, delta: { fine: -300 } } }), fmt);
     expect(lines).toEqual(['ryzyko 30%: −300 zł']);
     expect(lineTexts(answer({ cash: -50 }, { risk: { chance: 0.76, delta: { wut: 90, trust: -2 } } }), fmt))
-      .toEqual(['−50 zł', 'ryzyko 76%: zaufanie −2, WUT +90 zł']);
+      .toEqual(['−50 zł', 'ryzyko 76%: zaufanie −2, ubytki +90 zł']);
   });
 
   it('ryzyko bez skutku liczbowego dalej pokazuje szansę, a ryzyko zerowe znika', () => {
@@ -95,9 +95,9 @@ describe('deltaLines: ocena wiersza (koszt, zysk, bez oceny)', () => {
     expect(toned(answer({ cash: 90 }))).toEqual([['+90 zł', 'gain']]);
   });
 
-  it('WUT rośnie na szkodę gracza (koszt), odpis z programu refundacyjnego to zysk', () => {
-    expect(toned(answer({ wut: 350 }))).toEqual([['WUT +350 zł', 'cost']]);
-    expect(toned(answer({ wut: -200 }))).toEqual([['WUT −200 zł', 'gain']]);
+  it('ubytki rosną na szkodę gracza (koszt), odpis z programu refundacyjnego to zysk', () => {
+    expect(toned(answer({ wut: 350 }))).toEqual([['ubytki +350 zł', 'cost']]);
+    expect(toned(answer({ wut: -200 }))).toEqual([['ubytki −200 zł', 'gain']]);
   });
 
   it('zaufanie, reputacja i Ogonki: wzrost to zysk, spadek to koszt', () => {
@@ -122,7 +122,7 @@ describe('deltaLines: ocena wiersza (koszt, zysk, bez oceny)', () => {
     expect(toned(answer({}, { risk: { chance: 0.5, delta: {} } }))).toEqual([['ryzyko 50%', 'cost']]);
   });
 
-  it('koszt i zysk obok siebie w jednej odpowiedzi mają różne oceny (np. „WUT +350 zł” obok „+700 zł”)', () => {
-    expect(toned(answer({ bonus: 700, wut: 350 }))).toEqual([['+700 zł', 'gain'], ['WUT +350 zł', 'cost']]);
+  it('koszt i zysk obok siebie w jednej odpowiedzi mają różne oceny (np. „ubytki +350 zł” obok „+700 zł”)', () => {
+    expect(toned(answer({ bonus: 700, wut: 350 }))).toEqual([['+700 zł', 'gain'], ['ubytki +350 zł', 'cost']]);
   });
 });
