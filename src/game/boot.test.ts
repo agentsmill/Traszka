@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { OpenAtStart } from './actions';
-import { openAtBoot, shouldResumeRanked } from './boot';
+import { IMPORT_APPLIED_NOTICE, bootImport, openAtBoot, shouldResumeRanked } from './boot';
 import type { StartChoice } from './start';
 
 const request = (over: Partial<OpenAtStart> = {}): OpenAtStart => ({ seed: 'traszka-1', fresh: false, choice: null, ...over });
@@ -99,5 +99,22 @@ describe('openAtBoot: start rankingowy wybrany na ekranie startowym', () => {
     expect(openAtBoot(shell, request({ choice: CHOICE }), false, 'ranked', { onStarted: vi.fn() })).toBe(true);
     expect(shell.startRanked).not.toHaveBeenCalled();
     expect(shell.open).toHaveBeenCalledOnce();
+  });
+});
+
+describe('bootImport: zapis przeniesiony z innego urządzenia przy wejściu na stronę', () => {
+  it('nic nie czekało: seed z adresu zostaje, komunikatu nie ma', () => {
+    expect(bootImport(null, 'z-adresu')).toEqual({ requested: 'z-adresu', notice: null });
+    expect(bootImport(null, null)).toEqual({ requested: null, notice: null });
+  });
+
+  it('udany import: otwieramy sklep z paczki (seed z adresu ignorowany, `entrySeed` weźmie ostatni zapisany), a gracz dostaje komunikat', () => {
+    expect(bootImport({ seed: 'sklep-b' }, 'z-adresu')).toEqual({ requested: null, notice: IMPORT_APPLIED_NOTICE });
+    expect(bootImport({ seed: 'sklep-b' }, null)).toEqual({ requested: null, notice: 'Zapis wczytany.' });
+  });
+
+  it('błąd importu: gra rusza po staremu (seed z adresu zostaje), a gracz widzi komunikat o błędzie', () => {
+    expect(bootImport({ error: 'Zapis pochodzi z nowszej wersji gry' }, 'z-adresu')).toEqual({ requested: 'z-adresu', notice: 'Zapis pochodzi z nowszej wersji gry' });
+    expect(bootImport({ error: 'To nie jest zapis Traszki.' }, null)).toEqual({ requested: null, notice: 'To nie jest zapis Traszki.' });
   });
 });

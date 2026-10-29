@@ -12,9 +12,15 @@ export { NO_KEY, NOTHING_TO_SEND, SAME_CODE };
 export const MASKED_CODE = '••••-••••-••••-••••-••••';
 export const RECOVERY_INTRO = 'To Twój klucz do rankingu. Wpisany na innym urządzeniu przenosi nick i zapis gry. Zapisz go i nikomu nie pokazuj: kto ma kod, ten ma Twój nick.';
 
+/** Podpis przycisku potwierdzającego dla każdego pytania. */
+const CONFIRM_LABEL: Record<Pending['kind'], string> = { adopt: 'Zastąp klucz', download: 'Zastąp zapis', overwrite: 'Zastąp' };
+
 const dateText = (ms: number): string => new Date(ms).toLocaleString('pl-PL', { dateStyle: 'short', timeStyle: 'short' });
 
 function confirmText(pending: Pending, currentCode: string | null): string {
+  if (pending.kind === 'overwrite') {
+    return `Na serwerze leży kopia z ${dateText(pending.savedAt)}, której to urządzenie jeszcze nie widziało. Zastąpić ją tym zapisem?`;
+  }
   if (pending.kind === 'download') {
     return `Pobrać zapis wysłany ${dateText(pending.savedAt)}? Zastąpi na tym urządzeniu ten sklep, sieć sklepów, Punkty Partnera i kasjera. Inne sklepy zostaną.`;
   }
@@ -87,7 +93,7 @@ export function RecoveryPanel({ model, onClose }: RecoveryPanelProps) {
             <p>{confirmText(pending, code)}</p>
             <div class="tt-recovery-actions">
               <button type="button" class="tt-btn tt-primary" onClick={run(() => model.confirmPending())}>
-                {pending.kind === 'adopt' ? 'Zastąp klucz' : 'Zastąp zapis'}
+                {CONFIRM_LABEL[pending.kind]}
               </button>
               <button type="button" class="tt-btn" onClick={() => model.cancelPending()}>Anuluj</button>
             </div>

@@ -7,7 +7,7 @@ import { randomSeed } from '@/game/seedWords';
 import { entrySeed } from '@/game/seeds';
 import { lastSavedSeed } from '@/game/session';
 import { createShell, dropUnsentRun } from '@/game/actions';
-import { openAtBoot } from '@/game/boot';
+import { bootImport, openAtBoot } from '@/game/boot';
 import { bootMeta } from '@/game/bootMeta';
 import { bindControls } from '@/game/controls';
 import { advanceSession, debugHandleEnabled, debugHandleOf, installDebugHandle, isModalOpen, isSceneHeld } from '@/game/frame';
@@ -23,6 +23,7 @@ import { listenForNotices, postNotice } from '@/ui/Notice';
 import { FIRST_DAY_HINTS } from '@/ui/game/overlays';
 import { createRankingClient } from '@/ui/ranking/client';
 import { bindFinishOpen, createFinishModel } from '@/ui/ranking/finishModel';
+import { applyStagedImport } from '@/ui/ranking/saveTransfer';
 import { weekSeedOf } from '@/ui/start/weekSeed';
 import { createWorldOverlay } from '@/ui/worldOverlay';
 import { FrameMeter } from '@/ui/perfMeter';
@@ -279,11 +280,15 @@ if (params.get('charTest') === '1') {
 } else {
   // benchmark też jest osobnym fragmentem: zwykła gra go nie pobiera
   const benchKit = params.get('bench') === '1' ? await import('@/bench/bench') : null;
-  const requested = benchKit ? benchKit.BENCH_SEED : params.get('seed');
-  const seed = entrySeed(requested, lastSavedSeed());
+  // Zapis pobrany kodem odzyskiwania czeka pod kluczem pośrednim od przeładowania strony (ui/ranking/saveTransfer.ts). Wczytujemy go
+  // pierwszy, przed metą, wyborem sklepu i ekranem startowym: zapis przy zamykaniu poprzedniej karty już się skończył, więc nic go nie nadpisze.
+  // Po udanym wczytaniu otwieramy sklep z paczki (`?seed=` z adresu pomijamy); przy błędzie gra rusza ze starym stanem. Benchmark niczego nie wczytuje.
+  const booted = benchKit ? { requested: benchKit.BENCH_SEED, notice: null } : bootImport(applyStagedImport(), params.get('seed'));
+  const seed = entrySeed(booted.requested, lastSavedSeed());
   // Nakładka wstaje pierwsza: komunikat z createRenderContext musi trafić w działający nasłuch, a ekran startowy ma gdzie się pokazać.
   listenForNotices();
   renderUi(uiRoot, null, null);
+  if (booted.notice !== null) postNotice(booted.notice);
   const entry = benchKit ? null : await startScreen(seed);
   startGame(canvas, uiRoot, entry?.choice.seed ?? seed, presetFromUrl(), params, benchKit, entry);   // adres wpisze sam, gdy świat już stoi
 }

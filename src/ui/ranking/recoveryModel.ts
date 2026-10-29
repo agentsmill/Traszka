@@ -6,7 +6,12 @@ import type { RankingClient } from './client';
  * Stan panelu „Kod odzyskiwania” (bez DOM, do testów). Pokazuje kod tego urządzenia, przyjmuje kod z innego urządzenia (po
  * potwierdzeniu, bo zastępuje tutejszy klucz) i przenosi zapis gry tym kodem, zawsze na wyraźne polecenie: „Wyślij zapis” kładzie
  * kopię na serwerze, „Pobierz zapis” pyta, zanim zastąpi zapis na tym urządzeniu (spec §14.7: zapis nigdy nie ginie po cichu).
- * Zapis mety i zapisu sklepu robi gra (`adoptKey`, `importSave`), panel tylko o nie prosi.
+ * Pytanie jest też w drugą stronę: „Wyślij zapis” z urządzenia, które nie widziało kopii leżącej na serwerze (druga osoba, drugie
+ * urządzenie, inna przeglądarka), nie zastępuje jej po cichu, tylko pyta (409 `save-conflict`). Urządzenie pamięta chwilę ostatniej
+ * kopii, którą wysłało albo pobrało (`sync`), i wysyła ją jako `expected`.
+ * Zapis mety i zapisu sklepu robi gra (`adoptKey`, `stageSave`), panel tylko o nie prosi. Pobrany zapis nie ląduje od razu w mecie
+ * i sklepie, bo przeładowanie strony zapisałoby na wierzch stan z pamięci karty: `stageSave` odkłada go na następny start, a model
+ * przeładowuje stronę (`reload`).
  */
 export const NO_KEY = 'Kod pojawi się, gdy otworzysz pierwszy sklep.';
 export const SAME_CODE = 'To już jest kod tego urządzenia. Centrala docenia zaangażowanie.';
@@ -14,9 +19,13 @@ export const NOTHING_TO_SEND = 'Nie ma jeszcze czego wysłać: otwórz sklep i z
 export const COPIED = 'Kod skopiowany. Schowaj go lepiej niż klucz do zaplecza.';
 export const COPY_FAILED = 'Nie udało się skopiować. Przepisz kod ręcznie, Centrala też tak robi.';
 export const ADOPTED = 'Kod przyjęty: to urządzenie gra teraz Twoim kluczem.';
-export const DOWNLOADED = 'Zapis pobrany i wczytany.';
+export const STAGED_NOTICE = 'Zapis czeka na wczytanie. Przeładowujemy…';
 
-export type Pending = { kind: 'adopt'; key: string } | { kind: 'download'; save: string; savedAt: number };
+/** Pytanie do gracza: zmiana klucza, zastąpienie zapisu na tym urządzeniu pobranym albo zastąpienie kopii na serwerze (`savedAt` to jej chwila). */
+export type Pending =
+  | { kind: 'adopt'; key: string }
+  | { kind: 'download'; save: string; savedAt: number }
+  | { kind: 'overwrite'; savedAt: number };
 
 export interface RecoveryDeps {
   client: RankingClient;
@@ -29,10 +38,14 @@ export interface RecoveryDeps {
   /** Zapis do wysłania (tekst JSON) albo null, gdy nie ma czego wysłać; w grze `exportTransfer` z `saveTransfer.ts`. */
   exportSave: () => string | null;
   /**
-   * Wczytuje pobrany zapis na tym urządzeniu; null to sukces, tekst to komunikat. W grze `importTransfer`, a po sukcesie
-   * przeładowanie strony (gra trzyma metę i sklep w pamięci i nadpisałaby nimi wczytaną paczkę).
+   * Odkłada pobrany zapis do wczytania przy następnym starcie; null to sukces, tekst to komunikat. W grze `stageImport` z
+   * `saveTransfer.ts` (nic poza kluczem pośrednim nie jest ruszane: zapis przy zamykaniu karty nie ma z czym przegrać).
    */
-  importSave: (save: string) => string | null;
+  stageSave: (save: string) => string | null;
+  /** Przeładowuje stronę, żeby odłożony zapis się wczytał; w grze `location.reload()`. Model woła to tylko po udanym `stageSave`. */
+  reload: () => void;
+  /** Chwila (`savedAt`) ostatniej kopii z serwera, którą to urządzenie wysłało albo pobrało; null, gdy żadnej nie widziało. W grze `saveTransfer.ts`. */
+  sync: { get: () => number | null; set: (savedAt: number) => void };
   /** Schowek; domyślnie `navigator.clipboard`. */
   copy?: (text: string) => Promise<void>;
 }
@@ -84,6 +97,29 @@ export function createRecoveryModel(deps: RecoveryDeps): RecoveryModel {
     }
   }
 
+  /**
+   * Wysyła bieżący zapis z `expected` = ostatnia kopia, którą to urządzenie widziało. Gdy na serwerze leży inna (409 `save-conflict`),
+   * otwiera pytanie `overwrite` zamiast błędu; `force` (po „Zastąp”) wysyła mimo to.
+   */
+  async function send(force: boolean): Promise<void> {
+    const key = deps.key();
+    if (!key) return say(NO_KEY, true);
+    const save = deps.exportSave();
+    if (save === null) return say(NOTHING_TO_SEND, true);
+    const opts = force ? { expected: deps.sync.get(), force } : { expected: deps.sync.get() };
+    const res = await busyWhile(() => deps.client.uploadSave(key, save, opts));
+    if (!res.ok) {
+      if (res.error === 'save-conflict' && typeof res.savedAt === 'number') {
+        say(null);
+        confirm.value = { kind: 'overwrite', savedAt: res.savedAt };
+        return;
+      }
+      return say(res.message, true);
+    }
+    deps.sync.set(res.savedAt);
+    say(`Zapis wysłany (${Math.max(1, Math.round(res.bytes / 1024))} KB) i leży w szufladzie Centrali. Na drugim urządzeniu wpisz kod i wybierz „Pobierz zapis”.`);
+  }
+
   return {
     revealed, input, busy, error, notice, confirm, nicks,
     code: () => {
@@ -121,9 +157,13 @@ export function createRecoveryModel(deps: RecoveryDeps): RecoveryModel {
       confirm.value = null;
       if (pending === null) return;
       if (pending.kind === 'download') {
-        const err = deps.importSave(pending.save);
-        return say(err ?? DOWNLOADED, err !== null);
+        const err = deps.stageSave(pending.save);
+        if (err !== null) return say(err, true);
+        deps.sync.set(pending.savedAt);   // to urządzenie widziało już tę kopię: następne wysłanie nie będzie pytać
+        say(STAGED_NOTICE);
+        return deps.reload();
       }
+      if (pending.kind === 'overwrite') return send(true);
       const err = deps.adoptKey(pending.key);
       if (err !== null) return say(err, true);
       input.value = '';
@@ -134,15 +174,7 @@ export function createRecoveryModel(deps: RecoveryDeps): RecoveryModel {
     cancelPending() {
       confirm.value = null;
     },
-    async upload() {
-      const key = deps.key();
-      if (!key) return say(NO_KEY, true);
-      const save = deps.exportSave();
-      if (save === null) return say(NOTHING_TO_SEND, true);
-      const res = await busyWhile(() => deps.client.uploadSave(key, save));
-      if (!res.ok) return say(res.message, true);
-      say(`Zapis wysłany (${Math.max(1, Math.round(res.bytes / 1024))} KB) i leży w szufladzie Centrali. Na drugim urządzeniu wpisz kod i wybierz „Pobierz zapis”.`);
-    },
+    upload: () => send(false),
     async download() {
       const key = deps.key();
       if (!key) return say(NO_KEY, true);

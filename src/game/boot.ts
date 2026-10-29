@@ -44,3 +44,21 @@ export function openAtBoot(
   if (shouldResumeRanked(mode, seedInUrl, request) && shell.resumeRanked()) return true;
   return shell.open(request);
 }
+
+export const IMPORT_APPLIED_NOTICE = 'Zapis wczytany.';
+
+/** Co rozruch ma zrobić po (nie)wczytaniu zapisu z innego urządzenia: seed z adresu do `entrySeed` (null: brak) i komunikat dla gracza (null: brak). */
+export interface BootImport { requested: string | null; notice: string | null }
+
+/**
+ * Wynik wczytania zapisu odłożonego przed przeładowaniem strony (`applyStagedImport` w ui/ranking/saveTransfer.ts, wołane na samym
+ * początku rozruchu, przed metą i wyborem sklepu) przełożony na decyzję rozruchu. Nic nie czekało: wszystko jak zwykle. Udany import:
+ * otwieramy wczytany sklep, więc `?seed=` z adresu jest tym razem pomijany (`entrySeed` weźmie wtedy ostatni zapisany sklep, czyli
+ * ten z paczki; adres przepisze powłoka), a gracz widzi „Zapis wczytany”. Błąd: gra rusza ze starym stanem i adresem, a gracz widzi
+ * komunikat błędu. Wynik wejściowy podany strukturalnie, żeby warstwa gry nie zależała od ui/.
+ */
+export function bootImport(staged: { seed: string } | { error: string } | null, requested: string | null): BootImport {
+  if (staged === null) return { requested, notice: null };
+  if ('error' in staged) return { requested, notice: staged.error };
+  return { requested: null, notice: IMPORT_APPLIED_NOTICE };
+}

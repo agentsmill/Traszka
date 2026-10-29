@@ -28,7 +28,7 @@ describe('wstawianie paneli (mount)', () => {
   });
 
   it('kod odzyskiwania: to samo, bez zapytań przy wstawieniu', () => {
-    const model = createRecoveryModel({ client, key: () => null, adoptKey: () => null, exportSave: () => null, importSave: () => null });
+    const model = createRecoveryModel({ client, key: () => null, adoptKey: () => null, exportSave: () => null, stageSave: () => null, reload: () => undefined, sync: { get: () => null, set: () => undefined } });
     const unmount = mountRecoveryPanel(el, { model, onClose: () => undefined });
     expect(render).toHaveBeenLastCalledWith(expect.objectContaining({ type: RecoveryPanel }), el);
     expect(client.player).not.toHaveBeenCalled();
