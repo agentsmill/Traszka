@@ -112,14 +112,19 @@ export const STAFF_START = 2;
 // --- Koszty i kary ------------------------------------------------------------------------------------
 
 export const MEDIA_PER_DAY = 140;
-export const FRANCHISE_FEE_FIXED = 4500;
-export const FRANCHISE_FEE_SHARE = 0.03;
+/**
+ * Opłata franczyzowa na koniec miesiąca: stała część plus udział w obrocie. Centrala bierze swoje (satyra ze specu), a udział
+ * rośnie z wielkością sklepu, więc wyrównuje seedy: dwuosobowa zmiana bez decyzji kończy dwa miesiące w okolicy zera, i to
+ * w budce, i w flagowcu (balans: tycoon/balance.test.ts). Zaufana Centrali część wraca jako premia od obrotu (trust.ts).
+ */
+export const FRANCHISE_FEE_FIXED = 2000;
+export const FRANCHISE_FEE_SHARE = 0.12;
 /** Palet w dostawie bez opłaty logistycznej; każda kolejna kosztuje. */
 export const PALLETS_FREE = 6;
 export const PALLET_FEE = 60;
 export const RETURN_FEE = 150;
-export const FINE_BASE = 500;
-export const FINE_PER_PALLET = 150;
+export const FINE_BASE = 400;
+export const FINE_PER_PALLET = 120;
 /** Kredyt kupiecki: wartość towaru w sklepie (półki, zaplecze, palety) ponad limit wstrzymuje zamówienie. */
 export const CREDIT_LIMIT = 70_000;
 /** Na koniec miesiąca z gotówką poniżej tego Centrala wypowiada umowę. */

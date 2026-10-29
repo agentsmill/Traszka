@@ -83,8 +83,11 @@ export function trustTier(value: number): TrustTier {
 /** Udział zamówionego produktu wiralowego, który Centrala przydzieli: nic poniżej 20, całość od 90. */
 export const viralShare = (value: number): number => clamp((value - 20) / 70, 0, 1);
 
-/** Premia Centrali od obrotu miesiąca (jak w economy.ts od 70, wyżej trochę więcej). */
-export const turnoverBonusShare = (value: number): number => (value >= 85 ? 0.015 : value >= 70 ? 0.01 : 0);
+/**
+ * Premia Centrali od obrotu miesiąca: zaufany franczyzobiorca dostaje z powrotem część opłaty franczyzowej (od 70 trzy procent
+ * obrotu, od 85 trzy i pół). To główny zysk z dobrych decyzji w małym sklepie, gdzie mandatów jest mało (balans: balance.test.ts).
+ */
+export const turnoverBonusShare = (value: number): number => (value >= 85 ? 0.035 : value >= 70 ? 0.03 : 0);
 
 /** Mnożnik szansy na zapowiedź audytu: przy niskim zaufaniu Centrala przyjeżdża częściej (do ×3 przy zerze). */
 export const auditWeight = (value: number): number => 1 + Math.max(0, 60 - value) / 30;

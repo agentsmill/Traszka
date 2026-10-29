@@ -8,7 +8,7 @@ import { dateOfDay, formatDate, isLastDayOfMonth } from './calendar';
 import { advanceEconomy } from './clock';
 import {
   answerCard, arrivalRate, awaitingDecision, buyEquipment, buyUpgrade, cardContext, changeTrust, createEconomy, effects,
-  estimatedDailyMargin, expectedDailyCustomers, fire, freeSpots, isOpenForCustomers, kpiMetricsOf, kpiScaleOf, movePallet, relayout,
+  estimatedDailyMargin, expectedDailyCustomers, fire, freeSpots, GOLDEN_PRIZE, isOpenForCustomers, kpiMetricsOf, kpiScaleOf, movePallet, relayout,
   returnPallet, robotFleet, sell, slotFree, startRemont, stepMinute, tapPallet, tapTill, unlocksAt, upgradeBlocker, workshopUnlocked,
   type CommandResult, type EconEvent, type EconomyState, type MonthReport,
 } from './economy';
@@ -21,7 +21,7 @@ import { HINT_IDS, REPORT_LINES, reportCommentText } from './tycoon/report';
 import { emptyStaffStats, pinStaff, setStaffProfile } from './tycoon/staff';
 import { SUNDAY_TRAFFIC } from './tycoon/sunday';
 import { dateOfGameDay, isSunday, roundNice } from './tycoon/time';
-import { TRUST, trustTier } from './tycoon/trust';
+import { TRUST, trustTier, turnoverBonusShare } from './tycoon/trust';
 import { hallObstacle, palletBags } from './tycoon/waste';
 import { WUT } from './tycoon/wut';
 import { UPGRADE_BY_ID } from './upgrades';
@@ -473,7 +473,7 @@ describe('nagrody i postęp', () => {
     }
     expect(s.pallets.some((x) => x.id === p.id)).toBe(false);
     expect(text).toMatch(/Złota paleta/);
-    expect(s.cash).toBeGreaterThan(cash + 300);
+    expect(s.cash).toBeGreaterThanOrEqual(cash + GOLDEN_PRIZE.min);
   });
 
   it('punkty partnera z sieci sklepów podnoszą marżę, a sieć daje dochód co dzień', () => {
@@ -637,11 +637,11 @@ describe('zaufanie Centrali przez moduł tycoona', () => {
   it('premia od obrotu idzie do licznika bonus według progu zaufania, a wynik miesiąca ją liczy', () => {
     const s = createEconomy(SEED, info);
     toMonthEnd(s);
-    s.tycoon.trust.value = 90;       // próg ulubieńca: 1,5% obrotu
+    s.tycoon.trust.value = 90;       // najwyższy próg premii od obrotu (od 85)
     const before = s.month.bonus;    // premie z KPI tygodnia (niedziele) i ze złotych palet są już w liczniku; liczy się to, co dojdzie przy zamknięciu
     const events = run(s, info, 2 * 60);
     const c = events.find((e) => e.kind === 'month')!.report!.counters;
-    expect(c.bonus - before).toBe(Math.round(0.015 * c.revenue));
+    expect(c.bonus - before).toBe(Math.round(turnoverBonusShare(90) * c.revenue));
     expect(c.bonus - before).toBeGreaterThan(0);
     const report = events.find((e) => e.kind === 'month')!.report!;
     expect(report.profit).toBeCloseTo(c.margin + c.bonus + c.other - c.wages - c.media - c.fee - c.fines - c.logistics - c.wut, 6);
@@ -849,13 +849,13 @@ describe('WUT, KPI tygodnia zamiast zleceń i raport miesięczny', () => {
     it('pozycje zamknięcia miesiąca (opłata, premia od obrotu, WUT) są w miesiącu i sumie gry, ale nie w wyniku następnego dnia', () => {
       const s = createEconomy(SEED, info);
       toMonthEnd(s);
-      s.tycoon.trust.value = 90;                                  // premia od obrotu 1,5%
+      s.tycoon.trust.value = 90;                                  // najwyższy próg premii od obrotu
       s.tycoon.trust.monthStart = 90;
       s.tycoon.wut.month.pomylki += 0.05 * s.month.revenue;       // dużo ponad próg
       const totalBefore = { ...s.total };
       const report = monthReport(run(s, info, 61));               // 22:00–23:00: zamknięcie dnia i miesiąca
       const c = report.counters;
-      const turnoverBonus = Math.round(0.015 * c.revenue);
+      const turnoverBonus = Math.round(turnoverBonusShare(90) * c.revenue);
       expect(c.fee).toBeGreaterThan(0);
       expect(c.wut).toBeGreaterThan(0);
       expect(turnoverBonus).toBeGreaterThan(0);
@@ -1022,7 +1022,7 @@ describe('WUT, KPI tygodnia zamiast zleceń i raport miesięczny', () => {
         tapPallet(s, info, p.id, 5);
       }
       expect(s.pallets.some((x) => x.id === p.id)).toBe(false);
-      expect(s.total.bonus).toBeGreaterThanOrEqual(400);
+      expect(s.total.bonus).toBeGreaterThanOrEqual(GOLDEN_PRIZE.min);
       expect(s.month.bonus).toBe(s.total.bonus);
       expect(s.total.other).toBe(other);
     });

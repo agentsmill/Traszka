@@ -51,8 +51,11 @@ describe('zaufanie Centrali', () => {
     expect(viralShare(55)).toBeCloseTo(0.5);
     expect(viralShare(95)).toBe(1);
     expect(turnoverBonusShare(60)).toBe(0);
-    expect(turnoverBonusShare(70)).toBe(0.01);
-    expect(turnoverBonusShare(90)).toBe(0.015);
+    expect(turnoverBonusShare(69.9)).toBe(0);                                  // premia zaczyna się od 70
+    expect(turnoverBonusShare(70)).toBeGreaterThan(0);
+    expect(turnoverBonusShare(84.9)).toBe(turnoverBonusShare(70));
+    expect(turnoverBonusShare(90)).toBeGreaterThan(turnoverBonusShare(70));    // od 85 trochę więcej
+    expect(turnoverBonusShare(100)).toBe(turnoverBonusShare(90));
     expect(auditWeight(30)).toBeGreaterThan(auditWeight(80));
     expect(auditWeight(80)).toBe(1);
     expect(trustTier(5).label).toBe('Na wylocie');

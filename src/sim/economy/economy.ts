@@ -598,7 +598,7 @@ function unloadPallet(s: EconomyState, info: StoreInfo, fx: Effects, p: Pallet, 
     s.xp += XP.pallet;
     addWaste(s.tycoon.waste, p.bags ?? 1, wasteRoom(s, fx));   // kartony i folia po palecie
     if (p.golden) {
-      const prize = Math.round(Math.max(400, estimatedDailyMargin(s, info) * 0.4));
+      const prize = Math.round(Math.max(GOLDEN_PRIZE.min, estimatedDailyMargin(s, info) * GOLDEN_PRIZE.share));
       bonus(s, prize);   // premia Centrali: raport pokazuje ją w „Premiach”, a nie w innych przychodach
       s.ogonki += 5;
       s.xp += XP.golden;
@@ -683,7 +683,13 @@ function deliver(s: EconomyState, info: StoreInfo, count: number, out: EconEvent
 }
 
 /** Szansa, że paleta z dostawy jest złota. */
-export const GOLDEN_CHANCE = 0.08;
+export const GOLDEN_CHANCE = 0.05;
+/**
+ * Premia za rozładowanie złotej palety: ćwierć marży typowego dnia, nie mniej niż 800 zł. Stała dolna granica trzyma premię
+ * w podobnej wysokości w małym i dużym sklepie (przy udziale w marży premie rosłyby z kwadratem wielkości: więcej palet razy
+ * większa nagroda), więc nie rozjeżdżają wyniku biernego gracza między seedami (balans: tycoon/balance.test.ts).
+ */
+export const GOLDEN_PRIZE = { min: 800, share: 0.25 } as const;
 
 export const LOC_LABEL: Record<PalletLoc, string> = { sidewalk: 'Pod sklepem', backroom: 'Na zapleczu', floor: 'W sali' };
 

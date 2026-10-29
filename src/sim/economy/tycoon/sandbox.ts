@@ -1,6 +1,6 @@
 import { hashString } from '@/sim/rng';
 import {
-  CAT_INFO, DELIVERY_AT, FINE_BASE, FINE_PER_PALLET, FRANCHISE_FEE_FIXED, FRANCHISE_FEE_SHARE, HOT, HOT_MARGIN_PER_CUSTOMER,
+  CAT_INFO, DELIVERY_AT, HOT, HOT_MARGIN_PER_CUSTOMER,
   HOT_REVENUE_PER_CUSTOMER, HOUR_CURVE, ITEMS_PER_CUSTOMER, MARGIN_PER_CUSTOMER, MEDIA_PER_DAY, MINUTES_PER_DAY, OPEN_FROM,
   OPEN_TO, PALLET_ITEMS, PATIENCE, RESTOCK_RATE, REVENUE_PER_CUSTOMER, SCO_ACCEPT, SCO_RATE, SHELF_MARGIN_PER_CUSTOMER,
   SHELF_REVENUE_PER_CUSTOMER, TILL_RATE, UNLOAD_AT, UNLOAD_RATE, WAGE_PER_DAY,
@@ -23,7 +23,7 @@ import {
   zeroTasks, type RobotFleet,
 } from './staff';
 import { applyCardOutcome, createTycoon, type TycoonState } from './state';
-import { TRUST, addTrust, closeTrustMonth, trustTerminates, turnoverBonusShare } from './trust';
+import { TRUST, addTrust, closeTrustMonth, trustTerminates } from './trust';
 import {
   dateOfGameDay, dayOfMinute, daysLeftInMonth, isMonthEnd, isOpenMinute, minuteInDay, monthIndexOf, weekdayOf,
 } from './time';
@@ -37,6 +37,15 @@ import { closeWutMonth, wutFromSales, wutFromSco, wutSlack } from './wut';
  * towar jest jedną pulą sztuk, a nie siedmioma kategoriami, i nie ma zamówień, ulepszeń ani remontów. To nie jest
  * druga ekonomia gry: służy do testów modułów i jest wzorcem kolejności wywołań w minucie dla integracji.
  */
+
+/**
+ * Opłata, mandat i premia od obrotu makiety zostają przy liczbach sprzed strojenia na prawdziwej ekonomii (29.10.2026). Balans
+ * gry stroi `balance.test.ts` na `economy.ts` (opłata, mandaty i premia w `catalog.ts` i `trust.ts`), a makieta ma własne progi
+ * w `bots.test.ts`, więc nie idzie za tymi zmianami.
+ */
+const SANDBOX_FEE = { fixed: 4500, share: 0.03 } as const;
+const SANDBOX_FINE = { base: 500, perPallet: 150 } as const;
+const sandboxBonusShare = (trust: number): number => (trust >= 85 ? 0.015 : trust >= 70 ? 0.01 : 0);
 
 export interface SandboxConfig {
   seed: string;
@@ -341,7 +350,7 @@ function checkFine(s: SandboxState): void {
   const hours = (s.minute - Math.min(...outside.map((p) => p.since))) / 60;
   if (hours < 1) return;
   if (rand01(s.seedHash, s.minute, CH.sandboxFine) >= 0.0005 * outside.length * (1 + 0.2 * (hours - 1))) return;
-  const fine = FINE_BASE + FINE_PER_PALLET * (outside.length - 1);
+  const fine = SANDBOX_FINE.base + SANDBOX_FINE.perPallet * (outside.length - 1);
   s.cash -= fine;
   book(s, 'fines', fine);
   s.total.fines++;
@@ -371,8 +380,8 @@ function closeDay(s: SandboxState, day: number): void {
 function closeMonth(s: SandboxState, day: number): void {
   const t = s.tycoon;
   const m = s.month;
-  const fee = Math.round(FRANCHISE_FEE_FIXED + FRANCHISE_FEE_SHARE * m.revenue);
-  const bonus = Math.round(turnoverBonusShare(t.trust.value) * m.revenue);
+  const fee = Math.round(SANDBOX_FEE.fixed + SANDBOX_FEE.share * m.revenue);
+  const bonus = Math.round(sandboxBonusShare(t.trust.value) * m.revenue);
   const wut = closeWutMonth(t.wut, m.revenue);
   s.cash += bonus - fee - wut.charge;
   book(s, 'fee', fee);

@@ -223,8 +223,8 @@ describe('odtwarzanie biegu', () => {
       remonts.push(live.state.remontLevel);
     }
     // dowód ma dotyczyć całej gry, nie samych stuknięć: remonty (nowy układ w trakcie), wszystkie typy poleceń i śmieci
+    // (drugiego remontu bot losowych decyzji nie dociąga w 90 dni, odkąd opłata franczyzowa jest po balansie z 29.10.2026: dość jest pierwszego)
     expect(remonts.filter((n) => n >= 1).length).toBeGreaterThanOrEqual(3);
-    expect(Math.max(...remonts)).toBeGreaterThanOrEqual(2);
     expect(COMMAND_TYPES.filter((t) => !seen.has(t))).toEqual([]);
     expect(seen.has('nuke')).toBe(true);
   }, TIMEOUT);

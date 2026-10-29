@@ -13,9 +13,12 @@ export function xpToNext(level: number): number {
   return xpCurve(level);
 }
 
+/** Gotówka za poziom: stała część plus kwota za każdy poziom (stała część wyrównuje małe i duże sklepy, balans: tycoon/balance.test.ts). */
+export const LEVEL_CASH = { base: 500, perLevel: 200 } as const;
+
 /** Nagroda za wejście na poziom `level`. */
 export function levelReward(level: number): { cash: number; ogonki: number } {
-  return { cash: 200 * level, ogonki: 2 + Math.floor(level / 2) };
+  return { cash: LEVEL_CASH.base + LEVEL_CASH.perLevel * level, ogonki: 2 + Math.floor(level / 2) };
 }
 
 /** XP za czynności (poza KPI tygodnia i kartami decyzji, które mają własną nagrodę). */

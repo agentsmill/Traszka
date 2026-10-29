@@ -221,11 +221,13 @@ Wzorcem kolejności wywołań jest `sandbox.ts` (`stepSandbox`): to ta sama minu
 - Boty widzą `BotView` i wydają `BotCommand` w kształcie poleceń warstwy komend. Na prawdziwej ekonomii puszcza je
   `economyEnv.ts` (część 2): `economyEnv({ state, info })` buduje widok z `EconomyState` (`economyView`), mapuje polecenia
   na `applyCommand` (`card.answer` → `answerCard`, `staff.profile` → `setStaffProfile`, `tap.till` → `tapTill`,
-  `tap.pallet` → `tapPallet`; combo z `BotCommand` pomija, bo ekonomia liczy je z serii stuknięć) i robi minutę przez
-  `stepMinute`, który zwraca false, gdy gra stoi na karcie. `playBot(bot, seed, minutes)` puszcza bota od `freshRun(seed)`,
-  a `measureBots(seeds, minutes)` daje sumę wyników miesięcy (`history[].profit`) każdego bota na każdym seedzie: to jest
-  pomiar do wyważenia (cele balansu niżej). Bierny gracz i „stukanie bez decyzji” zatwierdzają odpowiedzi zaznaczone
-  z góry; bot, który nie odpowie na kartę, zatrzymałby grę, więc `runBot` rzuca wtedy wyjątek.
+  `tap.pallet` → `tapPallet`, `pallet.move` → `movePallet`; combo z `BotCommand` pomija, bo ekonomia liczy je z serii stuknięć)
+  i robi minutę przez `stepMinute`, który zwraca false, gdy gra stoi na karcie. `playBot(bot, seed, minutes)` puszcza bota od `freshRun(seed)`,
+  a `measureBots(seeds, minutes)` daje `{ totals, gameOver, cards }`: sumę wyników miesięcy (`history[].profit`), sygnał końca
+  gry i liczbę rozstrzygniętych kart każdego bota na każdym seedzie. To pomiar do wyważenia, który pilnuje
+  `balance.test.ts` (cele balansu niżej). Bierny gracz i „stukanie bez decyzji” zatwierdzają odpowiedzi zaznaczone
+  z góry i nie ruszają palet; decydent i mistrz przenoszą palety spod sklepu na zaplecze (`BotView.palletList`, `freeSpots`).
+  Bot, który nie odpowie na kartę, zatrzymałby grę, więc `runBot` rzuca wtedy wyjątek. Makieta polecenie `pallet.move` odrzuca.
 - Plik stoi nad `economy.ts` (nikt z ekonomii go nie importuje), więc jako jedyny w `tycoon/` bierze jej wartości, nie tylko
   typy (wyjątek w `purity.test.ts`). Makieta zostaje jako test modułów.
 
@@ -237,3 +239,6 @@ Wzorcem kolejności wywołań jest `sandbox.ts` (`stepSandbox`): to ta sama minu
 | stukanie w granicach puli dokłada najwyżej 15–20% wyniku | 12–14% (test: ≤ 20%) |
 | dobre decyzje dają wynik 2–4 razy lepszy od biernego | +49…+92% w makiecie; stosunek zależy od tego, gdzie część 2 ustawi biernego (≈ 0) |
 | „decyzje bez stukania” wygrywa ze „stukaniem bez decyzji” | tak, na każdym seedzie (+13…+26 tys. zł) |
+
+Na prawdziwej ekonomii te cele (w postaci przyjętej przez właściciela 29.10.2026: bierny ±5 tys. zł, mistrz 20–40 tys. zł,
+stukanie najwyżej 20%) pilnuje `balance.test.ts`; liczby są w `docs/ekonomia.md`.
