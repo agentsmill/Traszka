@@ -11,8 +11,8 @@ const RUN: RunRecord = { seed: 'kiełbasa-42', gameVersion: '0.0.0+abc123def456'
 const state = (...profits: number[]): Pick<EconomyState, 'history'> => ({
   history: profits.map((profit, i) => ({ label: `m${i}`, profit, revenue: 0 })),
 });
-const judge = (replay: (run: RunRecord, until: number) => Pick<EconomyState, 'history'>) =>
-  makeReplayVerifier({ replay, endMinute: RANKED_SEASON_END_MINUTE, score: seasonScore });
+const judge = (replay: (run: RunRecord, until: number) => Pick<EconomyState, 'history'>, bankrupt?: (state: Pick<EconomyState, 'history'>) => boolean) =>
+  makeReplayVerifier({ replay, endMinute: RANKED_SEASON_END_MINUTE, score: seasonScore, ...(bankrupt === undefined ? {} : { bankrupt }) });
 
 describe('sędzia biegu (verifyRun)', () => {
   it('domyślny sędzia do czasu scalenia strumienia A: „odtwarzanie jeszcze niedostępne”, dla każdego biegu', async () => {
@@ -23,7 +23,7 @@ describe('sędzia biegu (verifyRun)', () => {
     // `satisfies Record<VerifyFailure, …>` robi z tej tabeli kontrolę w czasie kompilacji: nowy powód w `VerifyFailure` bez wpisu tutaj
     // (albo wpis bez powodu) nie przejdzie `tsc`. W czasie działania każdy z nich musi mieć odpowiedź w `errors.ts`, bo `http.ts` oddaje
     // powód graczowi pod tym samym kodem.
-    const statuses = { 'replay-unavailable': 503, 'replay-failed': 422, 'old-version': 409 } satisfies Record<VerifyFailure, number>;
+    const statuses = { 'replay-unavailable': 503, 'replay-failed': 422, 'old-version': 409, 'season-bankrupt': 422 } satisfies Record<VerifyFailure, number>;
     for (const [reason, status] of Object.entries(statuses)) {
       expect(API_ERRORS[reason as VerifyFailure], reason).toMatchObject({ status, message: expect.stringMatching(/\S/) });
     }
@@ -39,8 +39,30 @@ describe('sędzia biegu (verifyRun)', () => {
     expect(calls).toEqual([[RUN, RANKED_SEASON_END_MINUTE]]);
   });
 
-  it('bieg zakończony wypowiedzeniem umowy przed końcem listopada liczy się z raportami, które powstały', async () => {
+  it('bieg zakończony bankructwem przed końcem sezonu (bankrupt → true): season-bankrupt, bez wyniku, choćby miał raporty', async () => {
+    const bankrupt = vi.fn(() => true);
+    const res = await judge(() => state(20_000, 30_000), bankrupt)(RUN);
+    expect(res).toEqual({ ok: false, reason: 'season-bankrupt' });
+    expect(res).not.toHaveProperty('score');
+    expect(bankrupt).toHaveBeenCalledTimes(1);
+    expect(API_ERRORS['season-bankrupt']).toEqual({ status: 422, message: 'Sezon zakończony bankructwem nie trafia do rankingu.' });
+  });
+
+  it('bankrupt → false albo brak pola bankrupt: wynik liczy się jak dotąd (także ujemny)', async () => {
+    expect(await judge(() => state(10_000, 20_000, -5_000), () => false)(RUN)).toEqual({ ok: true, score: 25_000 });
     expect(await judge(() => state(-20_000, -30_000))(RUN)).toEqual({ ok: true, score: -50_000 });
+  });
+
+  it('bankrupt dostaje stan z odtworzenia, a wyjątek z odtwarzania nadal daje replay-failed (bankrupt nie jest wtedy pytany)', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const seen: unknown[] = [];
+    const replayed = state(1, 2, 3);
+    expect(await judge(() => replayed, (s) => { seen.push(s); return false; })(RUN)).toEqual({ ok: true, score: 6 });
+    expect(seen).toEqual([replayed]);
+    const bankrupt = vi.fn(() => true);
+    expect(await judge(() => { throw new Error('zepsuty dziennik'); }, bankrupt)(RUN)).toEqual({ ok: false, reason: 'replay-failed' });
+    expect(bankrupt).not.toHaveBeenCalled();
+    errors.mockRestore();
   });
 
   it('odtworzenie, które rzuca albo daje wynik nieliczbowy: replay-failed', async () => {

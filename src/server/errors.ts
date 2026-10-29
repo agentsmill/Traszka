@@ -13,6 +13,7 @@ export const API_ERRORS = {
   'not-ranked': { status: 400, message: 'Do rankingu liczy się tylko tryb rankingowy: wrzesień–listopad, bez premii z sieci sklepów.' },
   'old-version': { status: 409, message: 'Ta wersja gry jest nieaktualna. Odśwież stronę: Centrala wydała nowy regulamin.' },
   'replay-failed': { status: 422, message: 'Odtworzenie biegu się nie powiodło, więc wyniku nie ma. Centrala przeprasza (formalnie).' },
+  'season-bankrupt': { status: 422, message: 'Sezon zakończony bankructwem nie trafia do rankingu.' },
   'replay-unavailable': { status: 503, message: 'Sędzia Centrali jeszcze się szkoli. Wyniki rankingowe przyjmiemy wkrótce.' },
   'rate-limited': { status: 429, message: 'Za dużo zgłoszeń naraz. Centrala prosi o cierpliwość (i o kawę).' },
   'bad-save': { status: 400, message: 'To nie wygląda na zapis gry.' },

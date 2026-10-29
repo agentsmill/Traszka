@@ -39,7 +39,8 @@ function checkBundle(mod: unknown): { bundle: JudgeBundle } | { problem: string 
  * startem dzielą jedną próbę. Wyjątek nie wychodzi na zewnątrz.
  *
  * Bieg z inną `simVersion` niż `SIM_VERSION` bundla to `old-version`, bez odtwarzania. Reszta (odtworzenie do końca sezonu,
- * wynik, `replay-failed`) to `makeReplayVerifier` z `verify.ts`; wyjątek z `replayRun` loguje on, więc tu nie ma drugiego try/catch.
+ * wynik, `replay-failed`, `season-bankrupt` dla stanu z `gameOver`) to `makeReplayVerifier` z `verify.ts`; wyjątek z `replayRun`
+ * loguje on, więc tu nie ma drugiego try/catch.
  */
 export function makeBundleVerifier(load: () => Promise<unknown>): VerifyRun {
   let loaded: JudgeBundle | undefined;
@@ -71,6 +72,11 @@ export function makeBundleVerifier(load: () => Promise<unknown>): VerifyRun {
     const judge = await bundle();
     if (judge === undefined) return { ok: false, reason: 'replay-unavailable' };
     if (run.simVersion !== judge.SIM_VERSION) return { ok: false, reason: 'old-version' };
-    return makeReplayVerifier({ replay: judge.replayRun, endMinute: judge.RANKED_SEASON_END_MINUTE, score: judge.seasonScore })(run);
+    return makeReplayVerifier({
+      replay: judge.replayRun,
+      endMinute: judge.RANKED_SEASON_END_MINUTE,
+      score: judge.seasonScore,
+      bankrupt: (state) => state.gameOver === true,   // koniec gry przed końcem sezonu (debet albo wypowiedzenie umowy): `season-bankrupt`
+    })(run);
   };
 }

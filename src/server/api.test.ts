@@ -120,6 +120,35 @@ describe('api/** na Vercelu (atrapa Upstash przez fetch)', () => {
     }, 60_000,
   );
 
+  // Reguła z 2026-10-29: bieg zakończony bankructwem przed końcem sezonu nie wchodzi do rankingu, choćby miał raporty. Prawdziwy bundle,
+  // prawdziwa droga przez `api/runs.ts`; bez bundla na dysku ten przypadek pokrywa tests/judgeBundle.test.ts (buduje własny).
+  it.runIf(bundleOnDisk)(
+    'ze zbudowanym bundlem sędziego: bieg, który bankrutuje przed końcem sezonu, dostaje 422 season-bankrupt, a nick i ranking zostają puste', async () => {
+      // zamówienia ręczne na maksa od pierwszego dnia: gotówka schodzi poniżej granicy debetu, zanim sklep zdąży zarobić
+      const bankrupt: RunRecord = {
+        seed: run.seed, gameVersion: run.gameVersion, generatorVersion: GENERATOR_VERSION, simVersion: SIM_VERSION, mode: 'ranked',
+        log: [{ minute: 360, seq: 0, cmd: { type: 'setOrder', auto: false, manual: 30 } }],
+      };
+      const state = replayRun(bankrupt, RANKED_SEASON_END_MINUTE);
+      expect(state.gameOver, 'dziennik naprawdę kończy grę').toBe(true);
+      expect(state.minute).toBeLessThan(RANKED_SEASON_END_MINUTE);
+
+      const own = new Request(`${ORIGIN}/api/runs`, {
+        method: 'POST', headers: { 'content-type': 'application/json', 'x-real-ip': '192.0.2.77' },
+        body: JSON.stringify({ key: 'M2N3-P4Q5-R6S7-T8V9-W0XY', nick: 'Bankrut', run: bankrupt }),
+      });
+      const res = await runs(own);
+      expect(res.status).toBe(422);
+      expect(await res.json()).toEqual({ ok: false, error: 'season-bankrupt', message: 'Sezon zakończony bankructwem nie trafia do rankingu.' });
+      // nic w bazie poza licznikami limitu: ani nick, ani wynik
+      expect(redis.keys().every((k) => k.startsWith('tr:rl:') || k.startsWith('tr:salt:'))).toBe(true);
+      const board = await (await leaderboard(new Request(`${ORIGIN}/api/leaderboard?board=global`))).json() as { rows: unknown[] };
+      expect(board.rows).toEqual([]);
+      const other = await (await player(post('/api/player', { key: KEY, nick: 'Bankrut' }))).json();
+      expect(other).toMatchObject({ ok: true, nick: { nick: 'Bankrut', status: 'free' } });
+    }, 60_000,
+  );
+
   it('z podpiętym sędzią (jak po scaleniu A) bieg trafia do rankingu, który widać przez api/leaderboard', async () => {
     const withJudge = route(handleRuns, { verifyRun: () => ({ ok: true, score: 12_345 }) });
     const res = await withJudge(post('/api/runs', { key: KEY, nick: 'Mateusz', run }));

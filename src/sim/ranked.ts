@@ -4,6 +4,8 @@ import type { EconomyState } from './economy/economy';
 /**
  * Tryb rankingowy (spec §14.7): świeży sklep z seeda i sezon trzech miesięcy gry, wrzesień–listopad. Wynik to suma zysków
  * trzech raportów miesięcznych. Serwer odtwarza bieg (`replayRun`) do `RANKED_SEASON_END_MINUTE` i liczy wynik sam, tą funkcją.
+ * Bieg, który przed końcem sezonu kończy się grą (`gameOver`: granica debetu albo wypowiedzenie umowy), do rankingu nie wchodzi:
+ * sędzia odrzuca go jako `season-bankrupt` (`src/server/verify.ts`), więc wynik dotyczy tylko biegów, które doszły do końca.
  */
 
 /** Ile raportów miesięcznych ma sezon. */
@@ -20,8 +22,9 @@ export const RANKED_SEASON_END_MINUTE = LAST_DAY * MINUTES_PER_DAY + OPEN_TO + 1
 
 /**
  * Wynik sezonu: suma zysków trzech pierwszych raportów z `history`, zaokrąglona do pełnych złotych (wynik trafia do rankingu
- * jako liczba całkowita). Raporty po sezonie nic nie zmieniają. Bieg zakończony wypowiedzeniem umowy przed końcem listopada ma
- * mniej raportów i liczy się suma tych, które powstały.
+ * jako liczba całkowita). Raporty po sezonie nic nie zmieniają. Funkcja liczy tylko zamknięte raporty i nie wie o bankructwie:
+ * bieg z `gameOver` przed końcem sezonu nie jest liczony wcale (sędzia odrzuca go jako `season-bankrupt`, zanim zawoła tę funkcję),
+ * więc w rankingu trafia tu bieg, który ma wszystkie trzy raporty.
  */
 export function seasonScore(state: Pick<EconomyState, 'history'>): number {
   const sum = state.history.slice(0, RANKED_SEASON_MONTHS).reduce((acc, h) => acc + h.profit, 0);

@@ -94,8 +94,18 @@ describe('POST /api/runs: zgłoszenie biegu', () => {
     expect((await body(await handleLeaderboard(get('/api/leaderboard'), deps))).rows).toEqual([]);
   });
 
-  it('każda odmowa sędziego ma swój kod i status: old-version 409, replay-failed 422, replay-unavailable 503', async () => {
-    const reasons = { 'old-version': 409, 'replay-failed': 422, 'replay-unavailable': 503 } as const;
+  it('bieg zakończony bankructwem (season-bankrupt): 422 z komunikatem, a w bazie nie ma ani nicka, ani wyniku', async () => {
+    const { deps, redis } = setup({ ok: false, reason: 'season-bankrupt' });
+    const res = await submit(deps, KEY_A, 'Mateusz');
+    expect(res.status).toBe(422);
+    expect(await body(res)).toEqual({ ok: false, error: 'season-bankrupt', message: 'Sezon zakończony bankructwem nie trafia do rankingu.' });
+    expect(redis.keys().filter((k) => !k.startsWith('tr:rl:') && !k.startsWith('tr:salt:'))).toEqual([]);
+    expect(await body(await handlePlayer(post('/api/player', { key: KEY_B, nick: 'Mateusz' }), deps))).toEqual({ ok: true, nicks: [], nick: { nick: 'Mateusz', status: 'free' } });
+    expect((await body(await handleLeaderboard(get('/api/leaderboard'), deps))).rows).toEqual([]);
+  });
+
+  it('każda odmowa sędziego ma swój kod i status: old-version 409, replay-failed 422, season-bankrupt 422, replay-unavailable 503', async () => {
+    const reasons = { 'old-version': 409, 'replay-failed': 422, 'season-bankrupt': 422, 'replay-unavailable': 503 } as const;
     for (const [reason, status] of Object.entries(reasons) as [keyof typeof reasons, number][]) {
       const res = await submit(setup({ ok: false, reason }).deps, KEY_A, 'Ala');
       expect([reason, res.status]).toEqual([reason, status]);

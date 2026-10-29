@@ -46,33 +46,42 @@ beforeAll(async () => {
 }, 60_000);
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
-const RUN: RunRecord = { seed: 'kiełbasa-42', gameVersion: 'test', generatorVersion: GENERATOR_VERSION, simVersion: SIM_VERSION, mode: 'ranked', log: [] };
-const at = (day: number, hour: number, minute = 0): number => day * MINUTES_PER_DAY + hour * 60 + minute;
 /**
- * Kilka poleceń rozłożonych na sezon oraz codzienne stuknięcia przez cztery tygodnie: bez nich sklepu nie stać na remont 1 (25 tys. zł),
- * a remont jest tu po to, żeby układ sklepu zmienił się w trakcie odtwarzania (pilnuje tego osobny test niżej).
+ * Sklep, w którym bierny bieg i bieg z `LOG` przeżywają sezon: sędzia odrzuca bieg zakończony bankructwem (`season-bankrupt`), a w
+ * wielu sklepach bierny bieg kończy grę poniżej granicy debetu (np. w `kiełbasa-42` w ostatniej minucie sezonu).
  */
-const LOG: LogEntry[] = (() => {
-  const planned: { minute: number; cmd: LogEntry['cmd'] }[] = [
-    { minute: at(0, 6, 0), cmd: { type: 'setOrder', auto: false, manual: 6 } },
-    { minute: at(0, 6, 1), cmd: { type: 'movePallet', palletId: 1, loc: 'backroom' } },
-    { minute: at(0, 6, 2), cmd: { type: 'setStaffProfile', profile: 'dostawa' } },
-    { minute: at(0, 6, 3), cmd: { type: 'tapPallet', palletId: 1 } },
-    { minute: at(1, 12), cmd: { type: 'buyUpgrade', id: 'szkolenie' } },
-    { minute: at(2, 9), cmd: { type: 'hire' } },
-    { minute: at(3, 7), cmd: { type: 'setOrder', auto: true } },
-    { minute: at(4, 12), cmd: { type: 'buyEquipment', id: 'sco' } },
-    // dzień 29 rano: po stuknięciach z czterech tygodni sklep ma ok. 25,6 tys. zł (SIM_VERSION 3), dzień wcześniej brakuje ok. 120 zł
-    { minute: at(29, 7), cmd: { type: 'startRemont' } },
-    { minute: at(29, 7, 5), cmd: { type: 'rushRemont' } },
-    { minute: at(40, 12), cmd: { type: 'campaign' } },
-  ];
-  for (let day = 0; day < 28; day++) {
+const SEED = 'szarlotka-380';
+const RUN: RunRecord = { seed: SEED, gameVersion: 'test', generatorVersion: GENERATOR_VERSION, simVersion: SIM_VERSION, mode: 'ranked', log: [] };
+const at = (day: number, hour: number, minute = 0): number => day * MINUTES_PER_DAY + hour * 60 + minute;
+/** Dopisuje codzienne stuknięcia (palety i kasa) przez `days` dni i układa wpisy po minucie z kolejnymi `seq`. */
+const withTaps = (planned: { minute: number; cmd: LogEntry['cmd'] }[], days: number): LogEntry[] => {
+  for (let day = 0; day < days; day++) {
     for (let k = 0; k < 8; k++) planned.push({ minute: at(day, 7, 2 + k), cmd: { type: 'tapPallet' } });
     for (let k = 0; k < 6; k++) planned.push({ minute: at(day, 8, 5 + k), cmd: { type: 'tapTill' } });
   }
   return planned.sort((a, b) => a.minute - b.minute).map((p, seq) => ({ minute: p.minute, seq, cmd: p.cmd }));
-})();
+};
+/**
+ * Kilka poleceń rozłożonych na sezon oraz codzienne stuknięcia przez cztery tygodnie. Bieg przeżywa sezon w `SEED` (`gameOver` false), a
+ * jego wynik różni się od biernego (pilnuje tego test niżej). Ekonomia z granicą debetu jest ciasna: droższe zakupy (zatrudnienie, sprzęt,
+ * remont) w tym sklepie kończą grę przed końcem sezonu, więc są tylko w `LOG_REMONT`.
+ */
+const LOG: LogEntry[] = withTaps([
+  { minute: at(0, 6, 0), cmd: { type: 'setStaffProfile', profile: 'kolejka' } },
+  { minute: at(0, 6, 1), cmd: { type: 'movePallet', palletId: 1, loc: 'backroom' } },
+  { minute: at(2, 12), cmd: { type: 'buyUpgrade', id: 'ulotki' } },
+  { minute: at(3, 7), cmd: { type: 'setOrder', auto: true } },
+  { minute: at(40, 12), cmd: { type: 'campaign' } },
+], 28);
+/**
+ * Stuknięcia przez cały sezon i remont 1 w 45. dniu (po stuknięciach sklepu stać na 25 tys. zł). Układ sklepu zmienia się w trakcie
+ * odtwarzania, ale po remoncie gotówka schodzi poniżej granicy debetu w drugim miesiącu: bieg kończy się bankructwem po dwóch raportach
+ * z dodatnim wynikiem (`direct` > 0), czyli taki, jaki gracz mógłby zamrozić i wysłać, gdyby sędzia liczył raporty, które powstały.
+ */
+const LOG_REMONT: LogEntry[] = withTaps([
+  { minute: at(45, 7), cmd: { type: 'startRemont' } },
+  { minute: at(45, 7, 5), cmd: { type: 'rushRemont' } },
+], 90);
 /** Wynik policzony bezpośrednio z src/sim, tym samym kodem co w bundlu (drugi sposób do porównania). */
 const direct = (run: RunRecord): number => seasonScore(replayRun(run, RANKED_SEASON_END_MINUTE));
 
@@ -107,7 +116,7 @@ describe('buildJudge: jeden samodzielny plik z aktualnej symulacji', () => {
         names: Object.keys(m).sort(),
         types: Object.fromEntries(Object.entries(m).map(([k, v]) => [k, typeof v])),
         SIM_VERSION: m.SIM_VERSION, GENERATOR_VERSION: m.GENERATOR_VERSION, END: m.RANKED_SEASON_END_MINUTE,
-        score: m.seasonScore(m.replayRun({ seed: 'kiełbasa-42', gameVersion: 'x', generatorVersion: m.GENERATOR_VERSION, mode: 'ranked', log: [] }, m.RANKED_SEASON_END_MINUTE)),
+        score: m.seasonScore(m.replayRun({ seed: ${JSON.stringify(SEED)}, gameVersion: 'x', generatorVersion: m.GENERATOR_VERSION, mode: 'ranked', log: [] }, m.RANKED_SEASON_END_MINUTE)),
       }));`;
     const res = spawnSync(process.execPath, ['--input-type=module', '-e', script, pathToFileURL(file).href], { encoding: 'utf8' });
     expect(res.stderr).toBe('');
@@ -184,15 +193,30 @@ describe('sędzia na zbudowanym bundlu daje ten sam wynik co symulacja z src', (
     expect(Number.isInteger(res.ok && res.score)).toBe(true);
   }, 60_000);
 
-  it('bieg z poleceniami w dzienniku (w tym remont): wynik jak z src i inny niż biernego, więc dziennik naprawdę wpływa na odtworzenie', async () => {
+  it('bieg z poleceniami w dzienniku: wynik jak z src i inny niż biernego, więc dziennik naprawdę wpływa na odtworzenie', async () => {
     const run: RunRecord = { ...RUN, log: LOG };
+    expect(replayRun(run, RANKED_SEASON_END_MINUTE).gameOver, 'bieg przeżywa sezon').toBe(false);
     const res = await makeBundleVerifier(load)(run);
     expect(res).toEqual({ ok: true, score: direct(run) });
     expect(direct(run)).not.toBe(direct(RUN));
   }, 60_000);
 
-  it('dziennik z testu przebudowuje sklep (remont 1 przyjęty), więc odtwarzanie przechodzi przez zmianę układu', () => {
-    expect(replayRun({ ...RUN, log: LOG }, RANKED_SEASON_END_MINUTE).remontLevel).toBeGreaterThan(0);
+  it('odtwarzanie przechodzi przez zmianę układu sklepu (remont 1 przyjęty): stan z bundla i z src jest ten sam', async () => {
+    const run: RunRecord = { ...RUN, log: LOG_REMONT };
+    const state = replayRun(run, RANKED_SEASON_END_MINUTE);
+    expect(state.remontLevel).toBeGreaterThan(0);
+    const mod = await load() as typeof entry;
+    expect(JSON.stringify(mod.replayRun(run, RANKED_SEASON_END_MINUTE))).toBe(JSON.stringify(state));
+  }, 60_000);
+
+  it('bieg, który bankrutuje przed końcem sezonu, choć ma raporty z dodatnim wynikiem: season-bankrupt, a nie wynik z raportów', async () => {
+    const run: RunRecord = { ...RUN, log: LOG_REMONT };
+    const state = replayRun(run, RANKED_SEASON_END_MINUTE);
+    expect(state.gameOver, 'dziennik naprawdę kończy grę').toBe(true);
+    expect(state.minute).toBeLessThan(RANKED_SEASON_END_MINUTE);
+    expect(state.history.length, 'raporty, które powstały przed bankructwem').toBeGreaterThan(0);
+    expect(seasonScore(state), 'wynik, który dałoby liczenie z raportów').toBeGreaterThan(0);
+    expect(await makeBundleVerifier(load)(run)).toEqual({ ok: false, reason: 'season-bankrupt' });
   }, 60_000);
 
   it('simVersion inny niż SIM_VERSION w bundlu: old-version', async () => {
