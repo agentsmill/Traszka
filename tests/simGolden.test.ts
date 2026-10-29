@@ -24,7 +24,7 @@ const GOLDEN: Record<number, string> = {
   1: 'f782942df6a06a7b9cda5ef1c0e5678e9765faeccde5a6c16aa4efa8d9695d26',
   2: 'de237366de4f5c764dde1bdbdd3f7adcc7fb7b80ff80673a4f73785a24e8cdca',   // C2: karty, profile i przypięcia załogi, KPI zamiast zleceń, bez prezentu
   3: '1c05f23716a31cb5f11cbb41a82f5f0eeebaf4e88f1b2d46456b39b4ce5aa79b',   // Straż z upomnieniem, limit asystenta, stukanie w kasę tylko gdy pomaga
-  4: '8229ee81686b9146ecd9cc0f319e3a04a0dac357688fb7e2639111213402223c',   // więcej klientów i fale, 6 palet, nowy balans opłaty i premii
+  4: '16a2834398928b489f50dc3b39de8cf18a49e3c700a0e4fbfc058b3f381a2239',   // więcej klientów i fale, 6 palet, limit debetu, nowy balans opłaty i premii
 };
 
 const SEED = 'kiełbasa-42';
@@ -62,10 +62,12 @@ function mulberry32(seed: number): () => number {
 }
 
 /**
- * Wydatki i decyzje gracza w wybranych dniach (dzień, godzina, minuta, polecenie). Terminy dobrane do ekonomii z C2 tak, żeby
- * każde polecenie poza zapasowymi było przyjęte, a bieg przetrwał sezon: gotówka po raporcie miesięcznym spada o opłatę
- * franczyzową (2000 zł + 12% obrotu), a dwa raporty z rzędu poniżej −30 tys. zł kończą umowę, więc droższe zakupy idą we wrześniu
- * (małe) i w listopadzie, a w październiku tylko kilka. Remont 1 (25 tys. zł, poziom 8) ma dwie próby: dziś przyjmowana jest
+ * Wydatki i decyzje gracza w wybranych dniach (dzień, godzina, minuta, polecenie). Terminy dobrane do ekonomii tak, żeby każde
+ * polecenie poza zapasowymi było przyjęte, a bieg przetrwał sezon: gotówka po raporcie miesięcznym spada o opłatę franczyzową
+ * (2000 zł + udział w obrocie), a gotówka poniżej granicy debetu (`DEBT_LIMIT`, −10 tys. zł) kończy grę od razu, więc droższe zakupy
+ * idą we wrześniu (małe) i w listopadzie, a w październiku tylko kilka. Po wrześniu bieg wchodzi w strefę ostrzeżenia o debecie
+ * (odtworzenie przechodzi też przez to zdarzenie). Trzecia osoba przychodzi dopiero w październiku: od SIM_VERSION 4 sklep na
+ * start ma ludzi akurat na swój ruch, więc etat od drugiego dnia zjadał gotówkę na opłatę. Remont 1 (25 tys. zł, poziom 8) ma dwie próby: dziś przyjmowana jest
  * pierwsza, a druga jest zapasem na zmiany cen (rush bez trwającego remontu jest odrzucany, nie błędem).
  * Palety startowe mają numery 1 i 2; sloty `equipmentSlot-1…3` (pojemność 2) są od układu 0, `equipmentSlot-4` od remontu 1.
  */
@@ -78,7 +80,6 @@ const PLAN: readonly (readonly [day: number, hour: number, minute: number, cmd: 
   [0, 6, 3, { type: 'tapPallet', palletId: 1 }],
   // pierwsze inwestycje, jeszcze na układzie 0
   [1, 12, 0, { type: 'buyUpgrade', id: 'szkolenie' }],
-  [2, 9, 0, { type: 'hire' }],
   [2, 12, 0, { type: 'buyUpgrade', id: 'ulotki' }],
   [3, 7, 0, { type: 'setOrder', auto: true }],
   [4, 12, 0, { type: 'buyEquipment', id: 'sco' }],
@@ -111,31 +112,110 @@ const PLAN: readonly (readonly [day: number, hour: number, minute: number, cmd: 
 
 /**
  * Odpowiedzi na karty dnia i okólniki: numer karty, jej id, dzień, godzina i minuta, od której jest widoczna, oraz numer wybranej
- * odpowiedzi (każda inna niż domyślna, bo domyślną symulacja zatwierdza sama). Karty losuje symulacja z seeda i numeru dnia, więc
- * numery są stałe dla tego seeda i tej ekonomii; po zmianie ekonomii mogą wskazywać inne karty (wtedy test „odpowiedzi trafiają w
- * zamierzone karty” się czerwieni i trzeba odczytać nową listę z `state.tycoon.cards`). Dziennik nie zależy od stanu w trakcie testu.
+ * odpowiedzi (każda inna niż domyślna, bo domyślną symulacja zatwierdza sama). Wybrane raz tak, jak gra bot `decydent`
+ * (`bestAnswer` z `BOT_VALUATION`), i zapisane na stałe: bieg z samymi odpowiedziami domyślnymi nie stać na remont przed końcem
+ * sezonu bez zejścia poniżej granicy debetu. Karty losuje symulacja z seeda i numeru dnia, więc numery są stałe dla tego seeda i tej
+ * ekonomii; po zmianie ekonomii mogą wskazywać inne karty (wtedy test „odpowiedzi trafiają w zamierzone karty” się czerwieni i trzeba
+ * odczytać nową listę z `state.tycoon.cards`). Dziennik nie zależy od stanu w trakcie testu.
  */
 const CARD_ANSWERS: readonly (readonly [seq: number, id: string, day: number, hour: number, minute: number, answer: number])[] = [
   [1, 'cenowki', 0, 11, 0, 0],
-  [2, 'chory', 1, 6, 0, 1],
+  [2, 'chory', 1, 6, 0, 0],
   [3, 'okolnik-ankieta', 2, 8, 0, 1],
-  [9, 'okolnik-paleta', 6, 8, 0, 0],
+  [4, 'fefo', 3, 18, 0, 1],
+  [6, 'promocja', 4, 7, 0, 0],
+  [8, 'glitch', 5, 10, 0, 0],
+  [7, 'fefo', 5, 18, 0, 1],
+  [10, 'ekspres', 7, 7, 30, 1],
+  [11, 'lodowka', 7, 14, 0, 1],
   [12, 'ulewa', 8, 9, 0, 1],
   [13, 'okolnik-premia', 9, 8, 0, 0],
+  [15, 'okolnik-refundacja', 11, 8, 0, 0],
+  [16, 'audyt', 12, 9, 0, 0],
+  [17, 'promocja', 13, 7, 0, 0],
+  [18, 'fefo', 13, 18, 0, 1],
+  [20, 'ulewa', 14, 9, 0, 1],
+  [19, 'glitch', 14, 10, 0, 0],
   [21, 'okolnik-usmiech', 15, 8, 0, 0],
   [22, 'mecz', 16, 12, 0, 0],
-  [24, 'okolnik-witryna', 18, 8, 0, 0],
-  [33, 'okolnik-usmiech', 26, 8, 0, 1],
+  [23, 'fefo', 17, 18, 0, 1],
+  [26, 'chory', 19, 6, 0, 0],
+  [25, 'wiralowy', 19, 10, 0, 0],
+  [28, 'lodowka', 21, 14, 0, 1],
+  [29, 'okolnik-premia', 22, 8, 0, 0],
+  [30, 'cenowki', 23, 11, 0, 0],
+  [31, 'okolnik-refundacja', 24, 8, 0, 0],
+  [32, 'influencer', 25, 15, 0, 0],
+  [33, 'okolnik-usmiech', 26, 8, 0, 0],
+  [34, 'fefo', 27, 18, 0, 1],
+  [35, 'glitch', 28, 10, 0, 0],
+  [36, 'fefo', 29, 18, 0, 1],
   [37, 'okolnik-premia', 30, 8, 0, 0],
-  [45, 'mecz', 37, 12, 0, 1],
-  [48, 'okolnik-witryna', 40, 8, 0, 0],
+  [38, 'wiralowy', 31, 10, 0, 0],
+  [39, 'okolnik-ankieta', 32, 8, 0, 1],
+  [40, 'fefo', 32, 18, 0, 1],
+  [41, 'chory', 34, 6, 0, 0],
+  [42, 'promocja', 34, 7, 0, 0],
+  [43, 'glitch', 35, 10, 0, 0],
+  [44, 'okolnik-refundacja', 36, 8, 0, 0],
+  [45, 'mecz', 37, 12, 0, 0],
+  [47, 'sejf', 39, 21, 0, 0],
+  [49, 'fefo', 41, 18, 0, 1],
+  [50, 'okolnik-usmiech', 42, 8, 0, 0],
+  [51, 'lodowka', 43, 14, 0, 1],
+  [52, 'fefo', 43, 18, 0, 1],
+  [53, 'chory', 44, 6, 0, 0],
+  [54, 'wiralowy', 44, 10, 0, 0],
+  [55, 'ekspres', 45, 7, 30, 1],
   [57, 'okolnik-premia', 46, 8, 0, 0],
-  [61, 'okolnik-ankieta', 50, 8, 0, 0],
-  [76, 'okolnik-witryna', 62, 8, 0, 0],
+  [58, 'cenowki', 47, 11, 0, 0],
+  [59, 'memy', 48, 13, 0, 0],
+  [60, 'fefo', 49, 18, 0, 1],
+  [61, 'okolnik-ankieta', 50, 8, 0, 1],
+  [63, 'promocja', 51, 7, 0, 0],
+  [62, 'ulewa', 51, 9, 0, 1],
+  [64, 'okolnik-refundacja', 52, 8, 0, 0],
+  [66, 'chory', 53, 6, 0, 0],
+  [65, 'fefo', 53, 18, 0, 1],
+  [67, 'glitch', 54, 10, 0, 0],
+  [68, 'audyt', 55, 9, 0, 0],
+  [69, 'lodowka', 55, 14, 0, 1],
+  [70, 'okolnik-usmiech', 56, 8, 0, 0],
+  [71, 'promocja', 57, 7, 0, 0],
+  [72, 'okolnik-premia', 58, 8, 0, 0],
+  [73, 'influencer', 59, 15, 0, 0],
+  [74, 'memy', 60, 13, 0, 0],
+  [75, 'chory', 61, 6, 0, 0],
+  [77, 'okolnik-refundacja', 64, 8, 0, 0],
+  [79, 'widmo', 65, 7, 10, 0],
   [78, 'ekspres', 65, 7, 30, 1],
-  [80, 'okolnik-paleta', 67, 8, 0, 0],
-  [97, 'okolnik-witryna', 80, 8, 0, 0],
+  [81, 'ulewa', 68, 9, 0, 1],
+  [82, 'mecz', 69, 12, 0, 0],
+  [83, 'okolnik-premia', 70, 8, 0, 0],
+  [84, 'widmo', 71, 7, 10, 0],
+  [85, 'okolnik-usmiech', 72, 8, 0, 0],
+  [86, 'fefo', 72, 18, 0, 1],
+  [87, 'audyt', 73, 9, 0, 0],
+  [88, 'chory', 74, 6, 0, 0],
+  [89, 'memy', 74, 13, 0, 0],
+  [90, 'promocja', 75, 7, 0, 0],
+  [91, 'fefo', 75, 18, 0, 1],
+  [92, 'okolnik-refundacja', 76, 8, 0, 0],
+  [94, 'okolnik-ankieta', 78, 8, 0, 1],
+  [95, 'widmo', 79, 7, 10, 0],
+  [96, 'mecz', 79, 12, 0, 0],
+  [98, 'cenowki', 81, 11, 0, 0],
+  [99, 'fefo', 81, 18, 0, 1],
+  [100, 'promocja', 82, 7, 0, 0],
+  [101, 'ekspres', 82, 7, 30, 1],
+  [102, 'ulewa', 83, 9, 0, 1],
+  [103, 'fefo', 83, 18, 0, 1],
   [104, 'okolnik-premia', 84, 8, 0, 0],
+  [106, 'chory', 85, 6, 0, 0],
+  [107, 'ulewa', 86, 9, 0, 1],
+  [108, 'okolnik-usmiech', 87, 8, 0, 0],
+  [109, 'influencer', 87, 15, 0, 0],
+  [110, 'fefo', 90, 18, 0, 1],
 ];
 
 /**
