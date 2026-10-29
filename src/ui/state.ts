@@ -211,11 +211,11 @@ export interface GameActions {
   dispatch(cmd: Command): CommandResult;
   /** Odbiera nagrodę za nieobecność i premię dzienną z okna powitalnego (nie jest poleceniem: stan zmienia się poza dziennikiem). */
   claimWelcome(): void;
-  /** Zamyka obecny sklep (dołącza do sieci) i otwiera nowy z premią. */
+  /** Zamyka obecny sklep (dołącza do sieci) i otwiera nowy z premią. W biegu rankingowym nie ma sieci: komunikat i nic więcej. */
   openNextStore(): void;
   setSound(on: boolean): void;
   setVibration(on: boolean): void;
-  /** Zaczyna od nowa w tym samym sklepie (kasuje zapis). */
+  /** Zaczyna od nowa w tym samym sklepie (kasuje zapis). W biegu rankingowym odmawia z komunikatem: bieg porzuca się osobno (`abandonRanked`). */
   restart(): void;
   /** „Nowy sklep” z ⚙: otwiera ekran startowy (nick, kasjer, seed). Obecny sklep zostaje zapisany pod swoim seedem. */
   newStore(): void;

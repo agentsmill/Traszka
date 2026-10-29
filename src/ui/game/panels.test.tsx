@@ -12,7 +12,7 @@ import { WEATHER_LABEL } from '@/sim/economy/tycoon/cleanliness';
 import { computeStoreInfo, type PalletLoc, type StoreInfo } from '@/sim/economy/storeInfo';
 import { EQUIPMENT, UPGRADES } from '@/sim/economy/upgrades';
 import { layoutFor } from '@/sim/store/layoutFor';
-import { metaView, speed, type GameActions } from '../state';
+import { metaView, ranked, speed, type GameActions } from '../state';
 import { Bar, GoalsPanel, PalletItem, PalletsPanel, PeoplePanel, ShopPanel, StorePanel } from './panels';
 import { plural, zl } from './format';
 import { buttonAria, buttonLabelled, buttonsOf, click, labels, sectionTitled, textOf, walk, type Vnode } from './vnodeTree';
@@ -39,6 +39,7 @@ function rich(): { s: EconomyState; info: StoreInfo } {
 afterEach(() => {
   metaView.value = { points: 0, stores: 0, networkIncome: 0, network: [], sound: true, vibration: true };
   speed.value = 1;
+  ranked.value = null;
 });
 
 describe('panele wysyłają polecenia przez game.dispatch, a nie wołają symulacji', () => {
@@ -340,6 +341,39 @@ describe('panele wysyłają polecenia przez game.dispatch, a nie wołają symula
       expect(text).not.toContain('przed opłatą');
       expect(text).toContain('Opłatę franczyzową, WUT ponad próg i premię od obrotu Centrala rozlicza przy zamknięciu miesiąca. Zostaw gotówkę na opłaty.');
     });
+  });
+});
+
+describe('panel Cele: sieć Traszek a bieg rankingowy', () => {
+  const PRESTIGE = 'Otwórz kolejną Traszkę';
+  const readyShop = (): { s: EconomyState; info: StoreInfo } => {
+    const r = rich();
+    r.s.remontLevel = 2;   // prestiż gotowy (prestigeReady)
+    return r;
+  };
+
+  it('zwykły sklep gotowy do prestiżu ma przycisk „Otwórz kolejną Traszkę”', () => {
+    const { s, info } = readyShop();
+    const section = sectionTitled(GoalsPanel({ s, info, game: fakeGame(), v: 1 }), 'Twoja sieć Traszek');
+    expect(labels(section)).toEqual([PRESTIGE]);
+  });
+
+  it('w biegu rankingowym przycisku prestiżu nie ma, a podpowiedź mówi, że sieci w tym biegu nie ma', () => {
+    const { s, info } = readyShop();
+    ranked.value = { seed: s.seed, day: 12, days: 91, phase: 'playing' };
+    const section = sectionTitled(GoalsPanel({ s, info, game: fakeGame(), v: 1 }), 'Twoja sieć Traszek');
+    expect(labels(section)).toEqual([]);
+    expect(textOf(section)).toContain('W biegu rankingowym nie ma sieci sklepów');
+    expect(textOf(section)).not.toContain('Po drugim remoncie');
+  });
+
+  it('w biegu rankingowym także sklep, który „już jest w sieci”, nie podsuwa otwierania innego seeda', () => {
+    const { s, info } = readyShop();
+    metaView.value = { ...metaView.value, network: [s.seed] };
+    ranked.value = { seed: s.seed, day: 3, days: 91, phase: 'playing' };
+    const text = textOf(sectionTitled(GoalsPanel({ s, info, game: fakeGame(), v: 1 }), 'Twoja sieć Traszek'));
+    expect(text).toContain('W biegu rankingowym nie ma sieci sklepów');
+    expect(text).not.toContain('Otwórz sklep z innym seedem');
   });
 });
 

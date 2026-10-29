@@ -242,11 +242,12 @@ export interface StartupWindow { intro: boolean; welcome: WelcomeOffer | null }
  * Nowa gra (sklep na kreskę) dostaje ekran powitalny i niczego nie odbiera. Istniejąca gra dostaje okno powitalne, o ile
  * ma co oddać. Nic nie dostaje: koniec gry (wstaje okno wypowiedzenia umowy), sklep tymczasowy (to nie pierwsza gra
  * gracza, a nagrody miałyby wylądować w sklepie, którego nikt nie zapisze) i gra z metą z nowszej wersji (seria dni
- * i czas wyjścia są domyślne, więc nagroda wracałaby przy każdym odświeżeniu).
+ * i czas wyjścia są domyślne, więc nagroda wracałaby przy każdym odświeżeniu). Bieg rankingowy (`mode`) też nic nie dostaje: nagroda
+ * za nieobecność i premia dzienna zmieniają stan poza dziennikiem poleceń, a serwer takiego biegu nie odtworzy.
  */
-export function startupWindow(meta: Meta, s: EconomyState, ephemeral: boolean, now: Date): StartupWindow {
+export function startupWindow(meta: Meta, s: EconomyState, ephemeral: boolean, now: Date, mode: 'casual' | 'ranked' = 'casual'): StartupWindow {
   const none = { intro: false, welcome: null };
-  if (ephemeral || s.gameOver) return none;
+  if (ephemeral || s.gameOver || mode === 'ranked') return none;
   if (s.minute === OPEN_FROM && s.total.customers === 0) return { intro: true, welcome: null };
   return meta.readOnly ? none : { intro: false, welcome: welcomeOffer(meta, s, now) };
 }

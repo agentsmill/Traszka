@@ -19,13 +19,17 @@ export const MAX_MINUTES_PER_ADVANCE = 240;
  * zmienia się na granicy minut (otwarcie, zamknięcie). Zwraca liczbę wykonanych minut.
  * Karta decyzji zatrzymuje grę: pętla staje dokładnie w minucie `showAt` (także przy ×8, w środku klatki), a reszta czasu
  * klatki przepada, nie zbiera się w zegarze. Wznawia ją dopiero odpowiedź gracza; `stepMinute` sam karty nie sprawdza.
+ * `stopAt` (opcjonalne) to minuta, od której zegar nie rusza ani o krok: stan staje dokładnie na niej, także przy ×8 i dużym `seconds`,
+ * a reszta czasu klatki przepada tak samo jak przy karcie. Bieg rankingowy podaje tu koniec sezonu (`RANKED_SEASON_END_MINUTE`);
+ * bez parametru zegar działa jak zawsze.
  */
-export function advanceEconomy(s: EconomyState, info: StoreInfo, clock: EconClock, seconds: number, out: EconEvent[]): number {
+export function advanceEconomy(s: EconomyState, info: StoreInfo, clock: EconClock, seconds: number, out: EconEvent[], stopAt?: number): number {
   if (!(seconds > 0) || s.gameOver) return 0;
   let budget = seconds;
   let steps = 0;
   while (steps < MAX_MINUTES_PER_ADVANCE) {
     if (awaitingDecision(s)) break;
+    if (stopAt !== undefined && s.minute >= stopAt) break;
     const rate = gameMinutesPerSecond(s.minute);
     const need = (1 - clock.acc) / rate;
     if (budget < need) { clock.acc += budget * rate; break; }

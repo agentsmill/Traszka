@@ -408,6 +408,18 @@ describe('okno po otwarciu sklepu (startupWindow)', () => {
     const fresh = createEconomy('nowy', computeStoreInfo(generateStore('nowy')));
     expect(startupWindow(meta, fresh, true, now)).toEqual(none);   // awaryjny świat nie jest pierwszą grą gracza
   });
+
+  it('bieg rankingowy nie dostaje ani ekranu powitalnego z nagrodą, ani okna „Witaj z powrotem”: reguła zależy od trybu, nie od wołającego', () => {
+    const none = { intro: false, welcome: null };
+    const meta = plainMeta();
+    meta.lastSeen = now.getTime() - 3 * 3_600_000;
+    expect(startupWindow(meta, played(), false, now).welcome).not.toBeNull();   // ten sam stan w zwykłej grze ma nagrodę
+    expect(startupWindow(meta, played(), false, now, 'casual').welcome).not.toBeNull();
+    expect(startupWindow(meta, played(), false, now, 'ranked')).toEqual(none);
+    const fresh = createEconomy('nowy', computeStoreInfo(generateStore('nowy')));
+    expect(startupWindow(plainMeta(), fresh, false, now)).toEqual({ intro: true, welcome: null });
+    expect(startupWindow(plainMeta(), fresh, false, now, 'ranked')).toEqual(none);   // świeży bieg: bez ekranu powitalnego z dymkami pierwszego dnia
+  });
 });
 
 describe('gracz w meta: nick i wygląd kasjera (ekran startowy)', () => {

@@ -13,7 +13,8 @@ import { SAVE_SCHEMA, envelopeOf, newRunLog, restoreSessionFrom, type GameSessio
  * to, co przeżywa przeładowanie strony:
  * - aktywny bieg: jeden zapis pod `traszka:ranked` (nie per seed), niezależny od zwykłych sklepów (`traszka:save:<seed>`, `traszka:last`);
  * - szufladę niewysłanego biegu (`traszka:ranked:done`): skończony sezon, który czeka na przyjęcie przez serwer. Bieg znika z niej
- *   dopiero po przyjęciu albo na wyraźne „Odrzuć bieg” (`clearFinished`), nie po przeładowaniu ani po porażce sieci;
+ *   dopiero po przyjęciu albo na wyraźne „Odrzuć bieg” (`clearFinished`), nie po przeładowaniu ani po porażce sieci; gdy przeglądarka
+ *   nie przyjmie szuflady, bieg czeka w pamięci karty (`holdFinished`), a `pendingFinished` oddaje to, co do wysłania;
  * - wybrany tryb gry (`traszka:mode`).
  * Każdy dostęp do `localStorage` jest w `try/catch` (tryb prywatny, brak miejsca, zablokowane dane witryny): zapisy zgłaszają porażkę
  * wartością `false`, odczyty zachowują się tak, jakby klucza nie było. Moduł niczego nie wysyła i nie zna powłoki gry.
@@ -227,12 +228,26 @@ export function discardRanked(): void {
 // --- Szuflada niewysłanego biegu -----------------------------------------------------------------------------------------
 
 /**
+ * Bieg, którego szuflada nie przyjęła (przeglądarka odmówiła `saveFinished`), trzymany w pamięci karty: do przeładowania strony nie
+ * przepada, więc gracz może go jeszcze wysłać. Nie jest zapisem: po zamknięciu karty znika. Jedna sztuka, bo nowy bieg nie
+ * startuje, dopóki poprzedni czeka (`pendingFinished`).
+ */
+let held: FinishedRun | null = null;
+
+export function holdFinished(f: FinishedRun): void {
+  held = f;
+}
+
+/**
  * Wkłada gotowy bieg do szuflady. Zwraca false, gdy przeglądarka odmówiła: bieg zostaje wtedy u wołającego (w pamięci, i aktywny
- * zapis biegu, jeśli wołający go jeszcze nie skasował; kasować go wolno dopiero po `true`).
+ * zapis biegu, jeśli wołający go jeszcze nie skasował; kasować go wolno dopiero po `true`). Udany zapis zdejmuje z pamięci karty
+ * bieg trzymany przez `holdFinished`: szuflada ma teraz najnowszy.
  */
 export function saveFinished(f: FinishedRun): boolean {
   try {
-    return write(RANKED_KEYS.done, JSON.stringify(f));
+    const saved = write(RANKED_KEYS.done, JSON.stringify(f));
+    if (saved) held = null;
+    return saved;
   } catch {
     return false;
   }
@@ -257,8 +272,15 @@ export function loadFinished(): FinishedRun | null {
   }
 }
 
-/** Opróżnia szufladę: po przyjęciu biegu przez serwer albo na wyraźne „Odrzuć bieg”. */
+/**
+ * Niewysłany bieg: ten z pamięci karty (nowszy z konstrukcji, bo trafia tam dopiero po nieudanym zapisie) albo z szuflady. To jego widzi
+ * interfejs (`ui.unsent`) i to on idzie do wysłania; `loadFinished` pokazuje wyłącznie to, co leży w przeglądarce.
+ */
+export const pendingFinished = (): FinishedRun | null => held ?? loadFinished();
+
+/** Opróżnia szufladę i pamięć karty (`holdFinished`): po przyjęciu biegu przez serwer albo na wyraźne „Odrzuć bieg”. */
 export function clearFinished(): void {
+  held = null;
   remove(RANKED_KEYS.done);
 }
 

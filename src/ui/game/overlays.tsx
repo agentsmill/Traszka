@@ -317,6 +317,7 @@ export function FirstDayHints() {
 export const EPHEMERAL_BADGE = 'Sklep tymczasowy: postęp nie jest zapisywany';
 export const EPHEMERAL_NOTE = 'Ten sklep jest tymczasowy: nic się w nim nie zapisuje, a ewentualny zapis pod jego seedem zostaje nietknięty.';
 export const RESTART_CONFIRM = 'Zacząć od nowa w tym sklepie? Zapis zostanie usunięty.';
+export const RANKED_NOTE = 'W biegu rankingowym nie zaczyna się od nowa: Centrala nie robi poprawek. Bieg możesz porzucić w ustawieniach.';
 
 /** Napis plakietki biegu rankingowego: „Ranking · dzień 3/91”. */
 export const rankedBadgeText = (run: Pick<RankedView, 'day' | 'days'>): string => `Ranking · dzień ${run.day}/${run.days}`;
@@ -338,11 +339,15 @@ export function StoreBadge() {
  * W sklepie tymczasowym nic nie jest zapisane ani kasowane, więc zamiast „Zacznij od nowa” jest wyjaśnienie, a zapis pod
  * tym seedem zostaje nietknięty.
  */
-export function StoreActions({ ephemeral: temporary, onNewStore, onRestart }: { ephemeral: boolean; onNewStore: () => void; onRestart: () => void }) {
+export function StoreActions(
+  { ephemeral: temporary, ranked: rankedRun = false, onNewStore, onRestart }: { ephemeral: boolean; ranked?: boolean; onNewStore: () => void; onRestart: () => void },
+) {
   return (
     <div class="tt-store-actions">
       <button type="button" class="tt-btn" onClick={onNewStore}>Nowy sklep</button>
-      {temporary
+      {rankedRun
+        ? <p class="tt-hint">{RANKED_NOTE}</p>
+        : temporary
         ? <p class="tt-hint">{EPHEMERAL_NOTE}</p>
         : <button type="button" class="tt-btn" onClick={onRestart}>Zacznij od nowa</button>}
     </div>
@@ -381,7 +386,7 @@ export function Settings({ controls, game }: { controls: Controls; game: GameAct
           <button type="submit" class="tt-btn tt-primary">Otwórz</button>
           <button type="button" class="tt-btn" onClick={() => { controls.randomize(); close(); }}>Losuj</button>
         </form>
-        <StoreActions ephemeral={ephemeral.value} onNewStore={() => { close(); game.newStore(); }}
+        <StoreActions ephemeral={ephemeral.value} ranked={!!ranked.value} onNewStore={() => { close(); game.newStore(); }}
           onRestart={() => { if (confirm(RESTART_CONFIRM)) { game.restart(); close(); } }} />
         <h3>Pomoc</h3>
         <HowToButton />

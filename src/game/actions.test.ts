@@ -1,12 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CharacterFactory } from '@/render/characters/characterFactory';
-import { MINUTES_PER_DAY, OPEN_FROM } from '@/sim/economy/catalog';
+import { MINUTES_PER_DAY, MINUTES_PER_SECOND_OPEN, OPEN_FROM } from '@/sim/economy/catalog';
 import { applyCommand, COMMAND_TYPES, type Command } from '@/sim/economy/commands';
 import { awaitingDecision, stepMinute, type CommandResult, type EconEvent } from '@/sim/economy/economy';
 import { cardDef, visibleCards } from '@/sim/economy/tycoon/cards';
 import { CIRCULARS, DECK } from '@/sim/economy/tycoon/deck';
 import { xpToNext } from '@/sim/economy/progress';
 import { UPGRADES } from '@/sim/economy/upgrades';
+import { RANKED_SEASON_END_MINUTE } from '@/sim/ranked';
 import { SIM_VERSION } from '@/sim/simVersion';
 import { layoutFor } from '@/sim/store/layoutFor';
 import * as layoutModule from '@/sim/store/layoutFor';
@@ -18,11 +19,12 @@ import {
 } from './actions';
 import { openAtBoot } from './boot';
 import type { CashierLook } from './cashier';
-import { isModalOpen } from './frame';
+import { advanceSession, isModalOpen } from './frame';
 import { MemoryStorage } from './memoryStorage';
 import { loadMeta, type Meta } from './meta';
+import * as rankedRunModule from './rankedRun';
 import {
-  createRankedSession, getPlayMode, loadFinished, loadRanked, saveFinished, saveRanked, setPlayMode, type FinishedRun,
+  clearFinished, createRankedSession, getPlayMode, loadFinished, loadRanked, pendingFinished, saveFinished, saveRanked, setPlayMode, type FinishedRun,
 } from './rankedRun';
 import { entrySeed } from './seeds';
 import {
@@ -57,6 +59,7 @@ let storage: MemoryStorage;
 beforeEach(() => {
   storage = new MemoryStorage();
   vi.stubGlobal('localStorage', storage);
+  clearFinished();   // bieg trzymany w pamięci karty (rankedRun.ts) żyje dłużej niż pamięć przeglądarki z atrapy
 });
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -2215,6 +2218,430 @@ describe('powłoka gry (createShell)', () => {
         storage.setItem('traszka:ranked:done', 'śmieci');   // nierozpoznana szuflada to pusta szuflada
         syncUnsent();
         expect(ui.unsent.value).toBeNull();
+      });
+    });
+
+    describe('koniec sezonu rankingowego i wyłączone nagrody', () => {
+      const END = RANKED_SEASON_END_MINUTE;
+      const SEASON_OVER_TEXT = 'Sezon dobiegł końca.';
+      const LOG_FULL_TEXT = 'Dziennik biegu rankingowego jest pełny.';
+      const NOT_COUNTED_NOTICE = 'Ten bieg nie liczy się do rankingu.';
+      const RESULT_NOT_SAVED_NOTICE = 'Przeglądarka nie ma miejsca na zapis wyniku. Wyślij go teraz, zanim zamkniesz kartę.';
+      const NO_NETWORK_NOTICE = 'W biegu rankingowym nie ma sieci sklepów.';
+      const NO_RESTART_NOTICE = 'W biegu rankingowym nie zaczyna się od nowa. Porzuć bieg w ustawieniach.';
+      const FULL_SEASON_MS = 60_000;   // pełne odtworzenie sezonu w `finishRun` trwa około sekundy, a pod obciążeniem dłużej
+
+      /** Bieg rankingowy w powłoce, ustawiony `before` minut przed końcem sezonu, bez kart na biurku. */
+      function rankedNearEnd(h: Harness, before = 1): GameSession {
+        h.shell.startRanked(RANKED_SEED);
+        const s = h.shell.session!;
+        s.econ.minute = END - before;
+        s.econ.tycoon.cards.pending = [];
+        return s;
+      }
+      /** Jedna klatka pętli z main.ts: czas gry, potem zdarzenia do powłoki. */
+      function frame(h: Harness, seconds = 10, speed = 8, modal = false): EconEvent[] {
+        const events: EconEvent[] = [];
+        advanceSession(h.shell.session!, seconds, speed, modal, events);
+        h.shell.handleEvents(events);
+        return events;
+      }
+      const snapshot = (): Record<string, string | null> => Object.fromEntries(storage.keys().map((k) => [k, storage.getItem(k)]));
+      const drawerWrites = (spy: { mock: { calls: unknown[][] } }): number => spy.mock.calls.filter(([key]) => key === 'traszka:ranked:done').length;
+
+      describe('zamknięcie biegu', () => {
+        it('koniec sezonu w jednej klatce z kartą decyzji, raportem miesiąca i zapisem dnia: szuflada dokładnie raz, aktywny zapis zdjęty, gra nie robi kroku poza koniec', () => {
+          const h = harness();
+          h.shell.startRanked(RANKED_SEED);
+          const s = h.shell.session!;
+          s.econ.minute = END - 3;
+          s.econ.tycoon.cards.pending = s.econ.tycoon.cards.pending.slice(0, 1).map((c) => ({ ...c, showAt: END }));   // karta na minutę końca sezonu
+          const finish = vi.spyOn(rankedRunModule, 'finishRun');
+          const writes = vi.spyOn(storage, 'setItem');
+
+          const events = frame(h);   // ×8: trzy minuty do końca w jednej klatce, w ostatniej zamknięcie dnia i miesiąca oraz karta
+
+          expect(s.econ.minute).toBe(END);
+          expect(events.map((e) => e.kind)).toEqual(expect.arrayContaining(['day', 'month', 'card']));
+          expect(awaitingDecision(s.econ)).toBe(true);
+          expect(finish).toHaveBeenCalledTimes(1);
+          expect(drawerWrites(writes)).toBe(1);
+          const drawer = loadFinished()!;
+          expect(drawer).toMatchObject({ v: 1, seed: RANKED_SEED, finishedAt: Date.now() });
+          expect(drawer.record.mode).toBe('ranked');
+          expect(Number.isInteger(drawer.score)).toBe(true);
+          expect(storage.getItem('traszka:ranked')).toBeNull();   // aktywny zapis zdjęty, choć „zapis dnia” w tej samej klatce go zapisał
+          expect(ui.unsent.value).toEqual({ seed: RANKED_SEED, score: drawer.score });
+          expect(ui.ranked.value).toMatchObject({ seed: RANKED_SEED, day: 91, days: 91, phase: 'over' });
+          expect(ui.report.value).not.toBeNull();   // raport miesiąca wstał mimo zamknięcia biegu w tej samej klatce
+          expect(h.notices).toEqual([]);
+
+          // kolejne klatki (okno raportu, karta, puste zdarzenia): ani kroku, ani drugiego zamknięcia
+          for (let i = 0; i < 5; i++) frame(h, 10, 8, i % 2 === 0);
+          expect(s.econ.minute).toBe(END);
+          expect(finish).toHaveBeenCalledTimes(1);
+          expect(drawerWrites(writes)).toBe(1);
+          expect(storage.getItem('traszka:ranked')).toBeNull();
+        }, FULL_SEASON_MS);
+
+        it('bez karty: gra staje na końcu sezonu, a zamknięcie nie czeka na zdarzenie month ani day (wystarczy minuta stanu)', () => {
+          const h = harness();
+          const s = rankedNearEnd(h, 1);
+          s.econ.minute = END;   // stan już za końcem, zdarzenia puste
+          h.shell.handleEvents([]);
+          expect(loadFinished()?.seed).toBe(RANKED_SEED);
+          expect(ui.ranked.value?.phase).toBe('over');
+          expect(h.shell.session).toBe(s);   // gracz zostaje w sesji: okno końca pokaże kolejny krok
+        }, FULL_SEASON_MS);
+
+        it('bieg przerwany wypowiedzeniem umowy przed końcem listopada też się zamyka, z wynikiem z raportów, które powstały; dziennik zawiera polecenia gracza', () => {
+          const h = harness();
+          h.shell.startRanked(RANKED_SEED);
+          const s = h.shell.session!;
+          expect(h.shell.game.dispatch({ type: 'setOrder', auto: false, manual: 4 }).ok).toBe(true);
+          s.econ.minute = 40 * MINUTES_PER_DAY + OPEN_FROM;
+          s.econ.gameOver = true;
+
+          h.shell.handleEvents([{ kind: 'gameover', text: 'Koniec współpracy' }]);
+
+          const drawer = loadFinished()!;
+          expect(drawer.seed).toBe(RANKED_SEED);
+          expect(drawer.record.log.map((e) => e.cmd.type)).toEqual(['setOrder']);
+          expect(storage.getItem('traszka:ranked')).toBeNull();
+          expect(ui.unsent.value).toEqual({ seed: RANKED_SEED, score: drawer.score });
+          expect(ui.ranked.value?.phase).toBe('over');
+          expect(ui.ranked.value?.day).toBe(41);
+          h.shell.handleEvents([]);
+          expect(loadFinished()).toEqual(drawer);
+        }, FULL_SEASON_MS);
+
+        it('sesja z run === null (po markOffLog) nie tworzy szuflady: aktywny zapis zdjęty, komunikat, faza over, bez ui.unsent', () => {
+          const h = harness();
+          const s = rankedNearEnd(h, 1);
+          markOffLog(s);
+          const finish = vi.spyOn(rankedRunModule, 'finishRun');
+          s.econ.minute = END;
+
+          h.shell.handleEvents([]);
+          h.shell.handleEvents([]);
+
+          expect(finish).toHaveBeenCalledTimes(1);
+          expect(loadFinished()).toBeNull();
+          expect(storage.getItem('traszka:ranked:done')).toBeNull();
+          expect(storage.getItem('traszka:ranked')).toBeNull();
+          expect(ui.unsent.value).toBeNull();
+          expect(pendingFinished()).toBeNull();
+          expect(ui.ranked.value?.phase).toBe('over');
+          expect(h.notices).toEqual([NOT_COUNTED_NOTICE]);
+
+          // skończony bieg bez szuflady nie jest „rozpoczętym biegiem”: nowy start rusza bez pytania
+          expect(h.shell.startRanked('nowy-bieg')).toBe(true);
+          expect(ui.confirmRankedStart.value).toBeNull();
+          expect(h.shell.session).not.toBe(s);
+        });
+
+        it('przeglądarka odmawia zapisu szuflady: bieg zostaje w pamięci karty (pendingFinished, ui.unsent), jedno ostrzeżenie, nowy start pyta o niewysłany bieg', () => {
+          const h = harness();
+          const s = rankedNearEnd(h, 1);
+          s.econ.minute = END;
+          storage.failWrites = true;
+
+          h.shell.handleEvents([]);
+          h.shell.handleEvents([]);
+
+          expect(h.notices).toEqual([RESULT_NOT_SAVED_NOTICE]);   // jedno, nie przy każdej klatce
+          expect(loadFinished()).toBeNull();
+          const held = pendingFinished()!;
+          expect(held).toMatchObject({ v: 1, seed: RANKED_SEED });
+          expect(ui.unsent.value).toEqual({ seed: RANKED_SEED, score: held.score });
+          expect(ui.ranked.value?.phase).toBe('over');
+          expect(storage.getItem('traszka:ranked')).toBeNull();
+
+          storage.failWrites = false;
+          expect(h.shell.startRanked('inny-bieg')).toBe(false);   // bieg z pamięci blokuje start tak jak szuflada
+          expect(ui.confirmRankedStart.value).toEqual({ seed: 'inny-bieg', reason: 'unsent' });
+          expect(h.shell.session).toBe(s);
+          clearFinished();   // „Odrzuć bieg” (albo przyjęcie przez serwer) zabiera bieg z pamięci
+          syncUnsent();
+          expect(ui.unsent.value).toBeNull();
+        }, FULL_SEASON_MS);
+
+        it('wyjątek z odtwarzania nie wychodzi z handleEvents ani nie powtarza się co klatkę: komunikat, faza over, aktywny zapis zostaje', () => {
+          const h = harness();
+          const s = rankedNearEnd(h, 1);
+          const before = storage.getItem('traszka:ranked');
+          expect(before).not.toBeNull();
+          const finish = vi.spyOn(rankedRunModule, 'finishRun').mockImplementation(() => { throw new Error('rozjazd wersji'); });
+          vi.spyOn(console, 'error').mockImplementation(() => {});
+          s.econ.minute = END;
+
+          expect(() => h.shell.handleEvents([])).not.toThrow();
+          h.shell.handleEvents([]);
+
+          expect(finish).toHaveBeenCalledTimes(1);
+          expect(h.notices).toHaveLength(1);
+          expect(ui.ranked.value?.phase).toBe('over');
+          expect(storage.getItem('traszka:ranked')).toBe(before);   // bieg nie przepada: zapis czeka na kolejną próbę po odświeżeniu
+          expect(loadFinished()).toBeNull();
+        });
+
+        it('po zamknięciu persist sesji nie zapisuje aktywnego slotu (ani zapis dnia, ani przejście): leaveRanked zostawia traszka:ranked puste i szufladę nietkniętą', () => {
+          const h = harness();
+          casualOpen(h, 'traszka-1');
+          const s = rankedNearEnd(h, 1);
+          s.econ.minute = END;
+          h.shell.handleEvents([]);
+          const drawer = storage.getItem('traszka:ranked:done');
+          expect(drawer).not.toBeNull();
+          expect(storage.getItem('traszka:ranked')).toBeNull();
+
+          h.shell.persist();
+          h.shell.handleEvents([{ kind: 'day', text: 'Dzień' }]);
+          expect(storage.getItem('traszka:ranked')).toBeNull();
+
+          h.shell.leaveRanked();
+
+          expect(h.shell.session!.mode).toBe('casual');
+          expect(h.shell.session!.seed).toBe('traszka-1');
+          expect(storage.getItem('traszka:ranked')).toBeNull();   // przejście na zwykły sklep zapisuje poprzednią sesję: tej już nie
+          expect(storage.getItem('traszka:ranked:done')).toBe(drawer);
+          expect(ui.unsent.value).toMatchObject({ seed: RANKED_SEED });
+          expect(ui.ranked.value).toBeNull();
+          expect(loadRanked().status).toBe('none');
+        }, FULL_SEASON_MS);
+
+        it('porzucenie po zakończonym sezonie zostawia szufladę', () => {
+          const h = harness();
+          const s = rankedNearEnd(h, 1);
+          s.econ.minute = END;
+          h.shell.handleEvents([]);
+          const drawer = storage.getItem('traszka:ranked:done');
+          h.shell.abandonRanked();
+          expect(storage.getItem('traszka:ranked:done')).toBe(drawer);
+          expect(storage.getItem('traszka:ranked')).toBeNull();
+          expect(h.shell.session!.mode).toBe('casual');
+        }, FULL_SEASON_MS);
+
+        it('w trakcie sezonu nic się nie zmienia: zapis dnia zapisuje bieg, a zamknięcie nie rusza szuflady', () => {
+          const h = harness();
+          h.shell.startRanked(RANKED_SEED);
+          storage.removeItem('traszka:ranked');
+          h.shell.handleEvents([{ kind: 'day', text: 'Dzień' }]);
+          expect(loadRanked().status).toBe('ok');
+          expect(loadFinished()).toBeNull();
+          expect(ui.ranked.value?.phase).toBe('playing');
+          expect(ui.unsent.value).toBeNull();
+        });
+
+        it('finishRun na biegu zagranym przez dispatch (kilkanaście dni, stuknięcia, polecenia tuż przed końcem): record.log ma same minuty < RANKED_SEASON_END_MINUTE', () => {
+          const h = harness();
+          h.shell.startRanked(RANKED_SEED);
+          const s = h.shell.session!;
+          const answerCards = (): void => {
+            for (const c of visibleCards(s.econ.tycoon.cards, s.econ.minute)) h.shell.game.dispatch({ type: 'answerCard', seq: c.seq, answer: c.defaultAnswer });
+          };
+          for (let i = 0; i < 4000 && s.econ.minute < 12 * MINUTES_PER_DAY; i++) {
+            answerCards();
+            if (i % 25 === 0) h.shell.game.dispatch({ type: 'tapTill' });
+            frame(h, 1, 8);
+          }
+          expect(s.econ.minute).toBeGreaterThanOrEqual(12 * MINUTES_PER_DAY);
+          expect(s.run!.record.log.length).toBeGreaterThan(10);
+
+          // sezon skrócony ustawieniem minuty tuż przed końcem: polecenia w ostatnich minutach i próba po końcu
+          const oneMinute = (): EconEvent[] => frame(h, 1.01 / MINUTES_PER_SECOND_OPEN, 1);   // ×1: dokładnie jedna minuta gry
+          s.econ.minute = END - 2;
+          s.clock.acc = 0;
+          s.econ.tycoon.cards.pending = [];
+          h.shell.game.dispatch({ type: 'setOrder', auto: false, manual: 3 });
+          oneMinute();   // END - 1
+          expect(s.econ.minute).toBe(END - 1);
+          expect(h.shell.game.dispatch({ type: 'setOrder', auto: false, manual: 5 }).ok).toBe(true);
+          oneMinute();   // END: koniec sezonu
+          expect(s.econ.minute).toBe(END);
+          expect(h.shell.game.dispatch({ type: 'setOrder', auto: false, manual: 7 })).toEqual({ ok: false, text: SEASON_OVER_TEXT });
+
+          const live = s.run!.record.log;
+          expect(live.every((e) => e.minute < END)).toBe(true);
+          expect(live.at(-1)).toMatchObject({ minute: END - 1, cmd: { type: 'setOrder', manual: 5 } });
+          const drawer = loadFinished()!;
+          expect(drawer.record.log.length).toBe(live.length);
+          expect(drawer.record.log.every((e) => e.minute < END)).toBe(true);
+          expect(drawer.record.log.at(-1)).toMatchObject({ minute: END - 1, cmd: { type: 'setOrder', manual: 5 } });
+        }, FULL_SEASON_MS);
+      });
+
+      describe('polecenia po końcu sezonu i limit dziennika', () => {
+        it('po końcu sezonu polecenie jest odmówione: toast error, bez dziennika, bez zmiany stanu, bez zapisu i bez zdarzeń', () => {
+          const s = createRankedSession(RANKED_SEED);
+          s.econ.minute = END;
+          const rec = recorder();
+          const before = JSON.stringify(s.econ);
+
+          const r = dispatchCommand(s, { type: 'setOrder', auto: false, manual: 4 }, rec.fx);
+
+          expect(r).toEqual({ ok: false, text: SEASON_OVER_TEXT });
+          expect(rec.named('toast')).toEqual([['toast', SEASON_OVER_TEXT, 'error']]);
+          expect(rec.names()).not.toContain('persist');
+          expect(rec.names()).not.toContain('handleEvents');
+          expect(s.run!.record.log).toEqual([]);
+          expect(s.run!.seq).toBe(0);
+          expect(JSON.stringify(s.econ)).toBe(before);
+        });
+
+        it('wypowiedzenie umowy przed końcem sezonu też zamyka polecenia; tuż przed końcem polecenie jeszcze przechodzi', () => {
+          const rec = recorder();
+          const over = createRankedSession(RANKED_SEED);
+          over.econ.gameOver = true;
+          expect(dispatchCommand(over, { type: 'setOrder', auto: false }, rec.fx)).toEqual({ ok: false, text: SEASON_OVER_TEXT });
+          expect(over.run!.record.log).toEqual([]);
+
+          const last = createRankedSession(RANKED_SEED);
+          last.econ.minute = END - 1;
+          expect(dispatchCommand(last, { type: 'setOrder', auto: false }, rec.fx).ok).toBe(true);
+          expect(last.run!.record.log).toEqual([{ minute: END - 1, seq: 0, cmd: { type: 'setOrder', auto: false } }]);
+        });
+
+        it('zwykła sesja po tej samej minucie przyjmuje polecenia jak dotąd (nie ma sezonu)', () => {
+          const s = fresh();
+          s.econ.minute = END + 10;
+          const rec = recorder();
+          expect(dispatchCommand(s, { type: 'setOrder', auto: false }, rec.fx).ok).toBe(true);
+          expect(s.run!.record.log).toHaveLength(1);
+          const over = fresh();
+          over.econ.gameOver = true;
+          expect(dispatchCommand(over, { type: 'setOrder', auto: false }, rec.fx).text ?? '').not.toBe(SEASON_OVER_TEXT);
+        });
+
+        it('przez game.dispatch: po końcu sezonu odmowa idzie do toastów interfejsu i nic nie trafia do zapisu', () => {
+          const h = harness();
+          const s = rankedNearEnd(h, 1);
+          s.econ.minute = END;
+          h.shell.handleEvents([]);
+          const keys = snapshot();
+          ui.toasts.value = [];
+
+          expect(h.shell.game.dispatch({ type: 'setOrder', auto: false, manual: 2 })).toEqual({ ok: false, text: SEASON_OVER_TEXT });
+
+          expect(ui.toasts.value.map((t) => [t.text, t.kind])).toEqual([[SEASON_OVER_TEXT, 'error']]);
+          expect(snapshot()).toEqual(keys);
+          expect(s.run!.record.log).toEqual([]);
+        }, FULL_SEASON_MS);
+
+        it('RUN_LOG_MAX w sesji rankingowej odmawia polecenia i nie wyłącza dziennika; w zwykłej nadal wyłącza dziennik, a polecenie się wykonuje', () => {
+          const cmd: Command = { type: 'setOrder', auto: true };
+          const fill = (s: GameSession, n: number): void => {
+            for (let i = 0; i < n; i++) s.run!.record.log.push({ minute: OPEN_FROM, seq: i, cmd });
+            s.run!.seq = n;
+          };
+          const rec = recorder();
+
+          const ranked = createRankedSession(RANKED_SEED);
+          fill(ranked, RUN_LOG_MAX - 1);
+          expect(dispatchCommand(ranked, { type: 'setOrder', auto: true, manual: 1 }, rec.fx).ok).toBe(true);   // ostatni wpis się mieści
+          expect(ranked.run!.record.log).toHaveLength(RUN_LOG_MAX);
+          const before = JSON.stringify(ranked.econ);
+          const seq = ranked.run!.seq;
+          rec.calls.length = 0;
+
+          const r = dispatchCommand(ranked, { type: 'setOrder', auto: false }, rec.fx);
+
+          expect(r).toEqual({ ok: false, text: LOG_FULL_TEXT });
+          expect(rec.named('toast')).toEqual([['toast', LOG_FULL_TEXT, 'error']]);
+          expect(ranked.run).not.toBeNull();   // bieg dalej da się zapisać i wysłać
+          expect(ranked.run!.record.log).toHaveLength(RUN_LOG_MAX);
+          expect(ranked.run!.seq).toBe(seq);
+          expect(JSON.stringify(ranked.econ)).toBe(before);
+          expect(ranked.econ.order.auto).toBe(true);
+
+          const casual = fresh();
+          fill(casual, RUN_LOG_MAX);
+          expect(dispatchCommand(casual, { type: 'setOrder', auto: false }, rec.fx).ok).toBe(true);
+          expect(casual.run).toBeNull();
+          expect(casual.econ.order.auto).toBe(false);
+        });
+      });
+
+      describe('nagrody poza dziennikiem są wyłączone w biegu rankingowym', () => {
+        it('skip nic nie robi: minuta, stan, dziennik i scena nietknięte', () => {
+          const h = harness();
+          h.shell.startRanked(RANKED_SEED);
+          const s = h.shell.session!;
+          h.shell.game.dispatch({ type: 'setOrder', auto: false, manual: 2 });
+          const before = JSON.stringify(s.econ);
+          const log = s.run!.record.log.length;
+          h.scene.syncs.length = 0;
+
+          h.shell.skip(120);
+
+          expect(JSON.stringify(s.econ)).toBe(before);
+          expect(s.run).not.toBeNull();
+          expect(s.run!.record.log).toHaveLength(log);
+          expect(h.scene.syncs).toEqual([]);
+        });
+
+        it('openNextStore odmawia z komunikatem i niczego nie zmienia: sesja, sieć w mecie, zapisy', () => {
+          const h = harness({ seeds: ['nowy-1'] });
+          casualOpen(h, 'traszka-1');
+          h.shell.startRanked(RANKED_SEED);
+          const s = h.shell.session!;
+          s.econ.total.margin = 80_000;   // prestiż byłby gotowy
+          s.econ.bestDayProfit = 5000;
+          const keys = snapshot();
+          const meta = h.shell.meta;
+          const network = [...meta.network];
+          h.scene.loads.length = 0;
+
+          h.shell.game.openNextStore();
+
+          expect(h.notices).toEqual([NO_NETWORK_NOTICE]);
+          expect(h.shell.session).toBe(s);
+          expect(h.shell.meta).toBe(meta);
+          expect(meta.network).toEqual(network);
+          expect(snapshot()).toEqual(keys);
+          expect(h.scene.loads).toEqual([]);
+          expect(ui.celebration.value).toBeNull();
+          expect(hasStoredSave('traszka-1')).toBe(true);
+        });
+
+        it('restart odmawia z komunikatem: nie kasuje zwykłego zapisu ani biegu, nie otwiera nowego świata, nie zamyka raportu', () => {
+          const h = harness();
+          casualOpen(h, 'traszka-1');
+          h.shell.startRanked(RANKED_SEED);
+          const s = h.shell.session!;
+          ui.report.value = { label: 'x', counters: s.econ.total, profit: 0, cash: 0, comment: '', detail: null };
+          const keys = snapshot();
+          h.scene.loads.length = 0;
+
+          h.shell.game.restart();
+
+          expect(h.notices).toEqual([NO_RESTART_NOTICE]);
+          expect(h.shell.session).toBe(s);
+          expect(snapshot()).toEqual(keys);   // zapis sklepu 'traszka-1', traszka:last i traszka:ranked na miejscu
+          expect(h.scene.loads).toEqual([]);
+          expect(ui.report.value).not.toBeNull();
+          expect(getPlayMode()).toBe('ranked');
+        });
+
+        it('wejście w bieg nie pokazuje okna powitalnego ani dymków, choć meta ma nagrodę za nieobecność i serię dni', () => {
+          const meta: Meta = { ...loadMeta(), lastSeen: Date.now() - 6 * 3_600_000 };
+          const h = harness({ meta });
+          h.shell.startRanked(RANKED_SEED);
+          expect(ui.welcome.value).toBeNull();
+          expect(ui.hints.value).toEqual([]);
+          expect(h.shell.session!.run).not.toBeNull();
+        });
+
+        it('zwykłe skip, restart i openNextStore działają jak dotąd', () => {
+          const h = harness({ seeds: ['nowy-1'] });
+          const s = open(h, 'traszka-1');
+          h.shell.skip(10);
+          expect(s.econ.minute).toBe(OPEN_FROM + 10);
+          expect(s.run).toBeNull();
+          h.shell.game.restart();
+          expect(h.shell.session).not.toBe(s);
+          expect(h.notices).toEqual([]);
+        });
       });
     });
   });

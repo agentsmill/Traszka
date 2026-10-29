@@ -3,12 +3,14 @@ import { MINUTES_PER_SECOND_OPEN as R, OPEN_FROM } from '@/sim/economy/catalog';
 import { advanceEconomy } from '@/sim/economy/clock';
 import { applyCommand } from '@/sim/economy/commands';
 import { awaitingDecision, type EconEvent, type MonthReport } from '@/sim/economy/economy';
+import { RANKED_SEASON_END_MINUTE } from '@/sim/ranked';
 import { visibleCards } from '@/sim/economy/tycoon/cards';
 import * as ui from '@/ui/state';
 import type { GameShell } from './actions';
 import { advanceSession, debugHandleEnabled, debugHandleOf, installDebugHandle, isModalOpen, isSceneHeld } from './frame';
 import { MemoryStorage } from './memoryStorage';
 import type { SceneHost } from './scene';
+import { createRankedSession } from './rankedRun';
 import { createSession, type GameSession } from './session';
 
 beforeEach(() => { vi.stubGlobal('localStorage', new MemoryStorage()); });
@@ -117,6 +119,50 @@ describe('advanceSession', () => {
     s.econ.gameOver = true;
     expect(advanceSession(s, 1, 1, false, [])).toBe(0);
     expect(s.econ.minute).toBe(OPEN_FROM);
+  });
+});
+
+describe('advanceSession: sezon rankingowy kończy się dokładnie na RANKED_SEASON_END_MINUTE', () => {
+  const END = RANKED_SEASON_END_MINUTE;
+  /** Sesja tuż przed końcem sezonu, bez kart na biurku (to koniec sezonu, a nie karta, ma zatrzymać zegar). */
+  const nearEnd = (s: GameSession, minutesBefore = 5): GameSession => {
+    s.econ.minute = END - minutesBefore;
+    s.econ.tycoon.cards.pending = [];
+    return s;
+  };
+
+  it('×1, ×8 i duży czas klatki: stan staje na END, nigdy na END + k', () => {
+    for (const [dt, speed] of [[0.05, 1], [0.1, 8], [0.5, 8], [1000, 8], [1e9, 1]] as const) {
+      const s = nearEnd(createRankedSession('traszka-frame'));
+      for (let i = 0; i < 400; i++) advanceSession(s, dt, speed, false, []);
+      expect(s.econ.minute).toBe(END);
+      expect(s.clock.acc).toBe(0);   // reszta czasu klatki przepada, nie zbiera się
+    }
+  });
+
+  it('po dojściu do końca kolejne klatki nic nie robią (0 minut, stan bez zmian), także gdy zdarzenia są puste', () => {
+    const s = nearEnd(createRankedSession('traszka-frame'), 1);
+    const out: EconEvent[] = [];
+    expect(advanceSession(s, 10, 8, false, out)).toBe(1);
+    expect(s.econ.minute).toBe(END);
+    const stopped = JSON.stringify(s);
+    const events: EconEvent[] = [];
+    expect(advanceSession(s, 10, 8, false, events)).toBe(0);
+    expect(JSON.stringify(s)).toBe(stopped);
+    expect(events).toEqual([]);
+  });
+
+  it('zwykła sesja o tej samej minucie się nie zatrzymuje: gra idzie za END', () => {
+    const s = nearEnd(createSession('traszka-frame', true));
+    advanceSession(s, 1000, 8, false, []);
+    expect(s.econ.minute).toBeGreaterThan(END);
+  });
+
+  it('sesja rankingowa, która zaczyna przed końcem, gra normalnie aż do niego (żaden wcześniejszy limit)', () => {
+    const s = createRankedSession('traszka-frame');
+    const first = Math.min(...s.econ.tycoon.cards.pending.map((c) => c.showAt));
+    for (let i = 0; i < 200 && !awaitingDecision(s.econ); i++) advanceSession(s, 1, 8, false, []);
+    expect(s.econ.minute).toBe(first);   // staje na karcie, nie na końcu sezonu
   });
 });
 

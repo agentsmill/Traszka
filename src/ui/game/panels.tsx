@@ -21,7 +21,7 @@ import {
 } from '@/sim/economy/upgrades';
 import { nextRankAt, rankFor, xpToNext } from '@/sim/economy/progress';
 import { networkIncomeOf, prestigePoints, prestigeReady } from '@/game/meta';
-import { econ, metaView, selection, showPrestige, tab, type GameActions, type TabId } from '../state';
+import { econ, metaView, ranked, selection, showPrestige, tab, type GameActions, type TabId } from '../state';
 import { duration, int, pct, people, plural, signedZl, zl } from './format';
 import { tapBlock } from './tapBlock';
 
@@ -457,7 +457,9 @@ export function GoalsPanel({ s, info }: { s: EconomyState; info: StoreInfo; game
         <Row label="Sklepy w sieci">{meta.stores}</Row>
         <Row label="Dochód z sieci">{zl(meta.networkIncome)} / dzień</Row>
         <Row label="Punkty Partnera">{meta.points} (+{4 * meta.points}% marży, +{3 * meta.points}% ruchu)</Row>
-        {meta.network.includes(s.seed)
+        {ranked.value
+          ? <p class="tt-hint">W biegu rankingowym nie ma sieci sklepów: ten sklep nie dostaje premii z sieci i do niej nie dołączy.</p>
+          : meta.network.includes(s.seed)
           ? <p class="tt-hint">Ten lokal już jest w Twojej sieci, więc drugi raz nie da Punktów Partnera ani dochodu. Otwórz sklep z innym seedem (Ustawienia), żeby sieć rosła.</p>
           : prestigeReady(s)
           ? (

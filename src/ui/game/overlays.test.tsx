@@ -17,7 +17,7 @@ import { TrustChip } from './Hud';
 import { int, zl } from './format';
 import { Bar } from './panels';
 import {
-  ClickerBar, ComboChip, EPHEMERAL_BADGE, EPHEMERAL_NOTE, FIRST_DAY_HINTS, FirstDayHints, RESTART_CONFIRM, ReportBody, ReportModal,
+  ClickerBar, ComboChip, EPHEMERAL_BADGE, EPHEMERAL_NOTE, FIRST_DAY_HINTS, FirstDayHints, RANKED_NOTE, RESTART_CONFIRM, ReportBody, ReportModal,
   STORY_GRACE_MS, SelectionCard, StoreActions, StoreBadge, StoryModal, WelcomeModal, terminationReason,
 } from './overlays';
 import { buttonLabelled, buttonsOf, click, labels, textOf, walk, type Vnode } from './vnodeTree';
@@ -77,6 +77,17 @@ describe('⚙: Nowy sklep zamiast „Zacznij od nowa” w sklepie tymczasowym (R
     expect(RESTART_CONFIRM).toBe('Zacząć od nowa w tym sklepie? Zapis zostanie usunięty.');
     expect(EPHEMERAL_NOTE).toMatch(/nie jest zapisywany|nie zapisuje/);
     expect(EPHEMERAL_NOTE).toMatch(/nietknięt/);
+  });
+
+  it('bieg rankingowy: zostaje tylko „Nowy sklep”, a „Zacznij od nowa” znika; tekst mówi dlaczego', () => {
+    const onNewStore = vi.fn();
+    const onRestart = vi.fn();
+    const tree = StoreActions({ ephemeral: false, ranked: true, onNewStore, onRestart });
+    expect(labels(tree)).toEqual(['Nowy sklep']);
+    expect(textOf(tree)).toContain(RANKED_NOTE);
+    expect(textOf(tree)).not.toContain('Zacznij od nowa');
+    expect(onRestart).not.toHaveBeenCalled();
+    expect(labels(StoreActions({ ephemeral: false, ranked: false, onNewStore, onRestart }))).toEqual(['Nowy sklep', 'Zacznij od nowa']);
   });
 
   it('ten sam komponent odpowiada na zmianę rodzaju sklepu (bez stanu własnego)', () => {

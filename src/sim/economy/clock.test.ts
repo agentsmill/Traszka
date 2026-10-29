@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { generateStore } from '@/sim/store/generateStore';
 import { MINUTES_PER_DAY, OPEN_FROM } from './catalog';
-import { advanceEconomy, gameMinutesPerSecond, type EconClock } from './clock';
+import { MAX_MINUTES_PER_ADVANCE, advanceEconomy, gameMinutesPerSecond, type EconClock } from './clock';
 import { awaitingDecision, createEconomy, stepMinute, type EconEvent, type EconomyState } from './economy';
 import { applyCommand } from './commands';
 import { computeStoreInfo } from './storeInfo';
@@ -114,5 +114,66 @@ describe('advanceEconomy: karta decyzji zatrzymuje zegar', () => {
     }
     expect(s.minute).toBeGreaterThanOrEqual(end);
     expect([...days].sort()).toEqual([0, 1, 2]);
+  });
+});
+
+describe('advanceEconomy: stopAt zatrzymuje zegar na zadanej minucie (koniec sezonu rankingowego)', () => {
+  const R = gameMinutesPerSecond(OPEN_FROM);
+  /** Odpowiada na karty z domyślną odpowiedzią, żeby to `stopAt`, a nie karta, było tym, co zatrzymuje grę. */
+  const answerAll = (s: EconomyState): void => {
+    for (const c of visibleCards(s.tycoon.cards, s.minute)) applyCommand(s, info, { type: 'answerCard', seq: c.seq, answer: c.defaultAnswer });
+  };
+
+  it('stan staje dokładnie na stopAt: w drobnych klatkach ×8 i przy ogromnym czasie naraz, bez minuty za dużo', () => {
+    const stopAt = OPEN_FROM + 90;
+    const framed = createEconomy(SEED, info);
+    const clock: EconClock = { acc: 0 };
+    for (let i = 0; i < 400; i++) { answerAll(framed); advanceEconomy(framed, info, clock, 0.1 * 8, [], stopAt); }
+    expect(framed.minute).toBe(stopAt);
+    expect(clock.acc).toBe(0);
+
+    const big = createEconomy(SEED, info);
+    answerAll(big);
+    expect(advanceEconomy(big, info, { acc: 0 }, 1e9, [], stopAt)).toBe(90);
+    expect(big.minute).toBe(stopAt);
+  });
+
+  it('po dojściu do stopAt kolejne wywołania nic nie robią: ani kroku, ani ułamka minuty, ani zmiany stanu', () => {
+    const s = createEconomy(SEED, info);
+    const clock: EconClock = { acc: 0 };
+    const stopAt = OPEN_FROM + 10;
+    advanceEconomy(s, info, clock, 1e6, [], stopAt);
+    expect(s.minute).toBe(stopAt);
+    const before = JSON.stringify(s);
+    const out: EconEvent[] = [];
+    for (const seconds of [0.001, 1, 1e6]) expect(advanceEconomy(s, info, clock, seconds, out, stopAt)).toBe(0);
+    expect(clock.acc).toBe(0);
+    expect(JSON.stringify(s)).toBe(before);
+    expect(out).toEqual([]);
+  });
+
+  it('reszta czasu klatki za stopAt przepada (nie zbiera się w zegarze), tak jak przy karcie', () => {
+    const s = createEconomy(SEED, info);
+    const clock: EconClock = { acc: 0 };
+    const stopAt = OPEN_FROM + 5;
+    advanceEconomy(s, info, clock, 5 / R + 0.7 / R, [], stopAt);   // pięć minut i jeszcze 0,7 minuty ponad stopAt
+    expect(s.minute).toBe(stopAt);
+    expect(clock.acc).toBe(0);
+  });
+
+  it('stan już na stopAt albo za nim nie robi kroku, a ułamek zegara zostaje', () => {
+    const s = createEconomy(SEED, info);
+    const clock: EconClock = { acc: 0.4 };
+    expect(advanceEconomy(s, info, clock, 100, [], s.minute)).toBe(0);
+    expect(advanceEconomy(s, info, clock, 100, [], s.minute - 1)).toBe(0);
+    expect(s.minute).toBe(OPEN_FROM);
+    expect(clock.acc).toBe(0.4);
+  });
+
+  it('bez stopAt zachowanie jest jak dotąd: zegar nie zatrzymuje się przed bezpiecznikiem 240 minut', () => {
+    const s = createEconomy(SEED, info);
+    answerAll(s);
+    expect(advanceEconomy(s, info, { acc: 0 }, 1e9, [])).toBe(MAX_MINUTES_PER_ADVANCE);
+    expect(s.minute).toBe(OPEN_FROM + MAX_MINUTES_PER_ADVANCE);
   });
 });

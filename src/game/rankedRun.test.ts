@@ -10,8 +10,8 @@ import { GENERATOR_VERSION } from '@/sim/store/generateStore';
 import { dispatchCommand, markOffLog, type CommandEffects } from './actions';
 import { MemoryStorage } from './memoryStorage';
 import {
-  RANKED_KEYS, clearFinished, createRankedSession, discardRanked, finishRun, getPlayMode, loadFinished, loadRanked, rankedRunStale, saveFinished,
-  saveRanked, seasonOver, setPlayMode, type FinishedRun,
+  RANKED_KEYS, clearFinished, createRankedSession, discardRanked, finishRun, getPlayMode, holdFinished, loadFinished, loadRanked, pendingFinished,
+  rankedRunStale, saveFinished, saveRanked, seasonOver, setPlayMode, type FinishedRun,
 } from './rankedRun';
 import { GAME_VERSION } from './version';
 import { SAVE_SCHEMA, createSession, deleteSave, discardSave, newRunLog, retireSession, reviveSession, saveSession, type GameSession } from './session';
@@ -542,6 +542,45 @@ describe('szuflada niewysłanego biegu', () => {
   });
 });
 
+describe('bieg trzymany w pamięci karty (przeglądarka nie dała zapisać szuflady)', () => {
+  const finished = (seed = SEED, score = 777): FinishedRun => ({ v: 1, seed, record: newRunLog(seed, 'ranked').record, score, finishedAt: 1_700_000_000_000 });
+  afterEach(() => { clearFinished(); });
+
+  it('pendingFinished widzi bieg z szuflady, a bez niej ten z pamięci; holdFinished niczego nie zapisuje w przeglądarce', () => {
+    expect(pendingFinished()).toBeNull();
+    const held = finished('trzymany', 5);
+    holdFinished(held);
+    expect(pendingFinished()).toEqual(held);
+    expect(storage.keys()).toEqual([]);
+    expect(loadFinished()).toBeNull();
+
+    clearFinished();
+    saveFinished(finished('z-szuflady', 9));
+    expect(pendingFinished()?.seed).toBe('z-szuflady');
+  });
+
+  it('bieg w pamięci jest nowszy od szuflady: wygrywa, dopóki ktoś go nie zabierze', () => {
+    saveFinished(finished('stary', 1));
+    holdFinished(finished('nowy', 2));
+    expect(pendingFinished()?.seed).toBe('nowy');
+    clearFinished();
+    expect(pendingFinished()).toBeNull();
+    expect(loadFinished()).toBeNull();
+  });
+
+  it('udany saveFinished zdejmuje bieg z pamięci (jest już w szufladzie), nieudany go zostawia', () => {
+    holdFinished(finished('trzymany', 5));
+    storage.failWrites = true;
+    expect(saveFinished(finished('inny', 6))).toBe(false);
+    expect(pendingFinished()?.seed).toBe('trzymany');
+    storage.failWrites = false;
+    expect(saveFinished(finished('inny', 6))).toBe(true);
+    expect(pendingFinished()?.seed).toBe('inny');
+    clearFinished();
+    expect(pendingFinished()).toBeNull();
+  });
+});
+
 describe('finishRun', () => {
   it('sesja po markOffLog (skip, nagroda powitalna) albo bez dziennika: null', () => {
     const s = createRankedSession(SEED);
@@ -561,13 +600,12 @@ describe('finishRun', () => {
     expect(played).toBeGreaterThan(30);
     expect(log(s).some((e) => e.cmd.type === 'answerCard')).toBe(true);
 
-    // koniec sezonu „na skróty”: stan dostaje minutę tuż przed końcem, a polecenia z ostatnich minut i spoza sezonu trafiają do dziennika
+    // koniec sezonu „na skróty”: stan dostaje minutę tuż przed końcem, a polecenie z ostatniej minuty trafia do dziennika przez dispatch;
+    // wpisy z minut spoza sezonu dopisujemy ręcznie, bo `dispatchCommand` biegu rankingowego odmawia poleceń po końcu sezonu (ale `finishRun` dalej
+    // ma je odfiltrować, gdyby dziennik jakimś cudem takie miał)
     s.econ.minute = END - 1;
     expect(dispatch(s, { type: 'tapPallet' })).toBeDefined();
-    s.econ.minute = END;
-    dispatch(s, { type: 'tapPallet' });
-    s.econ.minute = END + 7;
-    dispatch(s, { type: 'tapTill' });
+    for (const minute of [END, END + 7]) s.run!.record.log.push({ minute, seq: s.run!.seq++, cmd: { type: 'tapTill' } });
     expect(log(s)).toHaveLength(played + 3);
 
     const f = finishRun(s, 1_700_000_000_000)!;
