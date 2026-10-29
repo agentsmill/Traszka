@@ -99,6 +99,17 @@ describe('zgłoszenie biegu: kształt i granice', () => {
     }
   });
 
+  it('kolejność kontroli: zły typ simVersion (bad-request) wygrywa z wersją generatora, a brak simVersion (old-version) z trybem zwykłym', () => {
+    // pole simVersion o złym typie to zły formularz, więc nie dochodzi do wersji generatora (old-version) ani do trybu
+    expect(parseSubmission(body({}, { simVersion: '1', generatorVersion: 99 }))).toMatchObject({ ok: false, error: 'bad-request' });
+    expect(parseSubmission(body({}, { simVersion: '1', mode: 'casual' }))).toMatchObject({ ok: false, error: 'bad-request' });
+    // brak simVersion to bieg ze starej wersji gry: old-version wygrywa z not-ranked (gracz najpierw ma odświeżyć grę)
+    expect(parseSubmission(body({}, { simVersion: undefined, mode: 'casual' }))).toMatchObject({ ok: false, error: 'old-version' });
+    expect(parseSubmission(body({}, { simVersion: undefined, generatorVersion: 99 }))).toMatchObject({ ok: false, error: 'old-version' });
+    // przy aktualnych wersjach tryb zwykły dopiero wtedy jest not-ranked
+    expect(parseSubmission(body({}, { mode: 'casual' }))).toMatchObject({ ok: false, error: 'not-ranked' });
+  });
+
   it('simVersion o nieznanej wartości parser przepuszcza: porównanie z SIM_VERSION robi sędzia (parser nie zna bundla)', () => {
     expect(parseSubmission(body({}, { simVersion: 999_999 }))).toMatchObject({ ok: true, value: { run: { simVersion: 999_999 } } });
   });

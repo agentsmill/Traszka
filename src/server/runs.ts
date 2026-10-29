@@ -71,7 +71,7 @@ function parseLog(raw: unknown[]): Checked<LogEntry[]> {
  * filtra słów nie ma, decyzja właściciela gry z 2026-10-28), wersje, tryb rankingowy, seed, dziennik. Bieg dostaje tylko pola
  * kontraktu (obce odpadają), a polecenia są kopiami. Sam wynik liczy dopiero odtworzenie (`verify.ts`).
  *
- * Wersje: `gameVersion` to napis (najwyżej `RUN_MAX_GAME_VERSION_CHARS` znaków) i tylko jedzie z biegiem, bo gra wstawia do niego
+ * Wersje: `gameVersion` to napis (najwyżej `RUN_MAX_GAME_VERSION_CHARS` jednostek UTF-16, jak `String.length`) i tylko jedzie z biegiem, bo gra wstawia do niego
  * wersję z commitem i żadna lista jej nie zna. O przyjęciu decyduje `simVersion`: brak pola to bieg ze starej wersji gry (`old-version`),
  * pole, które nie jest liczbą całkowitą nieujemną, to zły formularz (`bad-request`). Czy `simVersion` równa się `SIM_VERSION`, rozstrzyga
  * sędzia, bo tylko on ma bundle z symulacją. Nieznana wersja generatora to też `old-version` (wczesny odrzut).

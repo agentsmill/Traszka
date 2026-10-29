@@ -68,7 +68,7 @@ export const BOARD_LIMIT_MAX = Math.max(...BOARD_LIMITS);
 export const RUN_MAX_BODY_BYTES = 4_000_000;
 export const RUN_MAX_LOG_ENTRIES = 100_000;
 export const RUN_MAX_COMMAND_BYTES = 512;
-/** Najdłuższa `gameVersion` (znaki): informacyjna, jedzie z biegiem, więc ma tylko rozsądną granicę (prawdziwa ma kilkanaście znaków). */
+/** Najdłuższa `gameVersion` (jednostki UTF-16, jak `String.length`): informacyjna, jedzie z biegiem, więc ma tylko rozsądną granicę (prawdziwa ma kilkanaście znaków). */
 export const RUN_MAX_GAME_VERSION_CHARS = 100;
 /** Najdłuższy seed (punkty kodowe): 40 z pola na ekranie startowym i zapas na sąsiedni lokal (`seed·5`). */
 export const RUN_MAX_SEED_CHARS = 48;
