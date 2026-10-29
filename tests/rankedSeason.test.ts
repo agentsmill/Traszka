@@ -2,7 +2,8 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { MINUTES_PER_DAY } from '@/sim/economy/catalog';
 import { COMMAND_TYPES, type Command } from '@/sim/economy/commands';
 import { awaitingDecision, type EconEvent, type EconomyState } from '@/sim/economy/economy';
-import { visibleCards } from '@/sim/economy/tycoon/cards';
+import { BOT_VALUATION } from '@/sim/economy/tycoon/bots';
+import { bestAnswer, visibleCards } from '@/sim/economy/tycoon/cards';
 import { RANKED_SEASON_END_MINUTE, RANKED_SEASON_MONTHS, seasonScore } from '@/sim/ranked';
 import { replayRun, type LogEntry, type RunRecord } from '@/sim/run';
 import { SIM_VERSION } from '@/sim/simVersion';
@@ -28,10 +29,11 @@ import { makeReplayVerifier } from '../src/server/verify';
  * tu niczego się nie podstawia, więc jeśli gra i sędzia kiedykolwiek się rozjadą (dziennik traci polecenie, zapis gubi pole, parser je przycina,
  * wynik żywej gry różni się od odtworzenia), ten test to zobaczy.
  *
- * Nic tu nie czyta zegara ani `Math.random`: skrypt gracza wynika ze stałych poniżej, o odpowiedziach na karty decyduje numer karty, a `Date`
+ * Nic tu nie czyta zegara ani `Math.random`: skrypt gracza wynika ze stałych poniżej, o odpowiedziach na karty decyduje sama karta (`bestAnswer`), a `Date`
  * jest przypięta do `NOW` (kod gry wpisuje chwilę zapisu do `traszka:ranked`). Jeśli po zmianie ekonomii skrypt doprowadzi sklep do bankructwa
- * (test zgłosi minutę), popraw terminy zakupów w `PLAN` albo regułę odpowiedzi w `chooseAnswer`; ranking nie wymaga od tego skryptu
- * niczego poza tym, że gra do końca sezonu.
+ * (test zgłosi minutę), popraw terminy zakupów w `PLAN` albo regułę odpowiedzi w `chooseAnswer`: ranking nie przyjmuje biegu, który kończy się
+ * grą przed końcem sezonu (sędzia odrzuca go jako `season-bankrupt`, jak `bankrupt` w `makeBundleVerifier`), więc skrypt ma doprowadzić
+ * sklep do końca sezonu z `gameOver` równym false. Wzorzec terminów i odpowiedzi: `PLAN` i `CARD_ANSWERS` z `tests/simGolden.test.ts`.
  */
 
 const SEED = 'kiełbasa-42';
@@ -78,7 +80,6 @@ const PLAN: readonly (readonly [day: number, hour: number, minute: number, cmd: 
   [0, 6, 1, { type: 'returnPallet', palletId: 2 }],
   [0, 6, 2, { type: 'setStaffProfile', profile: 'dostawa' }],
   [1, 12, 0, { type: 'buyUpgrade', id: 'szkolenie' }],
-  [2, 9, 0, { type: 'hire' }],
   [2, 12, 0, { type: 'buyUpgrade', id: 'ulotki' }],
   [3, 7, 0, { type: 'setOrder', auto: true }],
   [4, 12, 0, { type: 'buyEquipment', id: 'sco' }],
@@ -134,10 +135,12 @@ function buildScript(): Step[] {
 }
 
 /**
- * Odpowiedź gracza na kartę, która trzyma grę: co trzecia karta (po numerze) dostaje odpowiedź inną niż zaznaczona z góry
- * (`(domyślna + 1) % liczba odpowiedzi`), reszta domyślną. Decyduje numer karty, nie stan ani losowość.
+ * Odpowiedź gracza na kartę, która trzyma grę: najlepsza według wyceny bota `decydent` (`bestAnswer` z `BOT_VALUATION`), jak w
+ * `PLAN` z `tests/simGolden.test.ts`. Część kart ma najlepszą odpowiedź równą zaznaczonej z góry (wtedy gracz zatwierdza domyślną), reszta
+ * dostaje inną. Z samymi odpowiedziami domyślnymi bieg nie stać na remont przed końcem sezonu bez zejścia poniżej granicy debetu
+ * (kończy grę, a ranking takiego biegu nie przyjmuje). Decyduje sama karta, nie stan ani losowość.
  */
-const chooseAnswer = (seq: number, defaultAnswer: number, answers: number): number => (seq % 3 === 0 ? (defaultAnswer + 1) % answers : defaultAnswer);
+const chooseAnswer = (card: Parameters<typeof bestAnswer>[0]): number => bestAnswer(card, BOT_VALUATION);
 
 /**
  * Przeładowania strony: dzień 10 i dzień 45 (jak w zadaniu) oraz dzień 86, już po remoncie (w zapisie jest inny układ sklepu). Drugie
@@ -244,7 +247,7 @@ function playSeason(storage: MemoryStorage): Season {
     // karta, która trzyma grę, dostaje odpowiedź przed jakimkolwiek innym poleceniem tej minuty (stuknięcia czekają na kartę)
     while (awaitingDecision(session.econ)) {
       const card = visibleCards(session.econ.tycoon.cards, session.econ.minute)[0]!;
-      const answer = chooseAnswer(card.seq, card.defaultAnswer, card.answers.length);
+      const answer = chooseAnswer(card);
       const entry = dispatch({ type: 'answerCard', seq: card.seq, answer });
       if (!accepted.get(entry.seq)) throw new Error(`Karta ${card.seq} („${card.id}”) odrzuciła odpowiedź ${answer}.`);
       cards.push({ seq: card.seq, id: card.id, answer, defaultAnswer: card.defaultAnswer, logSeq: entry.seq });
@@ -351,6 +354,8 @@ describe('cały sezon rankingowy z gry przechodzi sędziego z tym samym wynikiem
     expect(finished.score).toBe(seasonScore(season.session.econ));
     expect(finished.score).toBe(seasonScore(replayedEnd));
     expect(replayedEnd, 'żywy stan końca sezonu równa się odtworzeniu całego dziennika').toEqual(season.session.econ);
+    expect(replayedEnd.gameOver, 'odtworzony bieg przeżył sezon: inaczej sędzia odrzuciłby go jako season-bankrupt').toBe(false);
+    expect(replayedEnd.minute).toBe(END);
     expect(Number.isFinite(finished.score)).toBe(true);
     expect(Number.isInteger(finished.score)).toBe(true);
     expect(finished).toMatchObject({ v: 1, seed: SEED, finishedAt: NOW });
@@ -375,8 +380,10 @@ describe('cały sezon rankingowy z gry przechodzi sędziego z tym samym wynikiem
     expect(parsed.value.run, 'bieg po drodze przez szufladę, JSON i parser').toEqual(finished.record);
     expect(parsed.value.run.log).toHaveLength(finished.record.log.length);
 
-    const verify = makeReplayVerifier({ replay: replayRun, endMinute: END, score: seasonScore });
+    // sędzia tak jak w `makeBundleVerifier`: z regułą bankructwa (bieg z gameOver przed końcem sezonu nie wchodzi do rankingu)
+    const verify = makeReplayVerifier({ replay: replayRun, endMinute: END, score: seasonScore, bankrupt: (state) => state.gameOver === true });
     expect(await verify(parsed.value.run)).toEqual({ ok: true, score: finished.score });
+    expect(replayRun(parsed.value.run, END).gameOver).toBe(false);
   }, TIMEOUT);
 
   it('kontrola negatywna: bez ostatniego przyjętego zakupu albo niedomyślnej odpowiedzi na kartę odtworzenie wychodzi inne', () => {
