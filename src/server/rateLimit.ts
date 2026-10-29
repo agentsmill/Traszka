@@ -1,13 +1,15 @@
-import { BUDGET_TTL, RATE_LIMITS, type RateAction } from './config.js';
-import { cryptoBytes, randomHex, sha256Hex, type RandomBytes } from './hash.js';
+import { BUDGET_TTL, RATE_GATE_MAX_ENTRIES, RATE_LIMITS, RATE_SECRET_MIN_CHARS, type RateAction } from './config.js';
+import { hmacSha256Hex, randomHex, sha256Hex, type RandomBytes } from './hash.js';
 import { KEYS } from './keys.js';
-import { asNumber, asString, type RedisExec } from './redis.js';
+import { asNumber, asString, RedisError, type RedisExec } from './redis.js';
 
 /**
  * Limit zgłoszeń w stałych oknach czasu, osobno na klucz gracza i na adres klienta (spec §14.7). Adresu serwer nie przechowuje:
- * w bazie jest tylko jego skrót z solą tego okna, a sól i liczniki giną dokładnie z końcem okna (PXAT), więc po oknie nie da się
- * już powiedzieć, czyj to był skrót. Dwa zapytania do bazy: sól, potem liczniki (drugiego nie da się dołączyć do pierwszego, bo
- * nazwy liczników zależą od soli). Na końcu pliku globalny budżet dzienny (`checkBudget`), niezależny od klucza i adresu.
+ * w bazie jest tylko jego skrót (sha256 z solą okna albo, z sekretem `RANKING_SALT`, HMAC), a skrót i liczniki giną z końcem okna
+ * (czas życia względny, patrz `checkRate`), więc po oknie nie da się już powiedzieć, czyj to był skrót. Z sekretem liczniki idą
+ * w jednym zapytaniu do bazy, bez sekretu w dwóch: sól, potem liczniki (nazwy liczników zależą od soli). Przed bazą stoi bramka
+ * w pamięci instancji (`createRateGate`), która zapamiętaną odmowę kosztuje zero zapytań. Na końcu pliku globalny budżet dzienny
+ * (`checkBudget`), niezależny od klucza i adresu.
  */
 export interface RateCheck { ok: boolean; retryAfter: number }
 export interface Requester { owner: string | null; address: string }
@@ -49,21 +51,154 @@ export function addressBucket(address: string): string {
   return `${n.slice(0, 4).map((x) => x.toString(16)).join(':')}/64`;
 }
 
-export async function checkRate(redis: RedisExec, action: RateAction, who: Requester, now: number, random: RandomBytes = cryptoBytes): Promise<RateCheck> {
-  const { window, perKey, perAddress } = RATE_LIMITS[action];
+/** Okno limitu, w którym leży `now`: numer, koniec (ms), ms do końca (dla czasu życia kluczy) i `Retry-After` w sekundach. */
+function windowOf(action: RateAction, now: number): { window: number; index: number; end: number; left: number; retryAfter: number } {
+  const { window } = RATE_LIMITS[action];
   const index = Math.floor(now / (window * 1000));
   const end = (index + 1) * window * 1000;
-  const saltKey = KEYS.salt(window, index);
-  const [, saltRaw] = await redis.exec([['SET', saltKey, randomHex(16, random), 'NX', 'PXAT', end], ['GET', saltKey]]);
-  const address = (await sha256Hex(`${asString(saltRaw) ?? ''}:${addressBucket(who.address)}`)).slice(0, 32);
+  return { window, index, end, left: Math.max(1, Math.ceil(end - now)), retryAfter: Math.max(1, Math.ceil((end - now) / 1000)) };
+}
+
+/** Co baza odpowiedziała na `INCR` liczników jednego żądania (klucz `null`, gdy żądanie nie ma klucza gracza). */
+export interface RateSeen { address: number; key: number | null }
+
+/**
+ * Bramka limitu w pamięci jednej instancji funkcji (Fluid compute współdzieli instancję między wywołaniami). Odmawia tanio, bez
+ * pytania bazy, temu, komu baza i tak by odmówiła; wszystko inne puszcza dalej, do bazy.
+ *
+ * Zasada: bramka trzyma dla (akcji, okna, kubełka adresu) i dla (akcji, okna, właściciela) największą liczbę, jaką baza oddała
+ * jako wynik `INCR` tego licznika. Liczniki w oknie tylko rosną, więc to dolna granica prawdziwego licznika: nigdy go nie
+ * przekracza, także gdy odpowiedzi wracają w odwrotnej kolejności albo licznik rośnie od żądań innych instancji. Odmowa z pamięci
+ * (zapamiętana liczba już `>= limit`) znaczy więc, że następny `INCR` dałby więcej niż limit, czyli baza odrzuciłaby to żądanie
+ * tak samo, z tym samym `Retry-After` (do końca okna). Odmowa z pamięci niczego nie liczy: nie dochodzi do bazy.
+ * Do pamięci trafia tylko to, co baza faktycznie odpowiedziała (`record` po udanym `exec`), więc błąd bazy niczego nie psuje.
+ *
+ * Pamięć jest tylko przyspieszeniem i jest ograniczona (`maxEntries`): wpisy z minionych okien wypadają, przy przepełnieniu
+ * wypada ten, którego odpowiedź z bazy zapisano najdawniej, a wypadnięty wpis oznacza jedno zapytanie do bazy więcej, nie inną decyzję.
+ * Adresy nie leżą w pamięci wprost: nazwa wpisu to skrót `sha256` z losową solą instancji, wylosowaną przy tworzeniu bramki.
+ */
+export interface RateGate {
+  /** Odmowa z pamięci (`ok: false`, `retryAfter` do końca okna) albo `null`: pytać bazę. Z `owner: null` sprawdza sam adres. */
+  peek(action: RateAction, who: Requester, now: number): Promise<RateCheck | null>;
+  /** Zapamiętuje liczniki odczytane z odpowiedzi bazy (po udanym `exec`). */
+  record(action: RateAction, who: Requester, now: number, seen: RateSeen): Promise<void>;
+  /** Ile wpisów leży teraz w pamięci i jak się nazywają (do testów). */
+  readonly size: number;
+  keys(): string[];
+}
+
+export interface RateGateOptions {
+  /** Losowość do podmiany w testach (sól instancji). */
+  random?: RandomBytes;
+  /** Ile wpisów najwyżej (domyślnie `RATE_GATE_MAX_ENTRIES`). */
+  maxEntries?: number;
+}
+
+export function createRateGate(opts: RateGateOptions = {}): RateGate {
+  const salt = randomHex(16, opts.random);
+  const max = Math.max(1, opts.maxEntries ?? RATE_GATE_MAX_ENTRIES);
+  const slots = new Map<string, { seen: number; end: number }>();
+  let earliestEnd = Infinity;   // najwcześniejszy koniec okna wśród wpisów: dopóki `now` go nie dogoni, nie ma czego wyrzucać
+
+  const names = async (action: RateAction, who: Requester, index: number): Promise<{ address: string; key: string | null }> => {
+    const hash = (await sha256Hex(`${salt}:${addressBucket(who.address)}`)).slice(0, 32);
+    return { address: `${action}:${index}:a:${hash}`, key: who.owner === null ? null : `${action}:${index}:k:${who.owner.slice(0, 32)}` };
+  };
+
+  function purge(now: number): void {
+    earliestEnd = Infinity;
+    for (const [name, slot] of slots) {
+      if (slot.end <= now) slots.delete(name);
+      else earliestEnd = Math.min(earliestEnd, slot.end);
+    }
+  }
+
+  function remember(name: string, seen: number, end: number, now: number): void {
+    const previous = slots.get(name);
+    if (previous) slots.delete(name);   // zapis z bazy odświeża kolejność (odmowy z pamięci jej nie ruszają: wpis bywa wyrzucony mimo użycia, to tylko jedno zapytanie więcej)
+    else {
+      if (now >= earliestEnd) purge(now);
+      while (slots.size >= max) slots.delete(slots.keys().next().value as string);
+    }
+    slots.set(name, { seen: Math.max(previous?.seen ?? 0, seen), end });
+    earliestEnd = Math.min(earliestEnd, end);
+  }
+
+  return {
+    async peek(action, who, now) {
+      const { perKey, perAddress } = RATE_LIMITS[action];
+      const w = windowOf(action, now);
+      const n = await names(action, who, w.index);
+      const full = (name: string | null, limit: number): boolean => name !== null && (slots.get(name)?.seen ?? 0) >= limit;
+      return full(n.address, perAddress) || full(n.key, perKey) ? { ok: false, retryAfter: w.retryAfter } : null;
+    },
+    async record(action, who, now, seen) {
+      const w = windowOf(action, now);
+      const n = await names(action, who, w.index);
+      remember(n.address, seen.address, w.end, now);
+      if (n.key !== null && seen.key !== null) remember(n.key, seen.key, w.end, now);
+    },
+    get size() { return slots.size; },
+    keys: () => [...slots.keys()],
+  };
+}
+
+export interface RateOptions {
+  /** Losowość do podmiany w testach (sól okna w bazie). */
+  random?: RandomBytes;
+  /** Bramka w pamięci instancji: odmawia bez pytania bazy temu, komu baza i tak by odmówiła (patrz `createRateGate`). */
+  gate?: RateGate;
+  /**
+   * Sekret z `RANKING_SALT` (co najmniej `RATE_SECRET_MIN_CHARS` znaków): skrót adresu to HMAC-SHA256 tego sekretu, więc nie
+   * trzeba czytać soli okna z bazy i liczniki idą w jednym zapytaniu. Bez niego sól okna leży w bazie. Wartość nigdy nie trafia
+   * do bazy, odpowiedzi ani komunikatu błędu.
+   */
+  secret?: string;
+}
+
+/**
+ * Jedno sprawdzenie limitu: `ok: false`, gdy licznik adresu albo klucza w tym oknie przekroczył limit. Najpierw bramka w pamięci
+ * (jeśli jest): zapamiętana odmowa kosztuje 0 zapytań i 0 poleceń.
+ *
+ * Skrót adresu ma dwa tryby. Z sekretem: HMAC-SHA256(sekret, `traszka:limit:{akcja}:{okno}:{nr okna}:{kubełek adresu}`), skrócony
+ * do 32 znaków szesnastkowych; wiadomość wiąże skrót z akcją i oknem (pola przed kubełkiem nie mają dwukropków, więc zapis jest
+ * jednoznaczny), więc okien ani akcji nie da się połączyć, a jedno zapytanie do bazy robi same liczniki. Bez sekretu: sha256 z solą
+ * okna, którą baza trzyma (`SET NX`, `GET`), czyli dwa zapytania (sól, potem liczniki). Sól, której baza nie oddała, to błąd: skrót
+ * z pustą solą byłby tym samym skrótem u każdego klienta i w każdym oknie.
+ *
+ * Czas życia kluczy jest względny (`PX`, `PEXPIRE`: tyle ms, ile zostało do końca okna według zegara funkcji): zegar bazy może się
+ * różnić od zegara funkcji, a klucz z bezwzględnym końcem okna (`PXAT`) powstałby wtedy przeterminowany albo żyłby za długo.
+ * Licznik dostaje czas życia przy każdym żądaniu, więc nie zostaje nigdy bez niego, także gdy klucz wygasł między poleceniami
+ * (`INCR` zakłada go wtedy od nowa, a `PEXPIRE` zaraz po nim ustawia czas). Błąd bazy wychodzi na zewnątrz i niczego nie zapisuje
+ * w bramce.
+ */
+export async function checkRate(redis: RedisExec, action: RateAction, who: Requester, now: number, opts: RateOptions = {}): Promise<RateCheck> {
+  const { perKey, perAddress } = RATE_LIMITS[action];
+  const { window, index, left, retryAfter } = windowOf(action, now);
+  if (opts.secret !== undefined && opts.secret.length < RATE_SECRET_MIN_CHARS) throw new RedisError('Limiter: sekret limitu jest za krótki');
+  const local = await opts.gate?.peek(action, who, now);
+  if (local) return local;
+
+  const bucket = addressBucket(who.address);
+  let address: string;
+  if (opts.secret !== undefined) {
+    address = (await hmacSha256Hex(opts.secret, `traszka:limit:${action}:${window}:${index}:${bucket}`)).slice(0, 32);
+  } else {
+    const saltKey = KEYS.salt(window, index);
+    const [, saltRaw] = await redis.exec([['SET', saltKey, randomHex(16, opts.random), 'NX', 'PX', left], ['GET', saltKey]]);
+    const salt = asString(saltRaw);
+    if (!salt) throw new RedisError('Limiter: baza nie oddała soli okna');
+    address = (await sha256Hex(`${salt}:${bucket}`)).slice(0, 32);
+  }
 
   const counters = [KEYS.rate(action, index, `a:${address}`)];
   if (who.owner !== null) counters.push(KEYS.rate(action, index, `k:${who.owner.slice(0, 32)}`));
-  const results = await redis.exec(counters.flatMap((k) => [['SET', k, '0', 'NX', 'PXAT', end], ['INCR', k]]));
-  const byAddress = asNumber(results[1]) ?? 0;
-  const byKey = who.owner !== null ? asNumber(results[3]) ?? 0 : 0;
-  const ok = byAddress <= perAddress && byKey <= perKey;
-  return { ok, retryAfter: ok ? 0 : Math.max(1, Math.ceil((end - now) / 1000)) };
+  const results = await redis.exec(counters.flatMap((k) => [['INCR', k], ['PEXPIRE', k, left]]));
+  const byAddress = asNumber(results[0]) ?? 0;
+  const byKey = who.owner !== null ? asNumber(results[2]) ?? 0 : null;
+  await opts.gate?.record(action, who, now, { address: byAddress, key: byKey });
+  const ok = byAddress <= perAddress && (byKey ?? 0) <= perKey;
+  return { ok, retryAfter: ok ? 0 : retryAfter };
 }
 
 const DAY_MS = 86_400_000;

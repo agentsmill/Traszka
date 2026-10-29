@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { CROCKFORD, formatRecoveryCode } from '@/game/playerKey';
 import { API_ERRORS } from './errors';
 import {
-  BOARD_LIMIT_DEFAULT, BOARD_LIMIT_MAX, BOARD_LIMITS, KNOWN_GAME_VERSIONS, KNOWN_GENERATOR_VERSIONS, RATE_LIMITS, RUN_MAX_BODY_BYTES,
+  BOARD_LIMIT_DEFAULT, BOARD_LIMIT_MAX, BOARD_LIMITS, KNOWN_GENERATOR_VERSIONS, RATE_LIMITS, RUN_MAX_BODY_BYTES,
   SAVE_BODY_BYTES, SAVE_BUNDLE_FORMAT, SAVE_DAILY_BUDGET, SAVE_MAX_BYTES, SMALL_BODY_BYTES, type RateAction,
 } from './config';
 import {
@@ -10,8 +10,9 @@ import {
 } from './http';
 import { KEYS, ownerOf } from './keys';
 import { MemoryRedis } from './memoryRedis';
+import { createRateGate } from './rateLimit';
 import { run as runCommand } from './redis';
-import type { RunRecord } from './runs';
+import type { SubmittedRun } from './runs';
 import { testBundle } from './testBundle';
 import { replayNotAvailable, type VerifyResult } from './verify';
 import { weekOf } from './week';
@@ -21,16 +22,16 @@ const KEY_A = 'K7QX9MBD2HFAP3WN8RTE';
 const KEY_B = 'M2N3P4Q5R6S7T8V9W0XY';
 const ORIGIN = 'https://traszka.test';
 
-function setup(verdict: VerifyResult | ((run: RunRecord) => VerifyResult) = { ok: true, score: 25_000 }) {
+function setup(verdict: VerifyResult | ((run: SubmittedRun) => VerifyResult) = { ok: true, score: 25_000 }) {
   const clock = { now: NOW };
   const redis = new MemoryRedis(() => clock.now);
-  const verifyRun = vi.fn((run: RunRecord) => (typeof verdict === 'function' ? verdict(run) : verdict));
+  const verifyRun = vi.fn((run: SubmittedRun) => (typeof verdict === 'function' ? verdict(run) : verdict));
   const deps: ServerDeps = { redis, readRedis: redis, verifyRun, now: () => clock.now };
   return { clock, redis, deps, verifyRun };
 }
 
-const run = (seed = 'pierogi-731'): RunRecord => ({
-  seed, gameVersion: KNOWN_GAME_VERSIONS[0]!, generatorVersion: KNOWN_GENERATOR_VERSIONS[0]!, mode: 'ranked',
+const run = (seed = 'pierogi-731'): SubmittedRun => ({
+  seed, gameVersion: '0.0.0+abc123def456', generatorVersion: KNOWN_GENERATOR_VERSIONS[0]!, simVersion: 1, mode: 'ranked',
   log: [{ minute: 400, seq: 0, cmd: { type: 'tapTill' } }],
 });
 const post = (path: string, body: unknown, headers: Record<string, string> = {}): Request => new Request(`${ORIGIN}${path}`, {
@@ -77,6 +78,50 @@ describe('POST /api/runs: zgłoszenie biegu', () => {
     expect((await body(failed)).error).toBe('replay-failed');
   });
 
+  it('sędzia odrzuca bieg z innej wersji symulacji (old-version): 409 z prośbą o odświeżenie strony, a w bazie nie ma ani nicka, ani wyniku', async () => {
+    const { deps, redis, verifyRun } = setup({ ok: false, reason: 'old-version' });
+    const res = await submit(deps, KEY_A, 'Mateusz');
+    expect(res.status).toBe(409);
+    expect(res.headers.get('cache-control')).toBe('no-store');
+    const answer = await body(res);
+    expect(answer).toEqual({ ok: false, error: 'old-version', message: API_ERRORS['old-version'].message });
+    expect(answer.message).toContain('Odśwież stronę');
+    expect(verifyRun).toHaveBeenCalledTimes(1);
+    expect(verifyRun).toHaveBeenCalledWith(run());
+    // ani rezerwacji nicka, ani wpisu w żadnym rankingu (zostają tylko liczniki limitu zgłoszeń)
+    expect(redis.keys().filter((k) => !k.startsWith('tr:rl:') && !k.startsWith('tr:salt:'))).toEqual([]);
+    expect(await body(await handlePlayer(post('/api/player', { key: KEY_B, nick: 'Mateusz' }), deps))).toEqual({ ok: true, nicks: [], nick: { nick: 'Mateusz', status: 'free' } });
+    expect((await body(await handleLeaderboard(get('/api/leaderboard'), deps))).rows).toEqual([]);
+  });
+
+  it('każda odmowa sędziego ma swój kod i status: old-version 409, replay-failed 422, replay-unavailable 503', async () => {
+    const reasons = { 'old-version': 409, 'replay-failed': 422, 'replay-unavailable': 503 } as const;
+    for (const [reason, status] of Object.entries(reasons) as [keyof typeof reasons, number][]) {
+      const res = await submit(setup({ ok: false, reason }).deps, KEY_A, 'Ala');
+      expect([reason, res.status]).toEqual([reason, status]);
+      expect((await body(res)).error).toBe(reason);
+    }
+  });
+
+  it('bieg bez simVersion (z gry sprzed tej reguły) to 409 old-version już w parserze: sędzia nie jest wołany, w bazie nic nie przybywa', async () => {
+    const { deps, redis, verifyRun } = setup();
+    const { simVersion: _brak, ...stary } = run();
+    const res = await handleRuns(post('/api/runs', { key: KEY_A, nick: 'Ala', run: stary }), deps);
+    expect(res.status).toBe(409);
+    expect(await body(res)).toEqual({ ok: false, error: 'old-version', message: API_ERRORS['old-version'].message });
+    expect(verifyRun).not.toHaveBeenCalled();
+    expect(redis.keys()).toEqual([]);
+  });
+
+  it('wersja gry w biegu (z commitem, „test”, dowolny napis do 100 znaków) nie rozstrzyga o przyjęciu: bieg trafia do sędziego', async () => {
+    const { deps, verifyRun } = setup();
+    for (const [i, gameVersion] of ['0.0.0+abc123def456', 'test', '0.0.1-stara'].entries()) {
+      const res = await handleRuns(post('/api/runs', { key: KEY_A, nick: `Gracz${i}`.slice(0, 20), run: { ...run(), gameVersion } }, { 'x-real-ip': `10.0.0.${i}` }), deps);
+      expect(res.status, gameVersion).toBe(200);
+    }
+    expect(verifyRun.mock.calls.map(([r]) => r.gameVersion)).toEqual(['0.0.0+abc123def456', 'test', '0.0.1-stara']);
+  });
+
   it('seed tygodnia trafia też do rankingu tygodnia; wulgarny seed i nick przechodzą jak każde inne (filtra słów nie ma)', async () => {
     const week = weekOf(NOW);
     const { deps } = setup((r) => ({ ok: true, score: r.seed === week.seed ? 30_000 : 20_000 }));
@@ -106,7 +151,11 @@ describe('POST /api/runs: zgłoszenie biegu', () => {
       [post('/api/runs', 'to nie JSON'), 400, 'bad-request'],
       [post('/api/runs', { key: KEY_A, nick: 'Centrala', run: run() }), 400, 'bad-nick'],
       [post('/api/runs', { key: 'zły', nick: 'Ala', run: run() }), 400, 'bad-key'],
-      [post('/api/runs', { key: KEY_A, nick: 'Ala', run: { ...run(), gameVersion: '0.0.1-stara' } }), 409, 'old-version'],
+      [post('/api/runs', { key: KEY_A, nick: 'Ala', run: { ...run(), simVersion: undefined } }), 409, 'old-version'],
+      [post('/api/runs', { key: KEY_A, nick: 'Ala', run: { ...run(), generatorVersion: 99 } }), 409, 'old-version'],
+      [post('/api/runs', { key: KEY_A, nick: 'Ala', run: { ...run(), simVersion: '1' } }), 400, 'bad-request'],
+      [post('/api/runs', { key: KEY_A, nick: 'Ala', run: { ...run(), simVersion: -1 } }), 400, 'bad-request'],
+      [post('/api/runs', { key: KEY_A, nick: 'Ala', run: { ...run(), gameVersion: 'x'.repeat(101) } }), 400, 'bad-request'],
       [post('/api/runs', `{"x":"${'a'.repeat(4_000_000)}"}`), 413, 'too-large'],
       [get('/api/runs'), 405, 'method'],
     ];
@@ -394,6 +443,102 @@ describe('limit zgłoszeń na poziomie handlerów: 429 z Retry-After na klucz i 
     });
   }
 
+  /**
+   * Bramka w pamięci instancji (`deps.rateGate`): kto przekroczył limit w bazie, przy kolejnych żądaniach z tego adresu albo tego
+   * klucza nie kosztuje już ani zapytania, ani polecenia, aż do końca okna. Bez bramki (reszta tego pliku) każde żądanie idzie do bazy.
+   */
+  for (const c of cases) {
+    const { perKey, perAddress, window } = RATE_LIMITS[c.action];
+    const gated = () => { const t = setup(); return { ...t, deps: { ...t.deps, rateGate: createRateGate() } as ServerDeps }; };
+
+    it(`${c.name} z bramką: po odmowie bazy na adres 100 następnych żądań z tego adresu to 429 za 0 zapytań i 0 poleceń`, async () => {
+      const { deps, redis } = gated();
+      for (let i = 0; i < perAddress; i++) expect((await c.call(deps, i, keyN(i), { 'x-real-ip': '203.0.113.7' })).status, `żądanie ${i + 1}`).not.toBe(429);
+      expect((await c.call(deps, perAddress, keyN(perAddress), { 'x-real-ip': '203.0.113.7' })).status).toBe(429);   // tę odrzuca baza
+      const [calls, commands] = [redis.calls, redis.commands];
+      for (let i = 0; i < 100; i++) {
+        const denied = await c.call(deps, perAddress + 1 + i, keyN(perAddress + 1 + i), { 'x-real-ip': '203.0.113.7' });
+        expect(denied.status).toBe(429);
+        expect((await body(denied)).error).toBe('rate-limited');
+        expect(denied.headers.get('cache-control')).toBe('no-store');
+        expect(Number(denied.headers.get('retry-after'))).toBe(window - (NOW / 1000) % window);
+      }
+      expect([redis.calls - calls, redis.commands - commands]).toEqual([0, 0]);
+      expect((await c.call(deps, 9999, keyN(9999), { 'x-real-ip': '198.51.100.9' })).status).not.toBe(429);   // inny adres przechodzi
+    });
+
+    it(`${c.name} z bramką: po odmowie bazy na klucz kolejne żądania tego klucza (z dowolnych adresów) kosztują 0, inny klucz przechodzi`, async () => {
+      const { deps, redis } = gated();
+      for (let i = 0; i < perKey; i++) expect((await c.call(deps, i, KEY_A, { 'x-real-ip': ipv4(i) })).status, `żądanie ${i + 1}`).not.toBe(429);
+      expect((await c.call(deps, perKey, KEY_A, { 'x-real-ip': ipv4(perKey) })).status).toBe(429);
+      const [calls, commands] = [redis.calls, redis.commands];
+      for (let i = 0; i < 100; i++) expect((await c.call(deps, 500 + i, KEY_A, { 'x-real-ip': ipv4(500 + i) })).status).toBe(429);
+      expect([redis.calls - calls, redis.commands - commands]).toEqual([0, 0]);
+      expect((await c.call(deps, 9999, KEY_B, { 'x-real-ip': ipv4(9999) })).status).not.toBe(429);
+    });
+
+    it(`${c.name} z sekretem limitu (deps.rateSecret): bez soli okna w bazie, ten sam limit na klucz, 429 z Retry-After`, async () => {
+      const { deps, redis } = setup();
+      const withSecret: ServerDeps = { ...deps, rateSecret: 'sekret-limitu-0123456789abcdef', rateGate: createRateGate() };
+      for (let i = 0; i < perKey; i++) expect((await c.call(withSecret, i, KEY_A, { 'x-real-ip': ipv4(i) })).status, `żądanie ${i + 1}`).not.toBe(429);
+      expect(redis.keys().filter((k) => k.startsWith('tr:salt:'))).toEqual([]);
+      const denied = await c.call(withSecret, perKey, KEY_A, { 'x-real-ip': ipv4(perKey) });
+      expect(denied.status).toBe(429);
+      expect(Number(denied.headers.get('retry-after'))).toBeGreaterThan(0);
+      expect((await c.call(withSecret, perKey + 1, KEY_B, { 'x-real-ip': ipv4(perKey + 1) })).status).not.toBe(429);
+    });
+
+    it(`${c.name} z bramką: odmowa trwa do końca okna, a w następnym oknie żądanie znów przechodzi przez bazę`, async () => {
+      const { deps, redis, clock } = gated();
+      for (let i = 0; i <= perAddress; i++) await c.call(deps, i, keyN(i), { 'x-real-ip': '203.0.113.7' });
+      const calls = redis.calls;
+      clock.now += (window - (NOW / 1000) % window) * 1000 - 1;   // ostatnia milisekunda okna
+      expect((await c.call(deps, 7000, keyN(7000), { 'x-real-ip': '203.0.113.7' })).status).toBe(429);
+      expect(redis.calls).toBe(calls);
+      clock.now += 1;
+      expect((await c.call(deps, 7001, keyN(7001), { 'x-real-ip': '203.0.113.7' })).status).not.toBe(429);
+      expect(redis.calls).toBeGreaterThan(calls);
+    });
+  }
+
+  const endpoints: [string, typeof handleRuns, string, RateAction][] = [
+    ['POST /api/runs', handleRuns, '/api/runs', 'runs'],
+    ['POST /api/player', handlePlayer, '/api/player', 'player'],
+    ['POST /api/save/upload', handleSaveUpload, '/api/save/upload', 'saveUp'],
+    ['POST /api/save/download', handleSaveDownload, '/api/save/download', 'saveDown'],
+  ];
+  for (const [name, handler, path, action] of endpoints) {
+    it(`${name}: adres, któremu bramka już odmawia, dostaje 429 przed odczytem ciała (nawet z żądaniem, które inaczej byłoby 400 albo 413), a inny adres jak dotąd`, async () => {
+      const { deps, redis } = setup();
+      const rateGate = createRateGate();
+      await rateGate.record(action, { owner: null, address: '203.0.113.7' }, NOW, { address: RATE_LIMITS[action].perAddress, key: null });
+      const gated = { ...deps, rateGate };
+      const bad = post(path, 'to nie JSON', { 'x-real-ip': '203.0.113.7' });
+      const huge = post(path, { key: KEY_A }, { 'x-real-ip': '203.0.113.7', 'content-length': '99999999' });
+      for (const req of [bad, huge]) {
+        const res = await handler(req, gated);
+        expect(res.status).toBe(429);
+        expect((await body(res)).error).toBe('rate-limited');
+        expect(Number(res.headers.get('retry-after'))).toBeGreaterThan(0);
+        expect(req.bodyUsed).toBe(false);
+      }
+      expect(redis.calls).toBe(0);
+      expect((await handler(post(path, 'to nie JSON', { 'x-real-ip': '198.51.100.9' }), gated)).status).toBe(400);
+      expect((await handler(post(path, { key: KEY_A }, { 'x-real-ip': '198.51.100.9', 'content-length': '99999999' }), gated)).status).toBe(413);
+      expect((await handler(get(path), gated)).status).toBe(405);   // metoda jest sprawdzana przed bramką
+    });
+  }
+
+  it('wczesna kontrola niczego nie liczy: żądania z poprawnym i niepoprawnym ciałem nie przybliżają adresu do odmowy', async () => {
+    const { deps, redis } = setup();
+    const rateGate = createRateGate();
+    const gated = { ...deps, rateGate };
+    for (let i = 0; i < 3 * RATE_LIMITS.player.perAddress; i++) await handlePlayer(post('/api/player', 'to nie JSON'), gated);
+    expect(redis.calls).toBe(0);
+    expect(rateGate.size).toBe(0);
+    expect((await handlePlayer(post('/api/player', { key: KEY_A }), gated)).status).toBe(200);
+  });
+
   it('odmowa limitu nie dotyka niczego poza licznikami: nick, wynik i zapis nie powstają', async () => {
     const { deps, redis } = setup();
     for (let i = 0; i < RATE_LIMITS.runs.perKey; i++) await submit(deps, KEY_A, `Gracz${i}`.slice(0, 20), undefined, { 'x-real-ip': ipv4(i) });
@@ -415,20 +560,18 @@ describe('wczesna odmowa po nagłówku Content-Length: 413 bez czytania ciała',
     it(`${name}: nagłówek większy niż ${max} B kończy się 413 ${error}, zanim ktokolwiek sięgnie po ciało albo do bazy`, async () => {
       const { deps, redis } = setup();
       const req = post(path, { key: KEY_A }, { 'content-length': String(max + 1) });
-      const read = vi.spyOn(req, 'text');
       const res = await handler(req, deps);
       expect(res.status).toBe(413);
       expect((await body(res)).error).toBe(error);
-      expect(read).not.toHaveBeenCalled();
+      expect(req.bodyUsed).toBe(false);
       expect(redis.calls).toBe(0);
     });
 
     it(`${name}: nagłówek równy ${max} B nie odrzuca wcześniej (ciało i tak sprawdza się po odczycie), a bez nagłówka za duże ciało to 413 po odczycie`, async () => {
       const { deps } = setup();
       const ok = post(path, { key: KEY_A }, { 'content-length': String(max) });
-      const read = vi.spyOn(ok, 'text');
       expect((await handler(ok, deps)).status).not.toBe(413);
-      expect(read).toHaveBeenCalledTimes(1);
+      expect(ok.bodyUsed).toBe(true);
       const big = post(path, `{"x":"${'a'.repeat(max)}"}`);
       expect(big.headers.get('content-length')).toBeNull();
       const res = await handler(big, deps);
@@ -442,6 +585,186 @@ describe('wczesna odmowa po nagłówku Content-Length: 413 bez czytania ciała',
     for (const value of ['abc', '', '-5', '12abc']) {
       const res = await handlePlayer(post('/api/player', { key: KEY_A }, { 'content-length': value }), deps);
       expect(res.status, value).toBe(200);
+    }
+  });
+});
+
+describe('ciało żądania czytane strumieniem z ucięciem', () => {
+  const CHUNK = 1_000;
+  const enc = new TextEncoder();
+  const endpoints: [string, typeof handleRuns, string, number, string][] = [
+    ['POST /api/runs', handleRuns, '/api/runs', RUN_MAX_BODY_BYTES, 'too-large'],
+    ['POST /api/player', handlePlayer, '/api/player', SMALL_BODY_BYTES, 'too-large'],
+    ['POST /api/save/download', handleSaveDownload, '/api/save/download', SMALL_BODY_BYTES, 'too-large'],
+    ['POST /api/save/upload', handleSaveUpload, '/api/save/upload', SAVE_BODY_BYTES, 'save-too-large'],
+  ];
+
+  /** Ten sam kawałek `times` razy (bez składania całości w pamięci). */
+  function* repeat(chunk: Uint8Array, times: number): Generator<Uint8Array> {
+    for (let i = 0; i < times; i++) yield chunk;
+  }
+  const slices = (bytes: Uint8Array, size: number): Uint8Array[] => {
+    const out: Uint8Array[] = [];
+    for (let at = 0; at < bytes.length; at += size) out.push(bytes.slice(at, at + size));
+    return out;
+  };
+  /** JSON `{ key, pad }` o długości dokładnie `bytes` bajtów UTF-8; dopełnia `fill`, a reszta (gdy znak ma kilka bajtów) to „a”. */
+  function sized(bytes: number, fill = 'a'): Uint8Array {
+    const extra = bytes - enc.encode(JSON.stringify({ key: KEY_A, pad: '' })).length;
+    const width = enc.encode(fill).length;
+    const out = enc.encode(JSON.stringify({ key: KEY_A, pad: fill.repeat(Math.floor(extra / width)) + 'a'.repeat(extra % width) }));
+    expect(out.length).toBe(bytes);
+    return out;
+  }
+  /**
+   * Żądanie z ciałem jako strumień, bez nagłówka długości. Strumień oddaje kawałek dopiero na żądanie czytającego
+   * (`highWaterMark: 0`), więc `seen.pulled` to dokładnie liczba pobranych kawałków, a `seen.cancelled` mówi, czy czytający
+   * przerwał strumień (`cancel`). Iterator, który rzuci wyjątek, zrywa strumień w połowie.
+   */
+  function streamed(path: string, chunks: Iterable<Uint8Array>, headers: Record<string, string> = {}) {
+    const source = chunks[Symbol.iterator]();
+    const seen = { pulled: 0, cancelled: false };
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        const next = source.next();
+        if (next.done) return controller.close();
+        seen.pulled++;
+        controller.enqueue(next.value);
+      },
+      cancel() { seen.cancelled = true; },
+    }, { highWaterMark: 0 });
+    const req = new Request(`${ORIGIN}${path}`, {
+      method: 'POST', headers: { 'content-type': 'application/json', 'x-real-ip': '203.0.113.7', ...headers }, body: stream, duplex: 'half',
+    } as RequestInit & { duplex: 'half' });
+    return { req, seen };
+  }
+
+  for (const [name, handler, path, max, error] of endpoints) {
+    const chunksToLimit = Math.ceil(max / CHUNK);
+
+    it(`${name}: strumień dłuższy niż ${max} B zostaje przerwany zaraz po przekroczeniu (najwyżej limit plus jeden kawałek), cancel wywołany, 413`, async () => {
+      const { deps, redis } = setup();
+      const { req, seen } = streamed(path, repeat(enc.encode('a'.repeat(CHUNK)), 3 * chunksToLimit));
+      expect(req.headers.get('content-length')).toBeNull();
+      const res = await handler(req, deps);
+      expect(res.status).toBe(413);
+      expect((await body(res)).error).toBe(error);
+      expect(seen.cancelled).toBe(true);
+      expect(seen.pulled).toBeLessThanOrEqual(chunksToLimit + 1);
+      expect(redis.calls).toBe(0);
+    });
+
+    it(`${name}: kłamliwy Content-Length (mniejszy niż ciało) nie omija limitu, ciało jest liczone i przerwane tak samo`, async () => {
+      const { deps } = setup();
+      const { req, seen } = streamed(path, repeat(enc.encode('a'.repeat(CHUNK)), 3 * chunksToLimit), { 'content-length': '10' });
+      const res = await handler(req, deps);
+      expect(res.status).toBe(413);
+      expect((await body(res)).error).toBe(error);
+      expect(seen.cancelled).toBe(true);
+      expect(seen.pulled).toBeLessThanOrEqual(chunksToLimit + 1);
+    });
+
+    it(`${name}: Content-Length większy niż ${max} B odrzuca od razu, bez pobrania choćby jednego kawałka`, async () => {
+      const { deps, redis } = setup();
+      const { req, seen } = streamed(path, repeat(enc.encode('a'.repeat(CHUNK)), 3), { 'content-length': String(max + 1) });
+      const res = await handler(req, deps);
+      expect(res.status).toBe(413);
+      expect((await body(res)).error).toBe(error);
+      expect(seen.pulled).toBe(0);
+      expect(req.bodyUsed).toBe(false);
+      expect(redis.calls).toBe(0);
+    });
+
+    it(`${name}: dokładnie ${max} B przechodzi, a ${max} B plus jeden bajt to 413 (ciało w kawałkach)`, async () => {
+      const { deps } = setup();
+      expect((await handler(streamed(path, slices(sized(max), CHUNK)).req, deps)).status).not.toBe(413);
+      const res = await handler(streamed(path, slices(sized(max + 1), CHUNK)).req, deps);
+      expect(res.status).toBe(413);
+      expect((await body(res)).error).toBe(error);
+    });
+
+    it(`${name}: limit liczy bajty, nie znaki (dwubajtowe „ż” w ciele): ${max} B przechodzi, ${max} B plus jeden bajt to 413`, async () => {
+      const { deps } = setup();
+      expect((await handler(streamed(path, slices(sized(max, 'ż'), CHUNK)).req, deps)).status).not.toBe(413);
+      const res = await handler(streamed(path, slices(sized(max + 1, 'ż'), CHUNK)).req, deps);
+      expect(res.status).toBe(413);
+      expect((await body(res)).error).toBe(error);
+    });
+  }
+
+  it('ciało o dokładnie dozwolonej długości, podane jednym kawałkiem, jest przyjęte (200)', async () => {
+    const { deps } = setup();
+    const res = await handlePlayer(streamed('/api/player', [sized(SMALL_BODY_BYTES)]).req, deps);
+    expect(res.status).toBe(200);
+    expect((await body(res)).ok).toBe(true);
+  });
+
+  it('wielobajtowe znaki (2 i 4 bajty) przecięte granicą kawałków dekodują się poprawnie, nawet gdy kawałki mają po jednym bajcie', async () => {
+    const { deps } = setup();
+    const ok = await handlePlayer(streamed('/api/player', slices(enc.encode(JSON.stringify({ key: KEY_A, nick: 'Łódź żółć' })), 1)).req, deps);
+    expect(ok.status).toBe(200);
+    expect((await body(ok)).nick).toEqual({ nick: 'Łódź żółć', status: 'free' });
+    const emoji = await handlePlayer(streamed('/api/player', slices(enc.encode(JSON.stringify({ key: KEY_A, nick: 'Ala\u{1F600}' })), 1)).req, deps);
+    expect(emoji.status).toBe(200);
+    expect((await body(emoji)).nick).toMatchObject({ nick: 'Ala\u{1F600}', status: 'invalid' });
+  });
+
+  it('niepoprawny UTF-8 nie rzuca wyjątku: bajty zamieniają się w \\u{FFFD}, a ciało jest oceniane dalej', async () => {
+    const { deps } = setup();
+    const bad = Uint8Array.from([...enc.encode('{"key":"'), 0xff, 0xc3, ...enc.encode('"}')]);
+    const inString = await handlePlayer(streamed('/api/player', [bad]).req, deps);
+    expect(inString.status).toBe(400);
+    expect((await body(inString)).error).toBe('bad-key');
+    const cutOff = await handlePlayer(streamed('/api/player', [Uint8Array.from([0x7b, 0xc3])]).req, deps);
+    expect(cutOff.status).toBe(400);
+    expect((await body(cutOff)).error).toBe('bad-request');
+    // Niedokończony znak na samym końcu po poprawnym JSON to nadal śmieci w ciele (dekoder oddaje \u{FFFD}), a nie cicho pominięty bajt.
+    const tail = await handlePlayer(streamed('/api/player', [Uint8Array.from([...enc.encode(JSON.stringify({ key: KEY_A })), 0xc3])]).req, deps);
+    expect(tail.status).toBe(400);
+    expect((await body(tail)).error).toBe('bad-request');
+  });
+
+  it('pusty strumień, puste ciało i brak ciała to 400 bad-request', async () => {
+    const { deps } = setup();
+    const requests = [
+      streamed('/api/player', []).req,
+      post('/api/player', ''),
+      new Request(`${ORIGIN}/api/player`, { method: 'POST', headers: { 'x-real-ip': '203.0.113.7' } }),
+    ];
+    for (const req of requests) {
+      const res = await handlePlayer(req, deps);
+      expect(res.status).toBe(400);
+      expect((await body(res)).error).toBe('bad-request');
+    }
+  });
+
+  it('strumień zerwany w połowie to 400 bad-request, a nie wyjątek', async () => {
+    const { deps } = setup();
+    function* broken(): Generator<Uint8Array> {
+      yield enc.encode('{"key":');
+      throw new Error('połączenie zerwane');
+    }
+    const res = await handlePlayer(streamed('/api/player', broken()).req, deps);
+    expect(res.status).toBe(400);
+    expect((await body(res)).error).toBe('bad-request');
+  });
+
+  it('blokada czytnika jest zwolniona po każdym wyniku: przyjęciu, odrzuceniu za dużego ciała, złym JSON i zerwanym strumieniu', async () => {
+    const { deps } = setup();
+    function* broken(): Generator<Uint8Array> {
+      yield enc.encode('{"key":');
+      throw new Error('połączenie zerwane');
+    }
+    const cases: [string, Iterable<Uint8Array>][] = [
+      ['przyjęte', slices(sized(100), 40)],
+      ['za duże', repeat(enc.encode('a'.repeat(CHUNK)), 3 * Math.ceil(SMALL_BODY_BYTES / CHUNK))],
+      ['zły JSON', [enc.encode('to nie JSON')]],
+      ['zerwany strumień', broken()],
+    ];
+    for (const [label, chunks] of cases) {
+      const { req } = streamed('/api/player', chunks);
+      await handlePlayer(req, deps);
+      expect(req.body?.locked, label).toBe(false);
     }
   });
 });

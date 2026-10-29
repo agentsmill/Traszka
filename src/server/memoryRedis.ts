@@ -113,6 +113,7 @@ export class MemoryRedis implements RedisExec {
         return next;
       }
       case 'EXPIRE': return this.expireAt(key, this.now() + int(args[1]) * 1000);
+      case 'PEXPIRE': return this.expireAt(key, this.now() + int(args[1]));
       case 'PEXPIREAT': return this.expireAt(key, int(args[1]));
       case 'PTTL': {
         const e = this.entry(key);

@@ -220,7 +220,7 @@ describe('normalizeSeed: znaki niewidoczne (zerowej szerokości i sterujące kie
     expect(normalizeSeed('👩\u200d\u200d💻', draw)).toBe('👩💻');                         // dwa spójniki z rzędu nie skleją niczego
   });
 
-  it('inne znaki formatujące, których gra nie wymienia, zostają (np. selektor wariantu emoji)', () => {
+  it('selektor wariantu emoji nie jest znakiem formatującym (Cf), więc zostaje; resztę Cf zdejmuje seedText.test.ts', () => {
     expect(normalizeSeed('❤\ufe0f', draw)).toBe('❤\ufe0f');
   });
 

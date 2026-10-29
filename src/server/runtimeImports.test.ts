@@ -4,8 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { resolveStore } from '@/game/seeds';
 import { GENERATOR_VERSION } from '@/sim/store/generateStore';
 import { RANKED_SEASON_END_MINUTE } from '@/sim/ranked';
-import { version as GAME_VERSION } from '../../package.json';
-import { KNOWN_GAME_VERSIONS, KNOWN_GENERATOR_VERSIONS, SEASON_END_MINUTE, SEED_NEIGHBOURS } from './config';
+import { KNOWN_GENERATOR_VERSIONS, SEASON_END_MINUTE, SEED_NEIGHBOURS } from './config';
 
 const ROOT = resolve(__dirname, '../..');
 
@@ -25,34 +24,75 @@ function runtimeImports(src: string): string[] {
   return out;
 }
 
+/**
+ * Pliki, które Vercel załaduje w czasie działania, idąc od `api/**` i `src/server/**` po importach (bez `import type`), oraz importy,
+ * których funkcja nie rozwiąże (nie względne, bez `.js`, do nieistniejącego pliku).
+ */
+function runtimeGraph(): { seen: Set<string>; bad: string[] } {
+  const seen = new Set<string>();
+  const bad: string[] = [];
+  const queue = [...files(join(ROOT, 'api')), ...files(join(ROOT, 'src/server'))];
+  while (queue.length > 0) {
+    const file = queue.pop()!;
+    if (seen.has(file)) continue;
+    seen.add(file);
+    for (const spec of runtimeImports(readFileSync(file, 'utf8'))) {
+      const where = `${relative(ROOT, file)} → ${spec}`;
+      if (!spec.startsWith('.') || !spec.endsWith('.js')) {
+        bad.push(where);
+        continue;
+      }
+      const target = resolve(dirname(file), spec.replace(/\.js$/, '.ts'));
+      if (!existsSync(target)) bad.push(`${where} (brak pliku)`);
+      else queue.push(target);
+    }
+  }
+  return { seen, bad };
+}
+
 describe('funkcje serwerowe: importy, które Vercel uruchomi', () => {
   it('api/** i src/server/** (i wszystko, co importują) mają tylko względne importy z rozszerzeniem .js do istniejących plików .ts', () => {
     // Vercel kompiluje każdy plik osobno do ESM: bez `.js` Node nie znajdzie modułu, a alias `@/` nie jest rozwiązywany wcale
     // (build przechodzi, funkcja pada przy pierwszym wywołaniu; sprawdzone `vercel build` na kopii repozytorium).
-    const seen = new Set<string>();
-    const bad: string[] = [];
-    const queue = [...files(join(ROOT, 'api')), ...files(join(ROOT, 'src/server'))];
-    while (queue.length > 0) {
-      const file = queue.pop()!;
-      if (seen.has(file)) continue;
-      seen.add(file);
-      for (const spec of runtimeImports(readFileSync(file, 'utf8'))) {
-        const where = `${relative(ROOT, file)} → ${spec}`;
-        if (!spec.startsWith('.') || !spec.endsWith('.js')) {
-          bad.push(where);
-          continue;
-        }
-        const target = resolve(dirname(file), spec.replace(/\.js$/, '.ts'));
-        if (!existsSync(target)) bad.push(`${where} (brak pliku)`);
-        else queue.push(target);
-      }
-    }
+    const { seen, bad } = runtimeGraph();
     expect(bad).toEqual([]);
     expect([...seen].some((f) => f.includes(`${join('src', 'game', 'nick.ts')}`))).toBe(true);
   });
 
-  it('serwer zna bieżącą wersję gry i generatora (inaczej odrzuci każdy bieg jako „nieaktualna wersja”)', () => {
-    expect(KNOWN_GAME_VERSIONS).toContain(GAME_VERSION);
+  it('typy biegu z gry (src/sim/run.ts, src/sim/economy/commands.ts) serwer bierze tylko przez import type: w czasie działania ich nie ma', () => {
+    // `import type` znika przy kompilacji, więc plik z aliasem `@/` w środku (jak run.ts) nie trafia do funkcji i jej nie wywraca.
+    const typeOnly = (file: string, from: string): boolean => {
+      const src = readFileSync(join(ROOT, file), 'utf8');
+      return new RegExp(`^import type \\{[^}]*\\} from '${from.replace(/\./g, '\\.')}';`, 'm').test(src) && !runtimeImports(src).includes(from);
+    };
+    expect(typeOnly('src/server/runs.ts', '../sim/run.js')).toBe(true);
+    expect(typeOnly('src/server/runs.ts', '../sim/economy/commands.js')).toBe(true);
+    const { seen } = runtimeGraph();
+    const loaded = [...seen].map((f) => relative(ROOT, f));
+    expect(loaded).not.toContain(join('src', 'sim', 'run.ts'));
+    expect(loaded).not.toContain(join('src', 'sim', 'economy', 'commands.ts'));
+    expect(loaded).toContain(join('src', 'server', 'runs.ts'));   // graf jest prawdziwy, a nie pusty
+  });
+
+  it('bundle sędziego (src/server/judgeBundle.js) ładuje tylko api/runs.ts, dynamicznie i z literałem; nic w funkcji nie importuje go statycznie', () => {
+    // Statyczny import brakującego pliku (krok `npm run build:judge` pominięty) wywróciłby cały plik funkcji: nawet odpowiedź
+    // `ranking-off` zamieniłaby się w błąd platformy. Literał w `import()` jest potrzebny, żeby ślad plików Vercela znalazł bundle.
+    const runsApi = readFileSync(join(ROOT, 'api/runs.ts'), 'utf8');
+    expect(runsApi).toContain("import('../src/server/judgeBundle.js')");
+    const { seen } = runtimeGraph();
+    const staticLoaders = [...seen].filter((f) => runtimeImports(readFileSync(f, 'utf8')).some((spec) => spec.includes('judgeBundle')));
+    expect(staticLoaders.map((f) => relative(ROOT, f))).toEqual([]);
+    // plik z typami bundla (d.ts) jest w grafie, ale bez importów w czasie działania, więc po kompilacji go nie ma
+    expect([...seen].map((f) => relative(ROOT, f))).toContain(join('src', 'server', 'judgeBundle.d.ts'));
+  });
+
+  it('wspólny walidator seeda (src/game/seedText.ts) jest osiągalny z serwera i nie ma żadnych importów', () => {
+    const file = join(ROOT, 'src/game/seedText.ts');
+    expect(readFileSync(join(ROOT, 'src/server/runs.ts'), 'utf8')).toContain("from '../game/seedText.js'");
+    expect(readFileSync(file, 'utf8')).not.toMatch(/^\s*import\b/m);
+  });
+
+  it('serwer zna bieżącą wersję generatora (inaczej odrzuci każdy bieg jako „nieaktualna wersja”); wersji gry nie sprawdza, bo o przyjęciu decyduje simVersion', () => {
     expect(KNOWN_GENERATOR_VERSIONS).toContain(GENERATOR_VERSION);
   });
 
@@ -76,12 +116,14 @@ describe('funkcje serwerowe: importy, które Vercel uruchomi', () => {
 describe('kod serwera i klucza gracza: znaki niewidoczne tylko jako zapis \\uXXXX, nigdy dosłownie', () => {
   // Dosłowny niewidoczny znak w wyrażeniu regularnym ginie przy kopiowaniu i edycji i po cichu zmienia jego sens: z `(?!<ZWJ>)\p{Cf}`
   // zostaje `(?!)\p{Cf}` i serwer wpuszcza wszystkie znaki formatujące (dosłowny U+200D był w `runs.ts`). Zapis \u200d tego nie traci.
-  const INVISIBLE = /[\u00ad\u061c\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff\u{e0000}-\u{e007f}]/u;
+  // Klasy ogólne (formatujące, separatory wierszy i akapitów, surogaty) plus jawne zakresy ze `src/game/seedText.ts` (`ALSO_HIDDEN`): puste litery,
+  // selektory wariantów, nieprzydzielone obok znaków niewidocznych i blok znaczników aż do U+E0FFF. U+FE0F (emoji) jest dozwolony.
+  const INVISIBLE = /[\p{Cf}\p{Zl}\p{Zp}\p{Cs}\u{034f}\u{115f}-\u{1160}\u{17b4}-\u{17b5}\u{180b}-\u{180f}\u{2065}\u{3164}\u{fe00}-\u{fe0e}\u{ffa0}\u{fff0}-\u{fff8}\u{e0000}-\u{e0fff}]/u;
 
   it('api/**, src/server/**, src/ui/ranking/** i playerKey.ts (bez testów) nie zawierają dosłownych znaków niewidocznych', () => {
     const sources = [
       ...files(join(ROOT, 'api')), ...files(join(ROOT, 'src/server')), ...files(join(ROOT, 'src/ui/ranking')),
-      join(ROOT, 'src/game/playerKey.ts'),
+      join(ROOT, 'src/game/playerKey.ts'), join(ROOT, 'src/game/seedText.ts'),
     ];
     expect(sources.length).toBeGreaterThan(20);
     const found: string[] = [];
@@ -95,7 +137,14 @@ describe('kod serwera i klucza gracza: znaki niewidoczne tylko jako zapis \\uXXX
   });
 
   it('wykrywacz łapie wstawiony znak (inaczej test powyżej niczego nie pilnuje)', () => {
-    for (const c of ['\u200d', '\u200b', '\u00ad', '\ufeff', '\u202e', '\u{e0067}']) expect(INVISIBLE.test(`const x = /(?!${c})/u;`), c.codePointAt(0)!.toString(16)).toBe(true);
+    const inserted = [
+      0x200d, 0x200b, 0x00ad, 0xfeff, 0x202e, 0xe0067, 0x0600, 0x110bd, 0x1d173, 0xfff9, 0xe0100, 0x3164, 0x034f, 0x115f, 0x17b4, 0x180b,
+      0x2065, 0xfe00, 0xfe0e, 0xffa0, 0xfff0, 0xe0fff, 0x2028, 0x2029,
+    ];
+    for (const cp of inserted) expect(INVISIBLE.test(`const x = /(?!${String.fromCodePoint(cp)})/u;`), cp.toString(16)).toBe(true);
+    // zwykłe znaki i dozwolone emoji z selektorem wariantu nie są znakami niewidocznymi
+    for (const cp of [0x61, 0x20, 0x00a0, 0x2800, 0xfe0f, 0x1f3f4, 0x1f469]) expect(INVISIBLE.test(`const x = '${String.fromCodePoint(cp)}';`), cp.toString(16)).toBe(false);
     expect(INVISIBLE.test('const x = /(?!\\u200d)\\p{Cf}/u;')).toBe(false);
+    expect(INVISIBLE.test('const x = /\\u{e0100}/u;')).toBe(false);
   });
 });

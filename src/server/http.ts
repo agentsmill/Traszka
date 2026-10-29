@@ -9,7 +9,7 @@ import type { RandomBytes } from './hash.js';
 import { KEYS, memberOf, ownerOf, seedIdOf } from './keys.js';
 import { rankOf, readBoard, recordScore, type BoardRef } from './leaderboard.js';
 import { claimNick, nickStatus, ownedNicks } from './nicks.js';
-import { checkBudget, checkRate } from './rateLimit.js';
+import { checkBudget, checkRate, type RateCheck, type RateGate } from './rateLimit.js';
 import type { RedisExec } from './redis.js';
 import { isShowableSeed, parseSubmission } from './runs.js';
 import { checkSave, getSave, putSave } from './saves.js';
@@ -29,6 +29,18 @@ export interface ServerDeps {
   verifyRun: VerifyRun;
   now: () => number;
   random?: RandomBytes;
+  /**
+   * Bramka limitu w pamięci instancji (`createRateGate`): odmawia bez pytania bazy temu, komu baza i tak by odmówiła. `route`
+   * tworzy ją raz na instancję funkcji (nie na żądanie), bo jej pamięć ma przeżyć wiele żądań. Bez niej (testy handlerów)
+   * każde żądanie idzie do bazy jak dotąd.
+   */
+  rateGate?: RateGate;
+  /**
+   * Sekret `RANKING_SALT` (co najmniej 16 znaków), z którego limit liczy HMAC skrótu adresu zamiast czytać sól okna z bazy (jedno
+   * zapytanie zamiast dwóch). Sprawdza go `env.ts` (krótszy to 503 `not-configured`). Tylko do limitu: nigdy do odpowiedzi,
+   * logów ani bazy. Bez niego (testy handlerów) sól okna leży w bazie jak dotąd.
+   */
+  rateSecret?: string;
 }
 export type Handler = (request: Request, deps: ServerDeps) => Promise<Response>;
 
@@ -47,17 +59,39 @@ const failure = (f: ApiFailure): Response => apiError(f.error, f.message);
 const wrongMethod = (request: Request, allowed: string): Response | null =>
   (request.method === allowed ? null : apiError('method', undefined, { allow: allowed }));
 
-/** Ciało żądania jako JSON, najwyżej `maxBytes` bajtów (nagłówek długości sprawdzany od razu, treść po odczycie). */
+/**
+ * Ciało żądania jako JSON, najwyżej `maxBytes` bajtów. Nagłówek długości większy od limitu odrzuca od razu, bez czytania. Nagłówka
+ * nie bierze za pewnik (może być mniejszy niż ciało albo go nie ma), więc ciało i tak czyta się strumieniem kawałek po kawałku
+ * i liczy w bajtach: gdy suma przekroczy limit, strumień jest przerywany (`cancel`) i wraca `too-large`, więc ciało większe od
+ * limitu nie jest czytane ani składane w całości. Pusty strumień i brak ciała to `bad-request`, tak jak JSON, który się nie parsuje.
+ * Dekoder nie jest rygorystyczny: niepoprawny UTF-8 daje znaki zastępcze (\u{FFFD}), a nie wyjątek. Jeden dekoder na całe ciało
+ * (`stream: true`) skleja znak wielobajtowy przecięty granicą kawałków.
+ */
 async function readJson(request: Request, maxBytes: number): Promise<Checked<unknown>> {
   const declared = Number(request.headers.get('content-length'));
   if (Number.isFinite(declared) && declared > maxBytes) return fail('too-large');
-  let text: string;
+  if (request.body === null) return fail('bad-request');
+  const reader = request.body.getReader();
+  const decoder = new TextDecoder();
+  let text = '';
+  let bytes = 0;
+  let drained = false;
   try {
-    text = await request.text();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      bytes += value.byteLength;
+      if (bytes > maxBytes) return fail('too-large');
+      text += decoder.decode(value, { stream: true });
+    }
+    drained = true;
+    text += decoder.decode();
   } catch {
     return fail('bad-request');
+  } finally {
+    if (!drained) await reader.cancel().catch(() => undefined);
+    reader.releaseLock();
   }
-  if (text.length > maxBytes || new TextEncoder().encode(text).length > maxBytes) return fail('too-large');
   try {
     return { ok: true, value: JSON.parse(text) as unknown };
   } catch {
@@ -65,16 +99,40 @@ async function readJson(request: Request, maxBytes: number): Promise<Checked<unk
   }
 }
 
-/** Adres klienta z nagłówków Vercela (pierwszy na liście). Trafia do bazy tylko jako skrót z solą okna limitu. */
+/** Adres klienta z nagłówków Vercela (pierwszy na liście). Trafia do bazy tylko jako skrót (z solą okna w bazie albo HMAC z `RANKING_SALT`), a do pamięci instancji jako skrót z solą bramki. */
 export function clientAddress(request: Request): string {
   const first = (name: string): string | null => request.headers.get(name)?.split(',')[0]?.trim() || null;
   return first('x-real-ip') ?? first('x-vercel-forwarded-for') ?? first('x-forwarded-for') ?? 'nieznany';
 }
 
-/** Limit zgłoszeń: null, gdy wolno, albo gotowa odpowiedź 429 z `Retry-After`. */
-async function limited(request: Request, deps: ServerDeps, action: RateAction, owner: string | null): Promise<Response | null> {
-  const r = await checkRate(deps.redis, action, { owner, address: clientAddress(request) }, deps.now(), deps.random);
-  return r.ok ? null : apiError('rate-limited', undefined, { 'retry-after': String(r.retryAfter) });
+/**
+ * Limit zgłoszeń jednego żądania; adres czytany z nagłówków raz. Oba sprawdzenia zwracają null, gdy wolno, albo gotową odpowiedź
+ * 429 z `Retry-After`.
+ * - `early()`: wczesna kontrola przed odczytem ciała, tylko po adresie i tylko w pamięci instancji (bramka), więc odmowa nie kosztuje
+ *   ani odczytu ciała, ani zapytania do bazy. Niczego nie liczy. Odrzuca wyłącznie adres, który w tym oknie ma już komplet
+ *   żądań w bazie, więc wszystko, co od niego przyszłoby poprawne, baza i tak by odrzuciła; niepoprawne żądanie z takiego adresu
+ *   dostaje 429 zamiast 400/413. Bez bramki zawsze null.
+ * - `limited(owner)`: właściwy limit na adres i klucz gracza (bramka, potem baza). Licznik rośnie tylko tu, czyli dla żądań,
+ *   które doszły do tego miejsca, tak samo jak licznik w bazie.
+ */
+interface RateLimiter {
+  early(): Promise<Response | null>;
+  limited(owner: string | null): Promise<Response | null>;
+}
+
+function rateLimiter(request: Request, deps: ServerDeps, action: RateAction): RateLimiter {
+  const address = clientAddress(request);
+  const tooMany = (r: RateCheck): Response => apiError('rate-limited', undefined, { 'retry-after': String(r.retryAfter) });
+  return {
+    async early() {
+      const r = await deps.rateGate?.peek(action, { owner: null, address }, deps.now());
+      return r ? tooMany(r) : null;
+    },
+    async limited(owner) {
+      const r = await checkRate(deps.redis, action, { owner, address }, deps.now(), { random: deps.random, gate: deps.rateGate, secret: deps.rateSecret });
+      return r.ok ? null : tooMany(r);
+    },
+  };
 }
 
 /** Klucz gracza z ciała żądania → skrót właściciela. Brak pola to zły formularz, nieczytelny kod to `bad-key`. */
@@ -136,18 +194,23 @@ export const handleLeaderboard: Handler = async (request, deps) => {
 
 /**
  * `POST /api/runs` z `{ key, nick, run }`: sprawdza zgłoszenie i limit, odrzuca cudzy nick, zanim sędzia odtworzy bieg, a wynik
- * policzony przez sędziego wpisuje do rankingów (globalnego, seeda i, dla seeda tygodnia, tygodnia) i rezerwuje nick.
+ * policzony przez sędziego wpisuje do rankingów (globalnego, seeda i, dla seeda tygodnia, tygodnia) i rezerwuje nick. Odmowa sędziego
+ * (`old-version`: bieg z innej wersji symulacji, `replay-failed`, `replay-unavailable`) wraca do gracza pod własnym kodem i statusem
+ * z `errors.ts`, a do bazy nie trafia nic: ani nick, ani wynik.
  */
 export const handleRuns: Handler = async (request, deps) => {
   const bad = wrongMethod(request, 'POST');
   if (bad) return bad;
+  const rate = rateLimiter(request, deps, 'runs');
+  const early = await rate.early();
+  if (early) return early;
   const body = await readJson(request, RUN_MAX_BODY_BYTES);
   if (!body.ok) return failure(body);
   const sub = parseSubmission(body.value);
   if (!sub.ok) return failure(sub);
   const { nick, nickKey, run } = sub.value;
   const owner = await ownerOf(sub.value.key);
-  const limit = await limited(request, deps, 'runs', owner);
+  const limit = await rate.limited(owner);
   if (limit) return limit;
   if (await nickStatus(deps.redis, nickKey, owner, deps.now()) === 'taken') return apiError('nick-taken');
 
@@ -171,6 +234,9 @@ export const handleRuns: Handler = async (request, deps) => {
 export const handlePlayer: Handler = async (request, deps) => {
   const bad = wrongMethod(request, 'POST');
   if (bad) return bad;
+  const rate = rateLimiter(request, deps, 'player');
+  const early = await rate.early();
+  if (early) return early;
   const body = await readJson(request, SMALL_BODY_BYTES);
   if (!body.ok) return failure(body);
   const who = await ownerFrom(body.value);
@@ -178,7 +244,7 @@ export const handlePlayer: Handler = async (request, deps) => {
   const { owner } = who.value;
   const raw = who.value.body.nick;
   if (raw !== undefined && typeof raw !== 'string') return apiError('bad-request');
-  const limit = await limited(request, deps, 'player', owner);
+  const limit = await rate.limited(owner);
   if (limit) return limit;
 
   const now = deps.now();
@@ -211,6 +277,9 @@ export const handlePlayer: Handler = async (request, deps) => {
 export const handleSaveUpload: Handler = async (request, deps) => {
   const bad = wrongMethod(request, 'POST');
   if (bad) return bad;
+  const rate = rateLimiter(request, deps, 'saveUp');
+  const early = await rate.early();
+  if (early) return early;
   const body = await readJson(request, SAVE_BODY_BYTES);
   if (!body.ok) return failure(body.error === 'too-large' ? fail('save-too-large') : body);
   const who = await ownerFrom(body.value);
@@ -218,7 +287,7 @@ export const handleSaveUpload: Handler = async (request, deps) => {
   const save = checkSave(who.value.body.save);
   if (!save.ok) return failure(save);
   if (save.value.toUpperCase().replace(/-/g, '').includes(who.value.key)) return apiError('bad-save');
-  const limit = await limited(request, deps, 'saveUp', who.value.owner);
+  const limit = await rate.limited(who.value.owner);
   if (limit) return limit;
   const now = deps.now();
   const budget = await checkBudget(deps.redis, 'save', SAVE_DAILY_BUDGET, now);
@@ -230,11 +299,14 @@ export const handleSaveUpload: Handler = async (request, deps) => {
 export const handleSaveDownload: Handler = async (request, deps) => {
   const bad = wrongMethod(request, 'POST');
   if (bad) return bad;
+  const rate = rateLimiter(request, deps, 'saveDown');
+  const early = await rate.early();
+  if (early) return early;
   const body = await readJson(request, SMALL_BODY_BYTES);
   if (!body.ok) return failure(body);
   const who = await ownerFrom(body.value);
   if (!who.ok) return failure(who);
-  const limit = await limited(request, deps, 'saveDown', who.value.owner);
+  const limit = await rate.limited(who.value.owner);
   if (limit) return limit;
   const save = await getSave(deps.redis, who.value.owner);
   return save === null ? apiError('no-save') : json({ ok: true, ...save });

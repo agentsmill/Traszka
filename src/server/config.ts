@@ -1,15 +1,16 @@
 /**
- * Liczby serwera rankingu w jednym miejscu: wersje gry, które serwer umie sprawdzić, granice rozmiarów, czasy życia w bazie
+ * Liczby serwera rankingu w jednym miejscu: wersja generatora, którą serwer rozpoznaje, granice rozmiarów, czasy życia w bazie
  * i limity zgłoszeń. Wszystkie czasy w sekundach (Redis), chyba że nazwa mówi inaczej.
  */
 
 /**
- * Wersje gry, których biegi serwer przyjmuje: tylko te, które odtworzy ta sama symulacja co w grze (wynik liczy serwer, więc bieg
- * z innej wersji dałby inny wynik). Test pilnuje, żeby lista miała bieżącą wersję z `package.json` (podbicie wersji bez dopisania
- * jej tutaj nie przejdzie testów).
+ * Wersje generatora sklepu (`GENERATOR_VERSION`), które serwer rozpoznaje przy zgłoszeniu: tani wczesny odrzut, zanim ruszy sędzia.
+ * Sędzia i tak odtwarza bieg generatorem ze swojego bundla i rzuca przy innej wersji (`replay-failed`).
+ *
+ * Listy wersji gry tu nie ma. `gameVersion` z gry (`<package.json>+<12 znaków commita>`) zmienia się przy każdym wdrożeniu, więc
+ * nie może decydować o przyjęciu biegu. Decyduje `simVersion` biegu: sędzia (`verify.ts`) przyjmuje go tylko wtedy, gdy równa się
+ * `SIM_VERSION` z jego bundla, bo wtedy odtworzenie daje ten sam stan co w grze. Parser (`runs.ts`) tylko sprawdza kształt pola.
  */
-export const KNOWN_GAME_VERSIONS: readonly string[] = ['0.0.0'];
-/** Wersje generatora sklepu (`GENERATOR_VERSION`), z których serwer odtworzy sklep. */
 export const KNOWN_GENERATOR_VERSIONS: readonly number[] = [1];
 
 /**
@@ -44,7 +45,9 @@ export const SAVE_BUNDLE_VERSION = 1;
 /**
  * Globalny budżet wysyłania zapisów na dobę UTC, wspólny dla wszystkich kluczy i adresów (ponad niego 429 do północy UTC). Klucz
  * gracza nic nie kosztuje, więc limity na klucz i adres nie zatrzymają kogoś, kto je zmienia; ten licznik zatrzymuje. Zapis z gry
- * waży ok. 10 KB, ale w najgorszym razie 2000 wysłań po 64 KB to ok. 125 MB na dobę: tyle najwyżej doleje się do bazy.
+ * waży ok. 10 KB, ale w najgorszym razie 300 wysłań po 64 KB to ok. 19,7 MB na dobę. Przy czasie życia zapisu 30 dni ciągłe
+ * nadużycie wypełniłoby darmowe 256 MB Upstash w ok. 13 dni (stan ustalony ok. 590 MB), więc to wartość do przemyślenia przez
+ * właściciela razem z alertem zużycia w Upstash (tańsze ryzyko: niższy budżet).
  */
 export const SAVE_DAILY_BUDGET = 300;
 /** Licznik budżetu dziennego żyje dobę od pierwszego wysłania (nazwa klucza ma dzień, więc stary licznik nikomu nie przeszkadza). */
@@ -67,6 +70,8 @@ export const BOARD_LIMIT_MAX = Math.max(...BOARD_LIMITS);
 export const RUN_MAX_BODY_BYTES = 4_000_000;
 export const RUN_MAX_LOG_ENTRIES = 100_000;
 export const RUN_MAX_COMMAND_BYTES = 512;
+/** Najdłuższa `gameVersion` (jednostki UTF-16, jak `String.length`): informacyjna, jedzie z biegiem, więc ma tylko rozsądną granicę (prawdziwa ma kilkanaście znaków). */
+export const RUN_MAX_GAME_VERSION_CHARS = 100;
 /** Najdłuższy seed (punkty kodowe): 40 z pola na ekranie startowym i zapas na sąsiedni lokal (`seed·5`). */
 export const RUN_MAX_SEED_CHARS = 48;
 /** Ciało pozostałych żądań (klucz, nick, seed; zapis gry ma własny limit plus zapas na kopertę JSON). */
@@ -85,6 +90,19 @@ export const RATE_LIMITS: Readonly<Record<RateAction, RateLimit>> = {
   saveUp: { window: 3_600, perKey: 12, perAddress: 30 },
   saveDown: { window: 3_600, perKey: 30, perAddress: 60 },
 };
+
+/**
+ * Ile liczników najwyżej trzyma w pamięci jednej instancji bramka limitu (`createRateGate`); po przepełnieniu wypadają najstarsze.
+ * Pamięć jest tylko przyspieszeniem: wypadnięty wpis oznacza jedno zapytanie do bazy więcej, a nie inną decyzję.
+ */
+export const RATE_GATE_MAX_ENTRIES = 10_000;
+
+/**
+ * Najkrótszy dopuszczalny sekret `RANKING_SALT` (znaki, jednostki UTF-16). Z sekretu liczy się HMAC skrótu adresu w limicie, a baza
+ * (z liczbą skrótów adresów) jest w rękach osób trzecich, gdy wycieknie token: krótki sekret dałoby się odgadnąć razem z całą
+ * przestrzenią adresów IPv4. Krótszy niż minimum to błąd konfiguracji (503), a nie ciche użycie słabego sekretu.
+ */
+export const RATE_SECRET_MIN_CHARS = 16;
 
 /** Odpowiedź z rankingiem może poleżeć w pamięci podręcznej Vercela (wszyscy widzą to samo), zgłoszenia nigdy. */
 export const BOARD_CACHE = 'public, max-age=0, s-maxage=30, stale-while-revalidate=30';

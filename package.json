@@ -7,7 +7,10 @@
     "dev": "vite",
     "assets": "node scripts/process-assets.mjs",
     "audio": "node scripts/process-audio.mjs",
-    "build": "tsc --noEmit && vite build",
+    "build:judge": "node scripts/build-judge.mjs",
+    "ranking:smoke": "node scripts/ranking-smoke.mjs",
+    "check:vercel-build": "node scripts/check-vercel-build.mjs",
+    "build": "npm run build:judge && tsc --noEmit && vite build",
     "preview": "vite preview",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"

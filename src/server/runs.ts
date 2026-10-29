@@ -1,31 +1,31 @@
 import { nickKey, normalizeNick } from '../game/nick.js';
 import { parseRecoveryCode } from '../game/playerKey.js';
+import { isShowableSeed as isShowableSeedText } from '../game/seedText.js';
 import { isRec } from '../sim/guards.js';
+// Tylko typy z gry: znikają przy kompilacji, więc funkcja Vercela nie ładuje `src/sim/run.ts` (alias `@/` w środku) ani `commands.ts`.
+// Pilnuje tego `runtimeImports.test.ts`.
+import type { Command } from '../sim/economy/commands.js';
+import type { LogEntry, RunRecord } from '../sim/run.js';
 import {
-  KNOWN_GAME_VERSIONS, KNOWN_GENERATOR_VERSIONS, RUN_MAX_COMMAND_BYTES, RUN_MAX_LOG_ENTRIES, RUN_MAX_SEED_CHARS, SEASON_END_MINUTE,
+  KNOWN_GENERATOR_VERSIONS, RUN_MAX_COMMAND_BYTES, RUN_MAX_GAME_VERSION_CHARS, RUN_MAX_LOG_ENTRIES, RUN_MAX_SEED_CHARS, SEASON_END_MINUTE,
 } from './config.js';
 import { fail, type Checked } from './errors.js';
 
 /**
- * Bieg zgłoszony do rankingu. Typy to kopia kontraktu z dokumentu etapu 2 (§2, `src/sim/run.ts` dostarcza strumień A): po
- * scaleniu A zastąpić je importem typów z `run.ts` (polecenie jest tam unią `Command`; tu wystarcza obiekt z polem `type`, a
- * resztę sprawdza `applyCommand` przy odtwarzaniu).
+ * Bieg zgłoszony do rankingu: `RunRecord` z gry (`src/sim/run.ts`) z wersją symulacji, według której został rozegrany. `simVersion`
+ * dojdzie do `RunRecord` gry w części B2b; wtedy przecięcie jest zbędne, ale nadal poprawne. Do tego czasu typ gry nie ma tego
+ * pola, a serwer wymaga go od każdego zgłoszenia: o przyjęciu decyduje zgodność z `SIM_VERSION` sędziego (`verify.ts`), a nie `gameVersion`.
  */
-export interface RunCommand { type: string; [field: string]: unknown }
-export interface LogEntry { minute: number; seq: number; cmd: RunCommand }
-export interface RunRecord {
-  seed: string; gameVersion: string; generatorVersion: number;
-  mode: 'casual' | 'ranked'; log: LogEntry[];
-}
+export type SubmittedRun = RunRecord & { simVersion: number };
 
 /** Zgłoszenie po sprawdzeniu: klucz w postaci kanonicznej, nick po `normalizeNick` (do wyświetlania) i jego klucz porównań. */
-export interface Submission { key: string; nick: string; nickKey: string; run: RunRecord }
+export interface Submission { key: string; nick: string; nickKey: string; run: SubmittedRun }
 
 /** Typ polecenia: krótki identyfikator (jak `tapPallet`), bez spacji i znaków spoza ASCII. */
 const COMMAND_TYPE = /^[A-Za-z][A-Za-z0-9]{0,31}$/;
-/** Znaki, których nie wolno pokazać w rankingu: sterujące, formatujące (kierunek tekstu, zerowej szerokości, BOM) i separatory wierszy. Spójnik emoji (U+200D) zostaje. */
-const HIDDEN = /[\p{Cc}\p{Zl}\p{Zp}]|(?!\u200d)\p{Cf}/u;
 const isWhole = (v: unknown, min: number, max: number): v is number => Number.isInteger(v) && (v as number) >= min && (v as number) <= max;
+/** Wersja symulacji w biegu: liczba całkowita nieujemna, taka, którą da się dokładnie porównać z `SIM_VERSION`. */
+const isSimVersion = (v: unknown): v is number => Number.isSafeInteger(v) && (v as number) >= 0;
 
 /** Klucz gracza i nick wspólne dla wszystkich zgłoszeń z nickiem (bieg, sprawdzenie nicka). Brak pola to zły formularz, zły klucz to `bad-key`. */
 export function parseKeyAndNick(key: unknown, nick: unknown): Checked<{ key: string; nick: string; nickKey: string }> {
@@ -37,10 +37,14 @@ export function parseKeyAndNick(key: unknown, nick: unknown): Checked<{ key: str
   return { ok: true, value: { key: parsedKey, nick: n.nick, nickKey: nickKey(n.nick) } };
 }
 
-/** Seed z biegu, który da się pokazać w rankingu: 1–48 znaków, bez spacji na brzegach i bez znaków niewidocznych. */
+/**
+ * Seed z biegu, który da się pokazać w rankingu: 1–48 znaków (`RUN_MAX_SEED_CHARS`), bez spacji na brzegach i bez niedozwolonych znaków.
+ * Które znaki są niedozwolone, rozstrzyga `src/game/seedText.ts`, ta sama definicja, według której gra czyści seed (`normalizeSeed`),
+ * więc seed zapisany przez grę serwer przyjmuje. Odrzuca znaki sterujące i formatujące, znaczniki (poza trzema flagami Anglii,
+ * Szkocji i Walii), osamotnione surogaty, separatory wierszy i ZWJ poza emoji.
+ */
 export function isShowableSeed(seed: string): boolean {
-  const chars = Array.from(seed).length;
-  return chars >= 1 && chars <= RUN_MAX_SEED_CHARS && seed === seed.trim() && !HIDDEN.test(seed);
+  return isShowableSeedText(seed, RUN_MAX_SEED_CHARS);
 }
 
 function parseLog(raw: unknown[]): Checked<LogEntry[]> {
@@ -54,7 +58,8 @@ function parseLog(raw: unknown[]): Checked<LogEntry[]> {
     if (typeof e.cmd.type !== 'string' || !COMMAND_TYPE.test(e.cmd.type)) return fail('bad-log');
     const json = JSON.stringify(e.cmd);
     if (json.length > RUN_MAX_COMMAND_BYTES) return fail('bad-log');
-    log.push({ minute: e.minute, seq: e.seq, cmd: JSON.parse(json) as RunCommand });
+    // Kształt pól polecenia sprawdza `applyCommand` przy odtwarzaniu (nieznane lub zepsute odrzuca); parser pilnuje tylko `type` i rozmiaru.
+    log.push({ minute: e.minute, seq: e.seq, cmd: JSON.parse(json) as Command });
     prevMinute = e.minute;
     prevSeq = e.seq;
   }
@@ -63,19 +68,27 @@ function parseLog(raw: unknown[]): Checked<LogEntry[]> {
 
 /**
  * Ciało `POST /api/runs` (`{ key, nick, run }`) bez zaufania → zgłoszenie albo błąd. Kolejność: kształt, klucz, nick (reguły gry;
- * filtra słów nie ma, decyzja właściciela gry z 2026-10-28), wersja gry i generatora, tryb rankingowy, seed, dziennik. Bieg dostaje tylko pola kontraktu (obce
- * odpadają), a polecenia są kopiami. Sam wynik liczy dopiero odtworzenie (`verify.ts`).
+ * filtra słów nie ma, decyzja właściciela gry z 2026-10-28), wersje, tryb rankingowy, seed, dziennik. Bieg dostaje tylko pola
+ * kontraktu (obce odpadają), a polecenia są kopiami. Sam wynik liczy dopiero odtworzenie (`verify.ts`).
+ *
+ * Wersje: `gameVersion` to napis (najwyżej `RUN_MAX_GAME_VERSION_CHARS` jednostek UTF-16, jak `String.length`) i tylko jedzie z biegiem, bo gra wstawia do niego
+ * wersję z commitem i żadna lista jej nie zna. O przyjęciu decyduje `simVersion`: brak pola to bieg ze starej wersji gry (`old-version`),
+ * pole, które nie jest liczbą całkowitą nieujemną, to zły formularz (`bad-request`). Czy `simVersion` równa się `SIM_VERSION`, rozstrzyga
+ * sędzia, bo tylko on ma bundle z symulacją. Nieznana wersja generatora to też `old-version` (wczesny odrzut).
  */
 export function parseSubmission(body: unknown): Checked<Submission> {
   if (!isRec(body) || !isRec(body.run)) return fail('bad-request');
   const who = parseKeyAndNick(body.key, body.nick);
   if (!who.ok) return who;
   const r = body.run;
-  if (typeof r.seed !== 'string' || typeof r.gameVersion !== 'string' || typeof r.generatorVersion !== 'number' || !Array.isArray(r.log)) {
+  if (typeof r.seed !== 'string' || typeof r.gameVersion !== 'string' || r.gameVersion.length > RUN_MAX_GAME_VERSION_CHARS
+    || typeof r.generatorVersion !== 'number' || !Array.isArray(r.log)) {
     return fail('bad-request');
   }
   if (r.mode !== 'ranked' && r.mode !== 'casual') return fail('bad-request');
-  if (!KNOWN_GAME_VERSIONS.includes(r.gameVersion) || !KNOWN_GENERATOR_VERSIONS.includes(r.generatorVersion)) return fail('old-version');
+  const sim = r.simVersion;
+  if (sim !== undefined && !isSimVersion(sim)) return fail('bad-request');
+  if (!isSimVersion(sim) || !KNOWN_GENERATOR_VERSIONS.includes(r.generatorVersion)) return fail('old-version');   // tu `sim` bez wartości = brak pola
   if (r.mode !== 'ranked') return fail('not-ranked');
   if (!isShowableSeed(r.seed)) return fail('bad-seed');
   const log = parseLog(r.log);
@@ -84,7 +97,9 @@ export function parseSubmission(body: unknown): Checked<Submission> {
     ok: true,
     value: {
       ...who.value,
-      run: { seed: r.seed, gameVersion: r.gameVersion, generatorVersion: r.generatorVersion, mode: 'ranked', log: log.value },
+      run: {
+        seed: r.seed, gameVersion: r.gameVersion, generatorVersion: r.generatorVersion, simVersion: sim, mode: 'ranked', log: log.value,
+      },
     },
   };
 }
