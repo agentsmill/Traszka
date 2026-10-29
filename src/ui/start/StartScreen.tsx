@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'preact/hooks';
+import type { Ref } from 'preact';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { OUTFIT_ORDER, rollCashierLook, stepOutfit, type CashierLook } from '@/game/cashier';
 import { NICK_MAX } from '@/game/nick';
 import { clipSeedInput, freeSeed } from '@/game/seeds';
@@ -7,9 +8,12 @@ import { hasStoredSave } from '@/game/session';
 import { submitStart } from '@/game/start';
 import type { OutfitFile } from '@/render/characters/modularPack';
 import { DISCLAIMER } from '../game/overlays';
-import { start, type StartRequest } from '../state';
+import { confirmRankedStart, start, type StartRequest } from '../state';
+import '../ranking/ranking.css';
 import { createLauncher, type Launcher } from './launch';
 import { createStartPreview, type StartPreview } from './preview';
+import { rankedAskFacts, rankedAskText } from './rankedAsk';
+import { WEEK_CHIP, WEEK_UNAVAILABLE, WEEK_WAITING, createWeekSeedPicker, type WeekSeedPicker } from './weekSeed';
 
 /** Nazwy strojów pod podglądem (typ pilnuje, że każdy z 21 strojów ma nazwę). */
 const OUTFIT_LABEL: Record<OutfitFile, string> = {
@@ -39,6 +43,32 @@ const OUTFIT_LABEL: Record<OutfitFile, string> = {
 /** Po tylu ms oczekiwania na strój specjalny pokazujemy „Wczytuję strój…” (zwykły stoi od razu i nie migocze). */
 const PENDING_NOTE_MS = 160;
 
+/** Podpis pod „Start rankingowy”. */
+export const RANKED_NOTE = 'Trzy miesiące na jednym seedzie, bez premii z sieci. Wynik wyślesz po sezonie; gdy ranking nie działa, bieg poczeka w przeglądarce.';
+
+/**
+ * Pytanie w ekranie startowym, gdy nowy bieg rankingowy porzuciłby coś, co jeszcze żyje (niewysłany bieg, trwający bieg): zamiast
+ * dwóch przycisków startu. Komponent bez haków (tekst pytania i odpowiedzi daje ekran), więc testy wołają go jak zwykłą funkcję.
+ * „Wróć” jest bezpieczną odpowiedzią i dostaje fokus; w trakcie startu po „Porzuć i zacznij” oba przyciski czekają.
+ */
+export function RankedConfirm({ question, busy, cancelRef, onReplace, onCancel }: {
+  question: string;
+  busy: boolean;
+  cancelRef?: Ref<HTMLButtonElement>;
+  onReplace: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div class="tt-ranked-ask">
+      <p class="tt-ranked-ask-text" role="alert">{question}</p>
+      <button type="button" class={`tt-btn big tt-ranked-go${busy ? ' is-working' : ''}`} disabled={busy} onClick={onReplace}>
+        {busy ? 'Otwieramy…' : 'Porzuć i zacznij'}
+      </button>
+      <button ref={cancelRef} type="button" class="tt-btn big" disabled={busy} onClick={onCancel}>Wróć</button>
+    </div>
+  );
+}
+
 /** Ekran startowy, gdy `start` jest ustawione (pierwsze wejście albo „Nowy sklep” z ⚙); inaczej nic. */
 export function StartHost() {
   const request = start.value;
@@ -48,10 +78,13 @@ export function StartHost() {
 /**
  * „Twój kasjer”. Lewa strona: podgląd 3D kasjera na podeście (osobny, lekki renderer, `preview.ts`), 🎲 Losuj, strzałki ‹ › po
  * strojach (najpierw zwykłe, potem specjalne) i przełącznik strojów specjalnych w losowaniu. Prawa: nazwa gracza, seed sklepu
- * i duży przycisk „Otwieramy sklep!”. Telefon (< 700 px): podgląd u góry, formularz pod spodem. Cała logika (nick, seed, zapisy)
- * jest w `game/start.ts`; tu tylko pola i podgląd. Podgląd zwalnia swój renderer, zanim ruszy gra.
+ * i duży przycisk „Otwieramy sklep!”, pod nim „Start rankingowy”. Chip „Seed tygodnia” obok kostki wpisuje w pole seed z serwera
+ * rankingu. Gdy nowy bieg rankingowy porzuciłby niewysłany albo trwający bieg, pytanie (`RankedConfirm`) staje w miejscu przycisków
+ * startu, a ekran (z podglądem) zostaje otwarty: pyta się przed zamknięciem, bo zamknięty podgląd oddaje kontekst WebGL bezpowrotnie.
+ * Telefon (< 700 px): podgląd u góry, formularz pod spodem. Cała logika (nick, seed, zapisy) jest w `game/start.ts`; tu tylko pola
+ * i podgląd. Podgląd zwalnia swój renderer, zanim ruszy gra.
  */
-function StartScreen({ request }: { request: StartRequest }) {
+export function StartScreen({ request }: { request: StartRequest }) {
   const [nick, setNick] = useState(request.form.nick);
   const [seed, setSeed] = useState(request.form.seed);
   const [look, setLook] = useState<CashierLook>(request.form.look);
@@ -60,16 +93,25 @@ function StartScreen({ request }: { request: StartRequest }) {
   /** Podgląd 3D: `loading` do czasu fabryki postaci, `ready` gdy stoi, `none` gdy się nie udał (formularz działa i bez niego). */
   const [stage, setStage] = useState<'loading' | 'ready' | 'none'>('loading');
   const [pending, setPending] = useState(false);
-  /** „Otwieramy sklep!” ruszyło: przycisk jest wyłączony z napisem „Otwieramy…”, a budowa świata czeka na namalowanie go. */
-  const [busy, setBusy] = useState(false);
+  /** Start ruszył (który: zwykły czy rankingowy): przyciski są wyłączone, ten kliknięty z napisem „Otwieramy…”, a budowa świata czeka na namalowanie go. */
+  const [busyKind, setBusyKind] = useState<'casual' | 'ranked' | null>(null);
+  const busy = busyKind !== null;
   /** Licznik próśb o pokazanie pola z błędem (każda zła próba zatwierdzenia, także z tym samym komunikatem, przewija na nowo). */
   const [revealTick, setRevealTick] = useState(0);
   const wrapRef = useRef<HTMLDivElement>(null);
   const bandRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const nickRef = useRef<HTMLInputElement>(null);
+  const cancelRef = useRef<HTMLButtonElement>(null);
   const launcherRef = useRef<Launcher | null>(null);
   launcherRef.current ??= createLauncher();
+  /** Chip „Seed tygodnia”: jest tylko wtedy, gdy wołający umie zapytać serwer (`weekSeed`). */
+  const weekRef = useRef<WeekSeedPicker | null>(null);
+  if (request.weekSeed) weekRef.current ??= createWeekSeedPicker(request.weekSeed, (picked) => setSeed(clipSeedInput(picked)));
+  const week = weekRef.current;
+  /** Pytanie o porzucenie biegu (ustawia je ekran po kliknięciu „Start rankingowy”, a `startRanked`, gdyby start nie wyszedł mimo sprawdzenia). */
+  const asked = confirmRankedStart.value;
+  const question = useMemo(() => (asked ? rankedAskText(asked.reason, rankedAskFacts()) : null), [asked]);
   const previewRef = useRef<StartPreview | null>(null);
   const lookRef = useRef(look);
   lookRef.current = look;
@@ -105,6 +147,7 @@ function StartScreen({ request }: { request: StartRequest }) {
     });
     return () => {
       alive = false;
+      weekRef.current?.reset();   // spóźniona odpowiedź serwera nie dotyka ekranu, którego już nie ma
       previewRef.current?.dispose();
       previewRef.current = null;
       delete (window as { traszkaStart?: unknown }).traszkaStart;
@@ -113,11 +156,15 @@ function StartScreen({ request }: { request: StartRequest }) {
 
   useEffect(() => { showLook(look); }, [look]);
 
-  /** Zamyka ekran: najpierw podgląd oddaje renderer i kontekst WebGL, potem ekran znika, dopiero potem ruszają dalsze kroki. */
+  /** Pytanie o bieg wchodzi w miejsce przycisków startu: fokus na bezpieczną odpowiedź, żeby klawiatura i czytnik ekranu go nie zgubiły. */
+  useEffect(() => { if (asked) cancelRef.current?.focus(); }, [asked]);
+
+  /** Zamyka ekran: najpierw podgląd oddaje renderer i kontekst WebGL, potem ekran znika (z nim pytanie o bieg), dopiero potem ruszają dalsze kroki. */
   const close = (then: () => void): void => {
     previewRef.current?.dispose();
     previewRef.current = null;
     start.value = null;
+    confirmRankedStart.value = null;
     then();
   };
   const back = (): void => {
@@ -169,21 +216,41 @@ function StartScreen({ request }: { request: StartRequest }) {
       input.setSelectionRange(caret, caret);
     }
     setSeed(clipped);
+    week?.reset();   // własny seed gracza wygrywa z chipem (także ze spóźnioną odpowiedzią serwera)
   };
 
-  const submit = (e: Event): void => {
-    e.preventDefault();
+  /**
+   * „Otwieramy sklep!” (`ranked` false), „Start rankingowy” (`ranked` true) i „Porzuć i zacznij” (`replace`). Zły nick blokuje wszystkie
+   * trzy. Start rankingowy pyta o porzucenie biegu (`rankedBlock`) przed zamknięciem czegokolwiek; pytanie jest w sygnale, ekran stoi.
+   */
+  const begin = (ranked: boolean, replace = false): void => {
     if (launcherRef.current?.busy) return;
-    const result = submitStart({ nick, seed, look, specialOutfits: special });
+    const result = submitStart({ nick, seed, look, specialOutfits: special }, undefined, ranked);
     if (!result.ok) {
       setNickError(result.nickError);
       setRevealTick((t) => t + 1);
       return;
     }
+    const { choice } = result;
+    if (ranked && !replace) {
+      const reason = request.rankedBlock?.() ?? null;
+      if (reason) {
+        confirmRankedStart.value = { seed: choice.seed, reason };
+        return;
+      }
+    }
     // odpowiedź od razu („Otwieramy…”), a ciężka budowa świata dopiero po jej namalowaniu (launch.ts)
-    launcherRef.current?.launch(() => setBusy(true), () => close(() => request.onStart(result.choice)));
+    launcherRef.current?.launch(
+      () => setBusyKind(ranked ? 'ranked' : 'casual'),
+      () => close(() => (replace ? request.onStart(choice, { replace: true }) : request.onStart(choice))),
+    );
+  };
+  const submit = (e: Event): void => {
+    e.preventDefault();
+    begin(false);
   };
 
+  const weekWaiting = week?.status.value === 'loading';
   const label = OUTFIT_LABEL[look.outfit];
   const at = OUTFIT_ORDER.indexOf(look.outfit) + 1;
   return (
@@ -224,13 +291,35 @@ function StartScreen({ request }: { request: StartRequest }) {
             <div class="tt-seedrow">
               <input id="tt-seed" class="tt-input" type="text" value={seed} autocomplete="off" autocapitalize="off"
                 spellcheck={false} placeholder="dowolny tekst" onInput={(e) => editSeed(e.currentTarget)} />
+              {week && (
+                <button type="button" class="tt-btn tt-weekseed" disabled={busy || weekWaiting} onClick={() => week.pick()}>
+                  {weekWaiting ? WEEK_WAITING : WEEK_CHIP}
+                </button>
+              )}
               <button type="button" class="tt-btn tt-dice" aria-label="Wylosuj seed" title="Wylosuj seed"
-                onClick={() => setSeed(freeSeed(randomSeed, hasStoredSave))}>🎲</button>
+                onClick={() => { setSeed(freeSeed(randomSeed, hasStoredSave)); week?.reset(); }}>🎲</button>
             </div>
+            {week?.status.value === 'unavailable' && <p class="tt-hint warn" role="status">{WEEK_UNAVAILABLE}</p>}
             <p class="tt-hint">Dowolny tekst. Ten sam seed to ten sam sklep, a każdy seed ma własny zapis gry.</p>
 
             <div ref={bandRef} class="tt-start-go">
-              <button type="submit" class="tt-btn tt-primary big" disabled={busy}>{busy ? 'Otwieramy…' : 'Otwieramy sklep!'}</button>
+              {question !== null ? (
+                <RankedConfirm question={question} busy={busy} cancelRef={cancelRef} onReplace={() => begin(true, true)}
+                  onCancel={() => { confirmRankedStart.value = null; }} />
+              ) : (
+                <button type="submit" class="tt-btn tt-primary big" disabled={busy}>{busyKind === 'casual' ? 'Otwieramy…' : 'Otwieramy sklep!'}</button>
+              )}
+            </div>
+            <div class="tt-start-more">
+              {question === null && (
+                <>
+                  <button type="button" class={`tt-btn big tt-ranked-go${busyKind === 'ranked' ? ' is-working' : ''}`} aria-describedby="tt-ranked-note"
+                    disabled={busy} onClick={() => begin(true)}>
+                    {busyKind === 'ranked' ? 'Otwieramy…' : 'Start rankingowy'}
+                  </button>
+                  <p id="tt-ranked-note" class="tt-hint tt-ranked-note">{RANKED_NOTE}</p>
+                </>
+              )}
               {request.mode === 'new' && <button type="button" class="tt-btn big tt-back" disabled={busy} onClick={back}>Wróć do gry</button>}
             </div>
             <p class="tt-disclaimer2">{DISCLAIMER}</p>

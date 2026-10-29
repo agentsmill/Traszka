@@ -10,8 +10,8 @@ import { GENERATOR_VERSION } from '@/sim/store/generateStore';
 import { dispatchCommand, markOffLog, type CommandEffects } from './actions';
 import { MemoryStorage } from './memoryStorage';
 import {
-  RANKED_KEYS, clearFinished, createRankedSession, discardRanked, finishRun, getPlayMode, holdFinished, loadFinished, loadRanked, pendingFinished,
-  rankedRunStale, saveFinished, saveRanked, seasonOver, setPlayMode, type FinishedRun,
+  RANKED_DAYS, RANKED_KEYS, clearFinished, createRankedSession, discardRanked, finishRun, getPlayMode, holdFinished, loadFinished, loadRanked,
+  pendingFinished, rankedDayOf, rankedRunStale, saveFinished, saveRanked, seasonOver, setPlayMode, storedRankedBlock, type FinishedRun,
 } from './rankedRun';
 import { GAME_VERSION } from './version';
 import { SAVE_SCHEMA, createSession, deleteSave, discardSave, newRunLog, retireSession, reviveSession, saveSession, type GameSession } from './session';
@@ -702,5 +702,57 @@ describe('tryb gry i koniec sezonu', () => {
     expect(seasonOver({ minute: END - 1 })).toBe(false);
     expect(seasonOver({ minute: END })).toBe(true);
     expect(seasonOver({ minute: END + 1000 })).toBe(true);
+  });
+});
+
+describe('storedRankedBlock: co w przeglądarce stoi na przeszkodzie nowemu biegowi', () => {
+  const drawerRun = (): FinishedRun => ({ v: 1, seed: SEED, record: newRunLog(SEED, 'ranked').record, score: 12_345, finishedAt: 1_000 });
+
+  it('pusta przeglądarka: nic nie blokuje', () => {
+    expect(storedRankedBlock()).toBeNull();
+  });
+
+  it('aktywny zapis biegu: active', () => {
+    expect(saveRanked(createRankedSession(SEED))).toBe(true);
+    expect(storedRankedBlock()).toBe('active');
+  });
+
+  it('bieg z innej wersji gry też blokuje (nie da się go wznowić, ale nie wolno go po cichu skasować)', () => {
+    storage.setItem(RANKED_KEYS.active, JSON.stringify({ schema: 99 }));
+    expect(storedRankedBlock()).toBe('active');
+    expect(storage.getItem(RANKED_KEYS.active)).toBe('{"schema":99}');
+  });
+
+  it('szuflada niewysłanego biegu: unsent, i ma pierwszeństwo przed aktywnym zapisem', () => {
+    saveFinished(drawerRun());
+    expect(storedRankedBlock()).toBe('unsent');
+    saveRanked(createRankedSession(SEED));
+    expect(storedRankedBlock()).toBe('unsent');
+  });
+
+  it('bieg trzymany w pamięci karty (przeglądarka nie dała zapisać szuflady) też jest niewysłany', () => {
+    holdFinished(drawerRun());
+    expect(storedRankedBlock()).toBe('unsent');
+    clearFinished();
+    expect(storedRankedBlock()).toBeNull();
+  });
+
+  it('uszkodzony zapis biegu nie blokuje: idzie do kopii, jak w loadRanked', () => {
+    storage.setItem(RANKED_KEYS.active, 'nie json');
+    expect(storedRankedBlock()).toBeNull();
+    expect(storage.getItem(RANKED_KEYS.broken)).toBe('nie json');
+  });
+});
+
+describe('dzień sezonu rankingowego', () => {
+  it('sezon trwa 91 dni (od 1 września do 30 listopada)', () => {
+    expect(RANKED_DAYS).toBe(91);
+  });
+
+  it('rankedDayOf liczy od 1 i nie wychodzi poza sezon', () => {
+    expect(rankedDayOf({ minute: OPEN_FROM })).toBe(1);
+    expect(rankedDayOf({ minute: OPEN_FROM + MINUTES_PER_DAY })).toBe(2);
+    expect(rankedDayOf({ minute: END - 1 })).toBe(91);
+    expect(rankedDayOf({ minute: END + 10 * MINUTES_PER_DAY })).toBe(91);
   });
 });

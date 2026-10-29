@@ -1,20 +1,18 @@
 import type { CharacterFactory } from '@/render/characters/characterFactory';
-import { dayOf } from '@/sim/economy/calendar';
 import { applyCommand, type Command } from '@/sim/economy/commands';
 import {
   awaitingDecision, grantDaily, grantOffline, processLevels, stepMinute, tapCombo, type CommandResult, type EconEvent, type EconEventKind,
 } from '@/sim/economy/economy';
 import { rankFor } from '@/sim/economy/progress';
 import { noticeLevel } from '@/sim/economy/tycoon/notices';
-import { RANKED_SEASON_END_MINUTE } from '@/sim/ranked';
 import type { Sfx } from '@/ui/sfx';
 import * as ui from '@/ui/state';
 import type { CashierLook } from './cashier';
 import { addToNetwork, claimDaily, partnerOf, saveMeta, startupWindow, type Meta } from './meta';
 import { openStore } from './openStore';
 import {
-  clearFinished, createRankedSession, discardRanked, finishRun, getPlayMode, holdFinished, loadRanked, pendingFinished, rankedRunStale, saveFinished,
-  saveRanked, seasonOver, setPlayMode, type FinishedRun,
+  RANKED_DAYS, clearFinished, createRankedSession, discardRanked, finishRun, getPlayMode, holdFinished, loadRanked, pendingFinished, rankedDayOf,
+  rankedRunStale, saveFinished, saveRanked, seasonOver, setPlayMode, storedRankedBlock, type FinishedRun,
 } from './rankedRun';
 import type { ScenePick } from './scene';
 import { chooseStore, freeSeed } from './seeds';
@@ -22,7 +20,7 @@ import {
   NEWER_SAVE_NOTICE, RUN_LOG_MAX, UNBUILDABLE_SAVE_NOTICE, createSession, discardSave, hasStoredSave, lastSavedSeed, retireSession, reviveSession,
   saveSession, type GameSession,
 } from './session';
-import { initialStartForm, noticeAfterOpen, openChosen, openRequestFor, playerOf, type StartChoice, type StoreSwitch } from './start';
+import { initialStartForm, noticeAfterOpen, openChosen, openRequestFor, playerOf, type StartChoice, type StartForm, type StoreSwitch } from './start';
 
 /**
  * Warstwa gry nad `applyCommand`: każde polecenie gracza przechodzi tędy. Dyspozytor stosuje je do stanu (czysta symulacja),
@@ -236,6 +234,8 @@ export interface ShellDeps {
   characterFactory(): Promise<CharacterFactory>;
   /** Podpowiedzi pierwszego dnia w krótkich dymkach (`FIRST_DAY_HINTS` w ui/game/overlays.tsx: moduł interfejsu, więc podaje je main.ts). */
   firstDayHints: readonly string[];
+  /** Seed tygodnia z serwera rankingu dla chipa na ekranie „Nowy sklep” (main.ts: `weekSeedOf(createRankingClient())`); bez niej ekran nie ma chipa. */
+  weekSeed?(): Promise<string | null>;
 }
 
 /** Prośba o pierwszy sklep przy wejściu na stronę (`GameShell.open`). */
@@ -347,14 +347,11 @@ export const RANKED_NO_NETWORK_NOTICE = 'W biegu rankingowym nie ma sieci sklep�
 export const RANKED_NO_RESTART_NOTICE = 'W biegu rankingowym nie zaczyna się od nowa. Porzuć bieg w ustawieniach.';
 const rankedStartFailed = (seed: string): string => `Nie udało się zacząć biegu rankingowego „${seed}”.`;
 
-/** Ile dni ma sezon rankingowy (od 1 września do 30 listopada): numer dnia ostatniej minuty sezonu, licząc od 1. */
-const RANKED_DAYS = dayOf(RANKED_SEASON_END_MINUTE - 1) + 1;
-
 /** Widok biegu dla interfejsu: dzień sezonu (od 1, najwyżej `RANKED_DAYS`) i faza (`over`: sezon się skończył albo umowa została wypowiedziana); null dla zwykłego sklepu. */
 function rankedViewOf(session: GameSession): ui.RankedView | null {
   if (session.mode !== 'ranked') return null;
   const over = seasonOver(session.econ) || session.econ.gameOver;
-  return { seed: session.seed, day: Math.min(dayOf(session.econ.minute) + 1, RANKED_DAYS), days: RANKED_DAYS, phase: over ? 'over' : 'playing' };
+  return { seed: session.seed, day: rankedDayOf(session.econ), days: RANKED_DAYS, phase: over ? 'over' : 'playing' };
 }
 
 /** Ustawia `ui.ranked` tylko wtedy, gdy widok się zmienił: `publish` idzie kilka razy na sekundę, a ten sam widok nie powinien budzić interfejsu. */
@@ -639,11 +636,9 @@ export function createShell(deps: ShellDeps): GameShell {
 
   /** Co blokuje start nowego biegu: niewysłany bieg w szufladzie (pierwszeństwo) albo trwający bieg rankingowy. Uszkodzony zapis nie blokuje: `loadRanked` już oddał go do kopii. */
   function rankedStartBlock(): ui.RankedStartRequest['reason'] | null {
-    if (pendingFinished() !== null) return 'unsent';
     const current = shell.session;
-    if (current?.mode === 'ranked' && !concluded.has(current)) return 'active';   // bieg w pamięci karty, nawet gdy przeglądarka nie dała go zapisać; skończony sezon nie jest „rozpoczętym biegiem”
-    const { status } = loadRanked();
-    return status === 'ok' || status === 'incompatible' ? 'active' : null;
+    if (current?.mode === 'ranked' && !concluded.has(current)) return pendingFinished() !== null ? 'unsent' : 'active';   // bieg w pamięci karty, nawet gdy przeglądarka nie dała go zapisać; skończony sezon nie jest „rozpoczętym biegiem”
+    return storedRankedBlock();   // szuflada, potem zapis w przeglądarce (to samo sprawdza ekran startowy przed powstaniem powłoki)
   }
 
   function startRanked(seed: string, opts: { replace?: boolean } = {}): boolean {
@@ -739,12 +734,40 @@ export function createShell(deps: ShellDeps): GameShell {
    * do sceny przed `setSeed`: każdy sklep (także poprzedni, odtworzony, gdy nowy się nie otworzył) stawia kasjera z tego wyglądu,
    * więc `CashierView.setLook` na żywo nie jest tu potrzebne. Po otwarciu zupełnie nowego sklepu wstaje okno „Jak grać” (gra czeka na
    * „Zaczynamy”); sklep wczytany z zapisu i sklep, który się nie otworzył (gracz zostaje w poprzednim), instrukcji nie otwierają.
+   *
+   * Wybór rankingowy (`choice.ranked`, „Start rankingowy”) idzie do `startRanked(seed, opts)` zamiast do `openChosen`: bieg zaczyna się
+   * od zera bez wczytywania zwykłego zapisu pod tym seedem, a instrukcji nie otwiera (tylko zwykły, zupełnie nowy sklep). `opts.replace`
+   * to „Porzuć i zacznij” z pytania. Ekran pyta o porzucenie biegu jeszcze przed zamknięciem (`rankedBlock`), więc tu pytanie nie powinno
+   * paść; gdyby stan zmienił się po drodze (`startRanked` odmówił i ustawił `confirmRankedStart`), nic nie zostaje skasowane, a ekran
+   * wraca z tym samym wyborem i pytaniem. Inna porażka (świat się nie zbudował) zostawia gracza w poprzednim sklepie z komunikatem.
    */
-  function openChosenStore(choice: StartChoice): void {
+  function openChosenStore(choice: StartChoice, opts?: { replace?: boolean }): void {
     shell.meta.player = playerOf(choice);
     saveMeta(shell.meta);
     scene.setCashierLook(choice.look);
+    if (choice.ranked) {
+      ui.confirmRankedStart.value = null;   // po wywołaniu wartość znaczy tylko jedno: `startRanked` zapytał właśnie teraz
+      if (startRanked(choice.seed, opts)) {
+        if (choice.notice) ui.pushToast(choice.notice, 'info');   // np. „sąsiedni lokal”; `startRanked` zna tylko seed, który już jest kanoniczny
+      } else if (ui.confirmRankedStart.value) {
+        openStartScreen({ nick: choice.nick, seed: choice.seed, look: choice.look, specialOutfits: choice.specialOutfits });
+      }
+      return;
+    }
     if (openChosen(choice, storeSwitch) && shell.session && !shell.session.fromSave) ui.openHowTo();
+  }
+
+  /** Ekran „Nowy sklep” (tryb `new`): gra czeka pod nim (modal w pętli klatek). Pola z `form`; zatwierdzenie to `openChosenStore`. */
+  function openStartScreen(form: StartForm): void {
+    ui.start.value = {
+      mode: 'new',
+      form,
+      factory: deps.characterFactory(),
+      onStart: openChosenStore,
+      onBack: () => {},
+      weekSeed: deps.weekSeed,
+      rankedBlock: rankedStartBlock,
+    };
   }
 
   const game: ui.GameActions = {
@@ -819,14 +842,9 @@ export function createShell(deps: ShellDeps): GameShell {
       ui.showSettings.value = false;
       ui.tab.value = null;
       ui.selection.value = null;
-      // gra czeka pod ekranem (modal w pętli klatek); seed w polu to wolny, losowy: „Otwieramy sklep!” otwiera NOWY sklep
-      ui.start.value = {
-        mode: 'new',
-        form: initialStartForm(shell.meta, freeSeed(deps.randomSeed, hasStoredSave)),
-        factory: deps.characterFactory(),
-        onStart: openChosenStore,
-        onBack: () => {},
-      };
+      // seed w polu to wolny, losowy: „Otwieramy sklep!” otwiera NOWY sklep; stare pytanie o bieg (z innego ekranu) nie wraca
+      ui.confirmRankedStart.value = null;
+      openStartScreen(initialStartForm(shell.meta, freeSeed(deps.randomSeed, hasStoredSave)));
     },
     startRanked,
     resumeRanked,

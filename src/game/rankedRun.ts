@@ -1,3 +1,4 @@
+import { dayOf } from '@/sim/economy/calendar';
 import { isCommand } from '@/sim/economy/commands';
 import type { EconomyState } from '@/sim/economy/economy';
 import { isRec } from '@/sim/guards';
@@ -304,6 +305,24 @@ export const rankedRunStale = (s: GameSession): boolean => s.run !== null && s.r
 
 /** Czy sezon się skończył: pierwsza minuta po zamknięciu 30 listopada (`RANKED_SEASON_END_MINUTE`) i każda późniejsza. */
 export const seasonOver = (econ: Pick<EconomyState, 'minute'>): boolean => econ.minute >= RANKED_SEASON_END_MINUTE;
+
+/** Ile dni ma sezon rankingowy (od 1 września do 30 listopada): numer dnia ostatniej minuty sezonu, licząc od 1. */
+export const RANKED_DAYS = dayOf(RANKED_SEASON_END_MINUTE - 1) + 1;
+
+/** Dzień sezonu, w którym stoi bieg: od 1, najwyżej `RANKED_DAYS` (po końcu sezonu zostaje ostatni). */
+export const rankedDayOf = (econ: Pick<EconomyState, 'minute'>): number => Math.min(dayOf(econ.minute) + 1, RANKED_DAYS);
+
+/**
+ * Co w przeglądarce stoi na przeszkodzie nowemu biegowi: niewysłany bieg (szuflada albo pamięć karty; pierwszeństwo) albo aktywny zapis
+ * biegu, także z innej wersji gry (nie da się go wznowić, ale nie wolno go po cichu skasować). Uszkodzony zapis nie blokuje: `loadRanked`
+ * oddaje go do kopii. Nie zna bieżącej sesji, więc nie widzi biegu, którego przeglądarka nie dała zapisać: to dopowiada powłoka gry
+ * (`rankedStartBlock` w actions.ts), a przed powstaniem powłoki (ekran startowy przy wejściu na stronę) wystarcza ta funkcja.
+ */
+export function storedRankedBlock(): 'unsent' | 'active' | null {
+  if (pendingFinished() !== null) return 'unsent';
+  const { status } = loadRanked();
+  return status === 'ok' || status === 'incompatible' ? 'active' : null;
+}
 
 /**
  * Kończy bieg: wynik sezonu liczy lokalnie `seasonScore(replayRun(record, RANKED_SEASON_END_MINUTE))`, czyli tym samym kodem co sędzia na

@@ -75,10 +75,26 @@ export interface StartRequest {
   form: StartForm;
   /** Fabryka postaci dla podglądu: ta sama, z której korzysta gra (strój specjalny dociąga się przy pokazaniu). */
   factory: Promise<CharacterFactory>;
-  /** Gracz zatwierdził: ekran jest już zamknięty, a podgląd zwolniony (renderer i kontekst WebGL), gra może ruszać. */
-  onStart(choice: StartChoice): void;
+  /**
+   * Gracz zatwierdził: ekran jest już zamknięty, a podgląd zwolniony (renderer i kontekst WebGL), gra może ruszać. Zwykły start woła to
+   * z samym wyborem; „Porzuć i zacznij” z pytania o bieg rankingowy dokłada `{ replace: true }` (nowy bieg zastępuje niewysłany bieg
+   * i aktywny zapis, `GameShell.startRanked`). Ekran nie czeka na wynik: pytanie zadaje przed zamknięciem (`rankedBlock`).
+   */
+  onStart(choice: StartChoice, opts?: { replace?: boolean }): void;
   /** „Wróć do gry”; tylko w trybie `new`. */
   onBack?(): void;
+  /**
+   * Seed tygodnia z serwera rankingu dla chipa „Seed tygodnia” (`createRankingClient().board('week')`); null, gdy serwer nie odpowiada
+   * (ranking wyłączony, brak sieci). Bez tej funkcji ekran nie ma chipa.
+   */
+  weekSeed?(): Promise<string | null>;
+  /**
+   * Czy start rankingowy musi najpierw zapytać gracza (niewysłany bieg w szufladzie albo trwający bieg rankingowy; `null`: nie musi).
+   * Ekran woła to po kliknięciu „Start rankingowy”, ZANIM cokolwiek zamknie: podgląd 3D oddaje kontekst WebGL bezpowrotnie, więc
+   * pytanie nie może paść po jego zamknięciu. Bez tej funkcji ekran nie pyta (start rankingowy sam sprawdzi i, gdyby stan zmienił się
+   * po drodze, wróci do pytania: `openChosenStore`). Nie zmienia niczego; pytanie ustawia ekran (`confirmRankedStart`).
+   */
+  rankedBlock?(): RankedStartRequest['reason'] | null;
 }
 export const start: Signal<StartRequest | null> = signal<StartRequest | null>(null);
 

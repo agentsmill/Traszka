@@ -11,7 +11,7 @@ import { openAtBoot } from '@/game/boot';
 import { bindControls } from '@/game/controls';
 import { advanceSession, debugHandleEnabled, debugHandleOf, installDebugHandle, isModalOpen, isSceneHeld } from '@/game/frame';
 import { loadMeta, needsStartScreen, saveMeta } from '@/game/meta';
-import { pendingFinished } from '@/game/rankedRun';
+import { pendingFinished, storedRankedBlock } from '@/game/rankedRun';
 import { clearSeedFromUrl, createSceneHost, startTestScene, writeSeedToUrl } from '@/game/scene';
 import { initialStartForm, playerOf, type StartChoice } from '@/game/start';
 import { play, buzz, setSound, setVibration } from '@/ui/sfx';
@@ -22,6 +22,7 @@ import { listenForNotices, postNotice } from '@/ui/Notice';
 import { FIRST_DAY_HINTS } from '@/ui/game/overlays';
 import { createRankingClient } from '@/ui/ranking/client';
 import { bindFinishOpen, createFinishModel } from '@/ui/ranking/finishModel';
+import { weekSeedOf } from '@/ui/start/weekSeed';
 import { createWorldOverlay } from '@/ui/worldOverlay';
 import { FrameMeter } from '@/ui/perfMeter';
 import * as ui from '@/ui/state';
@@ -32,8 +33,14 @@ import * as ui from '@/ui/state';
  */
 type BenchModule = typeof import('@/bench/bench');
 
-/** Wybór gracza z ekranu startowego (pierwsze wejście) i fabryka postaci, której używał podgląd: gra dostaje tę samą (patrz `startGame`). */
-interface StartEntry { choice: StartChoice; factory: Promise<CharacterFactory> }
+/**
+ * Wybór gracza z ekranu startowego (pierwsze wejście) i fabryka postaci, której używał podgląd: gra dostaje tę samą (patrz `startGame`).
+ * `replace`: gracz odpowiedział „Porzuć i zacznij” na pytanie o niewysłany albo trwający bieg rankingowy (ma sens tylko z `choice.ranked`).
+ */
+interface StartEntry { choice: StartChoice; factory: Promise<CharacterFactory>; replace: boolean }
+
+/** Klient rankingu: ekran startowy pyta go o seed tygodnia (po kliknięciu chipa), okno końca sezonu wysyła nim wynik. Nic nie wysyła samo z siebie. */
+const rankingClient = createRankingClient();
 
 /**
  * Gra `?seed=<seed>` (bez seeda: ostatnio grany sklep z zapisu albo losowy; przy pierwszym wejściu ten seed wypełnia pole na
@@ -59,6 +66,9 @@ interface StartEntry { choice: StartChoice; factory: Promise<CharacterFactory> }
  *
  * Bieg rankingowy: gdy zapamiętany tryb to `ranked`, a adres nie ma `?seed=`, rozruch wznawia aktywny bieg zamiast otwierać zwykły sklep
  * (`openAtBoot` w game/boot.ts; zapis uszkodzony, z innej wersji gry albo świat, który się nie buduje, dają komunikat i zwykły sklep).
+ * „Start rankingowy” wybrany na ekranie startowym (`entry.choice.ranked`) też idzie przez `openAtBoot`: bieg rusza od razu, bez zwykłego
+ * sklepu pod spodem, a „Jak grać” otwiera się tak jak przy zwykłym pierwszym wejściu. Gdyby bieg nie ruszył, rozruch otwiera zwykły sklep
+ * z tego samego wyboru (strona nie zostaje pusta).
  *
  * Ta funkcja tylko składa grę z części: scena (`createSceneHost`, scene.ts), powłoka z sesją, metą i przepływami sklepu
  * (`createShell`, actions.ts), sterowanie (controls.ts), pętla klatek (frame.ts) i uchwyt debugowania.
@@ -98,6 +108,7 @@ function startGame(
   // i czy świat z niego stanął. Benchmark nie ma sesji.
   const shell = createShell({
     meta, benchMode, scene, writeSeedToUrl, clearSeedFromUrl, randomSeed, characterFactory, firstDayHints: FIRST_DAY_HINTS,
+    weekSeed: weekSeedOf(rankingClient),
     effects: {
       play, buzz, setSound, setVibration, notice: postNotice,
       confetti: (fx, fy, count) => confetti(fx === undefined ? undefined : window.innerWidth * fx, fy === undefined ? undefined : window.innerHeight * fy, count),
@@ -108,7 +119,7 @@ function startGame(
   // Okno końca sezonu rankingowego i ponownej wysyłki wyniku: wysyła bieg z szuflady (albo z pamięci karty), a po przyjęciu go kasuje
   // (`dropUnsentRun`). Model odświeża się przy każdym otwarciu okna (`ui.finish`), także gdy sezon skończył się zaraz po rozruchu.
   const finishModel = createFinishModel({
-    client: createRankingClient(), finished: pendingFinished, clear: dropUnsentRun, player: () => shell.meta.player, rememberNick: shell.game.rememberNick,
+    client: rankingClient, finished: pendingFinished, clear: dropUnsentRun, player: () => shell.meta.player, rememberNick: shell.game.rememberNick,
   });
   bindFinishOpen(finishModel, ui.finish);
 
@@ -141,9 +152,17 @@ function startGame(
   if (benchMode) {
     scene.load(initialSeed, null);   // benchmark nie ma sesji ani zapisu: wyjątek idzie dalej
   } else {
-    // bieg rankingowy wznawia się, gdy tryb to `ranked` i adres nie ma `?seed=` (decyzja w boot.ts); inaczej zwykły sklep
+    // bieg rankingowy wznawia się, gdy tryb to `ranked` i adres nie ma `?seed=`; wybrany na ekranie startowym rusza od razu (decyzje w boot.ts); inaczej zwykły sklep
     const request = { seed: initialSeed, fresh: params.get('new') === '1', choice: entry?.choice ?? null };
-    if (!openAtBoot(shell, request, !!params.get('seed'))) return;
+    const opened = openAtBoot(shell, request, !!params.get('seed'), undefined, {
+      replace: entry?.replace === true,
+      onStarted: () => {
+        ui.openHowTo();   // pierwsze wejście przez ekran startowy: instrukcja, a gra czeka na „Zaczynamy” (zwykły sklep robi to w `GameShell.open`)
+        if (entry?.choice.notice) ui.pushToast(entry.choice.notice, 'info');   // np. „sąsiedni lokal”
+      },
+    });
+    ui.confirmRankedStart.value = null;   // pytanie o porzucenie biegu żyje tylko na ekranie startowym; po rozruchu nikt na nie nie czeka
+    if (!opened) return;
     // Sterowanie tylko w zwykłej grze: w benchmarku nic nie rusza kamerą ani presetem, wynik zależy tylko od biegu.
     bindControls(ctx, {
       setPreset: (id) => controls.setPreset(id),
@@ -227,10 +246,16 @@ async function startScreen(seed: string): Promise<StartEntry | null> {
   const meta = loadMeta();
   if (!needsStartScreen(meta)) return null;
   const factory = createCharacterFactory();
-  const choice = await new Promise<StartChoice>((resolve) => {
-    ui.start.value = { mode: 'first', form: initialStartForm(meta, seed), factory, onStart: resolve };
+  const picked = await new Promise<{ choice: StartChoice; replace: boolean }>((resolve) => {
+    ui.start.value = {
+      mode: 'first', form: initialStartForm(meta, seed), factory,
+      onStart: (choice, opts) => resolve({ choice, replace: opts?.replace === true }),
+      weekSeed: weekSeedOf(rankingClient),
+      // powłoki jeszcze nie ma, więc pytanie o porzucenie biegu opiera się na tym, co leży w przeglądarce (szuflada, zapis biegu)
+      rankedBlock: storedRankedBlock,
+    };
   });
-  return { choice, factory };
+  return { ...picked, factory };
 }
 
 const params = new URLSearchParams(location.search);

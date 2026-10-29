@@ -85,11 +85,48 @@ describe('submitStart: nick i seed w jednym kroku', () => {
     });
   });
 
-  it('wybór z ekranu startowego nie jest jeszcze rankingowy: `ranked` zawsze false (start rankingowy ustawi je później)', () => {
+  it('bez trzeciego argumentu wybór nie jest rankingowy: `ranked` zawsze false', () => {
     for (const seed of ['kielbasa-42', '', '🍕', 'bigos-1']) {
       const result = submitStart(form({ seed }), { ...never(), hasSave: (s: string) => s === 'kielbasa-42' });
       expect(result.ok && result.choice.ranked).toBe(false);
     }
+  });
+
+  it('start rankingowy (trzeci argument): choice.ranked jest true, reszta wyboru taka sama jak przy zwykłym starcie', () => {
+    const casual = submitStart(form({ nick: '  Ala   Ma  ', seed: '  Moja   Pizza ' }), never());
+    const ranked = submitStart(form({ nick: '  Ala   Ma  ', seed: '  Moja   Pizza ' }), never(), true);
+    if (!casual.ok || !ranked.ok) throw new Error('oczekiwano wyboru');
+    expect(ranked.choice.ranked).toBe(true);
+    expect(ranked.choice).toEqual({ ...casual.choice, ranked: true });
+  });
+
+  it('start rankingowy ignoruje zwykły zapis tego seeda: bez „Wczytujemy Twój sklep”, seed ten sam', () => {
+    const saved = { ...never(), hasSave: (s: string) => s === 'kielbasa-42' };
+    const casual = submitStart(form(), saved);
+    expect(casual.ok && casual.choice).toMatchObject({ seed: 'kielbasa-42', notice: EXISTING_STORE_NOTICE, ranked: false });
+    const ranked = submitStart(form(), saved, true);
+    expect(ranked.ok && ranked.choice).toMatchObject({ seed: 'kielbasa-42', notice: null, ranked: true });
+  });
+
+  it('start rankingowy przy seedzie, którego generator nie składa: sąsiedni lokal z komunikatem, jak zawsze', () => {
+    const broken = { ...never(), build: (s: string) => { if (s === 'bigos-1') throw new Error('brak układu'); } };
+    const ranked = submitStart(form({ seed: 'bigos-1' }), broken, true);
+    expect(ranked.ok && ranked.choice).toMatchObject({ seed: 'bigos-1·1', notice: NEIGHBOUR_STORE_NOTICE, ranked: true });
+  });
+
+  it('start rankingowy: pusty seed to losowy seed, z którego da się zagrać', () => {
+    const result = submitStart(form({ seed: '   ' }), undefined, true);
+    expect(result.ok && result.choice.seed).toMatch(/^[a-z]+-[1-9]\d{2}$/);
+  });
+
+  it('zły nick blokuje także start rankingowy: komunikat pod polem, seed i zapisy nietknięte', () => {
+    const deps = never();
+    for (const [nick, error] of [['', NICK_ERRORS.length], ['🍕', NICK_ERRORS.chars], ['CENTRALA', NICK_ERRORS.reserved]] as const) {
+      expect(submitStart(form({ nick }), deps, true), nick).toEqual({ ok: false, nickError: error });
+    }
+    expect(deps.hasSave).not.toHaveBeenCalled();
+    expect(deps.build).not.toHaveBeenCalled();
+    expect(deps.draw).not.toHaveBeenCalled();
   });
 
   it('wybór ma własną kopię wyglądu (dalsze zmiany formularza go nie ruszą)', () => {

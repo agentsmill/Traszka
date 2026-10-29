@@ -208,3 +208,103 @@
   margin: 0;
   box-sizing: border-box;
 }
+
+/*
+ * Ekran startowy (StartScreen): „Start rankingowy” pod „Otwieramy sklep!”, chip „Seed tygodnia” obok kostki seeda i pytanie o porzucenie
+ * biegu w miejscu „Otwieramy sklep!”. Przyklejony do dołu okna telefonu (.tt-start-go, ui.css) jest tylko ten pierwszy przycisk albo
+ * pytanie: „Start rankingowy”, jego podpis i „Wróć do gry” (.tt-start-more) płyną pod nim, bo razem z podpisem zajęłyby co trzecią
+ * linię ekranu. Pomarańcz jak w „Losuj”.
+ */
+.tt-start-more {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.tt-start-more .tt-btn.big {
+  margin-top: 0;
+  min-height: 54px;
+  font-size: 18px;
+}
+
+@media (max-width: 699px) and (orientation: portrait), (max-width: 559px) {
+  .tt-start-more .tt-btn.tt-back {
+    min-height: 40px;
+    font-size: 15px;
+  }
+}
+
+.tt-modal .tt-btn.tt-ranked-go {
+  background: var(--tt-orange, #f39200);
+  color: #1a1a1a;
+  font-weight: 800;
+}
+
+/* o jedną klasę więcej niż „.tt-modal .tt-btn:hover…” z ui.css, żeby najechanie nie zielenia pomarańczu niezależnie od kolejności arkuszy */
+.tt-modal .tt-start-form .tt-btn.tt-ranked-go:hover:not(:disabled) {
+  background: #ff9a3d;
+}
+
+/* start trwa: kliknięty przycisk nie blednie (to odpowiedź na kliknięcie), drugi zostaje wyblakły */
+.tt-modal .tt-btn.tt-ranked-go.is-working:disabled {
+  opacity: 1;
+  cursor: progress;
+  background: #c77700;
+  color: #fff;
+}
+
+.tt-ranked-note {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.tt-ranked-ask {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 2px solid var(--tt-orange, #f39200);
+  background: rgba(243, 146, 0, 0.14);
+}
+
+.tt-ranked-ask-text {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1.35;
+  color: #1a1a1a;
+}
+
+.tt-start-go .tt-ranked-ask .tt-btn.big {
+  min-height: 46px;
+  font-size: 16px;
+}
+
+/* chip nie rośnie z polem seeda; „Pytamy Centralę…” jest dłuższe od „Seed tygodnia”, więc nie zawija się i nie wypycha kostki */
+.tt-modal .tt-btn.tt-weekseed {
+  flex: none;
+  min-height: 46px;
+  padding: 0 10px;
+  font-size: 13px;
+  line-height: 1.15;
+  background: rgba(243, 146, 0, 0.22);
+  color: #5a3600;
+}
+
+.tt-modal .tt-seedrow .tt-btn.tt-weekseed:hover:not(:disabled) {
+  background: rgba(243, 146, 0, 0.4);
+}
+
+/* Telefon poziomo (667×375): kolumna formularza jest wąska, więc chip „Seed tygodnia” schodzi pod pole seeda zamiast je zgniatać. */
+@media (max-height: 600px) and (orientation: landscape) and (min-width: 560px) and (max-width: 767px) {
+  .tt-start .tt-seedrow {
+    flex-wrap: wrap;
+  }
+
+  .tt-modal .tt-btn.tt-weekseed {
+    order: 3;
+    flex: 1 1 100%;
+    min-height: 36px;
+  }
+}

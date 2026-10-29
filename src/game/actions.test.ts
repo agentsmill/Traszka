@@ -27,6 +27,7 @@ import {
   clearFinished, createRankedSession, getPlayMode, loadFinished, loadRanked, pendingFinished, saveFinished, saveRanked, setPlayMode, type FinishedRun,
 } from './rankedRun';
 import { entrySeed } from './seeds';
+import type { StartChoice } from './start';
 import {
   NEWER_SAVE_NOTICE, RUN_LOG_MAX, createSession, hasStoredSave, lastSavedSeed, newRunLog, saveSession, withLayoutFromSeed, type GameSession,
 } from './session';
@@ -466,7 +467,7 @@ interface Harness {
 }
 
 /** Powłoka na atrapach; `seeds` to kolejne losowania `randomSeed`. */
-function harness(options: { meta?: Meta; benchMode?: boolean; seeds?: string[] } = {}): Harness {
+function harness(options: { meta?: Meta; benchMode?: boolean; seeds?: string[]; weekSeed?: () => Promise<string | null> } = {}): Harness {
   const calls: Call[] = [];
   const urls: string[] = [];
   const clears: string[] = [];
@@ -489,6 +490,7 @@ function harness(options: { meta?: Meta; benchMode?: boolean; seeds?: string[] }
     clearSeedFromUrl: () => { clears.push('seed'); },
     characterFactory: () => Promise.resolve({} as CharacterFactory),
     firstDayHints: HINTS,
+    weekSeed: options.weekSeed,
   });
   const startup = calls.splice(0);
   return { shell, scene, startup, calls, urls, clears, notices };
@@ -1642,6 +1644,200 @@ describe('powłoka gry (createShell)', () => {
         expect(storage.getItem('traszka:ranked')).toBeNull();
         expect(loadFinished()).not.toBeNull();   // szuflada ginie dopiero, gdy nowy bieg naprawdę stoi
         expect(errorLog).toHaveBeenCalled();
+      });
+    });
+
+    describe('ekran startowy „Nowy sklep”: start rankingowy', () => {
+      const LOOK = { outfit: 'men-suit', appearanceSeed: 'kasjer-a' } as CashierLook;
+      const rankedChoice = (over: Partial<StartChoice> = {}): StartChoice =>
+        ({ nick: 'Kasia', seed: RANKED_SEED, look: LOOK, specialOutfits: false, notice: null, ranked: true, ...over });
+      /** Ekran „Nowy sklep” otwarty z ⚙, a potem zamknięty przez gracza (tak robi `close` w StartScreen przed `onStart`). */
+      function openedScreen(h: Harness): ui.StartRequest {
+        h.shell.game.newStore();
+        const request = ui.start.value!;
+        ui.start.value = null;
+        return request;
+      }
+
+      it('wybór z `ranked: true` zaczyna bieg rankingowy na seedzie z wyboru: gracz i wygląd zapisani, zwykłego sklepu nie otwiera, instrukcja nie wstaje', () => {
+        const h = harness();
+        casualOpen(h);
+        const request = openedScreen(h);
+        h.scene.loads.length = 0;
+        h.urls.length = 0;
+
+        request.onStart(rankedChoice());
+
+        expect(h.shell.session).toMatchObject({ seed: RANKED_SEED, mode: 'ranked', fromSave: false });
+        expect(h.scene.loads.map((l) => l.seed)).toEqual([RANKED_SEED]);   // jedna budowa świata
+        expect(h.shell.meta.player).toEqual({ nick: 'Kasia', look: LOOK, specialOutfits: false });
+        expect(savedMeta().player!.nick).toBe('Kasia');
+        expect(h.scene.looks).toEqual([LOOK]);   // wygląd idzie do sceny przed budową świata
+        expect(getPlayMode()).toBe('ranked');
+        expect(h.urls).toEqual([]);   // seed biegu nie trafia do adresu
+        expect(ui.howTo.value).toBe(false);   // instrukcja otwiera się tylko przy zwykłym zupełnie nowym sklepie
+        expect(ui.confirmRankedStart.value).toBeNull();
+      });
+
+      it('zwykły zapis tego samego seeda nie zamienia startu w wczytanie sklepu: bieg zaczyna się od zera, zapis stoi nietknięty', () => {
+        const h = harness();
+        const saved = createSession(RANKED_SEED, true);
+        saved.econ.cash = 777_777;
+        saveSession(saved);
+        casualOpen(h, 'traszka-1');
+        const raw = storage.getItem(`traszka:save:${RANKED_SEED}`);
+
+        openedScreen(h).onStart(rankedChoice());
+
+        expect(h.shell.session).toMatchObject({ seed: RANKED_SEED, mode: 'ranked', fromSave: false });
+        expect(h.shell.session!.econ.cash).not.toBe(777_777);
+        expect(storage.getItem(`traszka:save:${RANKED_SEED}`)).toBe(raw);
+      });
+
+      it('komunikat z wyboru (sąsiedni lokal) pokazuje się po starcie biegu', () => {
+        const h = harness();
+        casualOpen(h);
+        openedScreen(h).onStart(rankedChoice({ notice: 'Ten lokal się nie zmieścił, wzięliśmy sąsiedni.' }));
+        expect(h.shell.session!.mode).toBe('ranked');
+        expect(ui.toasts.value.map((t) => t.text)).toEqual(['Ten lokal się nie zmieścił, wzięliśmy sąsiedni.']);
+      });
+
+      it('wybór zwykły (`ranked: false`) nadal otwiera zwykły sklep i instrukcję; `opts.replace` go nie dotyczy', () => {
+        const h = harness();
+        casualOpen(h);
+        openedScreen(h).onStart(rankedChoice({ ranked: false, seed: 'traszka-5' }), { replace: true });
+        expect(h.shell.session).toMatchObject({ seed: 'traszka-5', mode: 'casual' });
+        expect(ui.howTo.value).toBe(true);
+        expect(getPlayMode()).toBe('casual');
+      });
+
+      it('pełna szuflada: ekran sprawdza ją przed zamknięciem (`rankedBlock`), nic nie kasuje ani nie zmienia', () => {
+        const h = harness();
+        const casual = casualOpen(h);
+        h.shell.game.newStore();
+        const request = ui.start.value!;
+        expect(request.rankedBlock!()).toBeNull();   // zwykły sklep, pusta szuflada
+        saveFinished(drawerRun());
+        const keys = storage.keys().sort();
+
+        expect(request.rankedBlock!()).toBe('unsent');
+
+        expect(ui.confirmRankedStart.value).toBeNull();   // samo sprawdzenie nie pyta: pyta ekran
+        expect(h.shell.session).toBe(casual);
+        expect(storage.keys().sort()).toEqual(keys);
+        expect(loadFinished()).not.toBeNull();
+      });
+
+      it('trwający bieg (w pamięci, w zapisie, z innej wersji gry) też blokuje; skończony i uszkodzony nie', () => {
+        const h = harness();
+        h.shell.startRanked(RANKED_SEED);
+        h.shell.game.newStore();
+        const request = ui.start.value!;
+        expect(request.rankedBlock!()).toBe('active');   // „Nowy sklep” z ⚙ w trakcie biegu
+
+        h.shell.leaveRanked();
+        expect(request.rankedBlock!()).toBe('active');   // bieg czeka w zapisie, gracz jest w zwykłym sklepie
+
+        storage.setItem('traszka:ranked', JSON.stringify({ schema: 99 }));
+        expect(request.rankedBlock!()).toBe('active');
+
+        storage.setItem('traszka:ranked', 'nie json');
+        expect(request.rankedBlock!()).toBeNull();
+      });
+
+      it('szuflada pełna mimo sprawdzenia (stan zmienił się po drodze): nic się nie kasuje, ekran wraca z tym samym wyborem i pytaniem', () => {
+        const h = harness();
+        const casual = casualOpen(h);
+        const request = openedScreen(h);
+        saveFinished(drawerRun());
+        h.scene.loads.length = 0;
+
+        request.onStart(rankedChoice({ nick: 'Kasia', seed: 'nowy-bieg', specialOutfits: true }));
+
+        expect(h.shell.session).toBe(casual);
+        expect(h.scene.loads).toEqual([]);
+        expect(loadFinished()).not.toBeNull();   // nic nie skasowane bez potwierdzenia
+        expect(ui.confirmRankedStart.value).toEqual({ seed: 'nowy-bieg', reason: 'unsent' });
+        const again = ui.start.value!;   // ekran stoi znowu, z tym, co gracz wybrał
+        expect(again.mode).toBe('new');
+        expect(again.form).toEqual({ nick: 'Kasia', seed: 'nowy-bieg', look: LOOK, specialOutfits: true });
+        expect(again.rankedBlock!()).toBe('unsent');
+        expect(getPlayMode()).toBe('casual');
+        expect(ui.howTo.value).toBe(false);
+      });
+
+      it('„Porzuć i zacznij”: `onStart(wybór, { replace: true })` kasuje szufladę, startuje bieg i zamyka pytanie', () => {
+        const h = harness();
+        casualOpen(h);
+        saveFinished(drawerRun());
+        syncUnsent();
+        const request = openedScreen(h);
+        request.onStart(rankedChoice({ seed: 'nowy-bieg' }));   // pytanie otwarte
+        expect(ui.confirmRankedStart.value).not.toBeNull();
+        ui.start.value = null;
+
+        request.onStart(rankedChoice({ seed: 'nowy-bieg' }), { replace: true });
+
+        expect(h.shell.session).toMatchObject({ seed: 'nowy-bieg', mode: 'ranked' });
+        expect(loadFinished()).toBeNull();
+        expect(ui.unsent.value).toBeNull();
+        expect(ui.confirmRankedStart.value).toBeNull();
+        expect(ui.start.value).toBeNull();
+        expect(ui.ranked.value?.seed).toBe('nowy-bieg');
+      });
+
+      it('„Porzuć i zacznij” przy trwającym biegu zastępuje zapis nowym biegiem', () => {
+        const h = harness();
+        h.shell.startRanked(RANKED_SEED);
+        h.shell.game.dispatch({ type: 'setOrder', auto: false, manual: 4 });
+        const request = openedScreen(h);
+
+        request.onStart(rankedChoice({ seed: 'nowy-bieg' }));
+        expect(h.shell.session!.seed).toBe(RANKED_SEED);
+        expect(ui.confirmRankedStart.value).toEqual({ seed: 'nowy-bieg', reason: 'active' });
+        ui.start.value = null;
+
+        request.onStart(rankedChoice({ seed: 'nowy-bieg' }), { replace: true });
+        expect(h.shell.session).toMatchObject({ seed: 'nowy-bieg', mode: 'ranked' });
+        expect(h.shell.session!.run!.record.log).toEqual([]);
+        expect(loadRanked()).toMatchObject({ status: 'ok', session: { seed: 'nowy-bieg' } });
+      });
+
+      it('świat biegu się nie buduje: gracz zostaje w poprzednim sklepie z komunikatem, ekran się nie otwiera od nowa, pytania nie ma', () => {
+        const h = harness();
+        const casual = casualOpen(h);
+        const request = openedScreen(h);
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+        h.scene.failing.add('zepsuty');
+
+        request.onStart(rankedChoice({ seed: 'zepsuty' }));
+
+        expect(h.shell.session).toBe(casual);
+        expect(h.notices).toHaveLength(1);
+        expect(ui.start.value).toBeNull();
+        expect(ui.confirmRankedStart.value).toBeNull();
+        expect(ui.howTo.value).toBe(false);
+        expect(getPlayMode()).toBe('casual');
+      });
+
+      it('„Nowy sklep” zdejmuje stare pytanie i podaje ekranowi wybór chipa „Seed tygodnia” z serwera', async () => {
+        const weekSeed = vi.fn(async () => 'babka-834');
+        const h = harness({ weekSeed });
+        casualOpen(h);
+        ui.confirmRankedStart.value = { seed: 'stary', reason: 'active' };
+
+        h.shell.game.newStore();
+
+        expect(ui.confirmRankedStart.value).toBeNull();
+        expect(await ui.start.value!.weekSeed!()).toBe('babka-834');
+        expect(weekSeed).toHaveBeenCalledOnce();
+      });
+
+      it('bez `weekSeed` w zależnościach ekran „Nowy sklep” nie ma czym zapytać serwera', () => {
+        const h = harness();
+        casualOpen(h);
+        h.shell.game.newStore();
+        expect(ui.start.value!.weekSeed).toBeUndefined();
       });
     });
 

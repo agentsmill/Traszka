@@ -28,7 +28,7 @@ export interface StartChoice {
   look: CashierLook;
   specialOutfits: boolean;
   notice: string | null;
-  /** Start rankingowy (`GameShell.startRanked`) zamiast zwykłego sklepu. `submitStart` daje na razie zawsze false; ustawia go dopiero przycisk „Start rankingowy”. */
+  /** Start rankingowy (`GameShell.startRanked`) zamiast zwykłego sklepu: `submitStart` ustawia go z trzeciego argumentu (przycisk „Start rankingowy”). */
   ranked: boolean;
 }
 
@@ -51,19 +51,21 @@ export function initialStartForm(meta: Meta, seed: string): StartForm {
 }
 
 /**
- * „Otwieramy sklep!”: sprawdza nick (zły: komunikat pod polem, nic więcej się nie dzieje, seed i zapisy nietknięte), potem
- * wybiera sklep dla wpisanego seeda (`chooseStore`: zapis pod seedem wygrywa i nigdy nie jest nadpisywany, generator, który nie
- * składa sklepu, daje sąsiedni lokal, dziwny tekst zawsze daje seed, z którego da się zagrać).
+ * „Otwieramy sklep!” (`ranked` false) i „Start rankingowy” (`ranked` true): sprawdza nick (zły: komunikat pod polem, nic więcej się
+ * nie dzieje, seed i zapisy nietknięte; dla obu startów tak samo), potem wybiera sklep dla wpisanego seeda (`chooseStore`: zapis pod
+ * seedem wygrywa i nigdy nie jest nadpisywany, generator, który nie składa sklepu, daje sąsiedni lokal, dziwny tekst zawsze daje seed,
+ * z którego da się zagrać). Bieg rankingowy zaczyna się od zera i nie czyta zwykłych zapisów, więc dla niego zapis pod seedem nie
+ * liczy się (`hasSave` zawsze false): zwykły sklep o tym seedzie nie zamienia startu w „Wczytujemy Twój sklep” (tak samo robi `startRanked`).
  */
-export function submitStart(f: StartForm, deps: Partial<SeedDeps> = {}): StartSubmit {
+export function submitStart(f: StartForm, deps: Partial<SeedDeps> = {}, ranked = false): StartSubmit {
   const nick = normalizeNick(f.nick);
   if (!('nick' in nick)) return { ok: false, nickError: nick.error };
-  const store = chooseStore(f.seed, deps);
+  const store = chooseStore(f.seed, ranked ? { ...deps, hasSave: () => false } : deps);
   return {
     ok: true,
     choice: {
       nick: nick.nick, seed: store.seed, look: { outfit: f.look.outfit, appearanceSeed: f.look.appearanceSeed },
-      specialOutfits: f.specialOutfits, notice: store.notice, ranked: false,
+      specialOutfits: f.specialOutfits, notice: store.notice, ranked,
     },
   };
 }
