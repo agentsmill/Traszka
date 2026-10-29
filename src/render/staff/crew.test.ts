@@ -1108,6 +1108,34 @@ describe('StaffCrew: histereza zadań i cele', () => {
     expect(crew.members[1]!.walker.atGoal).toBe(false);
   });
 
+  it('pierwsze zadanie nowej osoby (np. samo „wolny” w pierwszej minucie po otwarciu) poprawia się na pierwszej granicy kwadransa, choć od wejścia minęło mniej niż TASK_DWELL_S', () => {
+    const crew = new StaffCrew(layout);
+    const wanted = assign([0, 'kasa'], [1, 'wykladanie'], [2, 'sprzatanie']);
+    crew.sync(input(assign([0, 'wolny'], [1, 'wolny'], [2, 'wolny']), pallets, 0));   // ekonomia na starcie nikomu niczego nie daje
+    expect(crew.members.map((m) => m.task)).toEqual(['wolny', 'wolny', 'wolny']);
+    const idle = crew.members.map((m) => m.walker.goal);
+    for (let m = 1; m < QUARTER_MIN; m++) {
+      crew.step(0.0625);
+      crew.sync(input(wanted, pallets, m));
+      expect(crew.members.map((x) => x.task)).toEqual(['wolny', 'wolny', 'wolny']);   // granica kwadransa nadal jest wymagana
+    }
+    expect(pickSpy).toHaveBeenCalledTimes(1);
+
+    crew.sync(input(wanted, pallets, QUARTER_MIN));
+    expect(crew.clock).toBeLessThan(TASK_DWELL_S);
+    expect(crew.members.map((m) => m.task)).toEqual(['kasa', 'wykladanie', 'sprzatanie']);
+    expect(pickSpy).toHaveBeenCalledTimes(2);
+    expect(crew.members.map((m) => m.walker.goal)).not.toEqual(idle);   // ekipa idzie do nowych miejsc
+
+    // Kolejna zmiana podlega zwykłemu postojowi od tej zmiany.
+    const later = assign([0, 'wykladanie'], [1, 'wykladanie'], [2, 'sprzatanie']);
+    for (let m = QUARTER_MIN + 1; m <= 2 * QUARTER_MIN; m++) {
+      crew.step(0.0625);
+      crew.sync(input(later, pallets, m));
+    }
+    expect(crew.members.map((m) => m.task)).toEqual(['kasa', 'wykladanie', 'sprzatanie']);   // kilka dziesiątych sekundy po zmianie: za wcześnie
+  });
+
   it('wartość `previous` dostają ci, których zadanie trzymane się nie zmieniło od ostatniego liczenia', () => {
     const crew = new StaffCrew(layout);
     const crewAt = (one: StaffDuty): StaffAssignment[] => assign([0, 'kasa'], [1, one], [2, 'sprzatanie'], [3, 'wolny']);

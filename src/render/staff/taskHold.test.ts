@@ -21,15 +21,16 @@ describe('TaskHold: nowa i zwolniona osoba', () => {
     expect(hold.get(3)).toBeUndefined();
   });
 
-  it('osoba, która dołącza później, od razu dostaje swoje zadanie i liczy dwell od chwili dołączenia', () => {
+  it('osoba, która dołącza później, od razu dostaje swoje zadanie, a pierwsza granica kwadransa może je zmienić (postój już spełniony)', () => {
     const hold = new TaskHold();
     hold.update(0, 0, one('kasa'));
     hold.update(10, 20, [{ id: 1, task: 'sprzatanie' }, { id: 2, task: 'rozladunek' }]);
     expect(hold.get(2)).toBe('rozladunek');
     hold.update(14, 22, [{ id: 1, task: 'sprzatanie' }, { id: 2, task: 'wykladanie' }]);
+    expect(hold.get(2)).toBe('rozladunek');    // przed granicą kwadransa nic się nie zmienia
     hold.update(15, 23, [{ id: 1, task: 'sprzatanie' }, { id: 2, task: 'wykladanie' }]);
     expect(hold.get(1)).toBe('sprzatanie');   // 23 s od początku: wolno
-    expect(hold.get(2)).toBe('rozladunek');    // ma dopiero 3 s od dołączenia, mimo że głosy przeważają za wykładaniem
+    expect(hold.get(2)).toBe('wykladanie');    // 3 s po dołączeniu, ale nowa osoba ma postój spełniony: przeważają głosy
   });
 
   it('nowa osoba nie ma głosów za czas sprzed dołączenia: pierwszy update tylko ustawia jej zadanie', () => {
@@ -90,15 +91,18 @@ describe('TaskHold: zmiana zadania tylko na granicy kwadransa', () => {
     expect(hold.get(1)).toBe('sprzatanie');
   });
 
-  it('granica kwadransa bez spełnionego dwellu nie zmienia zadania, a głosy z okna przepadają', () => {
+  it('granica kwadransa bez spełnionego dwellu po zmianie nie zmienia zadania, a głosy z okna przepadają', () => {
     const hold = new TaskHold();
     hold.update(0, 0, one('kasa'));
-    for (let m = 1; m <= 15; m++) hold.update(m, m * 0.1, one('sprzatanie'));  // 1,5 s < TASK_DWELL_S
-    expect(hold.get(1)).toBe('kasa');
-    // Następne okno liczy się od zera: gdyby 15 minut „sprzątania” z okna 0 zostało, na granicy 30 wygrałoby sprzątanie.
-    for (let m = 16; m <= 29; m++) hold.update(m, 10, one('kasa'));
-    hold.update(30, 10, one('sprzatanie'));
-    expect(hold.get(1)).toBe('kasa');
+    for (let m = 1; m <= 15; m++) hold.update(m, m * 0.1, one('sprzatanie'));
+    expect(hold.get(1)).toBe('sprzatanie');                                   // pierwsza granica (1,5 s): nowa osoba ma postój spełniony
+    for (let m = 16; m <= 29; m++) hold.update(m, 2, one('kasa'));
+    hold.update(30, 2, one('kasa'));                                          // 0,5 s po zmianie < TASK_DWELL_S
+    expect(hold.get(1)).toBe('sprzatanie');
+    // Następne okno liczy się od zera: gdyby 15 minut „kasy” z okna 15..30 zostało, na granicy 45 wygrałaby kasa.
+    for (let m = 31; m <= 44; m++) hold.update(m, 10, one('sprzatanie'));
+    hold.update(45, 10, one('kasa'));
+    expect(hold.get(1)).toBe('sprzatanie');
   });
 
   it('dwell liczy się od ostatniej zmiany: tuż po przełączeniu kolejna zmiana jest blokowana', () => {
@@ -112,18 +116,49 @@ describe('TaskHold: zmiana zadania tylko na granicy kwadransa', () => {
     expect(hold.get(1)).toBe('kasa');                                         // 6,05 s po zmianie: wolno
   });
 
-  it('dwell to „co najmniej” TASK_DWELL_S: dokładnie tyle wystarcza, odrobina mniej nie', () => {
-    const exact = new TaskHold();
-    exact.update(0, 0, one('kasa'));
-    for (let m = 1; m <= 14; m++) exact.update(m, 0, one('sprzatanie'));
-    exact.update(15, TASK_DWELL_S, one('sprzatanie'));
-    expect(exact.get(1)).toBe('sprzatanie');
+  it('dwell to „co najmniej” TASK_DWELL_S po zmianie: dokładnie tyle wystarcza, odrobina mniej nie', () => {
+    /** Osoba zmienia zadanie na pierwszej granicy (czas 0), a na drugiej (czas `second`) chce znów kasy. */
+    const afterChange = (second: number): TaskHold => {
+      const hold = new TaskHold();
+      hold.update(0, 0, one('kasa'));
+      for (let m = 1; m <= 15; m++) hold.update(m, 0, one('sprzatanie'));
+      expect(hold.get(1)).toBe('sprzatanie');
+      for (let m = 16; m <= 29; m++) hold.update(m, 0, one('kasa'));
+      hold.update(30, second, one('kasa'));
+      return hold;
+    };
+    expect(afterChange(TASK_DWELL_S).get(1)).toBe('kasa');
+    expect(afterChange(TASK_DWELL_S - 0.01).get(1)).toBe('sprzatanie');
+  });
 
-    const short = new TaskHold();
-    short.update(0, 0, one('kasa'));
-    for (let m = 1; m <= 14; m++) short.update(m, 0, one('sprzatanie'));
-    short.update(15, TASK_DWELL_S - 0.01, one('sprzatanie'));
-    expect(short.get(1)).toBe('kasa');
+  it('nowa osoba ma minimalny postój spełniony: pierwsza granica kwadransa może ją przestawić, a kolejna zmiana dopiero po TASK_DWELL_S od faktycznej zmiany', () => {
+    // Pierwsza minuta po otwarciu: ekonomia nie ma jeszcze komu co dać i daje „wolny”, a od następnej minuty chce wyłącznie kasy.
+    const hold = new TaskHold();
+    hold.update(0, 0, one('wolny'));
+    expect(hold.get(1)).toBe('wolny');
+    for (let m = 1; m < QUARTER_MIN; m++) {
+      hold.update(m, m * 0.05, one('kasa'));
+      expect(hold.get(1)).toBe('wolny');                                      // granica kwadransa nadal jest wymagana
+    }
+    const changed = 0.75;
+    hold.update(QUARTER_MIN, changed, one('kasa'));
+    expect(changed).toBeLessThan(TASK_DWELL_S);
+    expect(hold.get(1)).toBe('kasa');                                         // 0,75 s po wejściu, a już poprawione
+
+    // Kolejna zmiana podlega zwykłemu postojowi, liczonemu od tej zmiany.
+    for (let m = 16; m < 2 * QUARTER_MIN; m++) hold.update(m, changed + 1, one('rozladunek'));
+    hold.update(2 * QUARTER_MIN, changed + TASK_DWELL_S - 0.01, one('rozladunek'));
+    expect(hold.get(1)).toBe('kasa');                                         // 5,99 s po zmianie: za wcześnie
+    for (let m = 2 * QUARTER_MIN + 1; m < 3 * QUARTER_MIN; m++) hold.update(m, changed + TASK_DWELL_S, one('rozladunek'));
+    hold.update(3 * QUARTER_MIN, changed + TASK_DWELL_S, one('rozladunek'));
+    expect(hold.get(1)).toBe('rozladunek');                                   // 6 s po zmianie: wolno
+  });
+
+  it('nowa osoba bez przewagi innego zadania w oknie zostaje przy swoim na pierwszej granicy', () => {
+    const hold = new TaskHold();
+    hold.update(0, 0, one('kasa'));
+    for (let m = 1; m <= QUARTER_MIN; m++) hold.update(m, 0.1, one(m % 2 === 0 ? 'sprzatanie' : 'kasa'));   // 8 minut kasy, 7 sprzątania
+    expect(hold.get(1)).toBe('kasa');
   });
 
   it('przy zadaniu losowym co minutę zmiany są rzadkie, tylko na granicach kwadransa i nie częściej niż co dwell', () => {
@@ -146,7 +181,7 @@ describe('TaskHold: zmiana zadania tylko na granicy kwadransa', () => {
         expect(clock - lastChangeClock).toBeGreaterThanOrEqual(TASK_DWELL_S);
         lastChangeClock = clock;
       }
-      if (prev === undefined) lastChangeClock = clock;
+      if (prev === undefined) lastChangeClock = clock - TASK_DWELL_S;   // nowa osoba ma postój już spełniony
       prev = now;
     }
     // 60 s widoku: przy dwellu 6 s zmian jest najwyżej 10, a losowe głosy dają ich na pewno kilka.

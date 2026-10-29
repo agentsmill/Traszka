@@ -3,7 +3,9 @@ import type { StaffAssignment, StaffDuty } from './types';
 // Histereza zadań pracowników na ekranie. Gra płynie ok. 20 minut gry na sekundę rzeczywistą, a ekonomia przydziela zadania
 // od nowa co minutę gry (czyli co ~0,05 s), więc „co ekonomia chce teraz” przerzucałoby postać między kasą a półką kilkanaście
 // razy na sekundę. Widz ma zobaczyć ludzi, którzy dochodzą do miejsca i pracują, więc pokazywane zadanie zmienia się rzadko:
-// tylko na granicy kwadransa gry i dopiero wtedy, gdy osoba trzymała poprzednie co najmniej `TASK_DWELL_S`.
+// tylko na granicy kwadransa gry i dopiero wtedy, gdy osoba trzymała poprzednie co najmniej `TASK_DWELL_S`. Nowa osoba ma ten
+// postój już spełniony (jej pierwsze zadanie bywa przypadkowe), więc pierwsza granica kwadransa może je poprawić; kolejne zmiany
+// podlegają zwykłemu postojowi, liczonemu od faktycznej zmiany.
 //
 // Na granicy kwadransa osoba dostaje to zadanie, które ekonomia dawała jej najdłużej w minionym oknie (głosy ważone minutami
 // gry), a nie to z ostatniej chwili, więc chwilowy zryw w ostatniej minucie nie przestawia nikogo. Warstwa jest czystą
@@ -11,7 +13,10 @@ import type { StaffAssignment, StaffDuty } from './types';
 
 /** Kwadrans gry w minutach: zadanie osoby zmienia się najwyżej na granicy kwadransa. */
 export const QUARTER_MIN = 15;
-/** Najkrócej tyle sekund czasu widoku (s, jak czas marszu) osoba trzyma zadanie, zanim je zmieni: musi zdążyć dojść i pokazać pracę. */
+/**
+ * Najkrócej tyle sekund czasu widoku (s, jak czas marszu) osoba trzyma zadanie, zanim je zmieni: musi zdążyć dojść i pokazać pracę.
+ * Nowa osoba ma ten postój spełniony od razu (jej pierwsze zadanie może poprawić pierwsza granica kwadransa).
+ */
 export const TASK_DWELL_S = 6;
 
 /** Kolejność rozstrzygania remisów, gdy trzymanego zadania nie ma wśród remisujących. */
@@ -20,7 +25,10 @@ const DUTY_ORDER: readonly StaffDuty[] = ['kasa', 'rozladunek', 'wykladanie', 's
 interface Held {
   /** Zadanie pokazywane teraz. */
   duty: StaffDuty;
-  /** Czas widoku (s), od którego osoba trzyma `duty` (albo od którego jest w ekipie). */
+  /**
+   * Czas widoku (s), od którego osoba trzyma `duty`, a dla nowej osoby `TASK_DWELL_S` przed jej pojawieniem się (jej pierwszy
+   * postój jest już spełniony, więc pierwsza granica kwadransa może zmienić zadanie).
+   */
   since: number;
   /** Minuty gry, przez które ekonomia chciała danego zadania w bieżącym oknie kwadransa. */
   votes: Map<StaffDuty, number>;
@@ -64,8 +72,10 @@ export class TaskHold {
     for (const [id, task] of wanted) {
       const person = this.people.get(id);
       if (person === undefined) {
-        // Nowa osoba pokazuje od razu to, czego ekonomia chce, i nie miała jeszcze okna, w którym mogłaby zebrać głosy.
-        this.people.set(id, { duty: task, since: clock, votes: new Map() });
+        // Nowa osoba pokazuje od razu to, czego ekonomia chce, i nie miała jeszcze okna, w którym mogłaby zebrać głosy. Postój ma
+        // już spełniony: zadanie z pierwszej (często przypadkowej, np. samo „wolny” w pierwszej minucie po otwarciu) minuty nie może
+        // zostać zamrożone na ~2 godziny gry. Granica kwadransa nadal jest wymagana, a po zmianie liczy się zwykły postój.
+        this.people.set(id, { duty: task, since: clock - TASK_DWELL_S, votes: new Map() });
       } else if (gain > 0) {
         person.votes.set(task, (person.votes.get(task) ?? 0) + gain);
       }
