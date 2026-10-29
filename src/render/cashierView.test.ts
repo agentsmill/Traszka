@@ -2,17 +2,20 @@ import { Box3, Color, Group, Matrix4, Mesh, SkinnedMesh, Vector3, type Material,
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_CASHIER_LOOK, REGULAR_OUTFITS, cashierSpot, type CashierLook } from '@/game/cashier';
 import { SIM_STEP, type Agent, type Crowd } from '@/sim/crowd/crowd';
+import { CELL_SIZE_M } from '@/sim/grid';
 import { generateStore } from '@/sim/store/generateStore';
 import { layoutFromParts, validParts } from '@/sim/store/testLayouts';
 import { pickAppearance } from './characters/appearance';
-import { BLOB_Y, characterBlobRadii, createBlobShadows } from './characters/blobShadows';
+import { BLOB_Y, characterBlobRadii, createBlobShadows, type BlobShadows } from './characters/blobShadows';
 import { REGION } from './characters/characterMaterial';
 import { createCharacterFactory, type CharacterFactory, type CharacterInstance, type OutfitOverrides } from './characters/characterFactory';
 import type { OutfitFile } from './characters/modularPack';
 import { loadFromDisk } from './characters/testAssets';
-import { CashierView, GESTURE_BOW_RAD, GESTURE_HOP_M, GESTURE_S, createCashierCharacter, isOutfitReady } from './cashierView';
+import { walkTimeScale } from './characters/walkSpeed';
+import { CashierView, GESTURE_BOW_RAD, GESTURE_HOP_M, GESTURE_S, createCashierCharacter, isOutfitReady, type CashierPose } from './cashierView';
 import { cellToWorld } from './coords';
-import { CrowdView, TURN_RATE_MAX, headingToYaw } from './crowdView';
+import { CrowdView, IDLE_DELAY_S, TURN_RATE_MAX, headingToYaw, turnTowards } from './crowdView';
+import { STAFF_WALK_SPEED } from './staff/walker';
 import { PALETTE } from './style';
 
 const layout = generateStore('kielbasa-42');
@@ -646,8 +649,455 @@ describe('CashierView: dispose, cienie i plamy', () => {
   });
 });
 
+/** Poza: `dx`, `dy` kratek od środka kratki kasjera (środek kratki = indeks + 0.5, jak `Agent.x/y`). */
+const poseAt = (dx: number, dy: number, heading = 0, moving = true): CashierPose => ({ x: spot.cell.x + 0.5 + dx, y: spot.cell.y + 0.5 + dy, heading, moving });
+/** Położenie i promienie plamy z miejsca `i` w siatce plam. */
+function blobAt(blobs: BlobShadows, i = 0): { x: number; y: number; z: number; rx: number; rz: number } {
+  const m = new Matrix4();
+  blobs.mesh.getMatrixAt(i, m);
+  const p = new Vector3().setFromMatrixPosition(m);
+  return { x: p.x, y: p.y, z: p.z, rx: new Vector3().setFromMatrixColumn(m, 0).length(), rz: new Vector3().setFromMatrixColumn(m, 2).length() };
+}
+
+describe('CashierView: chodzenie (setPose)', () => {
+  const footMps = 1.15;
+  const walkScale = walkTimeScale(footMps, STAFF_WALK_SPEED * CELL_SIZE_M, 0.9 * 1.2);
+
+  it('poza przesuwa postać na jej pozycję (środek kratki = indeks + 0.5, także między kratkami), na podłodze, bez drugiej postaci', () => {
+    const { factory, made } = fakeFactory();
+    const parent = new Group();
+    const view = new CashierView(factory, layout, parent, null, REGULAR_LOOK);
+    const o = view.character!.object;
+    view.setPose(poseAt(3, 2, 0.4));
+    view.update(SIM_STEP, null, false);
+    const w = cellToWorld(layout, spot.cell.x + 3, spot.cell.y + 2);
+    expect(o.position.x).toBeCloseTo(w.x, 12);
+    expect(o.position.z).toBeCloseTo(w.z, 12);
+    expect(o.position.y).toBe(0);
+    view.setPose(poseAt(3.25, 2.75));
+    view.update(SIM_STEP, null, false);
+    const between = cellToWorld(layout, spot.cell.x + 3.25, spot.cell.y + 2.75);
+    expect(o.position.x).toBeCloseTo(between.x, 12);
+    expect(o.position.z).toBeCloseTo(between.z, 12);
+    expect(made).toHaveLength(1);
+    expect(parent.children).toEqual([o]);
+    view.setPose(poseAt(0, 0));                                       // środek jego własnej kratki to dokładnie miejsce za ladą
+    view.update(SIM_STEP, null, false);
+    expect(o.position.x).toBeCloseTo(home.x, 12);
+    expect(o.position.z).toBeCloseTo(home.z, 12);
+  });
+
+  it('poza jest kopiowana: zmiana obiektu przez wołającego po setPose niczego nie przestawia, a kolejne setPose bierze nowe wartości', () => {
+    const { factory } = fakeFactory();
+    const view = new CashierView(factory, layout, new Group(), null, REGULAR_LOOK);
+    const o = view.character!.object;
+    const pose = poseAt(3, 0);
+    view.setPose(pose);
+    pose.x += 10;
+    pose.moving = false;
+    view.update(SIM_STEP, null, false);
+    expect(o.position.x).toBeCloseTo(cellToWorld(layout, spot.cell.x + 3, spot.cell.y).x, 12);
+    view.setPose(pose);
+    view.update(SIM_STEP, null, false);
+    expect(o.position.x).toBeCloseTo(cellToWorld(layout, spot.cell.x + 13, spot.cell.y).x, 12);
+  });
+
+  it('obrót z pozy doganiany przez turnTowards: w jednej klatce tyle co turnTowards (≤ TURN_RATE_MAX), najkrótszą drogą, aż do heading', () => {
+    const { factory } = fakeFactory();
+    const view = new CashierView(factory, layout, new Group(), null, REGULAR_LOOK);
+    const heading = spot.heading + Math.PI * 0.9;                     // prawie zawrót
+    view.setPose(poseAt(2, 1, heading));
+    let prev = yawOf(view);
+    const expected = turnTowards(prev, headingToYaw(heading), SIM_STEP);
+    view.update(SIM_STEP, null, false);
+    expect(yawOf(view)).toBeCloseTo(expected, 12);
+    expect(Math.abs(yawOf(view) - prev)).toBeGreaterThan(0.01);       // naprawdę się obraca
+    prev = yawOf(view);
+    for (let i = 0; i < 8; i++) {
+      view.update(SIM_STEP, null, false);
+      expect(Math.abs(yawOf(view) - prev)).toBeLessThanOrEqual(TURN_RATE_MAX * SIM_STEP + 1e-9);
+      prev = yawOf(view);
+    }
+    expect(angleDiff(facingOf(view), heading)).toBeGreaterThan(0.05);  // zawrót nie jest natychmiastowy
+    for (let i = 0; i < 120; i++) view.update(SIM_STEP, null, false);
+    expect(angleDiff(facingOf(view), heading)).toBeLessThan(1e-3);
+    view.update(0, null, false, 0);                                    // pauza: nie obraca
+    const frozen = yawOf(view);
+    view.setPose(poseAt(2, 1, heading + 1));
+    view.update(0, null, false, 0);
+    expect(yawOf(view)).toBe(frozen);
+  });
+
+  it('klient przy kasie nie obraca chodzącego kasjera: patrzy tam, dokąd idzie', () => {
+    const { factory } = fakeFactory();
+    const view = new CashierView(factory, layout, new Group(), null, REGULAR_LOOK);
+    view.setPose(poseAt(2, 0, 0));
+    for (let i = 0; i < 90; i++) view.update(SIM_STEP, customer(0, 3), false);
+    expect(angleDiff(facingOf(view), 0)).toBeLessThan(1e-3);
+  });
+
+  it('w marszu nie ma gestu ani ukłonu: sprzedaż nic nie zaczyna, a gest zaczęty przed marszem nie wraca po nim', () => {
+    const { factory } = fakeFactory();
+    const view = new CashierView(factory, layout, new Group(), null, REGULAR_LOOK);
+    const o = view.character!.object;
+    view.update(SIM_STEP, null, true);
+    view.update(SIM_STEP, null, false);
+    expect(o.position.y).toBeGreaterThan(0);                           // gest trwa
+    expect(o.rotation.x).toBeGreaterThan(0);
+    view.setPose(poseAt(3, 0));
+    for (let i = 0; i < 20; i++) {
+      view.update(SIM_STEP, null, i % 3 === 0);                        // sprzedaże w trakcie marszu
+      expect([o.position.y, o.rotation.x]).toEqual([0, 0]);
+    }
+    view.setPose(null);
+    for (let i = 0; i < 20; i++) {
+      view.update(SIM_STEP, null, false);
+      expect([o.position.y, o.rotation.x]).toEqual([0, 0]);            // przerwany gest nie wznawia się za ladą
+    }
+    view.update(SIM_STEP, null, true);                                 // a nowa sprzedaż znów robi gest
+    expect(o.position.y).toBeGreaterThan(0);
+  });
+
+  it('klip: ruch z pozy włącza walk od razu, z tempem walkTimeScale (animDt × mnożnik); stanie z pozy wraca do idle po IDLE_DELAY_S', () => {
+    const { factory, made } = fakeFactory();
+    const view = new CashierView(factory, layout, new Group(), null, REGULAR_LOOK);
+    view.setPose(poseAt(3, 0, 0, true));
+    view.update(0.04, null, false);
+    expect(made[0]!.setAnim).toHaveBeenCalledTimes(1);
+    expect(made[0]!.setAnim).toHaveBeenLastCalledWith('walk');
+    expect(made[0]!.update).toHaveBeenLastCalledWith(0.04 * walkScale);
+    view.update(0.08, null, false, 0.02);                              // czas animacji osobno od czasu ramki
+    expect(made[0]!.update).toHaveBeenLastCalledWith(0.02 * walkScale);
+
+    view.setPose(poseAt(3, 0, 0, false));                              // doszedł: stoi na miejscu
+    view.update(IDLE_DELAY_S / 3, null, false);
+    expect(made[0]!.setAnim).toHaveBeenCalledTimes(1);                 // chwilowy postój nie miga animacją
+    view.update(IDLE_DELAY_S, null, false);
+    expect(made[0]!.setAnim).toHaveBeenCalledTimes(2);
+    expect(made[0]!.setAnim).toHaveBeenLastCalledWith('idle');
+    view.update(0.04, null, false);
+    expect(made[0]!.update).toHaveBeenLastCalledWith(0.04);            // Idle gra w tempie 1
+  });
+
+  it('setPose(null) wraca za ladę: pozycja na kratce kasjera, obrót do kasy i klienta, klip do Idle, gest znów działa', () => {
+    const { factory, made } = fakeFactory();
+    const view = new CashierView(factory, layout, new Group(), null, REGULAR_LOOK);
+    const o = view.character!.object;
+    view.setPose(poseAt(4, 2, 1.1));
+    for (let i = 0; i < 30; i++) view.update(SIM_STEP, null, false);
+    expect(made[0]!.setAnim).toHaveBeenLastCalledWith('walk');
+    expect(o.position.x).not.toBeCloseTo(home.x, 3);
+
+    view.setPose(null);
+    for (let i = 0; i < 20; i++) view.update(SIM_STEP, null, false);   // 0,33 s > IDLE_DELAY_S
+    expect(o.position.x).toBeCloseTo(home.x, 12);
+    expect(o.position.z).toBeCloseTo(home.z, 12);
+    expect(o.position.y).toBe(0);
+    expect(made[0]!.setAnim).toHaveBeenLastCalledWith('idle');
+    expect(made[0]!.update).toHaveBeenLastCalledWith(SIM_STEP);        // znów animDt bez mnożnika
+    for (let i = 0; i < 90; i++) view.update(SIM_STEP, null, false);
+    expect(angleDiff(facingOf(view), spot.heading)).toBeLessThan(1e-3);
+    const who = customer(0, 3);                                         // i znów obraca się do klienta
+    for (let i = 0; i < 90; i++) view.update(SIM_STEP, who, false);
+    expect(angleDiff(facingOf(view), Math.atan2(3, 0))).toBeLessThan(1e-3);
+  });
+
+  it('setPose(null) bez poprzedniej pozy niczego nie rusza: postać stoi tam, gdzie stała, a gest i Idle działają jak dotąd', () => {
+    const { factory, made } = fakeFactory();
+    const view = new CashierView(factory, layout, new Group(), null, REGULAR_LOOK);
+    const o = view.character!.object;
+    o.position.x += 0.123;                                              // ktoś przestawił postać: setPose(null) jej nie wraca, bo nie było pozy
+    const x = o.position.x;
+    for (let i = 0; i < 5; i++) { view.setPose(null); view.update(SIM_STEP, null, false); }
+    expect(o.position.x).toBe(x);
+    expect(made[0]!.setAnim).not.toHaveBeenCalled();
+  });
+
+  it('plama podąża za postacią co klatkę (pod stopami, ten sam rozmiar) i wraca za ladę po setPose(null), nie tracąc miejsca', () => {
+    const { factory } = fakeFactory();
+    const blobs = createBlobShadows(1);
+    const view = new CashierView(factory, layout, new Group(), blobs, REGULAR_LOOK);
+    const [rx, rz] = characterBlobRadii(view.character!.object);
+    for (const [dx, dy] of [[3, 2], [3.5, 2.25], [5, 4]] as const) {
+      view.setPose(poseAt(dx, dy));
+      view.update(SIM_STEP, null, false);
+      const w = cellToWorld(layout, spot.cell.x + dx, spot.cell.y + dy);
+      const b = blobAt(blobs);
+      expect([b.x, b.y, b.z]).toEqual([expect.closeTo(w.x, 5), expect.closeTo(BLOB_Y, 5), expect.closeTo(w.z, 5)]);
+      expect(b.rx).toBeCloseTo(rx, 5);
+      expect(b.rz).toBeCloseTo(rz, 5);
+      expect(blobs.mesh.count).toBe(1);
+    }
+    view.setPose(null);
+    view.update(SIM_STEP, null, false);
+    const b = blobAt(blobs);
+    expect(b.x).toBeCloseTo(home.x, 5);
+    expect(b.z).toBeCloseTo(home.z, 5);
+    expect(blobs.mesh.count).toBe(1);
+    expect(blobs.reserve()).toBeNull();                                 // jedyne miejsce nadal jego
+  });
+
+  it('poza przed zbudowaniem postaci (strój specjalny się wczytuje) nie przerywa żądania ani nie dubluje postaci: kasjer powstaje od razu na pozycji z pozy', async () => {
+    const gate = deferred();
+    const { factory, made } = fakeFactory(() => gate.promise);
+    const parent = new Group();
+    const view = new CashierView(factory, layout, parent, null, KING_LOOK);
+    view.setPose(poseAt(3, 1));
+    view.update(SIM_STEP, null, false);                                 // brak postaci: nic się nie dzieje
+    view.setPose(null);
+    view.setPose(poseAt(3, 1));
+    expect(made).toHaveLength(0);
+    expect(parent.children).toHaveLength(0);
+    gate.resolve();
+    await flush();
+    expect(made).toHaveLength(1);                                       // wczytywanie przeżyło zmiany pozy
+    expect(parent.children).toEqual([made[0]!.character.object]);
+    const w = cellToWorld(layout, spot.cell.x + 3, spot.cell.y + 1);
+    expect(made[0]!.character.object.position.x).toBeCloseTo(w.x, 12);  // bez update: nie błyska przez chwilę za ladą
+    expect(made[0]!.character.object.position.z).toBeCloseTo(w.z, 12);
+    view.update(SIM_STEP, null, false);
+    expect(made[0]!.setAnim).toHaveBeenLastCalledWith('walk');
+  });
+
+  it('setPose w trakcie wczytywania zmiany wyglądu: stara postać chodzi do końca, potem nowa przejmuje pozycję z pozy, a stara jest zwolniona raz', async () => {
+    const gate = deferred();
+    const { factory, made } = fakeFactory(() => gate.promise);
+    const parent = new Group();
+    const view = new CashierView(factory, layout, parent, null, REGULAR_LOOK);
+    view.setLook(KING_LOOK);
+    view.setPose(poseAt(4, 0));
+    view.update(SIM_STEP, null, false);
+    view.setPose(null);
+    view.setPose(poseAt(5, 1));
+    gate.resolve();
+    await flush();
+    expect(made.map((m) => m.outfit)).toEqual(['men-suit', 'special-men-king']);
+    expect(made[0]!.dispose).toHaveBeenCalledTimes(1);
+    expect(parent.children).toEqual([made[1]!.character.object]);
+    const w = cellToWorld(layout, spot.cell.x + 5, spot.cell.y + 1);
+    expect(made[1]!.character.object.position.x).toBeCloseTo(w.x, 12);
+    expect(made[1]!.character.object.position.z).toBeCloseTo(w.z, 12);
+  });
+
+  it('zmiana wyglądu w marszu: nowa postać stoi tam, gdzie kasjer idzie, z własnym klipem (zaczyna od walk), obrót zostaje, stara przestaje być animowana', () => {
+    const { factory, made } = fakeFactory();
+    const parent = new Group();
+    const blobs = createBlobShadows(1);
+    const view = new CashierView(factory, layout, parent, blobs, REGULAR_LOOK);
+    view.setPose(poseAt(4, 1, 0.7));
+    for (let i = 0; i < 12; i++) view.update(SIM_STEP, null, false);
+    const yaw = yawOf(view);
+    expect(made[0]!.setAnim).toHaveBeenCalledTimes(1);
+    const oldUpdates = made[0]!.update.mock.calls.length;
+
+    view.setLook({ outfit: 'women-casual', appearanceSeed: 'kasjer-c' });
+    expect(made).toHaveLength(2);
+    expect(made[0]!.dispose).toHaveBeenCalledTimes(1);
+    expect(parent.children).toEqual([made[1]!.character.object]);
+    const w = cellToWorld(layout, spot.cell.x + 4, spot.cell.y + 1);
+    const o = made[1]!.character.object;
+    expect(o.position.x).toBeCloseTo(w.x, 12);
+    expect(o.position.z).toBeCloseTo(w.z, 12);
+    expect(yawOf(view)).toBeCloseTo(yaw, 12);
+    expect(blobAt(blobs).x).toBeCloseTo(w.x, 5);                        // plama od razu pod nową postacią
+    expect(blobs.mesh.count).toBe(1);
+
+    view.update(SIM_STEP, null, false);
+    expect(made[1]!.setAnim).toHaveBeenCalledWith('walk');              // nowy Gait: nowa postać dostaje swój klip chodu
+    expect(made[1]!.update).toHaveBeenLastCalledWith(SIM_STEP * walkScale);
+    expect(made[0]!.update.mock.calls.length).toBe(oldUpdates);         // stara już nie jest animowana
+  });
+
+  it('zmiana wyglądu bez pozy tworzy nowy Gait: nowa postać gra Idle (nie dziedziczy chodu poprzedniej)', () => {
+    const { factory, made } = fakeFactory();
+    const view = new CashierView(factory, layout, new Group(), null, REGULAR_LOOK);
+    view.setPose(poseAt(3, 0));
+    view.update(SIM_STEP, null, false);
+    view.setPose(null);
+    view.setLook({ outfit: 'women-casual', appearanceSeed: 'kasjer-c' });
+    for (let i = 0; i < 5; i++) view.update(SIM_STEP, null, false);
+    expect(made[1]!.setAnim).not.toHaveBeenCalled();
+    expect(made[1]!.update).toHaveBeenLastCalledWith(SIM_STEP);
+  });
+});
+
+describe('CashierView: poza zmianą (setVisible)', () => {
+  it('setVisible(false) chowa postać i plamę (zerowy promień), niczego nie zwalniając; true przywraca jedno i drugie', () => {
+    const { factory, made } = fakeFactory();
+    const parent = new Group();
+    const blobs = createBlobShadows(1);
+    const view = new CashierView(factory, layout, parent, blobs, REGULAR_LOOK);
+    const o = view.character!.object;
+    const [rx, rz] = characterBlobRadii(o);
+    expect(o.visible).toBe(true);
+
+    view.setVisible(false);
+    expect(o.visible).toBe(false);
+    const hidden = blobAt(blobs);
+    expect([hidden.rx, hidden.rz]).toEqual([0, 0]);
+    expect(blobs.mesh.count).toBe(1);                                   // miejsce nadal zajęte
+    expect(made[0]!.dispose).not.toHaveBeenCalled();
+    expect(parent.children).toEqual([o]);
+    expect(view.character).toBe(made[0]!.character);
+    expect(blobs.reserve()).toBeNull();
+
+    view.setVisible(false);                                             // powtórzone nic nie psuje
+    view.setVisible(true);
+    expect(o.visible).toBe(true);
+    const shown = blobAt(blobs);
+    expect([shown.x, shown.z]).toEqual([expect.closeTo(home.x, 5), expect.closeTo(home.z, 5)]);
+    expect(shown.rx).toBeCloseTo(rx, 5);
+    expect(shown.rz).toBeCloseTo(rz, 5);
+    expect(made).toHaveLength(1);
+  });
+
+  it('ukryty kasjer nie jest animowany ani przestawiany, a po pokazaniu znów pracuje', () => {
+    const { factory, made } = fakeFactory();
+    const view = new CashierView(factory, layout, new Group(), null, REGULAR_LOOK);
+    const o = view.character!.object;
+    view.update(SIM_STEP, null, false);
+    const updates = made[0]!.update.mock.calls.length;
+    view.setVisible(false);
+    view.setPose(poseAt(3, 0));
+    for (let i = 0; i < 10; i++) view.update(SIM_STEP, customer(0, 3), true);
+    expect(made[0]!.update.mock.calls.length).toBe(updates);            // nikt go nie widzi: bez kosztu animacji
+    expect(o.visible).toBe(false);
+    expect(o.position.x).toBeCloseTo(home.x, 12);
+    view.setVisible(true);
+    view.update(SIM_STEP, null, false);
+    expect(made[0]!.update.mock.calls.length).toBe(updates + 1);
+    expect(o.visible).toBe(true);
+    expect(o.position.x).toBeCloseTo(cellToWorld(layout, spot.cell.x + 3, spot.cell.y).x, 12);   // poza zadziałała dopiero teraz
+    expect(o.position.y).toBe(0);                                       // gest z czasu ukrycia nie wrócił
+  });
+
+  it('ukrycie przed zbudowaniem postaci (strój specjalny się wczytuje) ukrywa też tę, która dopiero powstanie, razem z plamą; true ją pokazuje', async () => {
+    const gate = deferred();
+    const { factory, made } = fakeFactory(() => gate.promise);
+    const parent = new Group();
+    const blobs = createBlobShadows(1);
+    const view = new CashierView(factory, layout, parent, blobs, KING_LOOK);
+    view.setVisible(false);
+    expect(view.character).toBeNull();
+    gate.resolve();
+    await flush();
+    const o = made[0]!.character.object;
+    expect(parent.children).toEqual([o]);
+    expect(o.visible).toBe(false);
+    const hidden = blobAt(blobs);
+    expect([hidden.rx, hidden.rz]).toEqual([0, 0]);
+    expect(blobs.mesh.count).toBe(1);
+
+    view.setVisible(true);
+    expect(o.visible).toBe(true);
+    expect(blobAt(blobs).rx).toBeGreaterThan(0.1);
+    view.dispose();
+  });
+
+  it('ukrycie, a potem pokazanie przed zbudowaniem postaci: powstaje widoczna', async () => {
+    const gate = deferred();
+    const { factory, made } = fakeFactory(() => gate.promise);
+    const blobs = createBlobShadows(1);
+    const view = new CashierView(factory, layout, new Group(), blobs, KING_LOOK);
+    view.setVisible(false);
+    view.setVisible(true);
+    gate.resolve();
+    await flush();
+    expect(made[0]!.character.object.visible).toBe(true);
+    expect(blobAt(blobs).rx).toBeGreaterThan(0.1);
+  });
+
+  it('zmiana wyglądu zachowuje ukrycie (nowa postać i jej plama są niewidoczne), a pokazanie pokazuje nową', () => {
+    const { factory, made } = fakeFactory();
+    const blobs = createBlobShadows(1);
+    const view = new CashierView(factory, layout, new Group(), blobs, REGULAR_LOOK);
+    view.setVisible(false);
+    view.setLook({ outfit: 'women-casual', appearanceSeed: 'kasjer-c' });
+    expect(made).toHaveLength(2);
+    const o = made[1]!.character.object;
+    expect(o.visible).toBe(false);
+    expect(blobAt(blobs).rx).toBe(0);
+    expect(blobs.mesh.count).toBe(1);
+    view.setVisible(true);
+    expect(o.visible).toBe(true);
+    expect(blobAt(blobs).rx).toBeGreaterThan(0.1);
+  });
+
+  it('ukryty chodzący kasjer: pokazanie stawia go na pozycji z pozy, a plama idzie za nim', () => {
+    const { factory } = fakeFactory();
+    const blobs = createBlobShadows(1);
+    const view = new CashierView(factory, layout, new Group(), blobs, REGULAR_LOOK);
+    view.setPose(poseAt(5, 2));
+    view.update(SIM_STEP, null, false);
+    view.setVisible(false);
+    view.update(SIM_STEP, null, false);
+    expect(blobAt(blobs).rx).toBe(0);                                   // update w ukryciu nie odsłania plamy
+    view.setVisible(true);
+    view.update(SIM_STEP, null, false);
+    const w = cellToWorld(layout, spot.cell.x + 5, spot.cell.y + 2);
+    expect(blobAt(blobs).x).toBeCloseTo(w.x, 5);
+    expect(blobAt(blobs).rx).toBeGreaterThan(0.1);
+  });
+
+  it('dispose po pozie i ukryciu: postać zwolniona raz, plama oddana, a późniejsze setPose, setVisible i update niczego nie ożywiają ani nie rzucają', () => {
+    const { factory, made } = fakeFactory();
+    const parent = new Group();
+    const blobs = createBlobShadows(1);
+    const view = new CashierView(factory, layout, parent, blobs, REGULAR_LOOK);
+    view.setPose(poseAt(3, 1));
+    view.update(SIM_STEP, null, false);
+    view.setVisible(false);
+    view.dispose();
+    expect(made[0]!.dispose).toHaveBeenCalledTimes(1);
+    expect(parent.children).toHaveLength(0);
+    expect(blobs.mesh.count).toBe(0);
+    view.setPose(poseAt(1, 1));
+    view.setVisible(true);
+    view.setPose(null);
+    view.update(SIM_STEP, null, true);
+    view.dispose();
+    expect(made).toHaveLength(1);
+    expect(made[0]!.dispose).toHaveBeenCalledTimes(1);
+    expect(parent.children).toHaveLength(0);
+    expect(blobs.mesh.count).toBe(0);
+    expect(blobs.reserve()).not.toBeNull();                             // miejsce w plamach wolne i nikt go znów nie zajął
+  });
+
+  it('dispose w trakcie wczytywania po setPose i setVisible: po dojściu pliku nic nie powstaje', async () => {
+    const gate = deferred();
+    const { factory, made } = fakeFactory(() => gate.promise);
+    const parent = new Group();
+    const view = new CashierView(factory, layout, parent, null, KING_LOOK);
+    view.setPose(poseAt(2, 0));
+    view.setVisible(false);
+    view.dispose();
+    gate.resolve();
+    await flush();
+    expect(made).toHaveLength(0);
+    expect(parent.children).toHaveLength(0);
+  });
+
+  it('układ bez kasy: setPose, setVisible i update nie rzucają i nic nie powstaje', () => {
+    const { factory, made } = fakeFactory();
+    const parts = validParts();
+    const noTill = layoutFromParts({ ...parts, fixtures: parts.fixtures.filter((f) => f.kind !== 'checkout') });
+    const parent = new Group();
+    const blobs = createBlobShadows(2);
+    const view = new CashierView(factory, noTill, parent, blobs, REGULAR_LOOK);
+    view.setPose(poseAt(1, 1));
+    view.setVisible(false);
+    view.update(SIM_STEP, null, true);
+    view.setVisible(true);
+    view.setPose(null);
+    view.dispose();
+    expect(made).toHaveLength(0);
+    expect(parent.children).toHaveLength(0);
+    expect(blobs.mesh.count).toBe(0);
+  });
+});
+
 describe('CashierView z prawdziwą fabryką postaci', () => {
-  const load = (log: string[]) => (url: string) => { log.push(url); return loadFromDisk(url); };
+  const load =(log: string[]) => (url: string) => { log.push(url); return loadFromDisk(url); };
   let factory: CharacterFactory;
   const requested: string[] = [];
   beforeAll(async () => { factory = await createCharacterFactory(load(requested)); }, 60_000);
@@ -700,4 +1150,32 @@ describe('CashierView z prawdziwą fabryką postaci', () => {
     expect(paletteOf(view)[REGION.top].getHexString()).not.toBe(new Color(PALETTE.brand.green).getHexString());
     view.dispose();
   }, 60_000);
+
+  it('prawdziwy kasjer chodzi i da się go ukryć: nadal jedna siatka (1 draw call), stopy na podłodze, klip chodu faktycznie rusza kośćmi, a po dispose nie zostaje nic', () => {
+    const parent = new Group();
+    const blobs = createBlobShadows(1);
+    const view = new CashierView(factory, layout, parent, blobs, { outfit: 'men-suit', appearanceSeed: 'kasjer-spacer' });
+    const skinned = view.character!.object.getObjectByProperty('isSkinnedMesh', true) as SkinnedMesh;
+    const boneYs = (): number[] => skinned.skeleton.bones.map((b) => b.position.y + b.rotation.x + b.rotation.z);
+    view.setPose(poseAt(4, 2, 0.5));
+    view.update(SIM_STEP, null, false);
+    view.character!.object.updateMatrixWorld(true);
+    expect(meshesIn(parent)).toHaveLength(1);
+    const w = cellToWorld(layout, spot.cell.x + 4, spot.cell.y + 2);
+    expect(view.character!.object.position.x).toBeCloseTo(w.x, 12);
+    expect(new Box3().setFromObject(meshesIn(parent)[0]!, true).min.y).toBeCloseTo(0, 1);
+    const before = boneYs();
+    for (let i = 0; i < 20; i++) view.update(SIM_STEP, null, false);        // 0,33 s chodu
+    expect(boneYs()).not.toEqual(before);                                   // animacja idzie
+    view.setVisible(false);
+    expect(view.character!.object.visible).toBe(false);
+    expect(blobs.mesh.count).toBe(1);
+    view.setVisible(true);
+    view.setPose(null);
+    for (let i = 0; i < 20; i++) view.update(SIM_STEP, null, i === 0);      // wraca za ladę, Idle i gest na prawdziwej postaci niczego nie psują
+    expect(view.character!.object.position.x).toBeCloseTo(home.x, 12);
+    view.dispose();
+    expect(parent.children).toHaveLength(0);
+    expect(blobs.mesh.count).toBe(0);
+  });
 });

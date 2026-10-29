@@ -138,8 +138,8 @@ Generator działa w dwóch krokach: **szkielet** (strefy) → **wypełnienie** (
 - Upgrade'y logistyczne: wózek paletowy, rampa i drzwi od zaplecza, regały magazynowe, dodatkowy pracownik na poranną zmianę, okno dostaw nocnych.
 
 ### 6.5 Praca ludzi: kasa, palety, półki, porządek **[U]** (model, 2026-10-28) / **[C]** (liczby)
-- **Czas personelu to wspólna pula.** Każda minuta zmiany każdej osoby idzie na jedno z czterech zadań: **kasa**, **rozładunek palet**, **wykładanie towaru**, **sprzątanie i śmieci**. Gracz ustawia kolejność priorytetów albo wybiera profil („Kolejka”, „Dostawa”, „Porządek”) i w razie potrzeby przydziela osobę ręcznie (§6.2). Zadanie, na które nie starcza ludzi, czeka.
-- **Kasa samoobsługowa odciąża kasę i przyspiesza kasowanie, ale nie zastępuje ludzi** **[U]**. Klient obsłużony przez kasę samoobsługową nie zabiera minut kasjera, więc kasa oddaje puli tyle czasu, ilu klientów przejęła, a ten czas idzie na palety, półki i porządek. Dopóki nie ma robotów, rozładunek, wykładanie i sprzątanie robią ludzie.
+- **Czas personelu to wspólna pula.** Każda minuta zmiany każdej osoby idzie na jedno z czterech zadań: **kasa**, **rozładunek palet**, **wykładanie towaru**, **sprzątanie i śmieci**. Gracz ustawia kolejność priorytetów albo wybiera profil („Kolejka”, „Dostawa”, „Porządek”) i w razie potrzeby przydziela osobę ręcznie (§6.2). Przypięta osoba bierze najpierw swoje zadanie, a gdy nie ma w nim pracy, wraca do puli **[U]** (2026-10-28). Zadanie, na które nie starcza ludzi, czeka.
+- **Kasa samoobsługowa odciąża kasę i przyspiesza kasowanie, ale nie zastępuje ludzi** **[U]**. Klient obsłużony przez kasę samoobsługową nie zabiera minut kasjera, więc kasa oddaje puli tyle czasu, ilu klientów przejęła, a ten czas idzie na palety, półki i porządek. Dopóki nie ma robotów, rozładunek, wykładanie i sprzątanie robią ludzie. Klient z alkoholem (albo innym towarem od 18 lat) czeka przy kasie samoobsługowej, aż człowiek z kasy potwierdzi wiek **[U]** (2026-10-28).
 - **Śmieci z rozładunku** **[U]**: rozładowana paleta zostawia kartony i folię (np. jeden worek na paletę, dwa przy napojach w folii) **[C]**. Trzeba je złożyć i wynieść do wiaty śmietnikowej na podwórku. Niewyniesione śmieci zajmują miejsca na zapleczu (te same, co palety), a przy pełnym zapleczu lądują w sali jako przeszkoda i brud.
 - **Czystość sali** **[C]**: brud rośnie z ruchem klientów i pogodą, spada z minutami sprzątania. Niska czystość obniża cierpliwość i reputację oraz wynik audytu i tajemniczego klienta (§7.1a).
 - **Roboty później** (warsztat złotej rączki, §8): taśmociąg przejmuje rozładunek, wykładacz wykładanie, prasa do kartonów skraca wynoszenie śmieci, a humanoid eDward bierze każde zadanie. Robot zastępuje minuty ludzi, więc „etat czy maszyna” jest rachunkiem gracza **[C]**.
@@ -152,16 +152,16 @@ Model wzorowany na realiach, uproszczony:
 - **Zamówienie nie kosztuje gotówki z góry** **[C]** (kredyt kupiecki), ale przesada boli na trzy sposoby: (1) każda paleta ponad bazowy przydział dostawy to **opłata logistyczna**, (2) niesprzedany towar świeży trafia do **WUT**, a ubytki ponad próg płacisz Ty, (3) wartość towaru w sklepie ma **limit kredytu**, po którego przekroczeniu Centrala wstrzymuje dostawy. Dzięki temu zamawianie jest decyzją bez pełnego modelu przepływów gotówki.
 - **Utarg** wpłacasz codziennie. Gotówka zostawiona w sejfie na weekend to ryzyko kradzieży, czyli mała decyzja i mały żart **[R]/[C]**.
 - **Twój przychód** = marża wg kategorii (np. 5% tytoń, 10% napoje, 15%+ hot food i dania) + premie Centrali (audyt, świeże, KPI) **[R]**. Gwarancja minimalnego przychodu działa tylko wtedy, gdy sklep jest otwarty każdego dnia, a wskaźnik jakości ≥ 80% **[R]**.
-- **Twoje koszty:** wynagrodzenia (2–4 etaty po ~4,5–5,5 tys. zł), ZUS, księgowa, media, **opłata franczyzowa dla Centrali** (miesięczna, stała plus prowizja od płatności kartą), mandaty i kary, ubytki ponad próg WUT **[U]/[R]**.
+- **Twoje koszty:** wynagrodzenia (2–4 etaty po ~4,5–5,5 tys. zł), ZUS, księgowa, media, **opłata franczyzowa dla Centrali** (miesięczna, stała plus prowizja od płatności kartą; w grze stała plus udział w obrocie, pobierana przy zamknięciu miesiąca: 2000 zł + 12% obrotu zostaje mimo wolniejszego rozwoju sklepu, bo tego wymaga cel balansu z §7.5 **[U]** (2026-10-29); liczby w `catalog.ts` i `docs/ekonomia.md`), mandaty i kary, ubytki ponad próg WUT **[U]/[R]**.
 - **Wynik:** Twój zysk. Rzędy wielkości do balansu **[R]**: obrót sklepu ~150 tys. zł/mies., przychód franczyzobiorcy ~30 tys. zł, „na rękę” 5–8 tys. zł. Dobrze prowadzony sklep w grze powinien dać wyraźnie więcej, to w końcu tycoon **[C]**.
 - Koniec miesiąca to ekran **Raport miesięczny**: wykres, komentarz Centrali, premie i kary, przypomnienie o opłacie.
 
 ### 7.1a Codzienność franczyzobiorcy **[R]** → mechaniki
-- **Pasek WUT** (Wskaźnik Ubytków Towarowych): napełniają go przeterminowany towar, kradzieże i pomyłki. Powyżej progu płacisz Ty. Raz na jakiś czas Centrala ogłasza „program refundacyjny”.
+- **Pasek WUT** (Wskaźnik Ubytków Towarowych): napełniają go przeterminowany towar, kradzieże i pomyłki. „Zapomniane” skany na kasach samoobsługowych liczą się do WUT jako kradzieże, jak w prawdziwym sklepie, a nie obcinają marży **[U]** (2026-10-28). Powyżej progu płacisz Ty. Raz na jakiś czas Centrala ogłasza „program refundacyjny”.
 - **FEFO i naklejka „NIE marnujeMY”**: ok. 18:00 możesz przecenić kanapki albo ryzykować kosz. Ostatnia deska ratunku to paczki-niespodzianki w Traszkapce.
 - **Audyt i tajemniczy klient**: losowe wizyty sprawdzają planogram, czystość, ceny i obsługę. Wynik wpływa na premię, gwarancję i zaufanie Centrali.
 - **Glitch kasowy**: system daje losowe rabaty. Zamykasz sklep czy sprzedajesz prawie za darmo?
-- **Niedziela „placówka pocztowa”**: podwójna marża, ale na kasie stoisz sam i rośnie zmęczenie.
+- **Niedziela** **[U]** (2026-10-28): bez osobnego trybu „placówki pocztowej”. Sklep działa jak co dzień, tylko klientów przychodzi ×1,35, bo duże sklepy są zamknięte.
 - **Grafik 17-godzinnej doby**: ułożenie zmian na 3–4 etaty. Pracownik, który „zachorował” akurat w dzień dostawy.
 
 ### 7.2 Ogonki i giełda Ogonków **[U]** (spekulacja) / **[C]** (forma)
@@ -180,8 +180,8 @@ Model wzorowany na realiach, uproszczony:
 
 ### 7.5 Balans: kliker a tycoon **[U]** (kierunek, 2026-10-28) / **[C]** (mechaniki i liczby)
 Rdzeń gry to **tycoon franczyzy**: decyzje pod presją Centrali. Stukanie zostaje jako **ręce franczyzobiorcy**: pomaga przy paletach, kasie i porządku, ale kosztuje.
-- **Zmęczenie** (§6.2): franczyzobiorca ma dzienną pulę sił (np. 100). Każde stuknięcie ją zużywa, a przy pustej puli ręce odmawiają. Po ciężkim dniu noc odnawia pulę tylko częściowo, a zmęczenie przeniesione na kolejny dzień obniża wydajność ręcznych akcji. Niedziela „placówka pocztowa” zużywa siły szybciej. Combo zostaje jako odczucie, w granicach puli. Pula odbiera przewagę autoklikaczom, więc ranking (§14.7) jest uczciwy.
-- **Codzienne decyzje zamiast nagród co minutę.** Każdy dzień przynosi 1–3 karty z §7.1a (FEFO o 18:00, glitch kasowy, „chory” pracownik w dzień dostawy, zapowiedź audytu, obowiązkowa promocja). Każda karta ma 2–3 odpowiedzi z widocznym kosztem: pieniądze, zaufanie, WUT albo czas ludzi.
+- **Zmęczenie** (§6.2): franczyzobiorca ma dzienną pulę sił (np. 100). Każde stuknięcie ją zużywa, a przy pustej puli ręce odmawiają. Po ciężkim dniu noc odnawia pulę tylko częściowo, a zmęczenie przeniesione na kolejny dzień obniża wydajność ręcznych akcji. Combo zostaje jako odczucie, w granicach puli. Pula odbiera przewagę autoklikaczom, więc ranking (§14.7) jest uczciwy.
+- **Codzienne decyzje zamiast nagród co minutę.** Dzień przynosi 0–2 karty z §7.1a, średnio ok. jednej (okólnik wlicza się do kart dnia), więc przy ×1 karta przychodzi co ~3 min, a przy ×8 co ~25 s **[U]** (2026-10-29) (FEFO o 18:00, glitch kasowy, „chory” pracownik w dzień dostawy, zapowiedź audytu, obowiązkowa promocja). Każda karta ma 2–3 odpowiedzi z widocznym kosztem: pieniądze, zaufanie, WUT albo czas ludzi. Karta zatrzymuje grę, także przy ×8, i czeka na wybór; odpowiedź zaznaczona z góry to ta domyślna. Informacja bez decyzji zamyka się sama, ale nie miga, a ważne zdarzenie (raport, koniec remontu, nowy próg zaufania, nowy poziom, który coś odblokowuje) czeka na „OK” **[U]** (2026-10-28). XP daje każda odpowiedź (karta 10, okólnik 15) i trafione KPI tygodnia (40 + 10 × poziom) **[U]**.
 - **Raport miesięczny to puls gry** (§7.1): wynik po pozycjach (marża, premie, płace, opłata franczyzowa, mandaty, WUT, logistyka), zmiana zaufania, komentarz Centrali i jedna wskazówka, co poprawić. W niedzielę krótkie podsumowanie tygodnia.
 - **Zaufanie Centrali i zrzuty wiralowe od początku**: pasek zaufania widać od pierwszego dnia, a pierwszy zrzut (§7.3) przychodzi już we wrześniu, żeby pętla palety, zaufanie i produkty wiralowe działała w pierwszych 20 minutach.
 - **Mechaniki z wersji grywalnej** (`docs/ekonomia.md`) zostają, ale w nowej roli:
@@ -190,7 +190,7 @@ Rdzeń gry to **tycoon franczyzy**: decyzje pod presją Centrali. Stukanie zosta
   - złota paleta zostaje małą premią Centrali;
   - kierownik zmiany (zarobek offline) zostaje mały i z limitem, a seria dni daje tylko drobne Ogonki;
   - „Otwórz kolejną Traszkę” i Punkty Partnera czekają na mapę miasta (§9): przycisk znika, punkty zostają w zapisie.
-- **Cel balansu** **[C]**: bierny gracz w pierwszych dwóch miesiącach kończy około zera. Stukanie w granicach puli dokłada najwyżej 15–20% wyniku, a dobre decyzje (wielkość zamówienia, miejsce palet, priorytety ludzi, odpowiedzi na karty) dają wynik 2–4 razy lepszy od biernego. Bot „decyzje bez stukania” wygrywa z botem „stukanie bez decyzji”. Pilnuje tego test balansu w `src/sim` (symulacja bez renderu).
+- **Cel balansu** **[U]** (2026-10-29): po dwóch miesiącach bierny gracz kończy w granicach ±5 tys. zł, a dobry gracz (wielkość zamówienia, miejsce palet, profil ludzi, odpowiedzi na karty, stukanie w granicach puli) na +20–40 tys. zł. Stukanie dokłada najwyżej 20% wyniku dobrego gracza, a bot „decyzje bez stukania” wygrywa z botem „stukanie bez decyzji”. Żaden bot nie kończy gry w tym czasie. Pilnuje tego `src/sim/economy/tycoon/balance.test.ts` na prawdziwej ekonomii (symulacja bez renderu).
 
 ## 8. Progresja i upgrade'y **[U]**
 
@@ -217,11 +217,11 @@ Rdzeń gry to **tycoon franczyzy**: decyzje pod presją Centrali. Stukanie zosta
 
 ## 10. Czas, tempo, wygrana i przegrana
 
-- Czas płynie w trybie ciągłym z pauzą i prędkościami ×1, ×2, ×4, ×8 **[U]** (przyspieszanie). **Doba przy ×1 trwa ok. 60 s realnych** (sklep otwarty 6:00–23:00), więc miesiąc to ~30 min przy ×1 i ~4 min przy ×8 **[C]**.
-- **Kalendarz** **[C]**: prawdziwy kalendarz gregoriański z tygodniami. Gra startuje 1 września, żeby pierwsze miesiące miały wyraziste zdarzenia: fioletowy dog, Halloween, Black Friday, święta, Sylwester. Rozliczenie miesiąca następuje ostatniego dnia. Niedziele niehandlowe są modelowane: sklep zamknięty albo „placówka pocztowa” (§7.1a).
-- **Tempo docelowe** **[C]**: pierwsze 20 minut to ok. 1,5–2 miesięcy gry (pierwszy raport, pierwsze upgrade'y). Drugi sklep jest w zasięgu po ~45–60 minutach. Podbicie miasta zajmuje 4–8 godzin.
+- Czas płynie w trybie ciągłym z pauzą i prędkościami ×1, ×2, ×4, ×8 **[U]** (przyspieszanie). **Doba przy ×1 trwa ok. 3 min 20 s realnych**: sklep otwarty 6:00–23:00 w 2 min 50 s, noc w 30 s, żeby zmiana zdążyła wyjść ze sklepu przed otwarciem. Miesiąc to ~100 min przy ×1, ~25 min przy ×4 i ~12,5 min przy ×8, a godzina gry przy ×8 to ~5 miesięcy kalendarza **[U]** (2026-10-29, wcześniej doba ~60 s).
+- **Kalendarz** **[C]**: prawdziwy kalendarz gregoriański z tygodniami. Gra startuje 1 września, żeby pierwsze miesiące miały wyraziste zdarzenia: fioletowy dog, Halloween, Black Friday, święta, Sylwester. Rozliczenie miesiąca następuje ostatniego dnia. W niedziele sklep działa, a klientów jest więcej, bo duże sklepy są zamknięte (§7.1a) **[U]** (2026-10-28).
+- **Tempo docelowe** **[C]**: pierwszy raport (koniec września) przychodzi po ~25 min gry przy ×4 albo ~12,5 min przy ×8; pierwsze upgrade'y w pierwszych 20 minutach. Drugi sklep (próg z §9: dwa miesiące z zyskiem i zaufanie) jest w zasięgu po ~50 minutach przy ×4 albo ~25 przy ×8; remonty idą wolniej: przy oszczędzaniu pierwszy w 2.–3. miesiącu, drugi w 4.–6. (sonda z 29.10.2026, po strojeniu opłaty). Podbicie miasta zajmuje 4–8 godzin.
 - Pora dnia wpływa na ruch, oświetlenie (dzień/noc) i archetypy klientów.
-- **Przegrana** **[C]**: dwa miesiące z rzędu bez opłacenia Centrali albo zaufanie spadające do zera oznacza wypowiedzenie umowy franczyzowej. Potem przychodzi „Rozliczenie końcowe” **[R]**: inwentaryzacja, odkup tylko towaru ze świeżą datą i rachunek za każdy ubytek, a na końcu ekran „Dziękujemy za współpracę”.
+- **Przegrana** **[C]**: dwa miesiące z rzędu bez opłacenia Centrali (gotówka poniżej `BANKRUPTCY_AT` przy dwóch kolejnych zamknięciach miesiąca; po pierwszym gracz dostaje ostrzeżenie w oknie „OK”, 2026-10-29) albo zaufanie na zerze przy zamknięciu miesiąca (po zmianie z wyniku miesiąca, nie od razu **[U]** 2026-10-28) oznacza wypowiedzenie umowy franczyzowej. Potem przychodzi „Rozliczenie końcowe” **[R]**: inwentaryzacja, odkup tylko towaru ze świeżą datą i rachunek za każdy ubytek, a na końcu ekran „Dziękujemy za współpracę”.
 - **Wygrana** **[C]**: udział w rynku miasta ≥ 60% albo zamknięcie wszystkich sklepów konkurencji daje tytuł „Króla Traszek”. Potem gra toczy się dalej w trybie bez końca i można wylosować nowe miasto z nowym seedem.
 
 ## 11. Zdarzenia i popkultura **[R]**
@@ -257,7 +257,7 @@ System zdarzeń: karty w skrzynce (prawy panel ze szkicu) z 0–3 wyborami i kon
 - **Reset Ogonków:** program lojalnościowy kończy sezon, saldo klientów i część Twoich Ogonków wygasa 31.12. Wcześniej panika zakupowa **[R]**.
 - **Kot w Nano:** kamera w trybie bezobsługowym policzyła kota jako 3 batony **[R]/[C]**.
 - **Gazetka dla uczniów:** Centrala wypuszcza promocję energetyka „na powrót do szkoły”. Burza w sieci, a Ty zbierasz skutki **[R]**.
-- **Poczta Traszkowa:** niedziela. Otwierasz jako „placówka pocztowa” i ryzykujesz kontrolę? **[R]** (stan prawny dziś niepotwierdzony, w grze to żart).
+- **Poczta Traszkowa:** niedziela. Otwierasz jako „placówka pocztowa” i ryzykujesz kontrolę? **[R]** (stan prawny dziś niepotwierdzony, w grze to żart). Odpada: niedziela nie ma osobnego trybu (§7.1a, 2026-10-28).
 - **Sezon nad morzem:** możliwość otwarcia sezonowej Traszki na wakacje **[R]**.
 - **Mecz reprezentacji:** fala piwa i chipsów; przygotuj zapas i dodatkowe ręce do kasy **[R]**.
 

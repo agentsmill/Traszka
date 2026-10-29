@@ -1,18 +1,24 @@
-import { signal } from '@preact/signals';
 import { useEffect, useState } from 'preact/hooks';
-import { RETURN_FEE } from '@/sim/economy/catalog';
-import { effects, giftOpen, isStoreOpen, slotFree, slotUsage, tapCombo, type EconomyState, type MonthReport } from '@/sim/economy/economy';
+import { BANKRUPTCY_AT, RETURN_FEE } from '@/sim/economy/catalog';
+import { effects, isOpenForCustomers, slotFree, slotUsage, tapCombo, type EconomyState, type MonthReport } from '@/sim/economy/economy';
+import { visibleCards } from '@/sim/economy/tycoon/cards';
+import { FATIGUE } from '@/sim/economy/tycoon/fatigue';
+import { REPORT_LINE_LABEL, hintText, reportCommentText } from '@/sim/economy/tycoon/report';
+import { TRUST_REASON_LABEL, trustTerminates } from '@/sim/economy/tycoon/trust';
 import { EQUIPMENT, EQUIPMENT_BY_ID, equipmentCost } from '@/sim/economy/upgrades';
 import type { QualityPresetId } from '@/render/quality';
 import { networkIncomeOf, prestigePoints } from '@/game/meta';
 import {
-  celebration, ephemeral, econ, hints, metaView, nextHint, preset, report, selection, seed, showPerf, showPrestige, showSettings,
-  start, tab, toasts, welcome, type Controls, type GameActions,
+  celebration, dismissStory, ephemeral, econ, hints, howTo, metaView, nextHint, openHowTo, preset, report, selection, seed, showPerf, showPrestige,
+  showSettings, story, tab, toasts, welcome, type Controls, type GameActions,
 } from '../state';
-import { int, plural, signedZl, zl } from './format';
-import { PalletItem } from './panels';
+import { int, people, signedPts, signedZl, zl } from './format';
+import { Bar, PalletItem } from './panels';
+import { NO_ENERGY_TITLE, tapBlock } from './tapBlock';
 
 export const DISCLAIMER = 'Wszystkie firmy, postacie i zdarzenia są fikcyjne.';
+
+export { NO_ENERGY_TITLE, tapBlock };
 
 /** Karta zaznaczonego obiektu (paleta, slot, kasa) nad dolnym paskiem. */
 export function SelectionCard({ game }: { game: GameActions }) {
@@ -35,8 +41,9 @@ export function SelectionCard({ game }: { game: GameActions }) {
     body = (
       <>
         <h3>Kasa</h3>
-        <p>Kolejka: <b>{int(s.queue)}</b> · na kasie: {s.lastCashiers} {plural(s.lastCashiers, 'osoba', 'osoby', 'osób')} · SCO: {fx.sco}</p>
-        <button type="button" class="tt-btn tt-primary big" disabled={!isStoreOpen(s) || s.queue < 1} onClick={() => game.dispatch({ type: 'tapTill' })}>Obsłuż klienta</button>
+        <p>Kolejka: <b>{int(s.queue)}</b> · na kasie: {people(s.lastCashiers)} os. · SCO: {fx.sco}</p>
+        <button type="button" class="tt-btn tt-primary big" disabled={!isOpenForCustomers(s) || s.queue < 1 || !!tapBlock(s, 'kasa')} title={tapBlock(s, 'kasa')}
+          onClick={() => game.dispatch({ type: 'tapTill' })}>Obsłuż klienta</button>
         <p class="tt-hint">Stuknięcie w kasę w sklepie też obsługuje klienta. Ty też umiesz kasować.</p>
       </>
     );
@@ -71,21 +78,35 @@ export function SelectionCard({ game }: { game: GameActions }) {
   );
 }
 
-/** Duże przyciski klikera nad dolnym paskiem: rozładuj najpilniejszą paletę, obsłuż klienta. */
+/** Poniżej tylu sił pasek klikera ostrzega (do końca puli zostaje kilkanaście stuknięć). */
+export const LOW_ENERGY = 20;
+
+/**
+ * Duże przyciski klikera nad dolnym paskiem: rozładuj najpilniejszą paletę, obsłuż klienta; nad nimi pasek sił franczyzobiorcy.
+ * Blokady stuknięcia opisuje `tapBlock`; kasa dodatkowo wymaga otwartego sklepu (`isOpenForCustomers`, także karta „zamknij na
+ * godzinę”) i klienta w kolejce.
+ */
 export function ClickerBar({ game, onFloat }: { game: GameActions; onFloat: (x: number, y: number, text: string, kind: 'money' | 'work') => void }) {
   const view = econ.value;
   if (!view || tab.value || selection.value) return null;
   const { s } = view;
   const pallets = s.pallets.length;
   const q = Math.round(s.queue);
+  const energy = s.tycoon.fatigue.energy;
+  const palletBlock = tapBlock(s, 'paleta');
+  const tillBlock = tapBlock(s, 'kasa');
   const at = (e: MouseEvent): [number, number] => [e.clientX || window.innerWidth - 60, e.clientY || window.innerHeight - 140];
   return (
     <div class="tt-clicker">
-      <button type="button" class="tt-fab" disabled={pallets === 0} aria-label={`Rozładuj paletę (${pallets})`}
+      <div class="tt-energy" title="Siły franczyzobiorcy: każde stuknięcie je zużywa, noc oddaje tylko część">
+        <span>Siły {int(energy)}/{FATIGUE.pool}</span>
+        <Bar value={energy / FATIGUE.pool} warn={energy < LOW_ENERGY} />
+      </div>
+      <button type="button" class="tt-fab" disabled={pallets === 0 || !!palletBlock} title={palletBlock} aria-label={`Rozładuj paletę (${pallets})`}
         onClick={(e) => { const r = game.dispatch({ type: 'tapPallet' }); if (r.ok) onFloat(...at(e), `+${Math.round(r.value ?? 0)} szt.`, 'work'); }}>
         <span aria-hidden="true">📦</span>{pallets > 0 && <span class="tt-badge">{pallets}</span>}
       </button>
-      <button type="button" class="tt-fab" disabled={q < 1 || !isStoreOpen(s)} aria-label={`Obsłuż klienta (${q} w kolejce)`}
+      <button type="button" class="tt-fab" disabled={q < 1 || !isOpenForCustomers(s) || !!tillBlock} title={tillBlock} aria-label={`Obsłuż klienta (${q} w kolejce)`}
         onClick={(e) => { const r = game.dispatch({ type: 'tapTill' }); if (r.ok) onFloat(...at(e), `+${(r.value ?? 0).toLocaleString('pl-PL', { maximumFractionDigits: 2 })} zł`, 'money'); }}>
         <span aria-hidden="true">🧾</span>{q > 0 && <span class="tt-badge">{q}</span>}
       </button>
@@ -111,23 +132,98 @@ export function Toasts() {
   );
 }
 
-function ReportBody({ r }: { r: MonthReport }) {
+/** Ile przyczyn zmiany zaufania mieści raport (od największej co do wartości; sim sortuje je w `closeTrustMonth`). */
+const REPORT_TRUST_REASONS = 4;
+
+/** Kwota pozycji raportu: koszty (ujemne) ze znakiem minus, przychody bez. Zaokrąglone do złotych; zero zostaje „0 zł” (nie „−0”). */
+const lineAmount = (amount: number): string => {
+  const r = Math.round(amount);
+  return r < 0 ? `−${zl(-r)}` : zl(Math.abs(r));
+};
+
+/** Komentarz Centrali (zwykła funkcja, nie komponent: testy `vnodeTree` widzą wtedy jego tekst). */
+const centralaQuote = (text: string) => <p class="tt-quote">„{text}”<br /><span class="tt-muted">— Centrala</span></p>;
+
+/**
+ * Treść raportu miesięcznego. Z danymi tycoona (`detail`): wynik dużą liczbą, pozycje z `REPORT_LINE_LABEL` (koszty ze znakiem
+ * minus), zaufanie Centrali z przyczynami, komentarz, jedna wskazówka i KPI miesiąca. Raport ze starego zapisu (`detail` równe
+ * null) zostaje dawnym widokiem: marża i inne przychody, premie Centrali (osobny licznik) i koszty (z WUT ponad próg) sumują się
+ * do wyniku miesiąca. `closing` zastępuje komentarz Centrali (wypowiedzenie umowy przy końcu gry).
+ */
+export function ReportBody({ r, closing }: { r: MonthReport; closing?: string }) {
   const c = r.counters;
+  const d = r.detail;
+  if (!d) {
+    return (
+      <>
+        <div class="tt-row"><span>Klienci</span><span>{int(c.customers)} (utraceni: {int(c.lost)})</span></div>
+        <div class="tt-row"><span>Obrót</span><span>{zl(c.revenue)}</span></div>
+        <div class="tt-row"><span>Marża i inne przychody</span><span>{zl(c.margin + c.other)}</span></div>
+        <div class="tt-row"><span>Premie Centrali</span><span>{zl(c.bonus)}</span></div>
+        <div class="tt-row"><span>Płace</span><span>−{zl(c.wages)}</span></div>
+        <div class="tt-row"><span>Media</span><span>−{zl(c.media)}</span></div>
+        <div class="tt-row"><span>Opłata franczyzowa</span><span>−{zl(c.fee)}</span></div>
+        <div class="tt-row"><span>Mandaty</span><span>−{zl(c.fines)}</span></div>
+        <div class="tt-row"><span>WUT ponad próg</span><span>−{zl(c.wut)}</span></div>
+        <div class="tt-row"><span>Logistyka</span><span>−{zl(c.logistics)}</span></div>
+        <div class="tt-row total"><span>Wynik miesiąca</span><span>{signedZl(r.profit)}</span></div>
+        <div class="tt-row"><span>Inwestycje</span><span>{zl(c.investments)}</span></div>
+        <div class="tt-row"><span>Gotówka na koniec</span><span>{zl(r.cash)}</span></div>
+        {centralaQuote(closing ?? r.comment)}
+      </>
+    );
+  }
+  // wynik w nagłówku to suma pozycji tak, jak je widać (każda zaokrąglona do złotych): zaokrąglenie samej sumy bywa o 1 zł obok
+  const result = d.lines.reduce((n, l) => n + Math.round(l.amount), 0);
+  const t = d.trust;
+  const kpiWeeks = d.kpi.hit + d.kpi.miss;
   return (
     <>
-      <div class="tt-row"><span>Klienci</span><span>{int(c.customers)} (utraceni: {int(c.lost)})</span></div>
-      <div class="tt-row"><span>Obrót</span><span>{zl(c.revenue)}</span></div>
-      <div class="tt-row"><span>Marża i inne przychody</span><span>{zl(c.margin + c.other)}</span></div>
-      <div class="tt-row"><span>Płace</span><span>−{zl(c.wages)}</span></div>
-      <div class="tt-row"><span>Media</span><span>−{zl(c.media)}</span></div>
-      <div class="tt-row"><span>Opłata franczyzowa</span><span>−{zl(c.fee)}</span></div>
-      <div class="tt-row"><span>Mandaty</span><span>−{zl(c.fines)}</span></div>
-      <div class="tt-row"><span>Logistyka</span><span>−{zl(c.logistics)}</span></div>
-      <div class="tt-row total"><span>Wynik miesiąca</span><span>{signedZl(r.profit)}</span></div>
-      <div class="tt-row"><span>Inwestycje</span><span>{zl(c.investments)}</span></div>
-      <div class="tt-row"><span>Gotówka na koniec</span><span>{zl(r.cash)}</span></div>
+      <div class="tt-report-head">
+        <span class="tt-muted">Wynik miesiąca</span>
+        <b class={`tt-report-result ${result < 0 ? 'neg' : 'pos'}`}>{signedZl(result)}</b>
+        <span class="tt-muted">Obrót {zl(d.revenue)} · klienci {int(c.customers)} (utraceni: {int(c.lost)})</span>
+        <span class="tt-muted">Gotówka na koniec: {zl(r.cash)} · inwestycje: {zl(c.investments)}</span>
+      </div>
+      <div class="tt-report-lines">
+        {d.lines.map((l) => (
+          <div key={l.key} class="tt-row"><span>{REPORT_LINE_LABEL[l.key]}</span><span class={Math.round(l.amount) < 0 ? 'tt-neg' : undefined}>{lineAmount(l.amount)}</span></div>
+        ))}
+      </div>
+      <div class="tt-report-trust">
+        <div class="tt-row"><b>Zaufanie Centrali: {int(t.start)} → {int(t.end)}</b><span class={t.delta < 0 ? 'tt-neg' : undefined}>{signedPts(t.delta)} pkt</span></div>
+        {t.reasons.slice(0, REPORT_TRUST_REASONS).map(([reason, v]) => (
+          <div key={reason} class="tt-row tt-reason"><span>{TRUST_REASON_LABEL[reason]}</span><span class={v < 0 ? 'tt-neg' : 'tt-pos'}>{signedPts(v)}</span></div>
+        ))}
+        {t.reasons.length === 0 && <p class="tt-hint">Bez zmian w tym miesiącu.</p>}
+      </div>
+      {centralaQuote(closing ?? (reportCommentText(d.commentId) || r.comment))}
+      <div class="tt-report-hint" role="note">
+        <b>Wskazówka</b>
+        <span>{hintText(d.hint, int)}</span>
+      </div>
+      <p class="tt-report-kpi">
+        {kpiWeeks > 0 ? `KPI tygodnia w miesiącu: ${d.kpi.hit} trafione, ${d.kpi.miss} nietrafione` : 'KPI tygodnia w miesiącu: żaden tydzień nie został jeszcze rozliczony'}
+      </p>
     </>
   );
+}
+
+const TERMINATION = 'Centrala dziękuje za współpracę. Rozliczenie końcowe: inwentaryzacja jutro o 6:00.';
+
+/**
+ * Dlaczego Centrala wypowiedziała umowę, odczytane ze stanu (okno wraca po przeładowaniu, a toast z powodem nie): dług, czyli
+ * ostatni raport zastał gotówkę poniżej `BANKRUPTCY_AT` (umowę kończy dopiero drugi taki raport z rzędu), albo zaufanie zero.
+ * Gdy zachodzi jedno i drugie, nie zgadujemy, które rozstrzygnęło: tekst mówi o obu. Bez żadnego z nich (stary zapis) null.
+ */
+export function terminationReason(s: EconomyState): string | null {
+  const debt = s.lastReport !== null && s.lastReport.cash < BANKRUPTCY_AT;
+  const distrust = trustTerminates(s.tycoon.trust.value);
+  const floor = signedZl(BANKRUPTCY_AT);
+  if (debt && distrust) return `Powód: zaufanie Centrali spadło do zera, a gotówka po raporcie była poniżej ${floor}.`;
+  if (debt) return `Powód: dług. Dwa raporty z rzędu zastały Cię z gotówką poniżej ${floor}, a Centrala nie doczekała się opłaty.`;
+  if (distrust) return 'Powód: zaufanie Centrali spadło do zera.';
+  return null;
 }
 
 /**
@@ -141,15 +237,53 @@ export function ReportModal({ game }: { game: GameActions }) {
   const r = report.value ?? (over ? view?.s.lastReport ?? null : null);
   if (!r && !over) return null;
   const title = over ? 'Koniec współpracy' : `Raport: ${r!.label}`;
+  const reason = over && view ? terminationReason(view.s) : null;
   return (
     <div class="tt-modal-wrap">
-      <div class="tt-modal" role="dialog" aria-label={title}>
+      <div class="tt-modal" role="dialog" aria-modal="true" aria-label={title}>
         <h2>{title}</h2>
-        {r && <ReportBody r={r} />}
-        <p class="tt-quote">„{over ? 'Centrala dziękuje za współpracę. Rozliczenie końcowe: inwentaryzacja jutro o 6:00.' : r!.comment}”<br /><span class="tt-muted">— Centrala</span></p>
-        {over
-          ? <button type="button" class="tt-btn tt-primary big" onClick={() => game.restart()}>Zacznij od nowa</button>
-          : <button type="button" class="tt-btn tt-primary big" onClick={() => { report.value = null; }}>Dalej</button>}
+        {reason && <p class="tt-end-reason" role="note"><b>{reason}</b></p>}
+        {r ? <ReportBody r={r} closing={over ? TERMINATION : undefined} /> : centralaQuote(TERMINATION)}
+        <div class="tt-modal-foot">
+          {over
+            ? <button type="button" class="tt-btn tt-primary big" onClick={() => game.restart()}>Zacznij od nowa</button>
+            : <button type="button" class="tt-btn tt-primary big" onClick={() => { report.value = null; }}>Dalej</button>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Tyle ms po pojawieniu się wpisu „OK” nic nie robi: podwójne stuknięcie nie może zdjąć następnego wpisu, zanim ktoś go przeczyta. */
+export const STORY_GRACE_MS = 400;
+/** Który wpis jest na ekranie i od kiedy (czas rzeczywisty; okno nie ma haków, więc stan trzyma moduł). Zero to „żaden”. */
+let storyShown = { id: 0, at: 0 };
+
+/**
+ * Ważne zdarzenie, które czeka na „OK” (nowy próg zaufania, koniec remontu, poziom z odblokowaniami): pokazuje pierwszy wpis
+ * kolejki `story`, a dopóki kolejka nie jest pusta, gra stoi (`isModalOpen`). Raport miesiąca i koniec gry mają pierwszeństwo
+ * (własne okna), wpis czeka za nimi. Tekst może mieć kilka wierszy (lista odblokowań). Każdy wpis to osobne okno (`key`), a „OK”
+ * w pierwszych `STORY_GRACE_MS` po jego pojawieniu się (także po zamknięciu raportu, który go zasłaniał) nic nie robi: drugie
+ * stuknięcie w „Dalej” albo „OK” nie może od razu odrzucić wpisu, którego nikt nie zdążył zobaczyć.
+ */
+export function StoryModal() {
+  const entry = story.value[0];
+  if (!entry || report.value || econ.value?.s.gameOver) {
+    storyShown = { id: 0, at: 0 };   // ukryte okno pokaże się potem od nowa, z własnym czasem karencji
+    return null;
+  }
+  if (storyShown.id !== entry.id) storyShown = { id: entry.id, at: Date.now() };
+  const ok = (): void => {
+    if (story.value[0]?.id !== entry.id) return;   // spóźnione stuknięcie w okno poprzedniego wpisu
+    if (Date.now() - storyShown.at < STORY_GRACE_MS) return;
+    dismissStory();
+  };
+  return (
+    <div class="tt-modal-wrap">
+      <div key={entry.id} class="tt-modal tt-story" role="dialog" aria-modal="true" aria-label={entry.title}>
+        <h2>{entry.title}</h2>
+        <p class="tt-story-text">{entry.text}</p>
+        <button type="button" class="tt-btn tt-primary big" onClick={ok}>OK</button>
       </div>
     </div>
   );
@@ -161,10 +295,10 @@ export function ReportModal({ game }: { game: GameActions }) {
  */
 export const FIRST_DAY_HINTS: readonly string[] = [
   '🦎 Od dziś prowadzisz franczyzę Traszki. Cel: zbudować sieć Traszek i dojść do rangi Legendarnej Palety.',
-  '📦 Palety przyjeżdżają pod sklep. Stukaj w nie, żeby rozładować, zanim przyjdzie Straż Miejska. Złota paleta to premia.',
-  '🧾 Kolejka za długa? Klienci odchodzą. Stuknij w kasę, kup kasę samoobsługową albo zatrudnij pracownika.',
-  '🎯 Zlecenia Centrali (zakładka Cele) dają nagrody, a poziomy odblokowują sprzęt, remonty i warsztat.',
-  '🎁 Łap paczki od Centrali, gdy pojawią się nad sklepem.',
+  '📦 Palety pod sklepem grożą mandatem Straży: przenieś je „Na zaplecze” w zakładce Palety. Złota paleta to premia.',
+  '🧾 Kolejka za długa? Klienci odchodzą. Stuknij w kasę albo kup kasę samoobsługową.',
+  '🎯 Cele: KPI tygodnia od Centrali daje zaufanie, premię i XP, a poziomy odblokowują sprzęt i remonty.',
+  '💪 Stukanie męczy: dzienna pula sił się kończy, a noc oddaje tylko część. Resztę robią pracownicy.',
   '👆 Przeciągnij, żeby przesunąć widok, a szczypnięciem albo kółkiem myszy przybliżysz. Gra zapisuje się sama.',
 ];
 
@@ -206,6 +340,13 @@ export function StoreActions({ ephemeral: temporary, onNewStore, onRestart }: { 
   );
 }
 
+/** Przycisk „Jak grać” w ⚙: zamyka ustawienia i otwiera okno z instrukcją (gra stoi, dopóki gracz nie kliknie „Zaczynamy”). */
+export function HowToButton() {
+  return (
+    <button type="button" class="tt-btn" onClick={() => { showSettings.value = false; openHowTo(); }}>Jak grać</button>
+  );
+}
+
 const PRESETS: { value: QualityPresetId; label: string }[] = [
   { value: 'niska', label: 'Niska' },
   { value: 'srednia', label: 'Średnia' },
@@ -233,6 +374,8 @@ export function Settings({ controls, game }: { controls: Controls; game: GameAct
         </form>
         <StoreActions ephemeral={ephemeral.value} onNewStore={() => { close(); game.newStore(); }}
           onRestart={() => { if (confirm(RESTART_CONFIRM)) { game.restart(); close(); } }} />
+        <h3>Pomoc</h3>
+        <HowToButton />
         <h3>Grafika</h3>
         <div class="tt-seg wide" role="group" aria-label="Jakość grafiki">
           {PRESETS.map((p) => (
@@ -250,7 +393,21 @@ export function Settings({ controls, game }: { controls: Controls; game: GameAct
   );
 }
 
-/** Wielki baner nagrody (nowy poziom): konfetti robi main.ts, baner znika sam albo po stuknięciu. */
+/**
+ * Czy jest otwarte okno, które baner nagrody (warstwa wyżej niż okna) zasłoniłby razem z jego przyciskami: raport miesiąca albo
+ * koniec gry, ważne zdarzenie czekające na „OK”, karta decyzji na biurku, powitanie i „Jak grać”. Ten sam poziom z odblokowaniami ma
+ * zresztą własne okno „Poziom N”, więc baner nie jest tam potrzebny.
+ */
+export function windowBlocksBanner(): boolean {
+  const view = econ.value;
+  return !!report.value || story.value.length > 0 || !!welcome.value || howTo.value || !!view?.s.gameOver
+    || (!!view && visibleCards(view.s.tycoon.cards, view.s.minute).length > 0);
+}
+
+/**
+ * Wielki baner nagrody (nowy poziom): konfetti robi main.ts, baner znika sam albo po stuknięciu. Nie pokazuje się nad
+ * oknami (`windowBlocksBanner`); jego czas biegnie dalej, więc po ich zamknięciu stary baner już nie wraca.
+ */
 export function CelebrationBanner() {
   const c = celebration.value;
   useEffect(() => {
@@ -258,7 +415,7 @@ export function CelebrationBanner() {
     const t = setTimeout(() => { if (celebration.value === c) celebration.value = null; }, 3200);
     return () => clearTimeout(t);
   }, [c]);
-  if (!c) return null;
+  if (!c || windowBlocksBanner()) return null;
   return (
     <div class="tt-celebrate" role="status" onClick={() => { celebration.value = null; }}>
       <div class="tt-celebrate-card">
@@ -270,7 +427,7 @@ export function CelebrationBanner() {
   );
 }
 
-/** „Witaj z powrotem”: zarobek kierownika zmiany pod nieobecność i premia za serię dni. */
+/** „Witaj z powrotem”: zarobek kierownika zmiany pod nieobecność i premia za serię dni (same Ogonki; wiersz gotówki tylko, gdy jest ją za co dać). */
 export function WelcomeModal({ game }: { game: GameActions }) {
   const w = welcome.value;
   if (!w) return null;
@@ -286,7 +443,7 @@ export function WelcomeModal({ game }: { game: GameActions }) {
           <>
             <p>Premia Centrali za {w.streak}. dzień z rzędu:</p>
             <div class="tt-streak">{Array.from({ length: 7 }, (_, i) => <span key={i} class={i < Math.min(7, w.streak!) ? 'on' : ''}>{i + 1}</span>)}</div>
-            <span class="tt-big-reward">+{zl(w.daily.cash)} · +{w.daily.ogonki} 🦎</span>
+            <span class="tt-big-reward">{w.daily.cash > 0 && <>+{zl(w.daily.cash)} · </>}+{w.daily.ogonki} 🦎</span>
             <p class="tt-hint">Wróć jutro: premia rośnie do 7. dnia.</p>
           </>
         )}
@@ -315,54 +472,6 @@ export function PrestigeModal({ game }: { game: GameActions }) {
         <button type="button" class="tt-btn big" onClick={() => { showPrestige.value = false; }}>Jeszcze nie</button>
       </div>
     </div>
-  );
-}
-
-/** Miejsce paczki w oknie z `giftAt`: ułamki okna w procentach, losowane raz na okno (kolejne renderowanie tego samego okna je zachowuje). */
-let giftSpot: { window: number; x: number; y: number } | null = null;
-function spotFor(giftAt: number): { x: number; y: number } {
-  if (giftSpot?.window === giftAt) return giftSpot;
-  giftSpot = { window: giftAt, x: 20 + Math.random() * 60, y: 30 + Math.random() * 30 };
-  return giftSpot;
-}
-
-/**
- * Okno paczki, w którym gracz kliknął już po jego zamknięciu (patrz `GiftDrop`): schowane od razu, bez czekania na następną publikację
- * stanu. Klucz to sesja (`s`) i `giftAt`: samo `giftAt` powtarza się po „Zacznij od nowa” w tym samym sklepie (wylicza się z seeda).
- */
-const lateGift = signal<{ s: EconomyState; giftAt: number } | null>(null);
-
-/**
- * Paczka od Centrali. Okno paczki daje symulacja, nie timer interfejsu: `giftOpen` jest prawdą od minuty `giftAt` przez
- * `GIFT_OPEN` minut gry (ok. 9 s przy ×1, krócej przy większej prędkości), więc paczka stoi w pauzie, a po wczytaniu zapisu
- * wraca tam, gdzie była. Interfejs losuje tylko miejsce nad sceną, raz na okno (klucz `giftAt`; `Math.random` w `ui` jest
- * dozwolony, bo to nie symulacja). Odbiór to polecenie `claimGift`: symulacja zamyka okno i planuje następne. Nie pokazuje się
- * przy otwartym raporcie, ekranie startowym, powitaniu ani ustawieniach.
- *
- * Stan w `econ` odświeża się co najwyżej co 200 ms, więc paczka potrafi stać na ekranie chwilę po zamknięciu okna. Klik w tej
- * chwili nie wysyła polecenia (symulacja odmówiłaby: czerwony toast i dźwięk błędu dla paczki, którą gracz widział), tylko
- * chowa paczkę. `view.s` to ten sam obiekt co stan sesji, więc `giftOpen` w obsłudze kliknięcia widzi bieżącą minutę gry.
- */
-export function GiftDrop({ game, onClaim }: { game: GameActions; onClaim: (x: number, y: number, text: string) => void }) {
-  const view = econ.value;
-  const late = lateGift.value;
-  if (!view || !giftOpen(view.s) || report.value || start.value || welcome.value || showSettings.value) return null;
-  if (late && late.s === view.s && late.giftAt === view.s.giftAt) return null;
-  // okno, które gracz widzi: zapamiętane przy renderowaniu, bo zanim kliknie, symulacja mogła już zaplanować następne (`scheduleGift`)
-  const giftAt = view.s.giftAt;
-  const spot = spotFor(giftAt);
-  return (
-    <button type="button" class="tt-gift" style={{ left: `${spot.x}%`, top: `${spot.y}%` }} aria-label="Paczka od Centrali"
-      onClick={() => {
-        if (!giftOpen(view.s)) {
-          lateGift.value = { s: view.s, giftAt };   // zmiana sygnału odświeża komponent: paczka znika od razu
-          return;
-        }
-        const r = game.dispatch({ type: 'claimGift' });
-        if (r.ok) onClaim(window.innerWidth * spot.x / 100, window.innerHeight * spot.y / 100, r.text ?? '');
-      }}>
-      🎁
-    </button>
   );
 }
 

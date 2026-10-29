@@ -271,6 +271,7 @@
   font-weight: 800;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.2px;
+  white-space: nowrap;   /* 1 000 000 zł nie może łamać rzędu paska na 390 px */
 }
 
 .tt-cash.neg {
@@ -294,6 +295,32 @@
   background: rgba(255, 243, 223, 0.14);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+
+/* Zaufanie Centrali: na telefonie sama liczba, nazwa progu dopiero od 640 px (podpowiedź i aria-label mówią całość). */
+.tt-stat.warn {
+  background: #c2410c;
+  color: #fff;
+}
+
+.tt-trust-tier {
+  display: none;
+  max-width: 20ch;
+  margin-left: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 600;
+  vertical-align: bottom;
+}
+
+@media (min-width: 640px) {
+  .tt-trust-tier { display: inline-block; }
+}
+
+/* Wąski telefon (390 px): ciaśniejsze znaczki, żeby gotówka, ⭐, 🦎, 🤝 i ⚙ zmieściły się w jednym rzędzie. */
+@media (max-width: 440px) {
+  .tt-hud-row { gap: 6px; }
+  .tt-stat { padding: 4px 6px; }
 }
 
 .tt-gear {
@@ -694,6 +721,43 @@
   font-size: 18px;
 }
 
+/* Panel Ludzie: liczba osób przy zadaniu i przypięcie (− 📌 N +) w jednym wierszu. */
+.tt-task-n {
+  display: inline-block;
+  min-width: 62px;
+}
+
+.tt-row:has(.tt-pin) {
+  align-items: center;
+}
+
+.tt-pin {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 8px;
+  vertical-align: middle;
+}
+
+.tt-sheet .tt-pin .tt-btn {
+  min-width: 36px;
+  min-height: 36px;
+  padding: 0;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.tt-pin-n {
+  min-width: 34px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.tt-starved {
+  margin: -2px 0 2px;
+  text-align: right;
+}
+
 .tt-actions {
   display: flex;
   flex-wrap: wrap;
@@ -766,6 +830,7 @@
   bottom: calc(var(--tabs-h) + 12px);
   display: flex;
   flex-direction: column;
+  align-items: flex-end;
   gap: 10px;
 }
 
@@ -798,6 +863,26 @@
   right: -2px;
   background: var(--tt-green-dark);
   color: var(--tt-cream);
+}
+
+/* Pasek sił nad przyciskami klikera. */
+.tt-energy {
+  min-width: 62px;
+  padding: 4px 8px 5px;
+  border-radius: 10px;
+  background: rgba(19, 40, 28, 0.78);
+  color: var(--tt-cream);
+  font-size: 11px;
+  font-weight: 700;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.tt-energy .tt-bar {
+  height: 6px;
+  margin: 3px 0 0;
+  background: rgba(255, 243, 223, 0.25);
 }
 
 .tt-rotate {
@@ -861,6 +946,7 @@
   pointer-events: auto;
   position: fixed;
   inset: 0;
+  z-index: 12;   /* nad plakietką sklepu tymczasowego (11); okna między sobą układa kolejność w App.tsx */
   display: grid;
   place-items: center;
   padding: 16px;
@@ -915,6 +1001,12 @@
   border-left: 4px solid var(--tt-orange);
   background: rgba(255, 138, 31, 0.1);
   font-style: italic;
+}
+
+/* powód wypowiedzenia umowy pod tytułem okna końca współpracy */
+.tt-end-reason {
+  margin: 4px 0 8px;
+  color: #c2410c;
 }
 
 .tt-disclaimer2 {
@@ -984,30 +1076,28 @@
 
 /* --- Nagrody --------------------------------------------------------------------------------------- */
 
-.tt-tab.ready .tt-badge {
-  animation: tt-pulse 0.7s ease-in-out infinite alternate;
-}
-
 @keyframes tt-pulse {
   from { transform: scale(1); }
   to { transform: scale(1.18); }
 }
 
-.tt-quest {
+.tt-kpi {
   margin: 8px 0;
   padding: 10px 12px;
   border-radius: 12px;
   background: rgba(29, 107, 58, 0.06);
 }
 
-.tt-quest.done {
-  background: rgba(255, 209, 102, 0.35);
-  box-shadow: 0 0 0 2px var(--tt-orange) inset;
+.tt-kpi-days {
+  margin-top: 2px;
+  font-size: 13px;
 }
 
-.tt-btn.tt-claim {
-  min-width: 96px;
-  animation: tt-pulse 0.7s ease-in-out infinite alternate;
+.tt-kpi-reward {
+  margin-top: 4px;
+  color: var(--tt-green-dark);
+  font-size: 13px;
+  font-weight: 700;
 }
 
 .tt-item.locked {
@@ -1090,22 +1180,6 @@
 .tt-streak span.on {
   background: var(--tt-orange);
   color: #1a1a1a;
-}
-
-.tt-gift {
-  pointer-events: auto;
-  position: fixed;
-  z-index: 12;
-  width: 64px;
-  height: 64px;
-  margin: -32px 0 0 -32px;
-  border: 0;
-  border-radius: 50%;
-  background: radial-gradient(circle, #fff6c9 0%, rgba(255, 209, 102, 0.85) 45%, rgba(255, 138, 31, 0) 72%);
-  font-size: 38px;
-  cursor: pointer;
-  animation: tt-bob 0.9s ease-in-out infinite alternate, tt-pop 0.4s cubic-bezier(0.2, 1.6, 0.4, 1);
-  touch-action: manipulation;
 }
 
 @keyframes tt-bob {
@@ -1583,4 +1657,268 @@
 .tt-store-actions .tt-hint {
   flex-basis: 100%;
   margin: 0;
+}
+
+/* --- Karta dnia: okno decyzji (CardDesk) ----------------------------------------------------------- */
+
+/* Okno modalne bez wyjścia: gra stoi, aż gracz wybierze. Na telefonie to arkusz przyklejony do dołu (kciuk sięga, a nad nim
+   zostaje kawałek sklepu), od 561 px zwykła karta na środku. */
+.tt-deck {
+  max-height: calc(100vh - 32px);
+  max-height: calc(100dvh - 32px);
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
+.tt-deck-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.tt-deck-count {
+  color: #6b766f;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+}
+
+.tt-deck-badge {
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: var(--tt-orange);
+  color: #1a1a1a;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.tt-modal.tt-deck h2 {
+  margin: 2px 0 8px;
+  font-size: 19px;
+  line-height: 1.25;
+}
+
+.tt-deck-text {
+  margin: 0 0 12px;
+  font-size: 15px;
+  line-height: 1.45;
+}
+
+.tt-answers {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tt-answer {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 48px;
+  padding: 10px 12px;
+  border: 2px solid rgba(29, 107, 58, 0.22);
+  border-radius: 12px;
+  background: #fff;
+  color: #22302a;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.3;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tt-answer:hover:not(.on) {
+  background: rgba(29, 107, 58, 0.05);
+}
+
+.tt-answer.on {
+  border-color: var(--tt-green);
+  background: rgba(29, 107, 58, 0.1);
+}
+
+/* kółko przy napisie: puste albo wypełnione zielenią, żeby zaznaczenie było widać także bez koloru ramki */
+.tt-answer-label::before {
+  content: '';
+  display: inline-block;
+  box-sizing: border-box;
+  width: 16px;
+  height: 16px;
+  margin-right: 8px;
+  border: 2px solid rgba(29, 107, 58, 0.5);
+  border-radius: 50%;
+  vertical-align: -3px;
+}
+
+.tt-answer.on .tt-answer-label::before {
+  border-color: var(--tt-green);
+  background: var(--tt-green);
+  box-shadow: inset 0 0 0 2px #fff;
+}
+
+.tt-answer-fx {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding-left: 24px;
+}
+
+.tt-chip {
+  padding: 2px 8px;
+  border-radius: 8px;
+  background: rgba(29, 107, 58, 0.12);
+  color: var(--tt-green-dark);
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* skutki odpowiedzi: strata czerwienią (jak .tt-neg w raporcie), zysk zielenią (jak .tt-pos), reszta szarością */
+.tt-chip.cost {
+  background: rgba(179, 38, 30, 0.1);
+  color: #b3261e;
+}
+
+.tt-chip.gain {
+  background: rgba(29, 107, 58, 0.12);
+  color: var(--tt-green-dark);
+}
+
+.tt-chip.neutral {
+  background: rgba(34, 48, 42, 0.08);
+  color: #4a5650;
+}
+
+.tt-chip.none {
+  padding-left: 0;
+  background: transparent;
+  color: #6b766f;
+  font-weight: 500;
+}
+
+.tt-chip.tag {
+  background: var(--tt-orange);
+  color: #1a1a1a;
+}
+
+@media (max-width: 560px) {
+  .tt-modal-wrap.tt-deck-wrap {
+    padding: 0;
+    place-items: end stretch;
+  }
+
+  .tt-deck {
+    width: 100%;
+    padding: 16px 14px calc(14px + env(safe-area-inset-bottom, 0px));
+    border-radius: 18px 18px 0 0;
+    max-height: 88vh;
+    max-height: 88dvh;
+  }
+}
+
+/* --- Raport miesięczny i okno ważnego zdarzenia ------------------------------------------------------ */
+
+.tt-neg {
+  color: #b3261e;
+}
+
+.tt-pos {
+  color: var(--tt-green-dark);
+}
+
+/* Nagłówek raportu: wynik miesiąca dużą liczbą, pod nim obrót, klienci i gotówka. */
+.tt-report-head {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  margin: 2px 0 12px;
+  text-align: center;
+}
+
+.tt-report-result {
+  font-size: 32px;
+  font-weight: 900;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.tt-report-result.pos {
+  color: var(--tt-green-dark);
+}
+
+.tt-report-result.neg {
+  color: #b3261e;
+}
+
+.tt-report-lines {
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(29, 107, 58, 0.2);
+}
+
+.tt-report-trust {
+  margin-top: 10px;
+}
+
+.tt-report-trust .tt-reason {
+  padding: 2px 0 2px 10px;
+  font-size: 13px;
+}
+
+.tt-report-hint {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--tt-orange);
+  border-radius: 12px;
+  background: rgba(255, 138, 31, 0.14);
+  font-weight: 600;
+}
+
+.tt-report-hint > b {
+  color: #9a4a00;
+  font-size: 11px;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+}
+
+.tt-report-kpi {
+  margin: 10px 0 0;
+  color: #4a5a50;
+  font-size: 13px;
+}
+
+/* Raport jest długi (na telefonie przewija się): „Dalej” zostaje przy dolnej krawędzi okna, a treść przesuwa się pod nim.
+   Ujemne `bottom` o dolny padding `.tt-modal` (16 px) zakrywa pasek, w którym treść prześwitywała pod przyciskiem. */
+.tt-modal-foot {
+  position: sticky;
+  bottom: -16px;
+  padding-bottom: 24px;
+  background: var(--tt-cream);
+}
+
+/* Tekst wpisu może mieć kilka wierszy (lista odblokowań w oknie poziomu): \n zostaje podziałem wiersza. */
+.tt-story-text {
+  margin: 8px 0 4px;
+  font-size: 15px;
+  line-height: 1.5;
+  white-space: pre-line;
+}
+
+/* „Jak grać”: ok. pół tysiąca słów w zwartych akapitach; okno przewija się całe, a „Zaczynamy” zostaje na dole (tt-modal-foot). */
+.tt-howto p,
+.tt-howto .tt-list {
+  margin: 0 0 8px;
+}
+
+.tt-howto .tt-list li {
+  margin: 0 0 6px;
 }

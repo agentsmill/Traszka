@@ -1,15 +1,16 @@
 import { inspect } from 'node:util';
 import { describe, expect, it } from 'vitest';
 import { layoutFor } from '@/sim/store/layoutFor';
-import { GIFT_OPEN, HIRE_COST } from './catalog';
+import { HIRE_COST } from './catalog';
 import { applyCommand, COMMAND_TYPES, isCommand, type Command } from './commands';
 import {
-  buyEquipment, buyUpgrade, campaign, claimGift, claimQuest, commitTap, createEconomy, fire, freeSpots, hire, movePallet,
-  processLevels, relayout, returnPallet, rushRemont, scheduleGift, setOrder, setPriority, startRemont, tapPallet, tapTill,
+  answerCard, awaitingDecision, buyEquipment, buyUpgrade, campaign, commitTap, createEconomy, fire, freeSpots, hire, movePallet,
+  processLevels, relayout, returnPallet, rushRemont, setOrder, startRemont, tapPallet, tapTill,
   type CommandResult, type EconomyState,
 } from './economy';
-import { questMetric } from './quests';
 import { computeStoreInfo, type StoreInfo } from './storeInfo';
+import { visibleCards } from './tycoon/cards';
+import { pinStaff, setStaffProfile } from './tycoon/staff';
 import { xpToNext } from './progress';
 
 const SEED = 'kiełbasa-42';
@@ -42,18 +43,6 @@ const CASES: Record<Command['type'], () => Prepared> = {
     s.queue = 3;
     return { s, info, cmd: { type: 'tapTill' }, legacy: (b, i) => { const r = tapTill(b, i, 1); if (r.ok) commitTap(b); return r; } };
   },
-  claimQuest: () => {
-    const { s, info } = base();
-    const q = s.quests[0]!;
-    q.start = questMetric(s, q.kind) - q.target - 1;   // cel już spełniony
-    return { s, info, cmd: { type: 'claimQuest', questId: q.id }, legacy: (b, i) => claimQuest(b, i, q.id) };
-  },
-  claimGift: () => {
-    const { s, info } = base();
-    s.minute = s.giftAt;   // okno paczki otwarte
-    // dziś okno gasił licznik w interfejsie; w stanie gry odbiór planuje następne okno
-    return { s, info, cmd: { type: 'claimGift' }, legacy: (b, i) => { const r = claimGift(b, i); scheduleGift(b); return r; } };
-  },
   movePallet: () => {
     const { s, info } = base();
     const p = s.pallets[0]!;
@@ -79,9 +68,13 @@ const CASES: Record<Command['type'], () => Prepared> = {
     s.staff = 3;
     return { s, info, cmd: { type: 'fire' }, legacy: (b) => fire(b) };
   },
-  setPriority: () => {
+  setStaffProfile: () => {
     const { s, info } = base();
-    return { s, info, cmd: { type: 'setPriority', priority: 'palety' }, legacy: (b) => { setPriority(b, 'palety'); return { ok: true }; } };
+    return { s, info, cmd: { type: 'setStaffProfile', profile: 'dostawa' }, legacy: (b) => setStaffProfile(b.tycoon.staff, 'dostawa') };
+  },
+  pinStaff: () => {
+    const { s, info } = base();
+    return { s, info, cmd: { type: 'pinStaff', task: 'kasa', count: 1 }, legacy: (b) => pinStaff(b.tycoon.staff, 'kasa', 1, b.staff) };
   },
   buyUpgrade: () => {
     const { s, info } = base();
@@ -106,6 +99,13 @@ const CASES: Record<Command['type'], () => Prepared> = {
     const { s, info } = base();
     s.ogonki = 100;
     return { s, info, cmd: { type: 'campaign' }, legacy: (b) => campaign(b) };
+  },
+  answerCard: () => {
+    // karta czeka na odpowiedź od tej minuty; interfejs podaje odpowiedź zaznaczoną z góry
+    const { s, info } = base();
+    const card = s.tycoon.cards.pending[0]!;
+    card.showAt = s.minute;
+    return { s, info, cmd: { type: 'answerCard', seq: card.seq, answer: card.defaultAnswer }, legacy: (b) => answerCard(b, card.seq, card.defaultAnswer, []) };
   },
   rushRemont: () => {
     // remont w toku: sklep już ma układ po remoncie, tak jak po `startRemont` i przebudowie w sesji
@@ -275,44 +275,6 @@ describe('stuknięcia w serii', () => {
   });
 });
 
-describe('paczka od Centrali', () => {
-  it('poza oknem odmowa bez zmiany stanu; w oknie raz, drugi odbiór w tym samym oknie odmowa', () => {
-    const { s, info } = base();
-    s.xp = xpToNext(1) + 5;   // gdyby odmowa wołała processLevels, poziom by się zmienił
-
-    // przed oknem
-    expect(s.minute).toBeLessThan(s.giftAt);
-    let before = snapshot(s);
-    let out = applyCommand(s, info, { type: 'claimGift' });
-    expect(out.result).toEqual({ ok: false, text: 'Paczki od Centrali już nie ma.' });
-    expect(out.events).toEqual([]);
-    expect(out.layoutChanged).toBe(false);
-    expect(snapshot(s)).toBe(before);
-
-    // po oknie
-    s.minute = s.giftAt + GIFT_OPEN;
-    before = snapshot(s);
-    out = applyCommand(s, info, { type: 'claimGift' });
-    expect(out.result.ok).toBe(false);
-    expect(snapshot(s)).toBe(before);
-
-    // w oknie: odbiór raz
-    s.minute = s.giftAt;
-    const window = s.giftAt;
-    const seq = s.giftSeq;
-    out = applyCommand(s, info, { type: 'claimGift' });
-    expect(out.result.ok).toBe(true);
-    expect(s.giftSeq).toBe(seq + 1);
-    expect(s.giftAt).toBeGreaterThan(window);   // następne okno zaplanowane
-
-    // drugi odbiór w tej samej minucie
-    before = snapshot(s);
-    out = applyCommand(s, info, { type: 'claimGift' });
-    expect(out.result).toEqual({ ok: false, text: 'Paczki od Centrali już nie ma.' });
-    expect(snapshot(s)).toBe(before);
-  });
-});
-
 describe('poziomy', () => {
   it('XP z polecenia od razu podnosi poziom (processLevels) i zdarzenie levelup jest w events', () => {
     const { s, info } = base();
@@ -372,8 +334,9 @@ describe('remont', () => {
 
   it('zwykłe polecenie nie przebudowuje układu i nie zwraca layout ani info', () => {
     const { s, info } = base();
-    const out = applyCommand(s, info, { type: 'setPriority', priority: 'klienci' });
-    expect(out.result).toEqual({ ok: true });
+    const out = applyCommand(s, info, { type: 'setStaffProfile', profile: 'porzadek' });
+    expect(out.result.ok).toBe(true);
+    expect(s.tycoon.staff.profile).toBe('porzadek');
     expect(out.layoutChanged).toBe(false);
     expect(out.layout).toBeUndefined();
     expect(out.info).toBeUndefined();
@@ -390,6 +353,39 @@ describe('remont', () => {
   });
 });
 
+describe('polecenia puli ludzi', () => {
+  it('setStaffProfile ustawia profil i kolejność zadań w stanie tycoona', () => {
+    const { s, info } = base();
+    expect(s.tycoon.staff.profile).toBe('kolejka');
+    const out = applyCommand(s, info, { type: 'setStaffProfile', profile: 'dostawa' });
+    expect(out.result.ok).toBe(true);
+    expect(s.tycoon.staff.profile).toBe('dostawa');
+    expect(s.tycoon.staff.order[0]).toBe('rozladunek');
+  });
+
+  it('pinStaff przypina osoby, a więcej niż jest na zmianie to odmowa bez zmiany stanu', () => {
+    const { s, info } = base();
+    s.staff = 3;
+    expect(applyCommand(s, info, { type: 'pinStaff', task: 'kasa', count: 2 }).result.ok).toBe(true);
+    expect(s.tycoon.staff.pinned.kasa).toBe(2);
+    const before = snapshot(s);
+    const refused = applyCommand(s, info, { type: 'pinStaff', task: 'rozladunek', count: 2 });   // 2 + 2 > 3
+    expect(refused.result.ok).toBe(false);
+    expect(snapshot(s)).toBe(before);
+    expect(applyCommand(s, info, { type: 'pinStaff', task: 'kasa', count: 0 }).result.ok).toBe(true);   // zdjęcie przydziału
+    expect(s.tycoon.staff.pinned.kasa).toBe(0);
+  });
+
+  it('zwolnienie po przypięciu wszystkich przycina przypiętych', () => {
+    const { s, info } = base();
+    s.staff = 3;
+    expect(applyCommand(s, info, { type: 'pinStaff', task: 'kasa', count: 3 }).result.ok).toBe(true);
+    expect(applyCommand(s, info, { type: 'fire' }).result.ok).toBe(true);
+    expect(s.staff).toBe(2);
+    expect(s.tycoon.staff.pinned.kasa).toBe(2);
+  });
+});
+
 describe('zepsute polecenia', () => {
   const BROKEN: unknown[] = [
     { type: 'nuke' },
@@ -397,10 +393,15 @@ describe('zepsute polecenia', () => {
     { type: 'buyUpgrade', id: '__proto__' },
     { type: 'buyEquipment', id: 'x' },
     { type: 'movePallet', palletId: 1, loc: 'roof' },
-    { type: 'setPriority', priority: 'all' },
+    { type: 'setPriority', priority: 'palety' },
+    { type: 'claimGift' },   // paczka od Centrali zniknęła; stare dzienniki odpadają jako nieznane polecenie
+    { type: 'claimQuest', questId: 1 },   // zlecenia Centrali zastąpiło KPI tygodnia (bez odbioru): to samo
+    { type: 'setStaffProfile', profile: 'all' },
+    { type: 'setStaffProfile', profile: '__proto__' },
+    { type: 'pinStaff', task: 'kawa', count: 1 },
+    { type: 'pinStaff', task: 'kasa', count: 1.5 },
     { type: 'setOrder', auto: 'yes' },
     { type: 'setOrder', auto: true, manual: NaN },
-    { type: 'claimQuest', questId: '1' },
     { type: 'tapPallet', palletId: 1.5 },
     null,
     'tapTill',
@@ -441,31 +442,15 @@ describe('zepsute polecenia', () => {
       return { cmd, reads: () => reads };
     }
 
-    it('claimGift, potem hire: o poleceniu rozstrzyga pierwszy odczyt, więc zamknięte okno paczki odmawia, a hire się nie wykonuje', () => {
-      const { s, info } = base();
-      s.cash = 10 * HIRE_COST;
-      expect(s.minute).toBeLessThan(s.giftAt);   // okno paczki zamknięte
-      const before = snapshot(s);
-      const { cmd, reads } = flipping('claimGift', 'hire');
-      const out = applyCommand(s, info, cmd);
-      expect(reads()).toBe(1);
-      expect(out.result).toEqual({ ok: false, text: 'Paczki od Centrali już nie ma.' });
-      expect(out.events).toEqual([]);
-      expect(out.layoutChanged).toBe(false);
-      expect(snapshot(s)).toBe(before);
-    });
-
-    it('hire, hire, potem claimGift: odbiór paczki nie przemyca się poza zamknięte okno, wykonuje się tylko hire', () => {
+    it('hire, hire, potem fire: o poleceniu rozstrzyga pierwszy odczyt, więc wykonuje się tylko hire', () => {
       const { s, info } = base();
       s.cash = 10 * HIRE_COST;
       const staff = s.staff;
-      const gifts = s.giftSeq;
-      const { cmd, reads } = flipping('hire', 'hire', 'claimGift');
+      const { cmd, reads } = flipping('hire', 'hire', 'fire');
       const out = applyCommand(s, info, cmd);
       expect(reads()).toBe(1);
       expect(out.result).toEqual({ ok: true });
       expect(s.staff).toBe(staff + 1);
-      expect(s.giftSeq).toBe(gifts);
     });
 
     it('poprawny typ, potem nieznany: odczyt jest jeden, więc polecenie się wykonuje, a nie kończy brakiem wyniku', () => {
@@ -488,8 +473,6 @@ describe('isCommand', () => {
       { type: 'tapPallet', palletId: 3 },
       { type: 'tapPallet', palletId: undefined },
       { type: 'tapTill' },
-      { type: 'claimQuest', questId: 7 },
-      { type: 'claimGift' },
       { type: 'movePallet', palletId: 1, loc: 'sidewalk' },
       { type: 'movePallet', palletId: 1, loc: 'backroom' },
       { type: 'movePallet', palletId: 1, loc: 'floor' },
@@ -498,15 +481,20 @@ describe('isCommand', () => {
       { type: 'setOrder', auto: false, manual: 12.4 },
       { type: 'hire' },
       { type: 'fire' },
-      { type: 'setPriority', priority: 'klienci' },
-      { type: 'setPriority', priority: 'rowno' },
-      { type: 'setPriority', priority: 'palety' },
+      { type: 'setStaffProfile', profile: 'kolejka' },
+      { type: 'setStaffProfile', profile: 'dostawa' },
+      { type: 'setStaffProfile', profile: 'porzadek' },
+      { type: 'pinStaff', task: 'kasa', count: 1 },
+      { type: 'pinStaff', task: 'rozladunek', count: 0 },
+      { type: 'pinStaff', task: 'sprzatanie', count: 100 },   // górną granicę sprawdza dopiero stan (pinStaff odmawia)
       { type: 'buyUpgrade', id: 'wozek' },
       { type: 'buyEquipment', id: 'piec' },
       { type: 'buyEquipment', id: 'sco', slotId: 'slot-1' },
       { type: 'startRemont' },
       { type: 'campaign' },
       { type: 'rushRemont' },
+      { type: 'answerCard', seq: 12, answer: 0 },
+      { type: 'answerCard', seq: 0, answer: 2 },
       { type: 'hire', note: 'zbędny klucz' },
     ];
     for (const cmd of valid) expect(isCommand(cmd), inspect(cmd)).toBe(true);
@@ -518,15 +506,28 @@ describe('isCommand', () => {
     const invalid: unknown[] = [
       undefined, 0, 1, true, '', {}, { type: 1 }, { type: 'toString' }, { type: '__proto__' }, { type: 'constructor' },
       { type: 'tapPallet', palletId: '1' }, { type: 'tapPallet', palletId: null }, { type: 'tapPallet', palletId: NaN },
-      { type: 'tapPallet', palletId: Infinity }, { type: 'claimQuest' }, { type: 'claimQuest', questId: 1.5 },
-      { type: 'claimQuest', questId: -Infinity }, { type: 'movePallet', palletId: 1 }, { type: 'movePallet', loc: 'floor' },
+      { type: 'tapPallet', palletId: Infinity }, { type: 'claimQuest', questId: 1 }, { type: 'claimQuest' },   // zlecenia zniknęły
+      { type: 'movePallet', palletId: 1 }, { type: 'movePallet', loc: 'floor' },
       { type: 'movePallet', palletId: 1, loc: 'constructor' }, { type: 'returnPallet' }, { type: 'returnPallet', palletId: NaN },
       { type: 'setOrder' }, { type: 'setOrder', auto: 1 }, { type: 'setOrder', auto: true, manual: '4' },
       { type: 'setOrder', auto: true, manual: Infinity }, { type: 'setOrder', auto: true, manual: null },
-      { type: 'setPriority' }, { type: 'setPriority', priority: 'toString' }, { type: 'setPriority', priority: 1 },
+      { type: 'setPriority' }, { type: 'setPriority', priority: 'rowno' },   // dawny priorytet pracy: polecenie znikło
+      { type: 'setStaffProfile' }, { type: 'setStaffProfile', profile: 'toString' }, { type: 'setStaffProfile', profile: '__proto__' },
+      { type: 'setStaffProfile', profile: 'wlasny' }, { type: 'setStaffProfile', profile: 1 }, { type: 'setStaffProfile', profile: null },
+      { type: 'pinStaff' }, { type: 'pinStaff', task: 'kasa' }, { type: 'pinStaff', count: 1 },
+      { type: 'pinStaff', task: 'kawa', count: 1 }, { type: 'pinStaff', task: '__proto__', count: 1 },
+      { type: 'pinStaff', task: 'toString', count: 1 }, { type: 'pinStaff', task: 1, count: 1 },
+      { type: 'pinStaff', task: 'kasa', count: NaN }, { type: 'pinStaff', task: 'kasa', count: Infinity },
+      { type: 'pinStaff', task: 'kasa', count: -1 }, { type: 'pinStaff', task: 'kasa', count: 1.5 },
+      { type: 'pinStaff', task: 'kasa', count: '2' }, { type: 'pinStaff', task: 'kasa', count: null },
       { type: 'buyUpgrade' }, { type: 'buyUpgrade', id: 5 }, { type: 'buyUpgrade', id: 'constructor' },
       { type: 'buyUpgrade', id: 'sco' }, { type: 'buyEquipment', id: 'szkolenie' }, { type: 'buyEquipment', id: 'toString' },
       { type: 'buyEquipment', id: 'sco', slotId: 5 }, { type: 'buyEquipment', id: 'sco', slotId: null },
+      { type: 'answerCard' }, { type: 'answerCard', seq: 1 }, { type: 'answerCard', answer: 0 },
+      { type: 'answerCard', seq: '1', answer: 0 }, { type: 'answerCard', seq: 1, answer: '0' }, { type: 'answerCard', seq: 1.5, answer: 0 },
+      { type: 'answerCard', seq: 1, answer: 0.5 }, { type: 'answerCard', seq: NaN, answer: 0 }, { type: 'answerCard', seq: 1, answer: Infinity },
+      { type: 'answerCard', seq: null, answer: 0 }, { type: 'answerCard', seq: 1, answer: null },
+      { type: 'card.answer', seq: 1, answer: 0 },   // nazwa z INTEGRATION.md; w kodzie poleceń są w camelCase
     ];
     for (const cmd of invalid) expect(isCommand(cmd), inspect(cmd)).toBe(false);
   });
@@ -534,5 +535,78 @@ describe('isCommand', () => {
   it('odrzuca polecenie po przejściu przez JSON z nieskończoną liczbą (null)', () => {
     const roundTrip = JSON.parse(JSON.stringify({ type: 'setOrder', auto: true, manual: Infinity })) as unknown;
     expect(isCommand(roundTrip)).toBe(false);
+  });
+});
+
+describe('karta na biurku', () => {
+  /** Karta widoczna od tej minuty: gra czeka na odpowiedź. */
+  function withCard(): { s: EconomyState; info: StoreInfo; seq: number; answer: number } {
+    const { s, info } = base();
+    s.queue = 5;
+    const card = s.tycoon.cards.pending[0]!;
+    card.showAt = s.minute;
+    return { s, info, seq: card.seq, answer: card.defaultAnswer };
+  }
+
+  it.each(['tapPallet', 'tapTill'] as const)('%s: póki karta czeka, odmowa „Najpierw karta na biurku.” bez zmiany stanu', (type) => {
+    const { s, info } = withCard();
+    expect(awaitingDecision(s)).toBe(true);
+    const before = snapshot(s);
+    const out = applyCommand(s, info, { type });
+    expect(out.result).toEqual({ ok: false, text: 'Najpierw karta na biurku.' });
+    expect(out.events).toEqual([]);
+    expect(snapshot(s)).toBe(before);
+    expect(s.tapStreak).toBe(0);   // odmowa nie podtrzymuje serii
+  });
+
+  it('po odpowiedzi na wszystkie widoczne karty stuknięcia znów działają', () => {
+    const { s, info } = withCard();
+    for (const c of visibleCards(s.tycoon.cards, s.minute)) {
+      expect(applyCommand(s, info, { type: 'answerCard', seq: c.seq, answer: c.defaultAnswer }).result.ok).toBe(true);
+    }
+    expect(awaitingDecision(s)).toBe(false);
+    expect(applyCommand(s, info, { type: 'tapTill' }).result.ok).toBe(true);
+  });
+
+  it('pozostałe polecenia przechodzą mimo karty (kupowanie, ludzie, zamówienia)', () => {
+    const { s, info } = withCard();
+    s.cash = 1_000_000;
+    for (const cmd of [
+      { type: 'setOrder', auto: false, manual: 3 }, { type: 'setStaffProfile', profile: 'dostawa' }, { type: 'hire' },
+      { type: 'buyUpgrade', id: 'szkolenie' },
+    ] as Command[]) expect(applyCommand(s, info, cmd).result.ok, cmd.type).toBe(true);
+    expect(awaitingDecision(s)).toBe(true);
+  });
+
+  it('answerCard: odpowiedź księguje skutek i daje zdarzenie z wynikiem; poziom z XP karty liczy się od razu', () => {
+    const { s, info, seq, answer } = withCard();
+    s.xp = xpToNext(s.level) - 5;   // dziesięć XP za kartę przeskakuje poziom
+    const out = applyCommand(s, info, { type: 'answerCard', seq, answer });
+    expect(out.result).toEqual({ ok: true });
+    expect(s.level).toBe(2);
+    expect(out.events.some((e) => e.kind === 'levelup')).toBe(true);
+    expect(out.events.some((e) => e.kind === 'card-result')).toBe(true);
+  });
+
+  it('zła odpowiedź przez applyCommand: odmowa z tekstem karty, stan nietknięty', () => {
+    const { s, info, seq } = withCard();
+    const before = snapshot(s);
+    for (const cmd of [
+      { type: 'answerCard', seq: 123456, answer: 0 }, { type: 'answerCard', seq, answer: 99 }, { type: 'answerCard', seq, answer: -1 },
+      { type: 'answerCard', seq: 1.5, answer: 0 },
+    ] as Command[]) {
+      const out = applyCommand(s, info, cmd);
+      expect(out.result.ok, JSON.stringify(cmd)).toBe(false);
+      expect(snapshot(s)).toBe(before);
+    }
+  });
+
+  it('po końcu gry karta nie zatrzymuje i nie przyjmuje odpowiedzi', () => {
+    const { s, info, seq, answer } = withCard();
+    s.gameOver = true;
+    expect(awaitingDecision(s)).toBe(false);
+    const before = snapshot(s);
+    expect(applyCommand(s, info, { type: 'answerCard', seq, answer }).result.ok).toBe(false);
+    expect(snapshot(s)).toBe(before);
   });
 });

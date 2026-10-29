@@ -1,11 +1,17 @@
 import { isNum, isRec, num, whole, type Rec } from '@/sim/guards';
-import { CATS, GIFT_FIRST, MINUTES_PER_DAY, PALLET_ITEMS, STAFF_MAX, type Cat } from './catalog';
+import { CATS, MINUTES_PER_DAY, PALLET_ITEMS, STAFF_MAX, type Cat } from './catalog';
+import { dayOf } from './calendar';
 import {
-  emptyCounters, giftWindowFrom, type Counters, type Delivery, type EconomyState, type EquipmentUnit, type MonthReport, type Pallet,
-  type Priority,
+  emptyCounters, kpiMetrics, kpiScaleOf, type Counters, type Delivery, type EconomyState, type EquipmentUnit,
+  type MonthReport, type Pallet,
 } from './economy';
 import { xpToNext } from './progress';
-import { QUESTS_ACTIVE, QUEST_KINDS, type Quest, type QuestKind } from './quests';
+import { sanitizeHall } from './tycoon/cleanliness';
+import { sanitizeReport } from './tycoon/report';
+import { sanitizeShift } from './tycoon/shift';
+import { PROFILE_ORDER, type StaffProfile } from './tycoon/staff';
+import { sanitizeTycoon } from './tycoon/state';
+import type { StoreInfo } from './storeInfo';
 import { EQUIPMENT_BY_ID, REMONTS, UPGRADE_BY_ID, type EquipmentId, type UpgradeId } from './upgrades';
 
 /**
@@ -47,6 +53,8 @@ export const LIMITS = {
   stockPerCat: 100_000,
   /** Sztuk na palecie: PALLET_ITEMS i sztuka zapasu na zaokrąglenia (suma składu palety wychodzi z ułamków). */
   palletItems: PALLET_ITEMS + 1,
+  /** Worków z jednej palety: gra liczy 1 albo 2 (`palletBags`), reszta to zapas na przyszłe rodzaje palet. */
+  palletBags: 8,
   /**
    * Kolejka przy kasie: ruch rośnie z Punktami Partnera, więc w 4000 dniach gry kolejka sięgała 538 osób przy 5,3 tys. punktów
    * i 2799 przy 40 tys. Granica przycina tylko chwilowe zaległości (kolejka zeruje się co wieczór po zamknięciu sklepu).
@@ -54,7 +62,7 @@ export const LIMITS = {
   queue: 1000,
   /** Poziom gracza: do 1000. poziomu potrzeba ok. 2 mld XP (`xpToNext`), czyli tysięcy lat gry. */
   level: 1000,
-  /** Numery palet i zleceń: 2^30 (1 073 741 824); `rand01` liczy je jako int32. */
+  /** Numery palet (i serii stuknięć): 2^30 (1 073 741 824); `rand01` liczy je jako int32. */
   id: 1_073_741_824,
   /**
    * Punkty Partnera: sklep daje pierwiastek z marży / 20 000, a marża jednego sklepu jest mała (zmierzone 5094 punkty po 97
@@ -78,13 +86,20 @@ const LONGEST_REMONT = Math.max(...REMONTS.map((r) => r.days)) * MINUTES_PER_DAY
  *   poziomy, liczby palet) są zaokrąglane, listy mają górną długość;
  * - uszkodzony element listy (paleta bez zawartości, nieznane ulepszenie) wypada, a reszta zostaje;
  * - lista tam, gdzie ma być obiekt (albo odwrotnie), cudzy seed czy nieznana wersja stanu to `null`: tego nie naprawiamy,
- *   bo nie wiadomo, co jeszcze w takim zapisie jest nie tak.
+ *   bo nie wiadomo, co jeszcze w takim zapisie jest nie tak;
+ * - zapis sprzed tycoona nie ma pola `tycoon`: dostaje świeży stan, a zaufanie Centrali bierze ze starego pola `trust`
+ *   (`null`, tekst albo brak to 60, liczba spoza 0–100 jest przycinana). Tydzień KPI liczy się wtedy od dnia i liczników
+ *   wczytanego zapisu, w skali sklepu (`info`). Uszkodzony `tycoon` naprawia się sam, kawałek po kawałku, i nie kasuje zapisu.
+ * - zlecenia Centrali zniknęły (zastąpiło je KPI tygodnia w `tycoon.kpi`): `quests`, `questSeq` i `cleanDays` z dawnego zapisu przepadają,
+ *   także uszkodzone. Ostatni raport miesiąca bez szczegółów tycoona (`detail`) wczytuje się z `detail: null`.
+ * - ten sam zapis ma jeszcze dawny `priority` (kasa/po równo/palety): zamienia się na profil puli ludzi (`klienci` i `rowno`
+ *   na `kolejka`, `palety` na `dostawa`). Zapis z `tycoon` zostaje przy profilu z własnej puli.
  * Wynik ma dokładnie pola `EconomyState` (test pilnuje, żeby nowe pole nie umknęło tej funkcji).
  */
-export function sanitizeEconomy(raw: unknown, defaults: EconomyState): EconomyState | null {
+export function sanitizeEconomy(raw: unknown, defaults: EconomyState, info: StoreInfo): EconomyState | null {
   if (!isRec(raw) || raw.version !== 1 || raw.seed !== defaults.seed) return null;
 
-  const wantsList = ['pallets', 'deliveries', 'equipment', 'history', 'milestones', 'quests'];
+  const wantsList = ['pallets', 'deliveries', 'equipment', 'history', 'milestones'];
   const wantsRecord = ['shelf', 'backroom', 'upgrades', 'order', 'today', 'month', 'total', 'partner'];
   if (wantsList.some((k) => raw[k] !== undefined && !Array.isArray(raw[k]))) return null;
   if (wantsRecord.some((k) => raw[k] !== undefined && !isRec(raw[k]))) return null;
@@ -93,27 +108,27 @@ export function sanitizeEconomy(raw: unknown, defaults: EconomyState): EconomySt
   const level = whole(raw.level, defaults.level, 1, LIMITS.level);
   const pallets = uniqueBy((raw.pallets as unknown[] | undefined)?.map((p) => pallet(p, minute)) ?? defaults.pallets, (p) => p.id)
     .slice(0, LIMITS.pallets);
-  const quests = uniqueBy((raw.quests as unknown[] | undefined)?.map(quest) ?? defaults.quests, (q) => q.id).slice(0, QUESTS_ACTIVE);
   const partner = raw.partner as Rec | undefined;
+  const seedHash = whole(raw.seedHash, defaults.seedHash, 0, 0xffff_ffff);
+  const staff = whole(raw.staff, defaults.staff, 1, STAFF_MAX);
+  const total = counters(raw.total);
 
-  return {
+  const wynik: EconomyState = {
     version: 1,
     seed: defaults.seed,
-    seedHash: whole(raw.seedHash, defaults.seedHash, 0, 0xffff_ffff),
+    seedHash,
     minute,
     cash: money(raw.cash, defaults.cash),
     ogonki: num(raw.ogonki, defaults.ogonki, 0, LIMITS.money),
     ogonkiAcc: num(raw.ogonkiAcc, defaults.ogonkiAcc, 0, 1),
     reputation: num(raw.reputation, defaults.reputation, 0, 100),
-    trust: num(raw.trust, defaults.trust, 0, 100),
     shelf: stock(raw.shelf, defaults.shelf, LIMITS.stockPerCat),
     backroom: stock(raw.backroom, defaults.backroom, LIMITS.stockPerCat),
     pallets,
     nextPalletId: Math.max(whole(raw.nextPalletId, defaults.nextPalletId, 1, LIMITS.id + 1), 1 + Math.max(0, ...pallets.map((p) => p.id))),
     order: order(raw.order, defaults.order),
     deliveries: (raw.deliveries as unknown[] | undefined)?.map(delivery).filter(notNull).slice(0, LIMITS.deliveries) ?? defaults.deliveries,
-    staff: whole(raw.staff, defaults.staff, 1, STAFF_MAX),
-    priority: priority(raw.priority, defaults.priority),
+    staff,
     queue: num(raw.queue, defaults.queue, 0, LIMITS.queue),
     arrivalAcc: num(raw.arrivalAcc, defaults.arrivalAcc, 0, 1),
     upgrades: upgrades(raw.upgrades),
@@ -124,25 +139,19 @@ export function sanitizeEconomy(raw: unknown, defaults: EconomyState): EconomySt
     lastFineAt: whole(raw.lastFineAt, defaults.lastFineAt, defaults.lastFineAt, minute),
     today: counters(raw.today),
     month: counters(raw.month),
-    total: counters(raw.total),
+    total,
     history: (raw.history as unknown[] | undefined)?.map(historyRow).filter(notNull).slice(-LIMITS.history) ?? defaults.history,
     lastReport: report(raw.lastReport),
     milestones: (raw.milestones as unknown[] | undefined)?.filter((m): m is string => typeof m === 'string').slice(0, LIMITS.milestones)
       ?? defaults.milestones,
     gameOver: typeof raw.gameOver === 'boolean' ? raw.gameOver : defaults.gameOver,
-    lastCashiers: whole(raw.lastCashiers, defaults.lastCashiers, 0, STAFF_MAX),
-    lastWorkers: whole(raw.lastWorkers, defaults.lastWorkers, 0, STAFF_MAX),
+    // osobominuty z ostatniego przydziału (ułamki), nie liczba osób: `whole` zaokrągliłoby je i zapis nie wracałby co do bajta
+    lastCashiers: num(raw.lastCashiers, defaults.lastCashiers, 0, STAFF_MAX),
+    lastWorkers: num(raw.lastWorkers, defaults.lastWorkers, 0, STAFF_MAX),
+    shift: sanitizeShift(raw.shift),
     level,
-    // pasek XP mieści najwyżej kilka poziomów (nagroda ze zlecenia wpada przed `processLevels`); więcej to pętla bez końca
+    // pasek XP mieści najwyżej kilka poziomów (nagroda, np. za KPI, wpada przed `processLevels`); więcej to pętla bez końca
     xp: num(raw.xp, defaults.xp, 0, 3 * xpToNext(level)),
-    quests,
-    questSeq: Math.max(whole(raw.questSeq, defaults.questSeq, 1, LIMITS.id + 1), 1 + Math.max(0, ...quests.map((q) => q.id))),
-    cleanDays: whole(raw.cleanDays, defaults.cleanDays, 0, LIMITS.minute / MINUTES_PER_DAY),
-    giftSeq: whole(raw.giftSeq, defaults.giftSeq, 1, LIMITS.id),
-    // zapis sprzed L3 nie ma okna paczki: pierwsze otwiera się GIFT_FIRST po minucie zapisu (w godzinach otwarcia),
-    // a okno z przyszłości dalszej niż dwie doby jest uszkodzeniem
-    giftAt: whole(raw.giftAt, giftWindowFrom(minute + GIFT_FIRST), 0, minute + 2 * MINUTES_PER_DAY),
-    tapBoostUntil: whole(raw.tapBoostUntil, defaults.tapBoostUntil, 0, LIMITS.minute),
     // zapis sprzed L1 nie ma combo: brak serii, ostatnie stuknięcie dawno temu (jak lastFineAt)
     tapStreak: whole(raw.tapStreak, defaults.tapStreak, 0, LIMITS.id),
     lastTapAt: whole(raw.lastTapAt, defaults.lastTapAt, defaults.lastTapAt, minute),
@@ -153,7 +162,17 @@ export function sanitizeEconomy(raw: unknown, defaults: EconomyState): EconomySt
       networkIncome: num(partner?.networkIncome, defaults.partner.networkIncome, 0, LIMITS.money),
       stores: whole(partner?.stores, defaults.partner.stores, 0, LIMITS.network),
     },
+    tycoon: defaults.tycoon,   // zaślepka: skala KPI poniżej liczy się z reszty wczytanego stanu
   };
+  // liczniki i sala są już po sanitize, a `trust` to surowe stare pole (sanitizeTrust je sprawdza)
+  const rawTycoon = isRec(raw.tycoon) ? raw.tycoon : null;
+  wynik.tycoon = sanitizeTycoon(raw.tycoon, {
+    day: dayOf(minute), seedHash, trust: raw.trust as number, staff,
+    metrics: kpiMetrics(total, sanitizeHall(rawTycoon?.hall)), scale: kpiScaleOf(wynik, info),
+  });
+  // zapis sprzed puli ludzi ma tylko stary priorytet pracy: profil z mapy; zapis z `tycoon` zostaje przy własnym profilu
+  if (!rawTycoon) setLegacyProfile(wynik.tycoon.staff, raw.priority);
+  return wynik;
 }
 
 // --- Części stanu ----------------------------------------------------------------------------------------------
@@ -165,7 +184,7 @@ function notNull<T>(v: T | null): v is T {
 /** Kwota w złotych: skończona, w granicach ±`LIMITS.money` (ujemna to dług, nie błąd). */
 const money = (v: unknown, fallback: number): number => num(v, fallback, -LIMITS.money, LIMITS.money);
 
-/** Zostawia pierwszy element z danym kluczem (zdublowany numer palety albo zlecenia to uszkodzenie) i pomija wypadłe (null). */
+/** Zostawia pierwszy element z danym kluczem (zdublowany numer palety to uszkodzenie) i pomija wypadłe (null). */
 function uniqueBy<T>(items: (T | null)[], key: (item: T) => number): T[] {
   const seen = new Set<number>();
   return items.filter(notNull).filter((item) => {
@@ -203,23 +222,9 @@ function pallet(v: unknown, minute: number): Pallet | null {
     since: whole(v.since, minute, 0, minute),
   };
   if (typeof v.golden === 'boolean') out.golden = v.golden;
+  // paleta z zapisu sprzed worków nie ma pola: rozładunek bierze wtedy jeden worek, a zapis wraca co do bajta
+  if (isNum(v.bags)) out.bags = whole(v.bags, 1, 1, LIMITS.palletBags);
   return out;
-}
-
-/** Zlecenie ze stanu albo zapisu. Pole `title` z zapisów sprzed L9 jest pomijane: tytuł liczy `questTitle` przy wyświetlaniu. */
-function quest(v: unknown): Quest | null {
-  if (!isRec(v) || !isNum(v.id) || !isNum(v.target) || v.target <= 0 || !isNum(v.start)) return null;
-  if (!QUEST_KINDS.includes(v.kind as QuestKind) || !isRec(v.reward)) return null;
-  const { cash, ogonki, xp } = v.reward;
-  if (!isNum(cash) || !isNum(ogonki) || !isNum(xp)) return null;
-  return {
-    id: whole(v.id, 0, 0, LIMITS.id),
-    kind: v.kind as QuestKind,
-    target: Math.min(v.target, LIMITS.money),
-    start: money(v.start, 0),
-    // XP z nagrody trafia do `processLevels`, więc nie więcej niż daje zlecenie na najwyższym poziomie (newQuest: 40 + 10 · poziom)
-    reward: { cash: num(cash, 0, 0, LIMITS.money), ogonki: num(ogonki, 0, 0, LIMITS.money), xp: num(xp, 0, 0, 40 + 10 * LIMITS.level) },
-  };
 }
 
 function delivery(v: unknown): Delivery | null {
@@ -253,8 +258,15 @@ function order(v: unknown, fallback: EconomyState['order']): EconomyState['order
   return { auto: typeof v.auto === 'boolean' ? v.auto : fallback.auto, manual: whole(v.manual, fallback.manual, 0, 30) };
 }
 
-function priority(v: unknown, fallback: Priority): Priority {
-  return v === 'klienci' || v === 'rowno' || v === 'palety' ? v : fallback;
+/** Dawny priorytet pracy (zniknął z `EconomyState`) i profil puli ludzi, który go zastępuje. */
+const PRIORITY_PROFILE: Record<string, StaffProfile> = { klienci: 'kolejka', rowno: 'kolejka', palety: 'dostawa' };
+
+/** Stary priorytet na profil; nieznany albo brak zostawia profil domyślny świeżej puli. `hasOwn`, bo `__proto__` nie jest priorytetem. */
+function setLegacyProfile(pool: EconomyState['tycoon']['staff'], priority: unknown): void {
+  if (typeof priority !== 'string' || !Object.hasOwn(PRIORITY_PROFILE, priority)) return;
+  const profile = PRIORITY_PROFILE[priority]!;
+  pool.profile = profile;
+  pool.order = [...PROFILE_ORDER[profile]];
 }
 
 function counters(v: unknown): Counters {
@@ -264,7 +276,11 @@ function counters(v: unknown): Counters {
   return out;
 }
 
+/** Ostatni raport miesiąca. Raport ze starego zapisu nie ma szczegółów tycoona (`detail`): wczytuje się jako `null`, reszta zostaje. */
 function report(v: unknown): MonthReport | null {
   if (!isRec(v) || typeof v.label !== 'string' || typeof v.comment !== 'string' || !isRec(v.counters)) return null;
-  return { label: v.label, counters: counters(v.counters), profit: money(v.profit, 0), cash: money(v.cash, 0), comment: v.comment };
+  return {
+    label: v.label, counters: counters(v.counters), profit: money(v.profit, 0), cash: money(v.cash, 0), comment: v.comment,
+    detail: sanitizeReport(v.detail),
+  };
 }

@@ -2,9 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CharacterFactory } from '@/render/characters/characterFactory';
 import { MINUTES_PER_DAY, OPEN_FROM } from '@/sim/economy/catalog';
 import { applyCommand, COMMAND_TYPES, type Command } from '@/sim/economy/commands';
-import { stepMinute, type CommandResult, type EconEvent } from '@/sim/economy/economy';
+import { awaitingDecision, stepMinute, type CommandResult, type EconEvent } from '@/sim/economy/economy';
+import { cardDef, visibleCards } from '@/sim/economy/tycoon/cards';
+import { CIRCULARS, DECK } from '@/sim/economy/tycoon/deck';
 import { xpToNext } from '@/sim/economy/progress';
-import { questMetric } from '@/sim/economy/quests';
 import { UPGRADES } from '@/sim/economy/upgrades';
 import { layoutFor } from '@/sim/store/layoutFor';
 import * as layoutModule from '@/sim/store/layoutFor';
@@ -12,6 +13,7 @@ import { replayRun, type LogEntry } from '@/sim/run';
 import * as ui from '@/ui/state';
 import { AFTER, createShell, dispatchCommand, markOffLog, type CommandEffects, type GameShell, type ShellEffects, type ShellScene } from './actions';
 import type { CashierLook } from './cashier';
+import { isModalOpen } from './frame';
 import { MemoryStorage } from './memoryStorage';
 import { loadMeta, type Meta } from './meta';
 import {
@@ -56,19 +58,12 @@ afterEach(() => {
 const fresh = (seed = SEED): GameSession => createSession(seed, true);
 const log = (s: GameSession): LogEntry[] => s.run!.record.log;
 
-/** Zlecenie gotowe do odebrania: początek licznika cofnięty o cel. */
-function finishQuest(s: GameSession, index = 0): number {
-  const q = s.econ.quests[index]!;
-  q.start = questMetric(s.econ, q.kind) - q.target;
-  return q.id;
-}
-
 describe('dziennik biegu', () => {
   it('polecenie trafia do dziennika z minutą stanu i kolejnym seq, także nieudane', () => {
     const s = fresh();
     const { fx } = recorder();
     const accepted: Command = { type: 'setOrder', auto: false, manual: 4 };
-    const refused: Command = { type: 'claimQuest', questId: 999 };
+    const refused: Command = { type: 'returnPallet', palletId: 999 };
 
     expect(dispatchCommand(s, accepted, fx).ok).toBe(true);
     expect(dispatchCommand(s, refused, fx).ok).toBe(false);
@@ -99,14 +94,23 @@ describe('dziennik biegu', () => {
     const firstUpgrade = UPGRADES[0]!.id;
     const script: Command[] = [
       { type: 'tapPallet' }, { type: 'tapPallet', palletId: 2 }, { type: 'tapTill' }, { type: 'setOrder', auto: false, manual: 6 },
-      { type: 'movePallet', palletId: 1, loc: 'backroom' }, { type: 'hire' }, { type: 'setPriority', priority: 'palety' },
-      { type: 'buyUpgrade', id: firstUpgrade }, { type: 'claimGift' }, { type: 'startRemont' }, { type: 'claimQuest', questId: 1 },
+      { type: 'movePallet', palletId: 1, loc: 'backroom' }, { type: 'hire' }, { type: 'setStaffProfile', profile: 'dostawa' },
+      { type: 'pinStaff', task: 'kasa', count: 1 }, { type: 'pinStaff', task: 'rozladunek', count: 9 },
+      { type: 'buyUpgrade', id: firstUpgrade }, { type: 'startRemont' }, { type: 'returnPallet', palletId: 999 },
       { type: 'fire' }, { type: 'returnPallet', palletId: 2 }, { type: 'campaign' }, { type: 'rushRemont' }, { type: 'setOrder', auto: true },
     ];
     const results: CommandResult[] = [];
     const events: EconEvent[] = [];
     let issued = 0;
+    let answered = 0;
     for (let i = 0; i < 2 * MINUTES_PER_DAY; i++) {
+      // gra stoi na karcie, dopóki gracz nie odpowie: pętla klatek nie wykonałaby minuty (odpowiedź idzie do dziennika jak każde polecenie)
+      if (awaitingDecision(s.econ)) {
+        for (const card of visibleCards(s.econ.tycoon.cards, s.econ.minute)) {
+          expect(dispatchCommand(s, { type: 'answerCard', seq: card.seq, answer: card.defaultAnswer }, fx).ok).toBe(true);
+          answered++;
+        }
+      }
       if (i % 90 === 0) {
         // co 180. minutę dwa polecenia w jednej minucie: o ich kolejności decyduje `seq`
         const count = i % 180 === 0 ? 2 : 1;
@@ -118,7 +122,8 @@ describe('dziennik biegu', () => {
 
     expect(results.some((r) => r.ok)).toBe(true);
     expect(results.some((r) => !r.ok)).toBe(true);
-    expect(log(s)).toHaveLength(issued);
+    expect(answered).toBeGreaterThanOrEqual(2);   // dwie doby: co najmniej po karcie na dzień
+    expect(log(s)).toHaveLength(issued + answered);
     const replayed = replayRun(s.run!.record, s.econ.minute);
     expect(JSON.stringify(replayed)).toBe(JSON.stringify(s.econ));
   });
@@ -161,29 +166,75 @@ describe('kroki po poleceniu', () => {
   it('nieudane polecenie: toast error i dźwięk error, bez dźwięku sukcesu i bez zapisu', () => {
     const s = fresh();
     const rec = recorder();
-    const r = dispatchCommand(s, { type: 'claimQuest', questId: 999 }, rec.fx);
+    s.econ.cash = 0;
+    const r = dispatchCommand(s, { type: 'buyUpgrade', id: UPGRADES[0]!.id }, rec.fx);
 
-    expect(r).toEqual({ ok: false, text: 'Nie ma takiego zlecenia.' });
+    expect(r).toEqual({ ok: false, text: 'Za mało gotówki.' });
     expect(rec.calls).toEqual([
-      ['toast', 'Nie ma takiego zlecenia.', 'error'],
+      ['toast', 'Za mało gotówki.', 'error'],
       ['play', 'error'],
       ['handleEvents', []],
       ['refresh'],
-    ]);   // żadnego 'persist', 'play' sukcesu, 'buzz' ani 'confetti', choć claimQuest po sukcesie zapisuje
+    ]);   // żadnego 'persist' ani 'play' sukcesu (coins), choć buyUpgrade po sukcesie zapisuje
   });
 
-  it('claimQuest: coins, wibracja, konfetti 0.5/0.6/28 i zapis', () => {
+  it('buyUpgrade ok: toast z tekstem, dźwięk coins i zapis', () => {
     const s = fresh();
     const rec = recorder();
-    const id = finishQuest(s);
-    const r = dispatchCommand(s, { type: 'claimQuest', questId: id }, rec.fx);
+    s.econ.cash = 1e6;
+    const r = dispatchCommand(s, { type: 'buyUpgrade', id: UPGRADES[0]!.id }, rec.fx);
 
     expect(r.ok).toBe(true);
-    expect(rec.names()).toEqual(['toast', 'play', 'buzz', 'confetti', 'handleEvents', 'persist', 'refresh']);
+    expect(rec.names()).toEqual(['toast', 'play', 'handleEvents', 'persist', 'refresh']);
     expect(rec.calls[0]).toEqual(['toast', (r as { text: string }).text, 'ok']);
     expect(rec.calls[1]).toEqual(['play', 'coins']);
-    expect(rec.calls[2]).toEqual(['buzz', [15, 30, 15]]);
-    expect(rec.calls[3]).toEqual(['confetti', 0.5, 0.6, 28]);
+  });
+
+  /** Karta widoczna od teraz; zwraca jej numer i odpowiedź zaznaczoną z góry. */
+  function cardNow(s: GameSession): { seq: number; answer: number } {
+    const card = s.econ.tycoon.cards.pending[0]!;
+    card.showAt = s.econ.minute;
+    return { seq: card.seq, answer: card.defaultAnswer };
+  }
+
+  it('answerCard ok: bez toastu (wynik idzie zdarzeniem card-result), dźwięk pop, zapis', () => {
+    const s = fresh();
+    const { seq, answer } = cardNow(s);
+    const rec = recorder();
+    const r = dispatchCommand(s, { type: 'answerCard', seq, answer }, rec.fx);
+
+    expect(r.ok).toBe(true);
+    expect(rec.names()).toEqual(['play', 'handleEvents', 'persist', 'refresh']);
+    expect(rec.calls[0]).toEqual(['play', 'pop']);
+    const events = rec.calls[1]![1] as EconEvent[];
+    expect(events.map((e) => e.kind)).toContain('card-result');
+    expect(log(s).at(-1)!.cmd).toEqual({ type: 'answerCard', seq, answer });
+  });
+
+  it('zła odpowiedź na kartę: toast error i dźwięk error, bez zapisu', () => {
+    const s = fresh();
+    const { seq } = cardNow(s);
+    const rec = recorder();
+    const r = dispatchCommand(s, { type: 'answerCard', seq, answer: 99 }, rec.fx);
+
+    expect(r.ok).toBe(false);
+    expect(rec.names()).toEqual(['toast', 'play', 'handleEvents', 'refresh']);
+    expect(rec.calls[0]).toEqual(['toast', 'Nie ma takiej odpowiedzi.', 'error']);
+    expect(rec.calls[1]).toEqual(['play', 'error']);
+  });
+
+  it('stuknięcie przy karcie na biurku: odmowa z toastem i dźwiękiem błędu, wpis do dziennika jest', () => {
+    const s = fresh();
+    cardNow(s);
+    s.econ.queue = 3;
+    const rec = recorder();
+    const r = dispatchCommand(s, { type: 'tapTill' }, rec.fx);
+
+    expect(r).toEqual({ ok: false, text: 'Najpierw karta na biurku.' });
+    expect(rec.calls[0]).toEqual(['toast', 'Najpierw karta na biurku.', 'error']);
+    expect(rec.calls[1]).toEqual(['play', 'error']);
+    expect(s.econ.queue).toBe(3);
+    expect(log(s)).toEqual([{ minute: OPEN_FROM, seq: 0, cmd: { type: 'tapTill' } }]);   // serwer odtwarzający zrobi to samo
   });
 
   it('tapTill ok: bez toastu, dźwięk cash', () => {
@@ -221,13 +272,13 @@ describe('kroki po poleceniu', () => {
       expect(rec.named('toast')).toEqual([]);   // tapPallet nie pokazuje toastu: złotą paletę pokazuje samo zdarzenie
     });
 
-    it('odebranie zlecenia, które daje poziom: zdarzenie levelup z wyniku polecenia trafia do handleEvents', () => {
+    it('odpowiedź na kartę, która daje poziom: zdarzenia card-result i levelup z wyniku polecenia trafiają do handleEvents', () => {
       const s = fresh();
-      const id = finishQuest(s);
-      s.econ.xp = xpToNext(s.econ.level) - 1;   // nagroda zlecenia daje XP, więc wchodzi nowy poziom
-      const cmd: Command = { type: 'claimQuest', questId: id };
+      const { seq, answer } = cardNow(s);
+      s.econ.xp = xpToNext(s.econ.level) - 1;   // XP za kartę (10) przeskakuje na nowy poziom
+      const cmd: Command = { type: 'answerCard', seq, answer };
       const expected = eventsOn(s, cmd);
-      expect(expected.map((e) => e.kind)).toEqual(['levelup']);
+      expect(expected.map((e) => e.kind)).toContain('levelup');
 
       const rec = recorder();
       expect(dispatchCommand(s, cmd, rec.fx).ok).toBe(true);
@@ -343,12 +394,11 @@ describe('tabela AFTER', () => {
     expect(AFTER).toEqual({
       tapPallet: { okToast: false, sfx: 'tap', buzz: 8 },
       tapTill: { okToast: false, sfx: 'cash', buzz: 8 },
-      claimQuest: { okToast: true, sfx: 'coins', buzz: [15, 30, 15], confetti: { fx: 0.5, fy: 0.6, count: 28 }, persist: true },
-      claimGift: { okToast: true, sfx: 'gift', buzz: [10, 20, 10] },
       movePallet: { okToast: true },
       returnPallet: { okToast: true, clearSelection: 'after' },
       setOrder: { okToast: false },
-      setPriority: { okToast: false },
+      setStaffProfile: { okToast: false },
+      pinStaff: { okToast: false },
       hire: { okToast: false },
       fire: { okToast: false },
       buyUpgrade: { okToast: true, sfx: 'coins', persist: true },
@@ -356,6 +406,7 @@ describe('tabela AFTER', () => {
       startRemont: { okToast: true, persist: true, clearSelection: 'before' },
       campaign: { okToast: true },
       rushRemont: { okToast: true },
+      answerCard: { okToast: false, sfx: 'pop', persist: true },
     });
   });
 });
@@ -451,12 +502,15 @@ describe('powłoka gry (createShell)', () => {
     ui.selection.value = null;
     ui.tab.value = null;
     ui.showSettings.value = false;
+    ui.howTo.value = false;
     ui.toasts.value = [];
+    ui.story.value = [];
+    ui.picked.value = null;
     ui.econ.value = null;
     ui.ephemeral.value = false;
     ui.seed.value = '';
   });
-  afterEach(() => { vi.useRealTimers(); });
+  afterEach(() => { vi.useRealTimers(); ui.story.value = []; ui.picked.value = null; });
 
   describe('rozruch', () => {
     it('dźwięk i wibracja z mety, widok mety dla interfejsu, bez komunikatu', () => {
@@ -544,7 +598,8 @@ describe('powłoka gry (createShell)', () => {
     it('zapis sprzed dłuższej nieobecności: okno „Witaj z powrotem” z zarobkiem, bez wskazówek; nic nie jest odebrane', () => {
       const old = createSession('traszka-1', true);
       for (let i = 0; i < 30; i++) stepMinute(old.econ, old.info, []);
-      old.econ.lastDayProfit = 1000;
+      old.econ.lastDayProfit = 99_999;   // wynik dnia przed opłatą nie liczy się do nagrody; liczy się ostatni zamknięty miesiąc
+      old.econ.history = [{ label: 'sierpień 2026', profit: 31_000, revenue: 150_000 }];   // zegar stoi na 1 września: sierpień ma 31 dni
       saveSession(old);
       const meta: Meta = { ...loadMeta(), lastSeen: Date.now() - 5 * 3_600_000 };
       const h = harness({ meta });
@@ -555,7 +610,7 @@ describe('powłoka gry (createShell)', () => {
       expect(s.fromSave).toBe(true);
       expect(s.econ.minute).toBe(OPEN_FROM + 30);
       expect(ui.hints.value).toEqual([]);
-      expect(ui.welcome.value).toMatchObject({ offline: 1250, streak: 1 });
+      expect(ui.welcome.value).toMatchObject({ offline: 1250, streak: 1, daily: { cash: 0, ogonki: 2 } });   // 1000 zł dziennie × ćwierć × 5 h
       expect(s.econ.cash).toBe(old.econ.cash);   // nagroda czeka na „Odbierz!”
       expect(h.shell.meta.lastSeen).toBe(meta.lastSeen);   // czas wyjścia stoi, dopóki okno czeka
     });
@@ -587,6 +642,31 @@ describe('powłoka gry (createShell)', () => {
       expect(h.shell.session!.fromSave).toBe(true);
       expect(h.shell.session!.econ.cash).toBe(4242);
       expect(ui.toasts.value.map((t) => t.text)).toEqual(['Wczytujemy Twój sklep spod tego seeda']);
+    });
+
+    it('pierwsze wejście przez ekran startowy otwiera okno „Jak grać”; wejście bez ekranu (adres, zapis) nie', () => {
+      const look = { outfit: 'normal', appearanceSeed: 'abc' } as unknown as CashierLook;
+      const withChoice = harness();
+      withChoice.shell.open({ seed: 'traszka-1', fresh: false, choice: { nick: 'Kasia', seed: 'traszka-1', look, specialOutfits: true, notice: null } });
+      expect(ui.howTo.value).toBe(true);
+      expect(isModalOpen()).toBe(true);   // gra stoi do „Zaczynamy”
+
+      ui.howTo.value = false;
+      const without = harness();
+      without.shell.open({ seed: 'traszka-2', fresh: false, choice: null });
+      expect(ui.howTo.value).toBe(false);
+    });
+
+    it('dymki pierwszego dnia czekają pod oknem „Jak grać”: ich zegar rusza od „Zaczynamy”', () => {
+      const look = { outfit: 'normal', appearanceSeed: 'abc' } as unknown as CashierLook;
+      const h = harness();
+      h.shell.open({ seed: 'traszka-1', fresh: false, choice: { nick: 'Kasia', seed: 'traszka-1', look, specialOutfits: true, notice: null } });
+      expect(ui.hints.value).toEqual(HINTS);
+      vi.advanceTimersByTime(ui.HINT_MS * (HINTS.length + 2));   // dłużej, niż wszystkie dymki razem
+      expect(ui.hints.value).toEqual(HINTS);                      // nic nie wygasło pod oknem
+      ui.closeHowTo();
+      vi.advanceTimersByTime(ui.HINT_MS);
+      expect(ui.hints.value).toEqual(HINTS.slice(1));             // pierwszy dymek dostał pełny czas
     });
 
     it('świat zapisanego sklepu się nie buduje: sklep tymczasowy o losowym seedzie, adres zostaje, komunikat o bezpiecznym zapisie', () => {
@@ -916,12 +996,30 @@ describe('powłoka gry (createShell)', () => {
       expect(() => harness().shell.skip(10)).not.toThrow();   // bez sesji nic
     });
 
+    it('skip staje na karcie decyzji i nie przewija dalej, póki gracz nie odpowie', () => {
+      const h = harness();
+      const s = open(h);
+      const first = [...s.econ.tycoon.cards.pending].sort((a, b) => a.showAt - b.showAt)[0]!;
+      h.shell.skip(MINUTES_PER_DAY);
+      expect(awaitingDecision(s.econ)).toBe(true);
+      expect(s.econ.minute).toBe(first.showAt);
+      const stopped = JSON.stringify(s.econ);
+      h.shell.skip(60);
+      expect(JSON.stringify(s.econ)).toBe(stopped);   // nic się nie zmieniło: ani minuta, ani stan
+      expect(s.run).toBeNull();
+      expect(ui.toasts.value.some((t) => t.kind === 'card' && t.text === cardDef(first.id)!.title)).toBe(true);
+      // po odpowiedzi skip rusza dalej
+      for (const c of visibleCards(s.econ.tycoon.cards, s.econ.minute)) h.shell.game.dispatch({ type: 'answerCard', seq: c.seq, answer: c.defaultAnswer });
+      h.shell.skip(5);
+      expect(s.econ.minute).toBe(first.showAt + 5);
+    });
+
     it('restart: kasuje zapis i zaczyna ten sam seed od nowa, zamyka raport', () => {
       const h = harness();
       const s = open(h, 'traszka-1');
       s.econ.cash = 777_777;
       saveSession(s);
-      ui.report.value = { label: 'x', counters: s.econ.total, profit: 0, cash: 0, comment: '' };
+      ui.report.value = { label: 'x', counters: s.econ.total, profit: 0, cash: 0, comment: '', detail: null };
 
       h.shell.game.restart();
 
@@ -973,6 +1071,29 @@ describe('powłoka gry (createShell)', () => {
       expect(h.urls).toEqual(['traszka-5']);
     });
 
+    it('newStore: okno „Jak grać” otwiera się dopiero po zamknięciu ekranu startowego i gdy sklep się otworzył', () => {
+      const h = harness({ seeds: ['wolny-1'] });
+      open(h, 'traszka-1');
+      h.shell.game.newStore();
+      expect(ui.howTo.value).toBe(false);   // ekran startowy jeszcze stoi
+      const request = ui.start.value!;
+      request.onStart({ nick: 'Kasia', seed: 'traszka-5', look: request.form.look, specialOutfits: true, notice: null });
+      expect(h.shell.session!.seed).toBe('traszka-5');
+      expect(ui.howTo.value).toBe(true);
+    });
+
+    it('newStore: sklep, który się nie zbudował, zostawia gracza w poprzednim i nie otwiera instrukcji', () => {
+      const h = harness({ seeds: ['wolny-1'] });
+      const old = open(h, 'traszka-1');
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      h.scene.failing.add('zepsuty');
+      h.shell.game.newStore();
+      const request = ui.start.value!;
+      request.onStart({ nick: 'Kasia', seed: 'zepsuty', look: request.form.look, specialOutfits: true, notice: null });
+      expect(h.shell.session).toBe(old);
+      expect(ui.howTo.value).toBe(false);
+    });
+
     it('newStore w benchmarku nie robi nic', () => {
       const h = harness({ benchMode: true });
       ui.showSettings.value = true;
@@ -993,6 +1114,7 @@ describe('powłoka gry (createShell)', () => {
       expect(h.shell.session!.fromSave).toBe(true);
       expect(h.shell.session!.econ.cash).toBe(4242);
       expect(ui.toasts.value.map((t) => t.text)).toEqual(['Wczytujemy Twój sklep spod tego seeda']);
+      expect(ui.howTo.value).toBe(false);   // gracz wraca do swojego sklepu: instrukcji nie narzucamy
     });
 
     it('setSound i setVibration: meta w pamięci i w zapisie, efekt, widok mety', () => {
@@ -1070,7 +1192,7 @@ describe('powłoka gry (createShell)', () => {
     it('handleEvents: dzień zapisuje, raport miesiąca idzie do interfejsu, reszta do toastów z dźwiękiem', () => {
       const h = harness();
       const s = open(h);
-      const report = { label: 'wrzesień', counters: s.econ.total, profit: 1, cash: 2, comment: 'ok' };
+      const report = { label: 'wrzesień', counters: s.econ.total, profit: 1, cash: 2, comment: 'ok', detail: null };
       h.shell.handleEvents([
         { kind: 'day', text: 'Dzień' },
         { kind: 'month', text: 'Miesiąc', report },
@@ -1084,17 +1206,127 @@ describe('powłoka gry (createShell)', () => {
       expect(ui.toasts.value.map((t) => t.text)).toEqual(['Uwaga', 'Info']);   // najwyżej dwa naraz, najnowsze
     });
 
-    it('handleEvents: nowy poziom to feta (tytuł, ranga, odblokowania), dźwięk, wibracja i konfetti, bez toastu', () => {
+    it('handleEvents: karta decyzji gra pop i dostaje toast, wynik karty to sam toast', () => {
       const h = harness();
       open(h);
-      h.shell.handleEvents([{ kind: 'levelup', text: 'Poziom 5! Nowa półka', level: 5, unlocks: ['Ulotki', 'Kasa'] }]);
+      h.shell.handleEvents([{ kind: 'card', text: 'FEFO o 18:00' }]);
+      expect(h.calls).toEqual([['play', 'pop']]);
+      expect(ui.toasts.value.map((t) => [t.text, t.kind])).toEqual([['FEFO o 18:00', 'card']]);
+      h.calls.length = 0;
+      h.shell.handleEvents([{ kind: 'card-result', text: 'Naklejki przyklejone.' }]);
+      expect(h.calls).toEqual([]);
+      expect(ui.toasts.value.map((t) => t.text)).toContain('Naklejki przyklejone.');
+    });
+
+    it('handleEvents: wynik karty z premią Centrali dzwoni monetami, wynik bez premii zostaje samym toastem', () => {
+      const h = harness();
+      open(h);
+      const premium = cardDef('okolnik-premia')!.answers[0]!.result;
+      h.shell.handleEvents([{ kind: 'card-result', text: premium }]);
+      expect(h.calls).toEqual([['play', 'coins']]);
+      expect(ui.toasts.value.map((t) => t.text)).toContain(premium);
+      h.calls.length = 0;
+      h.shell.handleEvents([{ kind: 'card-result', text: 'Centrala przyjęła odmowę ze zrozumieniem.' }]);
+      expect(h.calls).toEqual([]);
+    });
+
+    it('premię w wyniku karty rozpoznaje słowo „premi…”: w całej talii pojawia się tylko w odpowiedzi, która ją wypłaca', () => {
+      // zdarzenie `card-result` niesie sam tekst, więc dźwięk monet zależy od brzmienia; ten test pilnuje, żeby talia go nie rozjechała
+      const withWord: string[] = [];
+      for (const def of [...DECK, ...CIRCULARS]) {
+        def.answers.forEach((a, i) => {
+          for (const text of [a.result, a.risk?.text ?? '']) if (/premi/i.test(text)) withWord.push(`${def.id}#${i}`);
+        });
+      }
+      expect(withWord).toEqual(['okolnik-premia#0']);
+    });
+
+    it('handleEvents: nowy poziom z odblokowaniami to feta (baner, dźwięk, wibracja, konfetti) i okno „Poziom N” z listą, bez toastu', () => {
+      const h = harness();
+      open(h);
+      h.shell.handleEvents([{ kind: 'levelup', text: 'Poziom 5! Nagroda: +500 zł i +3 Ogonków.', level: 5, unlocks: ['Ulotki', 'Kasa'] }]);
       expect(ui.celebration.value).toEqual({
         title: 'POZIOM 5',
         subtitle: expect.any(String) as string,
-        lines: ['Nowa półka', '🔓 Ulotki', '🔓 Kasa'],
+        lines: ['Nagroda: +500 zł i +3 Ogonków.', '🔓 Ulotki', '🔓 Kasa'],
       });
       expect(h.calls).toEqual([['play', 'levelup'], ['buzz', [30, 40, 30]], ['confetti', undefined, undefined, undefined]]);
       expect(ui.toasts.value).toEqual([]);
+      expect(ui.story.value).toHaveLength(1);
+      expect(ui.story.value[0]).toMatchObject({ title: 'Poziom 5', text: 'Nagroda: +500 zł i +3 Ogonków.\n🔓 Ulotki\n🔓 Kasa' });
+      expect(isModalOpen()).toBe(true);   // gra czeka na „OK”
+    });
+
+    it('handleEvents: nowy poziom bez odblokowań to sama feta, gra się nie zatrzymuje', () => {
+      const h = harness();
+      open(h);
+      h.shell.handleEvents([{ kind: 'levelup', text: 'Poziom 6! Nagroda: +100 zł.', level: 6, unlocks: [] }]);
+      h.shell.handleEvents([{ kind: 'levelup', text: 'Poziom 7! Nagroda: +100 zł.', level: 7 }]);
+      expect(ui.celebration.value?.title).toBe('POZIOM 7');
+      expect(ui.story.value).toEqual([]);
+      expect(ui.toasts.value).toEqual([]);
+      expect(isModalOpen()).toBe(false);
+    });
+
+    it('handleEvents: nowy próg zaufania i koniec remontu czekają na „OK” zamiast toastu', () => {
+      const h = harness();
+      open(h);
+      h.shell.handleEvents([
+        { kind: 'trust-tier', text: 'Zaufanie Centrali: Zaufany partner. Lody wiralowe przyjeżdżają do Ciebie.' },
+        { kind: 'remont', text: 'Remont zakończony! Sklep otwarty, pachnie nową farbą i starym kurzem.' },
+      ]);
+      expect(ui.story.value.map((e) => [e.title, e.text])).toEqual([
+        ['Zaufanie Centrali', 'Zaufanie Centrali: Zaufany partner. Lody wiralowe przyjeżdżają do Ciebie.'],
+        ['Remont zakończony', 'Remont zakończony! Sklep otwarty, pachnie nową farbą i starym kurzem.'],
+      ]);
+      expect(ui.toasts.value).toEqual([]);
+      expect(isModalOpen()).toBe(true);
+    });
+
+    it('handleEvents: raport miesiąca ma własne okno, koniec gry też (okno końca współpracy), więc żadne nie trafia do story', () => {
+      const h = harness();
+      const s = open(h);
+      const report = { label: 'wrzesień', counters: s.econ.total, profit: 1, cash: 2, comment: 'ok', detail: null };
+      h.shell.handleEvents([
+        { kind: 'month', text: 'Raport za wrzesień', report },
+        { kind: 'gameover', text: 'Centrala wypowiada umowę franczyzową.' },
+      ]);
+      expect(ui.report.value).toBe(report);
+      expect(ui.story.value).toEqual([]);
+    });
+
+    it('handleEvents: karta, wynik karty, KPI tygodnia, dostawa, mandat i reszta informacji zostają toastami, bez zatrzymania gry', () => {
+      const h = harness();
+      open(h);
+      h.shell.handleEvents([{ kind: 'kpi-week', text: 'KPI trafione' }]);
+      h.shell.handleEvents([{ kind: 'card', text: 'Karta' }, { kind: 'card-result', text: 'Wynik' }]);
+      h.shell.handleEvents([{ kind: 'fine', text: 'Mandat' }, { kind: 'milestone', text: 'Kamień milowy' }]);
+      expect(ui.story.value).toEqual([]);
+      expect(ui.toasts.value.map((t) => t.text)).toEqual(['Mandat', 'Kamień milowy']);   // najwyżej dwa naraz
+      expect(isModalOpen()).toBe(false);
+    });
+
+    it('nowy sklep (setSeed) i „zacznij od nowa” zdejmują wpisy ze starej gry', () => {
+      const h = harness();
+      open(h);
+      h.shell.handleEvents([{ kind: 'trust-tier', text: 'Zaufanie Centrali: Na wylocie.' }]);
+      expect(ui.story.value).toHaveLength(1);
+      h.shell.game.restart();
+      expect(ui.story.value).toEqual([]);
+      h.shell.handleEvents([{ kind: 'remont', text: 'Remont zakończony!' }]);
+      expect(h.shell.setSeed('inny-sklep', true)).toBe(true);
+      expect(ui.story.value).toEqual([]);
+    });
+
+    it('nowy sklep (setSeed) i „zacznij od nowa” czyszczą też zaznaczoną odpowiedź karty: numery kart zaczynają się w nowej grze od 1', () => {
+      const h = harness();
+      open(h);
+      ui.picked.value = { seq: 1, answer: 1 };
+      h.shell.game.restart();
+      expect(ui.picked.value).toBeNull();
+      ui.picked.value = { seq: 1, answer: 1 };
+      expect(h.shell.setSeed('inny-sklep', true)).toBe(true);
+      expect(ui.picked.value).toBeNull();
     });
 
     it('handleEvents: złota paleta rozładowana to konfetti na środku ekranu, inne złote tylko dźwięk', () => {

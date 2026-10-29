@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { QUALITY, type QualityPresetId } from '@/render/quality';
 import { HOUR_CURVE, MINUTES_PER_DAY, OPEN_FROM, OPEN_TO } from '@/sim/economy/catalog';
-import { expectedDailyCustomers } from '@/sim/economy/economy';
+import { expectedDailyCustomers, isOpenForCustomers, isStoreOpen } from '@/sim/economy/economy';
 import { MemoryStorage } from './memoryStorage';
 import { CROWD_MAX, crowdRateFor, timeOfDayAt } from './scene';
 import { createSession, type GameSession } from './session';
@@ -70,6 +70,17 @@ describe('crowdRateFor: gęstość tłumu z ekonomii', () => {
     s.econ.remontUntil = s.econ.minute + 120;
     expect(crowdRateFor(s, 'srednia')).toEqual({ targetCount: 0, spawnPerMinute: 0 });
     s.econ.minute += 120;   // remont się skończył
+    expect(crowdRateFor(s, 'srednia').targetCount).toBeGreaterThan(0);
+  });
+
+  it('karta „zamknij na godzinę” też zamyka sklep dla tłumu, mimo że godziny i remont go nie zamykają', () => {
+    const s = atHour(12);
+    expect(crowdRateFor(s, 'srednia').targetCount).toBeGreaterThan(0);
+    s.econ.tycoon.cards.active.push({ kind: 'closed', value: 1, from: s.econ.minute, until: s.econ.minute + 60, seq: 1 });
+    expect(isStoreOpen(s.econ)).toBe(true);   // dla samej ekonomii (godziny, remont) sklep stoi otwarty
+    expect(isOpenForCustomers(s.econ)).toBe(false);
+    for (const preset of PRESETS) expect(crowdRateFor(s, preset)).toEqual({ targetCount: 0, spawnPerMinute: 0 });
+    s.econ.minute += 60;   // efekt się skończył
     expect(crowdRateFor(s, 'srednia').targetCount).toBeGreaterThan(0);
   });
 

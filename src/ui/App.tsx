@@ -1,12 +1,14 @@
 import { render } from 'preact';
 import { PALETTE } from '@/render/style';
 import { BenchOverlay } from './BenchOverlay';
+import { CardDesk } from './game/cards';
 import { Hud } from './game/Hud';
 import {
-  CelebrationBanner, ClickerBar, ComboChip, FirstDayHints, GiftDrop, PrestigeModal, ReportModal, RotateButtons, SelectionCard, Settings,
-  StoreBadge, Toasts, WelcomeModal,
+  CelebrationBanner, ClickerBar, ComboChip, FirstDayHints, PrestigeModal, ReportModal, RotateButtons, SelectionCard, Settings,
+  StoreBadge, StoryModal, Toasts, WelcomeModal,
 } from './game/overlays';
 import { Sheet, TabBar } from './game/panels';
+import { HowTo } from './howto/HowTo';
 import { Notice } from './Notice';
 import { PerfOverlay } from './PerfOverlay';
 import { StartHost } from './start/StartScreen';
@@ -25,7 +27,8 @@ const brandVars = {
 /**
  * Cała nakładka. Bez `controls` (renderer nie wstał, benchmark albo gra jeszcze nie ruszyła) zostaje komunikat, wyniki benchmarku
  * i ekran startowy „Twój kasjer”, który otwiera się przy pierwszym wejściu, zanim powstanie gra. W grze: górny pasek, zakładki
- * z arkuszami, karta zaznaczenia, przyciski klikera, podpowiedzi pierwszego dnia, komunikaty i okna.
+ * z arkuszami, karta zaznaczenia, przyciski klikera, podpowiedzi pierwszego dnia, komunikaty i okna. Kolejność okien to ich
+ * warstwy: karta decyzji leży nad panelami, a pod raportem miesiąca, „Jak grać”, powitaniem i ustawieniami.
  */
 export function App({ controls, game }: { controls: Controls | null; game: GameActions | null }) {
   return (
@@ -43,11 +46,13 @@ export function App({ controls, game }: { controls: Controls | null; game: GameA
           </div>
           <ClickerBar game={game} onFloat={floatText} />
           <ComboChip />
-          <GiftDrop game={game} onClaim={(x, y, text) => floatText(x, y, text.split(':').pop()?.trim() ?? '', 'money')} />
           <RotateButtons controls={controls} />
           <Sheet game={game} />
           <TabBar />
+          <CardDesk game={game} />
+          <StoryModal />
           <ReportModal game={game} />
+          <HowTo />
           <WelcomeModal game={game} />
           <PrestigeModal game={game} />
           <CelebrationBanner />

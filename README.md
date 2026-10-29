@@ -8,23 +8,12 @@ a na końcu humanoida eDwarda. Wszystkie firmy, postacie i zdarzenia są fikcyjn
 
 ## Jak grać
 
-Przy pierwszym wejściu ekran **Twój kasjer**: wybierasz wygląd kasjera (🎲 Losuj, strzałki ‹ › po strojach, czasem wypadnie
-dziwny strój specjalny, a przełącznik „Stroje specjalne w losowaniu” to wyłącza), wpisujesz nazwę gracza (1–20 znaków) i seed
-sklepu (dowolny tekst), i otwierasz sklep. Kasjer stoi potem za ladą. Nowy sklep (z innym seedem i kasjerem) otwierasz z ⚙.
-
-- **Palety** przyjeżdżają co rano pod sklep. Stukaj w nie (albo w pomarańczowy przycisk 📦), żeby rozładować.
-  Paletę można przestawić na zaplecze (bezpiecznie, mało miejsca) albo do sali (korek, mniej klientów).
-- **Kolejka**: za długa odstrasza klientów. Stuknięcie w kasę (albo 🧾) obsługuje klienta.
-- **Zamówienie** zamyka się o 11:00. Asystent Traszki zawsze trochę przesadza, więc nadmiar palet się kumuluje.
-- **Ulepszenia** kupujesz za zarobione pieniądze. Sloty w sklepie przyjmują sprzęt; slot 2×2 mieści dwie kasy
-  samoobsługowe. Remont generalny daje większy lokal i więcej slotów.
-- Koniec miesiąca to raport i opłata dla Centrali. Gra zapisuje się sama (osobno dla każdego seeda).
-
-Nagrody (🎯 Cele): szybkie stukanie daje combo do ×5, Zlecenia Centrali mają przycisk „Odbierz”, każdy poziom to
-premia (rangi od Drewnianej do Legendarnej Palety), a poziomy odblokowują sprzęt, remonty i warsztat. Złote palety
-i paczki od Centrali to losowe premie. Po powrocie czeka zarobek kierownika zmiany i premia za serię dni.
-Po drugim remoncie albo na 20. poziomie można otworzyć kolejną Traszkę: stary sklep zostaje w sieci i co dzień
-dokłada dochód, a Punkty Partnera trwale podnoszą marżę i ruch w każdym następnym sklepie.
+Przy pierwszym wejściu ekran **Twój kasjer** pyta o wygląd kasjera, nazwę gracza i seed sklepu; nowy sklep otwierasz potem z ⚙.
+Prowadzisz franczyzę Traszki: zamawiasz i rozładowujesz palety, zanim przyjdzie Straż Miejska, pilnujesz kolejki, ludzi
+i swoich sił, a każdego dnia odpowiadasz na karty decyzji od Centrali. Zarabiasz marżę, na koniec miesiąca płacisz opłatę
+franczyzową, a umowę kończy zaufanie Centrali na zerze przy zamknięciu miesiąca albo gotówka poniżej limitu po dwóch raportach
+z rzędu (pierwszy to ostrzeżenie). Zarobek idzie w ulepszenia, sprzęt i remonty, a po drugim remoncie albo na 20. poziomie
+otworzysz kolejną Traszkę. Pełna instrukcja jest w grze: ⚙ → Jak grać (okno otwiera się też samo po ekranie startowym).
 
 Sterowanie: przeciąganie przesuwa widok, szczypanie albo kółko myszy przybliża, ⟲ ⟳ albo Q/E obraca kamerę.
 Spacja pauzuje, F3 pokazuje licznik FPS. Model ekonomii i liczby: [docs/ekonomia.md](docs/ekonomia.md).

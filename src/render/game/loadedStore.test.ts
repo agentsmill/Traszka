@@ -10,12 +10,12 @@ import { generateStore } from '@/sim/store/generateStore';
 import { attachCharacters, loadStore, unloadStore, type Loaded, type StoreSource } from './loadedStore';
 
 /**
- * `loadStore` składa sklep z kilku części (bryła, towar, palety, sprzęt, kasa, widok tłumu, kasjer). Każda z nich może się wywrócić
+ * `loadStore` składa sklep z kilku części (bryła, towar, palety, sprzęt, kasa, widok tłumu, kasjer, załoga). Każda z nich może się wywrócić
  * (shader, bufor, nietypowy układ), a `load()` w main.ts wołane z odzyskiwania po błędzie zostawiało wtedy w scenie
  * pół-zbudowany sklep, którego nikt już nie zwolni. Części udają tu awarię, reszta jest prawdziwa.
  */
 const mocks = vi.hoisted(() => ({
-  fail: { goods: false, pallets: false, equipment: false, crowd: false, cashier: false },
+  fail: { goods: false, pallets: false, equipment: false, crowd: false, cashier: false, staff: false },
   /** Części, których `dispose` ma rzucić (sprzątanie, które samo się wywraca); rzucają po zapisaniu się w `disposed`, bez zwalniania. */
   disposeThrows: [] as string[],
   /** Części, których `dispose` zostało zawołane (także te, które rzuciły). */
@@ -89,6 +89,17 @@ vi.mock('@/render/cashierView', async (importOriginal) => {
   }
   return { ...actual, CashierView };
 });
+vi.mock('@/render/staff/staffView', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/render/staff/staffView')>();
+  class StaffView extends actual.StaffView {
+    constructor(...args: ConstructorParameters<typeof actual.StaffView>) {
+      if (mocks.fail.staff) throw new Error('załoga');
+      super(...args);
+      watch('staff', this);
+    }
+  }
+  return { ...actual, StaffView };
+});
 
 const SEED = 'kiełbasa-42';
 const layout = generateStore(SEED);
@@ -97,7 +108,7 @@ const info = computeStoreInfo(layout);
 let scene: Scene;
 let crowdParent: Group;
 beforeEach(() => {
-  mocks.fail.goods = mocks.fail.pallets = mocks.fail.equipment = mocks.fail.crowd = mocks.fail.cashier = false;
+  mocks.fail.goods = mocks.fail.pallets = mocks.fail.equipment = mocks.fail.crowd = mocks.fail.cashier = mocks.fail.staff = false;
   mocks.disposeThrows.length = 0;
   mocks.disposed.length = 0;
   vi.restoreAllMocks();
@@ -156,12 +167,13 @@ describe('loadStore / unloadStore', () => {
     expect(loaded.tillTop).not.toBeNull();
     expect(loaded.crowdView).not.toBeNull();
     expect(loaded.cashierView).not.toBeNull();
+    expect(loaded.staffView).not.toBeNull();
     expect(loaded.street).toBeNull();
   });
 
-  it('bez opisu układu dla ekonomii (benchmark) nie ma palet, sprzętu ani kasy; bez fabryki postaci nie ma widoku tłumu ani kasjera', () => {
+  it('bez opisu układu dla ekonomii (benchmark) nie ma palet, sprzętu ani kasy; bez fabryki postaci nie ma widoku tłumu, kasjera ani załogi', () => {
     const loaded = loadStore(source({ info: null, factory: null }));
-    expect([loaded.pallets, loaded.equipment, loaded.till, loaded.tillTop, loaded.crowdView, loaded.cashierView]).toEqual([null, null, null, null, null, null]);
+    expect([loaded.pallets, loaded.equipment, loaded.till, loaded.tillTop, loaded.crowdView, loaded.cashierView, loaded.staffView]).toEqual([null, null, null, null, null, null, null]);
     expect(stores()).toBe(1);
     expect(crowdParent.children).toHaveLength(1);
   });
@@ -172,7 +184,7 @@ describe('loadStore / unloadStore', () => {
     expect(till).toEqual([]);   // nic nie zwolniono przed sprzątaniem
     unloadStore(loaded);
     expect(stores()).toBe(0);
-    expect(mocks.disposed.sort()).toEqual(['cashier', 'crowd', 'equipment', 'pallets', 'view']);
+    expect(mocks.disposed.sort()).toEqual(['cashier', 'crowd', 'equipment', 'pallets', 'staff', 'view']);
     expect(till.sort()).toEqual(['geometry', 'material']);
     expect(crowdParent.parent).toBe(scene);
     expect(crowdParent.children).toHaveLength(1);
@@ -215,21 +227,102 @@ describe('loadStore / unloadStore', () => {
     expect(cashiersIn(made)).toHaveLength(0);
   });
 
-  it('attachCharacters dokłada tłum i kasjera, gdy fabryka dochodzi później (main.ts), i niczego nie dubluje', () => {
+  it('attachCharacters dokłada tłum, kasjera i załogę, gdy fabryka dochodzi później (main.ts), i niczego nie dubluje', () => {
     const { factory, made } = fakeFactory();
     const blobs = createBlobShadows(4);
     const loaded = loadStore(source({ factory: null, blobs }));
-    expect([loaded.crowdView, loaded.cashierView]).toEqual([null, null]);
+    expect([loaded.crowdView, loaded.cashierView, loaded.staffView]).toEqual([null, null, null]);
     const parts = { factory, crowdParent, blobs, cashierLook: DEFAULT_CASHIER_LOOK };
     attachCharacters(loaded, parts);
     expect(loaded.crowdView).not.toBeNull();
     expect(loaded.cashierView).not.toBeNull();
-    const [crowdView, cashierView] = [loaded.crowdView, loaded.cashierView];
+    expect(loaded.staffView).not.toBeNull();
+    const [crowdView, cashierView, staffView] = [loaded.crowdView, loaded.cashierView, loaded.staffView];
     attachCharacters(loaded, parts);
-    expect([loaded.crowdView, loaded.cashierView]).toEqual([crowdView, cashierView]);
+    expect([loaded.crowdView, loaded.cashierView, loaded.staffView]).toEqual([crowdView, cashierView, staffView]);
+    expect(loaded.staffView).toBe(staffView);
     expect(cashiersIn(made)).toHaveLength(1);
     unloadStore(loaded);
     expect(cashiersIn(made)).toHaveLength(0);
+    expect(blobs.mesh.count).toBe(0);
+  });
+
+  it('załoga w sklepie prowadzi tego samego kasjera: pracownicy w grupie tłumu z miejscem w plamach, zwolnieni razem ze sklepem', () => {
+    const { factory, made } = fakeFactory();
+    const blobs = createBlobShadows(8);
+    const loaded = loadStore(source({ factory, blobs }));
+    const staff = loaded.staffView!;
+    staff.sync({ people: [{ id: 0, task: 'kasa' }, { id: 1, task: 'rozladunek' }, { id: 2, task: 'wykladanie' }], minute: 480, pallets: [] });
+    staff.update(1 / 16, 1 / 16, null);
+    expect(staff.size).toBe(2);
+    expect(made.filter((m) => m.seed.startsWith('pracownik-')).map((m) => m.character.object.parent)).toEqual([crowdParent, crowdParent]);
+    expect(cashiersIn(made).filter((o) => o !== loaded.cashierView!.character!.object)).toHaveLength(2);   // dwóch pracowników obok jednego kasjera
+    expect(made.filter((m) => !m.seed.startsWith('pracownik-'))).toHaveLength(1);                           // kasjer nie jest dublowany
+    expect(blobs.mesh.count).toBe(3);
+    unloadStore(loaded);
+    expect(crowdParent.children).toHaveLength(1);
+    expect(blobs.mesh.count).toBe(0);
+    for (const m of made) expect(m.character.dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it('załoga prowadzi kasjera z tego sklepu (nie innego): bez opisu zmiany stoi za ladą, bez ludzi jest schowany, na kasie zostaje za ladą, a z zadaniem poza kasą stoi przy zadaniu', () => {
+    const { cell } = cashierSpot(layout)!;
+    const home = cellToWorld(layout, cell.x, cell.y);
+    /** Świeży sklep po pierwszym opisie zmiany `people` i jednej klatce (załoga przed kasjerem, jak w scenie); `null`: bez opisu. */
+    const shop = (people: { id: number; task: 'kasa' | 'wolny' }[] | null) => {
+      const { factory } = fakeFactory();
+      const loaded = loadStore(source({ factory, blobs: createBlobShadows(8) }));
+      if (people) loaded.staffView!.sync({ people, minute: 480, pallets: [] });
+      loaded.staffView!.update(1 / 16, 1 / 16, null);
+      loaded.cashierView!.update(1 / 16, null, false, 1 / 16);
+      const o = loaded.cashierView!.character!.object;
+      const seen = { visible: o.visible, apart: Math.hypot(o.position.x - home.x, o.position.z - home.z) };   // przed unloadStore: dispose załogi odstawia kasjera
+      unloadStore(loaded);
+      return seen;
+    };
+
+    expect(shop(null)).toEqual({ visible: true, apart: 0 });                           // ekonomia jeszcze nic nie podała: kasjer stoi jak dawniej
+    expect(shop([]).visible).toBe(false);                                              // nikogo na zmianie
+    const atTill = shop([{ id: 0, task: 'kasa' }]);
+    expect(atTill.visible).toBe(true);
+    expect(atTill.apart).toBeLessThan(1e-6);                                           // na kasie zostaje za ladą
+    const away = shop([{ id: 0, task: 'wolny' }]);
+    expect(away.visible).toBe(true);
+    expect(away.apart).toBeGreaterThan(0.5);                                           // ten sam kasjer stoi na zapleczu, nie za ladą
+  });
+
+  it('unloadStore zwalnia załogę przed kasjerem (załoga go prowadzi), a kolejność reszty zostaje', () => {
+    const loaded = loadStore(source());
+    unloadStore(loaded);
+    expect(mocks.disposed.indexOf('crowd')).toBeLessThan(mocks.disposed.indexOf('staff'));
+    expect(mocks.disposed.indexOf('staff')).toBeLessThan(mocks.disposed.indexOf('cashier'));
+    expect(mocks.disposed.indexOf('cashier')).toBeLessThan(mocks.disposed.indexOf('pallets'));
+  });
+
+  it('nieudana budowa załogi w attachCharacters zostawia puste pole; to, co już stoi, jest zwalniane, a ponowna próba nie dubluje kasjera', () => {
+    const { factory, made } = fakeFactory();
+    const blobs = createBlobShadows(4);
+    const loaded = loadStore(source({ factory: null, blobs }));
+    const parts = { factory, crowdParent, blobs, cashierLook: DEFAULT_CASHIER_LOOK };
+    mocks.fail.staff = true;
+    expect(() => attachCharacters(loaded, parts)).toThrow('załoga');
+    expect(loaded.crowdView).not.toBeNull();
+    expect(loaded.cashierView).not.toBeNull();
+    expect(loaded.staffView).toBeNull();
+    const cashierView = loaded.cashierView;
+    mocks.fail.staff = false;
+    attachCharacters(loaded, parts);
+    expect(loaded.cashierView).toBe(cashierView);
+    expect(loaded.staffView).not.toBeNull();
+    expect(cashiersIn(made)).toHaveLength(1);
+
+    mocks.fail.staff = true;
+    const half = loadStore(source({ factory: null, blobs }));
+    expect(() => attachCharacters(half, parts)).toThrow('załoga');
+    mocks.disposed.length = 0;
+    expect(() => unloadStore(half)).not.toThrow();       // pole załogi puste: pominięte, reszta zwolniona
+    expect(mocks.disposed.sort()).toEqual(['cashier', 'crowd', 'equipment', 'pallets', 'view']);
+    unloadStore(loaded);
     expect(blobs.mesh.count).toBe(0);
   });
 
@@ -239,6 +332,7 @@ describe('loadStore / unloadStore', () => {
     ['sprzęt (palety już zbudowane)', 'equipment', ['pallets', 'view']],
     ['widok tłumu (wszystko inne gotowe, z kasą włącznie)', 'crowd', ['equipment', 'pallets', 'view']],
     ['kasjer (widok tłumu już stoi)', 'cashier', ['crowd', 'equipment', 'pallets', 'view']],
+    ['załoga (tłum i kasjer już stoją)', 'staff', ['cashier', 'crowd', 'equipment', 'pallets', 'view']],
   ];
   for (const [name, which, released] of failures) {
     it(`awaria przy budowie części „${name}”: wyjątek idzie dalej, w scenie nic nie zostaje, zbudowane części są zwolnione`, () => {
@@ -271,8 +365,8 @@ describe('loadStore / unloadStore', () => {
       loaded.street = watch('street', { root: new Group(), dispose: () => {} } as unknown as StreetView);
       return { loaded, till: watchTill(loaded) };
     }
-    const ALL = ['cashier', 'crowd', 'equipment', 'pallets', 'street', 'view'];
-    const steps = ['crowd', 'cashier', 'street', 'pallets', 'equipment', 'view'];   // w kolejności sprzątania
+    const ALL = ['cashier', 'crowd', 'equipment', 'pallets', 'staff', 'street', 'view'];
+    const steps = ['crowd', 'staff', 'cashier', 'street', 'pallets', 'equipment', 'view'];   // w kolejności sprzątania
 
     for (const step of steps) {
       it(`rzuca krok „${step}”: pozostałe i tak się wykonują (z geometrią i materiałem kasy), bryła schodzi ze sceny, wyjątek idzie dalej`, () => {
@@ -288,8 +382,8 @@ describe('loadStore / unloadStore', () => {
 
     it('rzuca kilka kroków naraz: wszystkie się wykonują, a dalej idzie pierwszy błąd (w kolejności sprzątania)', () => {
       const { loaded, till } = fullStore();
-      mocks.disposeThrows.push('view', 'pallets', 'cashier');
-      expect(() => unloadStore(loaded)).toThrow('dispose: cashier');
+      mocks.disposeThrows.push('view', 'pallets', 'cashier', 'staff');
+      expect(() => unloadStore(loaded)).toThrow('dispose: staff');
       expect(mocks.disposed.sort()).toEqual(ALL);
       expect(till.sort()).toEqual(['geometry', 'material']);
       expect(stores()).toBe(0);

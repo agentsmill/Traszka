@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { OPEN_FROM } from '@/sim/economy/catalog';
+import { MINUTES_PER_SECOND_OPEN as R, OPEN_FROM } from '@/sim/economy/catalog';
 import { advanceEconomy } from '@/sim/economy/clock';
-import type { EconEvent, MonthReport } from '@/sim/economy/economy';
+import { applyCommand } from '@/sim/economy/commands';
+import { awaitingDecision, type EconEvent, type MonthReport } from '@/sim/economy/economy';
+import { visibleCards } from '@/sim/economy/tycoon/cards';
 import * as ui from '@/ui/state';
 import type { GameShell } from './actions';
-import { advanceSession, debugHandleEnabled, debugHandleOf, installDebugHandle, isModalOpen } from './frame';
+import { advanceSession, debugHandleEnabled, debugHandleOf, installDebugHandle, isModalOpen, isSceneHeld } from './frame';
 import { MemoryStorage } from './memoryStorage';
 import type { SceneHost } from './scene';
 import { createSession, type GameSession } from './session';
@@ -12,7 +14,7 @@ import { createSession, type GameSession } from './session';
 beforeEach(() => { vi.stubGlobal('localStorage', new MemoryStorage()); });
 afterEach(() => { vi.unstubAllGlobals(); });
 
-/** Świeża gra: sklep otwarty od 6:00, więc ×1 daje 20 minut gry na sekundę. */
+/** Świeża gra: sklep otwarty od 6:00, więc ×1 daje `R` (`MINUTES_PER_SECOND_OPEN`) minut gry na sekundę. */
 const fresh = (): GameSession => createSession('traszka-frame', true);
 
 describe('advanceSession', () => {
@@ -41,20 +43,20 @@ describe('advanceSession', () => {
     expect(out).toEqual([]);
   });
 
-  it('×1 w godzinach otwarcia to 20 minut gry na sekundę', () => {
+  it('×1 w godzinach otwarcia to R minut gry na sekundę', () => {
     const s = fresh();
-    expect(advanceSession(s, 1.01, 1, false, [])).toBe(20);   // 1,01 s: 20 pełnych minut i reszta w zegarze
-    expect(s.econ.minute).toBe(OPEN_FROM + 20);
-    expect(s.clock.acc).toBeCloseTo(0.2, 9);
+    expect(advanceSession(s, 1.01, 1, false, [])).toBe(R);   // 1,01 s: R pełnych minut i reszta w zegarze
+    expect(s.econ.minute).toBe(OPEN_FROM + R);
+    expect(s.clock.acc).toBeCloseTo(0.01 * R, 9);
   });
 
-  it('równa sekunda to 20 minut z dokładnością do błędu zaokrągleń zegara (ostatnia domyka się w następnej klatce)', () => {
+  it('równa sekunda to R minut z dokładnością do błędu zaokrągleń zegara (ostatnia domyka się w następnej klatce)', () => {
     const s = fresh();
     const done = advanceSession(s, 1, 1, false, []);
-    expect(done === 19 || done === 20).toBe(true);   // 20 × 0,05 s w liczbach zmiennoprzecinkowych bywa o włos mniej niż 1 s
-    expect(s.econ.minute - OPEN_FROM + s.clock.acc).toBeCloseTo(20, 9);
+    expect(done === R - 1 || done === R).toBe(true);   // R × (1/R) s w liczbach zmiennoprzecinkowych bywa o włos mniej niż 1 s
+    expect(s.econ.minute - OPEN_FROM + s.clock.acc).toBeCloseTo(R, 9);
     advanceSession(s, 0.001, 1, false, []);
-    expect(s.econ.minute).toBe(OPEN_FROM + 20);
+    expect(s.econ.minute).toBe(OPEN_FROM + R);
   });
 
   it('prędkość mnoży czas ramki: pół sekundy ×2 to tyle samo, co sekunda ×1', () => {
@@ -67,9 +69,9 @@ describe('advanceSession', () => {
 
   it('ułamek minuty zostaje w zegarze i dopełnia się w następnej klatce', () => {
     const s = fresh();
-    expect(advanceSession(s, 0.04, 1, false, [])).toBe(0);   // 0,04 s ×20/s = 0,8 minuty
+    expect(advanceSession(s, 0.8 / R, 1, false, [])).toBe(0);   // 0,8 minuty
     expect(s.clock.acc).toBeCloseTo(0.8, 9);
-    expect(advanceSession(s, 0.02, 1, false, [])).toBe(1);   // razem 1,2 minuty
+    expect(advanceSession(s, 0.4 / R, 1, false, [])).toBe(1);   // razem 1,2 minuty
     expect(s.econ.minute).toBe(OPEN_FROM + 1);
   });
 
@@ -89,8 +91,25 @@ describe('advanceSession', () => {
   it('zdarzenia trafiają do `out` (koniec dnia)', () => {
     const s = fresh();
     const out: EconEvent[] = [];
-    for (let i = 0; i < 200 && !out.some((e) => e.kind === 'day'); i++) advanceSession(s, 1, 1, false, out);
+    for (let i = 0; i < 200 && !out.some((e) => e.kind === 'day'); i++) {
+      // karta dnia zatrzymuje grę do odpowiedzi gracza: tu zatwierdzamy zaznaczoną z góry
+      for (const c of visibleCards(s.econ.tycoon.cards, s.econ.minute)) applyCommand(s.econ, s.info, { type: 'answerCard', seq: c.seq, answer: c.defaultAnswer });
+      advanceSession(s, 1, 1, false, out);
+    }
     expect(out.some((e) => e.kind === 'day')).toBe(true);
+    expect(out.some((e) => e.kind === 'card')).toBe(true);   // po drodze karty się pokazywały
+  });
+
+  it('karta decyzji zatrzymuje grę mimo prędkości ×8: staje na showAt, zdarzenie card, kolejne klatki dają 0 minut', () => {
+    const s = fresh();
+    const first = Math.min(...s.econ.tycoon.cards.pending.map((c) => c.showAt));
+    const out: EconEvent[] = [];
+    for (let i = 0; i < 200 && !awaitingDecision(s.econ); i++) advanceSession(s, 1, 8, false, out);
+    expect(s.econ.minute).toBe(first);
+    expect(out.filter((e) => e.kind === 'card').length).toBeGreaterThanOrEqual(1);
+    const stopped = JSON.stringify(s);
+    expect(advanceSession(s, 1, 8, false, out)).toBe(0);
+    expect(JSON.stringify(s)).toBe(stopped);
   });
 
   it('po końcu gry nie liczy minut', () => {
@@ -101,12 +120,51 @@ describe('advanceSession', () => {
   });
 });
 
+describe('isSceneHeld (scena stoi pod oknem i pod kartą decyzji)', () => {
+  afterEach(() => { ui.howTo.value = false; });
+
+  it('bez okna i bez karty scena żyje, z sesją i bez niej', () => {
+    expect(isSceneHeld(null, false)).toBe(false);
+    expect(isSceneHeld(fresh(), isModalOpen())).toBe(false);
+  });
+
+  it('okno na wierzchu zatrzymuje scenę, także bez sesji', () => {
+    ui.howTo.value = true;
+    expect(isSceneHeld(null, isModalOpen())).toBe(true);
+    expect(isSceneHeld(fresh(), isModalOpen())).toBe(true);
+  });
+
+  it('karta decyzji, która trzyma grę, zatrzymuje scenę, choć żadne okno nie jest otwarte; po odpowiedzi scena rusza', () => {
+    const s = fresh();
+    const out: EconEvent[] = [];
+    for (let i = 0; i < 200 && !awaitingDecision(s.econ); i++) advanceSession(s, 1, 8, false, out);
+    expect(awaitingDecision(s.econ)).toBe(true);
+    expect(isModalOpen(s)).toBe(false);   // to nie jest okno: tylko karta w symulacji
+    expect(isSceneHeld(s, isModalOpen(s))).toBe(true);
+    for (const c of visibleCards(s.econ.tycoon.cards, s.econ.minute)) applyCommand(s.econ, s.info, { type: 'answerCard', seq: c.seq, answer: c.defaultAnswer });
+    expect(awaitingDecision(s.econ)).toBe(false);
+    expect(isSceneHeld(s, isModalOpen(s))).toBe(false);
+  });
+
+  it('po końcu gry karta nikogo nie czeka: scenę trzyma wtedy okno końca gry (isModalOpen), nie karta', () => {
+    const s = fresh();
+    const out: EconEvent[] = [];
+    for (let i = 0; i < 200 && !awaitingDecision(s.econ); i++) advanceSession(s, 1, 8, false, out);
+    s.econ.gameOver = true;
+    expect(awaitingDecision(s.econ)).toBe(false);
+    expect(isSceneHeld(s, false)).toBe(false);
+    expect(isSceneHeld(s, isModalOpen(s))).toBe(true);
+  });
+});
+
 describe('isModalOpen', () => {
   afterEach(() => {
     ui.report.value = null;
     ui.start.value = null;
     ui.welcome.value = null;
     ui.showPrestige.value = false;
+    ui.howTo.value = false;
+    ui.story.value = [];
   });
 
   it('bez żadnego okna gra się toczy, z sesją i bez niej', () => {
@@ -132,6 +190,29 @@ describe('isModalOpen', () => {
     expect(isModalOpen()).toBe(true);
     ui.showPrestige.value = false;
 
+    expect(isModalOpen()).toBe(false);
+  });
+
+  it('okno „Jak grać” zatrzymuje grę (z sesją i bez), a po „Zaczynamy” gra rusza', () => {
+    ui.howTo.value = true;
+    expect(isModalOpen()).toBe(true);
+    expect(isModalOpen(fresh())).toBe(true);
+    const s = fresh();
+    expect(advanceSession(s, 1, 1, isModalOpen(s), [])).toBe(0);   // pętla klatek: okno na wierzchu, więc ani minuty
+    expect(s.econ.minute).toBe(OPEN_FROM);
+    ui.howTo.value = false;
+    expect(isModalOpen(s)).toBe(false);
+    expect(advanceSession(s, 1, 1, isModalOpen(s), [])).toBeGreaterThan(0);
+  });
+
+  it('ważne zdarzenie czekające na „OK” zatrzymuje grę, a po „OK” (pusta kolejka) gra rusza', () => {
+    ui.pushStory('Remont zakończony', 'Sklep otwarty.');
+    expect(isModalOpen()).toBe(true);
+    expect(isModalOpen(fresh())).toBe(true);
+    ui.pushStory('Poziom 5', 'Nagroda');
+    ui.dismissStory();
+    expect(isModalOpen()).toBe(true);   // zostało jeszcze jedno
+    ui.dismissStory();
     expect(isModalOpen()).toBe(false);
   });
 

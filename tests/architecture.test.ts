@@ -2,6 +2,7 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { builtinModules } from 'node:module';
 import { basename, join, posix, sep } from 'node:path';
 import { describe, it, expect } from 'vitest';
+import { CH } from '@/sim/economy/tycoon/channels';
 
 function files(dir: string, match: RegExp): string[] {
   return readdirSync(dir).flatMap((f) => {
@@ -297,7 +298,7 @@ function nodeTestableViolations(path: string, source: string): string[] {
 
 // --- Kanały rand01 (kontrakty §3) ----------------------------------------------------------------------------------
 
-/** Moduły strumienia C: kanały losowości 100–199; reszta src/sim zostaje poniżej 100 (zajęte 1, 3, 7, 11, 12, 13, 21, 22, 30). */
+/** Moduły strumienia C: kanały losowości 100–199; reszta src/sim zostaje poniżej 100 (zajęte 1, 3, 7, 21, 22). */
 const TYCOON_DIR = 'src/sim/economy/tycoon/';
 
 /** Trzeci argument wywołania, którego nawias otwierający stoi tuż przed `from`; null, gdy wywołanie ma mniej argumentów. */
@@ -323,10 +324,21 @@ function thirdArgument(code: string, from: number): string | null {
 }
 
 const NUMBER_LITERAL = /^[+-]?(?:0[xX][\da-fA-F_]+|\d[\d_]*(?:\.\d+)?(?:[eE][+-]?\d+)?)$/;
+/** Kanał z rejestru `CH` w `tycoon/channels.ts` (np. `CH.cardPick`): wartość bierzemy z samego rejestru. */
+const CHANNEL_CONST = /^CH\s*\.\s*([A-Za-z_$][\w$]*)$/;
+
+/** Numer kanału: literał liczbowy albo stała z rejestru `CH`; null, gdy argument jest czymś innym (wyrażenie, inna stała). */
+function channelValue(arg: string): number | null {
+  if (NUMBER_LITERAL.test(arg)) return Number(arg.replace(/_/g, ''));
+  const name = CHANNEL_CONST.exec(arg)?.[1];
+  return name !== undefined && Object.hasOwn(CH, name) ? CH[name as keyof typeof CH] : null;
+}
 
 /**
- * Złamane kanały `rand01(seedHash, a, K)` z literałem liczbowym K: poza tycoon/ K < 100, w nim 100 ≤ K ≤ 199. Wywołanie bez
- * trzeciego argumentu (kanał 0) albo z nieliteralnym (stała, wyrażenie) nie jest sprawdzane.
+ * Złamane kanały `rand01(seedHash, a, K)`: poza tycoon/ K < 100, w nim 100 ≤ K ≤ 199. W tycoon/ kanał musi być literałem
+ * albo stałą `CH.nazwa` z `channels.ts` (rejestr jest jeden, więc dwa moduły nie wezmą tego samego strumienia, a nazwa
+ * mówi, co losuje); wywołanie bez kanału (to kanał 0 ekonomii) albo z wyrażeniem jest tam błędem, bo nie da się go
+ * sprawdzić. Poza tycoon/ wyrażenia i stałe spoza `CH` nie są sprawdzane.
  */
 function channelViolations(path: string, source: string): string[] {
   const inTycoon = path.replace(/\\/g, '/').startsWith(TYCOON_DIR);
@@ -334,8 +346,15 @@ function channelViolations(path: string, source: string): string[] {
   const bad: string[] = [];
   for (const m of code.matchAll(/\brand01\s*\(/g)) {
     const arg = thirdArgument(code, m.index + m[0].length);
-    if (arg === null || !NUMBER_LITERAL.test(arg)) continue;
-    const channel = Number(arg.replace(/_/g, ''));
+    if (arg === null) {
+      if (inTycoon) bad.push('rand01 bez kanału');
+      continue;
+    }
+    const channel = channelValue(arg);
+    if (channel === null) {
+      if (inTycoon) bad.push(`rand01 kanał ${arg}`);
+      continue;
+    }
     if (inTycoon ? !(channel >= 100 && channel <= 199) : !(channel < 100)) bad.push(`rand01 kanał ${arg}`);
   }
   return bad;
@@ -715,6 +734,15 @@ describe('channelViolations: kanały rand01 na próbkach', () => {
     [TYCOON_FILE, 'rand01(h, a, 200)'],
     [TYCOON_FILE, 'rand01(h, a, -1)'],
     ['src/sim/economy/tycoon/cards/x.ts', 'rand01(h, a, 30)'],
+    // w tycoon/ kanał musi dać się sprawdzić: bez kanału to kanał 0 ekonomii, a wyrażenie albo obca stała to niewiadoma
+    [TYCOON_FILE, 'rand01(h, a)'],
+    [TYCOON_FILE, 'rand01(h, a, CARD_CHANNEL)'],
+    [TYCOON_FILE, 'rand01(h, a, CH.nieMaTakiego)'],
+    [TYCOON_FILE, 'rand01(h, a, CH.cardPick + 1)'],
+    [TYCOON_FILE, 'rand01(h, a, CH["cardPick"])'],
+    [TYCOON_FILE, 'rand01(h, a, CH.toString)'],
+    // stała z rejestru tycoona poza tycoon/ to kanał ≥ 100
+    [SIM_FILE, 'rand01(h, a, CH.cardPick)'],
   ])('%s: %s -> złamany kanał', (path, code) => {
     expect(channelViolations(path, code)).toHaveLength(1);
   });
@@ -739,13 +767,18 @@ describe('channelViolations: kanały rand01 na próbkach', () => {
     [TYCOON_FILE, 'rand01(h, a, 100)'],
     [TYCOON_FILE, 'rand01(h, a, 150)'],
     [TYCOON_FILE, 'rand01(h, a, 199)'],
-    [TYCOON_FILE, 'rand01(h, a)'],
-    [TYCOON_FILE, 'rand01(h, a, CARD_CHANNEL)'],
+    [TYCOON_FILE, 'rand01(h, a, CH.cardPick)'],
+    [TYCOON_FILE, 'rand01(h, a, CH . weather)'],
     [TYCOON_FILE, 'rand01(h, a, 100); rand01(h, b, 199)'],
     // katalog o podobnej nazwie to nie moduły strumienia C
     ['src/sim/economy/tycoonish/x.ts', 'rand01(h, a, 50)'],
   ])('%s: %s -> brak naruszeń', (path, code) => {
     expect(channelViolations(path, code)).toEqual([]);
+  });
+
+  it('rejestr CH: każdy kanał w zakresie 100–199', () => {
+    for (const [name, value] of Object.entries(CH)) expect(channelViolations(TYCOON_FILE, `rand01(h, a, CH.${name})`), name).toEqual([]);
+    expect(Object.values(CH).every((v) => v >= 100 && v <= 199)).toBe(true);
   });
 
   it('liczy każde wywołanie osobno', () => {

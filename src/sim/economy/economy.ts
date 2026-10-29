@@ -1,11 +1,11 @@
 import { hashString } from '@/sim/rng';
 import {
   BANKRUPTCY_AT, CATS, CAT_INFO, COMBO_WINDOW, CREDIT_LIMIT, DELIVERY_AT, DELIVERY_AT_AFTERNOON, DELIVERY_AT_NIGHT,
-  FINE_BASE, FINE_PER_PALLET, FRANCHISE_FEE_FIXED, FRANCHISE_FEE_SHARE, GIFT_FIRST, GIFT_GAP_MIN, GIFT_GAP_SPREAD, GIFT_OPEN,
+  FINE_BASE, FINE_PER_PALLET, FRANCHISE_FEE_FIXED, FRANCHISE_FEE_SHARE,
   HIRE_COST, HOT, HOUR_CURVE, ITEMS_PER_CUSTOMER,
-  LOT_TRAFFIC, MEDIA_PER_DAY, MINUTES_PER_DAY, OPEN_FROM, OPEN_TO, ORDER_DEADLINE, PALLET_FEE, PALLET_ITEMS, PALLETS_FREE, PATIENCE,
-  RESTOCK_RATE, RETURN_FEE, SCO_ACCEPT, SCO_RATE, STAFF_MAX, STAFF_START, START_CASH, TAP_ITEMS, TILL_RATE, TRAFFIC_PER_SHELF_ITEM,
-  TRAFFIC_RANGE, UNLOAD_AT, UNLOAD_RATE, WAGE_PER_DAY, type Cat,
+  LOT_TRAFFIC, MARGIN_PER_CUSTOMER, MEDIA_PER_DAY, MINUTES_PER_DAY, OPEN_FROM, OPEN_TO, ORDER_DEADLINE, PALLET_FEE, PALLET_ITEMS,
+  PALLETS_FREE, PATIENCE, RESTOCK_RATE, RETURN_FEE, REVENUE_PER_CUSTOMER, SCO_ACCEPT, SCO_RATE, STAFF_MAX, STAFF_START, START_CASH,
+  TILL_RATE, TRAFFIC_PER_SHELF_ITEM, TRAFFIC_RANGE, UNLOAD_AT, UNLOAD_RATE, WAGE_PER_DAY, type Cat,
 } from './catalog';
 import { dayOf, formatMonth, isLastDayOfMonth, isOpenAt, minuteOfDay } from './calendar';
 import { FINE_PALLET_POW } from './exactMath';
@@ -17,14 +17,34 @@ import {
 } from './upgrades';
 import { MILESTONES } from './milestones';
 import { XP, levelReward, xpToNext } from './progress';
-import { QUESTS_ACTIVE, newQuest, questDone, type Quest, type QuestScale } from './quests';
+import {
+  cardDef, cardModifiers, cardsBlocking, closeCardsMonth, drawDayCards, fillText, pruneCardMods, resolveCard, type CardContext,
+} from './tycoon/cards';
+import {
+  cleaningDemand, cleanHall, cleanlinessEffects, closeHallMonth, rollWeather, sampleHall, soilHall, type HallState,
+} from './tycoon/cleanliness';
+import { closeFatigueMonth, fatigueEfficiency, fatigueNight, tap as fatigueTap, tapItems } from './tycoon/fatigue';
+import { closeKpiMonth, closeKpiWeek, kpiTitle, type KpiMetrics, type KpiScale, type KpiWeekResult } from './tycoon/kpi';
+import { buildMonthReport, reportCommentText, type MonthFigures, type TycoonMonthReport } from './tycoon/report';
+import { createShift, peopleOnShift, placePeople, type ShiftState } from './tycoon/shift';
+import {
+  PEOPLE_PER_PALLET, allocateStaff, closeStaffDay, closeStaffMonth, normalizePins, restockDemand, serveTill, stepStaff, tillDemand,
+  unloadDemand, zeroTasks, type RobotFleet,
+} from './tycoon/staff';
+import { applyCardOutcome, createTycoon, type TycoonState } from './tycoon/state';
+import { dayTrafficMult } from './tycoon/sunday';
+import { dateOfGameDay, monthIndexOf, weekdayOf } from './tycoon/time';
+import {
+  TRUST, addTrust, closeTrustMonth, trustTerminates, trustTier, turnoverBonusShare, type TrustReason, type TrustTier,
+} from './tycoon/trust';
+import {
+  addWaste, closeWasteMonth, hallObstacle, palletBags, removeWaste, settleWaste, wasteDemand, wasteSpots, wasteMinute,
+} from './tycoon/waste';
+import { closeWutMonth, wutFromSales, wutFromSco } from './tycoon/wut';
 
 // Ekonomia jednego sklepu (spec §6–§8) jako czysta symulacja z krokiem jednej minuty gry. Klienci są modelowani
 // zbiorczo (strumień przyjść, kolejka, przepustowość kas), a tłum w 3D to ich obraz, a nie źródło liczb.
 // Stan jest zwykłym obiektem JSON, więc zapis gry to JSON.stringify.
-
-export type Priority = 'klienci' | 'rowno' | 'palety';
-export const PRIORITY_LABEL: Record<Priority, string> = { klienci: 'Najpierw kasa', rowno: 'Po równo', palety: 'Najpierw palety' };
 
 export interface Pallet {
   id: number;
@@ -39,6 +59,8 @@ export interface Pallet {
   since: number;
   /** Złota paleta: po rozładunku premia (losowa nagroda w dostawie). */
   golden?: boolean;
+  /** Worki śmieci po rozładunku (`palletBags` ze składu z dostawy). Palety ze starych zapisów nie mają pola: wtedy jeden worek. */
+  bags?: number;
 }
 
 export interface Counters {
@@ -52,7 +74,10 @@ export interface Counters {
   fines: number;
   logistics: number;    // opłaty za palety ponad przydział i odesłane palety
   investments: number;  // ulepszenia, sprzęt, remont, rekrutacja
-  other: number;        // inne przychody (najem bankomatu, premia Centrali)
+  other: number;        // inne przychody (najem bankomatu, sieć sklepów, nagrody)
+  bonus: number;        // premie Centrali (od obrotu miesiąca)
+  wut: number;          // opłata za WUT (ubytki) ponad próg
+  fineCount: number;    // liczba mandatów (kwoty są w `fines`)
   missingItems: number;
   palletsUnloaded: number;
   taps: number;         // stuknięcia gracza w palety i kasę
@@ -68,7 +93,13 @@ export interface MonthReport {
   counters: Counters;
   profit: number;
   cash: number;
+  /** Komentarz Centrali: tekst z `detail.commentId` (`reportCommentText`). Raport ze starego zapisu niesie własny tekst. */
   comment: string;
+  /**
+   * Szczegóły raportu tycoona (pozycje, zaufanie z przyczynami, czystość, KPI, wskazówka): liczby i identyfikatory, teksty
+   * robi interfejs. `null` w raportach ze starych zapisów, sprzed raportu tycoona.
+   */
+  detail: TycoonMonthReport | null;
 }
 
 export interface EconomyState {
@@ -80,7 +111,6 @@ export interface EconomyState {
   ogonki: number;
   ogonkiAcc: number;
   reputation: number;
-  trust: number;
   shelf: Record<Cat, number>;
   backroom: Record<Cat, number>;
   pallets: Pallet[];
@@ -88,7 +118,6 @@ export interface EconomyState {
   order: { auto: boolean; manual: number };
   deliveries: Delivery[];
   staff: number;
-  priority: Priority;
   queue: number;
   arrivalAcc: number;
   upgrades: Partial<Record<UpgradeId, number>>;
@@ -105,22 +134,14 @@ export interface EconomyState {
   lastReport: MonthReport | null;
   milestones: string[];
   gameOver: boolean;
-  /** Ostatni przydział ludzi (do interfejsu): ilu na kasie, ilu przy paletach. */
+  /** Ostatni przydział ludzi w osobominutach (do interfejsu): na kasie, przy paletach, półkach i sprzątaniu. Z `shift.human`. */
   lastCashiers: number;
   lastWorkers: number;
+  /** Zmiana w ostatniej wykonanej minucie (tycoon/shift.ts): ilu ludzi i co robili. Z tego `staffOnShift` pokazuje ludzi na ekranie. */
+  shift: ShiftState;
   /** Poziom gracza i XP zebrane na obecnym poziomie (progress.ts). */
   level: number;
   xp: number;
-  quests: Quest[];
-  questSeq: number;
-  /** Ile dni zamknięto bez mandatu (licznik do zleceń). */
-  cleanDays: number;
-  /** Numer kolejnej paczki od Centrali (losowa nagroda). */
-  giftSeq: number;
-  /** Minuta otwarcia bieżącego albo następnego okna paczki od Centrali (okno trwa `GIFT_OPEN` minut gry, `giftOpen`). */
-  giftAt: number;
-  /** Do tej minuty stuknięcia działają ×3 (nagroda z paczki). */
-  tapBoostUntil: number;
   /** Combo stukania w czasie gry (nie zegarem przeglądarki): stuknięcia w serii (0 = brak) i minuta ostatniego udanego. */
   tapStreak: number;
   lastTapAt: number;
@@ -128,15 +149,17 @@ export interface EconomyState {
   bestDayProfit: number;
   /** Sieć sklepów z poprzednich rozgrywek: punkty partnera (trwała premia) i dochód z sieci na dzień. */
   partner: { points: number; networkIncome: number; stores: number };
+  /** Mechaniki tycoona (ludzie, śmieci, czystość, siły, karty, KPI, WUT) i zaufanie Centrali (tycoon/state.ts). */
+  tycoon: TycoonState;
 }
 
-export type EconEventKind = 'delivery' | 'order' | 'fine' | 'milestone' | 'day' | 'month' | 'remont' | 'info' | 'warning' | 'gameover'
-  | 'levelup' | 'golden' | 'quest';
+export type EconEventKind = 'delivery' | 'order' | 'fine' | 'milestone' | 'day' | 'month' | 'remont' | 'info' | 'warning' | 'debt' | 'gameover'
+  | 'levelup' | 'golden' | 'trust-tier' | 'card' | 'card-result' | 'kpi-week';
 export interface EconEvent { kind: EconEventKind; text: string; report?: MonthReport; level?: number; unlocks?: string[] }
 
 export const emptyCounters = (): Counters => ({
   customers: 0, lost: 0, revenue: 0, margin: 0, wages: 0, media: 0, fee: 0, fines: 0, logistics: 0, investments: 0, other: 0,
-  missingItems: 0, palletsUnloaded: 0, taps: 0, hotSold: 0, purchases: 0,
+  bonus: 0, wut: 0, fineCount: 0, missingItems: 0, palletsUnloaded: 0, taps: 0, hotSold: 0, purchases: 0,
 });
 
 const perCat = (f: (c: Cat) => number): Record<Cat, number> => {
@@ -166,10 +189,7 @@ export interface Effects {
   rampa: boolean;
   traffic: number;
   hotMult: number;
-  shrink: number;
   fineMult: number;
-  autoUnload: number;
-  autoRestock: number;
   humanoid: boolean;
   ogonkiMult: number;
   /** Mnożnik marży (punkty partnera z sieci sklepów). */
@@ -201,10 +221,7 @@ export function effects(s: EconomyState, info: StoreInfo): Effects {
     traffic: (1 + 0.1 * level(s, 'ulotki') + 0.12 * level(s, 'traszkapka') + 0.04 * activeEquipment(s, 'bankomat')
       + 0.07 * activeEquipment(s, 'paczkownik')) * (1 + 0.1 * s.remontLevel) * (1 + 0.03 * s.partner.points),
     hotMult: 1 + 0.3 * level(s, 'kawa') + 0.4 * activeEquipment(s, 'piec'),
-    shrink: 0.03 * (1 - 0.4 * level(s, 'kamery')),
     fineMult: 1 - 0.25 * level(s, 'kamery'),
-    autoUnload: 4 * level(s, 'tasmociag') + (humanoid ? 3 * UNLOAD_RATE : 0),
-    autoRestock: 12 * level(s, 'wykladacz') + (humanoid ? RESTOCK_RATE : 0),
     humanoid,
     ogonkiMult: 1 + 0.5 * level(s, 'traszkapka'),
     marginMult: 1 + 0.04 * s.partner.points,
@@ -219,21 +236,54 @@ export function baseTraffic(info: StoreInfo): number {
   return Math.min(hi, Math.max(lo, info.shelfCapTotal * TRAFFIC_PER_SHELF_ITEM)) * LOT_TRAFFIC[info.lotKind];
 }
 
+// --- Zaufanie Centrali i liczniki KPI ----------------------------------------------------------------
+
+const NO_KPI_METRICS: KpiMetrics = { customers: 0, hotSold: 0, lost: 0, fines: 0, cleanSum: 0, cleanMinutes: 0 };
+
+/**
+ * Zmiana zaufania Centrali z przyczyną (raport miesiąca pokaże, skąd wzrost i spadek). Gdy zmienia się próg, do `out`
+ * trafia komunikat `trust-tier`. Zwraca zmianę po miękkich granicach i przycięciu do 0–100.
+ */
+export function changeTrust(s: EconomyState, reason: TrustReason, delta: number, out?: EconEvent[]): number {
+  const before = trustTier(s.tycoon.trust.value);
+  const applied = addTrust(s.tycoon.trust, reason, delta);
+  announceTrustTier(s, before, out);
+  return applied;
+}
+
+/** Komunikat `trust-tier`, gdy zaufanie przeszło do innego progu niż `before`. */
+function announceTrustTier(s: EconomyState, before: TrustTier, out?: EconEvent[]): void {
+  const after = trustTier(s.tycoon.trust.value);
+  if (after.id !== before.id) out?.push({ kind: 'trust-tier', text: `Zaufanie Centrali: ${after.label}. ${after.flavor}` });
+}
+
+/** Liczniki narastające, od których KPI tygodnia liczy postęp: z liczników gry i z sumy czystości sali. */
+export const kpiMetrics = (total: Counters, hall: HallState): KpiMetrics => ({
+  customers: total.customers, hotSold: total.hotSold, lost: total.lost, fines: total.fineCount,
+  cleanSum: hall.totalSum, cleanMinutes: hall.totalMinutes,
+});
+export const kpiMetricsOf = (s: EconomyState): KpiMetrics => kpiMetrics(s.total, s.tycoon.hall);
+
+/** Skala sklepu do celów i nagród KPI: oczekiwany ruch, marża dnia i poziom gracza (XP za trafiony cel). */
+export const kpiScaleOf = (s: EconomyState, info: StoreInfo): KpiScale => ({
+  dailyCustomers: expectedDailyCustomers(s, info), dailyMargin: estimatedDailyMargin(s, info), level: s.level,
+});
+
 // --- Tworzenie ---------------------------------------------------------------------------------------
 
 /** Nowa gra: sklep na kreskę (towar Centrali na półkach, 2 palety pod drzwiami), 1 września, 6:00. */
 export function createEconomy(seed: string, info: StoreInfo, partner: EconomyState['partner'] = { points: 0, networkIncome: 0, stores: 0 }): EconomyState {
   const backroomStart = info.backroomCap * 0.35;
+  const seedHash = hashString(`${seed}:economy`);
   const s: EconomyState = {
     version: 1,
     seed,
-    seedHash: hashString(`${seed}:economy`),
+    seedHash,
     minute: OPEN_FROM,
     cash: START_CASH,
     ogonki: 0,
     ogonkiAcc: 0,
     reputation: 50,
-    trust: 60,
     shelf: perCat((c) => Math.round(info.shelfCap[c] * 0.8)),
     backroom: perCat((c) => Math.round(backroomStart * CAT_INFO[c].basket)),
     pallets: [],
@@ -241,7 +291,6 @@ export function createEconomy(seed: string, info: StoreInfo, partner: EconomySta
     order: { auto: true, manual: 4 },
     deliveries: [],
     staff: STAFF_START,
-    priority: 'rowno',
     queue: 0,
     arrivalAcc: 0,
     upgrades: {},
@@ -259,23 +308,26 @@ export function createEconomy(seed: string, info: StoreInfo, partner: EconomySta
     gameOver: false,
     lastCashiers: 1,
     lastWorkers: 1,
+    shift: createShift(),
     level: 1,
     xp: 0,
-    quests: [],
-    questSeq: 1,
-    cleanDays: 0,
-    giftSeq: 1,
-    giftAt: giftWindowFrom(OPEN_FROM + GIFT_FIRST),
-    tapBoostUntil: 0,
     tapStreak: 0,
     lastTapAt: -1e9,
     lastDayProfit: 0,
     bestDayProfit: 0,
     partner: { ...partner },
+    tycoon: createTycoon({ day: 0, seedHash, trust: TRUST.start, metrics: NO_KPI_METRICS, scale: { dailyCustomers: 0, dailyMargin: 0 } }),
   };
+  // Cel KPI pierwszego tygodnia zależy od skali sklepu i liczników (kpiScaleOf, kpiMetricsOf czytają gotowy stan), więc
+  // właściwy tycoon powstaje po obiekcie bazowym; ten z literału jest tylko zaślepką z czystą salą.
+  const day = dayOf(s.minute);
+  s.tycoon = createTycoon({
+    day, seedHash, trust: TRUST.start, weather: rollWeather(seedHash, day, dateOfGameDay(day).month),
+    metrics: kpiMetricsOf(s), scale: kpiScaleOf(s, info),
+  });
   const ev: EconEvent[] = [];
   deliver(s, info, 2, ev);
-  fillQuests(s, info);
+  drawDayCards(s.tycoon.cards, cardContext(s, info), seedHash);   // karty dnia 0 (w stepMinute losują się o północy)
   return s;
 }
 
@@ -283,14 +335,29 @@ export function createEconomy(seed: string, info: StoreInfo, partner: EconomySta
 
 export const isClosedForRemont = (s: EconomyState): boolean => s.remontUntil !== null && s.minute < s.remontUntil;
 export const isStoreOpen = (s: EconomyState): boolean => isOpenAt(minuteOfDay(s.minute)) && !isClosedForRemont(s);
+/** Czy do sklepu wolno teraz wejść klientowi: godziny i remont (`isStoreOpen`) oraz karta „zamknij na godzinę”. To rozstrzyga `stepMinute` i `tapTill`. */
+export const isOpenForCustomers = (s: EconomyState): boolean => isStoreOpen(s) && !cardModifiers(s.tycoon.cards, s.minute).closed;
+
+/**
+ * Czy gra czeka na odpowiedź gracza: widoczna karta decyzji albo okólnik (decyzja użytkownika z 28.10.2026: gra stoi, aż
+ * gracz wybierze, także przy ×8). `stepMinute` tego NIE sprawdza i zostaje całkowitą funkcją „minuta dalej” (pętle w testach
+ * i narzędziach liczą nią minuty bez klikania w karty). Pauzę wymuszają wołający, każdy po swojemu: `advanceEconomy` (żywa
+ * gra), `replayRun` (serwer: karta bez odpowiedzi w dzienniku dostaje zaznaczoną z góry), `skip` (debug) i boty.
+ */
+export const awaitingDecision = (s: EconomyState): boolean => !s.gameOver && cardsBlocking(s.tycoon.cards, s.minute);
 
 /** Jedna minuta gry. Zdarzenia dla gracza (dostawa, mandat, raport…) trafiają do `out`. */
 export function stepMinute(s: EconomyState, info: StoreInfo, out: EconEvent[]): void {
   if (s.gameOver) return;
-  if (s.minute >= s.giftAt + GIFT_OPEN) scheduleGift(s);   // okno paczki nie odebrane na czas wygasa
   const mod = minuteOfDay(s.minute);
+  // o północy pogoda dnia (zaczep: później ustawi ją system pogody) i karty dnia z jej wynikiem; dzień 0 ma jedno i drugie z `createEconomy`
+  if (mod === 0) {
+    s.tycoon.hall.weather = rollWeather(s.seedHash, dayOf(s.minute), dateOfGameDay(dayOf(s.minute)).month);
+    drawDayCards(s.tycoon.cards, cardContext(s, info), s.seedHash);
+  }
+  pruneCardMods(s.tycoon.cards, s.minute);   // efekty kart po czasie znikają (ruch, marża i ludzie czytają je niżej)
   const fx = effects(s, info);
-  const open = isStoreOpen(s);
+  const open = isOpenForCustomers(s);
 
   if (s.remontUntil !== null && s.minute >= s.remontUntil) {
     s.remontUntil = null;
@@ -300,12 +367,15 @@ export function stepMinute(s: EconomyState, info: StoreInfo, out: EconEvent[]): 
   for (const d of s.deliveries.filter((x) => x.at <= s.minute)) deliver(s, info, d.count, out);
   s.deliveries = s.deliveries.filter((x) => x.at > s.minute);
 
-  // kto obsłużył kolejkę w tej minucie, ten w niej nie rozładowuje: podział na kasę i resztę robimy raz
-  let cashiers = 0;
-  if (open) cashiers = serveCustomers(s, info, fx, mod);
+  let arrivals = 0;
+  if (open) arrivals = arrive(s, info, fx);
   else s.queue = 0;
-  // personel pracuje w godzinach otwarcia, także w czasie remontu (wtedy nikt nie stoi na kasie)
-  doWork(s, info, fx, isOpenAt(mod), cashiers, out);
+  // ludzie pracują w godzinach otwarcia, także w czasie remontu (wtedy nikt nie stoi na kasie); automatyka całą dobę
+  runStaff(s, info, fx, open, out);
+  // brud z przyjść i worków w sali, licznik worków, średnia czystości z minut otwarcia
+  soilHall(s.tycoon.hall, arrivals, s.tycoon.waste.hall);
+  wasteMinute(s.tycoon.waste);
+  if (open) sampleHall(s.tycoon.hall);
   if (mod >= 8 * 60 && mod < 20 * 60) checkFine(s, fx, out);
   if (mod === ORDER_DEADLINE) placeOrder(s, info, fx, out);
   if (mod === OPEN_TO) closeDay(s, info, out);
@@ -313,21 +383,42 @@ export function stepMinute(s: EconomyState, info: StoreInfo, out: EconEvent[]): 
   processLevels(s, out);
 
   s.minute++;
+  // karta, której godzina właśnie nadeszła: gra staje na niej (wołający sprawdzają `awaitingDecision`), a interfejs dostaje sygnał
+  for (const c of s.tycoon.cards.pending) if (c.showAt === s.minute) out.push({ kind: 'card', text: cardDef(c.id)?.title ?? '' });
 }
 
-/** Przyjęcie i obsługa klientów w jednej minucie. Zwraca, ilu ludzi stało na kasie (reszta personelu pracuje przy towarze). */
-function serveCustomers(s: EconomyState, info: StoreInfo, fx: Effects, mod: number): number {
-  const hour = Math.floor(mod / 60);
+/**
+ * Oczekiwani klienci w tej minucie (lambda przed losowaniem): krzywa godzin, reputacja, marketing i remont, paczka „szał
+ * zakupów”, przeszkody w sali (palety i worki śmieci), niedziela, kiedy duże sklepy stoją zamknięte (tycoon/sunday.ts), oraz
+ * ruch z efektów kart (np. +30% przez dwie godziny).
+ * Jedyne miejsce, gdzie liczy się ten wzór: korzysta z niego `stepMinute`, a testy i karty pytają o to samo.
+ */
+export function arrivalRate(s: EconomyState, info: StoreInfo, fx: Effects = effects(s, info)): number {
+  const hour = Math.floor(minuteOfDay(s.minute) / 60);
   const floorPallets = s.pallets.filter((p) => p.loc === 'floor').length;
   const boost = s.minute < s.boostUntil ? 1.3 : 1;
-  const lambda = (baseTraffic(info) * (HOUR_CURVE[hour] ?? 0) / 60) * reputationFactor(s.reputation)
-    * fx.traffic * boost * Math.max(0.5, 1 - 0.08 * floorPallets);
-  s.arrivalAcc += lambda * (0.75 + 0.5 * rand01(s.seedHash, s.minute, 1));
+  return (baseTraffic(info) * (HOUR_CURVE[hour] ?? 0) / 60) * reputationFactor(s.reputation)
+    * fx.traffic * boost * Math.max(0.5, 1 - 0.08 * (floorPallets + hallObstacle(s.tycoon.waste))) * dayTrafficMult(dayOf(s.minute))
+    * cardModifiers(s.tycoon.cards, s.minute).traffic;
+}
+
+/**
+ * Ilu ludzi w kolejce klient jeszcze toleruje: ulepszenia i palety w sali (`fx.patience`), a brud sali i worki w sali odejmują
+ * się dodatkowo. Jedyne miejsce tego wzoru: kolejka (`arrive`) i widok botów (`tycoon/economyEnv.ts`) pytają o to samo.
+ */
+export const patienceOf = (s: EconomyState, fx: Effects): number =>
+  fx.patience + cleanlinessEffects(s.tycoon.hall.cleanliness).patience - hallObstacle(s.tycoon.waste);
+
+/**
+ * Przyjście klientów w jednej minucie; ci, którzy widzą długą kolejkę, rezygnują (spec §6.1). Obsługa idzie przez pulę ludzi
+ * (`runStaff`). Zwraca liczbę przyjść z tej minuty (brud sali liczy się od przychodzących, nie od obsłużonych).
+ */
+function arrive(s: EconomyState, info: StoreInfo, fx: Effects): number {
+  s.arrivalAcc += arrivalRate(s, info, fx) * (0.75 + 0.5 * rand01(s.seedHash, s.minute, 1));
   const arrivals = Math.floor(s.arrivalAcc);
   s.arrivalAcc -= arrivals;
 
-  // klienci, którzy widzą długą kolejkę, rezygnują (spec §6.1)
-  const over = s.queue - Math.max(1, fx.patience);
+  const over = s.queue - Math.max(1, patienceOf(s, fx));
   const balk = over < 0 ? 0 : Math.min(1, 0.35 * (over + 1));
   const lost = arrivals * balk;
   s.queue += arrivals - lost;
@@ -335,34 +426,14 @@ function serveCustomers(s: EconomyState, info: StoreInfo, fx: Effects, mod: numb
     s.reputation -= lost * 0.03;
     for (const c of [s.today, s.month, s.total]) c.lost += lost;
   }
-
-  const cashiers = allocateCashiers(s, fx);
-  const capTill = cashiers * TILL_RATE * fx.tillSpeed;
-  const capSco = fx.sco * SCO_RATE * fx.scoSpeed;
-  const scoServed = Math.min(capSco, s.queue * fx.scoAccept);
-  const tillServed = Math.min(capTill, s.queue - scoServed);
-  const served = Math.max(0, scoServed + tillServed);
-  s.queue = Math.max(0, s.queue - served);
-  if (served > 0) sell(s, fx, served, scoServed / served);
-  if (s.queue > 4) s.reputation -= 0.002 * (s.queue - 4);
-  s.reputation = Math.min(100, Math.max(0, s.reputation));
-  return cashiers;
+  return arrivals;
 }
 
-/** Ilu ludzi stoi na kasie, gdy sklep jest otwarty (reszta pracuje przy paletach i półkach). */
-function allocateCashiers(s: EconomyState, fx: Effects): number {
-  const staff = s.staff;
-  let want: number;
-  switch (s.priority) {
-    case 'klienci': want = s.queue > 0.3 ? fx.tills : 1; break;
-    case 'rowno': want = Math.max(fx.sco > 0 && s.queue < 1.5 ? 0 : 1, Math.ceil(s.queue / 4)); break;
-    case 'palety': want = s.queue > 5 ? 1 : fx.sco > 0 ? 0 : 1; break;
-  }
-  return Math.max(0, Math.min(staff, fx.tills, want));
-}
-
-/** Sprzedaż `served` klientów: koszyk z półek, marża, strefa hot, ubytki na SCO, reputacja. */
-function sell(s: EconomyState, fx: Effects, served: number, scoShare: number): number {
+/**
+ * Sprzedaż `served` klientów: koszyk z półek, marża, strefa hot, ubytki (WUT), reputacja. `scoShare` to część obsłużonych przez
+ * kasy samoobsługowe: ich „zapomniane” skany to ubytek w inwentaryzacji (WUT, kradzieże), a nie obcięta marża. Zwraca marżę.
+ */
+export function sell(s: EconomyState, fx: Effects, served: number, scoShare: number): number {
   let revenue = 0;
   let margin = 0;
   let want = 0;
@@ -379,12 +450,15 @@ function sell(s: EconomyState, fx: Effects, served: number, scoShare: number): n
   const hot = served * HOT.chance * fx.hotMult;
   revenue += hot * HOT.price;
   margin += hot * HOT.price * HOT.margin;
-  margin -= revenue * scoShare * fx.shrink;   // „zapomniane” skany na SCO
-  margin *= fx.marginMult;
+  margin *= fx.marginMult * cardModifiers(s.tycoon.cards, s.minute).margin;   // partner i efekt karty (rabat z glitcha, promocja)
   s.xp += served * XP.customer;
+  // ubytki towarowe: naturalne od obrotu i „zapomniane” skany na SCO (kamery zmniejszają); do progu płaci Centrala, nadwyżkę przy zamknięciu miesiąca franczyzobiorca
+  wutFromSales(s.tycoon.wut, revenue);
+  wutFromSco(s.tycoon.wut, revenue * scoShare, 1 - 0.4 * level(s, 'kamery'));
 
   const missing = want > 0 ? 1 - got / want : 0;
   s.reputation += served * (0.0025 * (1 - missing) - 0.02 * missing);
+  s.reputation += served * cleanlinessEffects(s.tycoon.hall.cleanliness).repPerCustomer;   // brudna sala: do −0,003 na klienta
   s.cash += margin;
   s.ogonkiAcc += (served / 250) * fx.ogonkiMult;
   if (s.ogonkiAcc >= 1) { const n = Math.floor(s.ogonkiAcc); s.ogonki += n; s.ogonkiAcc -= n; }
@@ -402,34 +476,84 @@ function sell(s: EconomyState, fx: Effects, served: number, scoShare: number): n
 
 const PALLET_ORDER: Record<PalletLoc, number> = { sidewalk: 0, floor: 1, backroom: 2 };
 
-function doWork(s: EconomyState, info: StoreInfo, fx: Effects, shift: boolean, cashiers: number, out: EconEvent[]): void {
-  const workers = shift ? Math.max(0, s.staff - cashiers) : 0;
-  s.lastCashiers = cashiers;
-  s.lastWorkers = workers;
+/**
+ * Automatyka z warsztatu dla puli ludzi (tycoon/staff.ts): poziomy taśmociągu i wykładacza, prasa do kartonów (nie zastępuje
+ * ludzi, tylko skraca wynoszenie worków) oraz eDward.
+ */
+export const robotFleet = (s: EconomyState): RobotFleet => ({
+  tasmociag: level(s, 'tasmociag'), wykladacz: level(s, 'wykladacz'), prasa: level(s, 'prasa'), edward: level(s, 'humanoid') > 0 ? 1 : 0,
+});
 
-  let time = workers;   // osobominuty
-  // 1. pilne wykładanie: półki poniżej połowy
-  time -= restock(s, info, 0.5, time * RESTOCK_RATE) / RESTOCK_RATE;
-  // 2. rozładunek palet (najpierw chodnik: mandat; potem sala: korek; na końcu zaplecze)
-  const pallets = [...s.pallets].sort((a, b) => PALLET_ORDER[a.loc] - PALLET_ORDER[b.loc] || a.since - b.since);
-  for (const p of pallets) {
-    if (time <= 1e-6) break;
-    const rate = UNLOAD_RATE * fx.unloadMult * UNLOAD_AT[p.loc];
-    time -= unloadPallet(s, info, fx, p, time * rate, out) / rate;
-  }
-  // 3. dokładanie do pełna
-  if (time > 1e-6) restock(s, info, 1, time * RESTOCK_RATE);
+/**
+ * Miejsca na zapleczu, których nie zajmują palety (te, które w ogóle zostają: rozładowana paleta odejdzie z końcem minuty).
+ * Na tyle miejsc mieszczą się worki; reszta idzie do sali (waste.ts).
+ */
+const wasteRoom = (s: EconomyState, fx: Effects): number =>
+  Math.max(0, fx.backroomSpots - s.pallets.filter((p) => p.loc === 'backroom' && p.total >= 0.5).length);
 
-  // automatyka z warsztatu działa całą dobę
-  if (fx.autoUnload > 0) {
-    let budget = fx.autoUnload;
-    for (const p of [...s.pallets].sort((a, b) => PALLET_ORDER[b.loc] - PALLET_ORDER[a.loc])) {
-      if (budget <= 1e-6) break;
-      budget -= unloadPallet(s, info, fx, p, budget, out);
-    }
+/** Wolne miejsce na towar: zaplecze i półki. Bez niego nie ma co rozładowywać. */
+const stockRoom = (s: EconomyState, info: StoreInfo, fx: Effects): number =>
+  Math.max(0, fx.backroomCap - sum(s.backroom)) + CATS.reduce((n, c) => n + Math.max(0, info.shelfCap[c] - s.shelf[c]), 0);
+
+const unloadRate = (fx: Effects, p: Pallet): number => UNLOAD_RATE * fx.unloadMult * UNLOAD_AT[p.loc];
+
+/**
+ * Praca jednej minuty: zapotrzebowanie czterech zadań w osobominutach, przydział z puli ludzi i automatyki, a potem kasa,
+ * rozładunek, wykładanie i sprzątanie z tym, co zadanie dostało. Kto stoi na kasie, to wynik przydziału (profil i przypięci
+ * gracza), a nie osobna reguła. Sprzątanie to worki (najpierw z sali) i mycie podłogi (waste.ts, cleanliness.ts).
+ */
+function runStaff(s: EconomyState, info: StoreInfo, fx: Effects, open: boolean, out: EconEvent[]): void {
+  const staff = peopleOnShift(s);
+  const robots = robotFleet(s);
+  const press = robots.prasa > 0;
+  const { waste, hall } = s.tycoon;
+  const tillRate = TILL_RATE * fx.tillSpeed;
+  const till = tillDemand({
+    queue: open ? s.queue : 0, tills: fx.tills, tillRate, sco: fx.sco, scoRate: SCO_RATE * fx.scoSpeed, scoAccept: fx.scoAccept,
+  });
+  const demand = zeroTasks();
+  demand.kasa = till.demand;
+  demand.rozladunek = Math.min(
+    unloadDemand(s.pallets.map((p) => ({ items: p.total, rate: unloadRate(fx, p) }))),
+    stockRoom(s, info, fx) / (UNLOAD_RATE * fx.unloadMult),
+  );
+  demand.wykladanie = restockDemand(
+    CATS.reduce((n, c) => n + Math.max(0, Math.min(info.shelfCap[c] - s.shelf[c], s.backroom[c])), 0), RESTOCK_RATE,
+  );
+  demand.sprzatanie = wasteDemand(waste, press) + cleaningDemand(hall);
+  const input = { staff, demand, robots, scoFreed: till.freed };
+  // statystyki dnia i miesiąca liczą tylko minuty zmiany: nocą pracuje sama automatyka, a zadania bez ludzi (palety czekające do
+  // rana) nie są niedoborem rąk, więc raport nie podpowiada fałszywych „braków”. Bez statystyk liczy czysty przydział.
+  const alloc = isOpenAt(minuteOfDay(s.minute)) ? stepStaff(s.tycoon.staff, input) : allocateStaff(s.tycoon.staff, input);
+
+  // kasa: najpierw potwierdzenia wieku na SCO, potem kolejka; klient SCO bez potwierdzenia zostaje w kolejce
+  if (open) {
+    const served = serveTill(till, alloc.total.kasa, tillRate);
+    s.queue = Math.max(0, s.queue - served.total);
+    if (served.total > 0) sell(s, fx, served.total, served.sco / served.total);
+    if (s.queue > 4) s.reputation -= 0.002 * (s.queue - 4);
+    s.reputation = Math.min(100, Math.max(0, s.reputation));
   }
-  if (fx.autoRestock > 0) restock(s, info, 1, fx.autoRestock);
+
+  // rozładunek: najpierw chodnik (mandat), potem sala (korek), na końcu zaplecze; przy palecie najwyżej dwie osoby
+  let minutes = alloc.total.rozladunek;
+  for (const p of [...s.pallets].sort((a, b) => PALLET_ORDER[a.loc] - PALLET_ORDER[b.loc] || a.since - b.since)) {
+    if (minutes <= 1e-9) break;
+    const rate = unloadRate(fx, p);
+    const use = Math.min(minutes, PEOPLE_PER_PALLET, p.total / rate);
+    unloadPallet(s, info, fx, p, use * rate, out);
+    minutes -= use;
+  }
+  restock(s, info, 1, alloc.total.wykladanie * RESTOCK_RATE);
   removeEmptyPallets(s);
+
+  // sprzątanie: najpierw worki (z sali, potem z zaplecza), reszta minut na podłogę
+  const sweep = alloc.total.sprzatanie;
+  cleanHall(hall, sweep - removeWaste(waste, sweep, press));
+
+  s.shift = { staff, human: alloc.human, people: placePeople(s.shift.people, staff, alloc.human, s.tycoon.staff.pinned) };
+  s.lastCashiers = alloc.human.kasa;
+  s.lastWorkers = alloc.human.rozladunek + alloc.human.wykladanie + alloc.human.sprzatanie;
 }
 
 /** Wykłada z zaplecza na półki do poziomu `fill` pojemności, najwyżej `budget` sztuk. Zwraca liczbę sztuk. */
@@ -468,16 +592,17 @@ function unloadPallet(s: EconomyState, info: StoreInfo, fx: Effects, p: Pallet, 
   }
   p.total = Math.max(0, sum(p.items));
   // Liczy się tylko przejście poniżej progu. Paleta z ułamkiem sztuki zostaje do końca minuty (`removeEmptyPallets`), więc
-  // automatyka warsztatu odwiedza ją jeszcze raz i bez tego warunku premia, XP i zlecenia szłyby drugi raz.
+  // automatyka warsztatu odwiedza ją jeszcze raz i bez tego warunku premia i XP szłyby drugi raz.
   if (before >= 0.5 && p.total < 0.5 && moved > 0) {
     for (const k of [s.today, s.month, s.total]) k.palletsUnloaded++;
     s.xp += XP.pallet;
+    addWaste(s.tycoon.waste, p.bags ?? 1, wasteRoom(s, fx));   // kartony i folia po palecie
     if (p.golden) {
-      const bonus = Math.round(Math.max(400, estimatedDailyMargin(s, info) * 0.4));
-      income(s, bonus);
+      const prize = Math.round(Math.max(GOLDEN_PRIZE.min, estimatedDailyMargin(s, info) * GOLDEN_PRIZE.share));
+      bonus(s, prize);   // premia Centrali: raport pokazuje ją w „Premiach”, a nie w innych przychodach
       s.ogonki += 5;
       s.xp += XP.golden;
-      out?.push({ kind: 'golden', text: `✨ Złota paleta rozładowana: +${fmt(bonus)} zł i +5 Ogonków!` });
+      out?.push({ kind: 'golden', text: `✨ Złota paleta rozładowana: +${fmt(prize)} zł i +5 Ogonków!` });
     }
   }
   return moved;
@@ -489,15 +614,24 @@ function removeEmptyPallets(s: EconomyState): void {
 
 // --- Dostawy, zamówienia, mandaty -----------------------------------------------------------------------
 
+/** Miejsca w lokalizacji; na zapleczu zajmują je też worki ze śmieciami (cztery worki to jedno miejsce). */
+function spotLimit(s: EconomyState, info: StoreInfo, loc: PalletLoc): number {
+  return loc === 'backroom' ? effects(s, info).backroomSpots : info.spots[loc].length;
+}
+
 function freeSpot(s: EconomyState, info: StoreInfo, loc: PalletLoc): number {
-  const limit = loc === 'backroom' ? effects(s, info).backroomSpots : info.spots[loc].length;
-  const used = new Set(s.pallets.filter((p) => p.loc === loc).map((p) => p.spot));
+  const limit = spotLimit(s, info, loc);
+  const there = s.pallets.filter((p) => p.loc === loc);
+  // worki zajmują miejsca zaplecza, więc palet zmieści się o tyle mniej (liczy się liczba palet, a nie który indeks jest wolny)
+  const bagSpots = loc === 'backroom' ? wasteSpots(s.tycoon.waste) : 0;
+  if (bagSpots > 0 && there.length >= limit - bagSpots) return -1;
+  const used = new Set(there.map((p) => p.spot));
   for (let i = 0; i < limit; i++) if (!used.has(i)) return i;
   return -1;
 }
 
 export function freeSpots(s: EconomyState, info: StoreInfo, loc: PalletLoc): number {
-  const limit = loc === 'backroom' ? effects(s, info).backroomSpots : info.spots[loc].length;
+  const limit = spotLimit(s, info, loc) - (loc === 'backroom' ? wasteSpots(s.tycoon.waste) : 0);
   return Math.max(0, limit - s.pallets.filter((p) => p.loc === loc).length);
 }
 
@@ -530,9 +664,12 @@ function deliver(s: EconomyState, info: StoreInfo, count: number, out: EconEvent
     const items = palletMix(s, info);
     const id = s.nextPalletId++;
     const golden = s.total.customers > 0 && rand01(s.seedHash, id, 3) < GOLDEN_CHANCE;
-    s.pallets.push({ id, loc, spot: freeSpot(s, info, loc), items, total: sum(items), initial: sum(items), since: s.minute, golden });
+    s.pallets.push({
+      id, loc, spot: freeSpot(s, info, loc), items, total: sum(items), initial: sum(items), since: s.minute, golden, bags: palletBags(items),
+    });
     placed[loc]++;
   }
+  settleWaste(s.tycoon.waste, wasteRoom(s, fx));   // palety na zapleczu (rampa) mogły zająć miejsca worków
   const where = (['sidewalk', 'backroom', 'floor'] as const).filter((l) => placed[l] > 0)
     .map((l) => `${placed[l]} ${LOC_LABEL[l].toLowerCase()}`).join(', ');
   if (count - returned > 0) out.push({ kind: 'delivery', text: `Dostawa: ${count - returned} ${plPallets(count - returned)} (${where}).` });
@@ -540,13 +677,19 @@ function deliver(s: EconomyState, info: StoreInfo, count: number, out: EconEvent
   if (returned > 0) {
     const fee = returned * RETURN_FEE;
     charge(s, 'logistics', fee);
-    s.trust = Math.max(0, s.trust - 3);
+    changeTrust(s, 'palety', TRUST.driverReturned, out);
     out.push({ kind: 'warning', text: `Kierowca nie miał gdzie postawić ${returned} ${plPallets(returned)} i ${returned > 1 ? 'je zabrał' : 'ją zabrał'}. Opłata ${fee} zł.` });
   }
 }
 
 /** Szansa, że paleta z dostawy jest złota. */
-export const GOLDEN_CHANCE = 0.08;
+export const GOLDEN_CHANCE = 0.05;
+/**
+ * Premia za rozładowanie złotej palety: ćwierć marży typowego dnia, nie mniej niż 800 zł. Stała dolna granica trzyma premię
+ * w podobnej wysokości w małym i dużym sklepie (przy udziale w marży premie rosłyby z kwadratem wielkości: więcej palet razy
+ * większa nagroda), więc nie rozjeżdżają wyniku biernego gracza między seedami (balans: tycoon/balance.test.ts).
+ */
+export const GOLDEN_PRIZE = { min: 800, share: 0.25 } as const;
 
 export const LOC_LABEL: Record<PalletLoc, string> = { sidewalk: 'Pod sklepem', backroom: 'Na zapleczu', floor: 'W sali' };
 
@@ -623,20 +766,40 @@ function checkFine(s: EconomyState, fx: Effects, out: EconEvent[]): void {
   if (rand01(s.seedHash, s.minute, 7) >= p) return;
   const fine = FINE_BASE + FINE_PER_PALLET * (outside.length - 1);
   charge(s, 'fines', fine);
+  for (const k of [s.today, s.month, s.total]) k.fineCount++;
   s.lastFineAt = s.minute;
   s.reputation = Math.max(0, s.reputation - 2);
-  s.trust = Math.max(0, s.trust - 1);
+  changeTrust(s, 'mandaty', TRUST.fine, out);
   out.push({ kind: 'fine', text: `Straż Miejska: mandat ${fine} zł za palety na chodniku. „Pan tu nie jest w hurtowni”.` });
 }
 
-function charge(s: EconomyState, field: 'wages' | 'media' | 'fee' | 'fines' | 'logistics' | 'investments', amount: number): void {
+/**
+ * Do których liczników wchodzi pozycja: `day` to dzień, miesiąc i suma gry; `month` tylko miesiąc i suma gry. Pozycje zamknięcia
+ * miesiąca (opłata, premia od obrotu, WUT) są miesięczne i nie należą do wyniku żadnego dnia: `closeMonth` biegnie po zerowaniu
+ * `today`, więc z zakresem `day` zniekształciłyby wynik, rekord i zarobek nieobecnego gracza pierwszego dnia nowego miesiąca.
+ */
+type Scope = 'day' | 'month';
+const ledgers = (s: EconomyState, scope: Scope): Counters[] => (scope === 'month' ? [s.month, s.total] : [s.today, s.month, s.total]);
+
+function charge(
+  s: EconomyState, field: 'wages' | 'media' | 'fee' | 'fines' | 'wut' | 'logistics' | 'investments' | 'other', amount: number,
+  scope: Scope = 'day',
+): void {
   s.cash -= amount;
-  for (const k of [s.today, s.month, s.total]) k[field] += amount;
+  // `other` jest ze znakiem (przychody dodatnie, w wyniku dnia i miesiąca dodawane), więc koszt z karty zmniejsza licznik
+  const sign = field === 'other' ? -1 : 1;
+  for (const k of ledgers(s, scope)) k[field] += sign * amount;
 }
 
 function income(s: EconomyState, amount: number): void {
   s.cash += amount;
   for (const k of [s.today, s.month, s.total]) k.other += amount;
+}
+
+/** Premia Centrali: jak `income`, ale na własnym liczniku, bo raport pokazuje ją osobno. */
+function bonus(s: EconomyState, amount: number, scope: Scope = 'day'): void {
+  s.cash += amount;
+  for (const k of ledgers(s, scope)) k.bonus += amount;
 }
 
 // --- Koniec dnia i miesiąca -------------------------------------------------------------------------------
@@ -648,45 +811,108 @@ function closeDay(s: EconomyState, info: StoreInfo, out: EconEvent[]): void {
   const rent = 25 * activeEquipment(s, 'bankomat');
   if (rent > 0) income(s, rent);
   if (s.partner.networkIncome > 0) income(s, s.partner.networkIncome);
+  // KPI tygodnia kończy się w niedzielę o zamknięciu dnia. Premia należy do wyniku tego dnia, więc księguje się przed jego rachunkiem;
+  // zdarzenia (wynik tygodnia, ewentualny nowy próg zaufania) idą do gracza po komunikacie o dniu
+  const weekly: EconEvent[] = [];
+  if (day === s.tycoon.kpi.toDay) {
+    const r = closeKpiWeek(s.tycoon.kpi, kpiMetricsOf(s), s.seedHash, day + 1, kpiScaleOf(s, info));
+    // tekst niesie zaufanie naliczone (miękkie granice: połowa od 75 i poniżej 30, nic na 100 i na 0), nie nominalne +3/−2;
+    // ewentualny nowy próg idzie za nim
+    const tier: EconEvent[] = [];
+    const applied = changeTrust(s, 'kpi', r.trust, tier);
+    weekly.push({ kind: 'kpi-week', text: kpiWeekText(r, applied) }, ...tier);
+    if (r.bonus > 0) bonus(s, r.bonus);
+    s.xp += r.xp;
+  }
   const t = s.today;
-  const profit = t.margin + t.other - t.wages - t.media - t.fines - t.logistics;
+  // bez `fee`, a premia od obrotu i WUT z zamknięcia miesiąca są poza `today` (zakres `month` w `closeMonth`): wynik dnia to dzień
+  const profit = t.margin + t.bonus + t.other - t.wages - t.media - t.fines - t.logistics - t.wut;
   s.lastDayProfit = profit;
   s.bestDayProfit = Math.max(s.bestDayProfit, profit);
-  if (t.fines === 0) s.cleanDays++;
   out.push({ kind: 'day', text: `Dzień zamknięty: ${Math.round(t.customers)} klientów, obrót ${fmt(t.revenue)} zł, wynik dnia ${profit >= 0 ? '+' : ''}${fmt(profit)} zł.` });
+  out.push(...weekly);
   s.today = emptyCounters();
+  fatigueNight(s.tycoon.fatigue);   // noc oddaje część sił, reszta zmęczenia przechodzi na jutro
+  closeStaffDay(s.tycoon.staff);    // statystyki dnia ludzi od zera (miesięczne zostają do raportu)
 
   if (isLastDayOfMonth(day)) closeMonth(s, day, out);
 }
 
+/** Zmiana zaufania ze znakiem i przecinkiem dziesiętnym („+1,5”, „−2”), a gdy nic się nie zmieniło, „bez zmian”. */
+const trustDeltaText = (delta: number): string =>
+  delta === 0 ? 'bez zmian' : `${delta > 0 ? '+' : '−'}${Math.abs(delta).toLocaleString('pl-PL', { maximumFractionDigits: 1 })}`;
+
+/** Tekst zdarzenia `kpi-week`: cel (z tytułu), wynik i skutki. `trust` to zmiana zaufania, którą naprawdę naliczono (`changeTrust`). */
+function kpiWeekText(r: KpiWeekResult, trustApplied: number): string {
+  const title = kpiTitle(r.kind, r.target, fmt);
+  const trust = trustDeltaText(trustApplied);
+  return r.hit
+    ? `KPI tygodnia trafione: ${title}. Wynik: ${fmt(r.value)}. Premia ${fmt(r.bonus)} zł, +${fmt(r.xp)} XP, zaufanie Centrali ${trust}.`
+    : `KPI tygodnia nietrafione: ${title}. Wynik: ${fmt(r.value)}. Zaufanie Centrali ${trust}.`;
+}
+
+/** Liczniki miesiąca w kształcie raportu tycoona (`report.ts`): koszty jako kwoty dodatnie, `other` ze znakiem. */
+const figuresOf = (m: Counters): MonthFigures => ({
+  revenue: m.revenue, margin: m.margin, bonuses: m.bonus, other: m.other, wages: m.wages, media: m.media, fee: m.fee, fines: m.fines,
+  wut: m.wut, logistics: m.logistics, customers: m.customers, lost: m.lost,
+});
+
+/** Marża z jednego klienta w miesiącu (do wyceny klientów odstraszonych kolejką w raporcie); bez klientów średnia z katalogu. */
+const marginPerCustomer = (m: Counters): number => (m.customers > 0 ? m.margin / m.customers : MARGIN_PER_CUSTOMER);
+
+/** Opłata franczyzowa za miesiąc z obrotem `revenue`: stała część plus udział w obrocie (pobierana przy zamknięciu miesiąca). */
+export function franchiseFee(revenue: number): number {
+  return Math.round(FRANCHISE_FEE_FIXED + FRANCHISE_FEE_SHARE * revenue);
+}
+
 function closeMonth(s: EconomyState, day: number, out: EconEvent[]): void {
   const m = s.month;
-  const fee = Math.round(FRANCHISE_FEE_FIXED + FRANCHISE_FEE_SHARE * m.revenue);
-  charge(s, 'fee', fee);
-  if (s.trust >= 70) {
-    const bonus = Math.round(0.01 * m.revenue);
-    income(s, bonus);
-  }
-  const profit = m.margin + m.other - m.wages - m.media - m.fee - m.fines - m.logistics;
-  s.trust = Math.min(100, Math.max(0, s.trust + (profit > 0 ? 5 : -8)));
+  const t = s.tycoon;
+  // spec §10: umowę wypowiada dopiero drugi miesiąc z rzędu bez opłacenia Centrali; poprzednie zamknięcie to `lastReport`
+  const unpaidBefore = s.lastReport !== null && s.lastReport.cash < BANKRUPTCY_AT;
+  const fee = franchiseFee(m.revenue);
+  charge(s, 'fee', fee, 'month');
+  bonus(s, Math.round(turnoverBonusShare(t.trust.value) * m.revenue), 'month');
+  // WUT: ubytki miesiąca (naturalne, z SCO i z kart) do progu pokrywa Centrala, nadwyżkę płaci franczyzobiorca; ubytki liczą się od zera
+  charge(s, 'wut', closeWutMonth(t.wut, m.revenue).charge, 'month');
+  const profit = m.margin + m.bonus + m.other - m.wages - m.media - m.fee - m.fines - m.logistics - m.wut;
+  changeTrust(s, 'wynik', profit > 0 ? TRUST.monthProfit : TRUST.monthLoss, out);
+  // podsumowania modułów wchodzą do raportu raz każde i same zerują licznik miesiąca; zaufanie dopiero po zmianie z wyniku
+  const detail = buildMonthReport({
+    monthIndex: monthIndexOf(day),
+    figures: figuresOf(m),
+    trust: closeTrustMonth(t.trust),
+    cleanlinessAvg: closeHallMonth(t.hall),
+    staff: closeStaffMonth(t.staff),
+    days: dateOfGameDay(day).date,
+    staffCount: s.staff,
+    exhaustedDays: closeFatigueMonth(t.fatigue).exhaustedDays,
+    kpi: closeKpiMonth(t.kpi),
+    cards: closeCardsMonth(t.cards),
+    marginPerCustomer: marginPerCustomer(m),
+  }, s.seedHash);
+  closeWasteMonth(t.waste);
   const label = formatMonth(day);
-  const report: MonthReport = { label, counters: { ...m }, profit, cash: s.cash, comment: centralaComment(s, profit) };
+  const report: MonthReport = { label, counters: { ...m }, profit, cash: s.cash, comment: reportCommentText(detail.commentId), detail };
   s.history.push({ label, profit, revenue: m.revenue });
   s.lastReport = report;
   out.push({ kind: 'month', text: `Raport za ${label}: wynik ${profit >= 0 ? '+' : ''}${fmt(profit)} zł.`, report });
   s.month = emptyCounters();
-  if (s.cash < BANKRUPTCY_AT) {
+  if (s.cash < BANKRUPTCY_AT && unpaidBefore) {
     s.gameOver = true;
-    out.push({ kind: 'gameover', text: 'Centrala wypowiada umowę franczyzową. Dziękujemy za współpracę.' });
+    out.push({ kind: 'gameover', text: 'Centrala wypowiada umowę franczyzową: drugi miesiąc z rzędu bez opłacenia Centrali. Dziękujemy za współpracę.' });
+  } else if (s.cash < BANKRUPTCY_AT) {
+    out.push({
+      kind: 'debt',
+      text: `Gotówka po raporcie: ${fmt(s.cash)} zł, czyli poniżej ${fmt(BANKRUPTCY_AT)} zł. Centrala czeka na opłatę jeszcze miesiąc. `
+        + `Jeśli przy następnym raporcie gotówka nadal będzie poniżej tej granicy, umowa zostanie wypowiedziana.`,
+    });
   }
-}
-
-function centralaComment(s: EconomyState, profit: number): string {
-  if (s.cash < 0 && profit < 0) return 'Centrala z niepokojem obserwuje Twój wynik i przypomina, że wierzymy w Ciebie. Na razie.';
-  if (profit < 0) return 'Miesiąc na minusie. Centrala proponuje szkolenie „Jak zarabiać więcej, wydając mniej” (płatne).';
-  if (profit < 10_000) return 'Jest dodatnio! Centrala gratuluje i podnosi KPI na przyszły miesiąc.';
-  if (profit < 50_000) return 'Świetny wynik. Centrala rozważa wspomnienie o Tobie w newsletterze (strona 14).';
-  return 'Rekordowy miesiąc! Centrala przypisuje sukces nowej strategii Centrali.';
+  // zero w środku miesiąca to tylko ostrzeżenie; umowę wypowiada się przy zamknięciu miesiąca
+  if (!s.gameOver && trustTerminates(t.trust.value)) {
+    s.gameOver = true;
+    out.push({ kind: 'gameover', text: 'Centrala wypowiada umowę franczyzową: zaufanie spadło do zera. Dziękujemy za współpracę.' });
+  }
 }
 
 const fmt = (n: number): string => Math.round(n).toLocaleString('pl-PL');
@@ -707,12 +933,8 @@ function checkMilestones(s: EconomyState, info: StoreInfo, out: EconEvent[]): vo
 
 export type CommandResult = { ok: true; text?: string; value?: number } | { ok: false; text: string };
 
-/** Mnożnik stuknięć z paczki od Centrali („turbo rozładunek”). */
-export const tapBoost = (s: EconomyState): number => (s.minute < s.tapBoostUntil ? 3 : 1);
-
-// --- Combo stukania i okna paczek w czasie gry -------------------------------------------------------------
-// Dotąd combo mierzył zegar przeglądarki, a paczki liczniki `setTimeout` w interfejsie; serwer odtwarzający bieg
-// nie widzi żadnego z nich. Oba żyją więc w stanie, w minutach gry i z `rand01`.
+// --- Combo stukania w czasie gry -----------------------------------------------------------------------------
+// Dotąd combo mierzył zegar przeglądarki; serwer odtwarzający bieg go nie widzi. Żyje więc w stanie, w minutach gry.
 
 /** Mnożnik za szybkie stukanie: ×1 do 3 stuknięć w serii, potem o 1 wyżej co 4, najwyżej ×5. */
 export const comboMult = (streak: number): number => Math.min(5, 1 + Math.floor(streak / 4));
@@ -732,51 +954,64 @@ export function tapCombo(s: EconomyState): { count: number; mult: number } {
   return { count: s.tapStreak, mult: comboMult(s.tapStreak) };
 }
 
-/** Czy paczka od Centrali czeka na odbiór: okno trwa `GIFT_OPEN` minut od `giftAt`, po końcu gry nie ma paczek. */
-export const giftOpen = (s: EconomyState): boolean => s.giftAt <= s.minute && s.minute < s.giftAt + GIFT_OPEN && !s.gameOver;
+/** Mniej miejsca niż pół sztuki to nie rozładunek (tyle samo, co próg pustej palety w `removeEmptyPallets`). */
+const MIN_ROOM = 0.5;
 
 /**
- * Najbliższa minuta, w której okno paczki mieści się w godzinach otwarcia (od `OPEN_FROM` do `OPEN_TO - GIFT_OPEN`,
- * żeby cała paczka zdążyła zaczekać przed zamknięciem): sama `minute`, gdy już w nich jest; przed otwarciem otwarcie
- * tego dnia, po ostatniej możliwej minucie otwarcie następnego dnia. Okno nigdy nie wypada wcześniej, niż wypadało.
+ * Ile sztuk z palety zmieści się teraz: wolne zaplecze plus, w każdej kategorii z palety, tyle, ile zmieści jej półka i ile
+ * jej jest na palecie; nie więcej niż zostało na palecie. Bez miejsca stuknięcie jest odmową, zanim zużyje siły.
  */
-export function giftWindowFrom(minute: number): number {
-  const day = dayOf(minute);
-  const mod = minuteOfDay(minute);
-  if (mod < OPEN_FROM) return day * MINUTES_PER_DAY + OPEN_FROM;
-  if (mod > OPEN_TO - GIFT_OPEN) return (day + 1) * MINUTES_PER_DAY + OPEN_FROM;
-  return minute;
-}
-
-/** Planuje następne okno paczki: `GIFT_GAP_MIN` do `GIFT_GAP_MIN + GIFT_GAP_SPREAD` minut od teraz, przesunięte w godziny otwarcia. */
-export function scheduleGift(s: EconomyState): void {
-  s.giftAt = giftWindowFrom(s.minute + GIFT_GAP_MIN + Math.floor(rand01(s.seedHash, s.giftAt, 30) * GIFT_GAP_SPREAD));
+function palletRoom(s: EconomyState, info: StoreInfo, fx: Effects, p: Pallet): number {
+  let room = Math.max(0, fx.backroomCap - sum(s.backroom));
+  for (const c of CATS) room += Math.min(Math.max(0, p.items[c]), Math.max(0, info.shelfCap[c] - s.shelf[c]));
+  return Math.min(p.total, room);
 }
 
 /**
- * Gracz stuka w paletę: franczyzobiorca sam rozładowuje kawałek. Bez `id` bierze najpilniejszą. `combo` to mnożnik
- * za szybkie stukanie (liczy go wołający). Wynik: rozładowane sztuki, a przy złotej palecie także komunikat: w `text`,
- * a gdy podano `events`, jako zdarzenie `golden` dopisane do tej tablicy (wtedy `text` zostaje pusty).
+ * Combo przycięte do tego, co da się wykorzystać: stuknięcia ponad `needTaps` kosztowałyby siły za nic (combo mnoży koszt
+ * i efekt po równo). Bzdura zamiast combo (NaN, nieskończoność) zostaje jednym stuknięciem, jak w `tycoon/fatigue.ts`.
+ */
+const usableCombo = (combo: number, needTaps: number): number => Math.min(Number.isFinite(combo) ? combo : 1, needTaps);
+
+/**
+ * Gracz stuka w paletę: franczyzobiorca sam rozładowuje kawałek. Bez `id` bierze najpilniejszą. `combo` to mnożnik za szybkie
+ * stukanie (liczy go wołający); razem z nim rośnie koszt w siłach (tycoon/fatigue.ts), a zmęczenie z wczoraj zmniejsza moc.
+ * Najpierw sprawdza paletę i miejsce, dopiero potem zużywa siły, więc odmowa „nie ma co ani gdzie” ich nie rusza; odmowa rąk
+ * to pusta pula. Combo nie przekracza liczby stuknięć, jakiej potrzeba na to, co się zmieści. Wynik: rozładowane sztuki,
+ * a przy złotej palecie także komunikat: w `text`, a gdy podano `events`, jako zdarzenie `golden` dopisane do tej tablicy
+ * (wtedy `text` zostaje pusty).
  */
 export function tapPallet(s: EconomyState, info: StoreInfo, id?: number, combo = 1, events?: EconEvent[]): CommandResult {
   const fx = effects(s, info);
   const p = id !== undefined ? s.pallets.find((x) => x.id === id)
     : [...s.pallets].sort((a, b) => Number(!!b.golden) - Number(!!a.golden) || PALLET_ORDER[a.loc] - PALLET_ORDER[b.loc] || a.since - b.since)[0];
   if (!p) return { ok: false, text: 'Brak palet do rozładunku.' };
+  const room = palletRoom(s, info, fx, p);
+  if (room < MIN_ROOM) return { ok: false, text: 'Zaplecze i półki pełne: nie ma gdzie wyłożyć towaru.' };
+  const cart = 1 + 0.25 * level(s, 'wozek');
+  const needTaps = Math.max(1, Math.ceil(room / (tapItems(fatigueEfficiency(s.tycoon.fatigue)) * cart) - 1e-9));
+  const r = fatigueTap(s.tycoon.fatigue, 'paleta', usableCombo(combo, needTaps));
+  if (!r.ok) return { ok: false, text: r.text ?? 'Ręce odmawiają.' };
   const out: EconEvent[] = [];
-  const moved = unloadPallet(s, info, fx, p, TAP_ITEMS * (1 + 0.25 * level(s, 'wozek')) * combo * tapBoost(s), out);
+  const moved = unloadPallet(s, info, fx, p, tapItems(r.power) * cart, out);
   removeEmptyPallets(s);
-  events?.push(...out);   // premia już wypłacona, więc zdarzenie nie przepada nawet przy odmowie
-  if (moved <= 1e-6) return { ok: false, text: 'Zaplecze i półki pełne: nie ma gdzie wyłożyć towaru.' };
+  events?.push(...out);   // premia już wypłacona, więc zdarzenie nie przepada
   for (const k of [s.today, s.month, s.total]) k.taps++;
   return events ? { ok: true, value: moved } : { ok: true, value: moved, text: out[0]?.text };
 }
 
-/** Gracz stuka w kasę: franczyzobiorca obsługuje klienta z kolejki (z combo kilku naraz). Zwraca zarobioną marżę. */
+/**
+ * Gracz stuka w kasę: franczyzobiorca obsługuje klienta z kolejki (z combo kilku naraz, a zmęczenie obsługuje ułamek). Sklep
+ * zamknięty albo pusta kolejka to odmowa bez zużycia sił, a combo nie przekracza liczby stuknięć, jakiej potrzeba na kolejkę.
+ * Zwraca zarobioną marżę.
+ */
 export function tapTill(s: EconomyState, info: StoreInfo, combo = 1): CommandResult {
-  if (!isStoreOpen(s)) return { ok: false, text: 'Sklep zamknięty.' };
+  if (!isOpenForCustomers(s)) return { ok: false, text: 'Sklep zamknięty.' };
   if (s.queue < 1) return { ok: false, text: 'Nikt nie czeka przy kasie.' };
-  const n = Math.min(Math.floor(s.queue), Math.max(1, Math.floor(combo * tapBoost(s))));
+  const needTaps = Math.max(1, Math.ceil(s.queue / fatigueEfficiency(s.tycoon.fatigue) - 1e-9));
+  const r = fatigueTap(s.tycoon.fatigue, 'kasa', usableCombo(combo, needTaps));
+  if (!r.ok) return { ok: false, text: r.text ?? 'Ręce odmawiają.' };
+  const n = Math.min(s.queue, r.power);
   s.queue -= n;
   const margin = sell(s, effects(s, info), n, 0);
   for (const k of [s.today, s.month, s.total]) k.taps++;
@@ -792,15 +1027,16 @@ export function movePallet(s: EconomyState, info: StoreInfo, id: number, loc: Pa
   p.loc = loc;
   p.spot = spot;
   p.since = s.minute;
+  settleWaste(s.tycoon.waste, wasteRoom(s, effects(s, info)));
   return { ok: true };
 }
 
-export function returnPallet(s: EconomyState, id: number): CommandResult {
+export function returnPallet(s: EconomyState, id: number, out?: EconEvent[]): CommandResult {
   const p = s.pallets.find((x) => x.id === id);
   if (!p) return { ok: false, text: 'Nie ma takiej palety.' };
   s.pallets = s.pallets.filter((x) => x !== p);
   charge(s, 'logistics', RETURN_FEE);
-  s.trust = Math.max(0, s.trust - 4);
+  changeTrust(s, 'palety', TRUST.returnedPallet, out);
   return { ok: true, text: `Paleta odesłana do hurtowni. Opłata ${RETURN_FEE} zł, Centrala marszczy brwi.` };
 }
 
@@ -820,11 +1056,8 @@ export function hire(s: EconomyState): CommandResult {
 export function fire(s: EconomyState): CommandResult {
   if (s.staff <= 1) return { ok: false, text: 'Ktoś musi stać na kasie.' };
   s.staff--;
+  normalizePins(s.tycoon.staff, s.staff);   // przypięci ponad personel schodzą z posterunków
   return { ok: true };
-}
-
-export function setPriority(s: EconomyState, p: Priority): void {
-  s.priority = p;
 }
 
 export function workshopUnlocked(s: EconomyState): boolean {
@@ -942,6 +1175,7 @@ export function relayout(s: EconomyState, info: StoreInfo): void {
   const back = sum(s.backroom);
   if (back > fx.backroomCap) for (const c of CATS) s.backroom[c] *= fx.backroomCap / back;
   for (const c of CATS) s.shelf[c] = Math.min(s.shelf[c], info.shelfCap[c]);
+  settleWaste(s.tycoon.waste, wasteRoom(s, fx));
 }
 
 export function campaign(s: EconomyState): CommandResult {
@@ -961,34 +1195,65 @@ export function rushRemont(s: EconomyState): CommandResult {
   return { ok: true, text: 'Ekipa remontowa dostała premię w Ogonkach. Pracują szybciej (podobno).' };
 }
 
-// --- Poziomy, zlecenia, nagrody --------------------------------------------------------------------------
+// --- Karty decyzji i okólniki ----------------------------------------------------------------------------
+
+/** Obrót, jakiego sklep spodziewa się w typowy dzień (oczekiwani klienci razy średni obrót na klienta z katalogu). */
+export const estimatedDailyRevenue = (s: EconomyState, info: StoreInfo): number => expectedDailyCustomers(s, info) * REVENUE_PER_CUSTOMER;
+
+/**
+ * Co karta wie o sklepie przy losowaniu (INTEGRATION.md, §5): dostawy w kolejce na dziś, personel, zaufanie, sala, pogoda i
+ * skala sklepu (marża i obrót typowego dnia), z której karta liczy swoje kwoty.
+ */
+export function cardContext(s: EconomyState, info: StoreInfo): CardContext {
+  const day = dayOf(s.minute);
+  const dayStart = day * MINUTES_PER_DAY;
+  const palletsToday = s.deliveries.filter((d) => d.at >= dayStart && d.at < dayStart + MINUTES_PER_DAY).reduce((n, d) => n + d.count, 0);
+  return {
+    day,
+    now: s.minute,
+    weekday: weekdayOf(day),
+    deliveryToday: palletsToday > 0,
+    palletsToday,
+    staff: s.staff,
+    trust: s.tycoon.trust.value,
+    cleanliness: s.tycoon.hall.cleanliness,
+    sidewalkPallets: s.pallets.filter((p) => p.loc === 'sidewalk').length,
+    weather: s.tycoon.hall.weather,
+    dailyMargin: estimatedDailyMargin(s, info),
+    dailyRevenue: estimatedDailyRevenue(s, info),
+  };
+}
+
+/**
+ * Odpowiedź gracza na kartę. `resolveCard` sprawdza kartę, godzinę i numer odpowiedzi (odmowa nie rusza stanu), potem
+ * `applyCardOutcome` księguje to, co należy do tycoona (zaufanie, WUT, czas ludzi, siły), a tu reszta: gotówka w podziale na
+ * pozycje raportu, reputacja, Ogonki i XP. Poziom z tego XP liczy `applyCommand`. Wynik odpowiedzi to zdarzenie `card-result`.
+ */
+export function answerCard(s: EconomyState, seq: number, answer: number, out: EconEvent[]): CommandResult {
+  const r = resolveCard(s.tycoon.cards, seq, answer, s.minute, s.seedHash);
+  if (!r.ok) return { ok: false, text: r.text };
+  const o = r.outcome;
+  const tierBefore = trustTier(s.tycoon.trust.value);
+  const side = applyCardOutcome(s.tycoon, o);
+  if (side.other > 0) income(s, side.other);
+  else if (side.other < 0) charge(s, 'other', -side.other);   // koszt z karty obniża `other` (pozycja jest ze znakiem)
+  if (side.bonus !== 0) bonus(s, side.bonus);
+  if (side.fine !== 0) charge(s, 'fines', -side.fine);        // mandat z karty jest ujemny, licznik liczy kwotę dodatnią
+  if (side.fine < 0) for (const k of [s.today, s.month, s.total]) k.fineCount++;
+  if (side.logistics !== 0) charge(s, 'logistics', -side.logistics);
+  s.reputation = Math.min(100, Math.max(0, s.reputation + side.reputation));
+  s.ogonki = Math.max(0, s.ogonki + Math.round(side.ogonki));
+  s.xp += side.xp;
+  if (o.text) out.push({ kind: 'card-result', text: fillText(o.text, o.params, fmt) });
+  announceTrustTier(s, tierBefore, out);
+  return { ok: true };
+}
+
+// --- Poziomy i nagrody -----------------------------------------------------------------------------------
 
 /** Marża, jakiej sklep spodziewa się w typowy dzień (do skali nagród). */
 export function estimatedDailyMargin(s: EconomyState, info: StoreInfo): number {
-  const avgMargin = CATS.reduce((n, c) => n + CAT_INFO[c].price * CAT_INFO[c].margin * CAT_INFO[c].basket, 0) * ITEMS_PER_CUSTOMER;
-  return expectedDailyCustomers(s, info) * avgMargin * effects(s, info).marginMult;
-}
-
-function questScale(s: EconomyState, info: StoreInfo): QuestScale {
-  return { dailyCustomers: expectedDailyCustomers(s, info), dailyMargin: estimatedDailyMargin(s, info) };
-}
-
-/** Dobiera zleceń do trzech. */
-export function fillQuests(s: EconomyState, info: StoreInfo): void {
-  while (s.quests.length < QUESTS_ACTIVE) s.quests.push(newQuest(s, questScale(s, info)));
-}
-
-/** Odbiór nagrody za wykonane zlecenie; na jego miejsce przychodzi nowe. */
-export function claimQuest(s: EconomyState, info: StoreInfo, id: number): CommandResult {
-  const q = s.quests.find((x) => x.id === id);
-  if (!q) return { ok: false, text: 'Nie ma takiego zlecenia.' };
-  if (!questDone(s, q)) return { ok: false, text: 'Zlecenie jeszcze niewykonane.' };
-  income(s, q.reward.cash);
-  s.ogonki += q.reward.ogonki;
-  s.xp += q.reward.xp;
-  s.quests = s.quests.filter((x) => x !== q);
-  fillQuests(s, info);
-  return { ok: true, value: q.reward.cash, text: `Zlecenie wykonane! +${fmt(q.reward.cash)} zł, +${q.reward.ogonki} Ogonków, +${q.reward.xp} XP` };
+  return expectedDailyCustomers(s, info) * MARGIN_PER_CUSTOMER * effects(s, info).marginMult;
 }
 
 /** Wejście na kolejne poziomy: nagroda i odblokowania (komunikat `levelup` z listą). */
@@ -1016,30 +1281,6 @@ export function unlocksAt(lvl: number): string[] {
   for (const r of REMONTS) if (r.minLevel === lvl) out.push(r.name);
   if (lvl === WORKSHOP_LEVEL) out.push('Warsztat złotej rączki');
   return out;
-}
-
-export type GiftKind = 'cash' | 'ogonki' | 'rush' | 'turbo';
-
-/** Paczka od Centrali (pojawia się w interfejsie na kilka sekund): losowa nagroda. */
-export function claimGift(s: EconomyState, info: StoreInfo): CommandResult & { kind?: GiftKind } {
-  const r = rand01(s.seedHash, s.giftSeq++, 11);
-  s.xp += XP.gift;
-  if (r < 0.4) {
-    const cash = Math.round(Math.max(300, estimatedDailyMargin(s, info) * (0.15 + 0.2 * rand01(s.seedHash, s.giftSeq, 12))));
-    income(s, cash);
-    return { ok: true, kind: 'cash', value: cash, text: `Paczka od Centrali: premia +${fmt(cash)} zł!` };
-  }
-  if (r < 0.65) {
-    const n = 3 + Math.floor(rand01(s.seedHash, s.giftSeq, 13) * 6);
-    s.ogonki += n;
-    return { ok: true, kind: 'ogonki', value: n, text: `Paczka od Centrali: +${n} Ogonków!` };
-  }
-  if (r < 0.85) {
-    s.boostUntil = Math.max(s.minute, s.boostUntil) + 180;
-    return { ok: true, kind: 'rush', text: 'Szał zakupów! +30% klientów przez 3 godziny.' };
-  }
-  s.tapBoostUntil = Math.max(s.minute, s.tapBoostUntil) + 240;
-  return { ok: true, kind: 'turbo', text: 'Turbo rękawice! Stuknięcia ×3 przez 4 godziny gry.' };
 }
 
 /** Zarobek kierownika zmiany pod nieobecność gracza (liczy go warstwa gry z czasu rzeczywistego). */

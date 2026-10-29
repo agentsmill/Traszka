@@ -1,20 +1,29 @@
 import type { ComponentChildren } from 'preact';
-import { CATS, CAT_INFO, HIRE_COST, HOUR_CURVE, ORDER_DEADLINE, RESTOCK_RATE, RETURN_FEE, SCO_RATE, STAFF_MAX, TILL_RATE, UNLOAD_RATE, WAGE_PER_DAY } from '@/sim/economy/catalog';
+import {
+  BANKRUPTCY_AT, CATS, CAT_INFO, HIRE_COST, HOUR_CURVE, ORDER_DEADLINE, RESTOCK_RATE, RETURN_FEE, SCO_RATE, STAFF_MAX, TILL_RATE, UNLOAD_RATE, WAGE_PER_DAY,
+} from '@/sim/economy/catalog';
 import { formatClock, minuteOfDay } from '@/sim/economy/calendar';
 import {
-  LOC_LABEL, PRIORITY_LABEL, assistantSuggestion, effects, expectedDailyCustomers, freeSpots, isClosedForRemont, level,
-  nextRemont, plPallets, slotFree, slotUsage, upgradeBlocker, workshopUnlocked, type EconomyState, type Priority,
+  LOC_LABEL, assistantSuggestion, effects, expectedDailyCustomers, franchiseFee, freeSpots, isClosedForRemont, kpiMetricsOf, kpiScaleOf, level, nextRemont,
+  plPallets, robotFleet, slotFree, slotUsage, upgradeBlocker, workshopUnlocked, type EconomyState,
 } from '@/sim/economy/economy';
 import { MILESTONES } from '@/sim/economy/milestones';
+import { KPI, KPI_FLAVOR, kpiProgress, kpiTitle } from '@/sim/economy/tycoon/kpi';
+import { dayOfMinute, roundNice } from '@/sim/economy/tycoon/time';
+import { WEATHER_LABEL } from '@/sim/economy/tycoon/cleanliness';
+import { staffOnShift } from '@/sim/economy/tycoon/shift';
+import { PROFILE_HINT, PROFILE_LABEL, STAFF_PROFILES, STAFF_TASKS, TASK_LABEL } from '@/sim/economy/tycoon/staff';
+import { trustTier } from '@/sim/economy/tycoon/trust';
+import { WUT, wutCharge, wutTotal } from '@/sim/economy/tycoon/wut';
 import type { PalletLoc, StoreInfo } from '@/sim/economy/storeInfo';
 import {
   EQUIPMENT, GROUP_LABEL, UPGRADES, WORKSHOP_LEVEL, equipmentCost, upgradeCost, type UpgradeGroup,
 } from '@/sim/economy/upgrades';
 import { nextRankAt, rankFor, xpToNext } from '@/sim/economy/progress';
-import { questDone, questProgress, questTitle } from '@/sim/economy/quests';
 import { networkIncomeOf, prestigePoints, prestigeReady } from '@/game/meta';
 import { econ, metaView, selection, showPrestige, tab, type GameActions, type TabId } from '../state';
-import { duration, int, pct, plural, signedZl, zl } from './format';
+import { duration, int, pct, people, plural, signedZl, zl } from './format';
+import { tapBlock } from './tapBlock';
 
 // --- Wspólne -----------------------------------------------------------------------------------------
 
@@ -50,12 +59,11 @@ export function TabBar() {
     badge.palety = view.s.pallets.filter((p) => p.loc === 'sidewalk').length || undefined;
     const affordable = UPGRADES.filter((u) => !upgradeBlocker(view.s, u) && upgradeCost(u, level(view.s, u.id)) <= view.s.cash).length;
     badge.ulepszenia = affordable || undefined;
-    badge.cele = view.s.quests.filter((q) => questDone(view.s, q)).length || undefined;
   }
   return (
     <nav class="tt-tabs" aria-label="Zakładki">
       {TABS.map((t) => (
-        <button key={t.id} type="button" class={`tt-tab${tab.value === t.id ? ' on' : ''}${t.id === 'cele' && badge.cele ? ' ready' : ''}`} aria-pressed={tab.value === t.id}
+        <button key={t.id} type="button" class={`tt-tab${tab.value === t.id ? ' on' : ''}`} aria-pressed={tab.value === t.id}
           onClick={() => { tab.value = tab.value === t.id ? null : t.id; selection.value = null; }}>
           <span class="tt-tab-icon" aria-hidden="true">{t.icon}</span>
           <span class="tt-tab-label">{t.label}</span>
@@ -85,7 +93,7 @@ export function Sheet({ game }: { game: GameActions }) {
         {open === 'palety' && <PalletsPanel s={view.s} info={view.info} game={game} v={view.v} />}
         {open === 'ludzie' && <PeoplePanel s={view.s} info={view.info} game={game} v={view.v} />}
         {open === 'ulepszenia' && <ShopPanel s={view.s} info={view.info} game={game} v={view.v} />}
-        {open === 'cele' && <GoalsPanel s={view.s} game={game} v={view.v} />}
+        {open === 'cele' && <GoalsPanel s={view.s} info={view.info} game={game} v={view.v} />}
       </div>
     </aside>
   );
@@ -101,7 +109,7 @@ function capacityPerHour(s: EconomyState, info: StoreInfo): { now: number; max: 
   return { now: s.lastCashiers * till + sco, max: Math.min(s.staff, fx.tills) * till + sco };
 }
 
-function StorePanel({ s, info }: { s: EconomyState; info: StoreInfo; v: number }) {
+export function StorePanel({ s, info }: { s: EconomyState; info: StoreInfo; v: number }) {
   const fx = effects(s, info);
   const cap = capacityPerHour(s, info);
   const hour = Math.floor(minuteOfDay(s.minute) / 60);
@@ -109,12 +117,19 @@ function StorePanel({ s, info }: { s: EconomyState; info: StoreInfo; v: number }
   const peak = expectedDailyCustomers(s, info) / 15.6 * 1.3;
   const backroom = CATS.reduce((n, c) => n + s.backroom[c], 0);
   const usage = slotUsage(s);
+  const trust = s.tycoon.trust.value;
+  const tier = trustTier(trust);
+  const wut = wutTotal(s.tycoon.wut);
+  const wutLimit = WUT.threshold * Math.max(0, s.month.revenue);
+  const wutOver = wutCharge(s.tycoon.wut, s.month.revenue);
+  const hall = s.tycoon.hall;
+  const dirty = hall.cleanliness < 50;
   return (
     <>
       <Section title="Kasa i kolejka">
         <Row label="Kolejka">{int(s.queue)} {plural(Math.round(s.queue), 'osoba', 'osoby', 'osób')} (cierpliwość: {fx.patience})</Row>
         <Bar value={s.queue / Math.max(1, fx.patience)} warn={s.queue >= fx.patience} />
-        <Row label="Stanowiska kasowe">{fx.tills}, teraz na kasie: {s.lastCashiers}</Row>
+        <Row label="Stanowiska kasowe">{fx.tills}, teraz na kasie: {people(s.lastCashiers)}</Row>
         <Row label="Kasy samoobsługowe">{fx.sco}</Row>
         <Row label="Ruch teraz / w szczycie">{int(demand)} / {int(peak)} klientów/h</Row>
         <Row label="Przepustowość (max)">{int(cap.max)} klientów/h</Row>
@@ -132,9 +147,23 @@ function StorePanel({ s, info }: { s: EconomyState; info: StoreInfo; v: number }
       <Section title="Opinia">
         <Row label="Reputacja">{int(s.reputation)} / 100</Row>
         <Bar value={s.reputation / 100} warn={s.reputation < 30} />
-        <Row label="Zaufanie Centrali">{int(s.trust)} / 100</Row>
-        <Bar value={s.trust / 100} warn={s.trust < 30} />
+        <Row label="Zaufanie Centrali">{int(trust)} / 100 · {tier.label}</Row>
+        <Bar value={trust / 100} warn={trust < 30} />
+        <p class="tt-hint tt-flavor">{tier.flavor}</p>
         <p class="tt-hint">Reputacja rośnie, gdy klienci znajdują towar i nie czekają. Spada przez puste półki, kolejki i mandaty.</p>
+      </Section>
+      <Section title="WUT w tym miesiącu">
+        <Row label="Ubytki (WUT)">{zl(wut)} z {zl(wutLimit)}</Row>
+        <Bar value={wutLimit > 0 ? wut / wutLimit : wut > 0 ? 1 : 0} warn={wut > wutLimit} />
+        {wutOver > 0
+          ? <p class="tt-hint warn">Ponad progiem na dziś: {zl(wutOver)}. Rozliczenie dopiero przy zamknięciu miesiąca, a obrót jeszcze rośnie, więc kwota może się zmienić.</p>
+          : <p class="tt-hint">Ubytki to przeterminowany towar, kradzieże, pomyłki i skutki decyzji dnia. Centrala pokrywa je do {(WUT.threshold * 100).toLocaleString('pl-PL')}% obrotu miesiąca, resztę płacisz Ty.</p>}
+      </Section>
+      <Section title="Czystość sali">
+        <Row label="Czystość">{Math.round(hall.cleanliness)}%</Row>
+        <Bar value={hall.cleanliness / 100} warn={dirty} />
+        <Row label="Pogoda">{WEATHER_LABEL[hall.weather]}</Row>
+        <p class={`tt-hint${dirty ? ' warn' : ''}`}>{dirty ? 'Brudna sala odstrasza klientów i obniża reputację. Ktoś musi wziąć mopa.' : 'Klienci i deszcz brudzą salę, sprzątanie ją czyści. Zimą i w deszczu brudu jest więcej.'}</p>
       </Section>
       <Section title="Sloty na sprzęt">
         {info.slots.length === 0 && <p class="tt-hint">Ten lokal nie ma slotów. Remont je doda.</p>}
@@ -160,7 +189,8 @@ export function PalletsPanel({ s, info, game }: { s: EconomyState; info: StoreIn
   const mod = minuteOfDay(s.minute);
   const pending = s.deliveries.reduce((n, d) => n + d.count, 0);
   const fx = effects(s, info);
-  const workPerHour = (s.lastWorkers * UNLOAD_RATE * fx.unloadMult + fx.autoUnload) * 60;
+  const robots = robotFleet(s);
+  const workPerHour = s.shift.human.rozladunek * UNLOAD_RATE * fx.unloadMult * 60;
   return (
     <>
       <Section title="Zamówienie na jutro">
@@ -182,7 +212,7 @@ export function PalletsPanel({ s, info, game }: { s: EconomyState; info: StoreIn
       </Section>
       <Section title={`Palety (${s.pallets.length})`}>
         <Row label="Wolne miejsca">pod sklepem {freeSpots(s, info, 'sidewalk')} · zaplecze {freeSpots(s, info, 'backroom')} · sala {freeSpots(s, info, 'floor')}</Row>
-        <Row label="Rozładunek teraz">~{int(workPerHour)} szt./h ({s.lastWorkers} {plural(s.lastWorkers, 'osoba', 'osoby', 'osób')}{fx.autoUnload > 0 ? ' + automatyka' : ''})</Row>
+        <Row label="Rozładunek teraz">~{int(workPerHour)} szt./h ({people(s.shift.human.rozladunek)} os.{robots.tasmociag > 0 || robots.edward > 0 ? ' + automatyka' : ''})</Row>
         {s.pallets.length === 0 && <p class="tt-hint">Brak palet. Cisza przed dostawą.</p>}
         {s.pallets.map((p) => <PalletItem key={p.id} s={s} info={info} id={p.id} game={game} />)}
         <p class="tt-hint">Pod sklepem: ryzyko mandatu Straży Miejskiej. W sali: korek i mniej klientów. Zaplecze: bezpiecznie, ale miejsc jest mało.</p>
@@ -196,6 +226,7 @@ export function PalletItem({ s, info, id, game, compact = false }: { s: EconomyS
   if (!p) return <p class="tt-hint">Paleta rozładowana. 💪</p>;
   const age = s.minute - p.since;
   const moves = (['backroom', 'floor', 'sidewalk'] as PalletLoc[]).filter((l) => l !== p.loc);
+  const block = tapBlock(s, 'paleta');
   return (
     <div class={`tt-pallet${p.loc === 'sidewalk' ? ' risk' : ''}`}>
       <div class="tt-row">
@@ -204,7 +235,7 @@ export function PalletItem({ s, info, id, game, compact = false }: { s: EconomyS
       </div>
       <Bar value={p.total / p.initial} />
       <div class="tt-actions">
-        <button type="button" class="tt-btn tt-primary" onClick={() => game.dispatch({ type: 'tapPallet', palletId: p.id })}>Rozładuj</button>
+        <button type="button" class="tt-btn tt-primary" disabled={!!block} title={block} onClick={() => game.dispatch({ type: 'tapPallet', palletId: p.id })}>Rozładuj</button>
         {moves.map((l) => (
           <button key={l} type="button" class="tt-btn" disabled={freeSpots(s, info, l) === 0} onClick={() => game.dispatch({ type: 'movePallet', palletId: p.id, loc: l })}>
             {l === 'backroom' ? 'Na zaplecze' : l === 'floor' ? 'Do sali' : 'Pod sklep'}
@@ -218,39 +249,76 @@ export function PalletItem({ s, info, id, game, compact = false }: { s: EconomyS
 
 // --- Ludzie ------------------------------------------------------------------------------------------
 
-const PRIORITY_HINT: Record<Priority, string> = {
-  klienci: 'Przy kolejce otwierają się wszystkie kasy. Palety czekają.',
-  rowno: 'Na kasie tyle osób, ile trzeba na kolejkę (przy SCO czasem nikt). Reszta rozładowuje.',
-  palety: 'Na kasie ktoś staje dopiero przy długiej kolejce (albo gdy nie ma SCO). Reszta przy paletach.',
-};
+const osoby = (n: number): string => `${n} ${plural(n, 'osoba', 'osoby', 'osób')}`;
+
+/** Powyżej tylu minut czekania w dniu zadanie dostaje w „Dziś” ostrzeżenie (brakowało rąk). */
+const STARVED_WARN_MIN = 30;
 
 export function PeoplePanel({ s, info, game }: { s: EconomyState; info: StoreInfo; game: GameActions; v: number }) {
   const fx = effects(s, info);
+  const robots = robotFleet(s);
+  const pool = s.tycoon.staff;
+  const profile = pool.profile;
+  const onShift = staffOnShift(s);
+  const doing = (task: string): number => onShift.filter((x) => x.task === task).length;
+  const pinnedAll = STAFF_TASKS.reduce((n, t) => n + pool.pinned[t], 0);
   return (
     <>
-      <Section title="Zespół na zmianie">
+      <Section title="Zmiana">
         <div class="tt-stepper">
           <button type="button" class="tt-btn" aria-label="Zwolnij" onClick={() => game.dispatch({ type: 'fire' })}>−</button>
-          <b>{s.staff} {plural(s.staff, 'osoba', 'osoby', 'osób')}</b>
+          <b>{osoby(s.staff)}</b>
           <button type="button" class="tt-btn" aria-label="Zatrudnij" disabled={s.staff >= STAFF_MAX} onClick={() => game.dispatch({ type: 'hire' })}>+</button>
         </div>
         <Row label="Płace">{int(s.staff * WAGE_PER_DAY)} zł / dzień</Row>
         <p class="tt-hint">Rekrutacja: {HIRE_COST} zł. Każda osoba na zmianie to {WAGE_PER_DAY} zł dziennie (dwa etaty na 17-godzinny dzień).</p>
-        <Row label="Teraz">{s.lastCashiers} na kasie · {s.lastWorkers} przy paletach i półkach</Row>
       </Section>
-      <Section title="Priorytet pracy">
-        <div class="tt-seg wide" role="group" aria-label="Priorytet">
-          {(['klienci', 'rowno', 'palety'] as Priority[]).map((p) => (
-            <button key={p} type="button" class={`tt-btn${s.priority === p ? ' on' : ''}`} onClick={() => game.dispatch({ type: 'setPriority', priority: p })}>{PRIORITY_LABEL[p]}</button>
+      <Section title="Profil pracy">
+        <div class="tt-seg wide" role="group" aria-label="Profil pracy">
+          {STAFF_PROFILES.map((p) => (
+            <button key={p} type="button" class={`tt-btn${profile === p ? ' on' : ''}`} onClick={() => game.dispatch({ type: 'setStaffProfile', profile: p })}>{PROFILE_LABEL[p]}</button>
           ))}
         </div>
-        <p class="tt-hint">{PRIORITY_HINT[s.priority]}</p>
+        <p class="tt-hint">{profile === 'wlasny' ? PROFILE_LABEL.wlasny : PROFILE_HINT[profile]}</p>
         <p class="tt-hint">Jedna osoba: kasa ~{int(TILL_RATE * fx.tillSpeed * 60)} klientów/h albo rozładunek ~{int(UNLOAD_RATE * fx.unloadMult * 60)} szt./h, wykładanie ~{int(RESTOCK_RATE * 60)} szt./h.</p>
       </Section>
-      {(fx.autoUnload > 0 || fx.autoRestock > 0) && (
+      <Section title="Kto co robi teraz">
+        {STAFF_TASKS.map((t) => {
+          const pinned = pool.pinned[t];
+          return (
+            <Row key={t} label={TASK_LABEL[t]}>
+              <span class="tt-task-n">{osoby(doing(t))}</span>
+              <span class="tt-pin" role="group" aria-label={`Przypięcie: ${TASK_LABEL[t]}`}>
+                <button type="button" class="tt-btn" aria-label={`Odepnij od zadania: ${TASK_LABEL[t]}`} disabled={pinned <= 0}
+                  onClick={() => game.dispatch({ type: 'pinStaff', task: t, count: pinned - 1 })}>−</button>
+                <span class="tt-pin-n">📌 {pinned}</span>
+                <button type="button" class="tt-btn" aria-label={`Przypnij do zadania: ${TASK_LABEL[t]}`} disabled={pinnedAll >= s.staff}
+                  onClick={() => game.dispatch({ type: 'pinStaff', task: t, count: pinned + 1 })}>+</button>
+              </span>
+            </Row>
+          );
+        })}
+        <Row label="Wolni"><span class="tt-task-n">{osoby(doing('wolny'))}</span></Row>
+        <p class="tt-hint">Liczby to zgadnięcie z ostatniej minuty pracy; nocą nikogo nie ma. 📌 przypina osoby do zadania: biorą je najpierw, a gdy nie ma w nim pracy, wracają do puli (przypiętych razem najwyżej {osoby(s.staff)}).</p>
+      </Section>
+      <Section title="Dziś">
+        {STAFF_TASKS.map((t) => {
+          const worked = pool.day.worked[t];
+          const robot = pool.day.robot[t];
+          const waited = pool.day.starved[t];
+          return (
+            <div key={t}>
+              <Row label={TASK_LABEL[t]}>{int(worked)} osobomin{robot > 0 ? ` (w tym automatyka ${int(robot)})` : ''}</Row>
+              {waited > STARVED_WARN_MIN && <div class="tt-muted warn tt-starved">czekało {int(waited)} min</div>}
+            </div>
+          );
+        })}
+        <p class="tt-hint">Osobominuta to minuta pracy jednej osoby. „Czekało” znaczy, że zadanie miało pracę, a nikt jej nie wziął: brakuje rąk albo przypięć.</p>
+      </Section>
+      {(robots.tasmociag > 0 || robots.wykladacz > 0 || fx.humanoid) && (
         <Section title="Automatyka (warsztat)">
-          {level(s, 'tasmociag') > 0 && <Row label="Taśmociąg">poziom {level(s, 'tasmociag')}</Row>}
-          {level(s, 'wykladacz') > 0 && <Row label="Wykładacz">poziom {level(s, 'wykladacz')}</Row>}
+          {robots.tasmociag > 0 && <Row label="Taśmociąg">poziom {robots.tasmociag}</Row>}
+          {robots.wykladacz > 0 && <Row label="Wykładacz">poziom {robots.wykladacz}</Row>}
           {fx.humanoid && <Row label="Humanoid eDward">pracuje 24/7 🤖</Row>}
           <p class="tt-hint">Automatyka pracuje także w nocy, gdy sklep jest zamknięty.</p>
         </Section>
@@ -352,32 +420,33 @@ export function ShopPanel({ s, info, game }: { s: EconomyState; info: StoreInfo;
 
 // --- Cele i wyniki -------------------------------------------------------------------------------------
 
-export function GoalsPanel({ s, game }: { s: EconomyState; game: GameActions; v: number }) {
+export function GoalsPanel({ s, info }: { s: EconomyState; info: StoreInfo; game: GameActions; v: number }) {
   const t = s.today;
   const m = s.month;
-  const profit = (k: typeof t): number => k.margin + k.other - k.wages - k.media - k.fee - k.fines - k.logistics;
+  const profit = (k: typeof t): number => k.margin + k.bonus + k.other - k.wages - k.media - k.fee - k.fines - k.logistics - k.wut;
+  const kpi = s.tycoon.kpi;
+  const kpiDone = kpiProgress(kpi, kpiMetricsOf(s));
+  const daysLeft = Math.max(0, kpi.toDay - dayOfMinute(s.minute));
+  // premia i XP liczy sim przy zamknięciu tygodnia (closeKpiWeek); tu ta sama zasada na bieżącej skali sklepu, stąd „ok.”
+  const kpiBonus = roundNice(KPI.bonusShare * Math.max(0, kpiScaleOf(s, info).dailyMargin));
+  const kpiXp = KPI.xpBase + KPI.xpPerLevel * Math.max(1, s.level);
   const goals = MILESTONES.filter((x) => !s.milestones.includes(x.id)).slice(0, 3);
   const best = Math.max(1, ...s.history.map((h) => Math.abs(h.profit)));
+  // w trakcie miesiąca `m.fee` jest zerem (opłata schodzi dopiero przy zamknięciu), więc pokazujemy, ile naliczy się od dzisiejszego obrotu
+  const fee = franchiseFee(m.revenue);
   const nextRank = nextRankAt(s.level);
   const meta = metaView.value;
   return (
     <>
-      <Section title="Zlecenia Centrali">
-        {s.quests.map((q) => {
-          const done = questDone(s, q);
-          return (
-            <div key={q.id} class={`tt-quest${done ? ' done' : ''}`}>
-              <div class="tt-row"><b>{questTitle(q)}</b></div>
-              <Bar value={questProgress(s, q)} />
-              <div class="tt-row">
-                <span class="tt-muted">+{zl(q.reward.cash)} · +{q.reward.ogonki} 🦎 · +{q.reward.xp} XP</span>
-                {done
-                  ? <button type="button" class="tt-btn tt-primary tt-claim" onClick={() => game.dispatch({ type: 'claimQuest', questId: q.id })}>Odbierz!</button>
-                  : <span class="tt-muted">{pct(questProgress(s, q))}</span>}
-              </div>
-            </div>
-          );
-        })}
+      <Section title="KPI tygodnia">
+        <div class="tt-kpi">
+          <div class="tt-row"><b>{kpiTitle(kpi.kind, kpi.target, int)}</b></div>
+          <Bar value={kpiDone} />
+          <div class="tt-row"><span class="tt-muted">{KPI_FLAVOR[kpi.kind]}</span><span class="tt-muted">{pct(kpiDone)}</span></div>
+          <div class="tt-kpi-days">do niedzieli: <b>{daysLeft === 0 ? 'dziś' : `${daysLeft} ${plural(daysLeft, 'dzień', 'dni', 'dni')}`}</b></div>
+          <div class="tt-kpi-reward">Nagroda: zaufanie +{KPI.trustHit}, premia ok. {zl(kpiBonus)}, +{kpiXp} XP</div>
+        </div>
+        <p class="tt-hint">Rozliczenie w niedzielę o 23:00. Nietrafiony cel: zaufanie −{-KPI.trustMiss}.</p>
       </Section>
       <Section title={`Poziom ${s.level}: ${rankFor(s.level)}`}>
         <Bar value={s.xp / xpToNext(s.level)} />
@@ -406,19 +475,26 @@ export function GoalsPanel({ s, game }: { s: EconomyState; game: GameActions; v:
       <Section title="Dziś">
         <Row label="Klienci">{int(t.customers)} (utraceni: {int(t.lost)})</Row>
         <Row label="Obrót">{zl(t.revenue)}</Row>
-        <Row label="Marża (Twój przychód)">{zl(t.margin + t.other)}</Row>
-        <Row label="Koszty (bez płac)">{zl(t.fines + t.logistics)}</Row>
+        <Row label="Marża i premie (Twój przychód)">{zl(t.margin + t.bonus + t.other)}</Row>
+        <Row label="Koszty (bez płac)">{zl(t.fines + t.logistics + t.wut)}</Row>
         <p class="tt-hint">Płace i media rozliczają się przy zamknięciu, o 23:00.</p>
       </Section>
       <Section title="Ten miesiąc">
         <Row label="Obrót">{zl(m.revenue)}</Row>
-        <Row label="Marża">{zl(m.margin + m.other)}</Row>
+        <Row label="Marża i premie">{zl(m.margin + m.bonus + m.other)}</Row>
         <Row label="Płace">−{zl(m.wages)}</Row>
         <Row label="Media">−{zl(m.media)}</Row>
         <Row label="Mandaty">−{zl(m.fines)}</Row>
         <Row label="Logistyka">−{zl(m.logistics)}</Row>
-        <Row label="Wynik (przed opłatą franczyzową)"><b>{signedZl(profit(m))}</b></Row>
+        <Row label="WUT ponad próg">−{zl(m.wut)}</Row>
+        <Row label="Opłata franczyzowa (naliczona do dziś)">−{zl(fee)}</Row>
+        <Row label="Wynik po opłacie (do dziś)"><b>{signedZl(profit(m) - fee)}</b></Row>
         <Row label="Inwestycje">{zl(m.investments)}</Row>
+        <p class="tt-hint">Opłatę franczyzową, WUT ponad próg i premię od obrotu Centrala rozlicza przy zamknięciu miesiąca. Zostaw gotówkę na opłaty.</p>
+        {/* ostrzeżenie wynika ze stanu (ostatni raport), więc wraca po przeładowaniu, a okno „OK” z dnia raportu nie jest zapisywane */}
+        {s.lastReport !== null && s.lastReport.cash < BANKRUPTCY_AT && (
+          <p class="tt-hint warn">Poprzedni raport zastał Cię z gotówką poniżej {signedZl(BANKRUPTCY_AT)}. Jeśli ten też, Centrala wypowie umowę.</p>
+        )}
       </Section>
       {s.history.length > 0 && (
         <Section title="Poprzednie miesiące">

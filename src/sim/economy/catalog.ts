@@ -36,6 +36,17 @@ export const ITEMS_PER_CUSTOMER = 3.4;
 /** Hot-dog albo kawa „przy okazji”: szansa na klienta, cena i marża. Bez zapasu (strefa hot jest w każdym sklepie). */
 export const HOT = { chance: 0.18, price: 8.5, margin: 0.45 } as const;
 
+/**
+ * Przeciętny klient w złotówkach (jedno miejsce, z którego liczą ekonomia, karty, KPI i makieta): koszyk z półek (sztuki
+ * z `ITEMS_PER_CUSTOMER` w proporcjach `basket`) i strefa hot. Marża to przychód franczyzobiorcy, obrót to wartość sprzedanego towaru.
+ */
+export const SHELF_MARGIN_PER_CUSTOMER = CATS.reduce((n, c) => n + CAT_INFO[c].price * CAT_INFO[c].margin * CAT_INFO[c].basket, 0) * ITEMS_PER_CUSTOMER;
+export const SHELF_REVENUE_PER_CUSTOMER = CATS.reduce((n, c) => n + CAT_INFO[c].price * CAT_INFO[c].basket, 0) * ITEMS_PER_CUSTOMER;
+export const HOT_MARGIN_PER_CUSTOMER = HOT.chance * HOT.price * HOT.margin;
+export const HOT_REVENUE_PER_CUSTOMER = HOT.chance * HOT.price;
+export const MARGIN_PER_CUSTOMER = SHELF_MARGIN_PER_CUSTOMER + HOT_MARGIN_PER_CUSTOMER;
+export const REVENUE_PER_CUSTOMER = SHELF_REVENUE_PER_CUSTOMER + HOT_REVENUE_PER_CUSTOMER;
+
 /** Pojemność mebli (sztuk na kratkę obrysu) i zaplecza (sztuk na kratkę podłogi zaplecza). */
 export const CAPACITY = { gondola: 36, wallShelf: 45, fridge: 35, backroom: 18 } as const;
 
@@ -47,9 +58,13 @@ export const PALLET_ITEMS = 320;
 export const MINUTES_PER_DAY = 24 * 60;
 export const OPEN_FROM = 6 * 60;
 export const OPEN_TO = 23 * 60;
-/** Minuty gry na sekundę przy ×1: dzień sklepu (17 h) w ~51 s, noc (7 h) w ~5 s. */
-export const MINUTES_PER_SECOND_OPEN = 20;
-export const MINUTES_PER_SECOND_CLOSED = 84;
+/**
+ * Minuty gry na sekundę przy ×1: dzień sklepu (17 h) w 2 min 50 s, noc (7 h) w 30 s, doba w ~3 min 20 s (decyzja
+ * właściciela z 29.10.2026: kalendarz nie pędzi w późne lata). Noc 30 s czasu widoku przy każdej prędkości (widok ludzi
+ * dostaje czas razy prędkość), więc zmiana zdąża wyjść na chodnik, zanim sklep znów się otworzy.
+ */
+export const MINUTES_PER_SECOND_OPEN = 6;
+export const MINUTES_PER_SECOND_CLOSED = 14;
 export const ORDER_DEADLINE = 11 * 60;
 export const DELIVERY_AT = 7 * 60;
 export const DELIVERY_AT_NIGHT = 5 * 60;
@@ -85,21 +100,10 @@ export const UNLOAD_AT = { sidewalk: 0.75, floor: 1, backroom: 1.15 } as const;
 export const TAP_ITEMS = 8;
 /**
  * Combo stukania liczone w minutach gry, a nie zegarem przeglądarki (serwer odtwarzający bieg nie widzi zegara):
- * odstęp między stuknięciami, który jeszcze podtrzymuje serię. 15 minut to ok. 0,75 s przy ×1 w godzinach otwarcia
- * (20 minut gry na sekundę), czyli tyle co dawne 650 ms.
+ * odstęp między stuknięciami, który jeszcze podtrzymuje serię. 5 minut to ok. 0,8 s przy ×1 w godzinach otwarcia
+ * (`MINUTES_PER_SECOND_OPEN`), czyli mniej więcej tyle co dawne 650 ms.
  */
-export const COMBO_WINDOW = 15;
-/**
- * Paczki od Centrali w czasie gry: pierwsze okno GIFT_FIRST minut od startu (przesunięte w godziny otwarcia), każde otwarte
- * GIFT_OPEN minut (ok. 9 s przy ×1, jak dotąd). Następne okno: GIFT_GAP_MIN plus losowe 0..GIFT_GAP_SPREAD minut od chwili,
- * gdy poprzednie przestało czekać (odebrane albo wygasłe), przesunięte w godziny otwarcia (`giftWindowFrom`). Odstęp
- * od końca okna to więc 900 do 2698 minut: 900..2099 po losowaniu plus do 599 minut przesunięcia na następne otwarcie.
- */
-export const GIFT_FIRST = 480;
-export const GIFT_GAP_MIN = 900;
-export const GIFT_GAP_SPREAD = 1200;
-export const GIFT_OPEN = 180;
-
+export const COMBO_WINDOW = 5;
 export const WAGE_PER_DAY = 340;
 export const HIRE_COST = 300;
 export const STAFF_MAX = 8;
@@ -108,17 +112,22 @@ export const STAFF_START = 2;
 // --- Koszty i kary ------------------------------------------------------------------------------------
 
 export const MEDIA_PER_DAY = 140;
-export const FRANCHISE_FEE_FIXED = 4500;
-export const FRANCHISE_FEE_SHARE = 0.03;
+/**
+ * Opłata franczyzowa na koniec miesiąca: stała część plus udział w obrocie. Centrala bierze swoje (satyra ze specu), a udział
+ * rośnie z wielkością sklepu, więc wyrównuje seedy: dwuosobowa zmiana bez decyzji kończy dwa miesiące w okolicy zera, i to
+ * w budce, i w flagowcu (balans: tycoon/balance.test.ts). Zaufana Centrali część wraca jako premia od obrotu (trust.ts).
+ */
+export const FRANCHISE_FEE_FIXED = 2000;
+export const FRANCHISE_FEE_SHARE = 0.12;
 /** Palet w dostawie bez opłaty logistycznej; każda kolejna kosztuje. */
 export const PALLETS_FREE = 6;
 export const PALLET_FEE = 60;
 export const RETURN_FEE = 150;
-export const FINE_BASE = 500;
-export const FINE_PER_PALLET = 150;
+export const FINE_BASE = 400;
+export const FINE_PER_PALLET = 120;
 /** Kredyt kupiecki: wartość towaru w sklepie (półki, zaplecze, palety) ponad limit wstrzymuje zamówienie. */
 export const CREDIT_LIMIT = 70_000;
-/** Na koniec miesiąca z gotówką poniżej tego Centrala wypowiada umowę. */
+/** Gotówka poniżej tego przy zamknięciu miesiąca to miesiąc bez opłacenia Centrali; drugi taki z rzędu kończy umowę (spec §10). */
 export const BANKRUPTCY_AT = -30_000;
 export const START_CASH = 2000;
 

@@ -1,9 +1,10 @@
 import type { CharacterFactory } from '@/render/characters/characterFactory';
 import { applyCommand, type Command } from '@/sim/economy/commands';
 import {
-  grantDaily, grantOffline, processLevels, stepMinute, tapCombo, type CommandResult, type EconEvent,
+  awaitingDecision, grantDaily, grantOffline, processLevels, stepMinute, tapCombo, type CommandResult, type EconEvent, type EconEventKind,
 } from '@/sim/economy/economy';
 import { rankFor } from '@/sim/economy/progress';
+import { noticeLevel } from '@/sim/economy/tycoon/notices';
 import type { Sfx } from '@/ui/sfx';
 import * as ui from '@/ui/state';
 import type { CashierLook } from './cashier';
@@ -60,12 +61,11 @@ interface AfterStep {
 export const AFTER: Record<Command['type'], AfterStep> = {
   tapPallet: { okToast: false, sfx: 'tap', buzz: 8 },
   tapTill: { okToast: false, sfx: 'cash', buzz: 8 },
-  claimQuest: { okToast: true, sfx: 'coins', buzz: [15, 30, 15], confetti: { fx: 0.5, fy: 0.6, count: 28 }, persist: true },
-  claimGift: { okToast: true, sfx: 'gift', buzz: [10, 20, 10] },
   movePallet: { okToast: true },
   returnPallet: { okToast: true, clearSelection: 'after' },
   setOrder: { okToast: false },
-  setPriority: { okToast: false },
+  setStaffProfile: { okToast: false },
+  pinStaff: { okToast: false },
   hire: { okToast: false },
   fire: { okToast: false },
   buyUpgrade: { okToast: true, sfx: 'coins', persist: true },
@@ -73,6 +73,8 @@ export const AFTER: Record<Command['type'], AfterStep> = {
   startRemont: { okToast: true, persist: true, clearSelection: 'before' },
   campaign: { okToast: true },
   rushRemont: { okToast: true },
+  // wynik odpowiedzi przychodzi zdarzeniem `card-result` (toast z handleEvents), więc sam wynik polecenia nie ma tekstu
+  answerCard: { okToast: false, sfx: 'pop', persist: true },
 };
 
 /** Typ spoza tabeli (polecenie obejściem typów): bez kroków po poleceniu, a odmowę z komunikatem da `applyCommand`. */
@@ -248,7 +250,30 @@ export interface GameShell {
   game: ui.GameActions;
 }
 
-const EVENT_SFX: Partial<Record<EconEvent['kind'], Sfx>> = { delivery: 'delivery', fine: 'fine', golden: 'golden', milestone: 'coins', warning: 'error' };
+const EVENT_SFX: Partial<Record<EconEvent['kind'], Sfx>> = {
+  delivery: 'delivery', fine: 'fine', golden: 'golden', milestone: 'coins', warning: 'error', card: 'pop',
+};
+
+/**
+ * Wynik karty dźwięczy monetami tylko przy premii Centrali. Zdarzenie niesie sam tekst (zob. `EconEvent`), więc premię
+ * rozpoznaje słowo „premi…” w tekście; `actions.test.ts` pilnuje, żeby w talii padało ono tylko w odpowiedzi, która ją wypłaca.
+ */
+const PREMIUM_WORD = /premi/i;
+
+function sfxOf(e: EconEvent): Sfx | undefined {
+  if (e.kind === 'card-result') return PREMIUM_WORD.test(e.text) ? 'coins' : undefined;
+  return EVENT_SFX[e.kind];
+}
+
+/**
+ * Tytuł okna „OK” dla ważnych zdarzeń (poziom `story` w `notices.ts`: to tam żyje lista, co czeka na gracza). Rodzaj bez wpisu,
+ * który kiedyś dostanie poziom `story`, też trafi do okna, pod ogólnym tytułem. Karta (`decision`) tu nie wchodzi: zatrzymuje
+ * ją symulacja (`cardsBlocking`), a okno karty jest osobne (`CardDesk`).
+ */
+const STORY_TITLE: Partial<Record<EconEventKind, string>> = { 'trust-tier': 'Zaufanie Centrali', remont: 'Remont zakończony', debt: 'Centrala czeka na opłatę' };
+const STORY_FALLBACK_TITLE = 'Ważne zdarzenie';
+/** Mają własne okno, więc nie idą do wspólnego: raport miesiąca (`ui.report`) i koniec gry (okno końca współpracy w `ReportModal`, z `gameOver`). */
+const OWN_WINDOW: ReadonlySet<EconEventKind> = new Set<EconEventKind>(['month', 'gameover']);
 
 const money = (n: number): string => `+${n.toLocaleString('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} zł`;
 
@@ -289,17 +314,20 @@ export function createShell(deps: ShellDeps): GameShell {
       if (e.kind === 'day') { persist(); continue; }
       if (e.kind === 'month' && e.report) ui.report.value = e.report;
       if (e.kind === 'levelup' && e.level) {
-        ui.celebration.value = {
-          title: `POZIOM ${e.level}`,
-          subtitle: rankFor(e.level),
-          lines: [e.text.replace(/^Poziom \d+! /, ''), ...(e.unlocks ?? []).map((u) => `🔓 ${u}`)],
-        };
+        const lines = [e.text.replace(/^Poziom \d+! /, ''), ...(e.unlocks ?? []).map((u) => `🔓 ${u}`)];
+        ui.celebration.value = { title: `POZIOM ${e.level}`, subtitle: rankFor(e.level), lines };
         fx.play('levelup');
         fx.buzz([30, 40, 30]);
         fx.confetti();
+        // baner mija sam, a poziom, który coś odblokowuje, czeka jeszcze na „OK” (zwykły awans zostaje samą fetą)
+        if (noticeLevel('levelup', { unlocks: e.unlocks?.length ?? 0 }) === 'story') ui.pushStory(`Poziom ${e.level}`, lines.join('\n'));
         continue;
       }
-      const sfx = EVENT_SFX[e.kind];
+      if (!OWN_WINDOW.has(e.kind) && noticeLevel(e.kind, { unlocks: e.unlocks?.length ?? 0 }) === 'story') {
+        ui.pushStory(STORY_TITLE[e.kind] ?? STORY_FALLBACK_TITLE, e.text);
+        continue;
+      }
+      const sfx = sfxOf(e);
       if (sfx) fx.play(sfx);
       if (e.kind === 'golden' && e.text.startsWith('✨ Złota paleta rozładowana')) fx.confetti(0.5, 0.5, 24);
       ui.pushToast(e.text, e.kind);
@@ -341,6 +369,8 @@ export function createShell(deps: ShellDeps): GameShell {
     }
     deps.writeSeedToUrl(next);
     ui.seed.value = next;
+    ui.story.value = [];   // wpisy z poprzedniego sklepu (także po „Zacznij od nowa”) nie mają czego czekać w nowym
+    ui.picked.value = null;   // numery kart zaczynają się w nowej grze od 1: zaznaczona odpowiedź ze starej nie może wskoczyć na nową kartę
     publish();
     persist();
     if (shell.session?.loadNotice) fx.notice(shell.session.loadNotice);
@@ -377,13 +407,14 @@ export function createShell(deps: ShellDeps): GameShell {
    * sklep otwiera `openChosen` (start.ts, z testem): przez `setSeed` zawsze bez `fresh`, więc seed z zapisem wczytuje ten zapis, a
    * zapisu z nowszej wersji gry ani takiego, którego świata nie dało się zbudować, nic nie nadpisze (`createSession`). Wygląd idzie
    * do sceny przed `setSeed`: każdy sklep (także poprzedni, odtworzony, gdy nowy się nie otworzył) stawia kasjera z tego wyglądu,
-   * więc `CashierView.setLook` na żywo nie jest tu potrzebne.
+   * więc `CashierView.setLook` na żywo nie jest tu potrzebne. Po otwarciu zupełnie nowego sklepu wstaje okno „Jak grać” (gra czeka na
+   * „Zaczynamy”); sklep wczytany z zapisu i sklep, który się nie otworzył (gracz zostaje w poprzednim), instrukcji nie otwierają.
    */
   function openChosenStore(choice: StartChoice): void {
     shell.meta.player = playerOf(choice);
     saveMeta(shell.meta);
     scene.setCashierLook(choice.look);
-    openChosen(choice, storeSwitch);
+    if (openChosen(choice, storeSwitch) && shell.session && !shell.session.fromSave) ui.openHowTo();
   }
 
   const game: ui.GameActions = {
@@ -498,6 +529,7 @@ export function createShell(deps: ShellDeps): GameShell {
       const start = startupWindow(shell.meta, session.econ, session.ephemeral, new Date());
       ui.showHints(start.intro ? deps.firstDayHints : []);   // nowa gra: wskazówki pierwszego dnia w krótkich dymkach
       ui.welcome.value = start.welcome;
+      if (choice) ui.openHowTo();   // pierwsze wejście przez ekran startowy: instrukcja, gra i dymki pierwszego dnia czekają na „Zaczynamy”
       persist();
       return true;
     },
@@ -530,7 +562,8 @@ export function createShell(deps: ShellDeps): GameShell {
       const { session } = shell;
       if (!session) return;
       const events: EconEvent[] = [];
-      for (let i = 0; i < minutes && !session.econ.gameOver; i++) stepMinute(session.econ, session.info, events);
+      // karta decyzji zatrzymuje także przewijanie: bez odpowiedzi gracza gra nie idzie dalej (jak pętla klatek)
+      for (let i = 0; i < minutes && !session.econ.gameOver && !awaitingDecision(session.econ); i++) stepMinute(session.econ, session.info, events);
       handleEvents(events);
       markOffLog(session);   // przewinięcie nie jest poleceniem: dziennik nie odtworzy takiego stanu
       settleOutsideCommand();

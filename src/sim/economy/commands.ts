@@ -1,11 +1,12 @@
 import { layoutFor } from '@/sim/store/layoutFor';
 import type { StoreLayout } from '@/sim/store/types';
 import {
-  buyEquipment, buyUpgrade, campaign, claimGift, claimQuest, commitTap, comboMult, fire, giftOpen, hire, movePallet, nextTapStreak,
-  PRIORITY_LABEL, processLevels, relayout, returnPallet, rushRemont, scheduleGift, setOrder, setPriority, startRemont, tapPallet, tapTill,
-  type CommandResult, type EconEvent, type EconomyState, type Priority,
+  answerCard, awaitingDecision, buyEquipment, buyUpgrade, campaign, commitTap, comboMult, fire, hire, movePallet,
+  nextTapStreak, processLevels, relayout, returnPallet, rushRemont, setOrder, startRemont, tapPallet, tapTill,
+  type CommandResult, type EconEvent, type EconomyState,
 } from './economy';
 import { computeStoreInfo, type PalletLoc, type StoreInfo } from './storeInfo';
+import { STAFF_PROFILES, TASK_LABEL, pinStaff, setStaffProfile, type StaffProfile, type StaffTask } from './tycoon/staff';
 import { EQUIPMENT_BY_ID, UPGRADE_BY_ID, type EquipmentId, type UpgradeId } from './upgrades';
 
 /**
@@ -32,19 +33,19 @@ import { EQUIPMENT_BY_ID, UPGRADE_BY_ID, type EquipmentId, type UpgradeId } from
 export type Command =
   | { type: 'tapPallet'; palletId?: number }
   | { type: 'tapTill' }
-  | { type: 'claimQuest'; questId: number }
-  | { type: 'claimGift' }
   | { type: 'movePallet'; palletId: number; loc: PalletLoc }
   | { type: 'returnPallet'; palletId: number }
   | { type: 'setOrder'; auto: boolean; manual?: number }
   | { type: 'hire' }
   | { type: 'fire' }
-  | { type: 'setPriority'; priority: Priority }
+  | { type: 'setStaffProfile'; profile: StaffProfile }
+  | { type: 'pinStaff'; task: StaffTask; count: number }
   | { type: 'buyUpgrade'; id: UpgradeId }
   | { type: 'buyEquipment'; id: EquipmentId; slotId?: string }
   | { type: 'startRemont' }
   | { type: 'campaign' }
-  | { type: 'rushRemont' };
+  | { type: 'rushRemont' }
+  | { type: 'answerCard'; seq: number; answer: number };
 
 /** Wartość pola polecenia: tylko to, co kopia płytka (`{ ...cmd }`) naprawdę kopiuje. */
 type FieldValue = string | number | boolean | undefined;
@@ -55,14 +56,14 @@ type NestedFields<C> = C extends { type: infer T extends string }
 type MustBeNever<Offenders extends never> = Offenders;
 /**
  * Kontrola w czasie kompilacji: dodanie do `Command` pola, które nie jest prostą wartością, kończy się błędem `tsc` typu
- * „Type '"setPriority.order"' does not satisfy the constraint 'never'” (typ i pole w cudzysłowie). Przeczytaj komentarz nad `Command`.
+ * „Type '"pinStaff.order"' does not satisfy the constraint 'never'” (typ i pole w cudzysłowie). Przeczytaj komentarz nad `Command`.
  */
 export type FlatCommands = MustBeNever<NestedFields<Command>>;
 
 /** Wszystkie typy poleceń (do testów pokrycia i do walidacji). */
 export const COMMAND_TYPES: readonly Command['type'][] = [
-  'tapPallet', 'tapTill', 'claimQuest', 'claimGift', 'movePallet', 'returnPallet', 'setOrder', 'hire', 'fire', 'setPriority',
-  'buyUpgrade', 'buyEquipment', 'startRemont', 'campaign', 'rushRemont',
+  'tapPallet', 'tapTill', 'movePallet', 'returnPallet', 'setOrder', 'hire', 'fire', 'setStaffProfile', 'pinStaff',
+  'buyUpgrade', 'buyEquipment', 'startRemont', 'campaign', 'rushRemont', 'answerCard',
 ];
 
 const LOCS: readonly PalletLoc[] = ['sidewalk', 'backroom', 'floor'];
@@ -82,19 +83,20 @@ const noFields = (): boolean => true;
 const VALID = {
   tapPallet: (c) => c.palletId === undefined || isInt(c.palletId),
   tapTill: noFields,
-  claimQuest: (c) => isInt(c.questId),
-  claimGift: noFields,
   movePallet: (c) => isInt(c.palletId) && LOCS.includes(c.loc as PalletLoc),
   returnPallet: (c) => isInt(c.palletId),
   setOrder: (c) => typeof c.auto === 'boolean' && (c.manual === undefined || isFiniteNumber(c.manual)),
   hire: noFields,
   fire: noFields,
-  setPriority: (c) => isKeyOf(PRIORITY_LABEL, c.priority),
+  setStaffProfile: (c) => typeof c.profile === 'string' && STAFF_PROFILES.includes(c.profile as StaffProfile),
+  // liczba osób całkowita i nieujemna; górną granicę (personel na zmianie) sprawdza `pinStaff`
+  pinStaff: (c) => isKeyOf(TASK_LABEL, c.task) && isInt(c.count) && c.count >= 0,
   buyUpgrade: (c) => isKeyOf(UPGRADE_BY_ID, c.id),
   buyEquipment: (c) => isKeyOf(EQUIPMENT_BY_ID, c.id) && (c.slotId === undefined || typeof c.slotId === 'string'),
   startRemont: noFields,
   campaign: noFields,
   rushRemont: noFields,
+  answerCard: (c) => isInt(c.seq) && isInt(c.answer),   // czy numer odpowiedzi mieści się w karcie, rozstrzyga `resolveCard`
 } satisfies Record<Command['type'], (c: Fields) => boolean>;
 
 /**
@@ -123,34 +125,33 @@ export interface CommandOutcome {
 
 const refused = (text: string): CommandOutcome => ({ result: { ok: false, text }, events: [], layoutChanged: false });
 
-/** Stuknięcie: mnożnik z serii, jaką da to stuknięcie; do serii liczy się dopiero udane. */
+/** Stuknięcie: mnożnik z serii, jaką da to stuknięcie; do serii liczy się dopiero udane (odmowa rąk jej nie podtrzymuje). */
 function tap(s: EconomyState, attempt: (combo: number) => CommandResult): CommandResult {
   const r = attempt(comboMult(nextTapStreak(s)));
   if (r.ok) commitTap(s);
   return r;
 }
 
+/** Stuknięcia czekają na kartę: ręce franczyzobiorcy zajmuje papier na biurku (gra i tak stoi do odpowiedzi). */
+const CARD_FIRST = 'Najpierw karta na biurku.';
+
 function run(s: EconomyState, info: StoreInfo, c: Command, events: EconEvent[]): CommandResult {
   switch (c.type) {
-    case 'tapPallet': return tap(s, (combo) => tapPallet(s, info, c.palletId, combo, events));
-    case 'tapTill': return tap(s, (combo) => tapTill(s, info, combo));
-    case 'claimQuest': return claimQuest(s, info, c.questId);
-    case 'claimGift': {
-      const r = claimGift(s, info);
-      scheduleGift(s);   // jedno okno to jeden odbiór: następne dopiero za kilka godzin gry
-      return r;
-    }
+    case 'tapPallet': return awaitingDecision(s) ? { ok: false, text: CARD_FIRST } : tap(s, (combo) => tapPallet(s, info, c.palletId, combo, events));
+    case 'tapTill': return awaitingDecision(s) ? { ok: false, text: CARD_FIRST } : tap(s, (combo) => tapTill(s, info, combo));
     case 'movePallet': return movePallet(s, info, c.palletId, c.loc);
-    case 'returnPallet': return returnPallet(s, c.palletId);
+    case 'returnPallet': return returnPallet(s, c.palletId, events);
     case 'setOrder': setOrder(s, c.auto, c.manual); return { ok: true };
     case 'hire': return hire(s);
     case 'fire': return fire(s);
-    case 'setPriority': setPriority(s, c.priority); return { ok: true };
+    case 'setStaffProfile': return setStaffProfile(s.tycoon.staff, c.profile);
+    case 'pinStaff': return pinStaff(s.tycoon.staff, c.task, c.count, s.staff);
     case 'buyUpgrade': return buyUpgrade(s, c.id);
     case 'buyEquipment': return buyEquipment(s, info, c.id, c.slotId);
     case 'startRemont': return startRemont(s);
     case 'campaign': return campaign(s);
     case 'rushRemont': return rushRemont(s);
+    case 'answerCard': return answerCard(s, c.seq, c.answer, events);
     default: {
       // wyczerpanie sprawdza kompilator: nowy typ w `Command` bez gałęzi wyżej nie przejdzie `tsc`
       const unreachable: never = c;
@@ -161,17 +162,16 @@ function run(s: EconomyState, info: StoreInfo, c: Command, events: EconEvent[]):
 }
 
 /**
- * Stosuje polecenie gracza do stanu. Odmowa z powodu kształtu, końca gry albo zamkniętego okna paczki nie rusza stanu
- * i nie rzuca. Przyjęte polecenie (także to, które się nie udało) kończy się przeliczeniem poziomów, a gdy zmienił się
- * poziom remontu, nowym układem sklepu i przeniesieniem palet oraz sprzętu. Polecenie jest kopiowane raz na początku i dalej
- * czyta się już tylko kopię: obiekt z getterem (spoza JSON-a) nie da innego `type` przy walidacji, w oknie paczki i w `run`.
+ * Stosuje polecenie gracza do stanu. Odmowa z powodu kształtu albo końca gry nie rusza stanu i nie rzuca. Przyjęte polecenie
+ * (także to, które się nie udało) kończy się przeliczeniem poziomów, a gdy zmienił się poziom remontu, nowym układem sklepu
+ * i przeniesieniem palet oraz sprzętu. Polecenie jest kopiowane raz na początku i dalej czyta się już tylko kopię: obiekt
+ * z getterem (spoza JSON-a) nie da innego `type` przy walidacji i w `run`.
  * Kopia jest płytka, bo pola poleceń są płaskie (komentarz nad `Command`, kontrola `FlatCommands`).
  */
 export function applyCommand(state: EconomyState, info: StoreInfo, cmd: Command): CommandOutcome {
   const c = typeof cmd === 'object' && cmd !== null && !Array.isArray(cmd) ? { ...cmd } : cmd;
   if (!isCommand(c)) return refused('Nieznane polecenie.');
   if (state.gameOver) return refused('Gra skończona: Centrala wypowiedziała umowę.');
-  if (c.type === 'claimGift' && !giftOpen(state)) return refused('Paczki od Centrali już nie ma.');
 
   const events: EconEvent[] = [];
   const remontBefore = state.remontLevel;

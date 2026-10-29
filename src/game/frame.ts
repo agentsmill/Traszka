@@ -1,6 +1,6 @@
 import type { RenderContext } from '@/render/renderer';
 import { advanceEconomy } from '@/sim/economy/clock';
-import type { EconEvent } from '@/sim/economy/economy';
+import { awaitingDecision, type EconEvent } from '@/sim/economy/economy';
 import * as ui from '@/ui/state';
 import type { GameShell } from './actions';
 import type { SceneHost } from './scene';
@@ -13,11 +13,19 @@ import type { GameSession } from './session';
  */
 
 /**
- * Czy na wierzchu jest okno, które zatrzymuje grę: raport miesiąca, ekran startowy, powitanie, prestiż albo koniec gry
- * (ten ostatni czyta się z `session`, bez sesji go nie ma). Pauza z klawisza to osobna sprawa: nią steruje prędkość.
+ * Czy na wierzchu jest okno, które zatrzymuje grę: raport miesiąca, ważne zdarzenie czekające na „OK” (`ui.story`), ekran
+ * startowy, powitanie, prestiż, „Jak grać” albo koniec gry (ten ostatni czyta się z `session`, bez sesji go nie ma). Karta decyzji
+ * zatrzymuje grę sama, w symulacji (`cardsBlocking`). Pauza z klawisza to osobna sprawa: nią steruje prędkość.
  */
-export const isModalOpen = (session: Pick<GameSession, 'econ'> | null = null): boolean =>
-  !!ui.report.value || !!ui.start.value || !!ui.welcome.value || ui.showPrestige.value || !!session?.econ.gameOver;
+export const isModalOpen = (session: Pick<GameSession, 'econ'> | null = null): boolean => ui.isWindowOpen() || !!session?.econ.gameOver;
+
+/**
+ * Czy scena stoi: tłum, ludzie i dymki zamierają pod oknem (`modal`, czyli `isModalOpen`) i pod kartą decyzji, która trzyma grę
+ * (`awaitingDecision`). Bez tego sklep żył własnym życiem, np. w ×8, pod napisem „Gra czeka na Twoją decyzję”. Pauza z klawisza
+ * nie potrzebuje tego warunku: prędkość świata 0 zatrzymuje scenę sama.
+ */
+export const isSceneHeld = (session: Pick<GameSession, 'econ'> | null, modal: boolean): boolean =>
+  modal || (!!session && awaitingDecision(session.econ));
 
 /**
  * Przesuwa ekonomię sesji o czas klatki `realDt` (s) przy prędkości gry `speed`, a zdarzenia dopisuje do `out`.
@@ -65,6 +73,7 @@ export function debugHandleOf({ ctx, shell, scene }: DebugParts): object {
     get street() { return scene.loaded?.street ?? null; },
     get crowdView() { return scene.loaded?.crowdView ?? null; },
     get cashierView() { return scene.loaded?.cashierView ?? null; },
+    get staffView() { return scene.loaded?.staffView ?? null; },
     get factory() { return scene.factory; },
   };
 }

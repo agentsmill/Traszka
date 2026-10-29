@@ -5,7 +5,7 @@
  * tym, co jest dokładne w każdym silniku: mnożeniem double (IEEE 754), arytmetyką BigInt i literałami.
  * Testy (`exactMath.test.ts`) dowodzą, że wartości są te same, co z dawnych wzorów w V8. Jeden wyjątek: tuż pod potęgą
  * dziesięciu `Math.log10` w V8 zaokrągla w górę, więc dawny wzór na `pow10Floor` dawał tam potęgę za dużą, a nowy daje
- * właściwą (patrz niżej); `niceRound`, jedyny użytkownik, kończy w tym samym punkcie.
+ * właściwą (patrz niżej); `niceRound` (dawne zlecenia Centrali, dziś tylko w teście) kończy w tym samym punkcie.
  */
 
 /** `base` do całkowitej potęgi `n` ≥ 0 pętlą mnożeń, zamiast `base ** n`, którego `Math.pow` bywa różny między silnikami. */

@@ -6,6 +6,7 @@ import type { BlobShadows } from '@/render/characters/blobShadows';
 import type { CharacterFactory } from '@/render/characters/characterFactory';
 import { CashierView } from '@/render/cashierView';
 import { CrowdView } from '@/render/crowdView';
+import { StaffView } from '@/render/staff/staffView';
 import type { StreetView } from '@/render/street/buildStreet';
 import type { CashierLook } from '@/game/cashier';
 import { createWorld, type World } from '@/game/world';
@@ -29,6 +30,7 @@ export interface Loaded {
   street: StreetView | null;        // dochodzi asynchronicznie (modele GLB)
   crowdView: CrowdView | null;      // dochodzi, gdy fabryka postaci jest gotowa
   cashierView: CashierView | null;  // razem z widokiem tłumu; stoi za kasą
+  staffView: StaffView | null;      // załoga na ekranie; prowadzi `cashierView`, więc powstaje po nim
 }
 
 /** Z czego i do czego budować sklep. */
@@ -55,18 +57,21 @@ export interface StoreSource {
 export type CharacterSource = Pick<StoreSource, 'crowdParent' | 'blobs' | 'cashierLook'> & { factory: CharacterFactory };
 
 /**
- * Dokłada sklepowi postacie: widok tłumu i kasjera za ladą (oba w grupie tłumu, ze wspólnymi plamami cienia). Wołane przy budowie
- * sklepu, gdy fabryka jest już gotowa, a w przeciwnym razie przez main.ts, gdy fabryka dojdzie. Części, które już stoją, zostają
- * (nic się nie dubluje). Gdy któraś się wywróci, wyjątek idzie dalej, a to, co już stoi, zwalnia `unloadStore`.
+ * Dokłada sklepowi postacie: widok tłumu, kasjera za ladą i załogi (wszystkie w grupie tłumu, ze wspólnymi plamami cienia; załoga
+ * prowadzi kasjera, więc dostaje jego widok). Wołane przy budowie sklepu, gdy fabryka jest już gotowa, a w przeciwnym razie przez
+ * main.ts, gdy fabryka dojdzie. Części, które już stoją, zostają (nic się nie dubluje). Gdy któraś się wywróci, wyjątek idzie
+ * dalej, a to, co już stoi, zwalnia `unloadStore`.
  */
 export function attachCharacters(loaded: Loaded, src: CharacterSource): void {
   const { layout } = loaded.world;
   loaded.crowdView ??= new CrowdView(src.factory, layout, src.crowdParent, src.blobs);
   loaded.cashierView ??= new CashierView(src.factory, layout, src.crowdParent, src.blobs, src.cashierLook);
+  // Załoga trzyma własną kopię układu, więc remont (nowy układ) to nowy sklep, a w nim nowy `StaffView`.
+  loaded.staffView ??= new StaffView(src.factory, layout, src.crowdParent, src.blobs, loaded.cashierView);
 }
 
 /**
- * Buduje sklep w scenie: świat symulacji, bryłę z towarem, palety, sprzęt, kasę do stukania, widok tłumu i kasjera. Gdy któraś część
+ * Buduje sklep w scenie: świat symulacji, bryłę z towarem, palety, sprzęt, kasę do stukania, widok tłumu, kasjera i załogi. Gdy któraś część
  * się wywróci, wszystko już zbudowane jest zdjęte ze sceny i zwolnione, zanim wyjątek pójdzie dalej: odzyskiwanie po błędzie
  * (poprzedni sklep w `setSeed`, sklep awaryjny przy starcie) zaczyna od czystej sceny, a nie od pół-zbudowanego sklepu,
  * którego nikt by już nie znalazł.
@@ -87,7 +92,7 @@ export function loadStore(src: StoreSource): Loaded {
   src.scene.add(view.root);
 
   // Od tej chwili sklep jest w scenie: pola wypełniamy po kolei, a przy wyjątku `unloadStore` zwalnia te, które już stoją.
-  const loaded: Loaded = { world, view, goods, pallets: null, equipment: null, till: null, tillTop: null, street: null, crowdView: null, cashierView: null };
+  const loaded: Loaded = { world, view, goods, pallets: null, equipment: null, till: null, tillTop: null, street: null, crowdView: null, cashierView: null, staffView: null };
   try {
     if (info) {
       loaded.pallets = createPalletsView(layout, info);
@@ -134,6 +139,7 @@ export function unloadStore(loaded: Loaded): void {
     }
   };
   attempt(() => loaded.crowdView?.dispose());
+  attempt(() => loaded.staffView?.dispose());   // przed kasjerem: załoga go prowadzi i przy zwolnieniu odstawia
   attempt(() => loaded.cashierView?.dispose());
   attempt(() => loaded.street?.dispose());
   attempt(() => loaded.pallets?.dispose());

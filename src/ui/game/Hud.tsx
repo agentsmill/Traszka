@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type { Speed } from '@/game/loop';
 import { dayOf, formatClock, formatDate } from '@/sim/economy/calendar';
-import { isClosedForRemont, tapBoost } from '@/sim/economy/economy';
+import { isClosedForRemont } from '@/sim/economy/economy';
 import { rankFor, xpToNext } from '@/sim/economy/progress';
+import { trustTier } from '@/sim/economy/tycoon/trust';
 import { econ, showSettings, speed, tab, type Controls } from '../state';
 import { int, zl } from './format';
 
-const SPEEDS: { value: Speed; label: string; title: string }[] = [
+/** Przyciski prędkości w pasku (pierwszy to pauza); „Jak grać” podaje z nich zakres tempa. */
+export const SPEEDS: { value: Speed; label: string; title: string }[] = [
   { value: 0, label: '❚❚', title: 'Pauza (spacja)' },
   { value: 1, label: '×1', title: 'Czas normalnie' },
   { value: 2, label: '×2', title: 'Czas ×2' },
@@ -39,7 +41,26 @@ function useTweened(value: number): [number, boolean] {
   return [shown, rising];
 }
 
-/** Górny pasek: poziom z pierścieniem XP, gotówka, reputacja, Ogonki, data i godzina, prędkość czasu, ustawienia. */
+/** Poniżej tej wartości zaufanie Centrali świeci ostrzeżeniem (próg „Na cenzurowanym” zaczyna się od 20, „Pod obserwacją” od 40). */
+export const TRUST_WARN_BELOW = 30;
+
+/**
+ * Znaczek zaufania Centrali: na telefonie sama wartość („🤝 62”), nazwę progu CSS dokłada dopiero na szerszym ekranie.
+ * Pełny opis jest w podpowiedzi i w `aria-label`.
+ */
+export function TrustChip({ value }: { value: number }) {
+  const tier = trustTier(value);
+  const shown = Math.round(value);
+  return (
+    <span class={`tt-stat tt-trust${value < TRUST_WARN_BELOW ? ' warn' : ''}`} role="img" aria-label={`Zaufanie ${shown}: ${tier.label}`}
+      title={`Zaufanie Centrali ${shown} / 100: ${tier.label}. ${tier.flavor}`}>
+      <span>🤝 {shown}</span>
+      <span class="tt-trust-tier">{tier.label}</span>
+    </span>
+  );
+}
+
+/** Górny pasek: poziom z pierścieniem XP, gotówka, reputacja, Ogonki, zaufanie Centrali, data i godzina, prędkość czasu, ustawienia. */
 export function Hud({ controls }: { controls: Controls }) {
   const view = econ.value;
   const [cash, rising] = useTweened(view?.s.cash ?? 0);
@@ -58,7 +79,7 @@ export function Hud({ controls }: { controls: Controls }) {
         <span class={`tt-cash${s.cash < 0 ? ' neg' : ''}${rising ? ' up' : ''}`} title="Gotówka">{zl(cash)}</span>
         <span class="tt-stat" title="Reputacja sklepu (0–100): ściąga klientów">⭐ {int(s.reputation)}</span>
         <span class="tt-stat" title="Ogonki: nagrody za cele, wydajesz w Ulepszeniach">🦎 {int(s.ogonki)}</span>
-        {tapBoost(s) > 1 && <span class="tt-stat hot" title="Turbo rękawice: stuknięcia ×3">🧤×3</span>}
+        <TrustChip value={s.tycoon.trust.value} />
         <button type="button" class="tt-iconbtn tt-gear" aria-label="Ustawienia" onClick={() => { showSettings.value = true; }}>⚙</button>
       </div>
       <div class="tt-hud-row">

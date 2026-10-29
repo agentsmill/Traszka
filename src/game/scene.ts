@@ -14,11 +14,13 @@ import { cashierCues, type CashierLook } from './cashier';
 import { bindControls } from './controls';
 import { advanceClock, clockAlpha } from './loop';
 import type { GameSession } from './session';
+import { palletRefsOf } from './palletRefs';
 import { SIM_STEP, payLook, setCrowdExtras, setCrowdRate, stepCrowd, type CrowdOptions } from '@/sim/crowd/crowd';
 import { CATS, HOUR_CURVE } from '@/sim/economy/catalog';
 import { minuteOfDay } from '@/sim/economy/calendar';
-import { effects, expectedDailyCustomers, isClosedForRemont, isStoreOpen, slotUsage } from '@/sim/economy/economy';
+import { effects, expectedDailyCustomers, isClosedForRemont, isOpenForCustomers, slotUsage } from '@/sim/economy/economy';
 import { slotUnits } from '@/sim/economy/slots';
+import { staffOnShift } from '@/sim/economy/tycoon/shift';
 import { spotCells } from '@/sim/economy/storeInfo';
 import { generateStore } from '@/sim/store/generateStore';
 import { CELL_SIZE_M } from '@/sim/grid';
@@ -27,7 +29,7 @@ import type { WorldOverlay } from '@/ui/worldOverlay';
 import * as ui from '@/ui/state';
 
 /**
- * Scena gry: wszystko, co dotyka three.js i obrazu. `createSceneHost` trzyma świat sklepu w scenie (`Loaded`), tłum i kasjera,
+ * Scena gry: wszystko, co dotyka three.js i obrazu. `createSceneHost` trzyma świat sklepu w scenie (`Loaded`), tłum, kasjera i załogę,
  * porę dnia, widok z zewnątrz i zegar tłumu, a zmiany stanu gry pokazuje na scenie (`syncVisuals`). O tym, co gra robi, nie
  * wie nic: sesję dostaje od wołającego (`GameShell` w actions.ts), a stuknięcie oddaje jako `ScenePick`. Host potrzebuje WebGL
  * i DOM; testowalna w node jest tylko czysta część (`crowdRateFor`, `timeOfDayAt`), resztę sprawdza przeglądarka.
@@ -98,12 +100,12 @@ export function writeSeedToUrl(seed: string): void {
 export const CROWD_MAX: Record<QualityPresetId, number> = { niska: 10, srednia: 16, wysoka: 22 };
 
 /**
- * Tłum, jakiego chce ekonomia: ile postaci naraz i ile nowych na minutę. Zamknięty sklep (noc, remont) nie wpuszcza nikogo,
+ * Tłum, jakiego chce ekonomia: ile postaci naraz i ile nowych na minutę. Zamknięty sklep (noc, remont, karta „zamknij na godzinę”) nie wpuszcza nikogo,
  * otwarty liczy ruch z bieżącej godziny (klientów na godzinę), ograniczony presetem grafiki (`CROWD_MAX`) i widełkami 4–… oraz 3–24.
  */
 export function crowdRateFor(session: Pick<GameSession, 'econ' | 'info'>, preset: QualityPresetId): CrowdOptions {
   const { econ: s, info } = session;
-  if (!isStoreOpen(s)) return { targetCount: 0, spawnPerMinute: 0 };
+  if (!isOpenForCustomers(s)) return { targetCount: 0, spawnPerMinute: 0 };
   const perHour = expectedDailyCustomers(s, info) / 15.6 * (HOUR_CURVE[Math.floor(minuteOfDay(s.minute) / 60)] ?? 0);
   return { targetCount: Math.max(4, Math.min(CROWD_MAX[preset], Math.round(perHour * 0.35))), spawnPerMinute: Math.max(3, Math.min(24, perHour * 0.3)) };
 }
@@ -190,6 +192,7 @@ export function createSceneHost(deps: SceneDeps): SceneHost {
   let generation = 0;               // odrzuca wyniki asynchroniczne, które wróciły po zmianie seeda
   let payingId: number | null = null;   // klient obsługiwany przy kasie w poprzedniej klatce (kasjer: gest przy sprzedaży)
   let lastVisual = -1;
+  let staffSyncFailed = false;           // błąd synchronizacji załogi zgłaszamy raz, a nie co ~100 ms
 
   ctx.setTimeOfDay(tod);
   ui.timeOfDay.value = tod;
@@ -236,6 +239,15 @@ export function createSceneHost(deps: SceneDeps): SceneHost {
       .map((u) => ({ cell: u.access!, look: payLook(u.fixture.facing) }));
     setCrowdExtras(loaded.world.crowd, obstacles, pay);
     setCrowdRate(loaded.world.crowd, crowdRateFor(session, ctx.preset));
+    // załoga: kto jest na zmianie i co robi (numery osób są stałe, `shift.people`), oraz palety (przeszkody i cele rozładunku);
+    // scena tylko to odgrywa
+    // Błąd w teatrze załogi nie może przerwać reszty tej metody (pora dnia, znaczniki, nakładka kasy) ani klatki: raz do konsoli.
+    try {
+      loaded.staffView?.sync({ people: staffOnShift(s), minute: s.minute, pallets: palletRefsOf(s, info) });
+    } catch (error) {
+      if (!staffSyncFailed) console.error('Nie udało się zsynchronizować załogi z ekonomią.', error);
+      staffSyncFailed = true;
+    }
 
     // pora dnia z zegara gry, chyba że zrzut wymusza noc
     if (!forcedNight) {
@@ -252,7 +264,7 @@ export function createSceneHost(deps: SceneDeps): SceneHost {
       else if (p.loc === 'sidewalk' && s.minute - p.since >= 60) marks.push({ key: `r${p.id}`, world: at, text: '⚠️', kind: 'risk' as const });
     }
     overlay?.setMarkers(marks);
-    const open = isStoreOpen(s);
+    const open = isOpenForCustomers(s);
     const closed = isClosedForRemont(s) ? 'REMONT' : !open ? 'ZAMKNIĘTE' : null;
     const q = Math.round(s.queue);
     overlay?.setTill(loaded.tillTop, closed ?? (q > 0 ? `👥 ${q}` : '🙂'), !closed && s.queue >= effects(s, info).patience);
@@ -316,18 +328,25 @@ export function createSceneHost(deps: SceneDeps): SceneHost {
 
     animate(frameDt, realDt, paused) {
       if (!loaded?.crowdView) return;
-      const { world, crowdView, cashierView } = loaded;
+      const { world, crowdView, cashierView, staffView } = loaded;
       const steps = paused ? 0 : advanceClock(clock, frameDt, world.speed);
       for (let i = 0; i < steps; i++) stepCrowd(world.crowd, world.layout, SIM_STEP);
       crowdView.setCharacterShadows(QUALITY[ctx.preset].characterShadows);
       const speed = paused ? 0 : world.speed;
       const animDt = realDt * Math.min(speed, ANIM_SPEED_CAP);
       crowdView.sync(world.crowd, clockAlpha(clock), realDt * speed, animDt);
-      if (cashierView) {
+      if (cashierView || staffView) {
         const cues = cashierCues(payingId, world.crowd.agents, world.layout);
         payingId = cues.payingId;
-        cashierView.setCharacterShadows(QUALITY[ctx.preset].characterShadows);
-        cashierView.update(realDt * speed, cues.serving, cues.sale, animDt);
+        // załoga przed kasjerem: kasjer ma dostać pozę z bieżącej klatki (idzie do palet albo wraca za ladę)
+        if (staffView) {
+          staffView.setCharacterShadows(QUALITY[ctx.preset].characterShadows);
+          staffView.update(realDt * speed, animDt, cues.serving);
+        }
+        if (cashierView) {
+          cashierView.setCharacterShadows(QUALITY[ctx.preset].characterShadows);
+          cashierView.update(realDt * speed, cues.serving, cues.sale, animDt);
+        }
       }
     },
 
@@ -362,7 +381,7 @@ export function createSceneHost(deps: SceneDeps): SceneHost {
       const current = loaded;
       if (!current) return;
       const s = session.econ;
-      if (!isStoreOpen(s)) return;
+      if (!isOpenForCustomers(s)) return;
       const agents = current.world.crowd.agents.filter((a) => a.state === 'browsing' || a.state === 'queueing' || a.state === 'paying' || a.state === 'toQueue');
       if (agents.length === 0) return;
       const agent = agents[Math.floor(Math.random() * agents.length)]!;
