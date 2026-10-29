@@ -1,5 +1,5 @@
 import {
-  BANKRUPTCY_AT, CATS, CAT_INFO, DELIVERY_AT, FINE_BASE, FINE_PER_PALLET, FRANCHISE_FEE_FIXED, FRANCHISE_FEE_SHARE, MEDIA_PER_DAY,
+  BANKRUPTCY_AT, CATS, CAT_INFO, DELIVERY_AT, FINE_BASE, FINE_PER_PALLET, FRANCHISE_FEE_FIXED, FRANCHISE_FEE_SHARE, HOT, MEDIA_PER_DAY,
   MINUTES_PER_DAY, MINUTES_PER_SECOND_CLOSED, MINUTES_PER_SECOND_OPEN, OPEN_FROM, OPEN_TO, ORDER_DEADLINE, PALLETS_FREE, PALLET_FEE,
   RETURN_FEE, STAFF_MAX, STAFF_START, WAGE_PER_DAY, type Cat,
 } from '@/sim/economy/catalog';
@@ -7,7 +7,7 @@ import { nextRankAt, rankFor } from '@/sim/economy/progress';
 import { CARDS } from '@/sim/economy/tycoon/cards';
 import { FATIGUE } from '@/sim/economy/tycoon/fatigue';
 import { KPI } from '@/sim/economy/tycoon/kpi';
-import { PROFILE_LABEL, STAFF_PROFILES } from '@/sim/economy/tycoon/staff';
+import { DEFAULT_PROFILE, PROFILE_LABEL, STAFF_PROFILES } from '@/sim/economy/tycoon/staff';
 import { SUNDAY_TRAFFIC } from '@/sim/economy/tycoon/sunday';
 import { TRUST, turnoverBonusShare } from '@/sim/economy/tycoon/trust';
 import { WUT } from '@/sim/economy/tycoon/wut';
@@ -87,6 +87,7 @@ export function howToSections(): HowToSection[] {
   const lastCircular = CARDS.circularGapMin + CARDS.circularGapSpan - 1;
   const profiles = STAFF_PROFILES.map((p) => `„${PROFILE_LABEL[p]}”`).join(', ');
   const queueProfile = PROFILE_LABEL.kolejka;
+  const queueIsDefault = DEFAULT_PROFILE === 'kolejka' ? ' (domyślny)' : '';
   const bonus = steps.length === 0 ? '' : `${steps.map((x, i) => (i === 0
     ? `Od ${x.from} punktów Centrala oddaje premię od obrotu: ${percent(x.share)}` : `od ${x.from} punktów ${percent(x.share)}`)).join(', ')}. `;
 
@@ -108,14 +109,14 @@ export function howToSections(): HowToSection[] {
     {
       title: 'Karty decyzji',
       paragraphs: [
-        `Dzień przynosi zwykle jedną kartę (szanse: ${percent(CARDS.none)} brak, ${percent(CARDS.one)} jedna, ${percent(1 - both)} dwie). Co ${CARDS.circularGapMin}–${lastCircular} dni dochodzi okólnik Centrali z haczykiem.`,
+        `Dzień przynosi zwykle jedną kartę (szanse: ${percent(CARDS.none)} brak, ${percent(CARDS.one)} jedna, ${percent(1 - both)} dwie). Co ${CARDS.circularGapMin}–${lastCircular} dni jedną z kart jest okólnik Centrali z haczykiem.`,
         'Odpowiedź pokazuje koszt na czerwono i zysk na zielono. Ta z napisem „domyślnie” jest zaznaczona z góry.',
       ],
     },
     {
       title: 'Pieniądze',
       paragraphs: [
-        `Zarabiasz marżę, nie obrót: od ${percent(margins.low.margin)} (${margins.low.label}) do ${percent(margins.high.margin)} (${margins.high.label}) ceny towaru. Płacisz ${zl(WAGE_PER_DAY)} dziennie za osobę i ${zl(MEDIA_PER_DAY)} za media.`,
+        `Zarabiasz marżę, nie obrót: od ${percent(margins.low.margin)} (${margins.low.label}) do ${percent(margins.high.margin)} (${margins.high.label}) ceny towaru z półek, a hot-dogi i kawa dają więcej: ${percent(HOT.margin)}. Płacisz ${zl(WAGE_PER_DAY)} dziennie za osobę, a za media od ok. ${zl(MEDIA_PER_DAY)} dziennie (im większy sklep, tym więcej).`,
         `Na koniec miesiąca Centrala pobiera opłatę franczyzową: ${zl(FRANCHISE_FEE_FIXED)} plus ${percent(FRANCHISE_FEE_SHARE)} obrotu. Zostaw na nią gotówkę: zakładka Cele, sekcja „Ten miesiąc”, pokazuje, ile już się naliczyło.`,
         'Raport miesiąca pokazuje pozycje, zmianę zaufania i jedną wskazówkę.',
       ],
@@ -123,7 +124,7 @@ export function howToSections(): HowToSection[] {
     {
       title: 'Palety',
       paragraphs: [
-        `Zamówienie składasz w zakładce Palety do ${hourOf(ORDER_DEADLINE)}, a dostawa przyjeżdża zwykle o ${hourOf(DELIVERY_AT)}. Palety ponad ${PALLETS_FREE} w zamówieniu kosztują po ${zl(PALLET_FEE)}; gdy brakuje miejsca, kierowca zabiera paletę i liczy ${zl(RETURN_FEE)}.`,
+        `Zamówienie na jutro zamyka się o ${hourOf(ORDER_DEADLINE)}. Domyślnie zamawia Asystent Traszki, a ręcznie ustawisz je w zakładce Palety. Dostawa przyjeżdża następnego dnia, zwykle o ${hourOf(DELIVERY_AT)}. Palety ponad ${PALLETS_FREE} w zamówieniu kosztują po ${zl(PALLET_FEE)}; gdy brakuje miejsca, kierowca zabiera paletę i liczy ${zl(RETURN_FEE)}.`,
         `Paleta pod sklepem grozi mandatem Straży Miejskiej: ${zl(FINE_BASE)} plus ${zl(FINE_PER_PALLET)} za każdą kolejną. Straż patroluje w dzień, a ryzyko rośnie z czasem. Przestaw paletę w zakładce Palety: „Na zaplecze” (miejsc mało) albo „Do sali” (przeszkadza: mniej klientów, krótsza cierpliwość w kolejce).`,
         'Rozładunek to czas ludzi. Po nim zostają worki ze śmieciami: ktoś musi je wynieść, inaczej zajmą zaplecze, a potem salę.',
       ],
@@ -143,7 +144,7 @@ export function howToSections(): HowToSection[] {
     {
       title: 'Zaufanie Centrali',
       paragraphs: [
-        `Zaufanie startuje od ${num(TRUST.start)} punktów. Rośnie za trafione KPI (${signedPts(KPI.trustHit)}) i miesiąc na plusie (${signedPts(TRUST.monthProfit)}), a spada za mandat (${signedPts(TRUST.fine)}), miesiąc na minusie (${signedPts(TRUST.monthLoss)}) i odesłaną paletę (${signedPts(TRUST.returnedPallet)}).`,
+        `Zaufanie startuje od ${num(TRUST.start)} punktów. Rośnie za trafione KPI (${signedPts(KPI.trustHit)}) i miesiąc na plusie (${signedPts(TRUST.monthProfit)}), a spada za mandat (${signedPts(TRUST.fine)}), miesiąc na minusie (${signedPts(TRUST.monthLoss)}) i odesłaną paletę (${signedPts(TRUST.returnedPallet)}) albo zabraną przez kierowcę (${signedPts(TRUST.driverReturned)}). Zmieniają je też karty decyzji i audyty Centrali.`,
         `${bonus}Zero na koniec miesiąca oznacza wypowiedzenie umowy.`,
       ],
     },
@@ -170,7 +171,7 @@ export function howToSections(): HowToSection[] {
       list: true,
       paragraphs: [
         'Po dostawie przenieś palety spod sklepu na zaplecze, zanim Straż Miejska zacznie obchód.',
-        `Kolejka rośnie? Ustaw profil „${queueProfile}”, kup kasę samoobsługową albo drugą kasę (zakładka Ulepszenia). Samo zatrudnianie nie pomoże: kasjerów jest tyle, ile stanowisk.`,
+        `Profil „${queueProfile}”${queueIsDefault} stawia ludzi najpierw przy kasie. Gdy kolejka i tak rośnie, kup kasę samoobsługową albo drugą kasę (zakładka Ulepszenia): kasjerów jest tyle, ile stanowisk, więc samo zatrudnianie nie pomoże.`,
         'Pilnuj paska WUT (zakładka Sklep) i gotówki na opłatę franczyzową.',
       ],
     },

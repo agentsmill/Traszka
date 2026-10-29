@@ -9,7 +9,7 @@ import { EQUIPMENT, EQUIPMENT_BY_ID, equipmentCost } from '@/sim/economy/upgrade
 import type { QualityPresetId } from '@/render/quality';
 import { networkIncomeOf, prestigePoints } from '@/game/meta';
 import {
-  celebration, dismissStory, ephemeral, econ, hints, howTo, metaView, nextHint, preset, report, selection, seed, showPerf, showPrestige,
+  celebration, dismissStory, ephemeral, econ, hints, howTo, metaView, nextHint, openHowTo, preset, report, selection, seed, showPerf, showPrestige,
   showSettings, story, tab, toasts, welcome, type Controls, type GameActions,
 } from '../state';
 import { int, people, signedPts, signedZl, zl } from './format';
@@ -326,7 +326,7 @@ export function StoreActions({ ephemeral: temporary, onNewStore, onRestart }: { 
 /** Przycisk „Jak grać” w ⚙: zamyka ustawienia i otwiera okno z instrukcją (gra stoi, dopóki gracz nie kliknie „Zaczynamy”). */
 export function HowToButton() {
   return (
-    <button type="button" class="tt-btn" onClick={() => { showSettings.value = false; howTo.value = true; }}>Jak grać</button>
+    <button type="button" class="tt-btn" onClick={() => { showSettings.value = false; openHowTo(); }}>Jak grać</button>
   );
 }
 

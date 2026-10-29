@@ -648,11 +648,24 @@ describe('powłoka gry (createShell)', () => {
       const withChoice = harness();
       withChoice.shell.open({ seed: 'traszka-1', fresh: false, choice: { nick: 'Kasia', seed: 'traszka-1', look, specialOutfits: true, notice: null } });
       expect(ui.howTo.value).toBe(true);
+      expect(isModalOpen()).toBe(true);   // gra stoi do „Zaczynamy”
 
       ui.howTo.value = false;
       const without = harness();
       without.shell.open({ seed: 'traszka-2', fresh: false, choice: null });
       expect(ui.howTo.value).toBe(false);
+    });
+
+    it('dymki pierwszego dnia czekają pod oknem „Jak grać”: ich zegar rusza od „Zaczynamy”', () => {
+      const look = { outfit: 'normal', appearanceSeed: 'abc' } as unknown as CashierLook;
+      const h = harness();
+      h.shell.open({ seed: 'traszka-1', fresh: false, choice: { nick: 'Kasia', seed: 'traszka-1', look, specialOutfits: true, notice: null } });
+      expect(ui.hints.value).toEqual(HINTS);
+      vi.advanceTimersByTime(ui.HINT_MS * (HINTS.length + 2));   // dłużej, niż wszystkie dymki razem
+      expect(ui.hints.value).toEqual(HINTS);                      // nic nie wygasło pod oknem
+      ui.closeHowTo();
+      vi.advanceTimersByTime(ui.HINT_MS);
+      expect(ui.hints.value).toEqual(HINTS.slice(1));             // pierwszy dymek dostał pełny czas
     });
 
     it('świat zapisanego sklepu się nie buduje: sklep tymczasowy o losowym seedzie, adres zostaje, komunikat o bezpiecznym zapisie', () => {
@@ -1100,6 +1113,7 @@ describe('powłoka gry (createShell)', () => {
       expect(h.shell.session!.fromSave).toBe(true);
       expect(h.shell.session!.econ.cash).toBe(4242);
       expect(ui.toasts.value.map((t) => t.text)).toEqual(['Wczytujemy Twój sklep spod tego seeda']);
+      expect(ui.howTo.value).toBe(false);   // gracz wraca do swojego sklepu: instrukcji nie narzucamy
     });
 
     it('setSound i setVibration: meta w pamięci i w zapisie, efekt, widok mety', () => {

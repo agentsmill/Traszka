@@ -5,7 +5,8 @@ import { computeStoreInfo } from '@/sim/economy/storeInfo';
 import { PROFILE_LABEL, STAFF_PROFILES } from '@/sim/economy/tycoon/staff';
 import { layoutFor } from '@/sim/store/layoutFor';
 import { isModalOpen } from '@/game/frame';
-import { GoalsPanel, PalletItem, PeoplePanel, TabBar } from '../game/panels';
+import { GoalsPanel, PalletItem, PalletsPanel, PeoplePanel, TabBar } from '../game/panels';
+import { App } from '../App';
 import { HowToButton, Settings } from '../game/overlays';
 import { buttonLabelled, click, labels, sectionTitled, textOf, walk } from '../game/vnodeTree';
 import { howTo, showSettings, type Controls, type GameActions } from '../state';
@@ -81,6 +82,12 @@ describe('okno „Jak grać”', () => {
   });
 });
 
+describe('montaż w aplikacji', () => {
+  it('<HowTo /> jest w drzewie App: bez niego otwarte okno zatrzymałoby grę bez żadnego widocznego przycisku', () => {
+    expect(walk(App({ controls, game })).some((v) => v.type === HowTo)).toBe(true);
+  });
+});
+
 describe('⚙: przycisk „Jak grać”', () => {
   it('ustawia howTo na true i zamyka ustawienia', () => {
     showSettings.value = true;
@@ -120,6 +127,13 @@ describe('nazwy z interfejsu w treści zgadzają się z interfejsem', () => {
     for (const title of [...all().matchAll(/sekcja „([^”]+)”/g)].map((m) => m[1]!)) expect(() => sectionTitled(goals, title), title).not.toThrow();
     expect(all()).toContain('„Kto co robi teraz”');
     expect(() => sectionTitled(people, 'Kto co robi teraz')).not.toThrow();
+  });
+
+  it('zamówienie: „Asystent Traszki” z treści to przycisk w sekcji „Zamówienie na jutro”, a dostawa przychodzi na następny dzień', () => {
+    const order = sectionTitled(PalletsPanel({ s, info, game, v: 1 }), 'Zamówienie na jutro');
+    expect(labels(order)).toContain('Asystent Traszki');
+    expect(all()).toContain('Domyślnie zamawia Asystent Traszki');
+    expect(s.order.auto).toBe(true);   // „domyślnie” zamawia asystent
   });
 
   it('przyciski przestawiania palet i profile pracy mają w treści te same napisy co w panelach', () => {

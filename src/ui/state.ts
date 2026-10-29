@@ -57,7 +57,10 @@ export interface Toast { id: number; text: string; kind: ToastKind }
 export const toasts: Signal<Toast[]> = signal<Toast[]>([]);
 export const report: Signal<MonthReport | null> = signal<MonthReport | null>(null);
 export const showSettings: Signal<boolean> = signal(false);
-/** Okno „Jak grać” (`ui/howto/HowTo.tsx`): otwiera się po ekranie startowym i z ⚙, a dopóki jest otwarte, gra stoi (`isModalOpen`). Nie jest częścią zapisu. */
+/**
+ * Okno „Jak grać” (`ui/howto/HowTo.tsx`): otwiera się po ekranie startowym i z ⚙, a dopóki jest otwarte, gra stoi (`isModalOpen`),
+ * a podpowiedzi pierwszego dnia czekają. Otwiera i zamyka je `openHowTo` / `closeHowTo`. Nie jest częścią zapisu.
+ */
 export const howTo: Signal<boolean> = signal(false);
 /** Sklep tymczasowy (zapis się nie zbudował albo jest z nowszej wersji gry): nic się w nim nie zapisuje, więc ekran gry to pokazuje. */
 export const ephemeral: Signal<boolean> = signal(false);
@@ -86,7 +89,18 @@ export const hints: Signal<string[]> = signal<string[]>([]);
 let hintTimer: ReturnType<typeof setTimeout> | undefined;
 function armHint(): void {
   clearTimeout(hintTimer);
-  hintTimer = hints.value.length > 0 ? setTimeout(nextHint, HINT_MS) : undefined;
+  // pod oknem „Jak grać” dymki czekają: gracz czyta instrukcję, a ich czas liczy się dopiero od „Zaczynamy”
+  hintTimer = hints.value.length > 0 && !howTo.value ? setTimeout(nextHint, HINT_MS) : undefined;
+}
+/** Otwiera „Jak grać”; zegar podpowiedzi pierwszego dnia staje. */
+export function openHowTo(): void {
+  howTo.value = true;
+  armHint();
+}
+/** „Zaczynamy”: zamyka „Jak grać”, a obecna podpowiedź dostaje pełny czas od nowa. */
+export function closeHowTo(): void {
+  howTo.value = false;
+  armHint();
 }
 /** Pokazuje podpowiedzi po kolei (lista zastępuje poprzednią; pusta czyści). */
 export function showHints(list: readonly string[]): void {

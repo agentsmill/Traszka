@@ -11,9 +11,9 @@ a na końcu humanoida eDwarda. Wszystkie firmy, postacie i zdarzenia są fikcyjn
 Przy pierwszym wejściu ekran **Twój kasjer** pyta o wygląd kasjera, nazwę gracza i seed sklepu; nowy sklep otwierasz potem z ⚙.
 Prowadzisz franczyzę Traszki: zamawiasz i rozładowujesz palety, zanim przyjdzie Straż Miejska, pilnujesz kolejki, ludzi
 i swoich sił, a każdego dnia odpowiadasz na karty decyzji od Centrali. Zarabiasz marżę, na koniec miesiąca płacisz opłatę
-franczyzową, a umowę kończy zaufanie Centrali na zerze albo gotówka poniżej limitu po raporcie. Zarobek idzie w ulepszenia,
-sprzęt i remonty, a po drugim remoncie albo na 20. poziomie otworzysz kolejną Traszkę. Pełna instrukcja jest w grze:
-⚙ → Jak grać (okno otwiera się też samo po ekranie startowym).
+franczyzową, a umowę kończy zaufanie Centrali na zerze przy zamknięciu miesiąca albo gotówka poniżej limitu po dwóch raportach
+z rzędu (pierwszy to ostrzeżenie). Zarobek idzie w ulepszenia, sprzęt i remonty, a po drugim remoncie albo na 20. poziomie
+otworzysz kolejną Traszkę. Pełna instrukcja jest w grze: ⚙ → Jak grać (okno otwiera się też samo po ekranie startowym).
 
 Sterowanie: przeciąganie przesuwa widok, szczypanie albo kółko myszy przybliża, ⟲ ⟳ albo Q/E obraca kamerę.
 Spacja pauzuje, F3 pokazuje licznik FPS. Model ekonomii i liczby: [docs/ekonomia.md](docs/ekonomia.md).

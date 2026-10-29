@@ -310,7 +310,7 @@ describe('panele wysyłają polecenia przez game.dispatch, a nie wołają symula
     it('stary napis „przed opłatą” zniknął, a podpowiedź każe zostawić gotówkę na opłatę', () => {
       const { text } = month(90_000);
       expect(text).not.toContain('przed opłatą');
-      expect(text).toContain('Opłatę franczyzową i premię od obrotu Centrala rozlicza przy zamknięciu miesiąca. Zostaw na nią gotówkę.');
+      expect(text).toContain('Opłatę franczyzową, WUT ponad próg i premię od obrotu Centrala rozlicza przy zamknięciu miesiąca. Zostaw gotówkę na opłaty.');
     });
   });
 });

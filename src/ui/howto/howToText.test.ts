@@ -1,6 +1,8 @@
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
-  BANKRUPTCY_AT, CATS, CAT_INFO, DELIVERY_AT, FINE_BASE, FINE_PER_PALLET, FRANCHISE_FEE_FIXED, FRANCHISE_FEE_SHARE, MEDIA_PER_DAY,
+  BANKRUPTCY_AT, CATS, CAT_INFO, DELIVERY_AT, FINE_BASE, FINE_PER_PALLET, FRANCHISE_FEE_FIXED, FRANCHISE_FEE_SHARE, HOT, MEDIA_PER_DAY,
   MINUTES_PER_DAY, MINUTES_PER_SECOND_CLOSED, MINUTES_PER_SECOND_OPEN, OPEN_FROM, OPEN_TO, ORDER_DEADLINE, PALLETS_FREE, PALLET_FEE,
   RETURN_FEE, STAFF_MAX, STAFF_START, WAGE_PER_DAY,
 } from '@/sim/economy/catalog';
@@ -8,7 +10,7 @@ import { nextRankAt, rankFor } from '@/sim/economy/progress';
 import { CARDS } from '@/sim/economy/tycoon/cards';
 import { FATIGUE } from '@/sim/economy/tycoon/fatigue';
 import { KPI } from '@/sim/economy/tycoon/kpi';
-import { PROFILE_LABEL, STAFF_PROFILES } from '@/sim/economy/tycoon/staff';
+import { DEFAULT_PROFILE, PROFILE_LABEL, STAFF_PROFILES } from '@/sim/economy/tycoon/staff';
 import { SUNDAY_TRAFFIC } from '@/sim/economy/tycoon/sunday';
 import { TRUST, turnoverBonusShare } from '@/sim/economy/tycoon/trust';
 import { WUT } from '@/sim/economy/tycoon/wut';
@@ -118,13 +120,17 @@ describe('treść okna „Jak grać”', () => {
     expect(t).toContain(`${SPEEDS[1]!.label}–${SPEEDS[SPEEDS.length - 1]!.label}`);
     expect(t).toContain('doba trwa ok. 3 min 20 s');
     expect(t).toContain(`od ${Math.round(CAT_INFO.alkohol.margin * 100)}% (alkohol) do ${Math.round(CAT_INFO.slodycze.margin * 100)}% (słodycze)`);
-    expect(t).toContain(`Płacisz ${WAGE_PER_DAY} zł dziennie za osobę i ${MEDIA_PER_DAY} zł za media`);
+    expect(t).toContain(`z półek, a hot-dogi i kawa dają więcej: ${Math.round(HOT.margin * 100)}%`);
+    expect(HOT.margin).toBeGreaterThan(marginRange().high.margin);   // „dają więcej” jest prawdą
+    // media zależą od wielkości sklepu (economy.ts: MEDIA_PER_DAY × powierzchnia sprzedaży), więc tekst obiecuje tylko dolną granicę
+    expect(t).toContain(`Płacisz ${WAGE_PER_DAY} zł dziennie za osobę, a za media od ok. ${MEDIA_PER_DAY} zł dziennie (im większy sklep, tym więcej)`);
     expect(t).toContain(`opłatę franczyzową: ${FRANCHISE_FEE_FIXED} zł plus ${Math.round(FRANCHISE_FEE_SHARE * 100)}% obrotu`);
   });
 
   it('każda liczba w treści to stała gry: palety, ludzie, siły', () => {
     const t = text();
-    expect(t).toContain(`do ${ORDER_DEADLINE / 60}:00, a dostawa przyjeżdża zwykle o ${DELIVERY_AT / 60}:00`);
+    expect(t).toContain(`Zamówienie na jutro zamyka się o ${ORDER_DEADLINE / 60}:00. Domyślnie zamawia Asystent Traszki`);
+    expect(t).toContain(`Dostawa przyjeżdża następnego dnia, zwykle o ${DELIVERY_AT / 60}:00`);
     expect(t).toContain(`Palety ponad ${PALLETS_FREE} w zamówieniu kosztują po ${PALLET_FEE} zł`);
     expect(t).toContain(`liczy ${RETURN_FEE} zł`);
     expect(t).toContain(`mandatem Straży Miejskiej: ${FINE_BASE} zł plus ${FINE_PER_PALLET} zł za każdą kolejną`);
@@ -132,13 +138,16 @@ describe('treść okna „Jak grać”', () => {
     expect(t).toContain(`Pula to ${FATIGUE.pool} sił na dobę`);
     expect(t).toContain(`stuknięcie w kasę kosztuje ${FATIGUE.tapCost.kasa}, w paletę ${pl(FATIGUE.tapCost.paleta)}, a noc oddaje ${FATIGUE.nightRecovery}`);
     for (const p of STAFF_PROFILES) expect(t).toContain(`„${PROFILE_LABEL[p]}”`);
+    expect(DEFAULT_PROFILE).toBe('kolejka');   // wskazówka „Na start” mówi, że „Kolejka” jest domyślna
+    expect(t).toContain(`Profil „${PROFILE_LABEL.kolejka}” (domyślny) stawia ludzi najpierw przy kasie`);
   });
 
   it('każda liczba w treści to stała gry: zaufanie, WUT, KPI, niedziela, karty', () => {
     const t = text();
     expect(t).toContain(`Zaufanie startuje od ${TRUST.start} punktów`);
     expect(t).toContain(`trafione KPI (+${KPI.trustHit}) i miesiąc na plusie (+${TRUST.monthProfit})`);
-    expect(t).toContain(`mandat (−${-TRUST.fine}), miesiąc na minusie (−${-TRUST.monthLoss}) i odesłaną paletę (−${-TRUST.returnedPallet})`);
+    expect(t).toContain(`mandat (−${-TRUST.fine}), miesiąc na minusie (−${-TRUST.monthLoss}) i odesłaną paletę (−${-TRUST.returnedPallet}) albo zabraną przez kierowcę (−${-TRUST.driverReturned})`);
+    expect(t).toContain('Zmieniają je też karty decyzji i audyty Centrali.');
     expect([turnoverBonusShare(69), turnoverBonusShare(70), turnoverBonusShare(84), turnoverBonusShare(85)]).toEqual([0, 0.03, 0.03, 0.035]);
     expect(t).toContain('Od 70 punktów Centrala oddaje premię od obrotu: 3%, od 85 punktów 3,5%');
     expect(t).toContain(`Do ${pl(WUT.threshold * 100)}% obrotu miesiąca pokrywa je Centrala`);
@@ -146,7 +155,7 @@ describe('treść okna „Jak grać”', () => {
     expect(t).toContain(`ruch rośnie ×${pl(SUNDAY_TRAFFIC)}`);
     const two = 1 - CARDS.none - CARDS.one;
     expect(t).toContain(`${Math.round(CARDS.none * 100)}% brak, ${Math.round(CARDS.one * 100)}% jedna, ${Math.round(two * 100)}% dwie`);
-    expect(t).toContain(`Co ${CARDS.circularGapMin}–${CARDS.circularGapMin + CARDS.circularGapSpan - 1} dni dochodzi okólnik Centrali`);
+    expect(t).toContain(`Co ${CARDS.circularGapMin}–${CARDS.circularGapMin + CARDS.circularGapSpan - 1} dni jedną z kart jest okólnik Centrali`);
   });
 
   it('zmiana stałej zmienia tekst (liczby nie są wpisane w treść)', () => {
@@ -156,13 +165,68 @@ describe('treść okna „Jak grać”', () => {
       expect(text()).toContain('a noc oddaje 45');
     });
     patched(FATIGUE.tapCost, { kasa: 3 }, () => expect(text()).toContain('stuknięcie w kasę kosztuje 3,'));
-    patched(TRUST, { start: 45, fine: -2 }, () => {
+    patched(TRUST, { start: 45, fine: -2, driverReturned: -7 }, () => {
       expect(text()).toContain('Zaufanie startuje od 45 punktów');
       expect(text()).toContain('mandat (−2)');
+      expect(text()).toContain('zabraną przez kierowcę (−7)');
     });
+    patched(HOT, { margin: 0.5 }, () => expect(text()).toContain('dają więcej: 50%'));
     patched(WUT, { threshold: 0.02 }, () => expect(text()).toContain('Do 2% obrotu miesiąca'));
     patched(KPI, { trustMiss: -5 }, () => expect(text()).toContain('odbiera zaufanie (−5)'));
     patched(CARDS, { none: 0.3, one: 0.5 }, () => expect(text()).toContain('30% brak, 50% jedna, 20% dwie'));
     expect(text()).toBe(before);   // po podmianach wszystko wróciło
+  });
+});
+
+/**
+ * Teksty ze źródła: zawartość literałów napisowych i szablonów (bez fragmentów `${...}`, które są kodem, i bez komentarzy).
+ * Mały skaner znaków, bo regex nie radzi sobie z szablonami zagnieżdżonymi w `${...}`.
+ */
+function stringLiterals(src: string): string[] {
+  const out: string[] = [];
+  type Frame = { kind: 'code' | 'tpl'; depth: number };
+  const stack: Frame[] = [{ kind: 'code', depth: 0 }];
+  let cur = '';
+  for (let i = 0; i < src.length; i++) {
+    const c = src[i]!;
+    const top = stack[stack.length - 1]!;
+    if (top.kind === 'tpl') {
+      if (c === '\\') cur += src[++i] ?? '';
+      else if (c === '`') { out.push(cur); cur = ''; stack.pop(); }
+      else if (c === '$' && src[i + 1] === '{') { out.push(cur); cur = ''; stack.push({ kind: 'code', depth: 0 }); i++; }
+      else cur += c;
+    } else if (c === '/' && src[i + 1] === '/') {
+      while (i < src.length && src[i] !== '\n') i++;
+    } else if (c === '/' && src[i + 1] === '*') {
+      i = src.indexOf('*/', i + 2) + 1;
+    } else if (c === "'" || c === '"') {
+      let s = '';
+      for (i++; i < src.length && src[i] !== c; i++) s += src[i] === '\\' ? src[++i] ?? '' : src[i];
+      out.push(s);
+    } else if (c === '`') {
+      stack.push({ kind: 'tpl', depth: 0 });
+      cur = '';
+    } else if (c === '{') top.depth++;
+    else if (c === '}') {
+      if (top.depth === 0 && stack.length > 1) { stack.pop(); cur = ''; } else top.depth--;
+    }
+  }
+  return out;
+}
+
+describe('treść nie ma liczb wpisanych na sztywno', () => {
+  it('skaner literałów: napisy i szablony bez kodu z ${...} i bez komentarzy', () => {
+    const src = "const a = `x ${f(`y 1`, 'z 2')} w 3`; // 4 `nie`\n/* 5 */ const b = \"q \\\" 6\";";
+    expect(stringLiterals(src)).toEqual(['x ', 'y 1', 'z 2', ' w 3', 'q " 6']);
+  });
+
+  it('żaden literał napisowy w howToText.ts nie zawiera cyfry (liczby idą ze stałych, a nie z tekstu)', () => {
+    // Stałe pierwotne (`WAGE_PER_DAY`, `FRANCHISE_FEE_*`…) to wiązania modułów, których test nie podmieni, więc "równa się stałej" przeszłoby
+    // także dla liczby wpisanej w tekst. Ten skan to uzupełnia. Wyjątek: znak dopełnienia '0' w `padStart` przy godzinach, który nie jest liczbą z gry.
+    const src = readFileSync(fileURLToPath(new URL('./howToText.ts', import.meta.url)), 'utf8');
+    const literals = stringLiterals(src);
+    expect(literals.length).toBeGreaterThan(50);   // skaner naprawdę coś znalazł
+    const withDigits = literals.filter((s) => /\d/.test(s) && s !== '0');
+    expect(withDigits).toEqual([]);
   });
 });

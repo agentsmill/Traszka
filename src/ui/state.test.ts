@@ -1,14 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NOTICE_MAX_READ_MS, NOTICE_MIN_READ_MS, readMs } from '@/sim/economy/tycoon/notices';
-import { HINT_MS, dismissStory, hints, nextHint, pushStory, pushToast, showHints, story, toasts } from './state';
+import { HINT_MS, closeHowTo, dismissStory, hints, howTo, nextHint, openHowTo, pushStory, pushToast, showHints, story, toasts } from './state';
 
 beforeEach(() => {
   vi.useFakeTimers();
+  howTo.value = false;
   showHints([]);
   toasts.value = [];
   story.value = [];
 });
 afterEach(() => {
+  howTo.value = false;
   showHints([]);
   toasts.value = [];
   story.value = [];
@@ -62,6 +64,49 @@ describe('podpowiedzi pierwszego dnia (krótkie dymki zamiast okna „Witaj w Tr
     showHints(list);
     list.push('c');
     expect(hints.value).toEqual(['a', 'b']);
+  });
+});
+
+describe('podpowiedzi pierwszego dnia czekają pod oknem „Jak grać”', () => {
+  it('lista pokazana przy otwartym oknie nie ma zegara: po minucie nadal pierwsza, a „Zaczynamy” daje jej pełny czas', () => {
+    openHowTo();
+    showHints(['a', 'b']);
+    expect(hints.value).toEqual(['a', 'b']);
+    expect(vi.getTimerCount()).toBe(0);
+    vi.advanceTimersByTime(HINT_MS * 10);
+    expect(hints.value).toEqual(['a', 'b']);   // nikt tego nie zobaczył, więc nie wygasa
+
+    closeHowTo();
+    expect(howTo.value).toBe(false);
+    vi.advanceTimersByTime(HINT_MS - 1);
+    expect(hints.value).toEqual(['a', 'b']);
+    vi.advanceTimersByTime(1);
+    expect(hints.value).toEqual(['b']);
+  });
+
+  it('okno otwarte w trakcie zatrzymuje zegar, a po zamknięciu czas liczy się od nowa (nie z reszty)', () => {
+    showHints(['a', 'b']);
+    vi.advanceTimersByTime(HINT_MS - 100);
+    openHowTo();
+    expect(vi.getTimerCount()).toBe(0);
+    vi.advanceTimersByTime(HINT_MS * 5);
+    expect(hints.value).toEqual(['a', 'b']);
+    closeHowTo();
+    vi.advanceTimersByTime(HINT_MS - 1);
+    expect(hints.value).toEqual(['a', 'b']);
+    vi.advanceTimersByTime(1);
+    expect(hints.value).toEqual(['b']);
+  });
+
+  it('„Dalej” pod otwartym oknem też nie uruchamia zegara; bez podpowiedzi zamknięcie okna nie zostawia zegara', () => {
+    openHowTo();
+    showHints(['a', 'b', 'c']);
+    nextHint();
+    expect(hints.value).toEqual(['b', 'c']);
+    expect(vi.getTimerCount()).toBe(0);
+    showHints([]);
+    closeHowTo();
+    expect(vi.getTimerCount()).toBe(0);
   });
 });
 

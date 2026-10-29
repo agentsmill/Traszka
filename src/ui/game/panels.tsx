@@ -488,7 +488,7 @@ export function GoalsPanel({ s, info }: { s: EconomyState; info: StoreInfo; game
         <Row label="Opłata franczyzowa (naliczona do dziś)">−{zl(fee)}</Row>
         <Row label="Wynik po opłacie (do dziś)"><b>{signedZl(profit(m) - fee)}</b></Row>
         <Row label="Inwestycje">{zl(m.investments)}</Row>
-        <p class="tt-hint">Opłatę franczyzową i premię od obrotu Centrala rozlicza przy zamknięciu miesiąca. Zostaw na nią gotówkę.</p>
+        <p class="tt-hint">Opłatę franczyzową, WUT ponad próg i premię od obrotu Centrala rozlicza przy zamknięciu miesiąca. Zostaw gotówkę na opłaty.</p>
       </Section>
       {s.history.length > 0 && (
         <Section title="Poprzednie miesiące">
