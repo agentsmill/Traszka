@@ -74,6 +74,18 @@ describe('funkcje serwerowe: importy, które Vercel uruchomi', () => {
     expect(loaded).toContain(join('src', 'server', 'runs.ts'));   // graf jest prawdziwy, a nie pusty
   });
 
+  it('bundle sędziego (src/server/judgeBundle.js) ładuje tylko api/runs.ts, dynamicznie i z literałem; nic w funkcji nie importuje go statycznie', () => {
+    // Statyczny import brakującego pliku (krok `npm run build:judge` pominięty) wywróciłby cały plik funkcji: nawet odpowiedź
+    // `ranking-off` zamieniłaby się w błąd platformy. Literał w `import()` jest potrzebny, żeby ślad plików Vercela znalazł bundle.
+    const runsApi = readFileSync(join(ROOT, 'api/runs.ts'), 'utf8');
+    expect(runsApi).toContain("import('../src/server/judgeBundle.js')");
+    const { seen } = runtimeGraph();
+    const staticLoaders = [...seen].filter((f) => runtimeImports(readFileSync(f, 'utf8')).some((spec) => spec.includes('judgeBundle')));
+    expect(staticLoaders.map((f) => relative(ROOT, f))).toEqual([]);
+    // plik z typami bundla (d.ts) jest w grafie, ale bez importów w czasie działania, więc po kompilacji go nie ma
+    expect([...seen].map((f) => relative(ROOT, f))).toContain(join('src', 'server', 'judgeBundle.d.ts'));
+  });
+
   it('wspólny walidator seeda (src/game/seedText.ts) jest osiągalny z serwera i nie ma żadnych importów', () => {
     const file = join(ROOT, 'src/game/seedText.ts');
     expect(readFileSync(join(ROOT, 'src/server/runs.ts'), 'utf8')).toContain("from '../game/seedText.js'");

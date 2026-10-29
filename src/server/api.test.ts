@@ -1,4 +1,4 @@
-import { readdirSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { GET as leaderboard } from '../../api/leaderboard';
@@ -62,12 +62,21 @@ describe('api/** na Vercelu (atrapa Upstash przez fetch)', () => {
     expect(upstash.log.every((l) => l.token === 'rw')).toBe(true);
   });
 
-  it('zgłoszenie biegu przed scaleniem odtwarzania: 503 „sędzia się szkoli”, w bazie tylko liczniki limitu', async () => {
-    const res = await runs(post('/api/runs', { key: KEY, nick: 'Mateusz', run }));
-    expect(res.status).toBe(503);
-    expect(await res.json()).toMatchObject({ ok: false, error: 'replay-unavailable' });
-    expect(redis.keys().every((k) => k.startsWith('tr:rl:') || k.startsWith('tr:salt:'))).toBe(true);
-  });
+  // `api/runs.ts` ładuje bundle sędziego z `src/server/judgeBundle.js` (budowany przez `npm run build:judge`, w repozytorium go nie ma).
+  // Test dotyczy świeżego klonu, bez bundla; po zbudowaniu go lokalnie byłby fałszywy, więc wtedy się pomija. Bundle na prawdziwym
+  // kodzie sprawdza tests/judgeBundle.test.ts (buduje własny), a wstrzyknięcie braku bundla do `route` src/server/judge.test.ts.
+  it.skipIf(existsSync(resolve(__dirname, 'judgeBundle.js')))(
+    'bez zbudowanego bundla sędziego: 503 „sędzia się szkoli” i wpis w logu, a w bazie tylko liczniki limitu', async () => {
+      const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      const res = await runs(post('/api/runs', { key: KEY, nick: 'Mateusz', run }));
+      expect(res.status).toBe(503);
+      expect(await res.json()).toMatchObject({ ok: false, error: 'replay-unavailable' });
+      expect(redis.keys().every((k) => k.startsWith('tr:rl:') || k.startsWith('tr:salt:'))).toBe(true);
+      expect(errors).toHaveBeenCalledTimes(1);
+      expect(errors.mock.calls[0]![0]).toBe('[ranking] sędzia');
+      errors.mockRestore();
+    },
+  );
 
   it('z podpiętym sędzią (jak po scaleniu A) bieg trafia do rankingu, który widać przez api/leaderboard', async () => {
     const withJudge = route(handleRuns, { verifyRun: () => ({ ok: true, score: 12_345 }) });
