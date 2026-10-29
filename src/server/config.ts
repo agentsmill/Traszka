@@ -47,11 +47,12 @@ export const SAVE_BUNDLE_VERSION = 1;
 /**
  * Globalny budżet wysyłania zapisów na dobę UTC, wspólny dla wszystkich kluczy i adresów (ponad niego 429 do północy UTC). Klucz
  * gracza nic nie kosztuje, więc limity na klucz i adres nie zatrzymają kogoś, kto je zmienia; ten licznik zatrzymuje. Zapis z gry
- * waży ok. 10 KB, ale w najgorszym razie 300 wysłań po 64 KB to ok. 19,7 MB na dobę. Przy czasie życia zapisu 30 dni ciągłe
- * nadużycie wypełniłoby darmowe 256 MB Upstash w ok. 13 dni (stan ustalony ok. 590 MB), więc to wartość do przemyślenia przez
- * właściciela razem z alertem zużycia w Upstash (tańsze ryzyko: niższy budżet).
+ * waży ok. 10 KB, ale w najgorszym razie 100 wysłań po 64 KB to ok. 6,5 MB na dobę. Przy czasie życia zapisu 30 dni ciągłe
+ * nadużycie dałoby stan ustalony ok. 197 MB w darmowych 256 MB Upstash. Wartość startowa (decyzja koordynatora, 2026-10-29):
+ * przy starcie ruch będzie mały, a podniesiemy ją, gdy będzie potrzeba (przy 300: ok. 19,7 MB na dobę, stan ustalony ok. 590 MB,
+ * więc darmowa baza zapełniłaby się w ok. 13 dni). Razem z alertem zużycia w Upstash (tańsze ryzyko: niższy budżet).
  */
-export const SAVE_DAILY_BUDGET = 300;
+export const SAVE_DAILY_BUDGET = 100;
 /** Licznik budżetu dziennego żyje dobę od pierwszego wysłania (nazwa klucza ma dzień, więc stary licznik nikomu nie przeszkadza). */
 export const BUDGET_TTL = DAY;
 /** Ranking seeda żyje ponad rok od ostatniego wyniku, a ranking tygodnia dziewięć tygodni (bieżący i dwa miesiące wstecz). */
