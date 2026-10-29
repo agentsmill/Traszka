@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { buildJudge } from '../scripts/build-judge.mjs';
+import { buildJudge, DEFAULT_BUNDLE_FILE } from '../scripts/build-judge.mjs';
 import * as entry from '../scripts/judge-entry';
 import { MINUTES_PER_DAY } from '@/sim/economy/catalog';
 import { RANKED_SEASON_END_MINUTE, seasonScore } from '@/sim/ranked';
@@ -122,6 +122,15 @@ describe('buildJudge: jeden samodzielny plik z aktualnej symulacji', () => {
     const broken = join(dir, 'zepsute-wejscie.ts');
     writeFileSync(broken, "export { nie } from '@/sim/nie-ma-takiego-pliku';\n");
     await expect(buildJudge({ outDir: join(dir, 'zepsute'), entry: broken })).rejects.toThrow();
+    expect(existsSync(join(dir, 'zepsute', 'judgeBundle.js'))).toBe(false);
+    // Stary plik wyniku (poprzednie udane budowanie) i wejście z nierozwiązywalnym pakietem: bundler potrafi zapisać wyjście z
+    // pozostawionym importem, a dopiero potem odrzucić obietnicę. Po błędzie nie może zostać żaden plik, bo wyglądałby na wynik.
+    const brokenPackage = join(dir, 'zepsute-pakiet.ts');
+    writeFileSync(brokenPackage, "export { x } from 'nie-ma-takiego-pakietu';\n");
+    mkdirSync(join(dir, 'zepsute2'), { recursive: true });
+    writeFileSync(join(dir, 'zepsute2', 'judgeBundle.js'), '// stary wynik');
+    await expect(buildJudge({ outDir: join(dir, 'zepsute2'), entry: brokenPackage })).rejects.toThrow();
+    expect(existsSync(join(dir, 'zepsute2', 'judgeBundle.js'))).toBe(false);
     await expect(buildJudge({ outDir: join(dir, 'out', 'cudzy-plik.txt', 'pod') })).rejects.toThrow();
   }, 60_000);
 });
@@ -147,7 +156,9 @@ describe('skrypt scripts/build-judge.mjs jako polecenie (npm run build:judge)', 
   }, 60_000);
 
   it('domyślny cel to src/server/judgeBundle.js, a plik jest w .gitignore (nie jest commitowany)', () => {
-    expect(readFileSync(script, 'utf8')).toContain("'judgeBundle.js'");
+    // budowanie zapisuje tam, skąd czyta funkcja: `import('../src/server/judgeBundle.js')` w api/runs.ts, liczone od katalogu api/
+    expect(DEFAULT_BUNDLE_FILE).toBe(resolve(ROOT, 'api', '../src/server/judgeBundle.js'));
+    expect(readFileSync(join(ROOT, 'api', 'runs.ts'), 'utf8')).toContain("import('../src/server/judgeBundle.js')");
     expect(readFileSync(join(ROOT, '.gitignore'), 'utf8').split('\n')).toContain('src/server/judgeBundle.js');
     expect(JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).scripts).toMatchObject({
       'build:judge': 'node scripts/build-judge.mjs',

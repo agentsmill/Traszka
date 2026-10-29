@@ -7,7 +7,7 @@
 // więc sędzia zawsze liczy tym samym kodem co gra. Używa tylko publicznego API Vite (`build`), bez konfiguracji gry.
 //
 // Użycie: node scripts/build-judge.mjs [--out <plik>]   (domyślnie src/server/judgeBundle.js)
-import { mkdirSync, statSync } from 'node:fs';
+import { mkdirSync, realpathSync, rmSync, statSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build } from 'vite';
@@ -16,12 +16,27 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const DEFAULT_ENTRY = join(ROOT, 'scripts', 'judge-entry.ts');
 const DEFAULT_OUT_DIR = join(ROOT, 'src', 'server');
 const DEFAULT_OUT_FILE = 'judgeBundle.js';
+/** Gdzie bundle ląduje domyślnie, czyli skąd czyta go `api/runs.ts` (`../src/server/judgeBundle.js`). */
+export const DEFAULT_BUNDLE_FILE = join(DEFAULT_OUT_DIR, DEFAULT_OUT_FILE);
 
 /**
  * Pakuje sędziego w jeden plik `outDir/outFile`. Zwraca ścieżkę i rozmiar; rzuca, gdy budowanie się nie uda.
- * Katalog wyjściowy NIE jest czyszczony (`emptyOutDir: false`): domyślnie to `src/server` ze źródłami serwera.
+ * Katalog wyjściowy NIE jest czyszczony (`emptyOutDir: false`): domyślnie to `src/server` ze źródłami serwera. Stary plik wyniku
+ * znika przed budowaniem, a po nieudanym nie zostaje nic (bundler potrafi zapisać wyjście z nierozwiązanym importem, a dopiero
+ * potem odrzucić obietnicę), więc plik na dysku zawsze pochodzi z udanego budowania.
  */
-export async function buildJudge({ outDir = DEFAULT_OUT_DIR, outFile = DEFAULT_OUT_FILE, entry = DEFAULT_ENTRY } = {}) {
+export async function buildJudge(options = {}) {
+  const file = join(resolve(options.outDir ?? DEFAULT_OUT_DIR), options.outFile ?? DEFAULT_OUT_FILE);
+  rmSync(file, { force: true });
+  try {
+    return await pack(options);
+  } catch (err) {
+    rmSync(file, { force: true });
+    throw err;
+  }
+}
+
+async function pack({ outDir = DEFAULT_OUT_DIR, outFile = DEFAULT_OUT_FILE, entry = DEFAULT_ENTRY }) {
   const dir = resolve(outDir);
   mkdirSync(dir, { recursive: true });   // błąd (np. ścieżka pod zwykłym plikiem) ma wyjść tu, a nie jako cichy brak pliku
   await build({
@@ -59,7 +74,8 @@ function parseArgs(argv) {
   return { outDir: dirname(resolve(out)), outFile: basename(out) };
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// realpath po obu stronach: wywołanie przez dowiązanie symboliczne nie może po cichu pominąć budowania (kod wyjścia 0 bez pliku)
+if (process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) {
   try {
     const { file, bytes } = await buildJudge(parseArgs(process.argv.slice(2)));
     console.log(`Bundle sędziego: ${file} (${(bytes / 1024).toFixed(1)} KB)`);

@@ -14,3 +14,5 @@ export interface BuildJudgeResult {
 }
 /** Pakuje sędziego (aktualną symulację) w jeden samodzielny plik ESM. Rzuca, gdy budowanie się nie uda. */
 export function buildJudge(options?: BuildJudgeOptions): Promise<BuildJudgeResult>;
+/** Domyślny plik wyniku (`src/server/judgeBundle.js`): stąd czyta bundle `api/runs.ts`. */
+export const DEFAULT_BUNDLE_FILE: string;
