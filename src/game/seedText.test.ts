@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { createRng } from '@/sim/rng';
 import { SEED_MAX, normalizeSeed } from './seeds';
-import { isShowableSeed, stripHiddenSeedChars } from './seedText';
+import { SEED_WORDS } from './seedWords';
+import { SEED_NEIGHBOUR_MAX, SEED_TEXT_MAX, canonicalSeedText, isCanonicalSeed, isShowableSeed, stripHiddenSeedChars } from './seedText';
 
 // Testy opisują, jaki tekst jest seedem do pokazania w rankingu, bez zaglądania do definicji w seedText.ts: znaki zapisane liczbami,
 // flagi złożone ze znaczników tutaj, nie z tamtych stałych. Jedna definicja ma obsługiwać grę (czyszczenie) i serwer (odrzucanie).
@@ -268,6 +269,154 @@ describe('stripHiddenSeedChars: co znika, co zostaje', () => {
       for (const raw of placements(c)) {
         const once = stripHiddenSeedChars(raw);
         expect(stripHiddenSeedChars(once), `${name}: ${hex(raw)}`).toBe(once);
+      }
+    }
+  });
+});
+
+describe('canonicalSeedText: postać kanoniczna seeda, to samo czyszczenie, które stosuje normalizeSeed', () => {
+  it('NFC, odstępy zwinięte i przycięte, małe litery, znaki niewidoczne zdjęte; z samych odstępów i niewidocznych zostaje pusty napis', () => {
+    expect(canonicalSeedText('  Pierogi \t\n 731 ')).toBe('pierogi 731');
+    expect(canonicalSeedText('cafe\u{301}')).toBe('caf\u{e9}');                     // NFD → NFC
+    expect(canonicalSeedText('ŁÓDŹ Żółw')).toBe('łódź żółw');
+    expect(canonicalSeedText('pie\u{200b}\u{00ad}rogi')).toBe('pierogi');
+    expect(canonicalSeedText('pie\u{a0}\u{3000}rogi')).toBe('pie rogi');
+    expect(canonicalSeedText('   ')).toBe('');
+    expect(canonicalSeedText('\u{200b}\u{e0067}\u{200d}')).toBe('');
+    expect(canonicalSeedText('')).toBe('');
+  });
+
+  it('limit w punktach kodowych: domyślnie SEED_TEXT_MAX (40), jawny maxChars go zastępuje; cięcie nie rozpoławia emoji ani flagi i nie zostawia spacji na końcu', () => {
+    expect(SEED_TEXT_MAX).toBe(40);
+    expect(canonicalSeedText('x'.repeat(60))).toBe('x'.repeat(40));
+    expect(Array.from(canonicalSeedText('🍕'.repeat(60)))).toHaveLength(40);
+    expect(canonicalSeedText('x'.repeat(60), 48)).toBe('x'.repeat(48));
+    expect(canonicalSeedText('Pierogi-731', 7)).toBe('pierogi');
+    expect(canonicalSeedText('Pierogi 731', 8)).toBe('pierogi');                     // 'pierogi ' → spacja na końcu znika
+    expect(canonicalSeedText(`${'a'.repeat(34)}${ENGLAND}`)).toBe(`${'a'.repeat(34)}\u{1f3f4}`);     // cięcie w środku flagi: sama czarna flaga
+    expect(canonicalSeedText(`ab${ENGLAND}`, 5)).toBe('ab\u{1f3f4}');
+    expect(canonicalSeedText(`${'a'.repeat(33)}${ENGLAND}`)).toBe(`${'a'.repeat(33)}${ENGLAND}`);
+  });
+
+  it('normalizeSeed to canonicalSeedText z losowaniem na pusty wynik (zero zmiany zachowania względem dawnego cleanSeed)', () => {
+    expect(SEED_MAX).toBe(SEED_TEXT_MAX);
+    for (const raw of ['  Pierogi \t 731 ', 'cafe\u{301}', 'x'.repeat(100), `Moja ${ENGLAND} FLAGA`, '👩\u{200d}💻', 'pie\u{200b}rogi']) {
+      expect(normalizeSeed(raw, () => 'losowy-1'), hex(raw)).toBe(canonicalSeedText(raw));
+    }
+    for (const raw of ['', '   ', '\u{200b}', '\u{200d}\u{200d}']) expect(normalizeSeed(raw, () => 'losowy-1'), hex(raw)).toBe('losowy-1');
+  });
+});
+
+describe('isCanonicalSeed: serwer przyjmuje seed tylko w postaci, w której zapisuje go gra', () => {
+  it('seedy z gry: słowo-liczba, polskie litery, spacja w środku, emoji ze spójnikiem, trzy flagi, sąsiedni lokal', () => {
+    for (const seed of [
+      'pierogi-731', 'babka-834·3', 'kiełbasa-42', 'moja pizza', 'żurek 🥣', '🍕', FAMILY, '👩\u{200d}💻', ENGLAND, `moja ${SCOTLAND} flaga`, `${WALES}-7`,
+      'caf\u{e9}', 'ab\u{0301}c', '日本語', 'pierogi-731·1', 'pierogi-731·5',
+    ]) {
+      expect(isCanonicalSeed(seed), hex(seed)).toBe(true);
+    }
+  });
+
+  it('ten sam seed w innej pisowni nie jest kanoniczny: wielkie litery, podwójna spacja, spacje na brzegach, NFD, odstęp inny niż spacja, znak niewidoczny', () => {
+    for (const seed of [
+      'Pierogi-731', 'PIEROGI', 'pierogi  731', ' pierogi', 'pierogi ', ' pierogi ', 'pie\trogi', 'pie\nrogi', 'pie\u{a0}rogi', 'pierogi\u{3000}731',
+      'cafe\u{301}',                                                  // litera e i łączący akcent ostry zamiast é (NFD zamiast NFC)
+      'pie\u{200b}rogi', 'pie\u{00ad}rogi', '\u{feff}pierogi', 'pie\u{202e}rogi', `pierogi${tags('x')}`, 'pie\u{200d}rogi', '👩\u{200d}', 'pie\ud83drogi',
+      'Pierogi-731·2', 'pierogi  731·2', 'cafe\u{301}·2', 'pie\u{200b}rogi·2', ` pierogi·2`, flag('gbxxx'), `${ENGLAND}\u{e007f}`,
+    ]) {
+      expect(isCanonicalSeed(seed), hex(seed)).toBe(false);
+    }
+  });
+
+  it('pusty seed i same odstępy: fałsz', () => {
+    for (const seed of ['', ' ', '  ', '\t', '\u{a0}', '\u{200b}']) expect(isCanonicalSeed(seed), hex(seed)).toBe(false);
+  });
+
+  it('sąsiedni lokal baza·N (N od 1 do SEED_NEIGHBOUR_MAX) przechodzi także wtedy, gdy baza ma pełne 40 znaków i z sufiksem seed ma ich 42', () => {
+    expect(SEED_NEIGHBOUR_MAX).toBe(5);
+    for (const base of ['x'.repeat(40), '🍕'.repeat(40), `${'a'.repeat(33)}${ENGLAND}`, `${'a'.repeat(39)}b`]) {
+      for (let n = 1; n <= SEED_NEIGHBOUR_MAX; n++) expect(isCanonicalSeed(`${base}\u{b7}${n}`), `${hex(base)} ·${n}`).toBe(true);
+      // poza zakresem 1…SEED_NEIGHBOUR_MAX albo bez cyfr: to nie sąsiedni lokal, a cały napis ma ponad 40 znaków, więc nie jest też zwykłym seedem
+      for (const suffix of ['0', '6', '7', '10', '01', '05', 'abc', '1x', '', '-1', '1.5']) {
+        expect(isCanonicalSeed(`${base}\u{b7}${suffix}`), `${hex(base)} ·${suffix}`).toBe(false);
+      }
+    }
+  });
+
+  it('baza sąsiedniego lokalu musi być kanoniczna i mieć najwyżej 40 znaków', () => {
+    for (const base of ['x'.repeat(41), 'x'.repeat(48), 'Pierogi', ' pierogi', 'pierogi  731', 'cafe\u{301}', 'pie\u{200b}rogi']) {   // (baza ze spacją na końcu to już zwykły seed: spacja stoi w środku napisu)
+      for (const n of [1, 3, 5]) {
+        const seed = `${base}\u{b7}${n}`;
+        expect(isCanonicalSeed(seed), hex(seed)).toBe(false);
+      }
+    }
+  });
+
+  it('seed z kropką wpisany przez gracza jest zwykłym seedem: gra zostawia go bez zmian (normalizeSeed), więc serwer też nie może go odrzucić', () => {
+    // Sufiks ·N jest ścisły (1…SEED_NEIGHBOUR_MAX) tylko tam, gdzie liczy się jako sąsiedni lokal, czyli ponad limit 40 znaków (test wyżej).
+    // Gracz może jednak wpisać `pierogi·6` albo `a·b`: normalizeSeed daje dokładnie ten napis, a seed, który gra przyjmuje, serwer przyjmuje też.
+    for (const seed of ['pierogi\u{b7}0', 'pierogi\u{b7}6', 'pierogi\u{b7}abc', 'pierogi\u{b7}10', '\u{b7}3', 'a\u{b7}b', 'pierogi-731\u{b7}2\u{b7}3']) {
+      expect(normalizeSeed(seed, DRAW), hex(seed)).toBe(seed);
+      expect(isCanonicalSeed(seed), hex(seed)).toBe(true);
+    }
+  });
+
+  it('każdy seed losowany przez grę i seed tygodnia (słowo z listy, myślnik, liczba 100–999) jest kanoniczny, także z sufiksem sąsiedniego lokalu', () => {
+    // serwer odrzuca resztę, więc lista słów z wielką literą albo NFD po cichu zablokowałaby ranking losowych sklepów i tygodnia
+    expect(SEED_WORDS.length).toBeGreaterThanOrEqual(50);
+    for (const word of SEED_WORDS) {
+      for (const n of [100, 555, 999]) {
+        const seed = `${word}-${n}`;
+        expect(isCanonicalSeed(seed), hex(seed)).toBe(true);
+        expect(normalizeSeed(seed, DRAW), hex(seed)).toBe(seed);
+        for (let k = 1; k <= SEED_NEIGHBOUR_MAX; k++) expect(isCanonicalSeed(`${seed}\u{b7}${k}`), `${seed} ·${k}`).toBe(true);
+      }
+    }
+  });
+
+  it('długość: 40 punktów kodowych tak (emoji to jeden znak, flaga siedem), 41 nie', () => {
+    expect(isCanonicalSeed('x'.repeat(40))).toBe(true);
+    expect(isCanonicalSeed('x'.repeat(41))).toBe(false);
+    expect(isCanonicalSeed('x'.repeat(48))).toBe(false);
+    expect(isCanonicalSeed('🍕'.repeat(40))).toBe(true);                       // 80 jednostek UTF-16
+    expect(isCanonicalSeed('🍕'.repeat(41))).toBe(false);
+    expect(isCanonicalSeed(`${'a'.repeat(33)}${ENGLAND}`)).toBe(true);         // 33 + 7 = 40
+    expect(isCanonicalSeed(`${'a'.repeat(34)}${ENGLAND}`)).toBe(false);        // 41, a gra obcięłaby go do samej czarnej flagi
+  });
+});
+
+describe('seed po normalizeSeed jest zawsze w postaci kanonicznej (to, co gra zapisuje, serwer przyjmie)', () => {
+  it('korpus trudnych tekstów i 500 losowych napisów (ustalone ziarno): isCanonicalSeed(normalizeSeed(x)), canonicalSeedText idempotentne, sąsiedni lokal bazy też kanoniczny', () => {
+    const rng = createRng('canonicalSeed-property');
+    const plain = ['a', 'B', 'ż', 'Ł', 'E', 'e\u{301}', ' ', ' ', '\t', '\u{a0}', '-', '9', '\u{b7}', '🍕', '👩', '💻', '🏽', '\u{fe0f}', '\u{0301}', '\u{200d}', '\u{1f3f4}'];
+    const tricky = [...CASES.map(([, text]) => text), ENGLAND, SCOTLAND, WALES, FAMILY];
+    const token = (): string => (rng.chance(0.5) ? rng.pick(plain) : rng.pick(tricky));
+    const random = Array.from({ length: 500 }, () => Array.from({ length: rng.int(0, 31) }, token).join(''));
+    const corpus = CASES.flatMap(([, text]) => [text, `${text}pierogi`, `Pie ${text} rogi`, `pierogi${text}`, `${'a'.repeat(39)}${text}ab`]);
+    expect(corpus.length).toBeGreaterThan(20000);
+
+    let withNeighbours = 0;
+    for (const raw of [...corpus, ...random]) {
+      const once = canonicalSeedText(raw);
+      const seed = normalizeSeed(raw, () => 'a');
+      expect(seed, hex(raw)).toBe(once || 'a');
+      expect(isCanonicalSeed(seed), `${hex(raw)} → ${hex(seed)}`).toBe(true);
+      expect(canonicalSeedText(once), `idempotencja: ${hex(raw)}`).toBe(once);
+      if (once === '') continue;
+      // sąsiedni lokal tego seeda (gra dopisuje `·1` … `·5`, gdy generator nie składa sklepu): kanoniczny, a numer spoza zakresu przechodzi tylko tam, gdzie to zwykły seed
+      const fits = Array.from(once).length + 2 <= SEED_TEXT_MAX;
+      for (let n = 1; n <= SEED_NEIGHBOUR_MAX; n++) expect(isCanonicalSeed(`${once}\u{b7}${n}`), `${hex(once)} ·${n}`).toBe(true);
+      expect(isCanonicalSeed(`${once}\u{b7}${SEED_NEIGHBOUR_MAX + 1}`), `${hex(once)} ·${SEED_NEIGHBOUR_MAX + 1}`).toBe(fits);
+      withNeighbours++;
+    }
+    expect(withNeighbours).toBeGreaterThan(15000);
+
+    // idempotencja także z innym limitem (serwer podaje własny: RUN_MAX_SEED_CHARS)
+    for (const raw of random) {
+      for (const max of [1, 2, 5, 40, 48]) {
+        const once = canonicalSeedText(raw, max);
+        expect(canonicalSeedText(once, max), `max ${max}: ${hex(raw)}`).toBe(once);
+        expect(Array.from(once).length).toBeLessThanOrEqual(max);
       }
     }
   });

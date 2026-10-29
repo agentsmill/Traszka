@@ -1,6 +1,6 @@
 import { nickKey, normalizeNick } from '../game/nick.js';
 import { parseRecoveryCode } from '../game/playerKey.js';
-import { isShowableSeed as isShowableSeedText } from '../game/seedText.js';
+import { isCanonicalSeed, isShowableSeed as isShowableSeedText } from '../game/seedText.js';
 import { isRec } from '../sim/guards.js';
 // Tylko typy z gry: znikają przy kompilacji, więc funkcja Vercela nie ładuje `src/sim/run.ts` (alias `@/` w środku) ani `commands.ts`.
 // Pilnuje tego `runtimeImports.test.ts`.
@@ -36,6 +36,7 @@ export function parseKeyAndNick(key: unknown, nick: unknown): Checked<{ key: str
 
 /**
  * Seed z biegu, który da się pokazać w rankingu: 1–48 znaków (`RUN_MAX_SEED_CHARS`), bez spacji na brzegach i bez niedozwolonych znaków.
+ * To jeszcze nie postać kanoniczna (wielkie litery, podwójne spacje i NFD przechodzą): bieg zgłoszony do rankingu musi spełnić też `isCanonicalSeed`.
  * Które znaki są niedozwolone, rozstrzyga `src/game/seedText.ts`, ta sama definicja, według której gra czyści seed (`normalizeSeed`),
  * więc seed zapisany przez grę serwer przyjmuje. Odrzuca znaki sterujące i formatujące, znaczniki (poza trzema flagami Anglii,
  * Szkocji i Walii), osamotnione surogaty, separatory wierszy i ZWJ poza emoji.
@@ -65,7 +66,8 @@ function parseLog(raw: unknown[]): Checked<LogEntry[]> {
 
 /**
  * Ciało `POST /api/runs` (`{ key, nick, run }`) bez zaufania → zgłoszenie albo błąd. Kolejność: kształt, klucz, nick (reguły gry;
- * filtra słów nie ma, decyzja właściciela gry z 2026-10-28), wersje, tryb rankingowy, seed, dziennik. Bieg dostaje tylko pola
+ * filtra słów nie ma, decyzja właściciela gry z 2026-10-28), wersje, tryb rankingowy, seed (do 48 znaków, bez znaków niewidocznych, w postaci
+ * kanonicznej, którą zapisuje gra: `isCanonicalSeed`), dziennik. Bieg dostaje tylko pola
  * kontraktu (obce odpadają), a polecenia są kopiami. Sam wynik liczy dopiero odtworzenie (`verify.ts`).
  *
  * Wersje: `gameVersion` to napis (najwyżej `RUN_MAX_GAME_VERSION_CHARS` jednostek UTF-16, jak `String.length`) i tylko jedzie z biegiem, bo gra wstawia do niego
@@ -87,7 +89,8 @@ export function parseSubmission(body: unknown): Checked<Submission> {
   if (sim !== undefined && !isSimVersion(sim)) return fail('bad-request');
   if (!isSimVersion(sim) || !KNOWN_GENERATOR_VERSIONS.includes(r.generatorVersion)) return fail('old-version');   // tu `sim` bez wartości = brak pola
   if (r.mode !== 'ranked') return fail('not-ranked');
-  if (!isShowableSeed(r.seed)) return fail('bad-seed');
+  // najpierw tani sprawdzian długości i znaków niewidocznych, dopiero potem postać kanoniczna (czyszczenie całego napisu)
+  if (!isShowableSeed(r.seed) || !isCanonicalSeed(r.seed)) return fail('bad-seed');
   const log = parseLog(r.log);
   if (!log.ok) return log;
   return {

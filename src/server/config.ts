@@ -2,6 +2,7 @@
  * Liczby serwera rankingu w jednym miejscu: wersja generatora, którą serwer rozpoznaje, granice rozmiarów, czasy życia w bazie
  * i limity zgłoszeń. Wszystkie czasy w sekundach (Redis), chyba że nazwa mówi inaczej.
  */
+import { SEED_NEIGHBOUR_MAX } from '../game/seedText.js';
 
 /**
  * Wersje generatora sklepu (`GENERATOR_VERSION`), które serwer rozpoznaje przy zgłoszeniu: tani wczesny odrzut, zanim ruszy sędzia.
@@ -20,11 +21,12 @@ export const KNOWN_GENERATOR_VERSIONS: readonly number[] = [1];
 export const SEASON_END_MINUTE = 130_981;
 
 /**
- * Ile sąsiednich lokali (`seed·1` … `seed·5`) gra próbuje, gdy generator nie składa sklepu z samego seeda (`NEIGHBOURS` w
- * `src/game/seeds.ts`, tam prywatne). Tylko takie seedy gra produkuje z seeda tygodnia, więc tylko one liczą się do rankingu tygodnia.
- * Kopia, bo plik gry importuje się aliasem `@/`; test pilnuje równości z tym, co robi `resolveStore`.
+ * Ile sąsiednich lokali (`seed·1` … `seed·5`) gra próbuje, gdy generator nie składa sklepu z samego seeda (`resolveStore` w
+ * `src/game/seeds.ts`). Tylko takie seedy gra produkuje z seeda tygodnia, więc tylko one liczą się do rankingu tygodnia.
+ * Ta sama stała co w grze: `SEED_NEIGHBOUR_MAX` z `src/game/seedText.ts` (plik bez importów, więc funkcja Vercela go załaduje);
+ * test pilnuje, że `resolveStore` próbuje dokładnie tyle sąsiadów.
  */
-export const SEED_NEIGHBOURS = 5;
+export const SEED_NEIGHBOURS = SEED_NEIGHBOUR_MAX;
 
 const DAY = 86_400;
 

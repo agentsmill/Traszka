@@ -1,5 +1,5 @@
 import { generateStore } from '@/sim/store/generateStore';
-import { stripHiddenSeedChars } from './seedText';
+import { SEED_NEIGHBOUR_MAX, SEED_TEXT_MAX, canonicalSeedText } from './seedText';
 import { randomSeed } from './seedWords';
 import { hasStoredSave } from './session';
 
@@ -32,14 +32,11 @@ export function freeSeed(draw: () => string, isTaken: (seed: string) => boolean)
 
 // --- Seed wpisany przez gracza (ekran startowy i ⚙) ---------------------------------------------------------------------
 
-/** Najwięcej znaków (punktów kodowych, więc emoji liczy się za jeden) seeda po normalizacji. */
-export const SEED_MAX = 40;
+/** Najwięcej znaków (punktów kodowych, więc emoji liczy się za jeden) seeda po normalizacji. Definicja w `seedText.ts` (współdzieli ją serwer). */
+export const SEED_MAX = SEED_TEXT_MAX;
 
 export const NEIGHBOUR_STORE_NOTICE = 'Ten lokal się nie zmieścił, otwieramy sąsiedni';
 export const EXISTING_STORE_NOTICE = 'Wczytujemy Twój sklep spod tego seeda';
-
-/** Ile sąsiednich lokali (`seed·1` … `seed·5`) próbujemy, gdy generator nie składa sklepu z samego seeda. */
-const NEIGHBOURS = 5;
 
 /** Co seedy wiedzą o świecie wokół siebie: zapisy w przeglądarce, generator sklepu i losowanie. Do podmiany w testach. */
 export interface SeedDeps {
@@ -57,28 +54,13 @@ const REAL_DEPS: SeedDeps = { hasSave: hasStoredSave, build: (seed) => generateS
 export interface ResolvedStore { seed: string; notice: string | null }
 
 /**
- * Tekst seeda po czyszczeniu (pusty, gdy nic nie zostało): NFC (ten sam napis to ten sam seed), niedozwolone znaki znikają
- * (`stripHiddenSeedChars`: sterujące, formatujące, znaczniki i osamotnione surogaty; ZWJ zostaje tylko między emoji, flagi Anglii,
- * Szkocji i Walii w całości; tabulator i nowy wiersz to spacje; zerowej szerokości, kierunkowe i luźny ZWJ nie liczą się do limitu),
- * spacje zwinięte i przycięte, małe litery, najwyżej `SEED_MAX` znaków. Tnie po punktach kodowych, więc emoji nie rozpada się na
- * pojedynczy surogat, którego nie da się zapisać w adresie ani w kluczu. Po obcięciu czyści jeszcze raz: cięcie w środku sklejonego
- * emoji nie zostawia na końcu spójnika, a cięcie w środku flagi zostawia samą czarną flagę zamiast urwanych znaczników. To samo
- * czyszczenie stosuje serwer przy odrzucaniu (`isShowableSeed`), więc to, co zostaje, serwer przyjmie.
- */
-function cleanSeed(raw: string): string {
-  const text = stripHiddenSeedChars(raw.normalize('NFC'))
-    .replace(/\s+/g, ' ').trim()
-    .toLowerCase().normalize('NFC');
-  return stripHiddenSeedChars(Array.from(text).slice(0, SEED_MAX).join('')).trim();
-}
-
-/**
- * Seed wpisany przez gracza w postaci, pod którą gra go zapamięta: przycięty, małymi literami, ze zwiniętymi spacjami, bez znaków
- * niewidocznych i do 40 znaków. Pusty tekst (też same spacje albo same znaki niewidoczne) to losowy seed z `draw` (domyślnie
- * `randomSeed`). Idempotentna. Jedyne miejsce, które mówi, jaki tekst jest seedem nowego sklepu: `chooseStore` używa jej, nie własnej kopii.
+ * Seed wpisany przez gracza w postaci, pod którą gra go zapamięta: NFC, przycięty, małymi literami, ze zwiniętymi spacjami, bez znaków
+ * niewidocznych i do 40 znaków (czyszczenie to `canonicalSeedText` z `seedText.ts`, tę samą postać wymaga od seeda serwer rankingu:
+ * `isCanonicalSeed`). Pusty tekst (też same spacje albo same znaki niewidoczne) to losowy seed z `draw` (domyślnie `randomSeed`).
+ * Idempotentna. Jedyne miejsce, które mówi, jaki tekst jest seedem nowego sklepu: `chooseStore` używa jej, nie własnej kopii.
  */
 export function normalizeSeed(raw: string, draw: () => string = randomSeed): string {
-  return cleanSeed(raw) || draw();
+  return canonicalSeedText(raw) || draw();
 }
 
 /**
@@ -119,7 +101,7 @@ const canBuild = (seed: string, build: SeedDeps['build']): boolean => {
 export function resolveStore(seed: string, deps: Partial<SeedDeps> = {}): ResolvedStore {
   const d = { ...REAL_DEPS, ...deps };
   if (canBuild(seed, d.build)) return { seed, notice: null };
-  for (let n = 1; n <= NEIGHBOURS; n++) {
+  for (let n = 1; n <= SEED_NEIGHBOUR_MAX; n++) {
     const next = `${seed}·${n}`;
     if (canBuild(next, d.build)) return { seed: next, notice: NEIGHBOUR_STORE_NOTICE };
   }

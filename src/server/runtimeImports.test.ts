@@ -2,6 +2,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { resolveStore } from '@/game/seeds';
+import { SEED_NEIGHBOUR_MAX } from '@/game/seedText';
 import { GENERATOR_VERSION } from '@/sim/store/generateStore';
 import { RANKED_SEASON_END_MINUTE } from '@/sim/ranked';
 import { KNOWN_GENERATOR_VERSIONS, SEASON_END_MINUTE, SEED_NEIGHBOURS } from './config';
@@ -88,7 +89,10 @@ describe('funkcje serwerowe: importy, które Vercel uruchomi', () => {
 
   it('wspólny walidator seeda (src/game/seedText.ts) jest osiągalny z serwera i nie ma żadnych importów', () => {
     const file = join(ROOT, 'src/game/seedText.ts');
-    expect(readFileSync(join(ROOT, 'src/server/runs.ts'), 'utf8')).toContain("from '../game/seedText.js'");
+    const runs = readFileSync(join(ROOT, 'src/server/runs.ts'), 'utf8');
+    expect(runs).toContain("from '../game/seedText.js'");
+    expect(runs).toContain('isCanonicalSeed');      // serwer wymaga postaci kanonicznej seeda, tej samej, którą zapisuje gra
+    expect(readFileSync(join(ROOT, 'src/server/config.ts'), 'utf8')).toContain("from '../game/seedText.js'");
     expect(readFileSync(file, 'utf8')).not.toMatch(/^\s*import\b/m);
   });
 
@@ -101,8 +105,10 @@ describe('funkcje serwerowe: importy, które Vercel uruchomi', () => {
   });
 
   it('liczba sąsiednich lokali seeda tygodnia na serwerze to ta sama liczba, którą próbuje gra (resolveStore: seed·1 … seed·N)', () => {
-    // NEIGHBOURS w src/game/seeds.ts jest prywatne, więc mierzymy zachowanie: dla którego n gra otworzy sklep `seed·n`, gdy
-    // generator składa tylko ten jeden lokal (poza sąsiadami resolveStore oddaje losowy seed z `draw`)
+    // Stała jest wspólna (SEED_NEIGHBOUR_MAX w src/game/seedText.ts, config.ts bierze ją stamtąd), ale to, czy resolveStore naprawdę ją
+    // stosuje, pokazuje dopiero zachowanie: dla którego n gra otworzy sklep `seed·n`, gdy generator składa tylko ten jeden lokal
+    // (poza sąsiadami resolveStore oddaje losowy seed z `draw`)
+    expect(SEED_NEIGHBOURS).toBe(SEED_NEIGHBOUR_MAX);
     const reached = (n: number): boolean => {
       const only = `babka-834·${n}`;
       const build = (seed: string): void => { if (seed !== only) throw new Error('lokal się nie składa'); };

@@ -1,5 +1,6 @@
-// Który tekst jest seedem do pokazania w rankingu. Jedna definicja dla gry (czyszczenie: `normalizeSeed` w seeds.ts) i dla serwera
-// (odrzucanie: `isShowableSeed` w src/server/runs.ts), żeby seed, który gra przyjmuje, serwer przyjmował też po trzech miesiącach gry.
+// Który tekst jest seedem do pokazania w rankingu. Jedna definicja dla gry (czyszczenie: `canonicalSeedText`, z którego korzysta
+// `normalizeSeed` w seeds.ts) i dla serwera (odrzucanie: `isShowableSeed` i `isCanonicalSeed` w src/server/runs.ts), żeby seed, który
+// gra przyjmuje, serwer przyjmował też po trzech miesiącach gry, a seed w innej pisowni niż ta, którą zapisuje gra, odrzucał.
 //
 // PLIK NIE MA IMPORTÓW, i tak ma zostać: importuje go kod funkcji Vercela (api/**, src/server/**), który po kompilacji ładuje tylko
 // względne pliki `.js`; alias `@/` i importy bez rozszerzenia przechodzą build, a funkcja pada przy pierwszym wywołaniu
@@ -7,6 +8,10 @@
 //
 // Reguła: seed pokazuje się, gdy czyszczenie niczego w nim nie zmienia (`stripHiddenSeedChars(seed) === seed`). Walidator jest więc
 // zbudowany z czyszczenia, a nie obok niego; nie da się dopisać znaku do jednego i zapomnieć o drugim.
+//
+// Postać kanoniczna (`isCanonicalSeed`): to, co gra zapisuje po `normalizeSeed`, czyli punkt stały `canonicalSeedText` (NFC, bez znaków
+// niewidocznych, odstępy zwinięte i przycięte, małe litery, najwyżej 40 znaków), z sufiksem sąsiedniego lokalu `·1` … `·5` (patrz niżej).
+// Serwer wymaga tej postaci, więc jeden sklep ma w rankingu jedną pisownię (`Pierogi-731`, `pierogi  731` i NFD to nie seedy z gry).
 //
 // Co jest niedozwolone (seedy widzą wszyscy w rankingu, więc znak niewidoczny mógłby ukryć albo odwrócić napis):
 //  - znaki sterujące (Cc), formatujące (Cf: spacje zerowej szerokości, miękki łącznik, kierunek tekstu, BOM, operatory niewidoczne…),
@@ -31,8 +36,8 @@
 //  - pusty znak Braille'a U+2800 (w wielu czcionkach jest widoczną kratką, więc nie ukrywa tekstu),
 //  - znaki łączące (Mn) w dowolnej liczbie, np. „zalgo”: kanał ograniczony limitem długości seeda (40 znaków w grze, 48 na serwerze);
 //    pełna obrona to biała lista znaków i osobna decyzja produktowa,
-//  - w napisie z serwera spacje inne niż zwykła w środku (U+00A0, U+2003, U+3000…): gra zwija każdy ciąg odstępów do jednej zwykłej
-//    spacji, serwer ich nie odrzuca.
+//  - w napisie z serwera spacje inne niż zwykła w środku (U+00A0, U+2003, U+3000…): `isShowableSeed` ich nie odrzuca (gra zwija każdy
+//    ciąg odstępów do jednej zwykłej spacji), ale `isCanonicalSeed` tak, bo takiego seeda gra nie zapisuje.
 
 /** Spójnik zerowej szerokości (ZWJ): skleja emoji w jedno (rodzina, zawód). */
 const JOINER = '\u{200d}';
@@ -122,4 +127,55 @@ export function isShowableSeed(seed: string, maxChars = Infinity): boolean {
     if (++chars > maxChars) return false;
   }
   return chars >= 1 && seed === seed.trim() && stripHiddenSeedChars(seed) === seed;
+}
+
+// --- Postać kanoniczna seeda ---------------------------------------------------------------------------------------------
+
+/** Najwięcej znaków (punktów kodowych, więc emoji liczy się za jeden, a flaga za siedem) seeda po czyszczeniu w grze. */
+export const SEED_TEXT_MAX = 40;
+
+/**
+ * Ile sąsiednich lokali (`seed·1` … `seed·5`) próbuje gra, gdy generator nie składa sklepu z samego seeda (`resolveStore` w seeds.ts).
+ * Sufiks nie wlicza się do `SEED_TEXT_MAX`: seed o pełnych 40 znakach z sufiksem ma ich 42 (serwer zostawia zapas do 48).
+ */
+export const SEED_NEIGHBOUR_MAX = 5;
+
+/** Znak przed numerem sąsiedniego lokalu: kropka środkowa U+00B7. */
+const NEIGHBOUR_SEPARATOR = '\u{b7}';
+
+/**
+ * Tekst seeda po czyszczeniu (pusty, gdy nic nie zostało): NFC (ten sam napis to ten sam seed), niedozwolone znaki znikają
+ * (`stripHiddenSeedChars`: sterujące, formatujące, znaczniki i osamotnione surogaty; ZWJ zostaje tylko między emoji, flagi Anglii,
+ * Szkocji i Walii w całości; tabulator i nowy wiersz to spacje; zerowej szerokości, kierunkowe i luźny ZWJ nie liczą się do limitu),
+ * spacje zwinięte i przycięte, małe litery, najwyżej `maxChars` znaków (domyślnie `SEED_TEXT_MAX`). Tnie po punktach kodowych, więc
+ * emoji nie rozpada się na pojedynczy surogat, którego nie da się zapisać w adresie ani w kluczu. Po obcięciu czyści jeszcze raz:
+ * cięcie w środku sklejonego emoji nie zostawia na końcu spójnika, a cięcie w środku flagi zostawia samą czarną flagę zamiast urwanych
+ * znaczników. Idempotentne (`canonicalSeedText(canonicalSeedText(x)) === canonicalSeedText(x)`), więc wynik jest punktem stałym.
+ * To czyszczenie stosuje `normalizeSeed` w grze, a serwer sprawdza przez nie, czy seed ma postać, którą gra zapisuje (`isCanonicalSeed`).
+ */
+export function canonicalSeedText(raw: string, maxChars: number = SEED_TEXT_MAX): string {
+  const text = stripHiddenSeedChars(raw.normalize('NFC'))
+    .replace(/\s+/g, ' ').trim()
+    .toLowerCase().normalize('NFC');
+  return stripHiddenSeedChars(Array.from(text).slice(0, maxChars).join('')).trim();
+}
+
+/** Niepusty tekst, który czyszczenie zostawia bez zmian (z samej definicji ma najwyżej `SEED_TEXT_MAX` znaków). */
+const isFixedPoint = (seed: string): boolean => seed !== '' && canonicalSeedText(seed) === seed;
+
+/**
+ * Czy seed ma postać, w której zapisuje go gra: punkt stały `canonicalSeedText` (nic w nim nie zmienia NFC, czyszczenie, zwijanie
+ * odstępów, małe litery ani cięcie do `SEED_TEXT_MAX` znaków) albo `baza·N`, gdzie `baza` jest takim punktem stałym, a N to numer
+ * sąsiedniego lokalu od 1 do `SEED_NEIGHBOUR_MAX` bez zer na początku. Drugi przypadek jest potrzebny dla baz o 39 i 40 znakach: gra dopisuje
+ * sufiks po czyszczeniu i cięciu, więc cały seed bywa dłuższy niż 40 znaków (dla krótszych baz `baza·N` jest punktem stałym już sam z siebie).
+ * Pusty seed nie jest kanoniczny. Seed z kropką środkową, który wpisał gracz (`pierogi·6`, `a·b`), jest zwykłym punktem stałym:
+ * `normalizeSeed` zostawia go bez zmian, więc serwer nie może go odrzucić. Długości nie ogranicza ponad to, co wynika z definicji;
+ * zbyt długi napis odrzuca wcześniej `isShowableSeed` z limitem serwera.
+ */
+export function isCanonicalSeed(seed: string): boolean {
+  if (isFixedPoint(seed)) return true;
+  const cut = seed.lastIndexOf(NEIGHBOUR_SEPARATOR);
+  if (cut < 1) return false;
+  const number = seed.slice(cut + NEIGHBOUR_SEPARATOR.length);
+  return /^[1-9][0-9]*$/.test(number) && Number(number) <= SEED_NEIGHBOUR_MAX && isFixedPoint(seed.slice(0, cut));
 }

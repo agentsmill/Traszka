@@ -118,9 +118,24 @@ describe('zgłoszenie biegu: kształt i granice', () => {
     for (const seed of ['', ' pierogi', 'pierogi ', 'x'.repeat(49), 'pie\nrogi', 'pie‮rogi', 'pie​rogi', 'pie﻿rogi', 'a b']) {
       expect(parseSubmission(body({}, { seed })), JSON.stringify(seed)).toMatchObject({ ok: false, error: 'bad-seed' });
     }
-    // emoji ze spójnikiem, polskie litery i sąsiedni lokal są w porządku
-    for (const seed of ['👩‍🍳 kuchnia', 'kiełbasa-42', 'pierogi-731·2', 'x'.repeat(48)]) {
+    // emoji ze spójnikiem, polskie litery, sąsiedni lokal i seed o pełnych 40 znakach (także z sufiksem sąsiedniego lokalu) są w porządku
+    for (const seed of ['👩‍🍳 kuchnia', 'kiełbasa-42', 'pierogi-731·2', 'x'.repeat(40), `${'x'.repeat(40)}·5`]) {
       expect(parseSubmission(body({}, { seed })).ok, seed).toBe(true);
+    }
+  });
+
+  it('seed w innej pisowni niż ta, którą zapisuje gra (wielkie litery, podwójna spacja, NFD, nietypowa spacja, ponad 40 znaków): bad-seed; kanoniczny przechodzi', () => {
+    // gra zapisuje seed przez normalizeSeed; serwer wymaga tej postaci (inaczej jeden sklep miałby w rankingu wiele pisowni)
+    const bad = [
+      'Pierogi-731', 'PIEROGI-731', 'pierogi  731', 'pierogi\u{a0}731', 'pierogi\u{3000}731', 'cafe\u{301}', 'Pierogi-731·2', 'pierogi  731·2',
+      'x'.repeat(41), 'x'.repeat(48), `${'x'.repeat(41)}·1`,       // w limicie serwera (48), ale gra obcięłaby seed do 40 znaków
+      `${'x'.repeat(40)}·0`, `${'x'.repeat(40)}·6`, `${'x'.repeat(40)}·abc`, `${'x'.repeat(40)}·`,     // 40 znaków bazy: sufiks musi być sąsiednim lokalem 1…5
+    ];
+    for (const seed of bad) {
+      expect(parseSubmission(body({}, { seed })), JSON.stringify(seed)).toMatchObject({ ok: false, error: 'bad-seed' });
+    }
+    for (const seed of ['pierogi-731', 'pierogi-731·2', 'caf\u{e9}', 'pierogi 731']) {
+      expect(parseSubmission(body({}, { seed })), JSON.stringify(seed)).toMatchObject({ ok: true, value: { run: { seed } } });
     }
   });
 
