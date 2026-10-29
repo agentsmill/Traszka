@@ -23,7 +23,8 @@
 // Poza zakresem (nadal niewidoczne, nie są Cf ani Cc): wypełniacze Hangul (U+115F, U+1160, U+3164, U+FFA0), pusty znak Braille'a
 // (U+2800), połączenie grafemów (U+034F), niewidoczne samogłoski khmerskie (U+17B4, U+17B5), selektory wariantów mongolskie
 // (U+180B–U+180D) i dodatkowe selektory wariantów (U+E0100–U+E01EF), a w napisie z serwera także spacje inne niż zwykła
-// (U+00A0, U+2003, U+3000…) w środku. Gra zwija je do jednej zwykłej spacji albo je zostawia; serwer ich nie odrzuca.
+// (U+00A0, U+2003, U+3000…) w środku. Gra zwija każdy ciąg odstępów do jednej zwykłej spacji, a pozostałych znaków z tej listy nie
+// rusza; serwer żadnego z nich nie odrzuca.
 
 /** Spójnik zerowej szerokości (ZWJ): skleja emoji w jedno (rodzina, zawód). */
 const JOINER = '\u{200d}';
