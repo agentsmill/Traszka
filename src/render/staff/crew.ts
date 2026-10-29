@@ -1,6 +1,6 @@
 import { spotCells } from '@/sim/economy/storeInfo';
 import { cellKey, manhattan, type Cell } from '@/sim/grid';
-import type { StoreLayout } from '@/sim/store/types';
+import { FRONT_WALL_Y, type StoreLayout } from '@/sim/store/types';
 import { buildStaffNav, type StaffNav } from './staffNav';
 import { pickStaffSpots } from './targets';
 import { TaskHold } from './taskHold';
@@ -14,6 +14,11 @@ import { STAFF_WALK_SPEED, StaffWalker } from './walker';
 
 /** Najdłużej (s czasu widoku) ktoś idzie do wyjścia: potem znika, choćby nie doszedł (np. paleta zamknęła mu drogę). */
 const LEAVE_TIMEOUT_S = 20;
+/**
+ * Wychodzący idzie tylekroć szybciej (czas jego marszu płynie szybciej): noc w grze to ok. 5 s czasu widoku, a z zaplecza na chodnik
+ * idzie się 6–10 s, więc bez pośpiechu załoga wychodziłaby dopiero rano (i zawracała). Tak samo spieszą się klienci (`CLOSING_SPEED`).
+ */
+export const LEAVE_RUSH = 3.5;
 
 export interface CrewInput {
   /** Osoby na zmianie z tym, czego chce ekonomia (`staffOnShift`). */
@@ -96,11 +101,25 @@ function streetPoint(layout: StoreLayout): Cell {
   return { x: best.x, y: best.y };
 }
 
+/**
+ * Kratka tuż za progiem, na której wychodzący znika: wiersz chodnika przy ścianie frontowej, w kolumnie pierwszego wejścia. Noc w grze
+ * trwa ok. 5 s czasu widoku, więc marsz na koniec ulicy (kilkanaście kratek więcej) nie mieści się w niej, a w sali ma nie zostać nikt.
+ * Bez wejścia (albo gdy kratka jest nietypowa) wychodzą tak jak wchodzą: punktem na chodniku.
+ */
+export function doorstepPoint(layout: StoreLayout, street: Cell): Cell {
+  const door = layout.entrance[0];
+  if (!door) return street;
+  const y = FRONT_WALL_Y - 1;
+  return layout.cells[y * layout.width + door.x] === 'outside' ? { x: door.x, y } : street;
+}
+
 export class StaffCrew {
   /** Własna kopia układu: wołający może go dalej używać (a nawet zmieniać) bez wpływu na ludzi na ekranie. */
   private readonly layout: StoreLayout;
   /** Punkt na chodniku, którym ludzie wchodzą i wychodzą (wychodzą zawsze do tego jednego punktu). */
   private readonly street: Cell;
+  /** Dokąd idą wychodzący i gdzie znikają: kratka tuż za progiem (wiersz przed ścianą frontową, przy wejściu), a nie koniec ulicy. */
+  private readonly exit: Cell;
   /** Histereza i zegar należą do załogi razem: zegar nigdy nie startuje od nowa osobno (histereza zakłada, że idzie tylko w górę). */
   private readonly hold = new TaskHold();
   private elapsed = 0;
@@ -117,6 +136,7 @@ export class StaffCrew {
   constructor(layout: StoreLayout) {
     this.layout = structuredClone(layout);
     this.street = streetPoint(this.layout);
+    this.exit = doorstepPoint(this.layout, this.street);
     this.nav = buildStaffNav(this.layout, []);
   }
 
@@ -181,7 +201,7 @@ export class StaffCrew {
       }
     }
     if (someoneLeft) this.list = this.list.filter((p) => !this.hasLeft(p));
-    for (const p of this.list) p.walker.step(dt, this.nav);
+    for (const p of this.list) p.walker.step(p.leaving ? dt * LEAVE_RUSH : dt, this.nav);
   }
 
   /** Wychodzący, który doszedł na chodnik albo wychodzi już `LEAVE_TIMEOUT_S` (np. droga zastawiona): znika ze sklepu. */
@@ -201,7 +221,7 @@ export class StaffCrew {
   private startLeaving(p: Person): void {
     p.leaving = true;
     p.leaveSince = this.elapsed;
-    p.walker.setGoal(this.street, p.walker.heading, this.nav);
+    p.walker.setGoal(this.exit, p.walker.heading, this.nav);
   }
 
   /**
