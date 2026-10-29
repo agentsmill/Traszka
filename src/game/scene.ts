@@ -96,6 +96,22 @@ export function writeSeedToUrl(seed: string): void {
   history.replaceState(null, '', url);
 }
 
+/**
+ * Zdejmuje `seed` z adresu (pozostałe parametry i fragment zostają). Wchodząc w bieg rankingowy gra nie wpisuje jego seeda do adresu,
+ * a stary `?seed=` zwykłego sklepu kazałby odświeżeniu otworzyć ten zwykły sklep zamiast wznowić bieg. Bez `?seed=` nic nie robi;
+ * odmowa przeglądarki (np. zablokowana historia) nie przerywa gry: adres zostaje, jaki był.
+ */
+export function clearSeedFromUrl(): void {
+  try {
+    const url = new URL(location.href);
+    if (!url.searchParams.has('seed')) return;
+    url.searchParams.delete('seed');
+    history.replaceState(null, '', url);
+  } catch {
+    // adres zostaje
+  }
+}
+
 /** Najwięcej postaci w sklepie naraz: telefon i słabsza grafika dostają mniej. */
 export const CROWD_MAX: Record<QualityPresetId, number> = { niska: 10, srednia: 16, wysoka: 22 };
 

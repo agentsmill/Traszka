@@ -199,8 +199,10 @@ export interface ShellDeps {
   scene: ShellScene;
   effects: ShellEffects;
   randomSeed(): string;
-  /** Wpisuje seed do adresu strony (`writeSeedToUrl` w scene.ts). */
+  /** Wpisuje seed do adresu strony (`writeSeedToUrl` w scene.ts). Bieg rankingowy go nie woła. */
   writeSeedToUrl(seed: string): void;
+  /** Zdejmuje `?seed=` z adresu (`clearSeedFromUrl` w scene.ts): wołane przy wejściu w bieg rankingowy, żeby odświeżenie wznowiło bieg, a nie stary zwykły sklep. */
+  clearSeedFromUrl(): void;
   /** Fabryka postaci dla ekranu „Nowy sklep”: ta sama, z której korzysta gra. */
   characterFactory(): Promise<CharacterFactory>;
   /** Podpowiedzi pierwszego dnia w krótkich dymkach (`FIRST_DAY_HINTS` w ui/game/overlays.tsx: moduł interfejsu, więc podaje je main.ts). */
@@ -434,43 +436,28 @@ export function createShell(deps: ShellDeps): GameShell {
     }
   }
 
-  function setSeed(next: string, fresh = false, ephemeral = false): boolean {
-    persist();
-    const previous = shell.session;
-    const previousSeed = scene.seed ?? ui.seed.value;
-    try {
-      if (!benchMode) shell.session = createSession(next, fresh, partnerOf(shell.meta), { ephemeral });
-      ui.selection.value = null;
-      scene.load(next, shell.session);
-    } catch (error) {
-      console.error(`Nie udało się otworzyć sklepu „${next}”.`, error);
-      shell.session = previous;
-      restoreScene(previous, previousSeed);
-      fx.notice(`Nie udało się otworzyć sklepu „${next}”. Zostajesz w poprzednim.`);
-      return false;
-    }
-    deps.writeSeedToUrl(next);
-    if (!benchMode) rememberCasual();   // z biegu rankingowego wychodzi się tędy: zwykły sklep to tryb `casual`
-    ui.seed.value = next;
-    ui.story.value = [];   // wpisy z poprzedniego sklepu (także po „Zacznij od nowa”) nie mają czego czekać w nowym
-    ui.picked.value = null;   // numery kart zaczynają się w nowej grze od 1: zaznaczona odpowiedź ze starej nie może wskoczyć na nową kartę
-    publish();
-    persist();
-    if (shell.session?.loadNotice) fx.notice(shell.session.loadNotice);
-    return true;
+  /** Czego chce przejście na inny sklep (`switchSession`). */
+  interface SwitchRequest {
+    /** Seed świata, który budujemy (scena, log błędu). */
+    seed: string;
+    /** Sesja nowego sklepu; może rzucić. null w benchmarku, który nie ma sesji (świat idzie z samego seeda). */
+    make: () => GameSession | null;
+    /** Komunikat dla gracza, gdy przejście się nie uda. */
+    failure: string;
+    /**
+     * Czy po porażce odbudować scenę także wtedy, gdy nie było poprzedniego sklepu. Zwykłe przejście: tak (jak zawsze; w benchmarku to
+     * jedyny sposób, by scena wróciła). Wejście w bieg rankingowy przy rozruchu: nie, bo `scene.load` po porażce zostawia scenę czystą,
+     * a gra zaraz otworzy zwykły sklep; odtwarzanie świata bez sesji byłoby budową na darmo.
+     */
+    restoreWithoutPrevious: boolean;
   }
 
-  // --- Bieg rankingowy: start, wznowienie, wyjście ---
-
   /**
-   * Przejście na sesję rankingową (nowy bieg albo bieg z zapisu), tak jak `setSeed` na zwykły sklep: zapis obecnej sesji, budowa świata
-   * i, gdy się nie uda, powrót do poprzedniego sklepu z komunikatem `failure`. Bez poprzedniego sklepu (rozruch) scena po porażce
-   * zostaje pusta, bo `scene.load` sprząta po sobie, i wołający otwiera zwykły sklep. Po udanej budowie: `onEntered` (porządki, które
-   * wolno zrobić dopiero teraz, np. skasowanie tego, co nowy bieg zastępuje; przed zapisem, żeby nie skasować nowego biegu), tryb
-   * `ranked`, stan interfejsu per sklep jak w `setSeed` (+ zakładka i raport), publikacja i zapis. Bez adresu strony (decyzja 3), bez
-   * okna powitalnego, nagród i wskazówek pierwszego dnia: bieg rankingowy zaczyna się od razu.
+   * Szkielet każdego przejścia na inny sklep (zwykły i rankingowy): zapis obecnej sesji, nowa sesja, budowa świata, a gdy cokolwiek po
+   * drodze rzuci, powrót do poprzedniego sklepu (jego sesja i świat odbudowany od nowa) i komunikat. Zwraca, czy się udało; po
+   * sukcesie `shell.session` to nowa sesja, a wołający dokańcza przejście (adres, tryb, interfejs, publikacja, zapis).
    */
-  function enterRanked(seed: string, make: () => GameSession, failure: string, onEntered?: () => void): boolean {
+  function switchSession({ seed, make, failure, restoreWithoutPrevious }: SwitchRequest): boolean {
     persist();
     const previous = shell.session;
     const previousSeed = scene.seed ?? ui.seed.value;
@@ -478,22 +465,69 @@ export function createShell(deps: ShellDeps): GameShell {
       const next = make();
       shell.session = next;
       ui.selection.value = null;
-      scene.load(next.seed, next);
+      scene.load(seed, next);
     } catch (error) {
-      console.error(`Nie udało się zbudować biegu rankingowego „${seed}”.`, error);
+      console.error(`Nie udało się otworzyć sklepu „${seed}”.`, error);
       shell.session = previous;
-      if (previous) restoreScene(previous, previousSeed);
+      if (previous || restoreWithoutPrevious) restoreScene(previous, previousSeed);
       fx.notice(failure);
       return false;
     }
-    onEntered?.();
-    setPlayMode('ranked');
+    return true;
+  }
+
+  /**
+   * Stan interfejsu przypisany do jednego sklepu, który nie może przejść do następnego: seed w interfejsie, wpisy czekające na „OK”
+   * i zaznaczona odpowiedź na kartę (numery kart zaczynają się w każdej grze od 1). `closePanels`: także otwarta zakładka i raport
+   * miesiąca; robi to wejście w bieg rankingowy i powrót z niego, a zwykłe przejście między sklepami nie (tak jak zawsze).
+   */
+  function resetShopUi(seed: string, closePanels: boolean): void {
     ui.seed.value = seed;
     ui.story.value = [];
     ui.picked.value = null;
+    if (!closePanels) return;
     ui.tab.value = null;
     ui.report.value = null;
+  }
+
+  /** Przejście na zwykły sklep: `switchSession` z sesją z `createSession`, a po sukcesie adres, tryb `casual`, interfejs, publikacja i zapis. */
+  function openCasual(next: string, fresh: boolean, ephemeral: boolean, closePanels: boolean): boolean {
+    const switched = switchSession({
+      seed: next, restoreWithoutPrevious: true,
+      make: () => (benchMode ? null : createSession(next, fresh, partnerOf(shell.meta), { ephemeral })),
+      failure: `Nie udało się otworzyć sklepu „${next}”. Zostajesz w poprzednim.`,
+    });
+    if (!switched) return false;
+    deps.writeSeedToUrl(next);
+    if (!benchMode) rememberCasual();   // z biegu rankingowego wychodzi się tędy: zwykły sklep to tryb `casual`
+    resetShopUi(next, closePanels);   // wpisy z poprzedniego sklepu (także po „Zacznij od nowa”) nie mają czego czekać w nowym
+    publish();
+    persist();
+    if (shell.session?.loadNotice) fx.notice(shell.session.loadNotice);
+    return true;
+  }
+
+  function setSeed(next: string, fresh = false, ephemeral = false): boolean {
+    return openCasual(next, fresh, ephemeral, false);
+  }
+
+  // --- Bieg rankingowy: start, wznowienie, wyjście ---
+
+  /**
+   * Przejście na sesję rankingową (nowy bieg albo bieg z zapisu): `switchSession` z komunikatem `failure`, a po sukcesie `onEntered`
+   * (porządki, które wolno zrobić dopiero teraz, np. skasowanie tego, co nowy bieg zastępuje; przed zapisem, żeby nie skasować nowego
+   * biegu), tryb `ranked`, `?seed=` zdjęty z adresu (decyzja 3: bieg nie wpisuje seeda, a stary seed zwykłego sklepu kazałby odświeżeniu
+   * otworzyć ten sklep zamiast wznowić bieg), interfejs sklepu (z zamknięciem zakładki i raportu), bez pytania o start i bez dymków
+   * pierwszego dnia, publikacja i zapis. Bez okna powitalnego i nagród: bieg rankingowy zaczyna się od razu.
+   */
+  function enterRanked(seed: string, make: () => GameSession, failure: string, onEntered?: () => void): boolean {
+    if (!switchSession({ seed, make, failure, restoreWithoutPrevious: false })) return false;
+    onEntered?.();
+    setPlayMode('ranked');
+    deps.clearSeedFromUrl();
+    resetShopUi(seed, true);
     ui.confirmRankedStart.value = null;
+    ui.showHints([]);
     publish();
     persist();
     return true;
@@ -548,14 +582,11 @@ export function createShell(deps: ShellDeps): GameShell {
   }
 
   /**
-   * Otwiera ostatni zwykły sklep (`traszka:last`) albo wolny losowy, przez `setSeed`: zapis obecnej sesji (biegu też), budowa świata
-   * i, gdy się nie uda, powrót do poprzedniego z komunikatem. Po udanym przejściu zamyka zakładkę i raport biegu.
+   * Otwiera ostatni zwykły sklep (`traszka:last`) albo wolny losowy, tym samym przejściem co `setSeed` (`openCasual`): zapis obecnej
+   * sesji (biegu też), budowa świata i, gdy się nie uda, powrót do poprzedniego z komunikatem. Po udanym przejściu zamyka zakładkę i raport biegu.
    */
   function openLastCasual(): boolean {
-    if (!setSeed(lastSavedSeed() ?? freeSeed(deps.randomSeed, hasStoredSave))) return false;
-    ui.tab.value = null;
-    ui.report.value = null;
-    return true;
+    return openCasual(lastSavedSeed() ?? freeSeed(deps.randomSeed, hasStoredSave), false, false, true);
   }
 
   function leaveRanked(): void {

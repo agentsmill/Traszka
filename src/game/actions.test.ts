@@ -456,6 +456,8 @@ interface Harness {
   calls: Call[];
   /** Seedy zapisane do adresu strony. */
   urls: string[];
+  /** Wywołania `clearSeedFromUrl` (zdjęcie `?seed=` z adresu przy wejściu w bieg rankingowy): jeden wpis na wywołanie. */
+  clears: string[];
   /** Komunikaty dla gracza (`notice`). */
   notices: string[];
 }
@@ -464,6 +466,7 @@ interface Harness {
 function harness(options: { meta?: Meta; benchMode?: boolean; seeds?: string[] } = {}): Harness {
   const calls: Call[] = [];
   const urls: string[] = [];
+  const clears: string[] = [];
   const notices: string[] = [];
   const scene = new FakeScene();
   const seeds = [...(options.seeds ?? ['losowy-1', 'losowy-2', 'losowy-3'])];
@@ -480,11 +483,12 @@ function harness(options: { meta?: Meta; benchMode?: boolean; seeds?: string[] }
     meta: options.meta ?? loadMeta(), benchMode: options.benchMode ?? false, scene, effects,
     randomSeed: () => seeds.shift() ?? 'zapas',
     writeSeedToUrl: (seed) => { urls.push(seed); },
+    clearSeedFromUrl: () => { clears.push('seed'); },
     characterFactory: () => Promise.resolve({} as CharacterFactory),
     firstDayHints: HINTS,
   });
   const startup = calls.splice(0);
-  return { shell, scene, startup, calls, urls, notices };
+  return { shell, scene, startup, calls, urls, clears, notices };
 }
 
 /** Otwiera sklep tak, jak robi to rozruch w main.ts (sesja i świat), i zeruje ślady, żeby test widział tylko to, co po nim. */
@@ -838,6 +842,17 @@ describe('powłoka gry (createShell)', () => {
       expect(h.shell.setSeed('bench-2')).toBe(true);
       expect(h.shell.session).toBeNull();
       expect(h.scene.loads).toEqual([{ seed: 'bench-2', session: null }]);
+    });
+
+    it('benchmark, świat się nie buduje: scena wraca do poprzedniego świata bez sesji (bez poprzedniej sesji też się odtwarza)', () => {
+      const h = harness({ benchMode: true });
+      h.scene.load('bench-1', null);
+      h.scene.loads.length = 0;
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      h.scene.failing.add('zepsuty');
+      expect(h.shell.setSeed('zepsuty')).toBe(false);
+      expect(h.scene.loads).toEqual([{ seed: 'zepsuty', session: null }, { seed: 'bench-1', session: null }]);
+      expect(h.scene.seed).toBe('bench-1');
     });
   });
 
@@ -1920,6 +1935,142 @@ describe('powłoka gry (createShell)', () => {
         expect(h.shell.session).toMatchObject({ seed: RANKED_SEED, mode: 'ranked' });
         expect(loadRanked().status).toBe('ok');
         expect(getPlayMode()).toBe('ranked');
+      });
+    });
+
+    describe('adres strony: ?seed= zdejmowany przy wejściu w bieg, żeby odświeżenie go wznowiło', () => {
+      it('startRanked zdejmuje ?seed= z adresu (raz, po zbudowaniu świata) i nie wpisuje żadnego seeda', () => {
+        const h = harness();
+        casualOpen(h);   // zwykły sklep wpisał ?seed=traszka-1
+        h.urls.length = 0;
+        expect(h.clears).toEqual([]);
+
+        expect(h.shell.startRanked(RANKED_SEED)).toBe(true);
+
+        expect(h.clears).toEqual(['seed']);
+        expect(h.urls).toEqual([]);
+      });
+
+      it('resumeRanked (rozruch i ze zwykłego sklepu) zdejmuje ?seed= z adresu', () => {
+        const first = harness();
+        first.shell.startRanked(RANKED_SEED);
+        first.shell.persist();
+
+        const boot = harness();
+        expect(openAtBoot(boot.shell, request(), false)).toBe(true);
+        expect(boot.clears).toEqual(['seed']);   // także, gdy adresu z seedem nie było: sprzątanie jest po stronie adresu (no-op)
+        expect(boot.urls).toEqual([]);
+
+        const fromCasual = harness();
+        casualOpen(fromCasual);
+        expect(fromCasual.shell.resumeRanked()).toBe(true);
+        expect(fromCasual.clears).toEqual(['seed']);
+      });
+
+      it('adresu nie ruszają: start odmówiony (pytanie), start, któremu świat się nie buduje, wznowienie bez biegu, z uszkodzonym zapisem i z błędem budowy', () => {
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+        const asked = harness();
+        casualOpen(asked);
+        saveFinished(drawerRun());
+        expect(asked.shell.startRanked(RANKED_SEED)).toBe(false);
+        expect(asked.clears).toEqual([]);
+        storage.removeItem('traszka:ranked:done');
+
+        const failing = harness();
+        casualOpen(failing);
+        failing.scene.failing.add('zepsuty');
+        expect(failing.shell.startRanked('zepsuty')).toBe(false);
+        expect(failing.clears).toEqual([]);
+
+        expect(harness().shell.resumeRanked()).toBe(false);   // brak biegu
+        storage.setItem('traszka:ranked', 'x');
+        const broken = harness();
+        expect(broken.shell.resumeRanked()).toBe(false);
+        expect(broken.clears).toEqual([]);
+
+        const saved = harness();
+        saved.shell.startRanked(RANKED_SEED);
+        saved.shell.persist();
+        const unbuildable = harness();
+        unbuildable.scene.failing.add(RANKED_SEED);
+        expect(unbuildable.shell.resumeRanked()).toBe(false);
+        expect(unbuildable.clears).toEqual([]);
+      });
+
+      it('zwykłe przepływy nie zdejmują seeda z adresu: rozruch, ?seed= przy trybie ranked, setSeed, wyjście z biegu i jego porzucenie', () => {
+        const plain = harness();
+        plain.shell.open({ seed: 'traszka-1', fresh: false, choice: null });
+        plain.shell.setSeed('traszka-2');
+        plain.shell.randomize();
+        expect(plain.clears).toEqual([]);
+
+        const first = harness();
+        first.shell.startRanked(RANKED_SEED);
+        first.shell.persist();
+        const deepLink = harness();
+        expect(openAtBoot(deepLink.shell, request('traszka-9'), true)).toBe(true);
+        expect(deepLink.clears).toEqual([]);
+        expect(deepLink.urls).toEqual(['traszka-9']);
+
+        const leaving = harness();
+        casualOpen(leaving);
+        leaving.shell.resumeRanked();
+        expect(leaving.clears).toEqual(['seed']);
+        leaving.shell.leaveRanked();
+        leaving.shell.resumeRanked();
+        leaving.shell.abandonRanked();
+        expect(leaving.clears).toEqual(['seed', 'seed']);   // tylko dwa wejścia w bieg; wyjście i porzucenie wpisują seed zwykłego sklepu
+        expect(leaving.urls.slice(-1)).toEqual(['traszka-1']);
+      });
+
+      it('`?new=1` i wybór z ekranu startowego nadal otwierają zwykły sklep przy trybie ranked i nie zdejmują seeda', () => {
+        const first = harness();
+        first.shell.startRanked(RANKED_SEED);
+        first.shell.persist();
+        const look = { outfit: 'normal', appearanceSeed: 'abc' } as unknown as CashierLook;
+        const choice = { nick: 'Kasia', seed: 'traszka-3', look, specialOutfits: true, notice: null, ranked: false };
+        const fresh = harness();
+        expect(openAtBoot(fresh.shell, { seed: 'traszka-2', fresh: true, choice: null }, false)).toBe(true);
+        const chosen = harness();
+        expect(openAtBoot(chosen.shell, { seed: 'traszka-3', fresh: false, choice }, false)).toBe(true);
+        expect([fresh.shell.session!.mode, chosen.shell.session!.mode]).toEqual(['casual', 'casual']);
+        expect([fresh.clears, chosen.clears]).toEqual([[], []]);
+      });
+    });
+
+    describe('stan interfejsu przy przejściach: wspólny reset sklepu', () => {
+      it('wejście w bieg zamyka wskazówki pierwszego dnia i pytanie o start; zwykłe przejście wskazówek nie rusza', () => {
+        const h = harness();
+        casualOpen(h);
+        ui.showHints(HINTS);
+        h.shell.setSeed('traszka-2');
+        expect(ui.hints.value).toEqual(HINTS);   // zwykły sklep tak jak dotąd: dymki zostają
+        ui.confirmRankedStart.value = { seed: 'x', reason: 'active' };
+
+        expect(h.shell.startRanked(RANKED_SEED)).toBe(true);
+
+        expect(ui.hints.value).toEqual([]);
+        expect(ui.confirmRankedStart.value).toBeNull();
+        ui.showHints(HINTS);
+        h.shell.leaveRanked();   // powrót do zwykłego sklepu też nie rusza dymków
+        expect(ui.hints.value).toEqual(HINTS);
+        ui.showHints([]);
+      });
+
+      it('zwykłe przejście nie zamyka zakładki ani raportu (jak dotąd); wyjście z biegu i wejście w bieg tak', () => {
+        const h = harness();
+        casualOpen(h);
+        ui.tab.value = 'palety';
+        h.shell.setSeed('traszka-2');
+        expect(ui.tab.value).toBe('palety');
+        ui.tab.value = null;
+
+        ui.tab.value = 'ludzie';
+        h.shell.startRanked(RANKED_SEED);
+        expect(ui.tab.value).toBeNull();
+        ui.tab.value = 'ludzie';
+        h.shell.leaveRanked();
+        expect(ui.tab.value).toBeNull();
       });
     });
 

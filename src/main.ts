@@ -11,7 +11,7 @@ import { openAtBoot } from '@/game/boot';
 import { bindControls } from '@/game/controls';
 import { advanceSession, debugHandleEnabled, debugHandleOf, installDebugHandle, isModalOpen, isSceneHeld } from '@/game/frame';
 import { loadMeta, needsStartScreen, saveMeta } from '@/game/meta';
-import { createSceneHost, startTestScene, writeSeedToUrl } from '@/game/scene';
+import { clearSeedFromUrl, createSceneHost, startTestScene, writeSeedToUrl } from '@/game/scene';
 import { initialStartForm, playerOf, type StartChoice } from '@/game/start';
 import { play, buzz, setSound, setVibration } from '@/ui/sfx';
 import { confetti } from '@/ui/fx';
@@ -94,7 +94,7 @@ function startGame(
   // Sesja powstaje dopiero przy otwieraniu pierwszego sklepu (`shell.open` niżej): dopiero wtedy wiadomo, czy zapis dało się użyć
   // i czy świat z niego stanął. Benchmark nie ma sesji.
   const shell = createShell({
-    meta, benchMode, scene, writeSeedToUrl, randomSeed, characterFactory, firstDayHints: FIRST_DAY_HINTS,
+    meta, benchMode, scene, writeSeedToUrl, clearSeedFromUrl, randomSeed, characterFactory, firstDayHints: FIRST_DAY_HINTS,
     effects: {
       play, buzz, setSound, setVibration, notice: postNotice,
       confetti: (fx, fy, count) => confetti(fx === undefined ? undefined : window.innerWidth * fx, fy === undefined ? undefined : window.innerHeight * fy, count),

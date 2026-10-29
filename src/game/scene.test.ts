@@ -3,7 +3,7 @@ import { QUALITY, type QualityPresetId } from '@/render/quality';
 import { HOUR_CURVE, MINUTES_PER_DAY, OPEN_FROM, OPEN_TO } from '@/sim/economy/catalog';
 import { expectedDailyCustomers, isOpenForCustomers, isStoreOpen } from '@/sim/economy/economy';
 import { MemoryStorage } from './memoryStorage';
-import { CROWD_MAX, crowdRateFor, timeOfDayAt } from './scene';
+import { CROWD_MAX, clearSeedFromUrl, crowdRateFor, timeOfDayAt } from './scene';
 import { createSession, type GameSession } from './session';
 
 /*
@@ -115,5 +115,44 @@ describe('crowdRateFor: gęstość tłumu z ekonomii', () => {
     const before = JSON.stringify([s.econ, s.info]);
     crowdRateFor(s, 'niska');
     expect(JSON.stringify([s.econ, s.info])).toBe(before);
+  });
+});
+
+describe('clearSeedFromUrl: zdjęcie ?seed= z adresu', () => {
+  /** Adres i historia przeglądarki z atrap: `replaceState` zapisuje nowy adres, który widać potem w `location.href`. */
+  function browserAt(href: string): { replaced: string[]; current: () => string } {
+    const replaced: string[] = [];
+    const where = { href };
+    vi.stubGlobal('location', where);
+    vi.stubGlobal('history', { replaceState: (_state: unknown, _title: string, url: string | URL) => { replaced.push(String(url)); where.href = String(url); } });
+    return { replaced, current: () => where.href };
+  }
+
+  it('zdejmuje tylko seed: pozostałe parametry (też `new=1`) i fragment adresu zostają', () => {
+    const b = browserAt('http://127.0.0.1:5173/?debug=1&seed=kielbasa-42&new=1&yaw=2#sklep');
+    clearSeedFromUrl();
+    expect(b.replaced).toHaveLength(1);
+    const url = new URL(b.current());
+    expect([...url.searchParams.keys()]).toEqual(['debug', 'new', 'yaw']);
+    expect(url.searchParams.get('debug')).toBe('1');
+    expect(url.searchParams.get('yaw')).toBe('2');
+    expect(url.hash).toBe('#sklep');
+    expect(url.pathname).toBe('/');
+  });
+
+  it('adres z samym seedem traci znak zapytania; seed z polskimi znakami i spacją też znika', () => {
+    const b = browserAt('http://127.0.0.1:5173/gra/?seed=kie%C5%82basa%2042');
+    clearSeedFromUrl();
+    expect(b.current()).toBe('http://127.0.0.1:5173/gra/');
+  });
+
+  it('bez ?seed= nic nie robi (historia nietknięta); wyjątek przeglądarki nie wychodzi na zewnątrz', () => {
+    const b = browserAt('http://127.0.0.1:5173/?debug=1#x');
+    clearSeedFromUrl();
+    expect(b.replaced).toEqual([]);
+
+    vi.stubGlobal('location', { href: 'http://127.0.0.1:5173/?seed=a' });
+    vi.stubGlobal('history', { replaceState: () => { throw new DOMException('zablokowane', 'SecurityError'); } });
+    expect(() => clearSeedFromUrl()).not.toThrow();
   });
 });
