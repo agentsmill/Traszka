@@ -2,13 +2,13 @@ import { describe, expect, it } from 'vitest';
 import { generateStore } from '@/sim/store/generateStore';
 import {
   BANKRUPTCY_AT, CATS, CAT_INFO, FRANCHISE_FEE_FIXED, FRANCHISE_FEE_SHARE, HOT, ITEMS_PER_CUSTOMER, MARGIN_PER_CUSTOMER, MINUTES_PER_DAY, OPEN_FROM, OPEN_TO, REVENUE_PER_CUSTOMER,
-  START_CASH, TILL_RATE, UNLOAD_AT, UNLOAD_RATE, WAGE_PER_DAY,
+  START_CASH, STRAZ, TILL_RATE, UNLOAD_AT, UNLOAD_RATE, WAGE_PER_DAY,
 } from './catalog';
-import { dateOfDay, formatDate, isLastDayOfMonth } from './calendar';
+import { dateOfDay, dayOf, formatDate, isLastDayOfMonth, minuteOfDay } from './calendar';
 import { advanceEconomy } from './clock';
 import {
-  answerCard, arrivalRate, awaitingDecision, buyEquipment, buyUpgrade, cardContext, changeTrust, createEconomy, effects,
-  estimatedDailyMargin, expectedDailyCustomers, fire, franchiseFee, freeSpots, GOLDEN_PRIZE, isOpenForCustomers, kpiMetricsOf, kpiScaleOf, movePallet, relayout,
+  answerCard, arrivalRate, assistantSuggestion, awaitingDecision, buyEquipment, buyUpgrade, cardContext, changeTrust, createEconomy, crewPalletCap, effects,
+  estimatedDailyMargin, expectedDailyCustomers, fire, franchiseFee, freeSpots, GOLDEN_PRIZE, isOpenForCustomers, kpiMetricsOf, kpiScaleOf, movePallet, orderedPallets, relayout,
   returnPallet, robotFleet, sell, slotFree, startRemont, stepMinute, tapPallet, tapTill, unlocksAt, upgradeBlocker, workshopUnlocked,
   type CommandResult, type EconEvent, type EconomyState, type MonthReport,
 } from './economy';
@@ -120,6 +120,61 @@ describe('ekonomia', () => {
     };
     expect(fines(true)).toBeGreaterThan(0);
     expect(fines(false)).toBe(0);
+  });
+
+  it('Straż Miejska: tolerancja po dostawie, najpierw upomnienie, mandat dopiero przy powtórce tego samego dnia (STRAZ)', () => {
+    const s = createEconomy(SEED, info);
+    s.staff = 0;            // nikt nie rozładowuje, więc palety stoją na chodniku całe dnie
+    s.order = { auto: false, manual: 0 };
+    const log: { minute: number; kind: 'upomnienie' | 'mandat'; since: number }[] = [];
+    for (let day = 0; day < 20; day++) {
+      const events: EconEvent[] = [];
+      while (s.pallets.length < 4) s.pallets.push({ ...s.pallets[0]!, id: 100 + s.pallets.length + day * 10, spot: s.pallets.length, since: s.minute });
+      for (let i = 0; i < MINUTES_PER_DAY; i++) {
+        const before = events.length;
+        stepMinute(s, info, events);
+        for (const e of events.slice(before)) {
+          const since = Math.min(...s.pallets.filter((p) => p.loc === 'sidewalk').map((p) => p.since));
+          if (e.kind === 'warning' && e.text.startsWith('Straż Miejska: upomnienie')) log.push({ minute: s.minute - 1, kind: 'upomnienie', since });
+          if (e.kind === 'fine') log.push({ minute: s.minute - 1, kind: 'mandat', since });
+        }
+      }
+    }
+    const warnings = log.filter((e) => e.kind === 'upomnienie');
+    const fines = log.filter((e) => e.kind === 'mandat');
+    expect(warnings.length).toBeGreaterThan(0);
+    expect(fines.length).toBeGreaterThan(0);
+    for (const e of log) {
+      const mod = minuteOfDay(e.minute);
+      expect(mod).toBeGreaterThanOrEqual(STRAZ.from);
+      expect(mod).toBeLessThan(STRAZ.to);
+      expect(e.minute - e.since).toBeGreaterThanOrEqual(STRAZ.graceMin);
+    }
+    // każdy mandat ma upomnienie tego samego dnia, co najmniej `warnGapMin` wcześniej; jedno upomnienie na dzień
+    for (const f of fines) {
+      const warn = warnings.find((w) => dayOf(w.minute) === dayOf(f.minute));
+      expect(warn).toBeDefined();
+      expect(f.minute - warn!.minute).toBeGreaterThanOrEqual(STRAZ.warnGapMin);
+    }
+    const days = warnings.map((w) => dayOf(w.minute));
+    expect(new Set(days).size).toBe(days.length);
+    // upomnienie nic nie kosztuje: wszystkie mandaty z kasy to kwoty mandatów
+    expect(s.total.fineCount).toBe(fines.length);
+  });
+
+  it('Asystent Traszki nie zamawia więcej palet, niż zmiana rozładuje przed obchodem (crewPalletCap)', () => {
+    const s = createEconomy(SEED, info);
+    for (const c of CATS) { s.shelf[c] = 0; s.backroom[c] = 0; }
+    s.pallets = [];
+    s.staff = 2;
+    const cap2 = crewPalletCap(s, info);
+    expect(assistantSuggestion(s, info)).toBe(cap2);   // puste półki: potrzeba więcej, niż zmiana rozładuje
+    s.staff = 4;
+    expect(crewPalletCap(s, info)).toBeGreaterThan(cap2);   // więcej ludzi, więcej palet
+    s.staff = 1;
+    expect(crewPalletCap(s, info)).toBeGreaterThanOrEqual(1);
+    s.order = { auto: false, manual: 30 };
+    expect(orderedPallets(s, info)).toBe(30);   // ręczne zamówienie gracza nie ma limitu asystenta (za duże → mandaty)
   });
 
   it('przesadne zamówienie bez rąk do pracy: palety się kumulują, a nadmiar kierowca zabiera za opłatą', () => {

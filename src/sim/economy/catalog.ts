@@ -88,6 +88,8 @@ export const LOT_TRAFFIC: Record<'blok' | 'kamienica' | 'pawilon', number> = { b
 
 /** Klientów na minutę: kasjer i kasa samoobsługowa (SCO). */
 export const TILL_RATE = 0.7;
+/** Stukanie w kasę pomaga, gdy kolejka czekałaby na kasjerów dłużej niż tyle minut (`tillTapBlock`). */
+export const TILL_TAP_QUEUE_MIN = 3;
 export const SCO_RATE = 0.4;
 /** Udział klientów, którzy w ogóle podejdą do SCO (reszta woli człowieka). */
 export const SCO_ACCEPT = 0.65;
@@ -123,8 +125,27 @@ export const FRANCHISE_FEE_SHARE = 0.12;
 export const PALLETS_FREE = 6;
 export const PALLET_FEE = 60;
 export const RETURN_FEE = 150;
-export const FINE_BASE = 400;
-export const FINE_PER_PALLET = 120;
+export const FINE_BASE = 800;
+export const FINE_PER_PALLET = 250;
+/**
+ * Straż Miejska (decyzja właściciela z 29.10.2026: mandat to rzadkość i skutek zaniedbania, a nie codzienność). Patrol zagląda
+ * od `from` do `to`; palety spod sklepu obchodzą go dopiero, gdy najstarsza stoi `graceMin` (zmiana zdąży po porannej dostawie).
+ * Pierwszy obchód dnia z takimi paletami to upomnienie bez kary; mandat dopiero przy kolejnym obchodzie tego samego dnia, co
+ * najmniej `warnGapMin` po upomnieniu, i nie częściej niż co `fineGapMin`. Szansa obchodu na minutę: `patrol` razy
+ * (1 + `perPallet` × liczba palet ponad jedną) razy (1 + `perHour` × godziny ponad tolerancję), razy kamery (`fineMult`).
+ */
+/** Asystent Traszki nie zamawia więcej palet, niż zmiana rozładuje w tyle minut po dostawie (`crewPalletCap`). */
+export const ASSISTANT_UNLOAD_MIN = 300;
+export const STRAZ = {
+  from: 9 * 60,
+  to: 20 * 60,
+  graceMin: 120,
+  warnGapMin: 60,
+  fineGapMin: 180,
+  patrol: 0.002,
+  perPallet: 0.25,
+  perHour: 0.2,
+} as const;
 /** Kredyt kupiecki: wartość towaru w sklepie (półki, zaplecze, palety) ponad limit wstrzymuje zamówienie. */
 export const CREDIT_LIMIT = 70_000;
 /** Gotówka poniżej tego przy zamknięciu miesiąca to miesiąc bez opłacenia Centrali; drugi taki z rzędu kończy umowę (spec §10). */

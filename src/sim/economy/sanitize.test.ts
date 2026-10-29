@@ -95,7 +95,7 @@ describe('sanitizeEconomy: poprawny stan przechodzi bez zmian', () => {
       const { tycoon, ...progress } = out;
       expect(progress).toEqual({
         ...rest, lastReport: null, shift: defaults(inf, seed).shift,
-        tapStreak: 0, lastTapAt: -1e9,
+        tapStreak: 0, lastTapAt: -1e9, lastWarnAt: -1e9,
         today: withNewCounters(raw.today), month: withNewCounters(raw.month), total: withNewCounters(raw.total),
       });
       expect(tycoon.trust.value).toBe(trust);

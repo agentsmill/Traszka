@@ -1146,6 +1146,7 @@ describe('powłoka gry (createShell)', () => {
       const h = harness();
       const s = open(h);
       s.econ.queue = 2;
+      s.econ.lastCashiers = 0;   // przy kasie nikogo: stukanie pomaga (`tillTapBlock`)
       expect(h.shell.game.dispatch({ type: 'tapTill' }).ok).toBe(true);
       expect(s.run!.record.log.map((e) => e.cmd.type)).toEqual(['tapTill']);
       expect(h.calls).toEqual([['play', 'cash'], ['buzz', 8]]);

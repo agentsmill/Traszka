@@ -137,6 +137,7 @@ export function sanitizeEconomy(raw: unknown, defaults: EconomyState, info: Stor
     remontUntil: isNum(raw.remontUntil) ? whole(raw.remontUntil, 0, 0, minute + LONGEST_REMONT) : defaults.remontUntil,
     boostUntil: whole(raw.boostUntil, defaults.boostUntil, 0, LIMITS.minute),
     lastFineAt: whole(raw.lastFineAt, defaults.lastFineAt, defaults.lastFineAt, minute),
+    lastWarnAt: whole(raw.lastWarnAt, defaults.lastWarnAt, defaults.lastWarnAt, minute),
     today: counters(raw.today),
     month: counters(raw.month),
     total,
