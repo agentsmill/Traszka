@@ -516,12 +516,11 @@ describe('limit zgłoszeń na poziomie handlerów: 429 z Retry-After na klucz i 
       const bad = post(path, 'to nie JSON', { 'x-real-ip': '203.0.113.7' });
       const huge = post(path, { key: KEY_A }, { 'x-real-ip': '203.0.113.7', 'content-length': '99999999' });
       for (const req of [bad, huge]) {
-        const read = vi.spyOn(req, 'text');
         const res = await handler(req, gated);
         expect(res.status).toBe(429);
         expect((await body(res)).error).toBe('rate-limited');
         expect(Number(res.headers.get('retry-after'))).toBeGreaterThan(0);
-        expect(read).not.toHaveBeenCalled();
+        expect(req.bodyUsed).toBe(false);
       }
       expect(redis.calls).toBe(0);
       expect((await handler(post(path, 'to nie JSON', { 'x-real-ip': '198.51.100.9' }), gated)).status).toBe(400);
@@ -561,20 +560,18 @@ describe('wczesna odmowa po nagłówku Content-Length: 413 bez czytania ciała',
     it(`${name}: nagłówek większy niż ${max} B kończy się 413 ${error}, zanim ktokolwiek sięgnie po ciało albo do bazy`, async () => {
       const { deps, redis } = setup();
       const req = post(path, { key: KEY_A }, { 'content-length': String(max + 1) });
-      const read = vi.spyOn(req, 'text');
       const res = await handler(req, deps);
       expect(res.status).toBe(413);
       expect((await body(res)).error).toBe(error);
-      expect(read).not.toHaveBeenCalled();
+      expect(req.bodyUsed).toBe(false);
       expect(redis.calls).toBe(0);
     });
 
     it(`${name}: nagłówek równy ${max} B nie odrzuca wcześniej (ciało i tak sprawdza się po odczycie), a bez nagłówka za duże ciało to 413 po odczycie`, async () => {
       const { deps } = setup();
       const ok = post(path, { key: KEY_A }, { 'content-length': String(max) });
-      const read = vi.spyOn(ok, 'text');
       expect((await handler(ok, deps)).status).not.toBe(413);
-      expect(read).toHaveBeenCalledTimes(1);
+      expect(ok.bodyUsed).toBe(true);
       const big = post(path, `{"x":"${'a'.repeat(max)}"}`);
       expect(big.headers.get('content-length')).toBeNull();
       const res = await handler(big, deps);
@@ -588,6 +585,186 @@ describe('wczesna odmowa po nagłówku Content-Length: 413 bez czytania ciała',
     for (const value of ['abc', '', '-5', '12abc']) {
       const res = await handlePlayer(post('/api/player', { key: KEY_A }, { 'content-length': value }), deps);
       expect(res.status, value).toBe(200);
+    }
+  });
+});
+
+describe('ciało żądania czytane strumieniem z ucięciem', () => {
+  const CHUNK = 1_000;
+  const enc = new TextEncoder();
+  const endpoints: [string, typeof handleRuns, string, number, string][] = [
+    ['POST /api/runs', handleRuns, '/api/runs', RUN_MAX_BODY_BYTES, 'too-large'],
+    ['POST /api/player', handlePlayer, '/api/player', SMALL_BODY_BYTES, 'too-large'],
+    ['POST /api/save/download', handleSaveDownload, '/api/save/download', SMALL_BODY_BYTES, 'too-large'],
+    ['POST /api/save/upload', handleSaveUpload, '/api/save/upload', SAVE_BODY_BYTES, 'save-too-large'],
+  ];
+
+  /** Ten sam kawałek `times` razy (bez składania całości w pamięci). */
+  function* repeat(chunk: Uint8Array, times: number): Generator<Uint8Array> {
+    for (let i = 0; i < times; i++) yield chunk;
+  }
+  const slices = (bytes: Uint8Array, size: number): Uint8Array[] => {
+    const out: Uint8Array[] = [];
+    for (let at = 0; at < bytes.length; at += size) out.push(bytes.slice(at, at + size));
+    return out;
+  };
+  /** JSON `{ key, pad }` o długości dokładnie `bytes` bajtów UTF-8; dopełnia `fill`, a reszta (gdy znak ma kilka bajtów) to „a”. */
+  function sized(bytes: number, fill = 'a'): Uint8Array {
+    const extra = bytes - enc.encode(JSON.stringify({ key: KEY_A, pad: '' })).length;
+    const width = enc.encode(fill).length;
+    const out = enc.encode(JSON.stringify({ key: KEY_A, pad: fill.repeat(Math.floor(extra / width)) + 'a'.repeat(extra % width) }));
+    expect(out.length).toBe(bytes);
+    return out;
+  }
+  /**
+   * Żądanie z ciałem jako strumień, bez nagłówka długości. Strumień oddaje kawałek dopiero na żądanie czytającego
+   * (`highWaterMark: 0`), więc `seen.pulled` to dokładnie liczba pobranych kawałków, a `seen.cancelled` mówi, czy czytający
+   * przerwał strumień (`cancel`). Iterator, który rzuci wyjątek, zrywa strumień w połowie.
+   */
+  function streamed(path: string, chunks: Iterable<Uint8Array>, headers: Record<string, string> = {}) {
+    const source = chunks[Symbol.iterator]();
+    const seen = { pulled: 0, cancelled: false };
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        const next = source.next();
+        if (next.done) return controller.close();
+        seen.pulled++;
+        controller.enqueue(next.value);
+      },
+      cancel() { seen.cancelled = true; },
+    }, { highWaterMark: 0 });
+    const req = new Request(`${ORIGIN}${path}`, {
+      method: 'POST', headers: { 'content-type': 'application/json', 'x-real-ip': '203.0.113.7', ...headers }, body: stream, duplex: 'half',
+    } as RequestInit & { duplex: 'half' });
+    return { req, seen };
+  }
+
+  for (const [name, handler, path, max, error] of endpoints) {
+    const chunksToLimit = Math.ceil(max / CHUNK);
+
+    it(`${name}: strumień dłuższy niż ${max} B zostaje przerwany zaraz po przekroczeniu (najwyżej limit plus jeden kawałek), cancel wywołany, 413`, async () => {
+      const { deps, redis } = setup();
+      const { req, seen } = streamed(path, repeat(enc.encode('a'.repeat(CHUNK)), 3 * chunksToLimit));
+      expect(req.headers.get('content-length')).toBeNull();
+      const res = await handler(req, deps);
+      expect(res.status).toBe(413);
+      expect((await body(res)).error).toBe(error);
+      expect(seen.cancelled).toBe(true);
+      expect(seen.pulled).toBeLessThanOrEqual(chunksToLimit + 1);
+      expect(redis.calls).toBe(0);
+    });
+
+    it(`${name}: kłamliwy Content-Length (mniejszy niż ciało) nie omija limitu, ciało jest liczone i przerwane tak samo`, async () => {
+      const { deps } = setup();
+      const { req, seen } = streamed(path, repeat(enc.encode('a'.repeat(CHUNK)), 3 * chunksToLimit), { 'content-length': '10' });
+      const res = await handler(req, deps);
+      expect(res.status).toBe(413);
+      expect((await body(res)).error).toBe(error);
+      expect(seen.cancelled).toBe(true);
+      expect(seen.pulled).toBeLessThanOrEqual(chunksToLimit + 1);
+    });
+
+    it(`${name}: Content-Length większy niż ${max} B odrzuca od razu, bez pobrania choćby jednego kawałka`, async () => {
+      const { deps, redis } = setup();
+      const { req, seen } = streamed(path, repeat(enc.encode('a'.repeat(CHUNK)), 3), { 'content-length': String(max + 1) });
+      const res = await handler(req, deps);
+      expect(res.status).toBe(413);
+      expect((await body(res)).error).toBe(error);
+      expect(seen.pulled).toBe(0);
+      expect(req.bodyUsed).toBe(false);
+      expect(redis.calls).toBe(0);
+    });
+
+    it(`${name}: dokładnie ${max} B przechodzi, a ${max} B plus jeden bajt to 413 (ciało w kawałkach)`, async () => {
+      const { deps } = setup();
+      expect((await handler(streamed(path, slices(sized(max), CHUNK)).req, deps)).status).not.toBe(413);
+      const res = await handler(streamed(path, slices(sized(max + 1), CHUNK)).req, deps);
+      expect(res.status).toBe(413);
+      expect((await body(res)).error).toBe(error);
+    });
+
+    it(`${name}: limit liczy bajty, nie znaki (dwubajtowe „ż” w ciele): ${max} B przechodzi, ${max} B plus jeden bajt to 413`, async () => {
+      const { deps } = setup();
+      expect((await handler(streamed(path, slices(sized(max, 'ż'), CHUNK)).req, deps)).status).not.toBe(413);
+      const res = await handler(streamed(path, slices(sized(max + 1, 'ż'), CHUNK)).req, deps);
+      expect(res.status).toBe(413);
+      expect((await body(res)).error).toBe(error);
+    });
+  }
+
+  it('ciało o dokładnie dozwolonej długości, podane jednym kawałkiem, jest przyjęte (200)', async () => {
+    const { deps } = setup();
+    const res = await handlePlayer(streamed('/api/player', [sized(SMALL_BODY_BYTES)]).req, deps);
+    expect(res.status).toBe(200);
+    expect((await body(res)).ok).toBe(true);
+  });
+
+  it('wielobajtowe znaki (2 i 4 bajty) przecięte granicą kawałków dekodują się poprawnie, nawet gdy kawałki mają po jednym bajcie', async () => {
+    const { deps } = setup();
+    const ok = await handlePlayer(streamed('/api/player', slices(enc.encode(JSON.stringify({ key: KEY_A, nick: 'Łódź żółć' })), 1)).req, deps);
+    expect(ok.status).toBe(200);
+    expect((await body(ok)).nick).toEqual({ nick: 'Łódź żółć', status: 'free' });
+    const emoji = await handlePlayer(streamed('/api/player', slices(enc.encode(JSON.stringify({ key: KEY_A, nick: 'Ala\u{1F600}' })), 1)).req, deps);
+    expect(emoji.status).toBe(200);
+    expect((await body(emoji)).nick).toMatchObject({ nick: 'Ala\u{1F600}', status: 'invalid' });
+  });
+
+  it('niepoprawny UTF-8 nie rzuca wyjątku: bajty zamieniają się w \\u{FFFD}, a ciało jest oceniane dalej', async () => {
+    const { deps } = setup();
+    const bad = Uint8Array.from([...enc.encode('{"key":"'), 0xff, 0xc3, ...enc.encode('"}')]);
+    const inString = await handlePlayer(streamed('/api/player', [bad]).req, deps);
+    expect(inString.status).toBe(400);
+    expect((await body(inString)).error).toBe('bad-key');
+    const cutOff = await handlePlayer(streamed('/api/player', [Uint8Array.from([0x7b, 0xc3])]).req, deps);
+    expect(cutOff.status).toBe(400);
+    expect((await body(cutOff)).error).toBe('bad-request');
+    // Niedokończony znak na samym końcu po poprawnym JSON to nadal śmieci w ciele (dekoder oddaje \u{FFFD}), a nie cicho pominięty bajt.
+    const tail = await handlePlayer(streamed('/api/player', [Uint8Array.from([...enc.encode(JSON.stringify({ key: KEY_A })), 0xc3])]).req, deps);
+    expect(tail.status).toBe(400);
+    expect((await body(tail)).error).toBe('bad-request');
+  });
+
+  it('pusty strumień, puste ciało i brak ciała to 400 bad-request', async () => {
+    const { deps } = setup();
+    const requests = [
+      streamed('/api/player', []).req,
+      post('/api/player', ''),
+      new Request(`${ORIGIN}/api/player`, { method: 'POST', headers: { 'x-real-ip': '203.0.113.7' } }),
+    ];
+    for (const req of requests) {
+      const res = await handlePlayer(req, deps);
+      expect(res.status).toBe(400);
+      expect((await body(res)).error).toBe('bad-request');
+    }
+  });
+
+  it('strumień zerwany w połowie to 400 bad-request, a nie wyjątek', async () => {
+    const { deps } = setup();
+    function* broken(): Generator<Uint8Array> {
+      yield enc.encode('{"key":');
+      throw new Error('połączenie zerwane');
+    }
+    const res = await handlePlayer(streamed('/api/player', broken()).req, deps);
+    expect(res.status).toBe(400);
+    expect((await body(res)).error).toBe('bad-request');
+  });
+
+  it('blokada czytnika jest zwolniona po każdym wyniku: przyjęciu, odrzuceniu za dużego ciała, złym JSON i zerwanym strumieniu', async () => {
+    const { deps } = setup();
+    function* broken(): Generator<Uint8Array> {
+      yield enc.encode('{"key":');
+      throw new Error('połączenie zerwane');
+    }
+    const cases: [string, Iterable<Uint8Array>][] = [
+      ['przyjęte', slices(sized(100), 40)],
+      ['za duże', repeat(enc.encode('a'.repeat(CHUNK)), 3 * Math.ceil(SMALL_BODY_BYTES / CHUNK))],
+      ['zły JSON', [enc.encode('to nie JSON')]],
+      ['zerwany strumień', broken()],
+    ];
+    for (const [label, chunks] of cases) {
+      const { req } = streamed('/api/player', chunks);
+      await handlePlayer(req, deps);
+      expect(req.body?.locked, label).toBe(false);
     }
   });
 });

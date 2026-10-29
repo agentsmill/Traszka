@@ -59,17 +59,39 @@ const failure = (f: ApiFailure): Response => apiError(f.error, f.message);
 const wrongMethod = (request: Request, allowed: string): Response | null =>
   (request.method === allowed ? null : apiError('method', undefined, { allow: allowed }));
 
-/** Ciało żądania jako JSON, najwyżej `maxBytes` bajtów (nagłówek długości sprawdzany od razu, treść po odczycie). */
+/**
+ * Ciało żądania jako JSON, najwyżej `maxBytes` bajtów. Nagłówek długości większy od limitu odrzuca od razu, bez czytania. Nagłówka
+ * nie bierze za pewnik (może być mniejszy niż ciało albo go nie ma), więc ciało i tak czyta się strumieniem kawałek po kawałku
+ * i liczy w bajtach: gdy suma przekroczy limit, strumień jest przerywany (`cancel`) i wraca `too-large`, więc ciało większe od
+ * limitu nie jest czytane ani składane w całości. Pusty strumień i brak ciała to `bad-request`, tak jak JSON, który się nie parsuje.
+ * Dekoder nie jest rygorystyczny: niepoprawny UTF-8 daje znaki zastępcze (\u{FFFD}), a nie wyjątek. Jeden dekoder na całe ciało
+ * (`stream: true`) skleja znak wielobajtowy przecięty granicą kawałków.
+ */
 async function readJson(request: Request, maxBytes: number): Promise<Checked<unknown>> {
   const declared = Number(request.headers.get('content-length'));
   if (Number.isFinite(declared) && declared > maxBytes) return fail('too-large');
-  let text: string;
+  if (request.body === null) return fail('bad-request');
+  const reader = request.body.getReader();
+  const decoder = new TextDecoder();
+  let text = '';
+  let bytes = 0;
+  let drained = false;
   try {
-    text = await request.text();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      bytes += value.byteLength;
+      if (bytes > maxBytes) return fail('too-large');
+      text += decoder.decode(value, { stream: true });
+    }
+    drained = true;
+    text += decoder.decode();
   } catch {
     return fail('bad-request');
+  } finally {
+    if (!drained) await reader.cancel().catch(() => undefined);
+    reader.releaseLock();
   }
-  if (text.length > maxBytes || new TextEncoder().encode(text).length > maxBytes) return fail('too-large');
   try {
     return { ok: true, value: JSON.parse(text) as unknown };
   } catch {
