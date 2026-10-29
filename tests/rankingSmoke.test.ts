@@ -195,7 +195,7 @@ function runCli(args: string[], opts: { blockNetwork?: boolean } = {}): Promise<
 
 /** Wynik symulacji dla (seed, dziennik): ten sam kod co w bundlu sędziego, więc tak samo policzy go serwer. */
 const scoreOf = (seed: string, log: readonly unknown[]): number =>
-  seasonScore(replayRun({ seed, gameVersion: 'test', generatorVersion: GENERATOR_VERSION, mode: 'ranked', log } as never, RANKED_SEASON_END_MINUTE));
+  seasonScore(replayRun({ seed, gameVersion: 'test', generatorVersion: GENERATOR_VERSION, simVersion: SIM_VERSION, mode: 'ranked', log } as never, RANKED_SEASON_END_MINUTE));
 
 /** Trzy domeny produkcyjne projektu na Vercelu (nazwa projektu, domena zespołu, domena gałęzi głównej). */
 const PRODUCTION_DOMAINS = [

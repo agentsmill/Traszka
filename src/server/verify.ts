@@ -1,4 +1,5 @@
-import type { SubmittedRun } from './runs.js';
+// Tylko typ z gry: znika przy kompilacji (patrz `runs.ts` i `runtimeImports.test.ts`).
+import type { RunRecord } from '../sim/run.js';
 
 /**
  * Sędzia biegu: serwer zapisuje tylko wynik, który sam policzył (spec §14.7). `verifyRun` jest wstrzykiwany do API, więc testy
@@ -17,7 +18,7 @@ import type { SubmittedRun } from './runs.js';
  */
 export type VerifyFailure = 'replay-unavailable' | 'replay-failed' | 'old-version';
 export type VerifyResult = { ok: true; score: number } | { ok: false; reason: VerifyFailure };
-export type VerifyRun = (run: SubmittedRun) => VerifyResult | Promise<VerifyResult>;
+export type VerifyRun = (run: RunRecord) => VerifyResult | Promise<VerifyResult>;
 
 /** Domyślny sędzia, gdy nie podano innego: żaden bieg nie jest odtwarzany (`api/runs.ts` podaje sędziego z bundla, `judge.ts`). */
 export const replayNotAvailable: VerifyRun = () => ({ ok: false, reason: 'replay-unavailable' });
@@ -33,7 +34,7 @@ export function describeError(err: unknown): [name: string, message: string] {
 
 /** Co sędzia musi wiedzieć o symulacji: odtworzenie biegu (pasuje do niego `replayRun` z gry, który bierze `RunRecord`), koniec sezonu i wynik. */
 export interface SeasonJudge<S> {
-  replay: (run: SubmittedRun, untilMinute: number) => S;
+  replay: (run: RunRecord, untilMinute: number) => S;
   endMinute: number;
   score: (state: S) => number;
 }

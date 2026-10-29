@@ -12,14 +12,11 @@ import {
 import { fail, type Checked } from './errors.js';
 
 /**
- * Bieg zgłoszony do rankingu: `RunRecord` z gry (`src/sim/run.ts`) z wersją symulacji, według której został rozegrany. `simVersion`
- * dojdzie do `RunRecord` gry w części B2b; wtedy przecięcie jest zbędne, ale nadal poprawne. Do tego czasu typ gry nie ma tego
- * pola, a serwer wymaga go od każdego zgłoszenia: o przyjęciu decyduje zgodność z `SIM_VERSION` sędziego (`verify.ts`), a nie `gameVersion`.
+ * Zgłoszenie po sprawdzeniu: klucz w postaci kanonicznej, nick po `normalizeNick` (do wyświetlania) i jego klucz porównań. Bieg to
+ * `RunRecord` z gry (`src/sim/run.ts`), który niesie `simVersion`: serwer wymaga go od każdego zgłoszenia, bo o przyjęciu decyduje
+ * zgodność z `SIM_VERSION` sędziego (`verify.ts`), a nie `gameVersion`.
  */
-export type SubmittedRun = RunRecord & { simVersion: number };
-
-/** Zgłoszenie po sprawdzeniu: klucz w postaci kanonicznej, nick po `normalizeNick` (do wyświetlania) i jego klucz porównań. */
-export interface Submission { key: string; nick: string; nickKey: string; run: SubmittedRun }
+export interface Submission { key: string; nick: string; nickKey: string; run: RunRecord }
 
 /** Typ polecenia: krótki identyfikator (jak `tapPallet`), bez spacji i znaków spoza ASCII. */
 const COMMAND_TYPE = /^[A-Za-z][A-Za-z0-9]{0,31}$/;

@@ -19,11 +19,18 @@ export interface LogEntry {
   cmd: Command;
 }
 
-/** `gameVersion` i `mode` tylko jadą z biegiem (sprawdza je serwer rankingu); odtworzenie liczy wyłącznie z seeda i dziennika. */
+/**
+ * `gameVersion` i `mode` tylko jadą z biegiem (sprawdza je serwer rankingu); odtworzenie liczy wyłącznie z seeda i dziennika.
+ * `simVersion` to wersja wyniku symulacji (`SIM_VERSION`, `src/sim/simVersion.ts`), według której bieg został rozegrany. Wypełnia
+ * ją gra, gdy bieg się zaczyna (`newRunLog` w `src/game/session.ts`), a porównuje sędzia na serwerze (`src/server/judge.ts`) z
+ * `SIM_VERSION` swojego bundla: inna wersja to `old-version`, bez odtwarzania. `replayRun` jej nie porównuje, bo sam jest częścią
+ * tej symulacji i nie ma jak wiedzieć, że dziennik pochodzi z innej.
+ */
 export interface RunRecord {
   seed: string;
   gameVersion: string;
   generatorVersion: number;
+  simVersion: number;
   mode: 'casual' | 'ranked';
   log: LogEntry[];
 }
@@ -43,15 +50,16 @@ export const isLogEntry = (x: unknown): x is LogEntry =>
   typeof x === 'object' && x !== null && Number.isFinite((x as LogEntry).minute) && Number.isFinite((x as LogEntry).seq);
 
 /**
- * Czy `x` ma kształt biegu: `seed` i `gameVersion` to napisy, `generatorVersion` liczba całkowita, `mode` 'casual' albo
- * 'ranked', `log` tablica. Wpisów dziennika nie sprawdza (robi to `isLogEntry` i `applyCommand`), a granice (długość seeda,
- * liczba wpisów, minuty) ustawia wołający, np. serwer rankingu przed `replayRun`.
+ * Czy `x` ma kształt biegu: `seed` i `gameVersion` to napisy, `generatorVersion` i `simVersion` liczby całkowite, `mode` 'casual'
+ * albo 'ranked', `log` tablica. Którą `simVersion` przyjąć, rozstrzyga sędzia, nie ta funkcja. Wpisów dziennika nie sprawdza
+ * (robi to `isLogEntry` i `applyCommand`), a granice (długość seeda, liczba wpisów, minuty) ustawia wołający, np. serwer rankingu
+ * przed `replayRun`.
  */
 export function isRunRecord(x: unknown): x is RunRecord {
   if (typeof x !== 'object' || x === null) return false;
   const r = x as Record<string, unknown>;
   return typeof r.seed === 'string' && typeof r.gameVersion === 'string' && Number.isInteger(r.generatorVersion)
-    && (r.mode === 'casual' || r.mode === 'ranked') && Array.isArray(r.log);
+    && Number.isInteger(r.simVersion) && (r.mode === 'casual' || r.mode === 'ranked') && Array.isArray(r.log);
 }
 
 /**

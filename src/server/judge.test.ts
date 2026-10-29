@@ -5,13 +5,12 @@ import { SEASON_END_MINUTE } from './config';
 import { route } from './env';
 import { handleRuns } from './http';
 import { makeBundleVerifier } from './judge';
-import type { SubmittedRun } from './runs';
 
 /**
  * Sędzia z bundla (judge.ts) na atrapie bundla: każdy z pięciu eksportów jest podmienialny, a funkcja ładująca to szpieg, więc
  * widać, ile razy i kiedy sędzia sięga po plik. Sędzia na prawdziwym, zbudowanym bundlu jest w tests/judgeBundle.test.ts.
  */
-const RUN: SubmittedRun = { seed: 'kiełbasa-42', gameVersion: '0.0.0+abc123def456', generatorVersion: 1, simVersion: 7, mode: 'ranked', log: [] };
+const RUN: RunRecord = { seed: 'kiełbasa-42', gameVersion: '0.0.0+abc123def456', generatorVersion: 1, simVersion: 7, mode: 'ranked', log: [] };
 const END = 1_000;
 const history = (...profits: number[]): Pick<EconomyState, 'history'> => ({ history: profits.map((profit, i) => ({ label: `m${i}`, profit, revenue: 0 })) });
 

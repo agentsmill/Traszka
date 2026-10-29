@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { CROCKFORD, formatRecoveryCode } from '@/game/playerKey';
+import type { RunRecord } from '@/sim/run';
 import { API_ERRORS } from './errors';
 import {
   BOARD_LIMIT_DEFAULT, BOARD_LIMIT_MAX, BOARD_LIMITS, KNOWN_GENERATOR_VERSIONS, RATE_LIMITS, RUN_MAX_BODY_BYTES,
@@ -12,7 +13,6 @@ import { KEYS, ownerOf } from './keys';
 import { MemoryRedis } from './memoryRedis';
 import { createRateGate } from './rateLimit';
 import { run as runCommand } from './redis';
-import type { SubmittedRun } from './runs';
 import { testBundle } from './testBundle';
 import { replayNotAvailable, type VerifyResult } from './verify';
 import { weekOf } from './week';
@@ -22,15 +22,15 @@ const KEY_A = 'K7QX9MBD2HFAP3WN8RTE';
 const KEY_B = 'M2N3P4Q5R6S7T8V9W0XY';
 const ORIGIN = 'https://traszka.test';
 
-function setup(verdict: VerifyResult | ((run: SubmittedRun) => VerifyResult) = { ok: true, score: 25_000 }) {
+function setup(verdict: VerifyResult | ((run: RunRecord) => VerifyResult) = { ok: true, score: 25_000 }) {
   const clock = { now: NOW };
   const redis = new MemoryRedis(() => clock.now);
-  const verifyRun = vi.fn((run: SubmittedRun) => (typeof verdict === 'function' ? verdict(run) : verdict));
+  const verifyRun = vi.fn((run: RunRecord) => (typeof verdict === 'function' ? verdict(run) : verdict));
   const deps: ServerDeps = { redis, readRedis: redis, verifyRun, now: () => clock.now };
   return { clock, redis, deps, verifyRun };
 }
 
-const run = (seed = 'pierogi-731'): SubmittedRun => ({
+const run = (seed = 'pierogi-731'): RunRecord => ({
   seed, gameVersion: '0.0.0+abc123def456', generatorVersion: KNOWN_GENERATOR_VERSIONS[0]!, simVersion: 1, mode: 'ranked',
   log: [{ minute: 400, seq: 0, cmd: { type: 'tapTill' } }],
 });

@@ -6,6 +6,7 @@ import { REMONTS } from '@/sim/economy/upgrades';
 import type { EconClock } from '@/sim/economy/clock';
 import { isRec, whole } from '@/sim/guards';
 import type { RunRecord } from '@/sim/run';
+import { SIM_VERSION } from '@/sim/simVersion';
 import { GENERATOR_VERSION } from '@/sim/store/generateStore';
 import { layoutFor } from '@/sim/store/layoutFor';
 import { sanitizeLayout } from '@/sim/store/sanitize';
@@ -68,9 +69,13 @@ export interface GameSession {
 const noPartner = (partner?: EconomyState['partner']): boolean =>
   partner === undefined || (partner.points === 0 && partner.networkIncome === 0 && partner.stores === 0);
 
-/** Pusty dziennik nowej gry: bieg zwykły (`casual`) od świeżego sklepu z seeda, z wersjami gry i generatora, którymi go prowadzimy. */
-const newRunLog = (seed: string): RunLog => ({
-  record: { seed, gameVersion: GAME_VERSION, generatorVersion: GENERATOR_VERSION, mode: 'casual', log: [] },
+/**
+ * Pusty dziennik nowej gry od świeżego sklepu z seeda, z wersjami gry, generatora i symulacji (`SIM_VERSION`), którymi go prowadzimy.
+ * Domyślnie bieg zwykły (`casual`); tryb rankingowy (`ranked`) podaje ten, kto zaczyna bieg do rankingu. `simVersion` wpisuje tu
+ * gra przy starcie biegu, a porównuje ją dopiero sędzia na serwerze (patrz `RunRecord`).
+ */
+export const newRunLog = (seed: string, mode: RunRecord['mode'] = 'casual'): RunLog => ({
+  record: { seed, gameVersion: GAME_VERSION, generatorVersion: GENERATOR_VERSION, simVersion: SIM_VERSION, mode, log: [] },
   seq: 0,
 });
 

@@ -3,12 +3,12 @@ import { NICK_ERRORS } from '@/game/nick';
 import { normalizeSeed } from '@/game/seeds';
 import type { RunRecord } from '@/sim/run';
 import { KNOWN_GENERATOR_VERSIONS, RUN_MAX_COMMAND_BYTES, RUN_MAX_LOG_ENTRIES, SEASON_END_MINUTE } from './config';
-import { parseSubmission, type SubmittedRun } from './runs';
+import { parseSubmission } from './runs';
 
 const KEY = 'K7QX9MBD2HFAP3WN8RTE';
 /** Tak wygląda wersja z prawdziwej gry: wersja z `package.json` i 12 znaków commita (`src/game/version.ts`). */
 const GAME_VERSION = '0.0.0+abc123def456';
-const run = (over: Partial<Record<keyof SubmittedRun, unknown>> = {}): Record<string, unknown> => ({
+const run = (over: Partial<Record<keyof RunRecord, unknown>> = {}): Record<string, unknown> => ({
   seed: 'pierogi-731', gameVersion: GAME_VERSION, generatorVersion: KNOWN_GENERATOR_VERSIONS[0], simVersion: 1, mode: 'ranked',
   log: [
     { minute: 360, seq: 0, cmd: { type: 'tapPallet', palletId: 3 } },
@@ -17,7 +17,7 @@ const run = (over: Partial<Record<keyof SubmittedRun, unknown>> = {}): Record<st
   ],
   ...over,
 });
-const body = (over: Record<string, unknown> = {}, runOver: Partial<Record<keyof SubmittedRun, unknown>> = {}): unknown => ({
+const body = (over: Record<string, unknown> = {}, runOver: Partial<Record<keyof RunRecord, unknown>> = {}): unknown => ({
   key: 'k7qx-9mbd-2hfa-p3wn-8rte', nick: '  Mateusz ', run: run(runOver), ...over,
 });
 
@@ -179,19 +179,17 @@ describe('zgłoszenie biegu: kształt i granice', () => {
 
 describe('typy zgłoszenia pochodzą z gry (src/sim/run.ts), a nie z kopii w serwerze', () => {
   // Kompilator pilnuje tego, co sprawdzają przypisania niżej: dopisanie wymaganego pola do `RunRecord` w `run.ts` albo zmiana typu pola
-  // zatrzymuje `tsc` w tym teście i w parserze (`runs.ts`), więc serwer nie rozjedzie się z grą po cichu. `Omit<…, 'simVersion'>`,
-  // bo pole `simVersion` dojdzie do `RunRecord` dopiero w części B2b: do tego czasu dopisuje je zgłoszenie (`SubmittedRun`).
-  const fromGame: Omit<RunRecord, 'simVersion'> = {
-    seed: 'pierogi-731', gameVersion: GAME_VERSION, generatorVersion: KNOWN_GENERATOR_VERSIONS[0]!, mode: 'ranked',
+  // zatrzymuje `tsc` w tym teście i w parserze (`runs.ts`), więc serwer nie rozjedzie się z grą po cichu.
+  const fromGame: RunRecord = {
+    seed: 'pierogi-731', gameVersion: GAME_VERSION, generatorVersion: KNOWN_GENERATOR_VERSIONS[0]!, simVersion: 3, mode: 'ranked',
     log: [{ minute: 360, seq: 0, cmd: { type: 'tapPallet', palletId: 3 } }, { minute: 700, seq: 1, cmd: { type: 'setOrder', auto: false, manual: 5 } }],
   };
 
-  it('bieg z gry z dopisanym simVersion to zgłoszenie, a to, co zwraca parser, to bieg, który przyjmuje replayRun', () => {
-    const submitted: SubmittedRun = { ...fromGame, simVersion: 3 };
-    const parsed = parseSubmission({ key: KEY, nick: 'Ala', run: JSON.parse(JSON.stringify(submitted)) });
+  it('bieg z gry (RunRecord z simVersion) to zgłoszenie, a to, co zwraca parser, to bieg, który przyjmuje replayRun', () => {
+    const parsed = parseSubmission({ key: KEY, nick: 'Ala', run: JSON.parse(JSON.stringify(fromGame)) });
     expect(parsed.ok).toBe(true);
     if (!parsed.ok) return;
     const forReplay: RunRecord = parsed.value.run;   // wejście `replayRun(run: RunRecord, …)`
-    expect(forReplay).toEqual(submitted);
+    expect(forReplay).toEqual(fromGame);
   });
 });

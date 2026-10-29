@@ -11,6 +11,7 @@ import { visibleCards } from '@/sim/economy/tycoon/cards';
 import { STAFF_PROFILES, STAFF_TASKS } from '@/sim/economy/tycoon/staff';
 import { EQUIPMENT, UPGRADES } from '@/sim/economy/upgrades';
 import { hashString } from '@/sim/rng';
+import { SIM_VERSION } from '@/sim/simVersion';
 import { GENERATOR_VERSION } from '@/sim/store/generateStore';
 import { freshRun, isLogEntry, isRunRecord, replayRun, type LogEntry, type RunRecord } from './run';
 
@@ -138,7 +139,7 @@ function playLive(seed: string, days: number, opts: { policy?: Policy; snapshotA
     events.length = 0;
     stepMinute(state, info, events);
   }
-  return { state, record: { seed, gameVersion: 'test', generatorVersion: GENERATOR_VERSION, mode: 'ranked', log }, snapshots, before };
+  return { state, record: { seed, gameVersion: 'test', generatorVersion: GENERATOR_VERSION, simVersion: SIM_VERSION, mode: 'ranked', log }, snapshots, before };
 }
 
 // --- Pomocniki testów --------------------------------------------------------------------------------------------
@@ -159,7 +160,8 @@ function allFinite(x: unknown): boolean {
   return Object.values(x).every(allFinite);
 }
 
-const recordOf = (seed: string, log: unknown[]): RunRecord => ({ seed, gameVersion: 'test', generatorVersion: GENERATOR_VERSION, mode: 'ranked', log: log as LogEntry[] });
+const recordOf = (seed: string, log: unknown[]): RunRecord =>
+  ({ seed, gameVersion: 'test', generatorVersion: GENERATOR_VERSION, simVersion: SIM_VERSION, mode: 'ranked', log: log as LogEntry[] });
 
 const SEEDS = Array.from({ length: 12 }, (_, i) => `traszka-${i + 1}`);
 const START = OPEN_FROM;
@@ -183,7 +185,7 @@ describe('strażniki kształtu biegu (dla serwera rankingu przed replayRun)', ()
     for (const e of bad) expect(isLogEntry(e), inspect(e)).toBe(false);
   });
 
-  it('isRunRecord: seed i gameVersion napisy, generatorVersion liczba całkowita, mode casual albo ranked, log tablica', () => {
+  it('isRunRecord: seed i gameVersion napisy, generatorVersion i simVersion liczby całkowite, mode casual albo ranked, log tablica', () => {
     const ok = recordOf(SEEDS[0]!, [{ minute: START, seq: 0, cmd }]);
     expect(isRunRecord(ok)).toBe(true);
     expect(isRunRecord({ ...ok, mode: 'casual' })).toBe(true);
@@ -191,6 +193,7 @@ describe('strażniki kształtu biegu (dla serwera rankingu przed replayRun)', ()
     expect(isRunRecord({ ...ok, seed: '' })).toBe(true);   // długość i treść seeda ustawia wołający
     expect(isRunRecord(clone(ok))).toBe(true);   // tak wygląda bieg po przejściu przez JSON
     expect(isRunRecord({ ...ok, dodatkowe: 1 })).toBe(true);
+    for (const simVersion of [0, 1, SIM_VERSION, 7, 999_999]) expect(isRunRecord({ ...ok, simVersion }), String(simVersion)).toBe(true);   // którą wersję przyjmie, rozstrzyga sędzia
     const bad: [string, unknown][] = [
       ['null', null], ['undefined', undefined], ['liczba', 7], ['napis', 'bieg'], ['tablica', []], ['pusty obiekt', {}],
       ['seed liczbą', { ...ok, seed: 5 }], ['seed null', { ...ok, seed: null }], ['seed obiektem', { ...ok, seed: {} }], ['bez seeda', { ...ok, seed: undefined }],
@@ -198,6 +201,8 @@ describe('strażniki kształtu biegu (dla serwera rankingu przed replayRun)', ()
       ['generatorVersion ułamkiem', { ...ok, generatorVersion: 1.5 }], ['generatorVersion napisem', { ...ok, generatorVersion: String(GENERATOR_VERSION) }],
       ['generatorVersion NaN', { ...ok, generatorVersion: NaN }], ['generatorVersion Infinity', { ...ok, generatorVersion: Infinity }],
       ['generatorVersion null', { ...ok, generatorVersion: null }],
+      ['bez simVersion', { ...ok, simVersion: undefined }], ['simVersion ułamkiem', { ...ok, simVersion: 1.5 }], ['simVersion napisem', { ...ok, simVersion: String(SIM_VERSION) }],
+      ['simVersion NaN', { ...ok, simVersion: NaN }], ['simVersion Infinity', { ...ok, simVersion: Infinity }], ['simVersion null', { ...ok, simVersion: null }],
       ['mode spoza listy', { ...ok, mode: 'practice' }], ['bez mode', { ...ok, mode: undefined }], ['mode wielką literą', { ...ok, mode: 'Ranked' }],
       ['log obiektem z length', { ...ok, log: { length: 5 } }], ['log null', { ...ok, log: null }], ['log napisem', { ...ok, log: 'abc' }], ['bez loga', { ...ok, log: undefined }],
     ];
@@ -448,10 +453,13 @@ describe('odtwarzanie biegu', () => {
     expect(() => replayRun({ ...record, generatorVersion: GENERATOR_VERSION - 1 }, START + 10)).toThrow(Error);
   });
 
-  it('gameVersion i mode są tylko przenoszone', () => {
+  it('gameVersion, simVersion i mode są tylko przenoszone (wersję symulacji porównuje sędzia na serwerze, nie replayRun)', () => {
     const live = playLive(SEEDS[1]!, 5);
     const base = replayRun(clone(live.record), live.state.minute);
     expectSameJson(replayRun({ ...clone(live.record), gameVersion: 'inna', mode: 'casual' }, live.state.minute), base);
+    for (const simVersion of [0, SIM_VERSION - 1, SIM_VERSION + 1]) {
+      expectSameJson(replayRun({ ...clone(live.record), simVersion }, live.state.minute), base, String(simVersion));
+    }
   });
 
   it('freshRun to ten sam stan co createSession dla nowej gry bez premii', () => {

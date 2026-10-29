@@ -343,7 +343,7 @@ async function prepareWorker({ copy, tmp }) {
     const store = await server.ssrLoadModule('/src/sim/store/generateStore.ts');
     const ranked = await server.ssrLoadModule('/src/sim/ranked.ts');
     const run = await server.ssrLoadModule('/src/sim/run.ts');
-    const record = { seed: SEED, gameVersion: GAME_VERSION, generatorVersion: store.GENERATOR_VERSION, mode: 'ranked', log: [] };
+    const record = { seed: SEED, gameVersion: GAME_VERSION, generatorVersion: store.GENERATOR_VERSION, simVersion: sim.SIM_VERSION, mode: 'ranked', log: [] };
     const t0 = performance.now();
     const score = ranked.seasonScore(run.replayRun(record, ranked.RANKED_SEASON_END_MINUTE));
     direct = {

@@ -200,7 +200,7 @@ function canonical(value: unknown): string {
 }
 
 /** Bieg (seed + dziennik) w kształcie, jaki dostaje serwer. Dziennik kopiowany, żeby żaden test nie zależał od zmian w cudzej kopii. */
-const runOf = (log: readonly LogEntry[]): RunRecord => ({ seed: SEED, gameVersion: 'test', generatorVersion: GENERATOR_VERSION, mode: 'ranked', log: [...log] });
+const runOf = (log: readonly LogEntry[]): RunRecord => ({ seed: SEED, gameVersion: 'test', generatorVersion: GENERATOR_VERSION, simVersion: SIM_VERSION, mode: 'ranked', log: [...log] });
 
 /** Skrót SHA-256 z kanonicznego JSON-a stanów w punktach kontrolnych razem z wynikiem sezonu, jaki policzyłby z nich serwer. */
 function digestOf(checkpoints: readonly number[], states: readonly EconomyState[]): string {

@@ -2,7 +2,7 @@ import { existsSync, readdirSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RANKED_SEASON_END_MINUTE, seasonScore } from '@/sim/ranked';
-import { replayRun } from '@/sim/run';
+import { replayRun, type RunRecord } from '@/sim/run';
 import { SIM_VERSION } from '@/sim/simVersion';
 import { GENERATOR_VERSION } from '@/sim/store/generateStore';
 import { GET as leaderboard } from '../../api/leaderboard';
@@ -17,7 +17,6 @@ import { fakeUpstash, type FakeUpstash } from './fakeUpstash';
 import { handlePlayer, handleRuns } from './http';
 import { MemoryRedis } from './memoryRedis';
 import { createRateGate } from './rateLimit';
-import type { SubmittedRun } from './runs';
 import { testBundle } from './testBundle';
 
 /**
@@ -105,7 +104,7 @@ describe('api/** na Vercelu (atrapa Upstash przez fetch)', () => {
   // (zbudowany ze starszego kodu symulacji): `npm run build:judge` (albo `npm run build`) go odświeża.
   it.runIf(bundleOnDisk)(
     'ze zbudowanym bundlem sędziego: poprawny bieg bierny przez api/runs.ts daje 200, a score to wynik policzony wprost z src/sim', async () => {
-      const passive: SubmittedRun = { seed: run.seed, gameVersion: run.gameVersion, generatorVersion: GENERATOR_VERSION, simVersion: SIM_VERSION, mode: 'ranked', log: [] };
+      const passive: RunRecord = { seed: run.seed, gameVersion: run.gameVersion, generatorVersion: GENERATOR_VERSION, simVersion: SIM_VERSION, mode: 'ranked', log: [] };
       const expected = seasonScore(replayRun(passive, RANKED_SEASON_END_MINUTE));
       expect(expected).toBeGreaterThan(0);   // wynik zerowy nie odróżniłby sędziego, który nic nie liczy
       // własny klucz i adres: bramka `api/runs.ts` jest wspólna dla testów tego pliku, a wyczerpany limit trwa do końca okna

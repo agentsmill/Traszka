@@ -10,13 +10,14 @@ import { newKpiWeek } from '@/sim/economy/tycoon/kpi';
 import { LIMITS } from '@/sim/economy/sanitize';
 import { computeStoreInfo } from '@/sim/economy/storeInfo';
 import { REMONTS } from '@/sim/economy/upgrades';
+import { SIM_VERSION } from '@/sim/simVersion';
 import { GENERATOR_VERSION, generateStore } from '@/sim/store/generateStore';
 import { layoutFor } from '@/sim/store/layoutFor';
 import { dispatchCommand, type CommandEffects } from './actions';
 import { MemoryStorage } from './memoryStorage';
 import {
   BROKEN_SAVE_NOTICE, NEWER_SAVE_NOTICE, SAVE_SCHEMA, UNBUILDABLE_SAVE_NOTICE, createSession, deleteSave, discardSave, hasStoredSave,
-  lastSavedSeed, retireSession, reviveSession, saveSession, withLayoutFromSeed, type GameSession, type SaveEnvelope,
+  lastSavedSeed, newRunLog, retireSession, reviveSession, saveSession, withLayoutFromSeed, type GameSession, type SaveEnvelope,
 } from './session';
 
 /** Efekty poleceń bez skutków: remont w tych testach ma tylko zmienić sesję (stan i układ), bez dźwięku, sceny i zapisu. */
@@ -968,10 +969,26 @@ describe('withLayoutFromSeed (druga próba po nieudanej budowie świata w scenie
   });
 });
 
+describe('newRunLog', () => {
+  it('domyślnie zakłada bieg „casual”; tryb podaje wołający, a simVersion zawsze bierze z SIM_VERSION', () => {
+    expect(newRunLog(BLOK)).toEqual({
+      record: { seed: BLOK, gameVersion, generatorVersion: GENERATOR_VERSION, simVersion: SIM_VERSION, mode: 'casual', log: [] }, seq: 0,
+    });
+    expect(newRunLog(BLOK, 'ranked').record).toEqual({
+      seed: BLOK, gameVersion, generatorVersion: GENERATOR_VERSION, simVersion: SIM_VERSION, mode: 'ranked', log: [],
+    });
+    expect(newRunLog(BLOK).record.log).not.toBe(newRunLog(BLOK).record.log);   // każdy dziennik ma własną tablicę
+  });
+});
+
 describe('dziennik poleceń sesji (run)', () => {
-  it('nowa gra ma pusty bieg „casual” od świeżego sklepu, z wersjami gry i generatora', () => {
+  it('nowa gra ma pusty bieg „casual” od świeżego sklepu, z wersjami gry, generatora i symulacji', () => {
     const s = createSession(BLOK, true);
-    expect(s.run).toEqual({ record: { seed: BLOK, gameVersion, generatorVersion: GENERATOR_VERSION, mode: 'casual', log: [] }, seq: 0 });
+    expect(s.run).toEqual({
+      record: { seed: BLOK, gameVersion, generatorVersion: GENERATOR_VERSION, simVersion: SIM_VERSION, mode: 'casual', log: [] }, seq: 0,
+    });
+    expect(s.run?.record.simVersion).toBe(SIM_VERSION);
+    expect(s.run?.record.mode).toBe('casual');
     expect(createSession(BLOK, true).run).not.toBe(s.run);   // każda sesja ma własny dziennik
   });
 

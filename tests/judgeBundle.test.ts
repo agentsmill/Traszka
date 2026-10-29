@@ -8,12 +8,11 @@ import { buildJudge, DEFAULT_BUNDLE_FILE } from '../scripts/build-judge.mjs';
 import * as entry from '../scripts/judge-entry';
 import { MINUTES_PER_DAY } from '@/sim/economy/catalog';
 import { RANKED_SEASON_END_MINUTE, seasonScore } from '@/sim/ranked';
-import { replayRun, type LogEntry } from '@/sim/run';
+import { replayRun, type LogEntry, type RunRecord } from '@/sim/run';
 import { SIM_VERSION } from '@/sim/simVersion';
 import { GENERATOR_VERSION } from '@/sim/store/generateStore';
 import { makeBundleVerifier } from '../src/server/judge';
 import type * as Declared from '../src/server/judgeBundle';
-import type { SubmittedRun } from '../src/server/runs';
 
 /**
  * Bundle sędziego (scripts/build-judge.mjs): `npm test` nie może wymagać zbudowanego `src/server/judgeBundle.js` (CI puszcza testy
@@ -47,7 +46,7 @@ beforeAll(async () => {
 }, 60_000);
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
-const RUN: SubmittedRun = { seed: 'kiełbasa-42', gameVersion: 'test', generatorVersion: GENERATOR_VERSION, simVersion: SIM_VERSION, mode: 'ranked', log: [] };
+const RUN: RunRecord = { seed: 'kiełbasa-42', gameVersion: 'test', generatorVersion: GENERATOR_VERSION, simVersion: SIM_VERSION, mode: 'ranked', log: [] };
 const at = (day: number, hour: number, minute = 0): number => day * MINUTES_PER_DAY + hour * 60 + minute;
 /**
  * Kilka poleceń rozłożonych na sezon oraz codzienne stuknięcia przez cztery tygodnie: bez nich sklepu nie stać na remont 1 (25 tys. zł),
@@ -74,7 +73,7 @@ const LOG: LogEntry[] = (() => {
   return planned.sort((a, b) => a.minute - b.minute).map((p, seq) => ({ minute: p.minute, seq, cmd: p.cmd }));
 })();
 /** Wynik policzony bezpośrednio z src/sim, tym samym kodem co w bundlu (drugi sposób do porównania). */
-const direct = (run: SubmittedRun): number => seasonScore(replayRun(run, RANKED_SEASON_END_MINUTE));
+const direct = (run: RunRecord): number => seasonScore(replayRun(run, RANKED_SEASON_END_MINUTE));
 
 describe('buildJudge: jeden samodzielny plik z aktualnej symulacji', () => {
   it('do katalogu wyjściowego trafia dokładnie jeden plik, a cudze pliki w nim zostają (katalog nie jest czyszczony)', () => {
@@ -185,7 +184,7 @@ describe('sędzia na zbudowanym bundlu daje ten sam wynik co symulacja z src', (
   }, 60_000);
 
   it('bieg z poleceniami w dzienniku (w tym remont): wynik jak z src i inny niż biernego, więc dziennik naprawdę wpływa na odtworzenie', async () => {
-    const run: SubmittedRun = { ...RUN, log: LOG };
+    const run: RunRecord = { ...RUN, log: LOG };
     const res = await makeBundleVerifier(load)(run);
     expect(res).toEqual({ ok: true, score: direct(run) });
     expect(direct(run)).not.toBe(direct(RUN));
@@ -212,7 +211,7 @@ describe('sędzia na zbudowanym bundlu daje ten sam wynik co symulacja z src', (
   });
 
   it('polecenie, którego symulacja nie zna, nie wywraca sędziego: bieg liczy się tak, jakby go nie było (applyCommand odrzuca je)', async () => {
-    const odd: SubmittedRun = { ...RUN, log: [{ minute: at(0, 7), seq: 0, cmd: { type: 'nieZnane' } as never }, ...LOG.map((e) => ({ ...e, seq: e.seq + 1 }))] };
+    const odd: RunRecord = { ...RUN, log: [{ minute: at(0, 7), seq: 0, cmd: { type: 'nieZnane' } as never }, ...LOG.map((e) => ({ ...e, seq: e.seq + 1 }))] };
     expect(await makeBundleVerifier(load)(odd)).toEqual({ ok: true, score: direct({ ...RUN, log: LOG }) });
   }, 60_000);
 });
