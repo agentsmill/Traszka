@@ -28,6 +28,8 @@ export interface StartChoice {
   look: CashierLook;
   specialOutfits: boolean;
   notice: string | null;
+  /** Start rankingowy (`GameShell.startRanked`) zamiast zwykłego sklepu. `submitStart` daje na razie zawsze false; ustawia go dopiero przycisk „Start rankingowy”. */
+  ranked: boolean;
 }
 
 export type StartSubmit = { ok: true; choice: StartChoice } | { ok: false; nickError: string };
@@ -61,7 +63,7 @@ export function submitStart(f: StartForm, deps: Partial<SeedDeps> = {}): StartSu
     ok: true,
     choice: {
       nick: nick.nick, seed: store.seed, look: { outfit: f.look.outfit, appearanceSeed: f.look.appearanceSeed },
-      specialOutfits: f.specialOutfits, notice: store.notice,
+      specialOutfits: f.specialOutfits, notice: store.notice, ranked: false,
     },
   };
 }

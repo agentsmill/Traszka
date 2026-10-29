@@ -7,6 +7,7 @@ import { randomSeed } from '@/game/seedWords';
 import { entrySeed } from '@/game/seeds';
 import { lastSavedSeed } from '@/game/session';
 import { createShell } from '@/game/actions';
+import { openAtBoot } from '@/game/boot';
 import { bindControls } from '@/game/controls';
 import { advanceSession, debugHandleEnabled, debugHandleOf, installDebugHandle, isModalOpen, isSceneHeld } from '@/game/frame';
 import { loadMeta, needsStartScreen, saveMeta } from '@/game/meta';
@@ -52,6 +53,9 @@ interface StartEntry { choice: StartChoice; factory: Promise<CharacterFactory> }
  * kasjera idą do meta, sklep otwiera się z wybranego seeda i nigdy jako nowa gra (nie nadpisze zapisu). Bez niego (gracz już jest
  * w meta, meta z nowszej wersji gry, benchmark) sklep otwiera się z `initialSeed`, a kasjer ma wygląd z meta albo domyślny.
  * Nakładka z komunikatami (`listenForNotices`, `renderUi`) wstaje przed tą funkcją, razem z ekranem startowym.
+ *
+ * Bieg rankingowy: gdy zapamiętany tryb to `ranked`, a adres nie ma `?seed=`, rozruch wznawia aktywny bieg zamiast otwierać zwykły sklep
+ * (`openAtBoot` w game/boot.ts; zapis uszkodzony, z innej wersji gry albo świat, który się nie buduje, dają komunikat i zwykły sklep).
  *
  * Ta funkcja tylko składa grę z części: scena (`createSceneHost`, scene.ts), powłoka z sesją, metą i przepływami sklepu
  * (`createShell`, actions.ts), sterowanie (controls.ts), pętla klatek (frame.ts) i uchwyt debugowania.
@@ -127,7 +131,9 @@ function startGame(
   if (benchMode) {
     scene.load(initialSeed, null);   // benchmark nie ma sesji ani zapisu: wyjątek idzie dalej
   } else {
-    if (!shell.open({ seed: initialSeed, fresh: params.get('new') === '1', choice: entry?.choice ?? null })) return;
+    // bieg rankingowy wznawia się, gdy tryb to `ranked` i adres nie ma `?seed=` (decyzja w boot.ts); inaczej zwykły sklep
+    const request = { seed: initialSeed, fresh: params.get('new') === '1', choice: entry?.choice ?? null };
+    if (!openAtBoot(shell, request, !!params.get('seed'))) return;
     // Sterowanie tylko w zwykłej grze: w benchmarku nic nie rusza kamerą ani presetem, wynik zależy tylko od biegu.
     bindControls(ctx, {
       setPreset: (id) => controls.setPreset(id),

@@ -81,8 +81,15 @@ describe('submitStart: nick i seed w jednym kroku', () => {
     const result = submitStart(form({ nick: '  Ala   Ma  ', seed: '  Moja   Pizza ', specialOutfits: false }), never());
     expect(result).toEqual({
       ok: true,
-      choice: { nick: 'Ala Ma', seed: 'moja pizza', look: { outfit: 'men-suit', appearanceSeed: 'kasjer-a' }, specialOutfits: false, notice: null },
+      choice: { nick: 'Ala Ma', seed: 'moja pizza', look: { outfit: 'men-suit', appearanceSeed: 'kasjer-a' }, specialOutfits: false, notice: null, ranked: false },
     });
+  });
+
+  it('wybór z ekranu startowego nie jest jeszcze rankingowy: `ranked` zawsze false (start rankingowy ustawi je później)', () => {
+    for (const seed of ['kielbasa-42', '', '🍕', 'bigos-1']) {
+      const result = submitStart(form({ seed }), { ...never(), hasSave: (s: string) => s === 'kielbasa-42' });
+      expect(result.ok && result.choice.ranked).toBe(false);
+    }
   });
 
   it('wybór ma własną kopię wyglądu (dalsze zmiany formularza go nie ruszą)', () => {
@@ -121,7 +128,7 @@ describe('submitStart: nick i seed w jednym kroku', () => {
 });
 
 describe('playerOf i openRequestFor', () => {
-  const choice: StartChoice = { nick: 'Ala', seed: 'nowy-7', look: { outfit: 'women-suit', appearanceSeed: 'kasjer-z' }, specialOutfits: true, notice: null };
+  const choice: StartChoice = { nick: 'Ala', seed: 'nowy-7', look: { outfit: 'women-suit', appearanceSeed: 'kasjer-z' }, specialOutfits: true, notice: null, ranked: false };
 
   it('playerOf: gracz do mety z wyboru (nick, wygląd, przełącznik; bez seeda i komunikatu), z własną kopią wyglądu', () => {
     const player = playerOf(choice);

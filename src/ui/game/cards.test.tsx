@@ -21,6 +21,7 @@ function fakeGame(result: CommandResult = { ok: true }): GameActions & { dispatc
   return {
     dispatch: vi.fn<(cmd: Command) => CommandResult>(() => result),
     claimWelcome: vi.fn(), openNextStore: vi.fn(), setSound: vi.fn(), setVibration: vi.fn(), restart: vi.fn(), newStore: vi.fn(),
+    startRanked: vi.fn(() => false), resumeRanked: vi.fn(() => false), leaveRanked: vi.fn(), abandonRanked: vi.fn(),
   };
 }
 

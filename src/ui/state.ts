@@ -178,6 +178,29 @@ export interface MetaView { points: number; stores: number; networkIncome: numbe
 export const metaView: Signal<MetaView> = signal<MetaView>({ points: 0, stores: 0, networkIncome: 0, network: [], sound: true, vibration: true });
 export const showPrestige: Signal<boolean> = signal(false);
 
+// --- Tryb rankingowy (spec §14.7) -----------------------------------------------------------------------------------
+
+/**
+ * Bieg rankingowy, który toczy się na ekranie: seed, dzień sezonu (`day` od 1, nie więcej niż `days`; `days` to 91, od 1 września do
+ * 30 listopada) i faza. `over` znaczy, że sezon się skończył. Liczy to powłoka gry (`publish` w game/actions.ts) ze stanu sesji.
+ */
+export interface RankedView { seed: string; day: number; days: number; phase: 'playing' | 'over' }
+/** Widok biegu rankingowego albo null poza trybem rankingowym (zwykły sklep). Nie jest częścią zapisu. */
+export const ranked: Signal<RankedView | null> = signal<RankedView | null>(null);
+/**
+ * Szuflada niewysłanego biegu (`traszka:ranked:done`, rankedRun.ts): seed i wynik biegu, który skończył sezon i czeka na przyjęcie przez
+ * serwer, albo null, gdy szuflada jest pusta. Powłoka gry ustawia go przy starcie i po każdej zmianie szuflady (`syncUnsent`).
+ */
+export interface UnsentRun { seed: string; score: number }
+export const unsent: Signal<UnsentRun | null> = signal<UnsentRun | null>(null);
+/**
+ * Prośba o decyzję gracza: start nowego biegu rankingowego na `seed` porzuciłby coś, co jeszcze żyje. `unsent`: szuflada niewysłanego
+ * biegu jest pełna; `active`: trwa bieg rankingowy (też taki z innej wersji gry, którego nie da się wznowić). Pytanie zadaje
+ * `startRanked` (bez `replace` nic wtedy nie zmienia); odpowiedź „porzuć i zacznij” to `startRanked(seed, { replace: true })`.
+ */
+export interface RankedStartRequest { seed: string; reason: 'unsent' | 'active' }
+export const confirmRankedStart: Signal<RankedStartRequest | null> = signal<RankedStartRequest | null>(null);
+
 /**
  * Gra widziana z interfejsu. Polecenia gracza (stuknięcie, zakup, remont, paczka…) to jedno `dispatch(Command)`: powłoka gry (`createShell` w game/actions.ts)
  * przepuszcza je przez `dispatchCommand` (dziennik, `applyCommand`, dźwięk, zapis, odświeżenie), a wynik wraca tutaj.
@@ -196,6 +219,17 @@ export interface GameActions {
   restart(): void;
   /** „Nowy sklep” z ⚙: otwiera ekran startowy (nick, kasjer, seed). Obecny sklep zostaje zapisany pod swoim seedem. */
   newStore(): void;
+  /**
+   * Świeży bieg rankingowy na seedzie (po normalizacji, jak przy zwykłym sklepie). Gdy szuflada niewysłanego biegu jest pełna albo trwa
+   * bieg rankingowy, a `opts.replace` nie jest ustawione, nic nie zmienia, ustawia `confirmRankedStart` i zwraca false. Zwraca, czy bieg ruszył.
+   */
+  startRanked(seed: string, opts?: { replace?: boolean }): boolean;
+  /** Wraca do aktywnego biegu rankingowego z zapisu. Zwraca, czy się udało (brak biegu, uszkodzony zapis albo zapis z innej wersji gry: false i komunikat). */
+  resumeRanked(): boolean;
+  /** Wychodzi z biegu rankingowego do ostatniego zwykłego sklepu; bieg zostaje zapisany i da się go wznowić. */
+  leaveRanked(): void;
+  /** Porzuca aktywny bieg rankingowy (kasuje zapis) i wraca do zwykłej gry; szuflada niewysłanego biegu zostaje. */
+  abandonRanked(): void;
 }
 
 /**

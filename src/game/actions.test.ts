@@ -7,17 +7,26 @@ import { cardDef, visibleCards } from '@/sim/economy/tycoon/cards';
 import { CIRCULARS, DECK } from '@/sim/economy/tycoon/deck';
 import { xpToNext } from '@/sim/economy/progress';
 import { UPGRADES } from '@/sim/economy/upgrades';
+import { SIM_VERSION } from '@/sim/simVersion';
 import { layoutFor } from '@/sim/store/layoutFor';
 import * as layoutModule from '@/sim/store/layoutFor';
+import * as generatorModule from '@/sim/store/generateStore';
 import { replayRun, type LogEntry } from '@/sim/run';
 import * as ui from '@/ui/state';
-import { AFTER, createShell, dispatchCommand, markOffLog, type CommandEffects, type GameShell, type ShellEffects, type ShellScene } from './actions';
+import {
+  AFTER, createShell, dispatchCommand, markOffLog, syncUnsent, type CommandEffects, type GameShell, type ShellEffects, type ShellScene,
+} from './actions';
+import { openAtBoot } from './boot';
 import type { CashierLook } from './cashier';
 import { isModalOpen } from './frame';
 import { MemoryStorage } from './memoryStorage';
 import { loadMeta, type Meta } from './meta';
 import {
-  NEWER_SAVE_NOTICE, RUN_LOG_MAX, createSession, hasStoredSave, saveSession, withLayoutFromSeed, type GameSession,
+  createRankedSession, getPlayMode, loadFinished, loadRanked, saveFinished, saveRanked, setPlayMode, type FinishedRun,
+} from './rankedRun';
+import { entrySeed } from './seeds';
+import {
+  NEWER_SAVE_NOTICE, RUN_LOG_MAX, createSession, hasStoredSave, lastSavedSeed, newRunLog, saveSession, withLayoutFromSeed, type GameSession,
 } from './session';
 
 const SEED = 'traszka-1';
@@ -509,6 +518,9 @@ describe('powłoka gry (createShell)', () => {
     ui.econ.value = null;
     ui.ephemeral.value = false;
     ui.seed.value = '';
+    ui.ranked.value = null;
+    ui.unsent.value = null;
+    ui.confirmRankedStart.value = null;
   });
   afterEach(() => { vi.useRealTimers(); ui.story.value = []; ui.picked.value = null; });
 
@@ -635,7 +647,7 @@ describe('powłoka gry (createShell)', () => {
       saved.econ.cash = 4242;
       saveSession(saved);
       const look = { outfit: 'normal', appearanceSeed: 'abc' } as unknown as CashierLook;
-      const choice = { nick: 'Kasia', seed: 'stary', look, specialOutfits: true, notice: 'Wczytujemy Twój sklep spod tego seeda' };
+      const choice = { nick: 'Kasia', seed: 'stary', look, specialOutfits: true, notice: 'Wczytujemy Twój sklep spod tego seeda', ranked: false };
 
       const h = harness();
       h.shell.open({ seed: 'stary', fresh: true, choice });   // `fresh` z adresu nie ma tu znaczenia: wybór gracza nie nadpisze zapisu
@@ -647,7 +659,7 @@ describe('powłoka gry (createShell)', () => {
     it('pierwsze wejście przez ekran startowy otwiera okno „Jak grać”; wejście bez ekranu (adres, zapis) nie', () => {
       const look = { outfit: 'normal', appearanceSeed: 'abc' } as unknown as CashierLook;
       const withChoice = harness();
-      withChoice.shell.open({ seed: 'traszka-1', fresh: false, choice: { nick: 'Kasia', seed: 'traszka-1', look, specialOutfits: true, notice: null } });
+      withChoice.shell.open({ seed: 'traszka-1', fresh: false, choice: { nick: 'Kasia', seed: 'traszka-1', look, specialOutfits: true, notice: null, ranked: false } });
       expect(ui.howTo.value).toBe(true);
       expect(isModalOpen()).toBe(true);   // gra stoi do „Zaczynamy”
 
@@ -660,7 +672,7 @@ describe('powłoka gry (createShell)', () => {
     it('dymki pierwszego dnia czekają pod oknem „Jak grać”: ich zegar rusza od „Zaczynamy”', () => {
       const look = { outfit: 'normal', appearanceSeed: 'abc' } as unknown as CashierLook;
       const h = harness();
-      h.shell.open({ seed: 'traszka-1', fresh: false, choice: { nick: 'Kasia', seed: 'traszka-1', look, specialOutfits: true, notice: null } });
+      h.shell.open({ seed: 'traszka-1', fresh: false, choice: { nick: 'Kasia', seed: 'traszka-1', look, specialOutfits: true, notice: null, ranked: false } });
       expect(ui.hints.value).toEqual(HINTS);
       vi.advanceTimersByTime(ui.HINT_MS * (HINTS.length + 2));   // dłużej, niż wszystkie dymki razem
       expect(ui.hints.value).toEqual(HINTS);                      // nic nie wygasło pod oknem
@@ -1060,7 +1072,7 @@ describe('powłoka gry (createShell)', () => {
       expect(h.scene.loads).toEqual([]);   // gra czeka pod ekranem
 
       const look: CashierLook = { outfit: 'normal', appearanceSeed: 'abc' } as unknown as CashierLook;
-      request.onStart({ nick: 'Kasia', seed: 'traszka-5', look, specialOutfits: false, notice: null });
+      request.onStart({ nick: 'Kasia', seed: 'traszka-5', look, specialOutfits: false, notice: null, ranked: false });
 
       expect(h.shell.meta.player).toEqual({ nick: 'Kasia', look: { outfit: look.outfit, appearanceSeed: look.appearanceSeed }, specialOutfits: false });
       expect(savedMeta().player!.nick).toBe('Kasia');
@@ -1077,7 +1089,7 @@ describe('powłoka gry (createShell)', () => {
       h.shell.game.newStore();
       expect(ui.howTo.value).toBe(false);   // ekran startowy jeszcze stoi
       const request = ui.start.value!;
-      request.onStart({ nick: 'Kasia', seed: 'traszka-5', look: request.form.look, specialOutfits: true, notice: null });
+      request.onStart({ nick: 'Kasia', seed: 'traszka-5', look: request.form.look, specialOutfits: true, notice: null, ranked: false });
       expect(h.shell.session!.seed).toBe('traszka-5');
       expect(ui.howTo.value).toBe(true);
     });
@@ -1089,7 +1101,7 @@ describe('powłoka gry (createShell)', () => {
       h.scene.failing.add('zepsuty');
       h.shell.game.newStore();
       const request = ui.start.value!;
-      request.onStart({ nick: 'Kasia', seed: 'zepsuty', look: request.form.look, specialOutfits: true, notice: null });
+      request.onStart({ nick: 'Kasia', seed: 'zepsuty', look: request.form.look, specialOutfits: true, notice: null, ranked: false });
       expect(h.shell.session).toBe(old);
       expect(ui.howTo.value).toBe(false);
     });
@@ -1110,7 +1122,7 @@ describe('powłoka gry (createShell)', () => {
       saveSession(saved);
       h.shell.game.newStore();
       const look = ui.start.value!.form.look;
-      ui.start.value!.onStart({ nick: 'Kasia', seed: 'stary', look, specialOutfits: true, notice: 'Wczytujemy Twój sklep spod tego seeda' });
+      ui.start.value!.onStart({ nick: 'Kasia', seed: 'stary', look, specialOutfits: true, notice: 'Wczytujemy Twój sklep spod tego seeda', ranked: false });
       expect(h.shell.session!.fromSave).toBe(true);
       expect(h.shell.session!.econ.cash).toBe(4242);
       expect(ui.toasts.value.map((t) => t.text)).toEqual(['Wczytujemy Twój sklep spod tego seeda']);
@@ -1389,6 +1401,670 @@ describe('powłoka gry (createShell)', () => {
       ui.selection.value = { kind: 'till' };
       h.shell.tap(null, 5, 5);
       expect(ui.selection.value).toBeNull();
+    });
+  });
+
+  describe('bieg rankingowy: start, wznowienie, wyjście i zapis', () => {
+    const RANKED_SEED = 'kielbasa-42';
+    const BROKEN_NOTICE = 'Zapis biegu rankingowego był uszkodzony. Kopia została w przeglądarce.';
+    const INCOMPATIBLE_NOTICE = 'Zapisany bieg rankingowy powstał w innej wersji gry i nie da się go wznowić. Możesz go porzucić w ustawieniach.';
+    const STALE_NOTICE = 'Ten bieg powstał w starszej wersji gry i nie trafi do rankingu. Możesz go dograć dla zabawy albo zacząć nowy.';
+    const NO_SPACE_NOTICE = 'Przeglądarka nie ma miejsca na zapis biegu rankingowego. Gra toczy się dalej, ale po zamknięciu karty bieg przepadnie.';
+    const SWITCH_FAILED_NOTICE = 'Nie udało się otworzyć sklepu „traszka-1”. Zostajesz w poprzednim.';
+    const request = (seed = 'traszka-1') => ({ seed, fresh: false, choice: null });
+
+    /** Szuflada niewysłanego biegu: poprawny, pusty dziennik rankingowy z wynikiem (bez odtwarzania całego sezonu). */
+    const drawerRun = (seed = 'stary-bieg'): FinishedRun => ({ v: 1, seed, record: newRunLog(seed, 'ranked').record, score: 12_345, finishedAt: 1_000 });
+
+    /** Zwykły sklep otwarty i zapisany (jest `traszka:last`), z gotówką, po której widać, że wczytał się zapis. */
+    function casualOpen(h: Harness, seed = 'traszka-1', cash = 4242): GameSession {
+      const s = open(h, seed);
+      s.econ.cash = cash;
+      h.shell.persist();
+      return s;
+    }
+
+    describe('startRanked', () => {
+      it('świeża sesja rankingowa bez premii z sieci: zapis pod traszka:ranked, tryb ranked, świat bez adresu; zwykłe zapisy i traszka:last nietknięte', () => {
+        const meta: Meta = { ...loadMeta(), partnerPoints: 3, network: [{ seed: 'a', income: 300, level: 5, margin: 10 }] };
+        const h = harness({ meta });
+        const sameSeed = createSession(RANKED_SEED, true);
+        sameSeed.econ.cash = 777;
+        saveSession(sameSeed);   // zwykły sklep o tym samym seedzie, co bieg rankingowy
+        const casual = casualOpen(h, 'traszka-1');
+        const before = { save: storage.getItem(`traszka:save:${RANKED_SEED}`), last: storage.getItem('traszka:last') };
+        expect(before.last).toBe('traszka-1');
+        ui.selection.value = { kind: 'till' };
+        ui.tab.value = 'palety';
+        ui.story.value = [{ id: 1, title: 'x', text: 'y' }];
+        ui.picked.value = { seq: 3, answer: 1 };
+        ui.report.value = { label: 'x', counters: casual.econ.total, profit: 0, cash: 0, comment: '', detail: null };
+        h.urls.length = 0;
+
+        expect(h.shell.startRanked(RANKED_SEED)).toBe(true);
+
+        const s = h.shell.session!;
+        expect(s).not.toBe(casual);
+        expect(s).toMatchObject({ seed: RANKED_SEED, mode: 'ranked', fromSave: false, ephemeral: false });
+        expect(s.econ.partner?.points ?? 0).toBe(0);   // bieg rankingowy startuje bez premii z sieci (serwer odtwarza bez niej)
+        expect(s.econ.partner?.networkIncome ?? 0).toBe(0);
+        expect(s.run).toMatchObject({ seq: 0, record: { seed: RANKED_SEED, mode: 'ranked', log: [] } });
+        expect(h.scene.loads).toEqual([{ seed: RANKED_SEED, session: s }]);
+        expect(h.urls).toEqual([]);   // sesje rankingowe nie wpisują seeda do adresu
+        expect(ui.seed.value).toBe(RANKED_SEED);
+        expect(ui.econ.value!.s).toBe(s.econ);
+        expect(ui.ranked.value).toEqual({ seed: RANKED_SEED, day: 1, days: 91, phase: 'playing' });
+        // stan sklepu poprzedniej gry nie przechodzi do nowej; bez wskazówek, okna powitalnego i instrukcji
+        expect([ui.selection.value, ui.tab.value, ui.report.value, ui.picked.value]).toEqual([null, null, null, null]);
+        expect(ui.story.value).toEqual([]);
+        expect([ui.welcome.value, ui.hints.value, ui.howTo.value, ui.confirmRankedStart.value]).toEqual([null, [], false, null]);
+        expect(h.notices).toEqual([]);
+        // pamięć: bieg, tryb; poprzedni sklep zapisany, cudzy zapis i traszka:last bez zmian
+        expect(loadRanked()).toMatchObject({ status: 'ok', session: { seed: RANKED_SEED, mode: 'ranked' } });
+        expect(storage.getItem('traszka:mode')).toBe('ranked');
+        expect(getPlayMode()).toBe('ranked');
+        expect(storage.getItem(`traszka:save:${RANKED_SEED}`)).toBe(before.save);
+        expect(storage.getItem('traszka:last')).toBe(before.last);
+        expect(hasStoredSave('traszka-1')).toBe(true);
+      });
+
+      it('seed przechodzi normalizację, a zwykły zapis pod tym seedem nie zamienia startu we wczytanie sklepu; losowy seed z losowania powłoki', () => {
+        const h = harness({ seeds: ['losowy-1'] });
+        const casual = createSession('kielbasa 42', true);
+        casual.econ.cash = 777;
+        saveSession(casual);
+        expect(h.shell.startRanked('  Kielbasa   42 ')).toBe(true);
+        expect(h.shell.session).toMatchObject({ seed: 'kielbasa 42', mode: 'ranked', fromSave: false });
+        expect(h.shell.session!.econ.cash).not.toBe(777);
+        expect(JSON.parse(storage.getItem('traszka:save:kielbasa 42')!).econ.cash).toBe(777);
+
+        expect(h.shell.startRanked('', { replace: true })).toBe(true);
+        expect(h.shell.session!.seed).toBe('losowy-1');
+      });
+
+      it('stary zwykły zapis pod nieznormalizowanym napisem nie podmienia seeda biegu (serwer przyjmuje tylko postać kanoniczną)', () => {
+        saveSession(createSession('Kielbasa 42', true));
+        const h = harness();
+        expect(h.shell.startRanked('Kielbasa 42')).toBe(true);
+        expect(h.shell.session).toMatchObject({ seed: 'kielbasa 42', mode: 'ranked', fromSave: false });
+        expect(ui.toasts.value).toEqual([]);   // żadnego „Wczytujemy Twój sklep spod tego seeda”
+      });
+
+      it('lokal, którego generator nie składa, daje sąsiedni seed z komunikatem, jak na ekranie startowym', () => {
+        const realGenerate = generatorModule.generateStore;
+        vi.spyOn(generatorModule, 'generateStore').mockImplementation((seed, ...rest) => {
+          if (seed === 'bez-miejsca') throw new Error('generateStore: brak poprawnego układu');
+          return realGenerate(seed, ...rest);
+        });
+        const h = harness();
+        expect(h.shell.startRanked('bez-miejsca')).toBe(true);
+        expect(h.shell.session!.seed).toBe('bez-miejsca·1');
+        expect(ui.toasts.value.map((t) => t.text)).toEqual(['Ten lokal się nie zmieścił, otwieramy sąsiedni']);
+      });
+
+      it('bez sesji (rozruch) też startuje; w benchmarku nie robi nic', () => {
+        const h = harness();
+        expect(h.shell.startRanked(RANKED_SEED)).toBe(true);
+        expect(h.shell.session).toMatchObject({ seed: RANKED_SEED, mode: 'ranked' });
+
+        const bench = harness({ benchMode: true });
+        expect(bench.shell.startRanked(RANKED_SEED)).toBe(false);
+        expect(bench.scene.loads).toEqual([]);
+        expect(getPlayMode()).toBe('ranked');   // tryb zostaje z pierwszej powłoki: benchmark go nie ruszył
+      });
+
+      it('pełna szuflada niewysłanego biegu: false, pytanie o decyzję (reason unsent) i żadnej zmiany', () => {
+        const h = harness();
+        const casual = casualOpen(h);
+        saveFinished(drawerRun());
+        const keys = storage.keys().sort();
+        h.scene.loads.length = 0;
+
+        expect(h.shell.startRanked('  Inny   Seed ')).toBe(false);
+
+        expect(ui.confirmRankedStart.value).toEqual({ seed: 'inny seed', reason: 'unsent' });   // seed w kanonicznej postaci
+        expect(h.shell.session).toBe(casual);
+        expect(h.scene.loads).toEqual([]);
+        expect(storage.keys().sort()).toEqual(keys);
+        expect(loadFinished()).not.toBeNull();
+        expect(getPlayMode()).toBe('casual');
+        expect(h.notices).toEqual([]);
+      });
+
+      it('trwa bieg rankingowy (także z innej wersji gry): false i reason active; zapis nietknięty', () => {
+        const h = harness();
+        expect(h.shell.startRanked(RANKED_SEED)).toBe(true);
+        h.shell.game.dispatch({ type: 'setOrder', auto: false, manual: 4 });
+        h.shell.persist();
+        const raw = storage.getItem('traszka:ranked');
+        const running = h.shell.session!;
+        h.scene.loads.length = 0;
+
+        expect(h.shell.startRanked('inny')).toBe(false);
+        expect(ui.confirmRankedStart.value).toEqual({ seed: 'inny', reason: 'active' });
+        expect(h.shell.session).toBe(running);
+        expect(h.scene.loads).toEqual([]);
+        expect(storage.getItem('traszka:ranked')).toBe(raw);
+
+        const other = harness();   // nowa karta: w pamięci biegu nie ma, jest tylko zapis z innej wersji gry
+        ui.confirmRankedStart.value = null;
+        storage.setItem('traszka:ranked', JSON.stringify({ schema: 99 }));
+        expect(other.shell.startRanked('inny')).toBe(false);
+        expect(ui.confirmRankedStart.value).toEqual({ seed: 'inny', reason: 'active' });
+        expect(storage.getItem('traszka:ranked')).toBe('{"schema":99}');   // incompatible nie jest kasowany po cichu
+      });
+
+      it('szuflada ma pierwszeństwo przed trwającym biegiem', () => {
+        const h = harness();
+        h.shell.startRanked(RANKED_SEED);
+        saveFinished(drawerRun());
+        expect(h.shell.startRanked('inny')).toBe(false);
+        expect(ui.confirmRankedStart.value).toEqual({ seed: 'inny', reason: 'unsent' });
+      });
+
+      it('sesja rankingowa w pamięci bez zapisu (przeglądarka go nie dała) też liczy się jako trwający bieg', () => {
+        const h = harness();
+        h.shell.startRanked(RANKED_SEED);
+        storage.removeItem('traszka:ranked');
+        expect(h.shell.startRanked('inny')).toBe(false);
+        expect(ui.confirmRankedStart.value).toEqual({ seed: 'inny', reason: 'active' });
+        expect(h.shell.session!.seed).toBe(RANKED_SEED);
+      });
+
+      it('uszkodzony zapis biegu nie blokuje startu: idzie do kopii, nowy bieg rusza', () => {
+        const h = harness();
+        storage.setItem('traszka:ranked', 'nie json');
+        expect(h.shell.startRanked(RANKED_SEED)).toBe(true);
+        expect(ui.confirmRankedStart.value).toBeNull();
+        expect(storage.getItem('traszka:ranked:broken')).toBe('nie json');
+        expect(loadRanked()).toMatchObject({ status: 'ok', session: { seed: RANKED_SEED } });
+      });
+
+      it('z `replace` kasuje szufladę i aktywny bieg, startuje nowy i zamyka pytanie', () => {
+        const h = harness();
+        h.shell.startRanked(RANKED_SEED);
+        h.shell.game.dispatch({ type: 'setOrder', auto: false, manual: 4 });
+        saveFinished(drawerRun());
+        syncUnsent();
+        expect(ui.unsent.value).toEqual({ seed: 'stary-bieg', score: 12_345 });
+        expect(h.shell.startRanked('nowy-bieg')).toBe(false);   // pytanie otwarte
+        expect(ui.confirmRankedStart.value).not.toBeNull();
+
+        expect(h.shell.startRanked('nowy-bieg', { replace: true })).toBe(true);
+
+        expect(h.shell.session).toMatchObject({ seed: 'nowy-bieg', mode: 'ranked' });
+        expect(h.shell.session!.run!.record.log).toEqual([]);
+        expect(loadFinished()).toBeNull();
+        expect(ui.unsent.value).toBeNull();
+        expect(ui.confirmRankedStart.value).toBeNull();
+        expect(loadRanked()).toMatchObject({ status: 'ok', session: { seed: 'nowy-bieg' } });
+        expect(ui.ranked.value?.seed).toBe('nowy-bieg');
+      });
+
+      it('świat nowego biegu się nie buduje: wraca poprzedni sklep, komunikat, tryb bez zmian; nic nie skasowane nawet z `replace`', () => {
+        const h = harness();
+        const casual = casualOpen(h);
+        saveFinished(drawerRun());
+        const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {});
+        h.scene.failing.add('zepsuty');
+        h.urls.length = 0;
+        h.scene.loads.length = 0;
+
+        expect(h.shell.startRanked('zepsuty', { replace: true })).toBe(false);
+
+        expect(h.shell.session).toBe(casual);
+        expect(h.scene.loads.map((l) => l.seed)).toEqual(['zepsuty', 'traszka-1']);   // próba, potem odtworzenie poprzedniego
+        expect(h.notices).toHaveLength(1);
+        expect(h.notices[0]).toContain('zepsuty');
+        expect(h.urls).toEqual([]);
+        expect(ui.seed.value).toBe('traszka-1');
+        expect(ui.ranked.value).toBeNull();
+        expect(getPlayMode()).toBe('casual');
+        expect(storage.getItem('traszka:ranked')).toBeNull();
+        expect(loadFinished()).not.toBeNull();   // szuflada ginie dopiero, gdy nowy bieg naprawdę stoi
+        expect(errorLog).toHaveBeenCalled();
+      });
+    });
+
+    describe('rozruch: wznowienie biegu albo zwykły sklep', () => {
+      it('po przeładowaniu rozruch wznawia bieg: ten sam dziennik i seq, jedna budowa świata, bez adresu, nagród i komunikatów', () => {
+        const first = harness();
+        first.shell.startRanked(RANKED_SEED);
+        first.shell.game.dispatch({ type: 'setOrder', auto: false, manual: 4 });
+        first.shell.game.dispatch({ type: 'returnPallet', palletId: 999 });   // odmowa też trafia do dziennika
+        first.shell.persist();
+        const before = first.shell.session!;
+        const log = structuredClone(before.run!.record.log);
+        expect(log).toHaveLength(2);
+
+        const second = harness();   // „przeładowanie”: nowa powłoka na tym samym magazynie
+        expect(openAtBoot(second.shell, request(), false)).toBe(true);
+
+        const s = second.shell.session!;
+        expect(s).toMatchObject({ seed: RANKED_SEED, mode: 'ranked', fromSave: true });
+        expect(s.run!.record.log).toEqual(log);
+        expect(s.run!.seq).toBe(before.run!.seq);
+        expect(s.econ.minute).toBe(before.econ.minute);
+        expect(second.scene.loads).toEqual([{ seed: RANKED_SEED, session: s }]);   // bez drugiej budowy: zwykłego sklepu nikt nie otwierał
+        expect(second.urls).toEqual([]);
+        expect(second.notices).toEqual([]);
+        expect([ui.welcome.value, ui.hints.value, ui.howTo.value]).toEqual([null, [], false]);
+        expect(ui.seed.value).toBe(RANKED_SEED);
+        expect(ui.ranked.value).toMatchObject({ seed: RANKED_SEED, phase: 'playing' });
+        expect(ui.econ.value!.s).toBe(s.econ);
+        expect(storage.getItem('traszka:save:traszka-1')).toBeNull();   // żaden zwykły sklep nie powstał
+
+        // dalsze polecenia dopisują się bez luki i bez powtórki
+        second.shell.game.dispatch({ type: 'setOrder', auto: false, manual: 5 });
+        expect(s.run!.record.log.map((e) => e.seq)).toEqual([0, 1, 2]);
+        expect(s.run!.seq).toBe(3);
+      });
+
+      it('bieg zaczęty w starszej wersji symulacji wznawia się z komunikatem, że nie trafi do rankingu', () => {
+        const old = createRankedSession(RANKED_SEED);
+        old.run!.record.simVersion = SIM_VERSION - 1;
+        expect(saveRanked(old)).toBe(true);
+        setPlayMode('ranked');
+        const h = harness();
+
+        expect(openAtBoot(h.shell, request(), false)).toBe(true);
+
+        expect(h.shell.session).toMatchObject({ seed: RANKED_SEED, mode: 'ranked' });
+        expect(h.shell.session!.run!.record.simVersion).toBe(SIM_VERSION - 1);
+        expect(h.notices).toEqual([STALE_NOTICE]);
+      });
+
+      it('adres z ?seed= otwiera zwykły sklep mimo trybu ranked; bieg czeka nietknięty, a zwykłe wejście dalej go wznowi', () => {
+        const first = harness();
+        first.shell.startRanked(RANKED_SEED);
+        first.shell.persist();
+        const raw = storage.getItem('traszka:ranked');
+
+        const second = harness();
+        expect(openAtBoot(second.shell, request('traszka-9'), true)).toBe(true);
+        expect(second.shell.session).toMatchObject({ seed: 'traszka-9', mode: 'casual' });
+        expect(second.urls).toEqual(['traszka-9']);
+        expect(second.scene.loads.map((l) => l.seed)).toEqual(['traszka-9']);
+        expect(storage.getItem('traszka:ranked')).toBe(raw);
+        expect(ui.ranked.value).toBeNull();
+        expect(getPlayMode()).toBe('ranked');   // link z seedem nie zmienia zapamiętanego trybu
+
+        const third = harness();
+        expect(openAtBoot(third.shell, request(), false)).toBe(true);
+        expect(third.shell.session).toMatchObject({ seed: RANKED_SEED, mode: 'ranked' });
+      });
+
+      it('zapis biegu uszkodzony: zwykły sklep i komunikat; kopia w :broken, aktywny klucz zwolniony', () => {
+        setPlayMode('ranked');
+        storage.setItem('traszka:ranked', '{nie json');
+        const h = harness();
+
+        expect(openAtBoot(h.shell, request(), false)).toBe(true);
+
+        expect(h.shell.session).toMatchObject({ seed: 'traszka-1', mode: 'casual' });
+        expect(h.notices).toEqual([BROKEN_NOTICE]);
+        expect(storage.getItem('traszka:ranked:broken')).toBe('{nie json');
+        expect(storage.getItem('traszka:ranked')).toBeNull();
+        expect(h.scene.loads.map((l) => l.seed)).toEqual(['traszka-1']);
+      });
+
+      it('zapis biegu z innej wersji gry: zwykły sklep, komunikat o porzuceniu w ustawieniach, zapis zostaje na miejscu', () => {
+        setPlayMode('ranked');
+        storage.setItem('traszka:ranked', '{"schema":99}');
+        const h = harness();
+
+        expect(openAtBoot(h.shell, request(), false)).toBe(true);
+
+        expect(h.shell.session).toMatchObject({ seed: 'traszka-1', mode: 'casual' });
+        expect(h.notices).toEqual([INCOMPATIBLE_NOTICE]);
+        expect(storage.getItem('traszka:ranked')).toBe('{"schema":99}');
+        expect(storage.getItem('traszka:ranked:broken')).toBeNull();
+      });
+
+      it('tryb ranked bez zapisanego biegu, `?new=1` albo wybór z ekranu startowego: zwykły sklep, bez komunikatu', () => {
+        setPlayMode('ranked');
+        const none = harness();
+        expect(openAtBoot(none.shell, request(), false)).toBe(true);
+        expect(none.shell.session).toMatchObject({ seed: 'traszka-1', mode: 'casual' });
+        expect(none.notices).toEqual([]);
+
+        const saved = harness();
+        saved.shell.startRanked(RANKED_SEED);
+        saved.shell.persist();
+        const fresh = harness();
+        expect(openAtBoot(fresh.shell, { seed: 'traszka-2', fresh: true, choice: null }, false)).toBe(true);
+        expect(fresh.shell.session).toMatchObject({ seed: 'traszka-2', mode: 'casual', fromSave: false });
+        const look = { outfit: 'normal', appearanceSeed: 'abc' } as unknown as CashierLook;
+        const chosen = harness();
+        const choice = { nick: 'Kasia', seed: 'traszka-3', look, specialOutfits: true, notice: null, ranked: false };
+        expect(openAtBoot(chosen.shell, { seed: 'traszka-3', fresh: false, choice }, false)).toBe(true);
+        expect(chosen.shell.session).toMatchObject({ seed: 'traszka-3', mode: 'casual' });
+        expect(loadRanked().status).toBe('ok');   // bieg przez to wszystko nietknięty
+      });
+
+      it('tryb casual: rozruch otwiera zwykły sklep, nawet gdy leży zapis biegu', () => {
+        const first = harness();
+        first.shell.startRanked(RANKED_SEED);
+        first.shell.persist();
+        setPlayMode('casual');
+        const h = harness();
+        expect(openAtBoot(h.shell, request(), false)).toBe(true);
+        expect(h.shell.session).toMatchObject({ seed: 'traszka-1', mode: 'casual' });
+        expect(h.notices).toEqual([]);
+      });
+
+      it('wznowienie, którego świat się nie buduje: false, komunikat o bezpiecznym zapisie, zwykły sklep ze świeżą sceną; zapis biegu zostaje', () => {
+        const first = harness();
+        first.shell.startRanked(RANKED_SEED);
+        first.shell.persist();
+        const raw = storage.getItem('traszka:ranked');
+        const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+        const h = harness();
+        h.scene.failing.add(RANKED_SEED);
+        expect(openAtBoot(h.shell, request(), false)).toBe(true);
+
+        expect(h.shell.session).toMatchObject({ seed: 'traszka-1', mode: 'casual' });
+        expect(h.notices).toHaveLength(1);
+        expect(h.notices[0]).toContain('Nie udało się wznowić biegu rankingowego');
+        expect(h.scene.loads.map((l) => l.seed)).toEqual([RANKED_SEED, 'traszka-1']);   // bez odtwarzania sceny dla nieistniejącej sesji
+        expect(storage.getItem('traszka:ranked')).toBe(raw);
+        expect(errorLog).toHaveBeenCalled();
+      });
+
+      it('resumeRanked w trakcie biegu nic nie przeładowuje: zapis w przeglądarce nie jest nowszy od stanu na ekranie', () => {
+        const h = harness();
+        h.shell.startRanked(RANKED_SEED);
+        const running = h.shell.session!;
+        h.shell.game.dispatch({ type: 'setOrder', auto: false, manual: 4 });   // jeszcze niezapisane
+        h.scene.loads.length = 0;
+        expect(h.shell.resumeRanked()).toBe(true);
+        expect(h.shell.session).toBe(running);
+        expect(running.run!.record.log).toHaveLength(1);
+        expect(h.scene.loads).toEqual([]);
+      });
+
+      it('resumeRanked bez biegu, w benchmarku albo przy zepsutym zapisie: false', () => {
+        expect(harness().shell.resumeRanked()).toBe(false);
+        expect(harness({ benchMode: true }).shell.resumeRanked()).toBe(false);
+        storage.setItem('traszka:ranked', 'x');
+        const h = harness();
+        expect(h.shell.resumeRanked()).toBe(false);
+        expect(h.notices).toEqual([BROKEN_NOTICE]);
+      });
+
+      it('resumeRanked ze zwykłego sklepu: zapisuje go, przechodzi do biegu i ustawia tryb ranked', () => {
+        const first = harness();
+        first.shell.startRanked(RANKED_SEED);
+        first.shell.persist();
+        const h = harness();
+        const casual = casualOpen(h, 'traszka-1');
+        casual.econ.cash = 999;
+
+        expect(h.shell.resumeRanked()).toBe(true);
+
+        expect(h.shell.session).toMatchObject({ seed: RANKED_SEED, mode: 'ranked' });
+        expect(JSON.parse(storage.getItem('traszka:save:traszka-1')!).econ.cash).toBe(999);   // poprzedni sklep zapisany przed przejściem
+        expect(getPlayMode()).toBe('ranked');
+        expect(h.urls).toEqual([]);
+      });
+    });
+
+    describe('leaveRanked i abandonRanked', () => {
+      it('leaveRanked zapisuje bieg i wraca do ostatniego zwykłego sklepu; kolejne wejście na stronę otwiera zwykły sklep', () => {
+        const h = harness();
+        casualOpen(h, 'traszka-1', 4242);
+        h.shell.startRanked(RANKED_SEED);
+        h.shell.game.dispatch({ type: 'setOrder', auto: false, manual: 4 });   // bez zapisu: zapisze go dopiero wyjście
+        ui.tab.value = 'palety';
+        ui.report.value = { label: 'x', counters: h.shell.session!.econ.total, profit: 0, cash: 0, comment: '', detail: null };
+        h.urls.length = 0;
+        h.scene.loads.length = 0;
+
+        h.shell.leaveRanked();
+
+        expect(h.shell.session).toMatchObject({ seed: 'traszka-1', mode: 'casual', fromSave: true });
+        expect(h.shell.session!.econ.cash).toBe(4242);
+        expect(h.scene.loads).toEqual([{ seed: 'traszka-1', session: h.shell.session }]);
+        expect(h.urls).toEqual(['traszka-1']);   // zwykły sklep wpisuje seed do adresu jak zawsze
+        expect(ui.seed.value).toBe('traszka-1');
+        expect([ui.ranked.value, ui.tab.value, ui.report.value]).toEqual([null, null, null]);
+        expect(getPlayMode()).toBe('casual');
+        const kept = loadRanked();
+        expect(kept.status).toBe('ok');
+        if (kept.status === 'ok') expect(kept.session.run!.record.log).toHaveLength(1);   // polecenie sprzed wyjścia jest w zapisie
+
+        const next = harness();   // kolejne wejście na stronę
+        expect(openAtBoot(next.shell, request(entrySeed(null, lastSavedSeed())), false)).toBe(true);
+        expect(next.shell.session).toMatchObject({ seed: 'traszka-1', mode: 'casual' });
+      });
+
+      it('leaveRanked bez zwykłego zapisu otwiera wolny losowy sklep; poza biegiem nic nie robi', () => {
+        const h = harness({ seeds: ['losowy-1'] });
+        h.shell.startRanked(RANKED_SEED);
+        h.shell.leaveRanked();
+        expect(h.shell.session).toMatchObject({ seed: 'losowy-1', mode: 'casual', fromSave: false });
+        expect(loadRanked().status).toBe('ok');
+
+        const calm = harness();
+        const casual = casualOpen(calm);
+        calm.scene.loads.length = 0;
+        calm.shell.leaveRanked();
+        expect(calm.shell.session).toBe(casual);
+        expect(calm.scene.loads).toEqual([]);
+        expect(() => harness({ benchMode: true }).shell.leaveRanked()).not.toThrow();
+      });
+
+      it('leaveRanked, gdy zwykły sklep się nie buduje: gracz zostaje w biegu, tryb ranked, komunikat jak przy zmianie sklepu', () => {
+        const h = harness();
+        casualOpen(h, 'traszka-1');
+        h.shell.startRanked(RANKED_SEED);
+        const running = h.shell.session!;
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+        h.scene.failing.add('traszka-1');
+
+        h.shell.leaveRanked();
+
+        expect(h.shell.session).toBe(running);
+        expect(getPlayMode()).toBe('ranked');
+        expect(h.notices).toEqual([SWITCH_FAILED_NOTICE]);
+        expect(ui.ranked.value).toMatchObject({ seed: RANKED_SEED });
+        expect(loadRanked().status).toBe('ok');
+      });
+
+      it('abandonRanked kasuje aktywny bieg i wraca do zwykłej gry; szuflada niewysłanego biegu zostaje', () => {
+        const h = harness();
+        casualOpen(h, 'traszka-1', 4242);
+        h.shell.startRanked(RANKED_SEED);
+        saveFinished(drawerRun());
+        syncUnsent();
+
+        h.shell.abandonRanked();
+
+        expect(storage.getItem('traszka:ranked')).toBeNull();   // także po zapisie, który robi przejście
+        expect(getPlayMode()).toBe('casual');
+        expect(h.shell.session).toMatchObject({ seed: 'traszka-1', mode: 'casual' });
+        expect(ui.ranked.value).toBeNull();
+        expect(loadFinished()).not.toBeNull();
+        expect(ui.unsent.value).toEqual({ seed: 'stary-bieg', score: 12_345 });
+
+        const next = harness();
+        expect(openAtBoot(next.shell, request(), false)).toBe(true);
+        expect(next.shell.session).toMatchObject({ mode: 'casual' });
+      });
+
+      it('abandonRanked ze zwykłego sklepu porzuca bieg z innej wersji gry (z ustawień) bez zmiany sklepu', () => {
+        setPlayMode('ranked');
+        storage.setItem('traszka:ranked', '{"schema":99}');
+        const h = harness();
+        const casual = casualOpen(h);
+        h.scene.loads.length = 0;
+
+        h.shell.game.abandonRanked();
+
+        expect(storage.getItem('traszka:ranked')).toBeNull();
+        expect(getPlayMode()).toBe('casual');
+        expect(h.shell.session).toBe(casual);
+        expect(h.scene.loads).toEqual([]);
+      });
+
+      it('abandonRanked, gdy zwykły sklep się nie buduje: bieg zostaje (nic nie skasowane, skoro przejście się nie udało)', () => {
+        const h = harness();
+        casualOpen(h, 'traszka-1');
+        h.shell.startRanked(RANKED_SEED);
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+        h.scene.failing.add('traszka-1');
+
+        h.shell.abandonRanked();
+
+        expect(h.shell.session).toMatchObject({ seed: RANKED_SEED, mode: 'ranked' });
+        expect(loadRanked().status).toBe('ok');
+        expect(getPlayMode()).toBe('ranked');
+      });
+    });
+
+    describe('zapis sesji rankingowej i tryb przy przejściach na zwykłe sklepy', () => {
+      it('persist sesji rankingowej: zapis do traszka:ranked, a zwykłe klucze sklepu nietknięte; czas wyjścia w mecie jak dotąd', () => {
+        const h = harness();
+        h.shell.startRanked(RANKED_SEED);
+        expect(h.shell.session).not.toBeNull();
+        storage.removeItem('traszka:ranked');
+        h.shell.persist();
+        expect(loadRanked().status).toBe('ok');
+        expect(storage.keys().filter((k) => k.startsWith('traszka:save:'))).toEqual([]);
+        expect(storage.getItem('traszka:last')).toBeNull();
+        expect(savedMeta().lastSeen).toBe(Date.now());
+      });
+
+      it('sesje rankingowe nie wołają writeSeedToUrl: start, polecenia, zapisy, koniec dnia i wznowienie', () => {
+        const h = harness();
+        h.shell.startRanked(RANKED_SEED);
+        h.shell.game.dispatch({ type: 'setOrder', auto: false, manual: 4 });
+        h.shell.handleEvents([{ kind: 'day', text: 'Dzień' }]);
+        h.shell.persist();
+        const second = harness();
+        second.shell.resumeRanked();
+        expect(h.urls).toEqual([]);
+        expect(second.urls).toEqual([]);
+      });
+
+      it('odmowa localStorage: jedna wiadomość na sesję, nie za każdym zapisem; nowa sesja dostaje własną', () => {
+        const h = harness();
+        h.shell.startRanked(RANKED_SEED);
+        expect(h.notices).toEqual([]);
+        storage.failWrites = true;
+
+        h.shell.persist();
+        h.shell.persist();
+        h.shell.handleEvents([{ kind: 'day', text: 'Dzień' }]);
+        h.shell.game.dispatch({ type: 'setOrder', auto: false, manual: 4 });
+        h.shell.persist();
+        expect(h.notices).toEqual([NO_SPACE_NOTICE]);
+        expect(h.shell.session!.mode).toBe('ranked');   // gra toczy się dalej
+
+        expect(h.shell.startRanked('drugi', { replace: true })).toBe(true);   // nowa sesja: znów jedno ostrzeżenie
+        h.shell.persist();
+        expect(h.notices).toEqual([NO_SPACE_NOTICE, NO_SPACE_NOTICE]);
+      });
+
+      it('bieg bez dziennika (nie do zapisu) nie wmawia graczowi braku miejsca w przeglądarce', () => {
+        const h = harness();
+        h.shell.startRanked(RANKED_SEED);
+        h.shell.session!.run = null;
+        h.shell.persist();
+        expect(h.notices).toEqual([]);
+      });
+
+      it('zwykły zapis przy odmowie localStorage nie mówi nic o biegu rankingowym', () => {
+        const h = harness();
+        open(h);
+        storage.failWrites = true;
+        h.shell.persist();
+        expect(h.notices).toEqual([]);
+      });
+
+      it('przejścia na zwykły sklep (setSeed, generate, randomize, restart, newStore) ustawiają tryb casual; sam zwykły gracz nie dostaje klucza traszka:mode', () => {
+        const plain = harness();
+        open(plain);
+        plain.shell.setSeed('traszka-2');
+        plain.shell.randomize();
+        expect(storage.getItem('traszka:mode')).toBeNull();   // zwykła gra zostawia pamięć tak, jak było
+
+        for (const leave of [
+          (h: Harness) => h.shell.setSeed('traszka-3'),
+          (h: Harness) => h.shell.generate('traszka-4'),
+          (h: Harness) => h.shell.randomize(),
+        ]) {
+          const h = harness();
+          h.shell.startRanked(RANKED_SEED, { replace: true });
+          expect(getPlayMode()).toBe('ranked');
+          leave(h);
+          expect(h.shell.session!.mode).toBe('casual');
+          expect(getPlayMode()).toBe('casual');
+          expect(ui.ranked.value).toBeNull();
+          expect(loadRanked().status).toBe('ok');   // bieg czeka w zapisie
+        }
+
+        setPlayMode('ranked');   // zwykły sklep otwarty linkiem z ?seed= przy trybie ranked
+        const h = harness();
+        open(h, 'traszka-1');
+        h.shell.game.restart();
+        expect(getPlayMode()).toBe('casual');
+        setPlayMode('ranked');
+        h.shell.game.newStore();
+        ui.start.value!.onStart({ nick: 'Kasia', seed: 'traszka-5', look: ui.start.value!.form.look, specialOutfits: true, notice: null, ranked: false });
+        expect(getPlayMode()).toBe('casual');
+      });
+
+      it('openNextStore ze zwykłego sklepu przy trybie ranked też ustawia tryb casual', () => {
+        setPlayMode('ranked');
+        const h = harness({ seeds: ['nowy-1'] });
+        const s = open(h, 'traszka-1');
+        s.econ.total.margin = 80_000;
+        s.econ.bestDayProfit = 5000;
+        saveSession(s);
+        h.shell.game.openNextStore();
+        expect(h.shell.session!.seed).toBe('nowy-1');
+        expect(getPlayMode()).toBe('casual');
+      });
+    });
+
+    describe('widok dla interfejsu: ranked i unsent', () => {
+      it('publish: dzień biegu z minuty stanu (od 1, do 91), faza; zwykły sklep daje null; ten sam widok nie jest podmieniany co 200 ms', () => {
+        const h = harness();
+        h.shell.startRanked(RANKED_SEED);
+        const s = h.shell.session!;
+        const view = ui.ranked.value;
+        h.shell.publish();
+        expect(ui.ranked.value).toBe(view);   // nic się nie zmieniło: ten sam obiekt, bez zbędnych odświeżeń
+
+        s.econ.minute = 5 * MINUTES_PER_DAY + OPEN_FROM;
+        h.shell.publish();
+        expect(ui.ranked.value).toEqual({ seed: RANKED_SEED, day: 6, days: 91, phase: 'playing' });
+
+        s.econ.minute = 200 * MINUTES_PER_DAY;   // za końcem sezonu: dzień nie rośnie ponad 91
+        h.shell.publish();
+        expect(ui.ranked.value).toMatchObject({ day: 91, days: 91, phase: 'over' });
+
+        h.shell.setSeed('traszka-1');
+        expect(ui.ranked.value).toBeNull();
+      });
+
+      it('unsent: stan szuflady z rozruchu i po syncUnsent', () => {
+        harness();
+        expect(ui.unsent.value).toBeNull();
+
+        saveFinished(drawerRun('bieg-a'));
+        harness();
+        expect(ui.unsent.value).toEqual({ seed: 'bieg-a', score: 12_345 });
+
+        storage.removeItem('traszka:ranked:done');
+        syncUnsent();
+        expect(ui.unsent.value).toBeNull();
+        storage.setItem('traszka:ranked:done', 'śmieci');   // nierozpoznana szuflada to pusta szuflada
+        syncUnsent();
+        expect(ui.unsent.value).toBeNull();
+      });
     });
   });
 });

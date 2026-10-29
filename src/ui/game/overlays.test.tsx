@@ -11,7 +11,7 @@ import type { CardInstance } from '@/sim/economy/tycoon/cards';
 import { hintText, reportCommentText, type TycoonMonthReport } from '@/sim/economy/tycoon/report';
 import { trustTier } from '@/sim/economy/tycoon/trust';
 import {
-  econ, ephemeral, hints, pushStory, report, selection, showHints, showSettings, speed, start, story, tab, welcome, type GameActions,
+  econ, ephemeral, hints, pushStory, ranked, report, selection, showHints, showSettings, speed, start, story, tab, welcome, type GameActions,
 } from '../state';
 import { TrustChip } from './Hud';
 import { int, zl } from './format';
@@ -25,6 +25,7 @@ import { buttonLabelled, buttonsOf, click, labels, textOf, walk, type Vnode } fr
 /** Sygnały, które sterują widocznością nakładek, do stanu wyjściowego (nic nie otwarte, brak gry). */
 const resetSignals = (): void => {
   ephemeral.value = false;
+  ranked.value = null;
   econ.value = null;
   selection.value = null;
   tab.value = null;
@@ -104,6 +105,30 @@ describe('plakietka sklepu tymczasowego', () => {
   });
 });
 
+describe('plakietka biegu rankingowego', () => {
+  it('bez biegu rankingowego jej nie ma; w biegu jedna linia „Ranking · dzień N/91”, bez przycisków', () => {
+    expect(StoreBadge()).toBeNull();
+    ranked.value = { seed: 'kielbasa-42', day: 3, days: 91, phase: 'playing' };
+    const badge = StoreBadge() as VNode<Record<string, unknown>>;
+    expect(textOf(badge)).toBe('Ranking · dzień 3/91');
+    expect(badge.props.role).toBe('status');
+    expect(labels(badge)).toEqual([]);
+
+    ranked.value = { seed: 'kielbasa-42', day: 91, days: 91, phase: 'over' };
+    expect(textOf(StoreBadge())).toBe('Ranking · dzień 91/91');
+    ranked.value = null;
+    expect(StoreBadge()).toBeNull();
+  });
+
+  it('plakietka sklepu tymczasowego zostaje, gdy bieg i tymczasowość zapalą się razem (osobna linia)', () => {
+    ephemeral.value = true;
+    ranked.value = { seed: 'kielbasa-42', day: 1, days: 91, phase: 'playing' };
+    const text = textOf(StoreBadge());
+    expect(text).toContain(EPHEMERAL_BADGE);
+    expect(text).toContain('Ranking · dzień 1/91');
+  });
+});
+
 describe('podpowiedzi pierwszego dnia: dymki zamiast okna powitalnego', () => {
   it('lista krótkich wskazówek z dawnego okna (cel gry, palety, kolejka, KPI tygodnia, siły, sterowanie), każda krótka i po polsku', () => {
     expect(FIRST_DAY_HINTS.length).toBeGreaterThanOrEqual(5);
@@ -149,6 +174,7 @@ function fakeGame(result: CommandResult = { ok: true }): GameActions & { dispatc
   return {
     dispatch: vi.fn<(cmd: Command) => CommandResult>(() => result),
     claimWelcome: vi.fn(), openNextStore: vi.fn(), setSound: vi.fn(), setVibration: vi.fn(), restart: vi.fn(), newStore: vi.fn(),
+    startRanked: vi.fn(() => false), resumeRanked: vi.fn(() => false), leaveRanked: vi.fn(), abandonRanked: vi.fn(),
   };
 }
 

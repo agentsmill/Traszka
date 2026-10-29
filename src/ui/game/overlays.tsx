@@ -9,8 +9,8 @@ import { EQUIPMENT, EQUIPMENT_BY_ID, equipmentCost } from '@/sim/economy/upgrade
 import type { QualityPresetId } from '@/render/quality';
 import { networkIncomeOf, prestigePoints } from '@/game/meta';
 import {
-  celebration, dismissStory, ephemeral, econ, hints, howTo, metaView, nextHint, openHowTo, preset, report, selection, seed, showPerf, showPrestige,
-  showSettings, story, tab, toasts, welcome, type Controls, type GameActions,
+  celebration, dismissStory, ephemeral, econ, hints, howTo, metaView, nextHint, openHowTo, preset, ranked, report, selection, seed, showPerf,
+  showPrestige, showSettings, story, tab, toasts, welcome, type Controls, type GameActions, type RankedView,
 } from '../state';
 import { int, people, signedPts, signedZl, zl } from './format';
 import { Bar, PalletItem } from './panels';
@@ -318,10 +318,19 @@ export const EPHEMERAL_BADGE = 'Sklep tymczasowy: postęp nie jest zapisywany';
 export const EPHEMERAL_NOTE = 'Ten sklep jest tymczasowy: nic się w nim nie zapisuje, a ewentualny zapis pod jego seedem zostaje nietknięty.';
 export const RESTART_CONFIRM = 'Zacząć od nowa w tym sklepie? Zapis zostanie usunięty.';
 
-/** Stała plakietka na ekranie gry, gdy sklep jest tymczasowy (zapis się nie zbudował albo jest z nowszej wersji gry). */
+/** Napis plakietki biegu rankingowego: „Ranking · dzień 3/91”. */
+export const rankedBadgeText = (run: Pick<RankedView, 'day' | 'days'>): string => `Ranking · dzień ${run.day}/${run.days}`;
+
+/**
+ * Stałe plakietki na ekranie gry: bieg rankingowy („Ranking · dzień N/91”, jedna linia, bez przycisków) i sklep tymczasowy (zapis się nie
+ * zbudował albo jest z nowszej wersji gry). Bieg rankingowy nigdy nie jest tymczasowy, więc zwykle świeci się najwyżej jedna.
+ */
 export function StoreBadge() {
-  if (!ephemeral.value) return null;
-  return <div class="tt-ephemeral" role="status">{EPHEMERAL_BADGE}</div>;
+  const run = ranked.value;
+  const rankedBadge = run ? <div class="tt-ranked-badge" role="status">{rankedBadgeText(run)}</div> : null;
+  const temporary = ephemeral.value ? <div class="tt-ephemeral" role="status">{EPHEMERAL_BADGE}</div> : null;
+  if (rankedBadge && temporary) return <>{rankedBadge}{temporary}</>;
+  return rankedBadge ?? temporary;
 }
 
 /**

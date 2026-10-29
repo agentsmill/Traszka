@@ -1,20 +1,25 @@
 import type { CharacterFactory } from '@/render/characters/characterFactory';
+import { dayOf } from '@/sim/economy/calendar';
 import { applyCommand, type Command } from '@/sim/economy/commands';
 import {
   awaitingDecision, grantDaily, grantOffline, processLevels, stepMinute, tapCombo, type CommandResult, type EconEvent, type EconEventKind,
 } from '@/sim/economy/economy';
 import { rankFor } from '@/sim/economy/progress';
 import { noticeLevel } from '@/sim/economy/tycoon/notices';
+import { RANKED_SEASON_END_MINUTE } from '@/sim/ranked';
 import type { Sfx } from '@/ui/sfx';
 import * as ui from '@/ui/state';
 import type { CashierLook } from './cashier';
 import { addToNetwork, claimDaily, partnerOf, saveMeta, startupWindow, type Meta } from './meta';
 import { openStore } from './openStore';
+import {
+  clearFinished, createRankedSession, discardRanked, getPlayMode, loadFinished, loadRanked, rankedRunStale, saveRanked, seasonOver, setPlayMode,
+} from './rankedRun';
 import type { ScenePick } from './scene';
 import { chooseStore, freeSeed } from './seeds';
 import {
-  NEWER_SAVE_NOTICE, RUN_LOG_MAX, UNBUILDABLE_SAVE_NOTICE, createSession, discardSave, hasStoredSave, retireSession, reviveSession, saveSession,
-  type GameSession,
+  NEWER_SAVE_NOTICE, RUN_LOG_MAX, UNBUILDABLE_SAVE_NOTICE, createSession, discardSave, hasStoredSave, lastSavedSeed, retireSession, reviveSession,
+  saveSession, type GameSession,
 } from './session';
 import { initialStartForm, noticeAfterOpen, openChosen, openRequestFor, playerOf, type StartChoice, type StoreSwitch } from './start';
 
@@ -246,6 +251,24 @@ export interface GameShell {
   randomize(): void;
   /** Przewija grę o `minutes` minut (testy ręczne i zrzuty); wyłącza dziennik biegu. */
   skip(minutes: number): void;
+  /**
+   * Świeży bieg rankingowy (spec §14.7) na seedzie, który powłoka sama normalizuje jak seed zwykłego sklepu (`chooseStore`, bez wczytywania
+   * zwykłego zapisu pod tym seedem). Jeden aktywny bieg (`traszka:ranked`) i jedna szuflada niewysłanego biegu: gdy któreś jest zajęte,
+   * a `opts.replace` nie jest ustawione, nic nie zmienia, ustawia `ui.confirmRankedStart` (`unsent` ma pierwszeństwo przed `active`)
+   * i zwraca false. Z `replace` kasuje szufladę i aktywny zapis, ale dopiero gdy nowy świat stoi. Zapisuje poprzedni sklep, a gdy świat
+   * się nie zbuduje, zostawia gracza w poprzednim (z komunikatem). Zwraca, czy bieg ruszył.
+   */
+  startRanked(seed: string, opts?: { replace?: boolean }): boolean;
+  /**
+   * Wznawia aktywny bieg rankingowy z zapisu. Uszkodzony zapis (`broken`, kopia w przeglądarce) i zapis z innej wersji gry
+   * (`incompatible`, zostaje na miejscu) dają komunikat i false; brak biegu to false bez komunikatu. Bieg z starszej wersji symulacji
+   * wznawia się z komunikatem, że nie trafi do rankingu (`rankedRunStale`).
+   */
+  resumeRanked(): boolean;
+  /** Zapisuje bieg rankingowy i wraca do ostatniego zwykłego sklepu (ustawia tryb `casual`). Poza biegiem nic nie robi. */
+  leaveRanked(): void;
+  /** Kasuje aktywny bieg rankingowy i wraca do zwykłej gry; szuflada niewysłanego biegu zostaje. Gdy nie da się otworzyć zwykłego sklepu, bieg zostaje. */
+  abandonRanked(): void;
   /** Gra widziana z interfejsu (`dispatch` i czynności spoza symulacji). */
   game: ui.GameActions;
 }
@@ -275,6 +298,48 @@ const STORY_FALLBACK_TITLE = 'Ważne zdarzenie';
 /** Mają własne okno, więc nie idą do wspólnego: raport miesiąca (`ui.report`) i koniec gry (okno końca współpracy w `ReportModal`, z `gameOver`). */
 const OWN_WINDOW: ReadonlySet<EconEventKind> = new Set<EconEventKind>(['month', 'gameover']);
 
+// --- Bieg rankingowy w powłoce -----------------------------------------------------------------------------------------
+
+export const RANKED_BROKEN_NOTICE = 'Zapis biegu rankingowego był uszkodzony. Kopia została w przeglądarce.';
+export const RANKED_INCOMPATIBLE_NOTICE = 'Zapisany bieg rankingowy powstał w innej wersji gry i nie da się go wznowić. Możesz go porzucić w ustawieniach.';
+export const RANKED_STALE_NOTICE = 'Ten bieg powstał w starszej wersji gry i nie trafi do rankingu. Możesz go dograć dla zabawy albo zacząć nowy.';
+export const RANKED_NO_SPACE_NOTICE = 'Przeglądarka nie ma miejsca na zapis biegu rankingowego. Gra toczy się dalej, ale po zamknięciu karty bieg przepadnie.';
+export const RANKED_RESUME_FAILED_NOTICE = 'Nie udało się wznowić biegu rankingowego. Zapis jest bezpieczny, spróbuj odświeżyć stronę.';
+const rankedStartFailed = (seed: string): string => `Nie udało się zacząć biegu rankingowego „${seed}”.`;
+
+/** Ile dni ma sezon rankingowy (od 1 września do 30 listopada): numer dnia ostatniej minuty sezonu, licząc od 1. */
+const RANKED_DAYS = dayOf(RANKED_SEASON_END_MINUTE - 1) + 1;
+
+/** Widok biegu dla interfejsu: dzień sezonu (od 1, najwyżej `RANKED_DAYS`) i faza; null dla zwykłego sklepu. */
+function rankedViewOf(session: GameSession): ui.RankedView | null {
+  if (session.mode !== 'ranked') return null;
+  return {
+    seed: session.seed, day: Math.min(dayOf(session.econ.minute) + 1, RANKED_DAYS), days: RANKED_DAYS, phase: seasonOver(session.econ) ? 'over' : 'playing',
+  };
+}
+
+/** Ustawia `ui.ranked` tylko wtedy, gdy widok się zmienił: `publish` idzie kilka razy na sekundę, a ten sam widok nie powinien budzić interfejsu. */
+function setRankedView(next: ui.RankedView | null): void {
+  const now = ui.ranked.value;
+  if (now === next) return;
+  if (now && next && now.seed === next.seed && now.day === next.day && now.days === next.days && now.phase === next.phase) return;
+  ui.ranked.value = next;
+}
+
+/** Odświeża `ui.unsent` ze stanu szuflady niewysłanego biegu. Wołać po każdej jej zmianie; szuflada, której nie da się odczytać, jest pusta. */
+export function syncUnsent(): void {
+  const found = loadFinished();
+  const next = found ? { seed: found.seed, score: found.score } : null;
+  const now = ui.unsent.value;
+  if (now === next || (now && next && now.seed === next.seed && now.score === next.score)) return;
+  ui.unsent.value = next;
+}
+
+/** Zwykły sklep stoi: zapamiętany tryb to `casual`. Zapisuje tylko powrót z `ranked`, więc gracz, który nie grał o ranking, nie dostaje klucza `traszka:mode`. */
+function rememberCasual(): void {
+  if (getPlayMode() !== 'casual') setPlayMode('casual');
+}
+
 const money = (n: number): string => `+${n.toLocaleString('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} zł`;
 
 /**
@@ -285,10 +350,21 @@ export function createShell(deps: ShellDeps): GameShell {
   const { scene, effects: fx, benchMode } = deps;
   let econVersion = 0;
 
+  /** Sesje rankingowe, którym przeglądarka odmówiła zapisu i które już o tym wiedzą: ostrzeżenie pada raz na sesję, nie przy każdym zapisie. */
+  const noSpaceWarned = new WeakSet<GameSession>();
+
+  /** Zapis biegu rankingowego (`traszka:ranked`). Odmowa przeglądarki to jedno ostrzeżenie na sesję; gra toczy się dalej. */
+  function persistRanked(session: GameSession): void {
+    if (saveRanked(session) || session.run === null || noSpaceWarned.has(session)) return;   // bez dziennika zapisu nie ma, ale to nie brak miejsca
+    noSpaceWarned.add(session);
+    fx.notice(RANKED_NO_SPACE_NOTICE);
+  }
+
   function persist(): void {
     const { session, meta } = shell;
     if (!session) return;
-    saveSession(session);   // sklep tymczasowy się nie zapisuje
+    if (session.mode === 'ranked') persistRanked(session);
+    else saveSession(session);   // sklep tymczasowy się nie zapisuje
     // zarobek z nieobecności czeka na „Odbierz!”, więc czas wyjścia zostaje stary; sklep tymczasowy nie jest prawdziwą grą
     if (!ui.welcome.value && !session.ephemeral) meta.lastSeen = Date.now();
     saveMeta(meta);
@@ -307,6 +383,7 @@ export function createShell(deps: ShellDeps): GameShell {
     if (!session) return;
     ui.econ.value = { s: session.econ, info: session.info, v: ++econVersion };
     ui.ephemeral.value = session.ephemeral;
+    setRankedView(rankedViewOf(session));
   }
 
   function handleEvents(events: EconEvent[]): void {
@@ -348,6 +425,15 @@ export function createShell(deps: ShellDeps): GameShell {
     publish();
   }
 
+  /** Odbudowuje scenę poprzedniego sklepu po nieudanym przejściu (jego sesja stoi w `shell.session`); błąd tylko trafia do konsoli. */
+  function restoreScene(previous: GameSession | null, previousSeed: string): void {
+    try {
+      scene.load(previous ? previous.seed : previousSeed, previous);
+    } catch (again) {
+      console.error('Nie udało się odtworzyć poprzedniego sklepu.', again);
+    }
+  }
+
   function setSeed(next: string, fresh = false, ephemeral = false): boolean {
     persist();
     const previous = shell.session;
@@ -359,15 +445,12 @@ export function createShell(deps: ShellDeps): GameShell {
     } catch (error) {
       console.error(`Nie udało się otworzyć sklepu „${next}”.`, error);
       shell.session = previous;
-      try {
-        scene.load(previous ? previous.seed : previousSeed, previous);
-      } catch (again) {
-        console.error('Nie udało się odtworzyć poprzedniego sklepu.', again);
-      }
+      restoreScene(previous, previousSeed);
       fx.notice(`Nie udało się otworzyć sklepu „${next}”. Zostajesz w poprzednim.`);
       return false;
     }
     deps.writeSeedToUrl(next);
+    if (!benchMode) rememberCasual();   // z biegu rankingowego wychodzi się tędy: zwykły sklep to tryb `casual`
     ui.seed.value = next;
     ui.story.value = [];   // wpisy z poprzedniego sklepu (także po „Zacznij od nowa”) nie mają czego czekać w nowym
     ui.picked.value = null;   // numery kart zaczynają się w nowej grze od 1: zaznaczona odpowiedź ze starej nie może wskoczyć na nową kartę
@@ -375,6 +458,117 @@ export function createShell(deps: ShellDeps): GameShell {
     persist();
     if (shell.session?.loadNotice) fx.notice(shell.session.loadNotice);
     return true;
+  }
+
+  // --- Bieg rankingowy: start, wznowienie, wyjście ---
+
+  /**
+   * Przejście na sesję rankingową (nowy bieg albo bieg z zapisu), tak jak `setSeed` na zwykły sklep: zapis obecnej sesji, budowa świata
+   * i, gdy się nie uda, powrót do poprzedniego sklepu z komunikatem `failure`. Bez poprzedniego sklepu (rozruch) scena po porażce
+   * zostaje pusta, bo `scene.load` sprząta po sobie, i wołający otwiera zwykły sklep. Po udanej budowie: `onEntered` (porządki, które
+   * wolno zrobić dopiero teraz, np. skasowanie tego, co nowy bieg zastępuje; przed zapisem, żeby nie skasować nowego biegu), tryb
+   * `ranked`, stan interfejsu per sklep jak w `setSeed` (+ zakładka i raport), publikacja i zapis. Bez adresu strony (decyzja 3), bez
+   * okna powitalnego, nagród i wskazówek pierwszego dnia: bieg rankingowy zaczyna się od razu.
+   */
+  function enterRanked(seed: string, make: () => GameSession, failure: string, onEntered?: () => void): boolean {
+    persist();
+    const previous = shell.session;
+    const previousSeed = scene.seed ?? ui.seed.value;
+    try {
+      const next = make();
+      shell.session = next;
+      ui.selection.value = null;
+      scene.load(next.seed, next);
+    } catch (error) {
+      console.error(`Nie udało się zbudować biegu rankingowego „${seed}”.`, error);
+      shell.session = previous;
+      if (previous) restoreScene(previous, previousSeed);
+      fx.notice(failure);
+      return false;
+    }
+    onEntered?.();
+    setPlayMode('ranked');
+    ui.seed.value = seed;
+    ui.story.value = [];
+    ui.picked.value = null;
+    ui.tab.value = null;
+    ui.report.value = null;
+    ui.confirmRankedStart.value = null;
+    publish();
+    persist();
+    return true;
+  }
+
+  /** Co blokuje start nowego biegu: niewysłany bieg w szufladzie (pierwszeństwo) albo trwający bieg rankingowy. Uszkodzony zapis nie blokuje: `loadRanked` już oddał go do kopii. */
+  function rankedStartBlock(): ui.RankedStartRequest['reason'] | null {
+    if (loadFinished() !== null) return 'unsent';
+    if (shell.session?.mode === 'ranked') return 'active';   // bieg w pamięci karty, nawet gdy przeglądarka nie dała go zapisać
+    const { status } = loadRanked();
+    return status === 'ok' || status === 'incompatible' ? 'active' : null;
+  }
+
+  function startRanked(seed: string, opts: { replace?: boolean } = {}): boolean {
+    if (benchMode) return false;
+    // seed w postaci kanonicznej, z której da się zbudować sklep; zwykły zapis pod tym seedem nie zamienia startu we wczytanie sklepu
+    const store = chooseStore(seed, { hasSave: () => false, draw: deps.randomSeed });
+    if (!opts.replace) {
+      const reason = rankedStartBlock();
+      if (reason) {
+        ui.confirmRankedStart.value = { seed: store.seed, reason };
+        return false;
+      }
+    }
+    const started = enterRanked(store.seed, () => createRankedSession(store.seed), `${rankedStartFailed(store.seed)} Zostajesz w poprzednim sklepie.`, () => {
+      if (!opts.replace) return;
+      clearFinished();   // dopiero teraz, gdy nowy świat stoi: nieudany start niczego nie traci
+      discardRanked();
+      syncUnsent();
+    });
+    if (started && store.notice) ui.pushToast(store.notice, 'info');   // lokal się nie zmieścił: sąsiedni
+    return started;
+  }
+
+  function resumeRanked(): boolean {
+    if (benchMode) return false;
+    if (shell.session?.mode === 'ranked') return true;   // już w biegu: zapis w przeglądarce nie jest nowszy od stanu na ekranie
+    const loaded = loadRanked();
+    if (loaded.status === 'none') return false;
+    if (loaded.status === 'broken') {
+      fx.notice(RANKED_BROKEN_NOTICE);
+      return false;
+    }
+    if (loaded.status === 'incompatible') {
+      fx.notice(RANKED_INCOMPATIBLE_NOTICE);
+      return false;
+    }
+    const { session } = loaded;
+    if (!enterRanked(session.seed, () => session, RANKED_RESUME_FAILED_NOTICE)) return false;
+    if (rankedRunStale(session)) fx.notice(RANKED_STALE_NOTICE);
+    return true;
+  }
+
+  /**
+   * Otwiera ostatni zwykły sklep (`traszka:last`) albo wolny losowy, przez `setSeed`: zapis obecnej sesji (biegu też), budowa świata
+   * i, gdy się nie uda, powrót do poprzedniego z komunikatem. Po udanym przejściu zamyka zakładkę i raport biegu.
+   */
+  function openLastCasual(): boolean {
+    if (!setSeed(lastSavedSeed() ?? freeSeed(deps.randomSeed, hasStoredSave))) return false;
+    ui.tab.value = null;
+    ui.report.value = null;
+    return true;
+  }
+
+  function leaveRanked(): void {
+    if (benchMode || shell.session?.mode !== 'ranked') return;
+    openLastCasual();
+  }
+
+  function abandonRanked(): void {
+    if (benchMode) return;
+    // z biegu przechodzimy najpierw (to przejście zapisuje bieg i dopiero potem go kasujemy); gdy się nie uda, bieg zostaje nietknięty
+    if (shell.session?.mode === 'ranked' && !openLastCasual()) return;
+    discardRanked();
+    rememberCasual();
   }
 
   /**
@@ -490,6 +684,10 @@ export function createShell(deps: ShellDeps): GameShell {
         onBack: () => {},
       };
     },
+    startRanked,
+    resumeRanked,
+    leaveRanked,
+    abandonRanked,
   };
 
   const shell: GameShell = {
@@ -499,6 +697,10 @@ export function createShell(deps: ShellDeps): GameShell {
     publish,
     setSeed,
     handleEvents,
+    startRanked,
+    resumeRanked,
+    leaveRanked,
+    abandonRanked,
 
     open({ seed, fresh, choice }) {
       let session: GameSession;
@@ -576,5 +778,6 @@ export function createShell(deps: ShellDeps): GameShell {
   fx.setVibration(shell.meta.vibration);
   if (shell.meta.readOnly) fx.notice(NEWER_SAVE_NOTICE);   // meta z nowszej wersji gry: nic jej nie nadpisze w tej karcie
   publishMeta();
+  syncUnsent();   // niewysłany bieg z poprzedniej wizyty czeka w szufladzie
   return shell;
 }
