@@ -65,6 +65,7 @@ export function debugHandleOf({ ctx, shell, scene }: DebugParts): object {
     get street() { return scene.loaded?.street ?? null; },
     get crowdView() { return scene.loaded?.crowdView ?? null; },
     get cashierView() { return scene.loaded?.cashierView ?? null; },
+    get staffView() { return scene.loaded?.staffView ?? null; },
     get factory() { return scene.factory; },
   };
 }

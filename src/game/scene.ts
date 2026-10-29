@@ -14,6 +14,7 @@ import { cashierCues, type CashierLook } from './cashier';
 import { bindControls } from './controls';
 import { advanceClock, clockAlpha } from './loop';
 import type { GameSession } from './session';
+import { palletRefsOf, staffFromEconomy } from './staffAdapter';
 import { SIM_STEP, payLook, setCrowdExtras, setCrowdRate, stepCrowd, type CrowdOptions } from '@/sim/crowd/crowd';
 import { CATS, HOUR_CURVE } from '@/sim/economy/catalog';
 import { minuteOfDay } from '@/sim/economy/calendar';
@@ -27,7 +28,7 @@ import type { WorldOverlay } from '@/ui/worldOverlay';
 import * as ui from '@/ui/state';
 
 /**
- * Scena gry: wszystko, co dotyka three.js i obrazu. `createSceneHost` trzyma świat sklepu w scenie (`Loaded`), tłum i kasjera,
+ * Scena gry: wszystko, co dotyka three.js i obrazu. `createSceneHost` trzyma świat sklepu w scenie (`Loaded`), tłum, kasjera i załogę,
  * porę dnia, widok z zewnątrz i zegar tłumu, a zmiany stanu gry pokazuje na scenie (`syncVisuals`). O tym, co gra robi, nie
  * wie nic: sesję dostaje od wołającego (`GameShell` w actions.ts), a stuknięcie oddaje jako `ScenePick`. Host potrzebuje WebGL
  * i DOM; testowalna w node jest tylko czysta część (`crowdRateFor`, `timeOfDayAt`), resztę sprawdza przeglądarka.
@@ -190,6 +191,7 @@ export function createSceneHost(deps: SceneDeps): SceneHost {
   let generation = 0;               // odrzuca wyniki asynchroniczne, które wróciły po zmianie seeda
   let payingId: number | null = null;   // klient obsługiwany przy kasie w poprzedniej klatce (kasjer: gest przy sprzedaży)
   let lastVisual = -1;
+  let staffSyncFailed = false;           // błąd synchronizacji załogi zgłaszamy raz, a nie co ~100 ms
 
   ctx.setTimeOfDay(tod);
   ui.timeOfDay.value = tod;
@@ -236,6 +238,15 @@ export function createSceneHost(deps: SceneDeps): SceneHost {
       .map((u) => ({ cell: u.access!, look: payLook(u.fixture.facing) }));
     setCrowdExtras(loaded.world.crowd, obstacles, pay);
     setCrowdRate(loaded.world.crowd, crowdRateFor(session, ctx.preset));
+    // załoga: kto jest na zmianie i co robi, oraz palety (przeszkody i cele rozładunku); scena tylko to odgrywa
+    // (wymiana na etap 2C2: `staffFromEconomy(s, info)` → `staffOnShift(s)`, nic więcej)
+    // Błąd w teatrze załogi nie może przerwać reszty tej metody (pora dnia, znaczniki, nakładka kasy) ani klatki: raz do konsoli.
+    try {
+      loaded.staffView?.sync({ people: staffFromEconomy(s, info), minute: s.minute, pallets: palletRefsOf(s, info) });
+    } catch (error) {
+      if (!staffSyncFailed) console.error('Nie udało się zsynchronizować załogi z ekonomią.', error);
+      staffSyncFailed = true;
+    }
 
     // pora dnia z zegara gry, chyba że zrzut wymusza noc
     if (!forcedNight) {
@@ -316,18 +327,25 @@ export function createSceneHost(deps: SceneDeps): SceneHost {
 
     animate(frameDt, realDt, paused) {
       if (!loaded?.crowdView) return;
-      const { world, crowdView, cashierView } = loaded;
+      const { world, crowdView, cashierView, staffView } = loaded;
       const steps = paused ? 0 : advanceClock(clock, frameDt, world.speed);
       for (let i = 0; i < steps; i++) stepCrowd(world.crowd, world.layout, SIM_STEP);
       crowdView.setCharacterShadows(QUALITY[ctx.preset].characterShadows);
       const speed = paused ? 0 : world.speed;
       const animDt = realDt * Math.min(speed, ANIM_SPEED_CAP);
       crowdView.sync(world.crowd, clockAlpha(clock), realDt * speed, animDt);
-      if (cashierView) {
+      if (cashierView || staffView) {
         const cues = cashierCues(payingId, world.crowd.agents, world.layout);
         payingId = cues.payingId;
-        cashierView.setCharacterShadows(QUALITY[ctx.preset].characterShadows);
-        cashierView.update(realDt * speed, cues.serving, cues.sale, animDt);
+        // załoga przed kasjerem: kasjer ma dostać pozę z bieżącej klatki (idzie do palet albo wraca za ladę)
+        if (staffView) {
+          staffView.setCharacterShadows(QUALITY[ctx.preset].characterShadows);
+          staffView.update(realDt * speed, animDt, cues.serving);
+        }
+        if (cashierView) {
+          cashierView.setCharacterShadows(QUALITY[ctx.preset].characterShadows);
+          cashierView.update(realDt * speed, cues.serving, cues.sale, animDt);
+        }
       }
     },
 
