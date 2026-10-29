@@ -29,6 +29,20 @@ function onShift(n: number, human: Partial<TaskMinutes> = {}, shiftStaff = n): E
 
 const tasks = (s: EconomyState): ShiftTask[] => staffOnShift(s).map((p) => p.task);
 
+/**
+ * Najwięcej osób, które mogły zostać przy swoim zadaniu przy podanym wyniku: osoba 0 jest przy kasie z urzędu (gdy kasa kogoś
+ * ma), reszta zostaje przy zadaniu, jeśli zadanie ma jeszcze miejsce. Liczby przy zadaniach bierze z wyniku.
+ */
+function maxKept(prev: readonly ShiftTask[], next: readonly ShiftTask[]): number {
+  const counts = zeroTasks();
+  for (const task of next) if (task !== 'wolny') counts[task]++;
+  const forced = next.length > 0 && counts.kasa > 0;
+  if (forced) counts.kasa--;
+  const others = prev.slice(forced ? 1 : 0, next.length);
+  const kept = STAFF_TASKS.reduce((k, task) => k + Math.min(others.filter((x) => x === task).length, counts[task]), 0);
+  return kept + (forced && prev[0] === 'kasa' ? 1 : 0);
+}
+
 describe('staffOnShift: kto jest na zmianie', () => {
   it('jedna pozycja na każdą osobę na zmianie, numery po kolei od 0', () => {
     for (let staff = 0; staff <= STAFF_MAX; staff++) {
@@ -191,10 +205,10 @@ describe('staffOnShift razem z symulacją', () => {
       const after = s.shift.people;
       expect(after).toHaveLength(s.shift.staff);
       if (before.length === 0 || after.length === 0) continue;
-      // najwięcej osób, które mogły zostać: tyle, ile przy zadaniu było i będzie
-      const common = STAFF_TASKS.reduce((n, task) => n + Math.min(
-        before.slice(0, after.length).filter((x) => x === task).length, after.filter((x) => x === task).length), 0);
+      // najwięcej osób, które mogły zostać: tyle, ile przy zadaniu było i będzie (osoba 0 jest przy kasie z urzędu)
+      const common = maxKept(before, after);
       const kept = after.filter((task, id) => task !== 'wolny' && task === before[id]).length;
+      if (after.includes('kasa')) expect(after[0]).toBe('kasa');
       expect(kept).toBe(common);
       compared++;
     }
@@ -212,7 +226,8 @@ describe('placePeople: stałe numery osób', () => {
   });
 
   it('osoba zostaje przy zadaniu, gdy liczba ludzi przy nim się nie zmienia', () => {
-    // rozładunek idzie z jednej osoby na dwie; zniknęło za to miejsce na kasie. Osoba 2 stała przy paletach i nadal stoi
+    // rozładunek idzie z jednej osoby na dwie; zniknęło za to miejsce na kasie (bez pracy przy kasie osoba 0 nie jest do niej
+    // przypisana). Osoba 2 stała przy paletach i nadal stoi
     const prev: ShiftTask[] = ['kasa', 'wykladanie', 'rozladunek'];
     const next = placePeople(prev, 3, need({ wykladanie: 1, rozladunek: 2 }), zeroTasks());
     expect(next[2]).toBe('rozladunek');
@@ -222,15 +237,35 @@ describe('placePeople: stałe numery osób', () => {
 
   it('osoba przy zadaniu, które ma teraz mniej miejsc, oddaje je od najwyższego numeru', () => {
     const next = placePeople(['rozladunek', 'rozladunek', 'rozladunek'], 3, need({ rozladunek: 2, kasa: 1 }), zeroTasks());
-    expect(next).toEqual(['rozladunek', 'rozladunek', 'kasa']);
+    expect(next).toEqual(['kasa', 'rozladunek', 'rozladunek']);   // osoba 0 idzie do kasy, dwie z trzech przy paletach zostają
+  });
+
+  it('osoba 0 zawsze przy kasie, gdy kasa kogoś potrzebuje', () => {
+    // osoba 0 stała przy paletach, ale przy kasie pojawiła się praca: kasjer gracza (id 0) idzie na kasę
+    const prev: ShiftTask[] = ['rozladunek', 'rozladunek', 'wykladanie'];
+    const next = placePeople(prev, 3, need({ kasa: 1, rozladunek: 1, wykladanie: 1 }), zeroTasks());
+    expect(next[0]).toBe('kasa');
+    expect(next).toEqual(['kasa', 'rozladunek', 'wykladanie']);   // osoby 1 i 2 zostają przy swoich zadaniach
+    // nawet gdy ktoś inny stoi już przy kasie: osoba 0 ją przejmuje, tamten idzie tam, gdzie zostało miejsce
+    expect(placePeople(['wykladanie', 'kasa'], 2, need({ kasa: 1, wykladanie: 1 }), zeroTasks())).toEqual(['kasa', 'wykladanie']);
+    // przy większej kolejce kasa ma więcej miejsc: osoba 0 bierze pierwsze, kto stał przy kasie, zostaje
+    expect(placePeople(['rozladunek', 'kasa', 'wykladanie'], 3, need({ kasa: 2, wykladanie: 1 }), zeroTasks())).toEqual(['kasa', 'kasa', 'wykladanie']);
+    // bez pracy przy kasie (ani przypiętych) osoba 0 zostaje przy swoim zadaniu
+    expect(placePeople(['rozladunek', 'kasa', 'wykladanie'], 3, need({ rozladunek: 1, wykladanie: 2 }), zeroTasks())[0]).toBe('rozladunek');
+    // przypięty do kasy bez pracy wraca do puli, więc nie ma kasy, a osoba 0 nie jest do niej zmuszana
+    expect(placePeople(['wykladanie'], 1, need({ wykladanie: 1 }), need({ kasa: 1 }))).toEqual(['wykladanie']);
+    // jedyna osoba na zmianie przy pracy przy kasie
+    expect(placePeople(['rozladunek'], 1, need({ kasa: 1 }), zeroTasks())).toEqual(['kasa']);
   });
 
   it('zatrudnienie dodaje najwyższe id i nie rusza dotychczasowych', () => {
     const prev: ShiftTask[] = ['rozladunek', 'wykladanie'];
-    // przybyła praca przy kasie: nowa osoba (id 2) staje na kasie, choć kasa jest pierwsza w kolejności zadań
-    const next = placePeople(prev, 3, need({ kasa: 1, rozladunek: 1, wykladanie: 1 }), zeroTasks());
-    expect(next).toEqual(['rozladunek', 'wykladanie', 'kasa']);
+    // przybyła praca przy sprzątaniu: nowa osoba (id 2) staje przy miotle, choć sprzątanie jest ostatnie w kolejności zadań
+    const next = placePeople(prev, 3, need({ rozladunek: 1, wykladanie: 1, sprzatanie: 1 }), zeroTasks());
+    expect(next).toEqual(['rozladunek', 'wykladanie', 'sprzatanie']);
     expect(next.slice(0, 2)).toEqual(prev);
+    // gdy przybyła praca przy kasie, kasa idzie do osoby 0, a dotychczasowy wykładający zostaje
+    expect(placePeople(prev, 3, need({ kasa: 1, rozladunek: 1, wykladanie: 1 }), zeroTasks())).toEqual(['kasa', 'wykladanie', 'rozladunek']);
   });
 
   it('zwolnienie zabiera najwyższe id: pozostali zostają przy swoich zadaniach', () => {
@@ -239,8 +274,8 @@ describe('placePeople: stałe numery osób', () => {
   });
 
   it('wolny bierze wolne miejsce, ale nikogo nie wypycha', () => {
-    const next = placePeople(['wolny', 'kasa', 'wolny'], 3, need({ kasa: 1, wykladanie: 1 }), zeroTasks());
-    expect(next).toEqual(['wykladanie', 'kasa', 'wolny']);
+    const next = placePeople(['wolny', 'wykladanie', 'wolny'], 3, need({ wykladanie: 1, sprzatanie: 1 }), zeroTasks());
+    expect(next).toEqual(['sprzatanie', 'wykladanie', 'wolny']);
   });
 
   it('przypięci mają miejsca pierwsi, a przypięcie nie przestawia tych, którzy już tam stoją', () => {
@@ -249,7 +284,7 @@ describe('placePeople: stałe numery osób', () => {
     expect(next).toEqual(['kasa', 'rozladunek', 'sprzatanie']);
   });
 
-  it('własność: długość n, liczby przy zadaniach jak w taskCounts, najwięcej osób zostaje przy swoim', () => {
+  it('własność: długość n, liczby przy zadaniach jak w taskCounts, osoba 0 przy kasie, najwięcej osób zostaje przy swoim', () => {
     let seed = 12345;
     const rnd = (): number => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
     const pickTask = (): ShiftTask => (['kasa', 'rozladunek', 'wykladanie', 'sprzatanie', 'wolny'] as const)[Math.floor(rnd() * 5)]!;
@@ -262,8 +297,8 @@ describe('placePeople: stałe numery osób', () => {
       const counts = taskCounts(n, human, pinned);
       expect(next).toHaveLength(n);
       for (const task of STAFF_TASKS) expect(next.filter((x) => x === task).length, `runda ${round}, ${task}`).toBe(counts[task]);
-      const common = STAFF_TASKS.reduce((k, task) => k + Math.min(prev.slice(0, n).filter((x) => x === task).length, counts[task]), 0);
-      expect(next.filter((task, id) => task !== 'wolny' && task === prev[id]).length, `runda ${round}`).toBe(common);
+      if (n > 0 && counts.kasa > 0) expect(next[0], `runda ${round}: osoba 0 przy kasie`).toBe('kasa');
+      expect(next.filter((task, id) => task !== 'wolny' && task === prev[id]).length, `runda ${round}`).toBe(maxKept(prev, next));
     }
   });
 });
@@ -287,7 +322,7 @@ describe('staffOnShift: stałe numery', () => {
 
   it('po stepMinute z zatrudnieniem nowa osoba ma najwyższe id, a dotychczasowi zostają przy zadaniach', () => {
     const s = onShift(2, { kasa: 1, wykladanie: 1 });
-    s.shift.people = ['wykladanie', 'kasa'];        // wykładający ma niższy numer niż kasjer, wbrew kolejności zadań
+    s.shift.people = ['kasa', 'wykladanie'];
     s.queue = 40;                                   // kasa ma pracę
     for (const c of CATS) {                         // wykładanie ma pracę: puste półki i pełne zaplecze
       s.shelf[c] = 0;
@@ -296,8 +331,8 @@ describe('staffOnShift: stałe numery', () => {
     s.staff = 3;                                    // zatrudnienie między minutami
     stepMinute(s, info, []);
     expect(s.shift.people).toHaveLength(3);
-    expect(s.shift.people.slice(0, 2)).toEqual(['wykladanie', 'kasa']);
-    expect(s.shift.people).toEqual(placePeople(['wykladanie', 'kasa'], 3, s.shift.human, s.tycoon.staff.pinned));
+    expect(s.shift.people.slice(0, 2)).toEqual(['kasa', 'wykladanie']);
+    expect(s.shift.people).toEqual(placePeople(['kasa', 'wykladanie'], 3, s.shift.human, s.tycoon.staff.pinned));
   });
 });
 

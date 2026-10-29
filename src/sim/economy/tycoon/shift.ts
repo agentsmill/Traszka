@@ -14,7 +14,8 @@ export type ShiftTask = StaffTask | 'wolny';
  * Z tego widok „Ludzie na ekranie” czyta, kto co robi (`staffOnShift`), a panele pokazują, ilu stoi na kasie.
  *
  * `people[i]` to zadanie osoby o stałym numerze `i`: zatrudnienie dodaje osobę o najwyższym numerze, zwolnienie zabiera
- * tę o najwyższym, a zmiana liczby ludzi przy jednym zadaniu nie przestawia pozostałych (`placePeople`).
+ * tę o najwyższym, osoba 0 stoi przy kasie, gdy jest tam praca, a zmiana liczby ludzi przy jednym zadaniu nie przestawia
+ * pozostałych (`placePeople`).
  */
 export interface ShiftState {
   staff: number;
@@ -93,17 +94,24 @@ export function taskCounts(n: number, human: TaskMinutes, pinned: TaskMinutes): 
 /**
  * Kto z `n` ludzi na zmianie czym się zajmuje, z zachowaniem poprzednich zadań (`prev[i]` to zadanie osoby `i` w poprzedniej
  * minucie). Liczby osób przy zadaniach daje `taskCounts` (pula liczy osobominuty, nie osoby, więc to zgadnięcie z przydziału).
- * - Osoba `i` zostaje przy `prev[i]`, jeśli to zadanie ma jeszcze wolne miejsce: zmiana liczby ludzi przy jednym zadaniu
- *   nie przestawia osób przy pozostałych (więcej kroków zostaje na postaciach, które i tak mają coś do zrobienia).
- * - Pozostali, od najniższego numeru, biorą wolne miejsca w kolejności `STAFF_TASKS` (kasa ma więc najniższe numery, gdy
- *   zaczyna się od zera, np. rano). Nowa osoba ma numer wyższy niż wszyscy, więc nie ma `prev` i też bierze wolne miejsce.
+ * - Osoba 0 stoi przy kasie, gdy kasa kogokolwiek potrzebuje: widok daje kasjerowi gracza (jego wygląd, gesty sprzedaży)
+ *   najniższy numer, a kasę obsługuje pierwsza osoba z zadaniem `kasa`, więc oba muszą być tą samą osobą.
+ * - Pozostali: osoba `i` zostaje przy `prev[i]`, jeśli to zadanie ma jeszcze wolne miejsce: zmiana liczby ludzi przy jednym
+ *   zadaniu nie przestawia osób przy pozostałych (więcej kroków zostaje na postaciach, które i tak mają coś do zrobienia).
+ * - Reszta, od najniższego numeru, bierze wolne miejsca w kolejności `STAFF_TASKS`. Nowa osoba ma numer wyższy niż
+ *   wszyscy, więc nie ma `prev` i też bierze wolne miejsce.
  * - Kto nie dostał miejsca, jest `'wolny'`.
  * Funkcja jest czysta i deterministyczna: tylko `stepMinute` zapisuje jej wynik do `shift.people`.
  */
 export function placePeople(prev: readonly ShiftTask[], n: number, human: TaskMinutes, pinned: TaskMinutes): ShiftTask[] {
   const free = taskCounts(n, human, pinned);
   const out: (ShiftTask | null)[] = Array.from({ length: n }, () => null);
+  if (n > 0 && free.kasa > 0) {
+    out[0] = 'kasa';
+    free.kasa--;
+  }
   for (let i = 0; i < n; i++) {
+    if (out[i] !== null) continue;
     const t = prev[i];
     if (t !== undefined && t !== 'wolny' && free[t] > 0) {
       out[i] = t;
