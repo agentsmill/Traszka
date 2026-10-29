@@ -138,17 +138,23 @@ const present = (redact, text) => {
 
 // ——— dziennik biegu B i paczka zapisu ———
 
-const at = (day, hour) => day * 1440 + hour * 60;
+const at = (day, hour, minute = 0) => day * 1440 + hour * 60 + minute;
 /**
- * Kilka poleceń rozłożonych na pierwsze dni sezonu (kształt wpisów jak w `RunRecord.log`: minuta, numer, polecenie). Wynik z nimi
- * różni się od biegu pustego (sprawdza to krok biegu B), więc próba widzi, że sędzia naprawdę odtwarza dziennik. Gdyby polecenia
- * w grze zmieniły nazwy, symulacja je odrzuci, wynik się zrówna z pustym i krok B zgłosi, że ten dziennik trzeba odświeżyć.
+ * Stuknięcia przez pięć pierwszych dni sezonu (rano po dostawie i w szczycie), jedno zatrudnienie i jawne ustawienie domyślnego
+ * profilu załogi (przechodzi przez parser i symulację, nie zmieniając wyniku). Kształt wpisów jak w `RunRecord.log`: minuta, numer,
+ * polecenie. Wynik z tym dziennikiem różni się od biegu pustego (sprawdza to krok biegu B), więc próba widzi, że sędzia naprawdę
+ * odtwarza dziennik, a zatrudnienie sprawia, że raz wypada lepiej, raz gorzej (test sprawdza zachowanie próby w obu przypadkach).
+ * Gdyby polecenia w grze zmieniły nazwy (jak przy C2: zniknęły `setPriority`, `claimGift` i `claimQuest`), symulacja je odrzuci,
+ * wynik się zrówna z pustym i krok B zgłosi, że ten dziennik trzeba odświeżyć.
  */
 export const SMOKE_LOG = [
-  [at(0, 6), { type: 'setOrder', auto: true }],
-  [at(1, 12), { type: 'buyUpgrade', id: 'szkolenie' }],
+  [at(0, 6), { type: 'setStaffProfile', profile: 'kolejka' }],
+  ...Array.from({ length: 5 }, (_, day) => [
+    ...[0, 1, 2, 3].map((k) => [at(day, 7, 2 + k), { type: 'tapPallet' }]),
+    ...[0, 1, 2].map((k) => [at(day, 8, 5 + k), { type: 'tapTill' }]),
+  ]).flat(),
   [at(2, 9), { type: 'hire' }],
-].map(([minute, cmd], seq) => ({ minute, seq, cmd }));
+].sort((a, b) => a[0] - b[0]).map(([minute, cmd], seq) => ({ minute, seq, cmd }));
 
 /** Paczka zapisu w kształcie z gry (`traszka-przeniesienie`, wersja 1); polskie litery sprawdzają drogę UTF-8 przez bazę. Bez klucza gracza. */
 const saveBundle = (t) => JSON.stringify({

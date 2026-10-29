@@ -25,7 +25,7 @@ const NAMES = ['GENERATOR_VERSION', 'RANKED_SEASON_END_MINUTE', 'SIM_VERSION', '
 
 // Kontrola typów (tsc): ręcznie pisany `judgeBundle.d.ts` opisuje dokładnie to, co eksportuje wejście bundla. Wejście musi pasować do
 // deklaracji (każda zadeklarowana nazwa istnieje i ma zgodny typ), a zbiory nazw w obu plikach są identyczne.
-// (Typów nie da się przypisać w obie strony: `SIM_VERSION` w wejściu ma typ literalny `1`, a w deklaracji `number`.)
+// (Typów nie da się przypisać w obie strony: `SIM_VERSION` w wejściu ma typ literalny (`export const SIM_VERSION = 2`), a w deklaracji `number`.)
 const declaredAsEntry: typeof Declared = entry;
 type ExtraDeclared = Exclude<keyof typeof Declared, keyof typeof entry>;
 type Undeclared = Exclude<keyof typeof entry, keyof typeof Declared>;
@@ -49,20 +49,30 @@ afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
 const RUN: SubmittedRun = { seed: 'kiełbasa-42', gameVersion: 'test', generatorVersion: GENERATOR_VERSION, simVersion: SIM_VERSION, mode: 'ranked', log: [] };
 const at = (day: number, hour: number, minute = 0): number => day * MINUTES_PER_DAY + hour * 60 + minute;
-/** Kilka poleceń rozłożonych na sezon, także remont (zmiana układu sklepu w trakcie odtwarzania). */
-const LOG: LogEntry[] = [
-  [at(0, 6, 0), { type: 'setOrder', auto: false, manual: 6 }],
-  [at(0, 6, 1), { type: 'movePallet', palletId: 1, loc: 'backroom' }],
-  [at(0, 6, 2), { type: 'setPriority', priority: 'klienci' }],
-  [at(0, 6, 3), { type: 'tapPallet', palletId: 1 }],
-  [at(1, 12), { type: 'buyUpgrade', id: 'szkolenie' }],
-  [at(2, 9), { type: 'hire' }],
-  [at(3, 7), { type: 'setOrder', auto: true }],
-  [at(4, 12), { type: 'buyEquipment', id: 'sco' }],
-  [at(26, 7), { type: 'startRemont' }],
-  [at(26, 7, 5), { type: 'rushRemont' }],
-  [at(40, 12), { type: 'campaign' }],
-].map(([minute, cmd], seq) => ({ minute: minute as number, seq, cmd: cmd as LogEntry['cmd'] }));
+/**
+ * Kilka poleceń rozłożonych na sezon oraz codzienne stuknięcia przez cztery tygodnie: bez nich sklepu nie stać na remont 1 (25 tys. zł),
+ * a remont jest tu po to, żeby układ sklepu zmienił się w trakcie odtwarzania (pilnuje tego osobny test niżej).
+ */
+const LOG: LogEntry[] = (() => {
+  const planned: { minute: number; cmd: LogEntry['cmd'] }[] = [
+    { minute: at(0, 6, 0), cmd: { type: 'setOrder', auto: false, manual: 6 } },
+    { minute: at(0, 6, 1), cmd: { type: 'movePallet', palletId: 1, loc: 'backroom' } },
+    { minute: at(0, 6, 2), cmd: { type: 'setStaffProfile', profile: 'dostawa' } },
+    { minute: at(0, 6, 3), cmd: { type: 'tapPallet', palletId: 1 } },
+    { minute: at(1, 12), cmd: { type: 'buyUpgrade', id: 'szkolenie' } },
+    { minute: at(2, 9), cmd: { type: 'hire' } },
+    { minute: at(3, 7), cmd: { type: 'setOrder', auto: true } },
+    { minute: at(4, 12), cmd: { type: 'buyEquipment', id: 'sco' } },
+    { minute: at(28, 7), cmd: { type: 'startRemont' } },
+    { minute: at(28, 7, 5), cmd: { type: 'rushRemont' } },
+    { minute: at(40, 12), cmd: { type: 'campaign' } },
+  ];
+  for (let day = 0; day < 28; day++) {
+    for (let k = 0; k < 8; k++) planned.push({ minute: at(day, 7, 2 + k), cmd: { type: 'tapPallet' } });
+    for (let k = 0; k < 6; k++) planned.push({ minute: at(day, 8, 5 + k), cmd: { type: 'tapTill' } });
+  }
+  return planned.sort((a, b) => a.minute - b.minute).map((p, seq) => ({ minute: p.minute, seq, cmd: p.cmd }));
+})();
 /** Wynik policzony bezpośrednio z src/sim, tym samym kodem co w bundlu (drugi sposób do porównania). */
 const direct = (run: SubmittedRun): number => seasonScore(replayRun(run, RANKED_SEASON_END_MINUTE));
 
@@ -179,6 +189,10 @@ describe('sędzia na zbudowanym bundlu daje ten sam wynik co symulacja z src', (
     const res = await makeBundleVerifier(load)(run);
     expect(res).toEqual({ ok: true, score: direct(run) });
     expect(direct(run)).not.toBe(direct(RUN));
+  }, 60_000);
+
+  it('dziennik z testu przebudowuje sklep (remont 1 przyjęty), więc odtwarzanie przechodzi przez zmianę układu', () => {
+    expect(replayRun({ ...RUN, log: LOG }, RANKED_SEASON_END_MINUTE).remontLevel).toBeGreaterThan(0);
   }, 60_000);
 
   it('simVersion inny niż SIM_VERSION w bundlu: old-version', async () => {

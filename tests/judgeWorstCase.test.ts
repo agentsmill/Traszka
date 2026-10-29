@@ -57,7 +57,7 @@ describe('pomiar najgorszego przypadku (scripts/judge-worst-case.mjs): scenarius
   it('mieszanka z planem zawiera remonty, ruchy palet i zakupy, rozłożone na cały sezon; „jedna minuta” trzyma wszystko w jednej', () => {
     const [, mix, burst] = firstScenarios(3);
     const count = (type: string): number => mix!.run.log.filter((e) => e.cmd.type === type).length;
-    for (const type of ['startRemont', 'rushRemont', 'movePallet', 'returnPallet', 'buyUpgrade', 'buyEquipment', 'claimQuest', 'tapTill']) {
+    for (const type of ['startRemont', 'rushRemont', 'movePallet', 'returnPallet', 'buyUpgrade', 'buyEquipment', 'answerCard', 'pinStaff', 'setStaffProfile', 'tapTill']) {
       expect(count(type), type).toBeGreaterThan(0);
     }
     expect(mix!.run.log.at(-1)!.minute).toBeGreaterThan(RANKED_SEASON_END_MINUTE - 1_000);

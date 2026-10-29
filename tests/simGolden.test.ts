@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { MINUTES_PER_DAY, OPEN_FROM } from '@/sim/economy/catalog';
 import { COMMAND_TYPES, isCommand, type Command } from '@/sim/economy/commands';
+import type { EconomyState } from '@/sim/economy/economy';
 import { RANKED_SEASON_END_MINUTE, RANKED_SEASON_MONTHS, seasonScore } from '@/sim/ranked';
 import { freshRun, replayRun, type LogEntry, type RunRecord } from '@/sim/run';
 import { SIM_VERSION } from '@/sim/simVersion';
@@ -21,6 +22,7 @@ import { GENERATOR_VERSION } from '@/sim/store/generateStore';
  */
 const GOLDEN: Record<number, string> = {
   1: 'f782942df6a06a7b9cda5ef1c0e5678e9765faeccde5a6c16aa4efa8d9695d26',
+  2: 'de237366de4f5c764dde1bdbdd3f7adcc7fb7b80ff80673a4f73785a24e8cdca',   // C2: karty, profile i przypięcia załogi, KPI zamiast zleceń, bez prezentu
 };
 
 const SEED = 'kiełbasa-42';
@@ -58,20 +60,20 @@ function mulberry32(seed: number): () => number {
 }
 
 /**
- * Wydatki i decyzje gracza w wybranych dniach (dzień, godzina, minuta, polecenie). Terminy dobrane do dzisiejszej ekonomii tak,
- * żeby każde polecenie poza zapasowymi było przyjęte: najpierw tanie ulepszenia i sprzęt, remont 1 (25 tys. zł, poziom 8), ulepszenia
- * po remoncie, remont 2 i 3 (80 i 200 tys. zł, poziomy 14 i 20). Każdy remont ma dwie próby: dziś przyjmowana jest pierwsza
- * (remonty 1 i 2) albo druga (remont 3), a odrzucona jest zapasem na zmiany ekonomii, nie błędem.
+ * Wydatki i decyzje gracza w wybranych dniach (dzień, godzina, minuta, polecenie). Terminy dobrane do ekonomii z C2 tak, żeby
+ * każde polecenie poza zapasowymi było przyjęte, a bieg przetrwał sezon: gotówka po raporcie miesięcznym spada o opłatę
+ * franczyzową (2000 zł + 12% obrotu), a dwa raporty z rzędu poniżej −30 tys. zł kończą umowę, więc droższe zakupy idą we wrześniu
+ * (małe) i w listopadzie, a w październiku tylko kilka. Remont 1 (25 tys. zł, poziom 8) ma dwie próby: dziś przyjmowana jest
+ * pierwsza, a druga jest zapasem na zmiany cen (rush bez trwającego remontu jest odrzucany, nie błędem).
  * Palety startowe mają numery 1 i 2; sloty `equipmentSlot-1…3` (pojemność 2) są od układu 0, `equipmentSlot-4` od remontu 1.
  */
 const PLAN: readonly (readonly [day: number, hour: number, minute: number, cmd: Command])[] = [
-  // start: zamówienie ręczne, paleta na zaplecze, druga odesłana, priorytet kasy, pierwsza paczka od Centrali (okno od 14:00)
+  // start: zamówienie ręczne, paleta na zaplecze, druga odesłana, profil załogi, pierwsze stuknięcie
   [0, 6, 0, { type: 'setOrder', auto: false, manual: 6 }],
   [0, 6, 0, { type: 'movePallet', palletId: 1, loc: 'backroom' }],
   [0, 6, 1, { type: 'returnPallet', palletId: 2 }],
-  [0, 6, 2, { type: 'setPriority', priority: 'klienci' }],
+  [0, 6, 2, { type: 'setStaffProfile', profile: 'dostawa' }],
   [0, 6, 3, { type: 'tapPallet', palletId: 1 }],
-  [0, 14, 10, { type: 'claimGift' }],
   // pierwsze inwestycje, jeszcze na układzie 0
   [1, 12, 0, { type: 'buyUpgrade', id: 'szkolenie' }],
   [2, 9, 0, { type: 'hire' }],
@@ -80,7 +82,7 @@ const PLAN: readonly (readonly [day: number, hour: number, minute: number, cmd: 
   [4, 12, 0, { type: 'buyEquipment', id: 'sco' }],
   [5, 12, 0, { type: 'buyUpgrade', id: 'wozek' }],
   [6, 12, 0, { type: 'campaign' }],
-  [6, 12, 30, { type: 'setPriority', priority: 'palety' }],
+  [6, 12, 30, { type: 'setStaffProfile', profile: 'porzadek' }],
   [7, 12, 0, { type: 'buyUpgrade', id: 'regaly' }],
   [9, 12, 0, { type: 'buyEquipment', id: 'bankomat' }],
   [10, 12, 0, { type: 'buyUpgrade', id: 'kawa' }],
@@ -89,47 +91,55 @@ const PLAN: readonly (readonly [day: number, hour: number, minute: number, cmd: 
   [14, 12, 0, { type: 'buyEquipment', id: 'piec', slotId: 'equipmentSlot-2' }],
   [16, 12, 0, { type: 'buyUpgrade', id: 'ulotki' }],
   [18, 12, 0, { type: 'buyUpgrade', id: 'szkolenie' }],
-  // remont 1 (po nim zmienia się układ, a odtwarzanie liczy dalej na nowym `info`)
-  [26, 7, 0, { type: 'startRemont' }],
-  [26, 7, 5, { type: 'rushRemont' }],
-  [30, 7, 0, { type: 'startRemont' }],
-  [30, 7, 5, { type: 'rushRemont' }],
-  // ulepszenia i sprzęt po remoncie
-  [34, 12, 0, { type: 'buyUpgrade', id: 'asystent' }],
-  [35, 12, 0, { type: 'buyUpgrade', id: 'klima' }],
-  [36, 12, 0, { type: 'buyUpgrade', id: 'scoSoft' }],
-  [37, 12, 0, { type: 'buyUpgrade', id: 'kamery' }],
-  [38, 12, 0, { type: 'buyUpgrade', id: 'drugaKasa' }],
+  // październik: kilka droższych zakupów i zmiany w załodze (reszta wydatków zostaje na listopad, bo opłata franczyzowa zjada gotówkę po raporcie)
   [40, 12, 0, { type: 'buyUpgrade', id: 'traszkapka' }],
-  [42, 12, 0, { type: 'buyEquipment', id: 'paczkownik' }],
-  [44, 12, 0, { type: 'buyUpgrade', id: 'nocne' }],
+  [41, 12, 0, { type: 'buyUpgrade', id: 'asystent' }],
+  [45, 12, 0, { type: 'buyUpgrade', id: 'klima' }],
   [46, 12, 0, { type: 'hire' }],
-  [48, 12, 0, { type: 'setPriority', priority: 'rowno' }],
+  [48, 12, 0, { type: 'pinStaff', task: 'kasa', count: 1 }],
   [50, 12, 0, { type: 'fire' }],
-  [50, 12, 5, { type: 'setPriority', priority: 'klienci' }],
-  [52, 12, 0, { type: 'buyUpgrade', id: 'rampa' }],
-  [56, 12, 0, { type: 'buyUpgrade', id: 'tasmociag' }],
-  // remonty 2 i 3
-  [62, 7, 0, { type: 'startRemont' }],
-  [62, 7, 5, { type: 'rushRemont' }],
-  [66, 7, 0, { type: 'startRemont' }],
-  [66, 7, 5, { type: 'rushRemont' }],
-  [68, 12, 0, { type: 'buyUpgrade', id: 'wykladacz' }],
-  [72, 12, 0, { type: 'buyUpgrade', id: 'dostawy2' }],
+  [50, 12, 5, { type: 'setStaffProfile', profile: 'kolejka' }],
+  // listopad: kampania, remont 1 (dwie próby: zapas na zmiany cen) i zakupy po remoncie
   [78, 12, 0, { type: 'campaign' }],
-  [80, 12, 0, { type: 'buyEquipment', id: 'sco', slotId: 'equipmentSlot-4' }],
   [84, 7, 0, { type: 'startRemont' }],
   [84, 7, 5, { type: 'rushRemont' }],
   [86, 12, 0, { type: 'campaign' }],
   [87, 12, 0, { type: 'hire' }],
-  [88, 7, 0, { type: 'startRemont' }],
-  [88, 7, 5, { type: 'rushRemont' }],
 ];
 
 /**
- * Dziennik biegu: `PLAN` plus rytm każdego dnia, czyli stuknięcia (rano po dostawie i w szczycie seriami w kolejnych minutach, żeby
- * ruszyło combo, reszta rozrzucona po godzinach otwarcia), próby odbioru zleceń i paczek od Centrali. Numery zleceń i palet, o
- * które nie ma jak zapytać stan, zgaduje przybliżony wzór: chybione próby `applyCommand` odrzuca, a trafione zmieniają wynik.
+ * Odpowiedzi na karty dnia i okólniki: numer karty, jej id, dzień, godzina i minuta, od której jest widoczna, oraz numer wybranej
+ * odpowiedzi (każda inna niż domyślna, bo domyślną symulacja zatwierdza sama). Karty losuje symulacja z seeda i numeru dnia, więc
+ * numery są stałe dla tego seeda i tej ekonomii; po zmianie ekonomii mogą wskazywać inne karty (wtedy test „odpowiedzi trafiają w
+ * zamierzone karty” się czerwieni i trzeba odczytać nową listę z `state.tycoon.cards`). Dziennik nie zależy od stanu w trakcie testu.
+ */
+const CARD_ANSWERS: readonly (readonly [seq: number, id: string, day: number, hour: number, minute: number, answer: number])[] = [
+  [1, 'cenowki', 0, 11, 0, 0],
+  [2, 'chory', 1, 6, 0, 1],
+  [3, 'okolnik-ankieta', 2, 8, 0, 1],
+  [9, 'okolnik-paleta', 6, 8, 0, 0],
+  [12, 'ulewa', 8, 9, 0, 1],
+  [13, 'okolnik-premia', 9, 8, 0, 0],
+  [21, 'okolnik-usmiech', 15, 8, 0, 0],
+  [22, 'mecz', 16, 12, 0, 0],
+  [24, 'okolnik-witryna', 18, 8, 0, 0],
+  [33, 'okolnik-usmiech', 26, 8, 0, 1],
+  [37, 'okolnik-premia', 30, 8, 0, 0],
+  [45, 'mecz', 37, 12, 0, 1],
+  [48, 'okolnik-witryna', 40, 8, 0, 0],
+  [57, 'okolnik-premia', 46, 8, 0, 0],
+  [61, 'okolnik-ankieta', 50, 8, 0, 0],
+  [76, 'okolnik-witryna', 62, 8, 0, 0],
+  [78, 'ekspres', 65, 7, 30, 1],
+  [80, 'okolnik-paleta', 67, 8, 0, 0],
+  [97, 'okolnik-witryna', 80, 8, 0, 0],
+  [104, 'okolnik-premia', 84, 8, 0, 0],
+];
+
+/**
+ * Dziennik biegu: `PLAN`, odpowiedzi na karty (`CARD_ANSWERS`) i rytm każdego dnia, czyli stuknięcia (rano po dostawie i w szczycie
+ * seriami w kolejnych minutach, żeby ruszyło combo, reszta rozrzucona po godzinach otwarcia). Numery palet, o które nie ma jak
+ * zapytać stan, zgaduje przybliżony wzór: chybione próby `applyCommand` odrzuca, a trafione zmieniają wynik.
  * Wpisy dostają kolejne `seq` w kolejności minut, a tablica jest podana od końca, bo odtworzenie ma układać je po `(minute, seq)`,
  * a nie ufać kolejności w tablicy. Wszystko przed końcem sezonu (późniejsze serwer i tak odrzuca).
  */
@@ -141,17 +151,13 @@ function buildLog(): LogEntry[] {
   const add = (minute: number, cmd: Command): void => { planned.push({ minute, cmd }); };
 
   for (const [day, hour, minute, cmd] of PLAN) add(at(day, hour, minute), cmd);
+  for (const [seq, , day, hour, minute, answer] of CARD_ANSWERS) add(at(day, hour, minute), { type: 'answerCard', seq, answer });
   for (let day = 0; day < DAYS; day++) {
     for (let k = 0; k < 8; k++) add(at(day, 7, 2 + k), { type: 'tapPallet' });   // seria po dostawie o 7:00
     for (let k = 0; k < 5; k++) add(between(at(day, 7, 10), at(day, 10)), { type: 'tapPallet' });
     if (day < 10) add(at(day, 7, 30), { type: 'tapPallet', palletId: Math.round(5.4 * day) - 2 + between(0, 5) });   // ok. 5,4 palety dziennie
     for (let k = 0; k < 6; k++) add(at(day, 8, 5 + k), { type: 'tapTill' });   // seria w porannym szczycie
     for (let k = 0; k < 10; k++) add(between(at(day, 6), at(day, 23)), { type: 'tapTill' });
-    if (day % 3 === 1) {
-      const first = 1 + Math.floor(0.3 * day);   // zlecenia rodzą się wolniej niż mija czas: okno pięciu numerów wędruje za nimi
-      for (let k = 0; k < 5; k++) add(at(day, 22, 30 + k), { type: 'claimQuest', questId: first + k });
-    }
-    for (const hour of [9, 15, 21]) add(at(day, hour), { type: 'claimGift' });   // okno paczki trwa 3 godziny
   }
 
   return planned
@@ -196,24 +202,24 @@ function canonical(value: unknown): string {
 /** Bieg (seed + dziennik) w kształcie, jaki dostaje serwer. Dziennik kopiowany, żeby żaden test nie zależał od zmian w cudzej kopii. */
 const runOf = (log: readonly LogEntry[]): RunRecord => ({ seed: SEED, gameVersion: 'test', generatorVersion: GENERATOR_VERSION, mode: 'ranked', log: [...log] });
 
-/**
- * Skrót SHA-256 z kanonicznego JSON-a stanów w punktach kontrolnych (każdy odtwarzany od zera) razem z wynikiem sezonu, jaki
- * policzyłby z nich serwer.
- */
-function digest(log: readonly LogEntry[], checkpoints: readonly number[] = CHECKPOINTS): string {
-  const points = checkpoints.map((minute) => {
-    const state = replayRun(runOf(log), minute);
-    return { minute, state, score: seasonScore(state) };
-  });
+/** Skrót SHA-256 z kanonicznego JSON-a stanów w punktach kontrolnych razem z wynikiem sezonu, jaki policzyłby z nich serwer. */
+function digestOf(checkpoints: readonly number[], states: readonly EconomyState[]): string {
+  const points = checkpoints.map((minute, i) => ({ minute, state: states[i]!, score: seasonScore(states[i]!) }));
   return createHash('sha256').update(canonical(points)).digest('hex');
 }
 
-/** Skrót pełnego biegu w punktach kontrolnych, liczony raz (czysta funkcja stałych, więc kolejność testów nie ma znaczenia). */
-let fullDigest: string | undefined;
-const goldenDigest = (): string => (fullDigest ??= digest(LOG));
-/** Skrót samego końca sezonu pełnego dziennika (baza porównań w testach „bez tego polecenia”), też liczony raz. */
-let endDigest: string | undefined;
-const seasonDigest = (): string => (endDigest ??= digest(LOG, [RANKED_SEASON_END_MINUTE]));
+/** Skrót stanów w punktach kontrolnych (każdy odtwarzany od zera). */
+function digest(log: readonly LogEntry[], checkpoints: readonly number[] = CHECKPOINTS): string {
+  return digestOf(checkpoints, checkpoints.map((minute) => replayRun(runOf(log), minute)));
+}
+
+/** Stany pełnego dziennika w punktach kontrolnych, odtwarzane raz (czysta funkcja stałych; testy tylko je czytają). */
+let fullStates: EconomyState[] | undefined;
+const checkpointStates = (): EconomyState[] => (fullStates ??= CHECKPOINTS.map((minute) => replayRun(runOf(LOG), minute)));
+/** Skrót pełnego biegu w punktach kontrolnych, liczony raz. */
+const goldenDigest = (): string => digestOf(CHECKPOINTS, checkpointStates());
+/** Skrót samego końca sezonu pełnego dziennika (baza porównań w testach „bez tego polecenia”): ostatni punkt kontrolny, więc bez drugiego odtwarzania. */
+const seasonDigest = (): string => digestOf([RANKED_SEASON_END_MINUTE], [checkpointStates()[CHECKPOINTS.length - 1]!]);
 
 // --- Testy ------------------------------------------------------------------------------------------------------------------------
 
@@ -272,12 +278,12 @@ describe('dziennik stałego biegu naprawdę coś robi', () => {
   }, TIMEOUT);
 
   it('bieg dochodzi do końca sezonu, a w stanie końcowym widać skutki poleceń', () => {
-    for (const minute of CHECKPOINTS) {
-      const s = replayRun(runOf(LOG), minute);
+    CHECKPOINTS.forEach((minute, i) => {
+      const s = checkpointStates()[i]!;
       expect(s.gameOver, `bankructwo przed minutą ${minute}`).toBe(false);
       expect(s.minute).toBe(minute);
-    }
-    const s = replayRun(runOf(LOG), RANKED_SEASON_END_MINUTE);
+    });
+    const s = checkpointStates()[CHECKPOINTS.length - 1]!;
     expect(s.history, 'raporty miesięczne sezonu').toHaveLength(RANKED_SEASON_MONTHS);
     expect(Object.keys(s.upgrades).length, 'kupione ulepszenia').toBeGreaterThan(0);
     expect(s.equipment.length, 'kupiony sprzęt').toBeGreaterThan(0);
@@ -285,6 +291,21 @@ describe('dziennik stałego biegu naprawdę coś robi', () => {
     expect(s.total.taps, 'stuknięcia').toBeGreaterThan(0);
     expect(s.total.purchases, 'zakupy').toBeGreaterThan(0);
     expect(s.staff, 'zatrudnienie i zwolnienie zmieniły załogę').not.toBe(replayRun(runOf([]), RANKED_SEASON_END_MINUTE).staff);
+  }, TIMEOUT);
+
+  it('odpowiedzi na karty trafiają w zamierzone karty (w oknie ostatnich rozstrzygnięć każdego punktu kontrolnego)', () => {
+    let checked = 0;
+    CHECKPOINTS.forEach((minute, i) => {
+      const logged = new Map(checkpointStates()[i]!.tycoon.cards.log.map((l) => [l.seq, l]));
+      for (const [seq, id, day, hour, min, answer] of CARD_ANSWERS) {
+        const entry = logged.get(seq);
+        if (entry === undefined || at(day, hour, min) >= minute) continue;   // karta poza oknem pamięci stanu albo jeszcze nie odpowiedziana
+        expect(entry, `karta ${seq}: oczekiwano „${id}” z odpowiedzią ${answer}; numery kart się przesunęły, odczytaj nową listę ze stanu`)
+          .toMatchObject({ id, answer });
+        checked++;
+      }
+    });
+    expect(checked, 'żadna odpowiedź z dziennika nie została sprawdzona: okno pamięci kart nie sięga tak daleko').toBeGreaterThanOrEqual(CARD_ANSWERS.length / 2);
   }, TIMEOUT);
 
   it('kolejność wpisów w tablicy nie ma znaczenia, liczy się (minute, seq)', () => {

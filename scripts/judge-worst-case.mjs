@@ -26,31 +26,44 @@ const MINUTES_PER_DAY = 24 * 60;
 const at = (day, hour, minute = 0) => day * MINUTES_PER_DAY + hour * 60 + minute;
 
 /**
- * Plan zakupów i decyzji, który ekonomia przyjmuje (ten sam co w `tests/simGolden.test.ts`): ulepszenia, sprzęt, zatrudnienie i cztery
- * remonty z przyspieszeniem. Bieg z tym planem przeżywa sezon i ma duży, rozbudowany sklep, więc każdy krok minuty jest najdroższy.
+ * Plan zakupów i decyzji, który ekonomia przyjmuje (ten sam co w `tests/simGolden.test.ts`): ulepszenia, sprzęt, zatrudnienie,
+ * profil i przypięcia załogi oraz remont 1 z przyspieszeniem. Bieg z tym planem przeżywa sezon i ma rozbudowany sklep, więc każdy
+ * krok minuty jest drogi.
  */
 const PLAN = [
-  [0, 6, 0, { type: 'setOrder', auto: false, manual: 6 }], [0, 6, 0, { type: 'movePallet', palletId: 1, loc: 'backroom' }],
-  [0, 6, 1, { type: 'returnPallet', palletId: 2 }], [0, 6, 2, { type: 'setPriority', priority: 'klienci' }],
-  [0, 6, 3, { type: 'tapPallet', palletId: 1 }], [0, 14, 10, { type: 'claimGift' }],
-  [1, 12, 0, { type: 'buyUpgrade', id: 'szkolenie' }], [2, 9, 0, { type: 'hire' }], [2, 12, 0, { type: 'buyUpgrade', id: 'ulotki' }],
-  [3, 7, 0, { type: 'setOrder', auto: true }], [4, 12, 0, { type: 'buyEquipment', id: 'sco' }], [5, 12, 0, { type: 'buyUpgrade', id: 'wozek' }],
-  [6, 12, 0, { type: 'campaign' }], [6, 12, 30, { type: 'setPriority', priority: 'palety' }], [7, 12, 0, { type: 'buyUpgrade', id: 'regaly' }],
-  [9, 12, 0, { type: 'buyEquipment', id: 'bankomat' }], [10, 12, 0, { type: 'buyUpgrade', id: 'kawa' }],
-  [11, 12, 0, { type: 'setOrder', auto: false, manual: 40 }], [12, 7, 0, { type: 'setOrder', auto: true, manual: 5.5 }],
-  [14, 12, 0, { type: 'buyEquipment', id: 'piec', slotId: 'equipmentSlot-2' }], [16, 12, 0, { type: 'buyUpgrade', id: 'ulotki' }],
+  [0, 6, 0, { type: 'setOrder', auto: false, manual: 6 }],
+  [0, 6, 0, { type: 'movePallet', palletId: 1, loc: 'backroom' }],
+  [0, 6, 1, { type: 'returnPallet', palletId: 2 }],
+  [0, 6, 2, { type: 'setStaffProfile', profile: 'dostawa' }],
+  [0, 6, 3, { type: 'tapPallet', palletId: 1 }],
+  [1, 12, 0, { type: 'buyUpgrade', id: 'szkolenie' }],
+  [2, 9, 0, { type: 'hire' }],
+  [2, 12, 0, { type: 'buyUpgrade', id: 'ulotki' }],
+  [3, 7, 0, { type: 'setOrder', auto: true }],
+  [4, 12, 0, { type: 'buyEquipment', id: 'sco' }],
+  [5, 12, 0, { type: 'buyUpgrade', id: 'wozek' }],
+  [6, 12, 0, { type: 'campaign' }],
+  [6, 12, 30, { type: 'setStaffProfile', profile: 'porzadek' }],
+  [7, 12, 0, { type: 'buyUpgrade', id: 'regaly' }],
+  [9, 12, 0, { type: 'buyEquipment', id: 'bankomat' }],
+  [10, 12, 0, { type: 'buyUpgrade', id: 'kawa' }],
+  [11, 12, 0, { type: 'setOrder', auto: false, manual: 40 }],
+  [12, 7, 0, { type: 'setOrder', auto: true, manual: 5.5 }],
+  [14, 12, 0, { type: 'buyEquipment', id: 'piec', slotId: 'equipmentSlot-2' }],
+  [16, 12, 0, { type: 'buyUpgrade', id: 'ulotki' }],
   [18, 12, 0, { type: 'buyUpgrade', id: 'szkolenie' }],
-  [26, 7, 0, { type: 'startRemont' }], [26, 7, 5, { type: 'rushRemont' }], [30, 7, 0, { type: 'startRemont' }], [30, 7, 5, { type: 'rushRemont' }],
-  [34, 12, 0, { type: 'buyUpgrade', id: 'asystent' }], [35, 12, 0, { type: 'buyUpgrade', id: 'klima' }], [36, 12, 0, { type: 'buyUpgrade', id: 'scoSoft' }],
-  [37, 12, 0, { type: 'buyUpgrade', id: 'kamery' }], [38, 12, 0, { type: 'buyUpgrade', id: 'drugaKasa' }], [40, 12, 0, { type: 'buyUpgrade', id: 'traszkapka' }],
-  [42, 12, 0, { type: 'buyEquipment', id: 'paczkownik' }], [44, 12, 0, { type: 'buyUpgrade', id: 'nocne' }], [46, 12, 0, { type: 'hire' }],
-  [48, 12, 0, { type: 'setPriority', priority: 'rowno' }], [50, 12, 0, { type: 'fire' }], [50, 12, 5, { type: 'setPriority', priority: 'klienci' }],
-  [52, 12, 0, { type: 'buyUpgrade', id: 'rampa' }], [56, 12, 0, { type: 'buyUpgrade', id: 'tasmociag' }],
-  [62, 7, 0, { type: 'startRemont' }], [62, 7, 5, { type: 'rushRemont' }], [66, 7, 0, { type: 'startRemont' }], [66, 7, 5, { type: 'rushRemont' }],
-  [68, 12, 0, { type: 'buyUpgrade', id: 'wykladacz' }], [72, 12, 0, { type: 'buyUpgrade', id: 'dostawy2' }], [78, 12, 0, { type: 'campaign' }],
-  [80, 12, 0, { type: 'buyEquipment', id: 'sco', slotId: 'equipmentSlot-4' }],
-  [84, 7, 0, { type: 'startRemont' }], [84, 7, 5, { type: 'rushRemont' }], [86, 12, 0, { type: 'campaign' }], [87, 12, 0, { type: 'hire' }],
-  [88, 7, 0, { type: 'startRemont' }], [88, 7, 5, { type: 'rushRemont' }],
+  [40, 12, 0, { type: 'buyUpgrade', id: 'traszkapka' }],
+  [41, 12, 0, { type: 'buyUpgrade', id: 'asystent' }],
+  [45, 12, 0, { type: 'buyUpgrade', id: 'klima' }],
+  [46, 12, 0, { type: 'hire' }],
+  [48, 12, 0, { type: 'pinStaff', task: 'kasa', count: 1 }],
+  [50, 12, 0, { type: 'fire' }],
+  [50, 12, 5, { type: 'setStaffProfile', profile: 'kolejka' }],
+  [78, 12, 0, { type: 'campaign' }],
+  [84, 7, 0, { type: 'startRemont' }],
+  [84, 7, 5, { type: 'rushRemont' }],
+  [86, 12, 0, { type: 'campaign' }],
+  [87, 12, 0, { type: 'hire' }],
 ].map(([day, hour, minute, cmd]) => ({ minute: at(day, hour, minute), cmd }));
 
 const SLOTS = ['equipmentSlot-1', 'equipmentSlot-2', 'equipmentSlot-3', 'equipmentSlot-4'];
@@ -59,25 +72,25 @@ const EQUIPMENT = ['sco', 'bankomat', 'piec', 'paczkownik'];
 
 /**
  * Każdy typ polecenia osobno: `i` to numer wpisu w scenariuszu. Pola dobrane tak, żeby polecenie przechodziło `isCommand` (nie było
- * odrzucone na wejściu) i dochodziło do logiki ekonomii: numery palet i zleceń z zakresu, które się trafiają, id z katalogów.
+ * odrzucone na wejściu) i dochodziło do logiki ekonomii: numery palet i kart z zakresu, które się trafiają, id z katalogów.
  */
 export const COMMANDS = {
   tapPallet: (i) => ({ type: 'tapPallet', palletId: 1 + (i % 40) }),
   tapPalletAny: () => ({ type: 'tapPallet' }),
   tapTill: () => ({ type: 'tapTill' }),
-  claimQuest: (i) => ({ type: 'claimQuest', questId: 1 + (i % 200) }),
-  claimGift: () => ({ type: 'claimGift' }),
   movePallet: (i) => ({ type: 'movePallet', palletId: 1 + (i % 6), loc: ['sidewalk', 'backroom', 'floor'][i % 3] }),
   returnPallet: (i) => ({ type: 'returnPallet', palletId: 1 + (i % 6) }),
   setOrder: (i) => ({ type: 'setOrder', auto: i % 2 === 0, manual: i % 31 }),
   hire: () => ({ type: 'hire' }),
   fire: () => ({ type: 'fire' }),
-  setPriority: (i) => ({ type: 'setPriority', priority: ['klienci', 'palety', 'rowno'][i % 3] }),
+  setStaffProfile: (i) => ({ type: 'setStaffProfile', profile: ['kolejka', 'dostawa', 'porzadek'][i % 3] }),
+  pinStaff: (i) => ({ type: 'pinStaff', task: ['kasa', 'rozladunek', 'wykladanie', 'sprzatanie'][i % 4], count: i % 3 }),
   buyUpgrade: (i) => ({ type: 'buyUpgrade', id: UPGRADES[i % UPGRADES.length] }),
   buyEquipment: (i) => ({ type: 'buyEquipment', id: EQUIPMENT[i % EQUIPMENT.length], slotId: SLOTS[i % SLOTS.length] }),
   startRemont: () => ({ type: 'startRemont' }),
   campaign: () => ({ type: 'campaign' }),
   rushRemont: () => ({ type: 'rushRemont' }),
+  answerCard: (i) => ({ type: 'answerCard', seq: 1 + (i % 120), answer: i % 3 }),
 };
 const COMMAND_NAMES = Object.keys(COMMANDS);
 /** Polecenia, które nie kończą gry bankructwem (zwolnienie i zatrudnienie bez końca, ręczne zamówienia bez zysku zrujnowałyby sklep przed końcem sezonu). */

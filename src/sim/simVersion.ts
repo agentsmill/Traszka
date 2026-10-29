@@ -16,4 +16,4 @@
  *
  * Plik nie ma importów, bo trafia do bundla sędziego na serwerze.
  */
-export const SIM_VERSION = 1;
+export const SIM_VERSION = 2;
