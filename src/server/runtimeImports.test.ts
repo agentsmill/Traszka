@@ -82,7 +82,9 @@ describe('funkcje serwerowe: importy, które Vercel uruchomi', () => {
 describe('kod serwera i klucza gracza: znaki niewidoczne tylko jako zapis \\uXXXX, nigdy dosłownie', () => {
   // Dosłowny niewidoczny znak w wyrażeniu regularnym ginie przy kopiowaniu i edycji i po cichu zmienia jego sens: z `(?!<ZWJ>)\p{Cf}`
   // zostaje `(?!)\p{Cf}` i serwer wpuszcza wszystkie znaki formatujące (dosłowny U+200D był w `runs.ts`). Zapis \u200d tego nie traci.
-  const INVISIBLE = /[\u00ad\u061c\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff\u{e0000}-\u{e007f}]/u;
+  // Klasy ogólne (formatujące, separatory wierszy i akapitów, surogaty) plus jawne zakresy ze `src/game/seedText.ts` (`ALSO_HIDDEN`): puste litery,
+  // selektory wariantów, nieprzydzielone obok znaków niewidocznych i blok znaczników aż do U+E0FFF. U+FE0F (emoji) jest dozwolony.
+  const INVISIBLE = /[\p{Cf}\p{Zl}\p{Zp}\p{Cs}\u{034f}\u{115f}-\u{1160}\u{17b4}-\u{17b5}\u{180b}-\u{180f}\u{2065}\u{3164}\u{fe00}-\u{fe0e}\u{ffa0}\u{fff0}-\u{fff8}\u{e0000}-\u{e0fff}]/u;
 
   it('api/**, src/server/**, src/ui/ranking/** i playerKey.ts (bez testów) nie zawierają dosłownych znaków niewidocznych', () => {
     const sources = [
@@ -101,7 +103,14 @@ describe('kod serwera i klucza gracza: znaki niewidoczne tylko jako zapis \\uXXX
   });
 
   it('wykrywacz łapie wstawiony znak (inaczej test powyżej niczego nie pilnuje)', () => {
-    for (const c of ['\u200d', '\u200b', '\u00ad', '\ufeff', '\u202e', '\u{e0067}']) expect(INVISIBLE.test(`const x = /(?!${c})/u;`), c.codePointAt(0)!.toString(16)).toBe(true);
+    const inserted = [
+      0x200d, 0x200b, 0x00ad, 0xfeff, 0x202e, 0xe0067, 0x0600, 0x110bd, 0x1d173, 0xfff9, 0xe0100, 0x3164, 0x034f, 0x115f, 0x17b4, 0x180b,
+      0x2065, 0xfe00, 0xfe0e, 0xffa0, 0xfff0, 0xe0fff, 0x2028, 0x2029,
+    ];
+    for (const cp of inserted) expect(INVISIBLE.test(`const x = /(?!${String.fromCodePoint(cp)})/u;`), cp.toString(16)).toBe(true);
+    // zwykłe znaki i dozwolone emoji z selektorem wariantu nie są znakami niewidocznymi
+    for (const cp of [0x61, 0x20, 0x00a0, 0x2800, 0xfe0f, 0x1f3f4, 0x1f469]) expect(INVISIBLE.test(`const x = '${String.fromCodePoint(cp)}';`), cp.toString(16)).toBe(false);
     expect(INVISIBLE.test('const x = /(?!\\u200d)\\p{Cf}/u;')).toBe(false);
+    expect(INVISIBLE.test('const x = /\\u{e0100}/u;')).toBe(false);
   });
 });

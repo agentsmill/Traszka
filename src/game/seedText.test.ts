@@ -18,11 +18,15 @@ const SCOTLAND = flag('gbsct');
 const WALES = flag('gbwls');
 const FAMILY = '👨\u{200d}👩\u{200d}👧';
 
-/** Pojedyncze znaki, których nie widać (formatujące Cf) albo które służą do ukrywania tekstu (cały blok znaczników). Korpus z zadania. */
+/**
+ * Pojedyncze znaki, których nie widać (formatujące Cf), puste litery albo które służą do ukrywania tekstu (cały blok znaczników
+ * i selektory wariantów dodatkowe). Korpus z zadania i z rundy poprawek 1 (druga linia od `\u{034f}`).
+ */
 const HIDDEN_CHARS: string[] = [
   '\u{00ad}', '\u{061c}', '\u{180e}', ...range(0x200b, 0x200f), ...range(0x202a, 0x202e), ...range(0x2060, 0x2064), ...range(0x2066, 0x206f),
   '\u{feff}', ...range(0xfff9, 0xfffb), ...range(0x600, 0x605), '\u{06dd}', '\u{070f}', '\u{110bd}', ...range(0x1d173, 0x1d17a), ...range(0x1bca0, 0x1bca3),
-  ...range(0xe0000, 0xe007f),
+  '\u{034f}', ...range(0x115f, 0x1160), ...range(0x17b4, 0x17b5), ...range(0x180b, 0x180f), '\u{2065}', '\u{3164}', ...range(0xfe00, 0xfe0e), '\u{ffa0}',
+  ...range(0xfff0, 0xfff8), ...range(0xe0000, 0xe0fff),
 ];
 
 /** Dłuższe sekwencje i znaki z innych powodów kłopotliwe: okaleczone flagi, ZWJ, surogaty, sterujące, spacje, same niewidoczne. */
@@ -39,6 +43,9 @@ const TRICKY: Array<[name: string, text: string]> = [
   ['NUL', '\0'], ['tabulator', '\t'], ['nowy wiersz', '\n'], ['powrót karetki', '\r'], ['DEL', '\u007f'], ['NEL (U+0085)', '\u0085'],
   ['U+2028', '\u{2028}'], ['U+2029', '\u{2029}'], ['spacja niełamliwa', '\u{00a0}'], ['spacja ideograficzna', '\u{3000}'], ['spacja em', '\u{2003}'],
   ['same znaki niewidoczne', '\u{200b}\u{00ad}\u{2060}\u{feff}\u{202e}\u{e0067}\u{200d}'], ['same znaki niewidoczne i spacje', ' \u{200b} \u{00ad} \u{3000}'],
+  ['puste litery i selektory wariantów', '\u{3164}\u{ffa0}\u{115f}\u{1160}\u{fe00}\u{fe0e}\u{e0100}\u{e01ef}'],
+  // ⓜ (po zamianie na małe litery) nie jest już emoji, więc ZWJ obok niego trzeba zdjąć dopiero po zamianie wielkości liter
+  ['Ⓜ ZWJ 👩 (wielka litera jest emoji, mała nie)', '\u{24c2}\u{200d}\u{1f469}'], ['👩 ZWJ Ⓜ', '\u{1f469}\u{200d}\u{24c2}'],
 ];
 
 const CASES: Array<[name: string, text: string]> = [...HIDDEN_CHARS.map((c): [string, string] => [hex(c), c]), ...TRICKY];
@@ -62,15 +69,17 @@ describe('seed z gry zawsze przechodzi walidator, który stosuje serwer (jedna d
         checked++;
       }
     }
-    expect(checked).toBeGreaterThan(4000);
+    expect(checked).toBe(CASES.length * placements('x').length);
+    expect(checked).toBeGreaterThan(80000);
   });
 
   it('losowe napisy z korpusu, liter, spacji i emoji (kilka tysięcy, ustalone ziarno): to samo, a normalizacja jest idempotentna', () => {
     const rng = createRng('seedText-property');
     const plain = ['a', 'B', 'ż', 'Ł', ' ', ' ', '-', '9', '·', '🍕', '👩', '💻', '🏽', '\u{fe0f}', '\u{0301}', '\u{200d}', '\u{200d}', '\u{1f3f4}'];
-    const pool = [...plain, ...plain, ...plain, ...CASES.map(([, text]) => text), ENGLAND, SCOTLAND, WALES, ENGLAND, SCOTLAND, WALES];
+    const tricky = [...CASES.map(([, text]) => text), ENGLAND, SCOTLAND, WALES, ENGLAND, SCOTLAND, WALES];
+    const token = (): string => (rng.chance(0.5) ? rng.pick(plain) : rng.pick(tricky));   // połowa to zwykłe znaki, korpus (z blokiem 4096 znaczników) nie zagłusza reszty
     for (let i = 0; i < 6000; i++) {
-      const raw = Array.from({ length: rng.int(0, 31) }, () => rng.pick(pool)).join('');
+      const raw = Array.from({ length: rng.int(0, 31) }, token).join('');
       const seed = normalizeSeed(raw, DRAW);
       expect(isShowableSeed(seed, SEED_MAX), `${hex(raw)} → ${hex(seed)}`).toBe(true);
       expect(normalizeSeed(seed, DRAW), `idempotencja: ${hex(raw)}`).toBe(seed);
@@ -138,6 +147,20 @@ describe('normalizeSeed: znaki formatujące i znaczniki zdejmowane, flagi z Unic
     expect(normalizeSeed('\u{200d}\u{200d}', DRAW)).toBe('pierogi-731');
   });
 
+  it('ZWJ między emoji, z których jedno po zamianie na małe litery przestaje być emoji (Ⓜ → ⓜ), znika: ostatnie czyszczenie jest po zamianie wielkości liter', () => {
+    expect(normalizeSeed('\u{24c2}\u{200d}\u{1f469}', DRAW)).toBe('\u{24dc}\u{1f469}');
+    expect(normalizeSeed('\u{1f469}\u{200d}\u{24c2}', DRAW)).toBe('\u{1f469}\u{24dc}');
+  });
+
+  it('selektor wariantu emoji U+FE0F zostaje, a inne selektory wariantów, wypełniacze Hangul i znaki z bloku do U+E0FFF znikają; flagi zostają', () => {
+    expect(normalizeSeed('\u{2764}\u{fe0f}\u{fe0e}\u{3164}\u{ffa0}\u{e0100}', DRAW)).toBe('\u{2764}\u{fe0f}');
+    expect(normalizeSeed('\u{2764}\u{fe0f}\u{200d}\u{1f525}', DRAW)).toBe('\u{2764}\u{fe0f}\u{200d}\u{1f525}');
+    expect(normalizeSeed(`Flaga ${ENGLAND}\u{e0100}\u{e01ef}`, DRAW)).toBe(`flaga ${ENGLAND}`);
+    expect(normalizeSeed(`${SCOTLAND}\u{3164}${WALES}`, DRAW)).toBe(SCOTLAND + WALES);
+    expect(normalizeSeed(`\u{1f3f4}\u{e0100}${tags('gbeng')}\u{e007f}`, DRAW)).toBe('\u{1f3f4}');   // znak w środku flagi psuje ją, jak każdy inny
+    expect(normalizeSeed('pie\u{034f}\u{17b4}\u{17b5}\u{180b}\u{115f}\u{1160}\u{2065}\u{fff0}\u{fff8}rogi', DRAW)).toBe('pierogi');
+  });
+
   it('ten sam napis ze znakami niewidocznymi i bez nich to ten sam seed', () => {
     expect(normalizeSeed(`\u{00ad}Moja\u{2062} PIZZA${tags('x')}\u{fff9}`, DRAW)).toBe(normalizeSeed('Moja PIZZA', DRAW));
   });
@@ -148,6 +171,19 @@ describe('isShowableSeed: niedozwolone znaki w surowym tekście (tego, co przysy
     for (const c of HIDDEN_CHARS) {
       for (const raw of [c, `${c}pierogi`, `pie${c}rogi`, `pierogi${c}`, `${c}${c}`]) expect(isShowableSeed(raw), hex(raw)).toBe(false);
     }
+  });
+
+  it('U+FE0F zostaje (emoji z selektorem wariantu przechodzi), a U+FE0E, U+E0100 i U+3164 nie; trzy flagi RGI nadal przechodzą', () => {
+    for (const raw of ['\u{2764}\u{fe0f}', '\u{2764}\u{fe0f}\u{200d}\u{1f525}', '\u{263a}\u{fe0f} kawa', ENGLAND, SCOTLAND, WALES, `x${ENGLAND}y${WALES}`]) {
+      expect(isShowableSeed(raw), hex(raw)).toBe(true);
+    }
+    const bad = [
+      '\u{fe0e}', '\u{2764}\u{fe0e}', '\u{263a}\u{fe0e}', '\u{fe00}', '\u{e0100}', 'a\u{e0100}b', '\u{e01ef}', '\u{e0fff}', '\u{3164}', 'pie\u{3164}rogi', 'pie\u{ffa0}rogi',
+      'a\u{034f}b', 'a\u{115f}b', 'a\u{1160}b', 'a\u{17b4}b', 'a\u{17b5}b', 'a\u{180b}b', 'a\u{180f}b', 'a\u{2065}b', 'a\u{fff0}b', 'a\u{fff8}b',
+      `${ENGLAND}\u{e0100}`, `\u{1f3f4}\u{e0100}${tags('gbeng')}\u{e007f}`, `${WALES}\u{3164}`,
+    ];
+    for (const raw of bad) expect(isShowableSeed(raw), hex(raw)).toBe(false);
+    expect(isShowableSeed('a\u{2800}b')).toBe(true);        // Braille zostaje (poza zakresem, opisane w nagłówku seedText.ts)
   });
 
   it('znaki sterujące i separatory wierszy (też w środku): odrzucone', () => {

@@ -11,20 +11,28 @@
 // Co jest niedozwolone (seedy widzą wszyscy w rankingu, więc znak niewidoczny mógłby ukryć albo odwrócić napis):
 //  - znaki sterujące (Cc), formatujące (Cf: spacje zerowej szerokości, miękki łącznik, kierunek tekstu, BOM, operatory niewidoczne…),
 //    separatory wierszy i akapitów (Zl, Zp) oraz osamotnione surogaty (Cs; nie da się ich zapisać w adresie, `encodeURIComponent` rzuca),
-//  - cały blok znaczników U+E0000–U+E007F: są niewidoczne i służą do wpisywania ukrytego tekstu w zwykłym napisie,
+//  - cały blok znaczników U+E0000–U+E007F i dalej do U+E0FFF (obejmuje ideograficzne selektory wariantów U+E0100–U+E01EF): każdy taki
+//    znak jest niewidoczny, a ciąg takich znaków wpisuje w zwykły napis ukryty tekst albo dane,
+//  - znaki, które nie są Cf ani Cc, a nic nie rysują albo są pustymi literami (lista `ALSO_HIDDEN` niżej, jawne zakresy),
 // z dwoma wyjątkami:
 //  - spójnik ZWJ (U+200D) między dwoma emoji: skleja rodzinę, zawód, pirata; luzem, między literami i na brzegach jest niedozwolony,
 //  - flagi Anglii, Szkocji i Walii jako cała sekwencja. To jedyne flagi podziałów na liście RGI Unicode (emoji zalecane do
 //    powszechnej wymiany), a zapisuje się je znacznikami: czarna flaga U+1F3F4, kod `gbeng` / `gbsct` / `gbwls` literami-znacznikami
 //    (U+E0067 U+E0062 …) i znacznik końca U+E007F. Białą listę trzech sekwencji da się sprawdzić co do znaku, dowolnej sekwencji
 //    znaczników nie (każda niewidoczna wiadomość też by przeszła), więc każdy inny znacznik znika: znaczniki po innym znaku niż
-//    czarna flaga, obca albo urwana sekwencja (`gbxxx`, brak znacznika końca) zostawiają samą czarną flagę.
+//    czarna flaga, obca albo urwana sekwencja (`gbxxx`, brak znacznika końca) zostawiają samą czarną flagę. Flagi dopasowują się
+//    pierwsze, więc szeroki zakres znaczników ich nie psuje.
 //
-// Poza zakresem (nadal niewidoczne, nie są Cf ani Cc): wypełniacze Hangul (U+115F, U+1160, U+3164, U+FFA0), pusty znak Braille'a
-// (U+2800), połączenie grafemów (U+034F), niewidoczne samogłoski khmerskie (U+17B4, U+17B5), selektory wariantów mongolskie
-// (U+180B–U+180D) i dodatkowe selektory wariantów (U+E0100–U+E01EF), a w napisie z serwera także spacje inne niż zwykła
-// (U+00A0, U+2003, U+3000…) w środku. Gra zwija każdy ciąg odstępów do jednej zwykłej spacji, a pozostałych znaków z tej listy nie
-// rusza; serwer żadnego z nich nie odrzuca.
+// Zakresy są jawne, a nie `Default_Ignorable_Code_Point`: przeglądarka gracza i Node na Vercelu mogą mieć różne wersje Unicode, a lista
+// wypisana w kodzie daje wszędzie tę samą odpowiedź. (Klasy ogólne Cc, Cf, Cs, Zl, Zp zależą od wersji Unicode tylko dla znaków
+// przydzielonych później; to ryzyko jest znane i małe.)
+//
+// Poza zakresem (nadal możliwe w seedzie):
+//  - pusty znak Braille'a U+2800 (w wielu czcionkach jest widoczną kratką, więc nie ukrywa tekstu),
+//  - znaki łączące (Mn) w dowolnej liczbie, np. „zalgo”: kanał ograniczony limitem długości seeda (40 znaków w grze, 48 na serwerze);
+//    pełna obrona to biała lista znaków i osobna decyzja produktowa,
+//  - w napisie z serwera spacje inne niż zwykła w środku (U+00A0, U+2003, U+3000…): gra zwija każdy ciąg odstępów do jednej zwykłej
+//    spacji, serwer ich nie odrzuca.
 
 /** Spójnik zerowej szerokości (ZWJ): skleja emoji w jedno (rodzina, zawód). */
 const JOINER = '\u{200d}';
@@ -36,12 +44,35 @@ const tags = (letters: string): string => Array.from(letters, (c) => String.from
 const KEPT_FLAGS = ['gbeng', 'gbsct', 'gbwls'].map((code) => `\u{1f3f4}${tags(code)}\u{e007f}`);
 
 /**
+ * Znaki spoza Cc, Cf, Cs, Zl i Zp, które też nic nie rysują albo służą do ukrywania tekstu, i blok znaczników. Zakresy jawne (patrz
+ * nagłówek pliku). U+FE0F (selektor wariantu emoji) zostaje, bo emoji go potrzebuje: zakaz obejmuje U+FE00–U+FE0E.
+ */
+const ALSO_HIDDEN: ReadonlyArray<readonly [from: number, to: number]> = [
+  [0x034f, 0x034f],     // połączenie grafemów (CGJ)
+  [0x115f, 0x1160],     // wypełniacze Hangul (puste litery)
+  [0x17b4, 0x17b5],     // niewidoczne samogłoski khmerskie
+  [0x180b, 0x180f],     // selektory wariantów mongolskie (U+180E to Cf, reszta Mn)
+  [0x2065, 0x2065],     // nieprzydzielony, w środku zakresu operatorów niewidocznych U+2060–U+206F
+  [0x3164, 0x3164],     // wypełniacz Hangul (pusta litera)
+  [0xfe00, 0xfe0e],     // selektory wariantów 1–15 (bez U+FE0F)
+  [0xffa0, 0xffa0],     // wypełniacz Hangul, połówkowa szerokość (pusta litera)
+  [0xfff0, 0xfff8],     // nieprzydzielone, obok znaków adnotacji U+FFF9–U+FFFB
+  [0xe0000, 0xe0fff],   // znaczniki (U+E0000–U+E007F) i selektory wariantów dodatkowe (U+E0100–U+E01EF), także nieprzydzielone między nimi
+];
+/** Znak w zapisie `\u{…}` do wnętrza klasy znaków wyrażenia z flagą `u`. */
+const hexCp = (cp: number): string => `\\u{${cp.toString(16)}}`;
+const ALSO_HIDDEN_CLASS = ALSO_HIDDEN.map(([from, to]) => (from === to ? hexCp(from) : hexCp(from) + '-' + hexCp(to))).join('');
+
+/**
  * Jeden przebieg po tekście, trzy rodzaje trafień po kolei: (1) dozwolona flaga w całości (zostaje), (2) odstęp, którego nie wolno
  * pokazać (tabulator, nowy wiersz, pionowa tabulacja, wysuw strony, powrót karetki, U+2028, U+2029): staje się spacją, żeby słowa
  * po obu stronach się nie skleiły, (3) każdy inny niedozwolony znak (znika). U+FEFF to dla `\s` spacja, ale znika (jest formatujący,
  * nie jest odstępem z (2)). Znacznik trafiony poza (1) znika, więc w napisie nie zostaje żadna niepełna ani obca sekwencja.
  */
-const HIDDEN = new RegExp(`(${KEPT_FLAGS.join('|')})|([\\t-\\r\\u2028\\u2029])|[\\p{Cc}\\p{Cf}\\p{Cs}\\p{Zl}\\p{Zp}\\u{e0000}-\\u{e007f}]`, 'gu');
+const HIDDEN = new RegExp(
+  `(${KEPT_FLAGS.join('|')})|([\\t-\\r\\u{2028}\\u{2029}])|[\\p{Cc}\\p{Cf}\\p{Cs}\\p{Zl}\\p{Zp}${ALSO_HIDDEN_CLASS}]`,
+  'gu',
+);
 
 const PICTOGRAPH = /^\p{Extended_Pictographic}$/u;
 /** Co może stać między emoji a spójnikiem: selektor wariantu (❤\u{fe0f}) i odcień skóry (👩🏽). */
