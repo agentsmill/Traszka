@@ -35,6 +35,12 @@ export interface ServerDeps {
    * każde żądanie idzie do bazy jak dotąd.
    */
   rateGate?: RateGate;
+  /**
+   * Sekret `RANKING_SALT` (co najmniej 16 znaków), z którego limit liczy HMAC skrótu adresu zamiast czytać sól okna z bazy (jedno
+   * zapytanie zamiast dwóch). Sprawdza go `env.ts` (krótszy to 503 `not-configured`). Tylko do limitu: nigdy do odpowiedzi,
+   * logów ani bazy. Bez niego (testy handlerów) sól okna leży w bazie jak dotąd.
+   */
+  rateSecret?: string;
 }
 export type Handler = (request: Request, deps: ServerDeps) => Promise<Response>;
 
@@ -101,7 +107,7 @@ function rateLimiter(request: Request, deps: ServerDeps, action: RateAction): Ra
       return r ? tooMany(r) : null;
     },
     async limited(owner) {
-      const r = await checkRate(deps.redis, action, { owner, address }, deps.now(), { random: deps.random, gate: deps.rateGate });
+      const r = await checkRate(deps.redis, action, { owner, address }, deps.now(), { random: deps.random, gate: deps.rateGate, secret: deps.rateSecret });
       return r.ok ? null : tooMany(r);
     },
   };

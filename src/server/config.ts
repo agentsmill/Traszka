@@ -95,5 +95,12 @@ export const RATE_LIMITS: Readonly<Record<RateAction, RateLimit>> = {
  */
 export const RATE_GATE_MAX_ENTRIES = 10_000;
 
+/**
+ * Najkrótszy dopuszczalny sekret `RANKING_SALT` (znaki, jednostki UTF-16). Z sekretu liczy się HMAC skrótu adresu w limicie, a baza
+ * (z liczbą skrótów adresów) jest w rękach osób trzecich, gdy wycieknie token: krótki sekret dałoby się odgadnąć razem z całą
+ * przestrzenią adresów IPv4. Krótszy niż minimum to błąd konfiguracji (503), a nie ciche użycie słabego sekretu.
+ */
+export const RATE_SECRET_MIN_CHARS = 16;
+
 /** Odpowiedź z rankingiem może poleżeć w pamięci podręcznej Vercela (wszyscy widzą to samo), zgłoszenia nigdy. */
 export const BOARD_CACHE = 'public, max-age=0, s-maxage=30, stale-while-revalidate=30';

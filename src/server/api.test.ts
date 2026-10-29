@@ -212,6 +212,110 @@ describe('bramka limitu w pamięci instancji: route tworzy ją raz na instancję
   });
 });
 
+/**
+ * `RANKING_SALT`: sekret limitu zgłoszeń. Ustawiony i co najmniej 16 znaków: skrót adresu z HMAC, jedno zapytanie do bazy zamiast
+ * dwóch. Ustawiony, ale krótszy (także pusty): 503 `not-configured` (głośna pomyłka zamiast cichego użycia słabego sekretu).
+ */
+describe('RANKING_SALT: sekret limitu', () => {
+  const SECRET = 'sekretny-ciag-0123456789';
+  const save = testBundle();
+  const endpoints: [string, () => Promise<Response>][] = [
+    ['GET /api/leaderboard', () => leaderboard(new Request(`${ORIGIN}/api/leaderboard?board=global`))],
+    ['POST /api/player', () => player(post('/api/player', { key: KEY, nick: 'Mateusz' }))],
+    ['POST /api/runs', () => runs(post('/api/runs', { key: KEY, nick: 'Mateusz', run }))],
+    ['POST /api/save/download', () => download(post('/api/save/download', { key: KEY }))],
+    ['POST /api/save/upload', () => upload(post('/api/save/upload', { key: KEY, save }))],
+  ];
+  const allValues = async (): Promise<string> => {
+    const values = await Promise.all(redis.keys().map(async (k) => String((await redis.exec([['GET', k]]).catch(() => [''])).at(0))));
+    return [...redis.keys(), ...values].join('\n');
+  };
+
+  for (const short of ['x', 'a'.repeat(15), '', ' '.repeat(15), 'zażółć-gęślą-j']) {
+    it(`za krótka wartość ${JSON.stringify(short)} (${short.length} znaków): 503 not-configured dla każdego endpointu, bez fetch, z wpisem w logu bez wartości`, async () => {
+      vi.stubEnv('RANKING_SALT', short);
+      const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      for (const [name, call] of endpoints) {
+        const res = await call();
+        expect(res.status, name).toBe(503);
+        expect(res.headers.get('cache-control'), name).toBe('no-store');
+        expect(await res.json(), name).toEqual({ ok: false, error: 'not-configured', message: API_ERRORS['not-configured'].message });
+      }
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(redis.keys()).toEqual([]);
+      expect(errors).toHaveBeenCalledTimes(endpoints.length);
+      for (const call of errors.mock.calls) expect(call).toEqual(['[ranking] RANKING_SALT jest krótsza niż 16 znaków']);
+      errors.mockRestore();
+    });
+  }
+
+  it('wyłącznik wygrywa: bez RANKING_ENABLED krótki RANKING_SALT to nadal ranking-off, bez wpisu w logu i bez fetch', async () => {
+    vi.stubEnv('RANKING_ENABLED', undefined);
+    vi.stubEnv('RANKING_SALT', 'x');
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    for (const [name, call] of endpoints) expect((await (await call()).json() as { error: string }).error, name).toBe('ranking-off');
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(errors).not.toHaveBeenCalled();
+    errors.mockRestore();
+  });
+
+  it('dokładnie 16 znaków wystarcza; bez zmiennej (albo przy RANKING_SALT=undefined) limit działa jak dotąd, z solą w bazie', async () => {
+    vi.stubEnv('RANKING_SALT', 'a'.repeat(16));
+    expect((await download(post('/api/save/download', { key: KEY }))).status).toBe(404);   // przeszło przez limit do bazy
+    vi.stubEnv('RANKING_SALT', undefined);
+    expect((await download(post('/api/save/download', { key: KEY }))).status).toBe(404);
+  });
+
+  it('z sekretem limit idzie w jednym zapytaniu (INCR i PEXPIRE na liczniku adresu i klucza), bez soli okna w bazie', async () => {
+    vi.stubEnv('RANKING_SALT', SECRET);
+    expect((await download(post('/api/save/download', { key: KEY }))).status).toBe(404);
+    expect(upstash.log[0]).toEqual({ token: 'rw', commands: ['INCR', 'PEXPIRE', 'INCR', 'PEXPIRE'] });
+    expect(redis.keys().filter((k) => k.startsWith('tr:salt:'))).toEqual([]);
+    expect(redis.keys().filter((k) => k.startsWith('tr:rl:'))).toHaveLength(2);
+  });
+
+  it('bez sekretu limit idzie w dwóch zapytaniach: sól okna (SET NX PX, GET), potem liczniki', async () => {
+    vi.stubEnv('RANKING_SALT', undefined);
+    expect((await download(post('/api/save/download', { key: KEY }))).status).toBe(404);
+    expect(upstash.log.slice(0, 2)).toEqual([
+      { token: 'rw', commands: ['SET', 'GET'] },
+      { token: 'rw', commands: ['INCR', 'PEXPIRE', 'INCR', 'PEXPIRE'] },
+    ]);
+    expect(redis.keys().filter((k) => k.startsWith('tr:salt:'))).toHaveLength(1);
+  });
+
+  it('sekret nie trafia do odpowiedzi, logów ani bazy (klucze i wartości), także przy odmowie 429 i przy błędzie 500', async () => {
+    vi.stubEnv('RANKING_SALT', SECRET);
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const bodies: string[] = [];
+    // własny klucz i adres: bramka plików api/*.ts jest wspólna dla testów tego pliku, a wyczerpany limit trwa do końca okna
+    const own = new Request(`${ORIGIN}/api/save/download`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-real-ip': '192.0.2.77' }, body: JSON.stringify({ key: 'T8V9-W0XY-M2N3-P4Q5-R6S7' }) });
+    for (let i = 0; i < RATE_LIMITS.saveDown.perKey + 3; i++) {
+      const res = await download(own.clone());
+      bodies.push(JSON.stringify(await res.json()), JSON.stringify([...res.headers]));
+    }
+    expect(bodies.some((b) => b.includes('rate-limited'))).toBe(true);
+    vi.stubGlobal('fetch', async () => { throw new TypeError(`fetch failed ${SECRET}`); });
+    const failed = await leaderboard(new Request(`${ORIGIN}/api/leaderboard`));
+    expect(failed.status).toBe(500);
+    bodies.push(JSON.stringify(await failed.json()));
+    for (const text of [...bodies, JSON.stringify(errors.mock.calls), await allValues()]) {
+      expect(text).not.toContain(SECRET);
+      expect(text).not.toContain(SECRET.slice(0, 10));
+    }
+    errors.mockRestore();
+  });
+
+  it('depsFromEnv podaje sekret do limitu, a za krótki albo wyłączony ranking daje null', () => {
+    const env = { RANKING_ENABLED: '1', KV_REST_API_URL: URL_, KV_REST_API_TOKEN: RW };
+    expect(depsFromEnv(env)!.rateSecret).toBeUndefined();
+    expect(depsFromEnv({ ...env, RANKING_SALT: SECRET })!.rateSecret).toBe(SECRET);
+    expect(depsFromEnv({ ...env, RANKING_SALT: 'krotki' })).toBeNull();
+    expect(depsFromEnv({ ...env, RANKING_SALT: '' })).toBeNull();
+    expect(depsFromEnv({ ...env, RANKING_ENABLED: undefined, RANKING_SALT: SECRET })).toBeNull();
+  });
+});
+
 describe('wyłącznik RANKING_ENABLED: bez niego żaden endpoint nie dotyka bazy', () => {
   const OFF_MESSAGE = 'Ranking Centrali jeszcze nie ruszył.';
   const save = testBundle();

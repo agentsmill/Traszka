@@ -1,5 +1,5 @@
-import { BUDGET_TTL, RATE_GATE_MAX_ENTRIES, RATE_LIMITS, type RateAction } from './config.js';
-import { randomHex, sha256Hex, type RandomBytes } from './hash.js';
+import { BUDGET_TTL, RATE_GATE_MAX_ENTRIES, RATE_LIMITS, RATE_SECRET_MIN_CHARS, type RateAction } from './config.js';
+import { hmacSha256Hex, randomHex, sha256Hex, type RandomBytes } from './hash.js';
 import { KEYS } from './keys.js';
 import { asNumber, asString, RedisError, type RedisExec } from './redis.js';
 
@@ -147,28 +147,48 @@ export interface RateOptions {
   random?: RandomBytes;
   /** Bramka w pamięci instancji: odmawia bez pytania bazy temu, komu baza i tak by odmówiła (patrz `createRateGate`). */
   gate?: RateGate;
+  /**
+   * Sekret z `RANKING_SALT` (co najmniej `RATE_SECRET_MIN_CHARS` znaków): skrót adresu to HMAC-SHA256 tego sekretu, więc nie
+   * trzeba czytać soli okna z bazy i liczniki idą w jednym zapytaniu. Bez niego sól okna leży w bazie. Wartość nigdy nie trafia
+   * do bazy, odpowiedzi ani komunikatu błędu.
+   */
+  secret?: string;
 }
 
 /**
  * Jedno sprawdzenie limitu: `ok: false`, gdy licznik adresu albo klucza w tym oknie przekroczył limit. Najpierw bramka w pamięci
- * (jeśli jest): zapamiętana odmowa kosztuje 0 zapytań i 0 poleceń. Inaczej dwa zapytania do bazy: sól okna, potem liczniki.
+ * (jeśli jest): zapamiętana odmowa kosztuje 0 zapytań i 0 poleceń.
+ *
+ * Skrót adresu ma dwa tryby. Z sekretem: HMAC-SHA256(sekret, `traszka:limit:{akcja}:{okno}:{nr okna}:{kubełek adresu}`), skrócony
+ * do 32 znaków szesnastkowych; wiadomość wiąże skrót z akcją i oknem (pola przed kubełkiem nie mają dwukropków, więc zapis jest
+ * jednoznaczny), więc okien ani akcji nie da się połączyć, a jedno zapytanie do bazy robi same liczniki. Bez sekretu: sha256 z solą
+ * okna, którą baza trzyma (`SET NX`, `GET`), czyli dwa zapytania (sól, potem liczniki). Sól, której baza nie oddała, to błąd: skrót
+ * z pustą solą byłby tym samym skrótem u każdego klienta i w każdym oknie.
+ *
  * Czas życia kluczy jest względny (`PX`, `PEXPIRE`: tyle ms, ile zostało do końca okna według zegara funkcji): zegar bazy może się
  * różnić od zegara funkcji, a klucz z bezwzględnym końcem okna (`PXAT`) powstałby wtedy przeterminowany albo żyłby za długo.
  * Licznik dostaje czas życia przy każdym żądaniu, więc nie zostaje nigdy bez niego, także gdy klucz wygasł między poleceniami
- * (`INCR` zakłada go wtedy od nowa, a `PEXPIRE` zaraz po nim ustawia czas). Sól, której baza nie oddała, to błąd: skrót z pustą
- * solą byłby tym samym skrótem u każdego klienta i w każdym oknie. Błąd bazy wychodzi na zewnątrz i niczego nie zapisuje w bramce.
+ * (`INCR` zakłada go wtedy od nowa, a `PEXPIRE` zaraz po nim ustawia czas). Błąd bazy wychodzi na zewnątrz i niczego nie zapisuje
+ * w bramce.
  */
 export async function checkRate(redis: RedisExec, action: RateAction, who: Requester, now: number, opts: RateOptions = {}): Promise<RateCheck> {
   const { perKey, perAddress } = RATE_LIMITS[action];
   const { window, index, left, retryAfter } = windowOf(action, now);
+  if (opts.secret !== undefined && opts.secret.length < RATE_SECRET_MIN_CHARS) throw new RedisError('Limiter: sekret limitu jest za krótki');
   const local = await opts.gate?.peek(action, who, now);
   if (local) return local;
 
-  const saltKey = KEYS.salt(window, index);
-  const [, saltRaw] = await redis.exec([['SET', saltKey, randomHex(16, opts.random), 'NX', 'PX', left], ['GET', saltKey]]);
-  const salt = asString(saltRaw);
-  if (!salt) throw new RedisError('Limiter: baza nie oddała soli okna');
-  const address = (await sha256Hex(`${salt}:${addressBucket(who.address)}`)).slice(0, 32);
+  const bucket = addressBucket(who.address);
+  let address: string;
+  if (opts.secret !== undefined) {
+    address = (await hmacSha256Hex(opts.secret, `traszka:limit:${action}:${window}:${index}:${bucket}`)).slice(0, 32);
+  } else {
+    const saltKey = KEYS.salt(window, index);
+    const [, saltRaw] = await redis.exec([['SET', saltKey, randomHex(16, opts.random), 'NX', 'PX', left], ['GET', saltKey]]);
+    const salt = asString(saltRaw);
+    if (!salt) throw new RedisError('Limiter: baza nie oddała soli okna');
+    address = (await sha256Hex(`${salt}:${bucket}`)).slice(0, 32);
+  }
 
   const counters = [KEYS.rate(action, index, `a:${address}`)];
   if (who.owner !== null) counters.push(KEYS.rate(action, index, `k:${who.owner.slice(0, 32)}`));

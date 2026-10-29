@@ -10,7 +10,9 @@ import { sha256Hex } from './hash.js';
  *   globalnym; bez czasu życia, bo wyniki zostają w rankingu także po wygaśnięciu rezerwacji nicka;
  * - `tr:save:{owner}` → tekst `{savedAt}\n{paczka zapisu}`: jeden zapis gry na klucz, paczka bajt w bajt (bez ucieczek JSON-a w
  *   JSON-ie, więc 64 KB zajmuje w bazie 64 KB), a chwila wysłania (ms) w pierwszej linii;
- * - `tr:salt:{okno}:{nr}` i `tr:rl:{akcja}:{nr}:{k|a}:{skrót}` → sól i liczniki limitu zgłoszeń, giną z końcem okna;
+ * - `tr:salt:{okno}:{nr}` → losowa sól okna limitu, tylko bez `RANKING_SALT` (z sekretem skrót adresu liczy się bez soli w bazie);
+ * - `tr:rl:{akcja}:{nr}:{k|a}:{skrót}` → liczniki limitu zgłoszeń na klucz (`k`: początek hasha właściciela) i na adres (`a`: skrót
+ *   z solą okna albo HMAC z `RANKING_SALT`); sól i liczniki giną z końcem okna (czas życia względny: `PX`, `PEXPIRE`);
  * - `tr:budget:{nazwa}:{RRRR-MM-DD}` → globalny licznik wysłań w dobie UTC (np. `tr:budget:save:2026-10-28`), żyje dobę.
  *
  * `owner` to SHA-256 klucza gracza (samego klucza serwer nie przechowuje), `tag` to jego pierwsze 16 znaków: członek rankingu

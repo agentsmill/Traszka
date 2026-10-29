@@ -477,6 +477,17 @@ describe('limit zgłoszeń na poziomie handlerów: 429 z Retry-After na klucz i 
       expect((await c.call(deps, 9999, KEY_B, { 'x-real-ip': ipv4(9999) })).status).not.toBe(429);
     });
 
+    it(`${c.name} z sekretem limitu (deps.rateSecret): bez soli okna w bazie, ten sam limit na klucz, 429 z Retry-After`, async () => {
+      const { deps, redis } = setup();
+      const withSecret: ServerDeps = { ...deps, rateSecret: 'sekret-limitu-0123456789abcdef', rateGate: createRateGate() };
+      for (let i = 0; i < perKey; i++) expect((await c.call(withSecret, i, KEY_A, { 'x-real-ip': ipv4(i) })).status, `żądanie ${i + 1}`).not.toBe(429);
+      expect(redis.keys().filter((k) => k.startsWith('tr:salt:'))).toEqual([]);
+      const denied = await c.call(withSecret, perKey, KEY_A, { 'x-real-ip': ipv4(perKey) });
+      expect(denied.status).toBe(429);
+      expect(Number(denied.headers.get('retry-after'))).toBeGreaterThan(0);
+      expect((await c.call(withSecret, perKey + 1, KEY_B, { 'x-real-ip': ipv4(perKey + 1) })).status).not.toBe(429);
+    });
+
     it(`${c.name} z bramką: odmowa trwa do końca okna, a w następnym oknie żądanie znów przechodzi przez bazę`, async () => {
       const { deps, redis, clock } = gated();
       for (let i = 0; i <= perAddress; i++) await c.call(deps, i, keyN(i), { 'x-real-ip': '203.0.113.7' });
