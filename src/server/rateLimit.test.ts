@@ -6,12 +6,29 @@ import { MemoryRedis } from './memoryRedis';
 import { addressBucket, checkBudget, checkRate, createRateGate, utcDay, type RateCheck } from './rateLimit';
 import { RedisError, run, type RedisExec } from './redis';
 
+// Wspólne dane i pomocniki całego pliku (jedno miejsce, żeby grupy testów nie definiowały ich po kilka razy).
 const OWNER = 'a'.repeat(64);
 const OTHER = 'b'.repeat(64);
 const ADDRESS = '203.0.113.7';
+/** Gracz z domyślnego klucza i adresu. */
+const REQUESTER = { owner: OWNER, address: ADDRESS };
+/** Chwila testów: południe UTC, w środku okna (okna to wielokrotności 600 i 3600 s od epoki), więc seria żądań nie przeskoczy granicy. */
+const NOON = Date.UTC(2026, 9, 28, 12, 0, 0);
+/** Sekret `RANKING_SALT` (co najmniej `RATE_SECRET_MIN_CHARS` znaków). */
+const SECRET = 'sekret-limitu-0123456789abcdef';
+/** Skrót właściciela numer `i`: różne numery dają różne skróty o pełnej długości (limit klucza liczy się po jego początku). */
+const owner = (i: number): string => i.toString(16).padStart(8, '0').padEnd(64, 'f');
+/** Koniec okna akcji, w którym leży `now` (ms). */
+const windowEnd = (action: RateAction, now: number): number => (Math.floor(now / (RATE_LIMITS[action].window * 1000)) + 1) * RATE_LIMITS[action].window * 1000;
+/** Ile zapytań i poleceń do bazy kosztuje `fn` (różnica liczników `MemoryRedis`). */
+const cost = async (redis: MemoryRedis, fn: () => Promise<unknown>): Promise<{ calls: number; commands: number }> => {
+  const [calls, commands] = [redis.calls, redis.commands];
+  await fn();
+  return { calls: redis.calls - calls, commands: redis.commands - commands };
+};
 
 function setup() {
-  const clock = { now: Date.UTC(2026, 9, 28, 12, 0, 0) };
+  const clock = { now: NOON };
   return { clock, redis: new MemoryRedis(() => clock.now) };
 }
 
@@ -33,7 +50,7 @@ describe('limit zgłoszeń na klucz i na adres', () => {
     const { redis, clock } = setup();
     const { perAddress } = RATE_LIMITS.runs;
     for (let i = 0; i < perAddress; i++) {
-      expect((await checkRate(redis, 'runs', { owner: i.toString(16).padStart(8, '0').padEnd(64, 'f'), address: ADDRESS }, clock.now)).ok).toBe(true);
+      expect((await checkRate(redis, 'runs', { owner: owner(i), address: ADDRESS }, clock.now)).ok).toBe(true);
     }
     expect((await checkRate(redis, 'runs', { owner: OTHER, address: ADDRESS }, clock.now)).ok).toBe(false);
     expect((await checkRate(redis, 'runs', { owner: null, address: ADDRESS }, clock.now)).ok).toBe(false);
@@ -54,9 +71,9 @@ describe('limit zgłoszeń na klucz i na adres', () => {
     expect(keys.join(' ')).not.toContain(ADDRESS);
     expect(keys.some((k) => k.startsWith('tr:salt:'))).toBe(true);
     expect(keys.some((k) => k.includes(':a:'))).toBe(true);
-    const windowEnd = (Math.floor(clock.now / (RATE_LIMITS.runs.window * 1000)) + 1) * RATE_LIMITS.runs.window * 1000;
-    for (const k of keys) expect(Number((await redis.exec([['PTTL', k]]))[0]), k).toBe(windowEnd - clock.now);
-    clock.now = windowEnd;
+    const end = windowEnd('runs', clock.now);
+    for (const k of keys) expect(Number((await redis.exec([['PTTL', k]]))[0]), k).toBe(end - clock.now);
+    clock.now = end;
     expect(redis.keys()).toEqual([]);
   });
 
@@ -79,10 +96,7 @@ describe('limit zgłoszeń na klucz i na adres', () => {
  * wtedy przeterminowany (`INCR` zakłada go po cichu bez czasu życia) albo żyłby za długo, i licznik przestawał liczyć w oknie.
  */
 describe('czas życia kluczy limitu jest względny, więc nie zależy od zegara bazy', () => {
-  const NOON = Date.UTC(2026, 9, 28, 12, 0, 0);
-  const { window } = RATE_LIMITS.runs;
-  const windowEnd = (Math.floor(NOON / (window * 1000)) + 1) * window * 1000;
-  const who = { owner: OWNER, address: ADDRESS };
+  const END = windowEnd('runs', NOON);
 
   async function ttls(redis: MemoryRedis): Promise<Record<string, number>> {
     const out: Record<string, number> = {};
@@ -93,10 +107,10 @@ describe('czas życia kluczy limitu jest względny, więc nie zależy od zegara 
   for (const [name, skew] of [['zegar bazy zgodny', 0], ['baza wyprzedza o godzinę', 3_600_000], ['baza wyprzedza o dobę', 86_400_000], ['baza spóźnia się o godzinę', -3_600_000]] as const) {
     it(`${name}: sól i oba liczniki żyją dokładnie do końca okna według zegara funkcji`, async () => {
       const redis = new MemoryRedis(() => NOON + skew);
-      expect((await checkRate(redis, 'runs', who, NOON)).ok).toBe(true);
+      expect((await checkRate(redis, 'runs', REQUESTER, NOON)).ok).toBe(true);
       const found = await ttls(redis);
       expect(Object.keys(found)).toHaveLength(3);   // sól, licznik adresu, licznik klucza
-      for (const [k, ttl] of Object.entries(found)) expect(ttl, k).toBe(windowEnd - NOON);
+      for (const [k, ttl] of Object.entries(found)) expect(ttl, k).toBe(END - NOON);
     });
 
     it(`${name}: licznik naprawdę liczy w oknie (limit działa), a z końcem okna znika i okno zaczyna od zera`, async () => {
@@ -104,9 +118,9 @@ describe('czas życia kluczy limitu jest względny, więc nie zależy od zegara 
       const redis = new MemoryRedis(() => t.fn + skew);
       for (let i = 0; i < RATE_LIMITS.runs.perKey; i++) expect((await checkRate(redis, 'runs', { owner: OWNER, address: `10.0.0.${i}` }, t.fn)).ok).toBe(true);
       expect((await checkRate(redis, 'runs', { owner: OWNER, address: '10.0.1.1' }, t.fn)).ok).toBe(false);
-      t.fn = windowEnd - 1;
+      t.fn = END - 1;
       expect(redis.keys().length).toBeGreaterThan(0);
-      t.fn = windowEnd;
+      t.fn = END;
       expect(redis.keys()).toEqual([]);
       expect((await checkRate(redis, 'runs', { owner: OWNER, address: '10.0.1.1' }, t.fn)).ok).toBe(true);
     });
@@ -114,15 +128,15 @@ describe('czas życia kluczy limitu jest względny, więc nie zależy od zegara 
 
   it('licznik bez czasu życia (np. po dawnym błędzie albo po wygaśnięciu klucza między poleceniami) dostaje go przy kolejnym żądaniu', async () => {
     const redis = new MemoryRedis(() => NOON);
-    await checkRate(redis, 'runs', who, NOON);
+    await checkRate(redis, 'runs', REQUESTER, NOON);
     const counters = redis.keys().filter((k) => k.startsWith('tr:rl:'));
     expect(counters).toHaveLength(2);
     for (const k of counters) await run(redis, ['SET', k, '3']);   // SET bez opcji zrywa czas życia: licznik na zawsze
     expect(Object.values(await ttls(redis)).filter((t) => t === -1)).toHaveLength(2);
-    await checkRate(redis, 'runs', who, NOON);
+    await checkRate(redis, 'runs', REQUESTER, NOON);
     for (const k of counters) {
       expect(await run(redis, ['GET', k]), k).toBe('4');
-      expect(Number(await run(redis, ['PTTL', k])), k).toBe(windowEnd - NOON);
+      expect(Number(await run(redis, ['PTTL', k])), k).toBe(END - NOON);
     }
   });
 
@@ -130,38 +144,35 @@ describe('czas życia kluczy limitu jest względny, więc nie zależy od zegara 
     const seen: string[] = [];
     const redis = new MemoryRedis(() => NOON);
     const spy: RedisExec = { exec: (commands) => { for (const c of commands) seen.push(c.map(String).join(' ')); return redis.exec(commands); } };
-    await checkRate(spy, 'runs', who, NOON);
+    await checkRate(spy, 'runs', REQUESTER, NOON);
     expect(seen.length).toBeGreaterThan(0);
     expect(seen.filter((c) => /\b(PXAT|EXAT|PEXPIREAT)\b/i.test(c))).toEqual([]);
   });
 
   it('ostatnia milisekunda okna: czas życia nie spada poniżej 1 ms (zero albo minus usunęłoby klucz od razu)', async () => {
     const redis = new MemoryRedis(() => NOON);
-    await checkRate(redis, 'runs', who, windowEnd - 1);
+    await checkRate(redis, 'runs', REQUESTER, END - 1);
     for (const [k, ttl] of Object.entries(await ttls(redis))) expect(ttl, k).toBe(1);
     expect(redis.keys()).toHaveLength(3);
   });
 });
 
 describe('sól okna w bazie jest wymagana', () => {
-  const who = { owner: OWNER, address: ADDRESS };
-  const NOON = Date.UTC(2026, 9, 28, 12, 0, 0);
-
   it('baza, która nie oddaje soli (GET daje null), to błąd, a nie skrót z pustą solą; liczniki nie powstają', async () => {
     const seen: string[] = [];
     const lost: RedisExec = { exec: async (commands) => { for (const c of commands) seen.push(String(c[0])); return commands.map(() => null); } };
-    await expect(checkRate(lost, 'runs', who, NOON)).rejects.toBeInstanceOf(RedisError);
+    await expect(checkRate(lost, 'runs', REQUESTER, NOON)).rejects.toBeInstanceOf(RedisError);
     expect(seen).toEqual(['SET', 'GET']);   // do liczników nie doszło
   });
 
   it('pusta sól to też błąd (skrót z pustą solą byłby tym samym skrótem u wszystkich)', async () => {
     const empty: RedisExec = { exec: async (commands) => commands.map((c) => (c[0] === 'GET' ? '' : 'OK')) };
-    await expect(checkRate(empty, 'runs', who, NOON)).rejects.toBeInstanceOf(RedisError);
+    await expect(checkRate(empty, 'runs', REQUESTER, NOON)).rejects.toBeInstanceOf(RedisError);
   });
 
   it('komunikat błędu nie zawiera adresu klienta', async () => {
     const lost: RedisExec = { exec: async (commands) => commands.map(() => null) };
-    const err = await checkRate(lost, 'runs', who, NOON).catch((e: unknown) => e);
+    const err = await checkRate(lost, 'runs', REQUESTER, NOON).catch((e: unknown) => e);
     expect(String((err as Error).message)).not.toContain(ADDRESS);
   });
 });
@@ -172,22 +183,14 @@ describe('sól okna w bazie jest wymagana', () => {
  * odrzuca niczego, czego baza by nie odrzuciła. Zapamiętana odmowa kosztuje 0 zapytań i 0 poleceń aż do końca okna.
  */
 describe('bramka limitu w pamięci instancji (createRateGate)', () => {
-  const NOON = Date.UTC(2026, 9, 28, 12, 0, 0);
-  const owner = (i: number): string => i.toString(16).padStart(8, '0').padEnd(64, 'f');
-  const windowEnd = (action: RateAction, now: number): number => (Math.floor(now / (RATE_LIMITS[action].window * 1000)) + 1) * RATE_LIMITS[action].window * 1000;
+  const player1 = { owner: owner(1), address: ADDRESS };   // gracz numer 1 z domyślnego adresu
   const denial = (action: RateAction, now: number): RateCheck => ({ ok: false, retryAfter: Math.ceil((windowEnd(action, now) - now) / 1000) });
-  const cost = async (redis: MemoryRedis, fn: () => Promise<unknown>): Promise<{ calls: number; commands: number }> => {
-    const [calls, commands] = [redis.calls, redis.commands];
-    await fn();
-    return { calls: redis.calls - calls, commands: redis.commands - commands };
-  };
 
   it('świeża bramka niczego nie odrzuca; licznik poniżej limitu też nie', async () => {
     const gate = createRateGate();
-    const who = { owner: owner(1), address: ADDRESS };
-    expect(await gate.peek('runs', who, NOON)).toBeNull();
-    await gate.record('runs', who, NOON, { address: RATE_LIMITS.runs.perAddress - 1, key: RATE_LIMITS.runs.perKey - 1 });
-    expect(await gate.peek('runs', who, NOON)).toBeNull();
+    expect(await gate.peek('runs', player1, NOON)).toBeNull();
+    await gate.record('runs', player1, NOON, { address: RATE_LIMITS.runs.perAddress - 1, key: RATE_LIMITS.runs.perKey - 1 });
+    expect(await gate.peek('runs', player1, NOON)).toBeNull();
   });
 
   it('licznik adresu na limicie: odmowa dla każdego klucza z tego adresu (też kubełek IPv6 /64), nie dla innego adresu', async () => {
@@ -220,31 +223,28 @@ describe('bramka limitu w pamięci instancji (createRateGate)', () => {
 
   it('odczyt z odpowiedzi nie cofa zapamiętanej odmowy (odpowiedzi mogą wracać w odwrotnej kolejności)', async () => {
     const gate = createRateGate();
-    const who = { owner: owner(1), address: ADDRESS };
-    await gate.record('runs', who, NOON, { address: RATE_LIMITS.runs.perAddress + 5, key: 1 });
-    await gate.record('runs', who, NOON, { address: 3, key: 1 });
-    expect(await gate.peek('runs', who, NOON)).toMatchObject({ ok: false });
+    await gate.record('runs', player1, NOON, { address: RATE_LIMITS.runs.perAddress + 5, key: 1 });
+    await gate.record('runs', player1, NOON, { address: 3, key: 1 });
+    expect(await gate.peek('runs', player1, NOON)).toMatchObject({ ok: false });
   });
 
   it('odmowa jest osobna dla każdej akcji', async () => {
     const gate = createRateGate();
-    const who = { owner: owner(1), address: ADDRESS };
-    await gate.record('runs', who, NOON, { address: RATE_LIMITS.runs.perAddress, key: 1 });
-    expect(await gate.peek('runs', who, NOON)).toMatchObject({ ok: false });
-    expect(await gate.peek('saveUp', who, NOON)).toBeNull();
-    expect(await gate.peek('player', who, NOON)).toBeNull();
+    await gate.record('runs', player1, NOON, { address: RATE_LIMITS.runs.perAddress, key: 1 });
+    expect(await gate.peek('runs', player1, NOON)).toMatchObject({ ok: false });
+    expect(await gate.peek('saveUp', player1, NOON)).toBeNull();
+    expect(await gate.peek('player', player1, NOON)).toBeNull();
   });
 
   it('Retry-After to czas do końca okna, malejący z upływem okna, i zawsze co najmniej sekunda; w następnym oknie odmowy już nie ma', async () => {
     const gate = createRateGate();
-    const who = { owner: owner(1), address: ADDRESS };
-    await gate.record('runs', who, NOON, { address: RATE_LIMITS.runs.perAddress, key: 1 });
+    await gate.record('runs', player1, NOON, { address: RATE_LIMITS.runs.perAddress, key: 1 });
     const end = windowEnd('runs', NOON);
-    expect(await gate.peek('runs', who, NOON)).toEqual({ ok: false, retryAfter: (end - NOON) / 1000 });
-    expect(await gate.peek('runs', who, end - 1_500)).toEqual({ ok: false, retryAfter: 2 });
-    expect(await gate.peek('runs', who, end - 1)).toEqual({ ok: false, retryAfter: 1 });
-    expect(await gate.peek('runs', who, end)).toBeNull();
-    expect(await gate.peek('runs', who, end + 3_600_000)).toBeNull();
+    expect(await gate.peek('runs', player1, NOON)).toEqual({ ok: false, retryAfter: (end - NOON) / 1000 });
+    expect(await gate.peek('runs', player1, end - 1_500)).toEqual({ ok: false, retryAfter: 2 });
+    expect(await gate.peek('runs', player1, end - 1)).toEqual({ ok: false, retryAfter: 1 });
+    expect(await gate.peek('runs', player1, end)).toBeNull();
+    expect(await gate.peek('runs', player1, end + 3_600_000)).toBeNull();
   });
 
   it('w pamięci nie leży surowy adres ani prefiks IPv6, a skrót zależy od soli instancji (dwie bramki nazywają ten sam adres inaczej)', async () => {
@@ -406,7 +406,7 @@ describe('własność: bramka nigdy nie odrzuca tego, czego sama baza nie odrzuc
   const ACTIONS: RateAction[] = ['runs', 'player', 'saveUp', 'saveDown'];
   // Mało adresów i kluczy, żeby limity (12 do 120 na okno) naprawdę się przekraczały; dwa adresy IPv6 to jeden kubełek /64.
   const ADDRESSES = ['203.0.113.7', '198.51.100.1', '2001:db8:aaaa:bbbb::1', '2001:db8:aaaa:bbbb:ffff::2', 'nieznany'];
-  const OWNERS = Array.from({ length: 3 }, (_, i) => i.toString(16).padStart(8, '0').padEnd(64, 'e'));
+  const OWNERS = Array.from({ length: 3 }, (_, i) => owner(i));
 
   for (const [name, secret] of [['sól okna w bazie', undefined], ['HMAC z RANKING_SALT', 'testowy-sekret-limitu-0123456789']] as const) {
     for (const seed of [1, 2, 3]) {
@@ -451,16 +451,13 @@ describe('własność: bramka nigdy nie odrzuca tego, czego sama baza nie odrzuc
  * w jednym zapytaniu zamiast dwóch, a w bazie nie ma ani adresu, ani sekretu, ani soli.
  */
 describe('skrót adresu z sekretu RANKING_SALT (HMAC-SHA256, bez soli w bazie)', () => {
-  const SECRET = 'sekret-limitu-0123456789abcdef';
-  const NOON = Date.UTC(2026, 9, 28, 12, 0, 0);
-  const who = { owner: OWNER, address: ADDRESS };
   const addressKeys = (redis: MemoryRedis): string[] => redis.keys().filter((k) => k.includes(':a:'));
   const hashOf = (redis: MemoryRedis): string => addressKeys(redis)[0]!.split(':a:')[1]!;
   const indexOf = (action: RateAction, now: number): number => Math.floor(now / (RATE_LIMITS[action].window * 1000));
 
   it('jedno zapytanie do bazy i cztery polecenia (bez klucza: dwa), bez klucza soli w bazie', async () => {
     const redis = new MemoryRedis(() => NOON);
-    await checkRate(redis, 'runs', who, NOON, { secret: SECRET });
+    await checkRate(redis, 'runs', REQUESTER, NOON, { secret: SECRET });
     expect([redis.calls, redis.commands]).toEqual([1, 4]);
     expect(redis.keys().some((k) => k.startsWith('tr:salt:'))).toBe(false);
     const alone = new MemoryRedis(() => NOON);
@@ -470,7 +467,7 @@ describe('skrót adresu z sekretu RANKING_SALT (HMAC-SHA256, bez soli w bazie)',
 
   it('skrót to HMAC-SHA256(sekret, „traszka:limit:{akcja}:{okno}:{nr okna}:{kubełek adresu}”) skrócony do 32 znaków', async () => {
     const redis = new MemoryRedis(() => NOON);
-    await checkRate(redis, 'runs', who, NOON, { secret: SECRET });
+    await checkRate(redis, 'runs', REQUESTER, NOON, { secret: SECRET });
     const want = createHmac('sha256', SECRET).update(`traszka:limit:runs:3600:${indexOf('runs', NOON)}:${ADDRESS}`).digest('hex').slice(0, 32);
     expect(addressKeys(redis)).toEqual([`tr:rl:runs:${indexOf('runs', NOON)}:a:${want}`]);
     const v6 = new MemoryRedis(() => NOON);
@@ -481,7 +478,7 @@ describe('skrót adresu z sekretu RANKING_SALT (HMAC-SHA256, bez soli w bazie)',
 
   it('ten sam adres, okno, akcja i sekret dają ten sam skrót (u każdej instancji i po restarcie), a kubełek IPv6 /64 jeden', async () => {
     const [a, b, c] = [new MemoryRedis(() => NOON), new MemoryRedis(() => NOON + 1_000), new MemoryRedis(() => NOON)];
-    await checkRate(a, 'runs', who, NOON, { secret: SECRET });
+    await checkRate(a, 'runs', REQUESTER, NOON, { secret: SECRET });
     await checkRate(b, 'runs', { owner: null, address: ADDRESS }, NOON + 1_000, { secret: SECRET });
     expect(hashOf(a)).toBe(hashOf(b));
     await checkRate(c, 'runs', { owner: null, address: '2001:db8:aaaa:bbbb::1' }, NOON, { secret: SECRET });
@@ -534,10 +531,9 @@ describe('skrót adresu z sekretu RANKING_SALT (HMAC-SHA256, bez soli w bazie)',
   for (const skew of [0, 3_600_000, -3_600_000]) {
     it(`liczniki mają czas życia względny, także gdy zegar bazy jest przesunięty o ${skew / 3_600_000} h`, async () => {
       const redis = new MemoryRedis(() => NOON + skew);
-      await checkRate(redis, 'runs', who, NOON, { secret: SECRET });
-      const windowEnd = (indexOf('runs', NOON) + 1) * RATE_LIMITS.runs.window * 1000;
+      await checkRate(redis, 'runs', REQUESTER, NOON, { secret: SECRET });
       expect(redis.keys()).toHaveLength(2);
-      for (const k of redis.keys()) expect(Number((await redis.exec([['PTTL', k]]))[0]), k).toBe(windowEnd - NOON);
+      for (const k of redis.keys()) expect(Number((await redis.exec([['PTTL', k]]))[0]), k).toBe(windowEnd('runs', NOON) - NOON);
     });
   }
 
@@ -554,19 +550,19 @@ describe('skrót adresu z sekretu RANKING_SALT (HMAC-SHA256, bez soli w bazie)',
   it('sekret krótszy niż minimum to błąd (słaby sekret nie jest po cichu używany), a komunikat go nie zdradza', async () => {
     const weak = 'x'.repeat(RATE_SECRET_MIN_CHARS - 1);
     const redis = new MemoryRedis(() => NOON);
-    const err = await checkRate(redis, 'runs', who, NOON, { secret: weak }).catch((e: unknown) => e);
+    const err = await checkRate(redis, 'runs', REQUESTER, NOON, { secret: weak }).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(RedisError);
     expect(String((err as Error).message)).not.toContain(weak);
     expect(redis.calls).toBe(0);
     expect(RATE_SECRET_MIN_CHARS).toBe(16);
-    await expect(checkRate(redis, 'runs', who, NOON, { secret: '' })).rejects.toThrow();
-    expect((await checkRate(redis, 'runs', who, NOON, { secret: 'x'.repeat(RATE_SECRET_MIN_CHARS) })).ok).toBe(true);
+    await expect(checkRate(redis, 'runs', REQUESTER, NOON, { secret: '' })).rejects.toThrow();
+    expect((await checkRate(redis, 'runs', REQUESTER, NOON, { secret: 'x'.repeat(RATE_SECRET_MIN_CHARS) })).ok).toBe(true);
   });
 
-  it('z bramką: odmowa bazy zapamiętana, a 100 następnych żądań kosztuje 0 zapytań (tak samo z sekretem i bez)', async () => {
+  it('z sekretem i bramką: odmowa bazy zapamiętana, a 100 następnych żądań kosztuje 0 zapytań i 0 poleceń (bramka nie zależy od trybu skrótu)', async () => {
     const redis = new MemoryRedis(() => NOON);
     const gate = createRateGate();
-    for (let i = 0; i <= RATE_LIMITS.runs.perAddress; i++) await checkRate(redis, 'runs', { owner: `${i.toString(16).padStart(8, '0')}${'f'.repeat(56)}`, address: ADDRESS }, NOON, { secret: SECRET, gate });
+    for (let i = 0; i <= RATE_LIMITS.runs.perAddress; i++) await checkRate(redis, 'runs', { owner: owner(i), address: ADDRESS }, NOON, { secret: SECRET, gate });
     const [calls, commands] = [redis.calls, redis.commands];
     for (let i = 0; i < 100; i++) expect((await checkRate(redis, 'runs', { owner: OWNER, address: ADDRESS }, NOON, { secret: SECRET, gate })).ok).toBe(false);
     expect([redis.calls - calls, redis.commands - commands]).toEqual([0, 0]);
@@ -576,60 +572,48 @@ describe('skrót adresu z sekretu RANKING_SALT (HMAC-SHA256, bez soli w bazie)',
 /**
  * Koszt jednego sprawdzenia limitu w bazie (zapytania HTTP i polecenia), zmierzony na `MemoryRedis` z licznikiem. „Przed” (zmierzone
  * na kodzie sprzed zadania): przepuszczone 2 zapytania i 6 poleceń, odrzucone przez bazę 2 i 6, a 100 kolejnych odmów tego samego
- * adresu 200 zapytań i 600 poleceń. Testy zamrażają liczby „po”.
+ * adresu 200 zapytań i 600 poleceń. Testy zamrażają liczby „po”. To, że zapamiętana odmowa kosztuje potem 0 zapytań i 0 poleceń,
+ * sprawdzają raz: „razem z checkRate” (adres, klucz, druga instancja, koniec okna, równoległość) i grupa HMAC (z sekretem).
  */
 describe('koszt sprawdzenia limitu w bazie (przed: 2 zapytania i 6 poleceń także dla odmowy, 100 odmów = 200 i 600)', () => {
-  const NOON = Date.UTC(2026, 9, 28, 12, 0, 0);
-  const SECRET = 'sekret-limitu-0123456789abcdef';
-  const owner = (i: number): string => i.toString(16).padStart(8, '0').padEnd(64, 'f');
   const { perAddress, perKey } = RATE_LIMITS.runs;
 
   for (const [name, secret, pass] of [
     ['bez RANKING_SALT (sól okna w bazie)', undefined, { calls: 2, commands: 6 }],
     ['z RANKING_SALT (HMAC)', SECRET, { calls: 1, commands: 4 }],
   ] as const) {
-    const measure = async (redis: MemoryRedis, fn: () => Promise<unknown>): Promise<{ calls: number; commands: number }> => {
-      const [calls, commands] = [redis.calls, redis.commands];
-      await fn();
-      return { calls: redis.calls - calls, commands: redis.commands - commands };
-    };
-
-    it(`${name}: (a) przepuszczone ${pass.calls} zapytań i ${pass.commands} poleceń, (b) pierwsze odrzucone przez bazę tyle samo, (c) 100 następnych 0 i 0`, async () => {
+    it(`${name}: (b) pierwsze żądanie odrzucone przez bazę (limit adresu, instancja z pustą pamięcią) kosztuje tyle co przepuszczone: ${pass.calls} zapytań i ${pass.commands} poleceń`, async () => {
       const redis = new MemoryRedis(() => NOON);
       for (let i = 0; i < perAddress; i++) await checkRate(redis, 'runs', { owner: owner(i), address: ADDRESS }, NOON, { secret });   // inne instancje wypełniły limit adresu
       const opts = { secret, gate: createRateGate() };   // ta instancja ma pustą pamięć
       let first: RateCheck | undefined;
-      expect(await measure(redis, async () => { first = await checkRate(redis, 'runs', { owner: owner(1000), address: ADDRESS }, NOON, opts); })).toEqual(pass);
+      expect(await cost(redis, async () => { first = await checkRate(redis, 'runs', { owner: owner(1000), address: ADDRESS }, NOON, opts); })).toEqual(pass);
       expect(first).toMatchObject({ ok: false });
-      expect(await measure(redis, async () => {
-        for (let i = 0; i < 100; i++) await checkRate(redis, 'runs', { owner: owner(2000 + i), address: ADDRESS }, NOON, opts);
-      })).toEqual({ calls: 0, commands: 0 });
     });
 
     it(`${name}: (a) pojedyncze przepuszczone żądanie ${pass.calls} zapytań i ${pass.commands} poleceń; ta sama instancja, która doprowadziła licznik do limitu, odmawia następnemu za 0`, async () => {
       const redis = new MemoryRedis(() => NOON);
       const opts = { secret, gate: createRateGate() };
-      expect(await measure(redis, () => checkRate(redis, 'runs', { owner: owner(0), address: ADDRESS }, NOON, opts))).toEqual(pass);
+      expect(await cost(redis, () => checkRate(redis, 'runs', { owner: owner(0), address: ADDRESS }, NOON, opts))).toEqual(pass);
       for (let i = 1; i < perAddress; i++) await checkRate(redis, 'runs', { owner: owner(i), address: ADDRESS }, NOON, opts);
-      expect(await measure(redis, async () => {
+      expect(await cost(redis, async () => {
         expect(await checkRate(redis, 'runs', { owner: owner(1000), address: ADDRESS }, NOON, opts)).toMatchObject({ ok: false });
       })).toEqual({ calls: 0, commands: 0 });   // limit osiągnięty żądaniem 30., więc 31. baza by odrzuciła na pewno
     });
 
-    it(`${name}: to samo dla odmowy na kluczu (pierwsza kosztuje tyle co przepuszczenie, 100 następnych z różnych adresów 0 i 0)`, async () => {
+    it(`${name}: (b2) to samo dla odmowy na kluczu: pierwsza kosztuje tyle co przepuszczenie`, async () => {
       const redis = new MemoryRedis(() => NOON);
       for (let i = 0; i < perKey; i++) await checkRate(redis, 'runs', { owner: owner(7), address: `10.0.0.${i}` }, NOON, { secret });
       const opts = { secret, gate: createRateGate() };
-      expect(await measure(redis, () => checkRate(redis, 'runs', { owner: owner(7), address: '10.0.1.1' }, NOON, opts))).toEqual(pass);
-      expect(await measure(redis, async () => {
-        for (let i = 0; i < 100; i++) await checkRate(redis, 'runs', { owner: owner(7), address: `10.1.0.${i}` }, NOON, opts);
-      })).toEqual({ calls: 0, commands: 0 });
+      let first: RateCheck | undefined;
+      expect(await cost(redis, async () => { first = await checkRate(redis, 'runs', { owner: owner(7), address: '10.0.1.1' }, NOON, opts); })).toEqual(pass);
+      expect(first).toMatchObject({ ok: false });
     });
 
     it(`${name}: bez bramki odmowa kosztuje tyle co przepuszczenie (${pass.calls} zapytań i ${pass.commands} poleceń), więc 100 odmów to ${100 * pass.calls} i ${100 * pass.commands}`, async () => {
       const redis = new MemoryRedis(() => NOON);
       for (let i = 0; i <= perAddress; i++) await checkRate(redis, 'runs', { owner: owner(i), address: ADDRESS }, NOON, { secret });
-      expect(await measure(redis, async () => {
+      expect(await cost(redis, async () => {
         for (let i = 0; i < 100; i++) expect((await checkRate(redis, 'runs', { owner: owner(2000 + i), address: ADDRESS }, NOON, { secret })).ok).toBe(false);
       })).toEqual({ calls: 100 * pass.calls, commands: 100 * pass.commands });
     });
@@ -647,8 +631,6 @@ describe('doba UTC', () => {
 });
 
 describe('globalny budżet dzienny (jeden licznik na dobę UTC, niezależny od klucza i adresu)', () => {
-  const NOON = Date.UTC(2026, 9, 28, 12);
-
   it('do limitu włącznie przechodzi, ponad limit odmowa z czasem do północy UTC; licznik tylko rośnie', async () => {
     const redis = new MemoryRedis(() => NOON);
     for (let i = 0; i < 3; i++) expect(await checkBudget(redis, 'save', 3, NOON), `wysłanie ${i + 1}`).toEqual({ ok: true, retryAfter: 0 });
@@ -696,8 +678,6 @@ describe('globalny budżet dzienny (jeden licznik na dobę UTC, niezależny od k
 });
 
 describe('adres IPv6 liczony po prefiksie /64', () => {
-  const owner = (i: number): string => i.toString(16).padStart(8, '0').padEnd(64, 'f');
-
   it('IPv4 i tekst, który nie jest adresem, bez zmian; IPv6 to pierwsze 4 z 8 grup po rozwinięciu ::, zapisane jednolicie', () => {
     expect(addressBucket('203.0.113.7')).toBe('203.0.113.7');
     expect(addressBucket('nieznany')).toBe('nieznany');
