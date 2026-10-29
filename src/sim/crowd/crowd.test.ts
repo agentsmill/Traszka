@@ -4,6 +4,8 @@ import { generateStore } from '@/sim/store/generateStore';
 import type { StoreLayout } from '@/sim/store/types';
 import { accessCells, isWalkable } from '@/sim/store/validate';
 import {
+  CLOSING_PAY_SPEEDUP,
+  CLOSING_SPEED,
   MAX_DT,
   SIM_STEP,
   createCrowd,
@@ -424,5 +426,154 @@ describe('gra: kasy samoobsługowe, palety, tempo', () => {
     setCrowdRate(sim.crowd, { targetCount: 0, spawnPerMinute: 0 });
     run(sim, 300);
     expect(sim.crowd.agents.length).toBe(0);
+  });
+});
+
+describe('zamknięcie sklepu (CrowdOptions.closing)', () => {
+  const OPEN: CrowdOptions = { targetCount: 16, spawnPerMinute: 24 };
+  const CLOSING: CrowdOptions = { targetCount: 0, spawnPerMinute: 0, closing: true };
+  /** Noc w grze trwa ok. 5 s czasu symulacji (420 minut przy 84 minutach na sekundę), a tłum ma mieć wyjść w tym czasie, z zapasem. */
+  const EMPTY_WITHIN_S = 8;
+  const live = (crowd: Crowd): Agent[] => crowd.agents.filter((a) => a.state !== 'gone');
+  /** Tłum w pełnym ruchu: oglądający, kolejka, płacący i wychodzący naraz. */
+  function busy(seed: string, warmS = 45): Sim {
+    const sim = makeSim(seed, OPEN);
+    run(sim, warmS);
+    return sim;
+  }
+
+  it.each(['kiełbasa-42', 'traszka-7', 'd', 'alfa', 'beta-12', 'kamienica-3', 'seed-6', 'x2'])(
+    '%s: po zamknięciu w ciągu kilku sekund wszyscy agenci są gone, a nikt nowy nie wchodzi',
+    (seed) => {
+      for (const warm of [40, 47.3, 61]) {
+        const sim = busy(seed, warm);
+        const before = live(sim.crowd).length;
+        expect(before).toBeGreaterThanOrEqual(8);   // test sprawdza prawdziwy tłum, a nie pusty sklep
+        const seen = new Set(sim.crowd.agents.map((a) => a.id));
+        setCrowdRate(sim.crowd, CLOSING);
+        let t = 0;
+        while (live(sim.crowd).length > 0 && t < EMPTY_WITHIN_S) {
+          run(sim, SIM_STEP);
+          t += SIM_STEP;
+          for (const a of sim.crowd.agents) expect(seen.has(a.id), `nowy agent ${a.id} po zamknięciu`).toBe(true);
+        }
+        expect(live(sim.crowd), `${seed} po ${warm} s: ${before} agentów, po ${EMPTY_WITHIN_S} s zostało`).toEqual([]);
+        run(sim, 10);
+        expect(sim.crowd.agents).toEqual([]);   // i nikt nie wchodzi później
+      }
+    },
+  );
+
+  it('stojący w kolejce płacą i wychodzą: kolejka się opróżnia, a płacący nie czeka pełnych 3–6 s', () => {
+    const sim = makeSim(MAIN_SEED, { targetCount: 14, spawnPerMinute: 90 });
+    // gęsty ruch, aż w kolejce stoi co najmniej troje
+    let guard = 0;
+    while (sim.crowd.internal.queue.length < 3 && guard++ < 3000) run(sim, SIM_STEP);
+    expect(sim.crowd.internal.queue.length).toBeGreaterThanOrEqual(3);
+    const inLine = [...sim.crowd.internal.queue];
+    setCrowdRate(sim.crowd, CLOSING);
+    const paid = new Set<number>();
+    let t = 0;
+    while (live(sim.crowd).length > 0 && t < EMPTY_WITHIN_S) {
+      run(sim, SIM_STEP);
+      t += SIM_STEP;
+      for (const a of sim.crowd.agents) if (a.state === 'leaving' && inLine.includes(a.id)) paid.add(a.id);
+    }
+    expect(sim.crowd.internal.queue).toEqual([]);
+    expect(paid.size).toBeGreaterThanOrEqual(inLine.length);   // każdy z kolejki zapłacił i wyszedł, a nie zniknął z kolejki
+    expect(t).toBeLessThan(EMPTY_WITHIN_S);
+    // płacenie jest przyspieszone: trzy osoby w kolejce nie zajmują 3 × (3–6 s)
+    expect(t).toBeLessThan(inLine.length * 3 / CLOSING_PAY_SPEEDUP + 6);
+  });
+
+  it('oglądający idą prosto do kasy (albo wychodzą, gdy kolejka jest pełna), nie dokańczają oglądania', () => {
+    const sim = busy(MAIN_SEED, 30);
+    const browsing = live(sim.crowd).filter((a) => a.state === 'browsing');
+    expect(browsing.length).toBeGreaterThan(0);
+    const ids = browsing.map((a) => a.id);
+    setCrowdRate(sim.crowd, CLOSING);
+    run(sim, 2 * SIM_STEP);   // jeden krok na zmianę planu
+    for (const id of ids) {
+      const a = sim.crowd.agents.find((x) => x.id === id);
+      if (!a || a.state === 'gone') continue;
+      expect(['toQueue', 'queueing', 'paying', 'leaving'], `agent ${id}`).toContain(a.state);
+    }
+  });
+
+  it('kto jest przed progiem, zawraca na ulicę (nie wchodzi do sali)', () => {
+    const sim = makeSim(MAIN_SEED, { targetCount: 1, spawnPerMinute: 30 });
+    stepCrowd(sim.crowd, sim.layout, SIM_STEP);
+    const agent = sim.crowd.agents[0]!;
+    expect(agent.state).toBe('entering');
+    const spawnCell = { x: Math.floor(agent.x), y: Math.floor(agent.y) };
+    setCrowdRate(sim.crowd, CLOSING);
+    let deepest = agent.y;
+    while (agent.state !== 'gone') {
+      stepCrowd(sim.crowd, sim.layout, SIM_STEP);
+      deepest = Math.max(deepest, agent.y);
+    }
+    expect(agent.state).toBe('gone');
+    expect(deepest).toBeLessThan(4);   // wiersze 0–3 to chodnik: do ściany frontowej (4) nie doszedł
+    expect(Math.floor(agent.x)).toBe(spawnCell.x);   // wrócił tam, skąd przyszedł
+  });
+
+  it.each([['×1', 1 / 60], ['×2', 2 / 60], ['×4', 4 / 60], ['×8', 8 / 60]] as const)(
+    'klatka po klatce przy dt jak dla %s: ten sam wynik co krokami SIM_STEP, wszyscy gone w czasie nocy',
+    (_label, frameDt) => {
+      const a = busy('alfa', 47.3);
+      const b = busy('alfa', 47.3);
+      setCrowdRate(a.crowd, CLOSING);
+      setCrowdRate(b.crowd, CLOSING);
+      let simTime = 0;
+      while ((live(a.crowd).length > 0 || live(b.crowd).length > 0) && simTime < EMPTY_WITHIN_S) {
+        stepCrowd(a.crowd, a.layout, frameDt);        // klatka gry
+        run(b, frameDt);                               // to samo drobnymi krokami (run zaokrągla do SIM_STEP, dlatego `stepCrowd` niżej)
+        simTime += frameDt;
+      }
+      expect(live(a.crowd)).toEqual([]);
+    },
+  );
+
+  it('ten sam przebieg przy ×1 i ×8: kolejność kroków symulacji nie zależy od podziału na klatki', () => {
+    const slow = busy('beta-12', 47.3);
+    const fast = busy('beta-12', 47.3);
+    setCrowdRate(slow.crowd, CLOSING);
+    setCrowdRate(fast.crowd, CLOSING);
+    for (let i = 0; i < 6 * 60; i++) stepCrowd(slow.crowd, slow.layout, 1 / 60);       // 6 s w klatkach ×1
+    for (let i = 0; i < 6 * 60 / 8; i++) stepCrowd(fast.crowd, fast.layout, 8 / 60);   // 6 s w klatkach ×8
+    expect(live(slow.crowd)).toEqual([]);
+    expect(live(fast.crowd)).toEqual([]);
+  });
+
+  it('powrót do otwarcia (rano, koniec remontu): closing przestaje działać, nowi klienci znów wchodzą, a wychodzący wyjdą', () => {
+    const sim = busy('traszka-7', 47.3);
+    setCrowdRate(sim.crowd, CLOSING);
+    run(sim, 0.5);
+    setCrowdRate(sim.crowd, OPEN);
+    run(sim, 60);
+    expect(sim.crowd.agents.length).toBeGreaterThan(0);
+    expect(Math.max(...sim.crowd.agents.map((a) => a.id))).toBeGreaterThan(20);   // napływ wrócił
+    // zwykłe tempo wróciło: marsz nie jest już przyspieszony
+    const walking = live(sim.crowd).find((a) => a.moving)!;
+    expect(walking.speed).toBeLessThanOrEqual(3.0);
+    expect(CLOSING_SPEED).toBeGreaterThan(1);
+  });
+
+  it('setCrowdRate zauważa samo przełączenie closing (te same liczby, inny tryb)', () => {
+    const sim = makeSim(MAIN_SEED, { targetCount: 0, spawnPerMinute: 0 });
+    setCrowdRate(sim.crowd, { targetCount: 0, spawnPerMinute: 0, closing: true });
+    expect(sim.crowd.internal.opts.closing).toBe(true);
+    setCrowdRate(sim.crowd, { targetCount: 0, spawnPerMinute: 0 });
+    expect(sim.crowd.internal.opts.closing).toBeFalsy();
+  });
+
+  it('zamknięcie nie zakleszcza ludzi: żadnego agenta nie zostaje po 8 s także w gęstym tłumie (22 osoby) na wielu układach', () => {
+    for (const seed of ['kiełbasa-42', 'traszka-7', 'd', 'x1', 'x2', 'x3', 'seed-11']) {
+      const sim = makeSim(seed, { targetCount: 22, spawnPerMinute: 24 });
+      run(sim, 55);
+      setCrowdRate(sim.crowd, CLOSING);
+      run(sim, EMPTY_WITHIN_S);
+      expect(live(sim.crowd), seed).toEqual([]);
+    }
   });
 });

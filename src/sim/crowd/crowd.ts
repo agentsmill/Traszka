@@ -38,7 +38,17 @@ export interface Agent {
   speed: number;                    // kratki/s, 2.2–3.0
 }
 
-export interface CrowdOptions { targetCount: number; spawnPerMinute: number }
+export interface CrowdOptions {
+  targetCount: number;
+  spawnPerMinute: number;
+  /**
+   * Sklep zamknięty (noc, remont, karta „zamknij na godzinę”): nikt nowy nie wchodzi, kto jest w wejściu, zawraca, kto ogląda, idzie
+   * prosto do kasy (albo wychodzi, gdy kolejka jest pełna), a marsz i płacenie są przyspieszone (`CLOSING_SPEED`, `CLOSING_PAY_SPEEDUP`),
+   * więc po chwili w sali nie ma nikogo. Zwykła symulacja dokańcza wtedy cykl klienta (oglądanie, kolejka, płacenie 3–6 s po kolei)
+   * i noc mija, zanim ostatni wyjdzie. Brak pola to sklep otwarty.
+   */
+  closing?: boolean;
+}
 
 export interface Crowd {
   seed: string;
@@ -64,6 +74,11 @@ const RELEASE_AT = 0.6;             // po tylu krawędzi agent zwalnia kratkę, 
 const STEP_EPSILON = 1e-9;
 const MAX_WALK_ITERATIONS = 8;      // bezpiecznik pętli ruchu w jednym kroku
 const STAFF_LANE_MAX = 2;           // pas personelu ma 1–2 kratki (walidator układu)
+/** Zamknięcie sklepu (`CrowdOptions.closing`): mnożnik tempa marszu i płacenia, żeby wyjść w kilka sekund (doba nocna to ok. 5 s czasu gry). */
+export const CLOSING_SPEED = 3.5;
+export const CLOSING_PAY_SPEEDUP = 20;
+/** Po zamknięciu zablokowany agent przechodzi „na ducha” już po tylu sekundach (zwykle `GHOST_AFTER`): dwoje wychodzących twarzą w twarz nie odsuwa się w kółko. */
+const CLOSING_GHOST_AFTER = 1;
 
 const BROWSABLE_KINDS: readonly FixtureKind[] = ['gondola', 'wallShelf', 'fridge'];
 const STAFF_BLOCK_KINDS: readonly FixtureKind[] = ['checkout', 'hotFood', 'coffee'];
@@ -111,6 +126,7 @@ interface Brain {
   timer: number;                    // s do końca oglądania albo płacenia
   payTime: number;
   wait: number;                     // s czekania na zajętą kratkę
+  rushed: boolean;                  // zamknięcie sklepu już zmieniło mu plany (raz na wizytę)
   replans: number;                  // ile razy w tym czekaniu szukano obejścia
 }
 
@@ -260,7 +276,7 @@ export function stepCrowd(crowd: Crowd, layout: StoreLayout, dt: number): void {
 /** Zmienia tempo napływu i docelową liczbę klientów (ekonomia gry steruje gęstością tłumu). */
 export function setCrowdRate(crowd: Crowd, opts: CrowdOptions): void {
   const o = crowd.internal.opts;
-  if (o.targetCount === opts.targetCount && o.spawnPerMinute === opts.spawnPerMinute) return;
+  if (o.targetCount === opts.targetCount && o.spawnPerMinute === opts.spawnPerMinute && !!o.closing === !!opts.closing) return;
   crowd.internal.opts = { ...opts };
 }
 
@@ -304,8 +320,8 @@ function removeGone(s: CrowdInternals): void {
 // --- Spawn -------------------------------------------------------------------------------------------
 
 function spawnStep(s: CrowdInternals): void {
-  const { spawnPerMinute, targetCount } = s.opts;
-  if (spawnPerMinute <= 0) return;
+  const { spawnPerMinute, targetCount, closing } = s.opts;
+  if (spawnPerMinute <= 0 || closing) return;
   s.spawnCredit = Math.min(s.spawnCredit + (SIM_STEP * spawnPerMinute) / 60, 1);
   if (s.spawnCredit < 1) return;
 
@@ -357,6 +373,7 @@ function spawnAgent(s: CrowdInternals, spawnIndex: number): void {
     timer: 0,
     payTime: rng.range(PAY_TIME_MIN, PAY_TIME_MAX),
     wait: 0,
+    rushed: false,
     replans: 0,
   };
 
@@ -375,10 +392,11 @@ function stepAgent(s: CrowdInternals, a: Agent): void {
   if (a.state === 'gone') return;
   const b = s.brains.get(a.id)!;
   if (a.ghost && b.next === null) reclaimCell(s, a, b);
+  if (s.opts.closing && !b.rushed) rushOut(s, a, b);
 
   switch (a.state) {
     case 'paying':
-      b.timer -= SIM_STEP;
+      b.timer -= SIM_STEP * (s.opts.closing ? CLOSING_PAY_SPEEDUP : 1);
       if (b.timer <= 0) finishPaying(s, a, b);
       break;
     case 'queueing':
@@ -417,7 +435,7 @@ function reclaimCell(s: CrowdInternals, a: Agent, b: Brain): void {
 // --- Ruch po ścieżce ---------------------------------------------------------------------------------
 
 function walk(s: CrowdInternals, a: Agent, b: Brain): void {
-  let budget = a.speed * SIM_STEP;
+  let budget = a.speed * SIM_STEP * (s.opts.closing ? CLOSING_SPEED : 1);
   let moved = false;
   for (let iteration = 0; iteration < MAX_WALK_ITERATIONS; iteration++) {
     if (b.next === null) {
@@ -457,7 +475,7 @@ function startMove(s: CrowdInternals, a: Agent, b: Brain, target: Cell): boolean
     s.occ[i] = a.id;
   } else {
     b.wait += SIM_STEP;
-    if (b.wait < GHOST_AFTER) {
+    if (b.wait < (s.opts.closing ? CLOSING_GHOST_AFTER : GHOST_AFTER)) {
       if (a.state === 'toQueue' && b.slot !== tailSlot(s)) routeToQueueTail(s, a, b);
       else if (b.wait >= REPLAN_AFTER * (b.replans + 1)) replanAround(s, a, b);
       return false;
@@ -667,6 +685,71 @@ function replanAround(s: CrowdInternals, a: Agent, b: Brain): void {
   }
 }
 
+// --- Zamknięcie sklepu -------------------------------------------------------------------------------
+
+/**
+ * Pierwszy krok agenta po zamknięciu sklepu (`CrowdOptions.closing`), raz na wizytę. Kto jeszcze nie przekroczył progu, zawraca na
+ * ulicę. Kto ogląda mebel, rezygnuje z oglądania i idzie na koniec kolejki, a gdy kolejka jest pełna, od razu wychodzi. Kto już idzie
+ * do kolejki, stoi w niej, płaci (w tym przy kasie samoobsługowej) albo wychodzi, robi to dalej, tylko szybciej (marsz i płacenie).
+ */
+function rushOut(s: CrowdInternals, a: Agent, b: Brain): void {
+  b.rushed = true;
+  if (a.state === 'leaving' && b.goal === 'exit' && b.cell.y >= FRONT_WALL_Y) {
+    const out = doorstep(s, b.cell);   // jeszcze w sklepie albo w drzwiach: wystarczy wyjść za próg
+    if (out !== null) rerouteTo(s, a, b, out, 'exit');
+  } else if (a.state === 'entering') {
+    const points = s.nav.layout.spawnPoints;
+    if (leaveNow(s, a, b, points[(b.exitIndex + 1) % points.length]!)) return;   // zawraca tam, skąd przyszedł: bez krzyżowania się z innymi
+  } else if (a.state === 'browsing' && b.goal === 'fixture') {
+    b.timer = 0;
+    b.visitsLeft = 0;
+    b.spot = null;
+    if (queueHasRoom(s)) {
+      const slot = tailSlot(s);
+      if (rerouteTo(s, a, b, s.nav.layout.checkoutQueue[slot]!, 'queue')) {
+        b.slot = slot;
+        a.state = 'toQueue';
+        return;
+      }
+    }
+    leaveNow(s, a, b);
+  }
+}
+
+/** Trasa do punktu wyjścia (domyślnie jego własnego) i stan 'leaving'. Zwraca false, gdy nie ma drogi (agent zostaje przy swoim planie). */
+function leaveNow(s: CrowdInternals, a: Agent, b: Brain, exit: Cell = (s.opts.closing ? doorstep(s, b.cell) : null) ?? s.nav.layout.spawnPoints[b.exitIndex]!): boolean {
+  if (!rerouteTo(s, a, b, exit, 'exit')) return false;
+  a.state = 'leaving';
+  return true;
+}
+
+/**
+ * Kratka chodnika tuż za progiem (wiersz przed ścianą frontową, przy wejściu bliższym agentowi), gdzie klient znika po zamknięciu
+ * sklepu: w sali ma nie zostać nikt, a marsz na koniec ulicy to kilka sekund, których noc nie ma. `null`, gdy kratka jest
+ * niedostępna (wtedy zwykłe wyjście).
+ */
+function doorstep(s: CrowdInternals, from: Cell): Cell | null {
+  let best: Cell | null = null;
+  for (const e of s.nav.layout.entrance) {
+    const c = { x: e.x, y: FRONT_WALL_Y - 1 };
+    if (s.nav.blocked[cellAt(s, c)] === 1) continue;
+    if (best === null || Math.abs(c.x - from.x) + Math.abs(c.y - from.y) < Math.abs(best.x - from.x) + Math.abs(best.y - from.y)) best = c;
+  }
+  return best;
+}
+
+/**
+ * Nowa trasa do `goalCell` także w środku kroku: liczona od kratki, do której agent już idzie (`b.next` jest zarezerwowana i
+ * dojdzie do niej tak czy inaczej), z kratką, z której wyszedł, na początku, żeby indeks `pathPos` zgadzał się po `completeMove`.
+ */
+function rerouteTo(s: CrowdInternals, a: Agent, b: Brain, goalCell: Cell, goal: Goal): boolean {
+  const from = b.next ?? b.cell;
+  const path = findRoute(s, a, from, goalCell, false);
+  if (path === null) return false;
+  setRoute(b, b.next ? [b.cell, ...path] : path, goal, goalCell);
+  return true;
+}
+
 // --- Kolejka -----------------------------------------------------------------------------------------
 
 /** Agent w kolejce: idzie na kratkę odpowiadającą jego miejscu, a gdy jest pierwszy i stoi przy kasie, płaci. */
@@ -702,7 +785,7 @@ function routeToSlot(s: CrowdInternals, a: Agent, b: Brain, slot: Cell): boolean
 
 /** Koniec płacenia: trasa do drugiego punktu spawnu (planowana, póki kolejka jeszcze stoi), zejście z kolejki. */
 function finishPaying(s: CrowdInternals, a: Agent, b: Brain): void {
-  const exit = s.nav.layout.spawnPoints[b.exitIndex]!;
+  const exit = (s.opts.closing ? doorstep(s, b.cell) : null) ?? s.nav.layout.spawnPoints[b.exitIndex]!;
   const routed = routeTo(s, a, b, exit, 'exit');
   const place = s.queue.indexOf(a.id);
   if (place >= 0) s.queue.splice(place, 1);

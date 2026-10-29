@@ -100,12 +100,13 @@ export function writeSeedToUrl(seed: string): void {
 export const CROWD_MAX: Record<QualityPresetId, number> = { niska: 10, srednia: 16, wysoka: 22 };
 
 /**
- * Tłum, jakiego chce ekonomia: ile postaci naraz i ile nowych na minutę. Zamknięty sklep (noc, remont, karta „zamknij na godzinę”) nie wpuszcza nikogo,
+ * Tłum, jakiego chce ekonomia: ile postaci naraz i ile nowych na minutę. Zamknięty sklep (noc, remont, karta „zamknij na godzinę”) nie wpuszcza nikogo
+ * i wyprasza tych w środku (`closing`: do kasy i za próg, szybko, bo noc trwa kilka sekund),
  * otwarty liczy ruch z bieżącej godziny (klientów na godzinę), ograniczony presetem grafiki (`CROWD_MAX`) i widełkami 4–… oraz 3–24.
  */
 export function crowdRateFor(session: Pick<GameSession, 'econ' | 'info'>, preset: QualityPresetId): CrowdOptions {
   const { econ: s, info } = session;
-  if (!isOpenForCustomers(s)) return { targetCount: 0, spawnPerMinute: 0 };
+  if (!isOpenForCustomers(s)) return { targetCount: 0, spawnPerMinute: 0, closing: true };
   const perHour = expectedDailyCustomers(s, info) / 15.6 * (HOUR_CURVE[Math.floor(minuteOfDay(s.minute) / 60)] ?? 0);
   return { targetCount: Math.max(4, Math.min(CROWD_MAX[preset], Math.round(perHour * 0.35))), spawnPerMinute: Math.max(3, Math.min(24, perHour * 0.3)) };
 }
