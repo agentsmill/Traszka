@@ -120,16 +120,17 @@ describe('losowanie kart dnia', () => {
     return { cs, byDay };
   }
 
-  it('każdy dzień przynosi 1–3 karty, deterministycznie z seeda', () => {
+  it('dzień przynosi 0–2 karty, średnio ok. jednej, deterministycznie z seeda', () => {
     const a = season(SEED, 200);
     const b = season(SEED, 200);
     expect(JSON.stringify(a.byDay)).toBe(JSON.stringify(b.byDay));
     const counts = a.byDay.map((x) => x.length);
-    expect(Math.min(...counts)).toBeGreaterThanOrEqual(1);
-    expect(Math.max(...counts)).toBe(3);
+    expect(Math.min(...counts)).toBe(0);
+    expect(Math.max(...counts)).toBe(2);
+    expect(counts[0]).toBeGreaterThanOrEqual(1);   // pierwszy dzień gry zawsze z kartą
     const mean = counts.reduce((n, x) => n + x, 0) / counts.length;
-    expect(mean).toBeGreaterThan(1.6);
-    expect(mean).toBeLessThan(2.1);
+    expect(mean).toBeGreaterThan(0.95);
+    expect(mean).toBeLessThan(1.35);
     expect(JSON.stringify(season(SEED + 1, 200).byDay)).not.toBe(JSON.stringify(a.byDay));
   });
 
@@ -390,7 +391,8 @@ describe('zapis', () => {
     expect(s.pending.map((c) => c.seq)).toEqual([card.seq, card.seq + 2]);
     expect(s.pending[1].showAt).toBeLessThan(11 * MINUTES_PER_DAY);
     expect(s.active[0].until).toBeLessThanOrEqual(14 * MINUTES_PER_DAY);
-    expect(drawDayCards(s, ctx(11), SEED).length).toBeGreaterThan(0);
+    // Dzień bywa bez karty (0–2 dziennie), ale najpóźniej 15. przypada okólnik, więc losowanie ruszyło.
+    expect([11, 12, 13, 14, 15].flatMap((d) => drawDayCards(s, ctx(d), SEED)).length).toBeGreaterThan(0);
   });
 
   it('uszkodzona albo nieznana karta wypada, reszta zostaje; numer następnej karty nie powtarza starych', () => {

@@ -11,7 +11,7 @@ export function gameMinutesPerSecond(minute: number): number {
 /** Ułamek bieżącej minuty gry, który już upłynął (poza stanem gry: nie trafia do zapisu). */
 export interface EconClock { acc: number }
 
-/** Bezpiecznik: tyle minut gry najwyżej w jednym wywołaniu (×8 w nocy to ~11 minut na klatkę). */
+/** Bezpiecznik: tyle minut gry najwyżej w jednym wywołaniu (×8 w nocy to ~2 minuty na klatkę). */
 export const MAX_MINUTES_PER_ADVANCE = 240;
 
 /**

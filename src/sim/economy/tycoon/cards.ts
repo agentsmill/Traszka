@@ -8,7 +8,8 @@ import type { TrustReason } from './trust';
 import { OPEN_MINUTES, clamp, roundNice } from './time';
 
 /**
- * Codzienne decyzje (spec §7.5): zamiast nagród co minutę każdy dzień przynosi 1–3 karty. Każda karta ma 2–3 odpowiedzi
+ * Codzienne decyzje (spec §7.5): zamiast nagród co minutę dzień przynosi 0–2 karty, średnio ok. jednej (decyzja właściciela z 29.10.2026: przy dobie
+ * ~3 min 20 s to karta co ~3 min przy ×1 i co ~25 s przy ×8). Każda karta ma 2–3 odpowiedzi
  * z widocznym kosztem: pieniądze, zaufanie, WUT, czas ludzi (i siły franczyzobiorcy). Okólnik Centrali (dawniej paczka
  * co 45–110 s) przychodzi raz na 2–4 dni i zawsze ma haczyk.
  *
@@ -99,9 +100,9 @@ export interface CardsState {
 }
 
 export const CARDS = {
-  /** Szanse na 1, 2 i 3 karty dnia (reszta to 3). */
-  one: 0.35,
-  two: 0.45,
+  /** Szanse na 0 i 1 kartę dnia (reszta to 2). Pierwszy dzień gry i dzień okólnika mają co najmniej jedną. */
+  none: 0.15,
+  one: 0.6,
   /** Okólnik co 2–4 dni. */
   circularGapMin: 2,
   circularGapSpan: 3,
@@ -221,7 +222,7 @@ function pickWeighted(list: readonly CardDef[], c: CardContext, r: number): Card
 }
 
 /**
- * Karty dnia (raz na dzień, zwykle o północy). Liczba 1–3 i wybór są deterministyczne z seeda i numeru dnia. Okólnik,
+ * Karty dnia (raz na dzień, zwykle o północy). Liczba 0–2 i wybór są deterministyczne z seeda i numeru dnia. Okólnik,
  * gdy przypada, zajmuje jedno z miejsc dnia; gdy biurko jest pełne (tylko po zepsutym zapisie), czeka na miejsce.
  * Zwraca nowe karty (widoczne od `showAt`).
  */
@@ -229,7 +230,10 @@ export function drawDayCards(cs: CardsState, c: CardContext, seedHash: number): 
   if (c.day <= cs.drawnDay) return [];
   cs.drawnDay = c.day;
   const r = rand01(seedHash, c.day, CH.cardCount);
-  let count = Math.min(r < CARDS.one ? 1 : r < CARDS.one + CARDS.two ? 2 : 3, CARDS.maxPending - cs.pending.length);
+  const drawn = r < CARDS.none ? 0 : r < CARDS.none + CARDS.one ? 1 : 2;
+  // Pierwsza karta gry (seq jeszcze 1) przychodzi pierwszego dnia, a okólnik, gdy przypada, nie czeka na dzień z kartą.
+  const floor = cs.seq === 1 || c.day >= cs.nextCircularDay ? 1 : 0;
+  let count = Math.min(Math.max(drawn, floor), CARDS.maxPending - cs.pending.length);
   const out: CardInstance[] = [];
   const take = (def: CardDef): void => {
     const card = instantiate(def, c, cs.seq++, seedHash);

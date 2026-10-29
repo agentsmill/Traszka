@@ -181,7 +181,7 @@ Model wzorowany na realiach, uproszczony:
 ### 7.5 Balans: kliker a tycoon **[U]** (kierunek, 2026-10-28) / **[C]** (mechaniki i liczby)
 Rdzeń gry to **tycoon franczyzy**: decyzje pod presją Centrali. Stukanie zostaje jako **ręce franczyzobiorcy**: pomaga przy paletach, kasie i porządku, ale kosztuje.
 - **Zmęczenie** (§6.2): franczyzobiorca ma dzienną pulę sił (np. 100). Każde stuknięcie ją zużywa, a przy pustej puli ręce odmawiają. Po ciężkim dniu noc odnawia pulę tylko częściowo, a zmęczenie przeniesione na kolejny dzień obniża wydajność ręcznych akcji. Niedziela „placówka pocztowa” zużywa siły szybciej. Combo zostaje jako odczucie, w granicach puli. Pula odbiera przewagę autoklikaczom, więc ranking (§14.7) jest uczciwy.
-- **Codzienne decyzje zamiast nagród co minutę.** Każdy dzień przynosi 1–3 karty z §7.1a (FEFO o 18:00, glitch kasowy, „chory” pracownik w dzień dostawy, zapowiedź audytu, obowiązkowa promocja). Każda karta ma 2–3 odpowiedzi z widocznym kosztem: pieniądze, zaufanie, WUT albo czas ludzi.
+- **Codzienne decyzje zamiast nagród co minutę.** Dzień przynosi 0–2 karty z §7.1a, średnio ok. jednej (okólnik wlicza się do kart dnia), więc przy ×1 karta przychodzi co ~3 min, a przy ×8 co ~25 s **[U]** (2026-10-29) (FEFO o 18:00, glitch kasowy, „chory” pracownik w dzień dostawy, zapowiedź audytu, obowiązkowa promocja). Każda karta ma 2–3 odpowiedzi z widocznym kosztem: pieniądze, zaufanie, WUT albo czas ludzi.
 - **Raport miesięczny to puls gry** (§7.1): wynik po pozycjach (marża, premie, płace, opłata franczyzowa, mandaty, WUT, logistyka), zmiana zaufania, komentarz Centrali i jedna wskazówka, co poprawić. W niedzielę krótkie podsumowanie tygodnia.
 - **Zaufanie Centrali i zrzuty wiralowe od początku**: pasek zaufania widać od pierwszego dnia, a pierwszy zrzut (§7.3) przychodzi już we wrześniu, żeby pętla palety, zaufanie i produkty wiralowe działała w pierwszych 20 minutach.
 - **Mechaniki z wersji grywalnej** (`docs/ekonomia.md`) zostają, ale w nowej roli:
@@ -217,9 +217,9 @@ Rdzeń gry to **tycoon franczyzy**: decyzje pod presją Centrali. Stukanie zosta
 
 ## 10. Czas, tempo, wygrana i przegrana
 
-- Czas płynie w trybie ciągłym z pauzą i prędkościami ×1, ×2, ×4, ×8 **[U]** (przyspieszanie). **Doba przy ×1 trwa ok. 60 s realnych** (sklep otwarty 6:00–23:00), więc miesiąc to ~30 min przy ×1 i ~4 min przy ×8 **[C]**.
+- Czas płynie w trybie ciągłym z pauzą i prędkościami ×1, ×2, ×4, ×8 **[U]** (przyspieszanie). **Doba przy ×1 trwa ok. 3 min 20 s realnych**: sklep otwarty 6:00–23:00 w 2 min 50 s, noc w 30 s, żeby zmiana zdążyła wyjść ze sklepu przed otwarciem. Miesiąc to ~100 min przy ×1, ~25 min przy ×4 i ~12,5 min przy ×8, a godzina gry przy ×8 to ~5 miesięcy kalendarza **[U]** (2026-10-29, wcześniej doba ~60 s).
 - **Kalendarz** **[C]**: prawdziwy kalendarz gregoriański z tygodniami. Gra startuje 1 września, żeby pierwsze miesiące miały wyraziste zdarzenia: fioletowy dog, Halloween, Black Friday, święta, Sylwester. Rozliczenie miesiąca następuje ostatniego dnia. Niedziele niehandlowe są modelowane: sklep zamknięty albo „placówka pocztowa” (§7.1a).
-- **Tempo docelowe** **[C]**: pierwsze 20 minut to ok. 1,5–2 miesięcy gry (pierwszy raport, pierwsze upgrade'y). Drugi sklep jest w zasięgu po ~45–60 minutach. Podbicie miasta zajmuje 4–8 godzin.
+- **Tempo docelowe** **[C]**: pierwszy raport (koniec września) przychodzi po ~25 min gry przy ×4 albo ~12,5 min przy ×8; pierwsze upgrade'y w pierwszych 20 minutach. Drugi sklep jest w zasięgu po ~45–60 minutach. Podbicie miasta zajmuje 4–8 godzin.
 - Pora dnia wpływa na ruch, oświetlenie (dzień/noc) i archetypy klientów.
 - **Przegrana** **[C]**: dwa miesiące z rzędu bez opłacenia Centrali albo zaufanie spadające do zera oznacza wypowiedzenie umowy franczyzowej. Potem przychodzi „Rozliczenie końcowe” **[R]**: inwentaryzacja, odkup tylko towaru ze świeżą datą i rachunek za każdy ubytek, a na końcu ekran „Dziękujemy za współpracę”.
 - **Wygrana** **[C]**: udział w rynku miasta ≥ 60% albo zamknięcie wszystkich sklepów konkurencji daje tytuł „Króla Traszek”. Potem gra toczy się dalej w trybie bez końca i można wylosować nowe miasto z nowym seedem.

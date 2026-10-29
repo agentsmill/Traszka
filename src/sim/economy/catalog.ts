@@ -58,9 +58,13 @@ export const PALLET_ITEMS = 320;
 export const MINUTES_PER_DAY = 24 * 60;
 export const OPEN_FROM = 6 * 60;
 export const OPEN_TO = 23 * 60;
-/** Minuty gry na sekundę przy ×1: dzień sklepu (17 h) w ~51 s, noc (7 h) w ~5 s. */
-export const MINUTES_PER_SECOND_OPEN = 20;
-export const MINUTES_PER_SECOND_CLOSED = 84;
+/**
+ * Minuty gry na sekundę przy ×1: dzień sklepu (17 h) w 2 min 50 s, noc (7 h) w 30 s, doba w ~3 min 20 s (decyzja
+ * właściciela z 29.10.2026: kalendarz nie pędzi w późne lata). Noc 30 s czasu widoku przy każdej prędkości (widok ludzi
+ * dostaje czas razy prędkość), więc zmiana zdąża wyjść na chodnik, zanim sklep znów się otworzy.
+ */
+export const MINUTES_PER_SECOND_OPEN = 6;
+export const MINUTES_PER_SECOND_CLOSED = 14;
 export const ORDER_DEADLINE = 11 * 60;
 export const DELIVERY_AT = 7 * 60;
 export const DELIVERY_AT_NIGHT = 5 * 60;
@@ -96,10 +100,10 @@ export const UNLOAD_AT = { sidewalk: 0.75, floor: 1, backroom: 1.15 } as const;
 export const TAP_ITEMS = 8;
 /**
  * Combo stukania liczone w minutach gry, a nie zegarem przeglądarki (serwer odtwarzający bieg nie widzi zegara):
- * odstęp między stuknięciami, który jeszcze podtrzymuje serię. 15 minut to ok. 0,75 s przy ×1 w godzinach otwarcia
- * (20 minut gry na sekundę), czyli tyle co dawne 650 ms.
+ * odstęp między stuknięciami, który jeszcze podtrzymuje serię. 5 minut to ok. 0,8 s przy ×1 w godzinach otwarcia
+ * (`MINUTES_PER_SECOND_OPEN`), czyli mniej więcej tyle co dawne 650 ms.
  */
-export const COMBO_WINDOW = 15;
+export const COMBO_WINDOW = 5;
 export const WAGE_PER_DAY = 340;
 export const HIRE_COST = 300;
 export const STAFF_MAX = 8;

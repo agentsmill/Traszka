@@ -175,7 +175,7 @@ describe('combo stukania: z tapCombo stanu symulacji, nie z timera interfejsu (L
     expect(ComboChip()).toBeNull();
     withTaps(3, 0);
     expect(ComboChip()).not.toBeNull();
-    withTaps(30, 16);   // od ostatniego stuknięcia minęło więcej niż COMBO_WINDOW (15 minut gry)
+    withTaps(30, 16);   // od ostatniego stuknięcia minęło więcej niż COMBO_WINDOW (5 minut gry)
     expect(ComboChip()).toBeNull();
     econ.value = null;
     expect(ComboChip()).toBeNull();

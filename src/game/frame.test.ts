@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { OPEN_FROM } from '@/sim/economy/catalog';
+import { MINUTES_PER_SECOND_OPEN as R, OPEN_FROM } from '@/sim/economy/catalog';
 import { advanceEconomy } from '@/sim/economy/clock';
 import { applyCommand } from '@/sim/economy/commands';
 import { awaitingDecision, type EconEvent, type MonthReport } from '@/sim/economy/economy';
@@ -14,7 +14,7 @@ import { createSession, type GameSession } from './session';
 beforeEach(() => { vi.stubGlobal('localStorage', new MemoryStorage()); });
 afterEach(() => { vi.unstubAllGlobals(); });
 
-/** Świeża gra: sklep otwarty od 6:00, więc ×1 daje 20 minut gry na sekundę. */
+/** Świeża gra: sklep otwarty od 6:00, więc ×1 daje `R` (`MINUTES_PER_SECOND_OPEN`) minut gry na sekundę. */
 const fresh = (): GameSession => createSession('traszka-frame', true);
 
 describe('advanceSession', () => {
@@ -43,20 +43,20 @@ describe('advanceSession', () => {
     expect(out).toEqual([]);
   });
 
-  it('×1 w godzinach otwarcia to 20 minut gry na sekundę', () => {
+  it('×1 w godzinach otwarcia to R minut gry na sekundę', () => {
     const s = fresh();
-    expect(advanceSession(s, 1.01, 1, false, [])).toBe(20);   // 1,01 s: 20 pełnych minut i reszta w zegarze
-    expect(s.econ.minute).toBe(OPEN_FROM + 20);
-    expect(s.clock.acc).toBeCloseTo(0.2, 9);
+    expect(advanceSession(s, 1.01, 1, false, [])).toBe(R);   // 1,01 s: R pełnych minut i reszta w zegarze
+    expect(s.econ.minute).toBe(OPEN_FROM + R);
+    expect(s.clock.acc).toBeCloseTo(0.01 * R, 9);
   });
 
-  it('równa sekunda to 20 minut z dokładnością do błędu zaokrągleń zegara (ostatnia domyka się w następnej klatce)', () => {
+  it('równa sekunda to R minut z dokładnością do błędu zaokrągleń zegara (ostatnia domyka się w następnej klatce)', () => {
     const s = fresh();
     const done = advanceSession(s, 1, 1, false, []);
-    expect(done === 19 || done === 20).toBe(true);   // 20 × 0,05 s w liczbach zmiennoprzecinkowych bywa o włos mniej niż 1 s
-    expect(s.econ.minute - OPEN_FROM + s.clock.acc).toBeCloseTo(20, 9);
+    expect(done === R - 1 || done === R).toBe(true);   // R × (1/R) s w liczbach zmiennoprzecinkowych bywa o włos mniej niż 1 s
+    expect(s.econ.minute - OPEN_FROM + s.clock.acc).toBeCloseTo(R, 9);
     advanceSession(s, 0.001, 1, false, []);
-    expect(s.econ.minute).toBe(OPEN_FROM + 20);
+    expect(s.econ.minute).toBe(OPEN_FROM + R);
   });
 
   it('prędkość mnoży czas ramki: pół sekundy ×2 to tyle samo, co sekunda ×1', () => {
@@ -69,9 +69,9 @@ describe('advanceSession', () => {
 
   it('ułamek minuty zostaje w zegarze i dopełnia się w następnej klatce', () => {
     const s = fresh();
-    expect(advanceSession(s, 0.04, 1, false, [])).toBe(0);   // 0,04 s ×20/s = 0,8 minuty
+    expect(advanceSession(s, 0.8 / R, 1, false, [])).toBe(0);   // 0,8 minuty
     expect(s.clock.acc).toBeCloseTo(0.8, 9);
-    expect(advanceSession(s, 0.02, 1, false, [])).toBe(1);   // razem 1,2 minuty
+    expect(advanceSession(s, 0.4 / R, 1, false, [])).toBe(1);   // razem 1,2 minuty
     expect(s.econ.minute).toBe(OPEN_FROM + 1);
   });
 

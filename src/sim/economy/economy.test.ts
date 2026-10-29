@@ -202,14 +202,14 @@ describe('ekonomia', () => {
     expect(bigger.shelfCapTotal).toBeGreaterThan(info.shelfCapTotal);
   });
 
-  it('zegar: dzień sklepu przy ×1 trwa ok. 51 s, noc ok. 5 s', () => {
+  it('zegar: dzień sklepu przy ×1 trwa 2 min 50 s, noc 30 s', () => {
     const s = createEconomy(SEED, info);
     s.tycoon.cards.pending = [];   // zegar mierzymy bez kart: karta zatrzymuje grę, a reszta klatki przepada (clock.test.ts)
     const clock = { acc: 0 };
     let minutes = 0;
-    for (let t = 0; t < 51; t++) minutes += advanceEconomy(s, info, clock, 1, []);
+    for (let t = 0; t < 170; t++) minutes += advanceEconomy(s, info, clock, 1, []);
     expect(Math.abs(minutes - 17 * 60)).toBeLessThanOrEqual(1);   // błąd zaokrągleń sumy ułamków minut
-    for (let t = 0; t < 5; t++) minutes += advanceEconomy(s, info, clock, 1, []);
+    for (let t = 0; t < 30; t++) minutes += advanceEconomy(s, info, clock, 1, []);
     expect(Math.abs(minutes - 24 * 60)).toBeLessThanOrEqual(2);
   });
 });

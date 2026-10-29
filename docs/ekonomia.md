@@ -5,7 +5,7 @@ To uproszczona wersja §6–§8 specu, zrobiona tak, żeby gra była grywalna na
 
 ## Pętla
 
-- **Czas.** Krok symulacji to minuta gry. Przy ×1 dzień sklepu (6:00–23:00) trwa ~51 s, noc ~5 s. Start 1 września 2026.
+- **Czas.** Krok symulacji to minuta gry. Przy ×1 dzień sklepu (6:00–23:00) trwa 2 min 50 s, noc 30 s, cała doba ~3 min 20 s (miesiąc ~100 min przy ×1, ~12,5 min przy ×8). Start 1 września 2026.
   Ostatniego dnia miesiąca o 23:00 jest raport i opłata franczyzowa. Noc (20:00–6:00) zmienia oświetlenie sceny.
 - **Klienci** są liczeni zbiorczo: strumień przyjść = ruch bazowy × krzywa godzinowa × reputacja × marketing.
   Ruch bazowy wynika z pojemności półek (pojemność / 75 klientów na godzinę), więc większy sklep sam ściąga ludzi.

@@ -41,6 +41,7 @@ describe('makieta sklepu', () => {
 
   it('karta decyzji zatrzymuje grę: minuta nie mija, a bot bez odpowiedzi kończy się błędem', () => {
     const s = createSandbox();
+    for (let i = 0; i < MINUTES_PER_DAY && stepSandbox(s); i++) { /* do pierwszej karty: pierwszy dzień gry zawsze ją ma */ }
     expect(s.tycoon.cards.pending.some((c) => c.showAt <= s.minute)).toBe(true);
     const at = s.minute;
     expect(stepSandbox(s)).toBe(false);
@@ -68,8 +69,8 @@ describe('makieta sklepu', () => {
     expect(s.tycoon.waste.month.produced).toBeGreaterThan(20);
     expect(s.tycoon.waste.month.removed).toBeGreaterThan(15);
     expect(s.tycoon.hall.monthMinutes).toBeGreaterThan(9 * 1000);
-    // karta zatrzymuje grę: bierny gracz zatwierdza odpowiedź zaznaczoną z góry
-    expect(s.outcomes.length).toBeGreaterThan(10);
+    // karta zatrzymuje grę: bierny gracz zatwierdza odpowiedź zaznaczoną z góry (0–2 karty dziennie, średnio ok. jednej)
+    expect(s.outcomes.length).toBeGreaterThanOrEqual(7);
     expect(s.outcomes.every((o) => o.isDefault)).toBe(true);
     expect(s.tycoon.staff.profile).toBe('kolejka');
     const { state } = run('bierny', 'makieta');
@@ -92,13 +93,19 @@ describe('makieta sklepu', () => {
   });
 
   it('automatyka z warsztatu zastępuje minuty ludzi: mniej mandatów, mniej czekania przy paletach, więcej czasu na sprzątanie', () => {
-    // 20 dni: jeszcze przed raportem za wrzesień, więc statystyki miesiąca są całe
-    const plain = play('bierny', { seed: 'traszka-1' }, 20 * MINUTES_PER_DAY);
-    const robots = play('bierny', { seed: 'traszka-1', robots: { ...NO_ROBOTS, tasmociag: 2, edward: 1, prasa: 1 } }, 20 * MINUTES_PER_DAY);
-    expect(robots.total.fines).toBeLessThan(plain.total.fines);
-    expect(robots.tycoon.staff.month.starved.rozladunek).toBeLessThan(plain.tycoon.staff.month.starved.rozladunek);
-    expect(robots.tycoon.staff.month.robot.rozladunek).toBeGreaterThan(0);
-    expect(robots.tycoon.hall.monthSum / robots.tycoon.hall.monthMinutes).toBeGreaterThan(plain.tycoon.hall.monthSum / plain.tycoon.hall.monthMinutes);
+    // 20 dni: jeszcze przed raportem za wrzesień, więc statystyki miesiąca są całe. Mandaty sumujemy po seedach: na jednym
+    // seedzie bywa tylko mandat z karty, którego automatyka nie zmienia.
+    let finesPlain = 0, finesRobots = 0;
+    for (const seed of SEEDS) {
+      const plain = play('bierny', { seed }, 20 * MINUTES_PER_DAY);
+      const robots = play('bierny', { seed, robots: { ...NO_ROBOTS, tasmociag: 2, edward: 1, prasa: 1 } }, 20 * MINUTES_PER_DAY);
+      finesPlain += plain.total.fines;
+      finesRobots += robots.total.fines;
+      expect(robots.tycoon.staff.month.starved.rozladunek, seed).toBeLessThan(plain.tycoon.staff.month.starved.rozladunek);
+      expect(robots.tycoon.staff.month.robot.rozladunek, seed).toBeGreaterThan(0);
+      expect(robots.tycoon.hall.monthSum / robots.tycoon.hall.monthMinutes, seed).toBeGreaterThan(plain.tycoon.hall.monthSum / plain.tycoon.hall.monthMinutes);
+    }
+    expect(finesRobots).toBeLessThan(finesPlain);
   });
 });
 
@@ -179,10 +186,12 @@ describe('boty i balans na poziomie modułów (spec §7.5)', () => {
     expect(dailyTapCeiling('paleta') * 8).toBeLessThanOrEqual(320);
   });
 
-  it('dobre decyzje dają wyraźnie lepszy wynik niż bierność (w makiecie co najmniej o 30%)', () => {
+  // Progi makiety od 29.10.2026 (karta ok. raz dziennie zamiast 1–3): mniej kart to mniej okazji do dobrej decyzji. Cel
+  // balansu na prawdziwej ekonomii (bierny ok. zera, dobry gracz +20–40 tys. zł w dwa miesiące) pilnuje balance.test.ts.
+  it('dobre decyzje dają wyraźnie lepszy wynik niż bierność (w makiecie co najmniej o 15%)', () => {
     for (const seed of SEEDS) {
       const passive = run('bierny', seed).sum.total;
-      expect(run('decydent', seed).sum.total - passive, seed).toBeGreaterThan(0.3 * passive);
+      expect(run('decydent', seed).sum.total - passive, seed).toBeGreaterThan(0.15 * passive);
       expect(run('mistrz', seed).sum.total, seed).toBeGreaterThan(passive);
     }
   });
@@ -194,7 +203,7 @@ describe('boty i balans na poziomie modułów (spec §7.5)', () => {
       expect(d.state.outcomes.filter((o) => o.isDefault).length, seed).toBeLessThan(d.state.outcomes.length / 2);
       expect(p.state.outcomes.every((o) => o.isDefault), seed).toBe(true);
       expect(d.state.xp, seed).toBeGreaterThan(0);
-      expect(d.sum.trust, seed).toBeGreaterThan(p.sum.trust + 15);
+      expect(d.sum.trust, seed).toBeGreaterThan(p.sum.trust + 10);
       expect(p.sum.trust, seed).toBeGreaterThan(20);
       expect(d.sum.trust, seed).toBeLessThan(100);
     }
