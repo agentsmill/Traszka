@@ -77,17 +77,27 @@ export const HOUR_CURVE: Record<number, number> = {
 };
 
 /**
- * Klientów na godzinę przy krzywej 1, reputacji 50 i bez marketingu: tylu, ilu obsłużą półki sklepu (pojemność / 75),
- * razy położenie lokalu (kamienica w śródmieściu ma więcej przechodniów). Większy sklep po remoncie sam ściąga ludzi.
+ * Klientów na godzinę przy krzywej 1, reputacji 50 i bez marketingu: stały ruch z ulicy (`TRAFFIC_BASE`) plus tyle, ile
+ * ściągną półki (pojemność / 180), razy położenie lokalu (kamienica w śródmieściu ma więcej przechodniów). Sklep na start
+ * (1200–2100 sztuk na półkach) ma tak 450–550 klientów dziennie, a większy po remoncie sam ściąga ludzi.
  */
-export const TRAFFIC_PER_SHELF_ITEM = 1 / 75;
+export const TRAFFIC_BASE = 23;
+export const TRAFFIC_PER_SHELF_ITEM = 1 / 180;
 export const TRAFFIC_RANGE: [number, number] = [12, 60];
+/**
+ * Fale klientów (autobus, przerwa w szkole): godzina dzieli się na bloki po `block` minut i w bloku z szansą `chance` przez
+ * `length` minut przychodzi ich więcej, a w pozostałych minutach bloku o `depth` mniej. Średnia bloku zostaje równa
+ * `arrivalRate`, więc dzień ma tylu klientów co bez fal, tylko kolejka rośnie w falach i schodzi między nimi.
+ */
+export const WAVES = { block: 20, length: 5, chance: 0.75, depth: 0.35 } as const;
 export const LOT_TRAFFIC: Record<'blok' | 'kamienica' | 'pawilon', number> = { blok: 1, kamienica: 1.15, pawilon: 0.95 };
 
 // --- Ludzie i kasy ----------------------------------------------------------------------------------
 
 /** Klientów na minutę: kasjer i kasa samoobsługowa (SCO). */
 export const TILL_RATE = 0.7;
+/** Stukanie w kasę pomaga, gdy kolejka czekałaby na kasjerów dłużej niż tyle minut (`tillTapBlock`). */
+export const TILL_TAP_QUEUE_MIN = 3;
 export const SCO_RATE = 0.4;
 /** Udział klientów, którzy w ogóle podejdą do SCO (reszta woli człowieka). */
 export const SCO_ACCEPT = 0.65;
@@ -118,17 +128,48 @@ export const MEDIA_PER_DAY = 140;
  * w budce, i w flagowcu (balans: tycoon/balance.test.ts). Zaufana Centrali część wraca jako premia od obrotu (trust.ts).
  */
 export const FRANCHISE_FEE_FIXED = 2000;
-export const FRANCHISE_FEE_SHARE = 0.12;
+export const FRANCHISE_FEE_SHARE = 0.151;
 /** Palet w dostawie bez opłaty logistycznej; każda kolejna kosztuje. */
 export const PALLETS_FREE = 6;
 export const PALLET_FEE = 60;
 export const RETURN_FEE = 150;
-export const FINE_BASE = 400;
-export const FINE_PER_PALLET = 120;
+export const FINE_BASE = 800;
+export const FINE_PER_PALLET = 100;
+/**
+ * Asystent Traszki nie zamawia więcej palet, niż zmiana rozładuje w tyle minut po dostawie (`crewPalletCap`): przy dwóch osobach
+ * to 6 palet, mniej więcej tyle, ile sprzeda sklep na start przy 450–550 klientach dziennie.
+ */
+export const ASSISTANT_UNLOAD_MIN = 450;
+/**
+ * Straż Miejska (decyzja właściciela z 29.10.2026: mandat to rzadkość i skutek zaniedbania, a nie codzienność). Patrol zagląda
+ * od `from` do `to`; palety spod sklepu obchodzą go dopiero, gdy najstarsza stoi `graceMin`: mniej więcej tyle dwuosobowa zmiana
+ * rozładowuje pełną dostawę asystenta (6 palet, kasjer dorzuca ręce między falami klientów), więc mandat dostaje sklep, w którym
+ * palet nikt nie rusza (np. dzień z chorym pracownikiem, kiedy jedyna osoba stoi przy kasie).
+ * Pierwszy obchód dnia z takimi paletami to upomnienie bez kary; mandat dopiero przy kolejnym obchodzie tego samego dnia, co
+ * najmniej `warnGapMin` po upomnieniu, i nie częściej niż co `fineGapMin`. Szansa obchodu na minutę: `patrol` razy
+ * (1 + `perPallet` × liczba palet ponad jedną) razy (1 + `perHour` × godziny ponad tolerancję), razy kamery (`fineMult`).
+ */
+export const STRAZ = {
+  from: 9 * 60,
+  to: 20 * 60,
+  graceMin: 360,
+  warnGapMin: 60,
+  fineGapMin: 180,
+  patrol: 0.002,
+  perPallet: 0.25,
+  perHour: 0.2,
+} as const;
 /** Kredyt kupiecki: wartość towaru w sklepie (półki, zaplecze, palety) ponad limit wstrzymuje zamówienie. */
 export const CREDIT_LIMIT = 70_000;
 /** Gotówka poniżej tego przy zamknięciu miesiąca to miesiąc bez opłacenia Centrali; drugi taki z rzędu kończy umowę (spec §10). */
-export const BANKRUPTCY_AT = -30_000;
+/**
+ * Granica debetu (decyzja właściciela z 29.10.2026: „za duży debet to koniec gry”): gotówka poniżej niej kończy grę od razu, także
+ * w środku miesiąca. Opłata franczyzowa schodzi na koniec miesiąca, więc wtedy gotówka ma dołek; bierny gracz bez pecha kończy go
+ * w okolicy zera (balans: tycoon/balance.test.ts), a granica stoi na tyle daleko, żeby sam ten dołek gry nie kończył. Od
+ * `DEBT_WARN_SHARE` granicy Centrala ostrzega, ile zostało do końca.
+ */
+export const DEBT_LIMIT = -10_000;
+export const DEBT_WARN_SHARE = 0.5;
 export const START_CASH = 2000;
 
 /** Cierpliwość: ilu ludzi w kolejce klient jeszcze toleruje. */

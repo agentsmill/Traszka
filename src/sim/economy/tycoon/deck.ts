@@ -23,6 +23,15 @@ export interface AnswerDef {
   risk?: { chance: (c: CardContext, p: CardParams) => number; delta: (c: CardContext, p: CardParams) => CardDelta; text: string };
 }
 
+/**
+ * Mandat po kontroli za sprzedaż energetyka nieletniemu (karta `wiek`, odpowiedź „Sprzedaję”): dwie typowe marże dnia, nie mniej niż
+ * 4000 zł. To największy pojedynczy koszt losowy w grze, „duży koszt” z decyzji właściciela z 29.10.2026: dwa takie stawiają biernego
+ * gracza w strefie ostrzeżenia o debecie, trzy kończą grę (tycoon/debt.test.ts).
+ */
+export const MINOR_SALE_FINE = { min: 4000, dailyMargins: 2 } as const;
+export const minorSaleFine = (c: Pick<CardContext, 'dailyMargin'>): number =>
+  Math.max(MINOR_SALE_FINE.min, MINOR_SALE_FINE.dailyMargins * c.dailyMargin);
+
 export interface CardDef {
   id: string;
   kind: 'zdarzenie' | 'okolnik';
@@ -78,7 +87,7 @@ export const DECK: readonly CardDef[] = [
       {
         label: 'Zostaw, może ktoś się skusi',
         result: 'Cud! Ostatni klient wieczoru wykupił wszystkie. Mówił, że to na imprezę, i nikt nie pytał dalej.',
-        risk: { chance: () => 0.75, delta: (_, p) => ({ wut: p.v }), text: 'Nikt się nie skusił. Kanapki lądują w koszu, a ich wartość w WUT.' },
+        risk: { chance: () => 0.75, delta: (_, p) => ({ wut: p.v }), text: 'Nikt się nie skusił. Kanapki lądują w koszu, a ich wartość w ubytkach.' },
       },
     ],
   },
@@ -308,7 +317,7 @@ export const DECK: readonly CardDef[] = [
       },
       {
         label: 'Podpisuję, kierowca się spieszy',
-        result: 'Podpisane. Zgrzewki-widma przeszły do WUT, gdzie straszą do końca miesiąca.',
+        result: 'Podpisane. Zgrzewki-widma przeszły do ubytków, gdzie straszą do końca miesiąca.',
         delta: (_, p) => ({ wut: p.v }),
       },
     ],
@@ -466,7 +475,7 @@ export const DECK: readonly CardDef[] = [
         label: 'Sprzedaję, wąs wygląda przekonująco',
         result: 'Transakcja udana. Wąs rozmazał się przy drzwiach.',
         risk: {
-          chance: () => 0.25, delta: (c) => ({ fine: -Math.max(1000, 0.5 * c.dailyMargin), trust: -2 }),
+          chance: () => 0.25, delta: (c) => ({ fine: -minorSaleFine(c), trust: -2 }),
           text: 'Za chłopakiem weszła kontrola. Wąsy kontrolerów były prawdziwe.',
         },
       },
@@ -517,7 +526,7 @@ export const DECK: readonly CardDef[] = [
         result: 'Lody zniknęły w godzinę. Kolejka dzieciaków sięgała przystanku, a jedno dziecko pytało o fakturę.',
         delta: () => ({ staffMinutes: 30, logistics: -PALLET_FEE }),
         mods: (c) => [{ kind: 'traffic', value: 0.25 * viralShare(c.trust), minutes: 2 * DAY }],
-        risk: { chance: () => 0.25, delta: (c) => ({ wut: 0.1 * c.dailyMargin }), text: 'Część lodów rozmroziła się przy przekładaniu. WUT lubi lody.' },
+        risk: { chance: () => 0.25, delta: (c) => ({ wut: 0.1 * c.dailyMargin }), text: 'Część lodów rozmroziła się przy przekładaniu. Ubytki lubią lody.' },
       },
       {
         label: 'Odpuszczam, nie mam miejsca',
@@ -598,8 +607,8 @@ export const CIRCULARS: readonly CardDef[] = [
   {
     id: 'okolnik-refundacja',
     kind: 'okolnik',
-    title: 'Okólnik: program refundacyjny WUT',
-    text: 'Centrala odpisze {r} zł ubytków z WUT, jeśli wypełnisz formularz R-17 w trzech egzemplarzach. Egzemplarz trzeci trzeba wysłać faksem.',
+    title: 'Okólnik: program refundacyjny ubytków',
+    text: 'Centrala odpisze {r} zł z Twoich ubytków, jeśli wypełnisz formularz R-17 w trzech egzemplarzach. Egzemplarz trzeci trzeba wysłać faksem.',
     at: h(8), weight: 1, cooldown: 12, trustReason: 'okolnik',
     defaultAnswer: 1,
     params: (c) => ({ r: zl(0.2 * c.dailyMargin) }),

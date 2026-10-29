@@ -1,15 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import { generateStore } from '@/sim/store/generateStore';
 import {
-  BANKRUPTCY_AT, CATS, CAT_INFO, FRANCHISE_FEE_FIXED, FRANCHISE_FEE_SHARE, HOT, ITEMS_PER_CUSTOMER, MARGIN_PER_CUSTOMER, MINUTES_PER_DAY, OPEN_FROM, OPEN_TO, REVENUE_PER_CUSTOMER,
-  START_CASH, TILL_RATE, UNLOAD_AT, UNLOAD_RATE, WAGE_PER_DAY,
+  CATS, CAT_INFO, DEBT_LIMIT, FRANCHISE_FEE_FIXED, FRANCHISE_FEE_SHARE, HOT, ITEMS_PER_CUSTOMER, MARGIN_PER_CUSTOMER, MINUTES_PER_DAY, OPEN_FROM, OPEN_TO, REVENUE_PER_CUSTOMER,
+  START_CASH, STRAZ, TILL_RATE, UNLOAD_AT, UNLOAD_RATE, WAGE_PER_DAY, WAVES,
 } from './catalog';
-import { dateOfDay, formatDate, isLastDayOfMonth } from './calendar';
+import { dateOfDay, dayOf, formatDate, isLastDayOfMonth, minuteOfDay } from './calendar';
 import { advanceEconomy } from './clock';
+import { applyCommand } from './commands';
 import {
-  answerCard, arrivalRate, awaitingDecision, buyEquipment, buyUpgrade, cardContext, changeTrust, createEconomy, effects,
-  estimatedDailyMargin, expectedDailyCustomers, fire, franchiseFee, freeSpots, GOLDEN_PRIZE, isOpenForCustomers, kpiMetricsOf, kpiScaleOf, movePallet, relayout,
-  returnPallet, robotFleet, sell, slotFree, startRemont, stepMinute, tapPallet, tapTill, unlocksAt, upgradeBlocker, workshopUnlocked,
+  DEBT_WARN, answerCard, arrivalRate, assistantSuggestion, awaitingDecision, buyEquipment, buyUpgrade, cardContext, changeTrust, checkDebt, createEconomy,
+  crewPalletCap, debtWarningText, effects,
+  estimatedDailyMargin, expectedDailyCustomers, fire, franchiseFee, freeSpots, GOLDEN_PRIZE, isOpenForCustomers, kpiMetricsOf, kpiScaleOf, movePallet, orderedPallets, relayout,
+  returnPallet, robotFleet, sell, slotFree, startRemont, stepMinute, tapPallet, tapTill, unlocksAt, upgradeBlocker, waveAt, workshopUnlocked,
   type CommandResult, type EconEvent, type EconomyState, type MonthReport,
 } from './economy';
 import { rand01 } from './rand';
@@ -120,6 +122,61 @@ describe('ekonomia', () => {
     };
     expect(fines(true)).toBeGreaterThan(0);
     expect(fines(false)).toBe(0);
+  });
+
+  it('Straż Miejska: tolerancja po dostawie, najpierw upomnienie, mandat dopiero przy powtórce tego samego dnia (STRAZ)', () => {
+    const s = createEconomy(SEED, info);
+    s.staff = 0;            // nikt nie rozładowuje, więc palety stoją na chodniku całe dnie
+    s.order = { auto: false, manual: 0 };
+    const log: { minute: number; kind: 'upomnienie' | 'mandat'; since: number }[] = [];
+    for (let day = 0; day < 20; day++) {
+      const events: EconEvent[] = [];
+      while (s.pallets.length < 4) s.pallets.push({ ...s.pallets[0]!, id: 100 + s.pallets.length + day * 10, spot: s.pallets.length, since: s.minute });
+      for (let i = 0; i < MINUTES_PER_DAY; i++) {
+        const before = events.length;
+        stepMinute(s, info, events);
+        for (const e of events.slice(before)) {
+          const since = Math.min(...s.pallets.filter((p) => p.loc === 'sidewalk').map((p) => p.since));
+          if (e.kind === 'warning' && e.text.startsWith('Straż Miejska: upomnienie')) log.push({ minute: s.minute - 1, kind: 'upomnienie', since });
+          if (e.kind === 'fine') log.push({ minute: s.minute - 1, kind: 'mandat', since });
+        }
+      }
+    }
+    const warnings = log.filter((e) => e.kind === 'upomnienie');
+    const fines = log.filter((e) => e.kind === 'mandat');
+    expect(warnings.length).toBeGreaterThan(0);
+    expect(fines.length).toBeGreaterThan(0);
+    for (const e of log) {
+      const mod = minuteOfDay(e.minute);
+      expect(mod).toBeGreaterThanOrEqual(STRAZ.from);
+      expect(mod).toBeLessThan(STRAZ.to);
+      expect(e.minute - e.since).toBeGreaterThanOrEqual(STRAZ.graceMin);
+    }
+    // każdy mandat ma upomnienie tego samego dnia, co najmniej `warnGapMin` wcześniej; jedno upomnienie na dzień
+    for (const f of fines) {
+      const warn = warnings.find((w) => dayOf(w.minute) === dayOf(f.minute));
+      expect(warn).toBeDefined();
+      expect(f.minute - warn!.minute).toBeGreaterThanOrEqual(STRAZ.warnGapMin);
+    }
+    const days = warnings.map((w) => dayOf(w.minute));
+    expect(new Set(days).size).toBe(days.length);
+    // upomnienie nic nie kosztuje: wszystkie mandaty z kasy to kwoty mandatów
+    expect(s.total.fineCount).toBe(fines.length);
+  });
+
+  it('Asystent Traszki nie zamawia więcej palet, niż zmiana rozładuje przed obchodem (crewPalletCap)', () => {
+    const s = createEconomy(SEED, info);
+    for (const c of CATS) { s.shelf[c] = 0; s.backroom[c] = 0; }
+    s.pallets = [];
+    s.staff = 2;
+    const cap2 = crewPalletCap(s, info);
+    expect(assistantSuggestion(s, info)).toBe(cap2);   // puste półki: potrzeba więcej, niż zmiana rozładuje
+    s.staff = 4;
+    expect(crewPalletCap(s, info)).toBeGreaterThan(cap2);   // więcej ludzi, więcej palet
+    s.staff = 1;
+    expect(crewPalletCap(s, info)).toBeGreaterThanOrEqual(1);
+    s.order = { auto: false, manual: 30 };
+    expect(orderedPallets(s, info)).toBe(30);   // ręczne zamówienie gracza nie ma limitu asystenta (za duże → mandaty)
   });
 
   it('przesadne zamówienie bez rąk do pracy: palety się kumulują, a nadmiar kierowca zabiera za opłatą', () => {
@@ -394,41 +451,75 @@ describe('ostatni raport miesięczny w stanie', () => {
     expect((JSON.parse(JSON.stringify(s)) as EconomyState).lastReport).toEqual(report);
   });
 
-  it('bankructwo: stan z wypowiedzianą umową niesie raport, który okno końca gry pokaże po przeładowaniu', () => {
+  it('za duży debet kończy grę od razu, w środku miesiąca: gra stoi, a stan niesie gotówkę z chwili końca i ostatni raport', () => {
     const s = createEconomy(SEED, info);
-    s.cash = -1e6;
-    run(s, info, 61 * MINUTES_PER_DAY);
+    run(s, info, 30 * MINUTES_PER_DAY + 6 * 60);   // wrzesień zamknięty, 1 października w południe
+    expect(s.lastReport?.label).toBe('wrzesień 2026');
+    s.cash = DEBT_LIMIT - 1000;
+    const events = run(s, info, 1);
     expect(s.gameOver).toBe(true);
+    expect(events.filter((e) => e.kind === 'gameover')).toHaveLength(1);
+    expect(events.find((e) => e.kind === 'gameover')!.text).toContain('granicy debetu');
+    const { minute, cash } = s;
+    run(s, info, 60);
+    expect([s.minute, s.cash]).toEqual([minute, cash]);   // po końcu gry symulacja nic już nie liczy
     const restored = JSON.parse(JSON.stringify(s)) as EconomyState;
     expect(restored.gameOver).toBe(true);
-    expect(restored.lastReport?.label).toBe('październik 2026');
-    expect(restored.lastReport?.cash).toBeLessThan(BANKRUPTCY_AT);
+    expect(restored.cash).toBeLessThan(DEBT_LIMIT);
+    expect(restored.lastReport?.label).toBe('wrzesień 2026');
   });
 
-  it('pierwszy miesiąc bez opłacenia Centrali to ostrzeżenie, drugi z rzędu kończy umowę (spec §10)', () => {
+  it('checkDebt: zejście pod próg ostrzeżenia to jedno zdarzenie z kwotą do granicy, wiszenie pod progiem już nie, a poniżej granicy koniec', () => {
     const s = createEconomy(SEED, info);
-    s.cash = -1e6;
-    const first = run(s, info, 30 * MINUTES_PER_DAY);
-    expect(s.gameOver).toBe(false);
-    expect(first.filter((e) => e.kind === 'debt')).toHaveLength(1);
-    expect(first.some((e) => e.kind === 'gameover')).toBe(false);
-    const second = run(s, info, 31 * MINUTES_PER_DAY);
+    const out: EconEvent[] = [];
+    expect(DEBT_WARN).toBe(DEBT_LIMIT / 2);
+    s.cash = DEBT_WARN;
+    checkDebt(s, 0, out);   // równo progowi: jeszcze nad nim
+    expect(out).toEqual([]);
+    s.cash = DEBT_WARN - 300;
+    checkDebt(s, DEBT_WARN, out);
+    expect(out.map((e) => e.kind)).toEqual(['debt']);
+    expect(out[0]!.text).toBe(debtWarningText(DEBT_WARN - 300));
+    expect(out[0]!.text).toContain(`zostało ${(DEBT_WARN - 300 - DEBT_LIMIT).toLocaleString('pl-PL')} zł`);
+    checkDebt(s, s.cash - 100, out);   // gotówka wisi pod progiem: bez powtórki
+    expect(out).toHaveLength(1);
+    s.cash = DEBT_LIMIT;
+    checkDebt(s, DEBT_WARN - 300, out);
+    expect(s.gameOver).toBe(false);   // granica jest ostra: koniec dopiero poniżej
+    s.cash = DEBT_LIMIT - 0.5;
+    checkDebt(s, DEBT_LIMIT, out);
     expect(s.gameOver).toBe(true);
-    expect(second.some((e) => e.kind === 'gameover')).toBe(true);
-    expect(second.some((e) => e.kind === 'debt')).toBe(false);
+    expect(out.map((e) => e.kind)).toEqual(['debt', 'gameover']);
   });
 
-  it('miesiąc z opłaconą Centralą między dwoma nieopłaconymi zeruje licznik', () => {
-    const s = createEconomy(SEED, info);
-    s.cash = -1e6;
-    run(s, info, 30 * MINUTES_PER_DAY);   // wrzesień: ostrzeżenie
-    s.cash = 1e6;
-    run(s, info, 31 * MINUTES_PER_DAY);   // październik: opłacony
-    expect(s.gameOver).toBe(false);
-    s.cash = -1e6;
-    const third = run(s, info, 30 * MINUTES_PER_DAY);   // listopad: znów pierwszy z rzędu
-    expect(s.gameOver).toBe(false);
-    expect(third.some((e) => e.kind === 'debt')).toBe(true);
+  it('opłata na koniec miesiąca: gotówka po niej między progiem a granicą to ostrzeżenie i gra trwa, poniżej granicy koniec z raportem', () => {
+    /** 30 września, 23:00: następna minuta zamyka dzień i miesiąc (opłata, premia, WUT). */
+    const atClose = (): EconomyState => {
+      const s = createEconomy(SEED, info);
+      run(s, info, 29 * MINUTES_PER_DAY + 17 * 60);
+      return s;
+    };
+    const base = atClose();
+    const probe = JSON.parse(JSON.stringify(base)) as EconomyState;
+    probe.cash = 0;
+    run(probe, info, 1);
+    const delta = probe.cash;   // o tyle zamknięcie zmienia gotówkę (deterministycznie)
+    expect(delta).toBeLessThan(DEBT_LIMIT);   // sama opłata jest większa niż granica: bez zarobku z miesiąca byłby koniec
+
+    const warned = atClose();
+    warned.cash = DEBT_WARN - 1000 - delta;
+    const ev1 = run(warned, info, 1);
+    expect(warned.cash).toBeCloseTo(DEBT_WARN - 1000, 6);
+    expect(warned.gameOver).toBe(false);
+    expect(ev1.map((e) => e.kind)).toEqual(expect.arrayContaining(['month', 'debt']));
+    expect(ev1.some((e) => e.kind === 'gameover')).toBe(false);
+
+    const ended = atClose();
+    ended.cash = DEBT_LIMIT - 1000 - delta;
+    const ev2 = run(ended, info, 1);
+    expect(ended.gameOver).toBe(true);
+    expect(ev2.map((e) => e.kind)).toEqual(expect.arrayContaining(['month', 'gameover']));
+    expect(ended.lastReport?.label).toBe('wrzesień 2026');   // okno końca gry pokaże raport tego miesiąca
   });
 });
 
@@ -1121,6 +1212,21 @@ describe('śmieci z palet, czystość sali, pogoda, niedziela i prasa', () => {
     id, loc, spot, items: { ...emptyItems(), napoje: total }, total, initial: total, since: 0, ...(bags === undefined ? {} : { bags }),
   });
 
+  it('pełne zaplecze, a najstarsza paleta wiezie tylko towar bez miejsca: ręce idą do następnej palety i do kasy, nie stoją nad pierwszą', () => {
+    const s = quiet();
+    setStaffProfile(s.tycoon.staff, 'dostawa');   // palety przed kasą: dawniej obie osoby „rozładowywały” pierwszą paletę bez końca
+    for (const c of CATS) { s.shelf[c] = info.shelfCap[c]; s.backroom[c] = 0; }
+    s.backroom.napoje = effects(s, info).backroomCap;   // zaplecze pełne
+    s.shelf.pieczywo = info.shelfCap.pieczywo - 40;    // luka tylko w pieczywie
+    const bread = { ...drinkPallet(901, 'sidewalk', 1, 60), items: { ...emptyItems(), pieczywo: 60 }, since: 5 };
+    s.pallets = [drinkPallet(900, 'sidewalk', 0, 320), bread];
+    s.queue = 3;
+    run(s, info, 15);
+    expect(s.pallets.find((p) => p.id === 900)!.total).toBeGreaterThan(300);   // napoje schodzą tylko tyle, ile klienci zwolnią na półce
+    expect(s.pallets.find((p) => p.id === 901)!.total).toBeLessThan(60 - 30);   // pieczywo poszło na półkę
+    expect(s.today.customers).toBeGreaterThan(5);   // przy kasie ktoś stał
+  });
+
   /** Półki i zaplecze pełne wszystkiego poza napojami: najbliższa dostawa to prawie same napoje. */
   const drinksSoldOut = (s: EconomyState): void => {
     const backroomCap = effects(s, info).backroomCap;
@@ -1309,10 +1415,38 @@ describe('śmieci z palet, czystość sali, pogoda, niedziela i prasa', () => {
       const s = quiet(day);
       s.arrivalAcc = 0;
       const lambda = arrivalRate(s, info);
-      const expected = lambda * (0.75 + 0.5 * rand01(s.seedHash, s.minute, 1));
+      const expected = lambda * waveAt(s.seedHash, s.minute) * (0.75 + 0.5 * rand01(s.seedHash, s.minute, 1));
       stepMinute(s, info, []);
       expect(s.arrivalAcc).toBeCloseTo(expected - Math.floor(expected), 9);
     }
+  });
+
+  it('fale klientów: w każdym bloku średnia mnożnika to dokładnie 1, fala trwa `length` minut, a bloków z falą jest ok. `chance`', () => {
+    const { block, length, chance, depth } = WAVES;
+    const peak = 1 + depth * (block - length) / length;
+    const blocks = 3000;
+    let withWave = 0;
+    for (let b = 0; b < blocks; b++) {
+      const m = (s: number): number => waveAt(1234567, b * block + s);
+      const values = Array.from({ length: block }, (_, i) => m(i));
+      expect(values.reduce((n, v) => n + v, 0), `blok ${b}`).toBeCloseTo(block, 9);
+      const inWave = values.filter((v) => Math.abs(v - peak) < 1e-9).length;
+      if (inWave === 0) {
+        expect(values.every((v) => v === 1), `blok ${b} bez fali`).toBe(true);
+        continue;
+      }
+      withWave++;
+      expect(inWave, `blok ${b}`).toBe(length);
+      // fala to jeden ciąg minut, reszta bloku ma mniej klientów
+      const first = values.findIndex((v) => Math.abs(v - peak) < 1e-9);
+      expect(values.slice(first, first + length).every((v) => Math.abs(v - peak) < 1e-9), `blok ${b}`).toBe(true);
+      expect(values.filter((v) => Math.abs(v - (1 - depth)) < 1e-9).length, `blok ${b}`).toBe(block - length);
+    }
+    expect(withWave / blocks).toBeGreaterThan(chance - 0.03);
+    expect(withWave / blocks).toBeLessThan(chance + 0.03);
+    // bez stanu: ta sama minuta i ten sam seed dają ten sam mnożnik, a inny seed układa fale inaczej
+    expect(waveAt(42, 9000)).toBe(waveAt(42, 9000));
+    expect(Array.from({ length: 200 }, (_, i) => waveAt(42, i)).join()).not.toBe(Array.from({ length: 200 }, (_, i) => waveAt(43, i)).join());
   });
 
   it('pogoda losuje się o północy: po przejściu przez 0:00 jest taka, jaką daje rollWeather dla tego dnia', () => {
@@ -1581,11 +1715,22 @@ describe('karty dnia i okólniki', () => {
       expect(s.reputation).toBe(0);
     });
 
+    it('mandat z karty, po którym gotówka spada poniżej granicy debetu, kończy grę od razu (applyCommand), a kolejne polecenia odpadają', () => {
+      const s = quiet();
+      s.cash = DEBT_LIMIT + 500;
+      const card = plant(s, 'fefo', [{ fine: -2000 }]);
+      const out = applyCommand(s, info, { type: 'answerCard', seq: card.seq, answer: 0 });
+      expect(out.result.ok).toBe(true);
+      expect(s.gameOver).toBe(true);
+      expect(out.events.filter((e) => e.kind === 'gameover')).toHaveLength(1);
+      expect(applyCommand(s, info, { type: 'tapTill' }).result.ok).toBe(false);
+    });
+
     it('skutki karty tycoona (zaufanie z przyczyną, WUT, siły) idą przez applyCardOutcome', () => {
       const s = quiet();
       const energy = s.tycoon.fatigue.energy;
       answer(s, plant(s, 'fefo', [{ trust: 2, wut: 80, energy: -10 }]), 0);
-      expect(s.tycoon.trust.value).toBe(62);
+      expect(s.tycoon.trust.value).toBe(TRUST.start + 2);
       expect(s.tycoon.trust.month.karty).toBe(2);
       expect(s.tycoon.wut.month.karty).toBe(80);
       expect(s.tycoon.fatigue.energy).toBe(energy - 10);

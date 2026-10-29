@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type { Speed } from '@/game/loop';
 import { dayOf, formatClock, formatDate } from '@/sim/economy/calendar';
-import { isClosedForRemont } from '@/sim/economy/economy';
+import { DEBT_WARN, debtWarningText, isClosedForRemont } from '@/sim/economy/economy';
 import { rankFor, xpToNext } from '@/sim/economy/progress';
 import { trustTier } from '@/sim/economy/tycoon/trust';
-import { econ, openRanking, showSettings, speed, tab, type Controls } from '../state';
+import { econ, openHowTo, openRanking, showSettings, speed, tab, type Controls } from '../state';
 import { int, zl } from './format';
 
 /** Przyciski prędkości w pasku (pierwszy to pauza); „Jak grać” podaje z nich zakres tempa. */
@@ -87,12 +87,14 @@ export function Hud({ controls, ranking = false }: { controls: Controls; ranking
           onClick={() => { tab.value = 'cele'; }}>
           <span>{s.level}</span>
         </button>
-        <span class={`tt-cash${s.cash < 0 ? ' neg' : ''}${rising ? ' up' : ''}`} title="Gotówka">{zl(cash)}</span>
+        <span class={`tt-cash${s.cash < 0 ? ' neg' : ''}${s.cash < DEBT_WARN ? ' debt' : ''}${rising ? ' up' : ''}`}
+          title={s.cash < DEBT_WARN ? debtWarningText(s.cash) : 'Gotówka'}>{zl(cash)}</span>
         <span class="tt-stat" title="Reputacja sklepu (0–100): ściąga klientów">⭐ {int(s.reputation)}</span>
         <span class="tt-stat" title="Ogonki: nagrody za cele, wydajesz w Ulepszeniach">🦎 {int(s.ogonki)}</span>
         <TrustChip value={s.tycoon.trust.value} />
         <span class="tt-hud-tools">
           {ranking && <RankingButton />}
+          <button type="button" class="tt-iconbtn tt-help" aria-label="Jak grać" onClick={() => openHowTo()}>?</button>
           <button type="button" class="tt-iconbtn tt-gear" aria-label="Ustawienia" onClick={() => { showSettings.value = true; }}>⚙</button>
         </span>
       </div>

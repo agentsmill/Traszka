@@ -11,11 +11,12 @@ import type { CharacterFactory } from '@/render/characters/characterFactory';
 import { ANIM_SPEED_CAP } from '@/render/crowdView';
 import { createBlobShadows } from '@/render/characters/blobShadows';
 import { cashierCues, type CashierLook } from './cashier';
+import { CrowdMirror } from './crowdMirror';
 import { bindControls } from './controls';
 import { advanceClock, clockAlpha } from './loop';
 import type { GameSession } from './session';
 import { palletRefsOf } from './palletRefs';
-import { SIM_STEP, payLook, setCrowdExtras, setCrowdRate, stepCrowd, type CrowdOptions } from '@/sim/crowd/crowd';
+import { SIM_STEP, crowdHeadcount, feedCrowdMirror, payLook, setCrowdExtras, setCrowdRate, stepCrowd, type CrowdOptions } from '@/sim/crowd/crowd';
 import { CATS, HOUR_CURVE } from '@/sim/economy/catalog';
 import { minuteOfDay } from '@/sim/economy/calendar';
 import { effects, expectedDailyCustomers, isClosedForRemont, isOpenForCustomers, slotUsage } from '@/sim/economy/economy';
@@ -115,14 +116,21 @@ export function clearSeedFromUrl(): void {
 /** Najwięcej postaci w sklepie naraz: telefon i słabsza grafika dostają mniej. */
 export const CROWD_MAX: Record<QualityPresetId, number> = { niska: 10, srednia: 16, wysoka: 22 };
 
+/** Klientów na godzinę gry z bieżącej godziny (dzień / 15,6 · krzywa): z tego liczą się i tempo napływu, i wielkość grupy w lustrze. */
+export function trafficPerHour(session: Pick<GameSession, 'econ' | 'info'>): number {
+  const { econ: s, info } = session;
+  return expectedDailyCustomers(s, info) / 15.6 * (HOUR_CURVE[Math.floor(minuteOfDay(s.minute) / 60)] ?? 0);
+}
+
 /**
- * Tłum, jakiego chce ekonomia: ile postaci naraz i ile nowych na minutę. Zamknięty sklep (noc, remont, karta „zamknij na godzinę”) nie wpuszcza nikogo,
+ * Tłum, jakiego chce ekonomia: ile postaci naraz i ile nowych na minutę. Zamknięty sklep (noc, remont, karta „zamknij na godzinę”) nie wpuszcza nikogo
+ * i wyprasza tych w środku (`closing`: do kasy i za próg, szybko, bo noc trwa kilka sekund),
  * otwarty liczy ruch z bieżącej godziny (klientów na godzinę), ograniczony presetem grafiki (`CROWD_MAX`) i widełkami 4–… oraz 3–24.
  */
 export function crowdRateFor(session: Pick<GameSession, 'econ' | 'info'>, preset: QualityPresetId): CrowdOptions {
-  const { econ: s, info } = session;
-  if (!isOpenForCustomers(s)) return { targetCount: 0, spawnPerMinute: 0 };
-  const perHour = expectedDailyCustomers(s, info) / 15.6 * (HOUR_CURVE[Math.floor(minuteOfDay(s.minute) / 60)] ?? 0);
+  const { econ: s } = session;
+  if (!isOpenForCustomers(s)) return { targetCount: 0, spawnPerMinute: 0, closing: true };
+  const perHour = trafficPerHour(session);
   return { targetCount: Math.max(4, Math.min(CROWD_MAX[preset], Math.round(perHour * 0.35))), spawnPerMinute: Math.max(3, Math.min(24, perHour * 0.3)) };
 }
 
@@ -208,6 +216,11 @@ export function createSceneHost(deps: SceneDeps): SceneHost {
   let generation = 0;               // odrzuca wyniki asynchroniczne, które wróciły po zmianie seeda
   let payingId: number | null = null;   // klient obsługiwany przy kasie w poprzedniej klatce (kasjer: gest przy sprzedaży)
   let lastVisual = -1;
+  /** Tłum jako lustro ekonomii (crowdMirror.ts): liczniki gry zamieniane na grupy w drzwiach, w kolejce, przy kasie i w złości. */
+  const mirror = new CrowdMirror();
+  let lastMirrorAt = -1;
+  const angrySeen = new Set<number>();   // utraceni, którzy już dostali dymek
+  let mirrored: GameSession | null = null;
   let staffSyncFailed = false;           // błąd synchronizacji załogi zgłaszamy raz, a nie co ~100 ms
 
   ctx.setTimeOfDay(tod);
@@ -254,7 +267,17 @@ export function createSceneHost(deps: SceneDeps): SceneHost {
       .filter((u) => u.equipment === 'sco' && u.access)
       .map((u) => ({ cell: u.access!, look: payLook(u.fixture.facing) }));
     setCrowdExtras(loaded.world.crowd, obstacles, pay);
-    setCrowdRate(loaded.world.crowd, crowdRateFor(session, ctx.preset));
+    // tłum jako lustro: tempo i zamknięcie z ekonomii, a przyjścia, kolejka, płacenie i złość z jej liczników (grupami)
+    const rate = crowdRateFor(session, ctx.preset);
+    setCrowdRate(loaded.world.crowd, { ...rate, mirror: true });
+    const simDt = lastMirrorAt < 0 ? 0 : Math.min(1, (now - lastMirrorAt) / 1000) * loaded.world.speed;
+    lastMirrorAt = now;
+    mirrored = session;
+    feedCrowdMirror(loaded.world.crowd, mirror.update({
+      customers: s.total.customers, lost: s.total.lost, queue: s.queue, open: !rate.closing, perHour: trafficPerHour(session),
+      maxCharacters: CROWD_MAX[ctx.preset], queueSlots: layout.checkoutQueue.length, speed: loaded.world.speed, simDt,
+      headcount: crowdHeadcount(loaded.world.crowd),
+    }));
     // załoga: kto jest na zmianie i co robi (numery osób są stałe, `shift.people`), oraz palety (przeszkody i cele rozładunku);
     // scena tylko to odgrywa
     // Błąd w teatrze załogi nie może przerwać reszty tej metody (pora dnia, znaczniki, nakładka kasy) ani klatki: raz do konsoli.
@@ -301,6 +324,9 @@ export function createSceneHost(deps: SceneDeps): SceneHost {
       clock.acc = 0;
       payingId = null;   // nowy tłum liczy id agentów od początku
       lastVisual = -1;
+      mirror.reset();    // nowy sklep: liczniki gry biorą się od nowa, zaległości nie są odgrywane
+      lastMirrorAt = -1;
+      angrySeen.clear();
 
       const lo = cellToWorld(layout, 0, 0);
       const hi = cellToWorld(layout, layout.width - 1, layout.depth - 1);
@@ -333,6 +359,21 @@ export function createSceneHost(deps: SceneDeps): SceneHost {
     }).catch((error: unknown) => console.error('Nie udało się zbudować ulicy.', error));
   }
 
+  /** Dymek nad utraconym klientem, który wychodzi zdenerwowany: z kolejki (puli o kolejce) albo od pustej półki (pula o braku towaru). */
+  function complain(id: number, why: 'queue' | 'shelf'): void {
+    const current = loaded;
+    const session = mirrored;
+    if (!current || !session) return;
+    const s = session.econ;
+    const empty = CATS.filter((c) => session.info.shelfCap[c] > 0 && s.shelf[c] / session.info.shelfCap[c] < 0.15);
+    const text = why === 'shelf' && empty.length > 0 ? missingLine(pick(empty)) : pick(LINES.queue);
+    const { width, depth } = current.world.layout;
+    overlay?.say(() => {
+      const a = current.world.crowd.agents.find((x) => x.id === id);
+      return a && loaded === current ? new Vector3((a.x - width / 2) * CELL_SIZE_M, 2.0, (a.y - depth / 2) * CELL_SIZE_M) : null;
+    }, text);
+  }
+
   return {
     get loaded() { return loaded; },
     get seed() { return loaded?.world.seed ?? null; },
@@ -347,6 +388,11 @@ export function createSceneHost(deps: SceneDeps): SceneHost {
       const { world, crowdView, cashierView, staffView } = loaded;
       const steps = paused ? 0 : advanceClock(clock, frameDt, world.speed);
       for (let i = 0; i < steps; i++) stepCrowd(world.crowd, world.layout, SIM_STEP);
+      for (const a of world.crowd.agents) {
+        if (!a.angry || angrySeen.has(a.id)) continue;
+        angrySeen.add(a.id);
+        complain(a.id, a.angry);
+      }
       crowdView.setCharacterShadows(QUALITY[ctx.preset].characterShadows);
       const speed = paused ? 0 : world.speed;
       const animDt = realDt * Math.min(speed, ANIM_SPEED_CAP);

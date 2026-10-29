@@ -315,15 +315,15 @@ describe('okno karty dnia: „Zatwierdź” zawsze działa', () => {
 describe('okno karty dnia: chipy skutków', () => {
   it('koszty są czerwone, zyski zielone (klasa oceny obok .tt-chip), także gdy stoją obok siebie', () => {
     publish(premia(1, 900), fefo(2, 950));
-    const buttons = answerButtons(desk(fakeGame()));   // okólnik: premia +800, czas ludzi 45 min, WUT +400
+    const buttons = answerButtons(desk(fakeGame()));   // okólnik: premia +800, czas ludzi 45 min, ubytki +400
     const tones = Object.fromEntries(chipsOf(buttons[0]!).map((c) => [textOf(c), toneOfChip(c)]));
-    expect(tones).toEqual({ [`+${nbsp(800)} zł`]: 'gain', 'czas ludzi 45 min': 'cost', [`WUT +${nbsp(400)} zł`]: 'cost' });
+    expect(tones).toEqual({ [`+${nbsp(800)} zł`]: 'gain', 'czas ludzi 45 min': 'cost', [`ubytki +${nbsp(400)} zł`]: 'cost' });
     publish(fefo(2, 950));
     const fefoChips = chipsOf(answerButtons(desk(fakeGame()))[1]!);   // −490 zł, czas ludzi 25 min, reputacja +0,5, Ogonki +2
     expect(fefoChips.map((c) => [textOf(c), toneOfChip(c)])).toEqual([
       ['−490 zł', 'cost'], ['czas ludzi 25 min', 'cost'], ['reputacja +0,5', 'gain'], ['Ogonki +2', 'gain'],
     ]);
-    expect(toneOfChip(chipsOf(answerButtons(desk(fakeGame()))[2]!)[0]!)).toBe('cost');   // ryzyko 75%: WUT +1 080 zł
+    expect(toneOfChip(chipsOf(answerButtons(desk(fakeGame()))[2]!)[0]!)).toBe('cost');   // ryzyko 75%: ubytki +1 080 zł
   });
 
   it('odpowiedź bez skutków pokazuje „bez skutków” bez oceny kolorem', () => {

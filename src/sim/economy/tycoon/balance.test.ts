@@ -8,10 +8,11 @@ import { measureBots, type BotMeasure } from './economyEnv';
  * (wrzesień i październik, 61 dni) na kilku sklepach. Wynik to suma wyników miesięcy (`history[].profit`). Liczby gry stroi
  * się tak, żeby te asercje przechodziły: opłata franczyzowa, mandaty, złota paleta, nagroda za poziom i premia od obrotu.
  *
- * Seedy dają sklepy o różnej wielkości (obrót dwóch miesięcy od ok. 400 do 670 tys. zł). Płace są stałe, więc wynik biernego i zysk
- * z decyzji zależą od wielkości sklepu: widełki są ciasne i trzymają na tych pięciu seedach, ale nie na każdym sklepie (na próbie
- * czternastu seedów wynik biernego wychodził od −8 do +12 tys. zł, mistrza od 21 do 55 tys. zł; np. `kiełbasa-42` daje mistrzowi
- * 42 tys. zł). Dodając seed, trzeba więc wiedzieć, że może nie przejść bez dalszego strojenia.
+ * Seedy dają sklepy o różnej wielkości, ale obrót dwóch miesięcy wychodzi podobny (ok. 680–760 tys. zł), bo sprzedaż ogranicza
+ * dostawa, jaką rozładuje dwuosobowa zmiana. Wynik biernego rozjeżdżają losowe zdarzenia: dni z chorym pracownikiem (mandaty), złote
+ * palety i trafione KPI. Widełki są ciasne i trzymają na tych pięciu seedach, ale nie na każdym sklepie (na próbie dziewięciu innych
+ * seedów, SIM_VERSION 4, wynik biernego wychodził od −8 do +10 tys. zł, mistrza od 22 do 34 tys. zł; np. `kiełbasa-42` daje biernemu
+ * −7,6 tys. zł). Dodając seed, trzeba więc wiedzieć, że może nie przejść bez dalszego strojenia.
  */
 const SEEDS = ['traszka-1', 'kopytka-541', 'makieta', 'lublin-9', 'seed-3'];
 const DAYS = 61;
@@ -25,8 +26,15 @@ beforeAll(() => {
 const results = (bot: (typeof BOT_NAMES)[number]): [string, number][] => SEEDS.map((seed, i) => [seed, run.totals[bot][i]!]);
 
 describe('balans na prawdziwej ekonomii (dwa miesiące, boty z bots.ts)', () => {
-  it('bierny gracz kończy dwa miesiące w okolicy zera: najwyżej 5 000 zł na plus albo minus na każdym sklepie', () => {
-    for (const [seed, total] of results('bierny')) expect(Math.abs(total), `${seed}: bierny ${Math.round(total)} zł`).toBeLessThanOrEqual(5000);
+  it('bierny gracz po mandatach i opłacie Centrali ledwo wiąże koniec z końcem: od −4 000 do +2 000 zł, mediana najwyżej +1 000 zł', () => {
+    // decyzja właściciela z 29.10.2026: w okolicy zera albo lekko na minusie, nie wygodnie na plusie
+    const totals = results('bierny');
+    for (const [seed, total] of totals) {
+      expect(total, `${seed}: bierny ${Math.round(total)} zł`).toBeGreaterThanOrEqual(-4000);
+      expect(total, `${seed}: bierny ${Math.round(total)} zł`).toBeLessThanOrEqual(2000);
+    }
+    const sorted = totals.map(([, t]) => t).sort((a, b) => a - b);
+    expect(sorted[Math.floor(sorted.length / 2)], `mediana biernego: ${sorted.map(Math.round).join(', ')}`).toBeLessThanOrEqual(1000);
   });
 
   it('mistrz (decyzje i stukanie) zarabia 20–40 tys. zł na każdym sklepie', () => {

@@ -62,8 +62,9 @@ const LOG: LogEntry[] = (() => {
     { minute: at(2, 9), cmd: { type: 'hire' } },
     { minute: at(3, 7), cmd: { type: 'setOrder', auto: true } },
     { minute: at(4, 12), cmd: { type: 'buyEquipment', id: 'sco' } },
-    { minute: at(28, 7), cmd: { type: 'startRemont' } },
-    { minute: at(28, 7, 5), cmd: { type: 'rushRemont' } },
+    // dzień 29 rano: po stuknięciach z czterech tygodni sklep ma ok. 25,6 tys. zł (SIM_VERSION 3), dzień wcześniej brakuje ok. 120 zł
+    { minute: at(29, 7), cmd: { type: 'startRemont' } },
+    { minute: at(29, 7, 5), cmd: { type: 'rushRemont' } },
     { minute: at(40, 12), cmd: { type: 'campaign' } },
   ];
   for (let day = 0; day < 28; day++) {
@@ -116,7 +117,7 @@ describe('buildJudge: jeden samodzielny plik z aktualnej symulacji', () => {
     expect(out.types).toEqual({ SIM_VERSION: 'number', GENERATOR_VERSION: 'number', RANKED_SEASON_END_MINUTE: 'number', seasonScore: 'function', replayRun: 'function' });
     expect([out.SIM_VERSION, out.GENERATOR_VERSION, out.END]).toEqual([SIM_VERSION, GENERATOR_VERSION, RANKED_SEASON_END_MINUTE]);
     expect(out.score).toBe(direct(RUN));   // ten sam wynik z czystego Node i z kodu źródłowego w Vitest
-  });
+  }, 60_000);   // dwa pełne sezony (w osobnym Node i tutaj): w CI dłużej niż domyślne 5 s
 
   it('eksporty bundla to dokładnie te z wejścia (scripts/judge-entry.ts) i te z src: wersje i koniec sezonu równe', async () => {
     const mod = await load() as typeof entry;

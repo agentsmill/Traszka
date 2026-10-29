@@ -1,7 +1,9 @@
 import { computed, signal, untracked, type ReadonlySignal } from '@preact/signals';
 import { useEffect, useState } from 'preact/hooks';
-import { BANKRUPTCY_AT, RETURN_FEE } from '@/sim/economy/catalog';
-import { effects, isOpenForCustomers, slotFree, slotUsage, tapCombo, type EconomyState, type MonthReport } from '@/sim/economy/economy';
+import { DEBT_LIMIT, RETURN_FEE } from '@/sim/economy/catalog';
+import {
+  DEBT_WARN, debtWarningText, effects, slotFree, slotUsage, tapCombo, tillTapBlock, type EconomyState, type MonthReport,
+} from '@/sim/economy/economy';
 import { visibleCards } from '@/sim/economy/tycoon/cards';
 import { FATIGUE } from '@/sim/economy/tycoon/fatigue';
 import { REPORT_LINE_LABEL, hintText, reportCommentText } from '@/sim/economy/tycoon/report';
@@ -16,7 +18,7 @@ import {
 } from '../state';
 import { int, people, signedPts, signedZl, zl } from './format';
 import { Bar, PalletItem } from './panels';
-import { NO_ENERGY_TITLE, tapBlock } from './tapBlock';
+import { ENERGY_TITLE, NO_ENERGY_TITLE, tapBlock, tillReason } from './tapBlock';
 
 export const DISCLAIMER = 'Wszystkie firmy, postacie i zdarzenia są fikcyjne.';
 
@@ -44,9 +46,9 @@ export function SelectionCard({ game }: { game: GameActions }) {
       <>
         <h3>Kasa</h3>
         <p>Kolejka: <b>{int(s.queue)}</b> · na kasie: {people(s.lastCashiers)} os. · SCO: {fx.sco}</p>
-        <button type="button" class="tt-btn tt-primary big" disabled={!isOpenForCustomers(s) || s.queue < 1 || !!tapBlock(s, 'kasa')} title={tapBlock(s, 'kasa')}
+        <button type="button" class="tt-btn tt-primary big" disabled={!!tillReason(s, info)} title={tillReason(s, info)}
           onClick={() => game.dispatch({ type: 'tapTill' })}>Obsłuż klienta</button>
-        <p class="tt-hint">Stuknięcie w kasę w sklepie też obsługuje klienta. Ty też umiesz kasować.</p>
+        <p class="tt-hint">{tillTapBlock(s, info) ?? 'Kolejka przerasta kasjera: staniesz przy drugiej kasie.'} Stukanie pomaga tylko, gdy przy kasie nikogo nie ma albo kolejka rośnie.</p>
       </>
     );
   } else {
@@ -85,8 +87,8 @@ export const LOW_ENERGY = 20;
 
 /**
  * Duże przyciski klikera nad dolnym paskiem: rozładuj najpilniejszą paletę, obsłuż klienta; nad nimi pasek sił franczyzobiorcy.
- * Blokady stuknięcia opisuje `tapBlock`; kasa dodatkowo wymaga otwartego sklepu (`isOpenForCustomers`, także karta „zamknij na
- * godzinę”) i klienta w kolejce.
+ * Blokady stuknięcia opisuje `tapBlock`; kasa dodatkowo działa tylko wtedy, gdy pomaga (`tillTapBlock`: sklep otwarty, ktoś
+ * czeka, a przy kasie nikogo nie ma albo kolejka przerasta kasjera), i wtedy przy przycisku stoi krótki powód.
  */
 export function ClickerBar({ game, onFloat }: { game: GameActions; onFloat: (x: number, y: number, text: string, kind: 'money' | 'work') => void }) {
   const view = econ.value;
@@ -96,11 +98,12 @@ export function ClickerBar({ game, onFloat }: { game: GameActions; onFloat: (x: 
   const q = Math.round(s.queue);
   const energy = s.tycoon.fatigue.energy;
   const palletBlock = tapBlock(s, 'paleta');
-  const tillBlock = tapBlock(s, 'kasa');
+  const tillBlock = tillReason(s, view.info);
+  const tillNote = tillTapBlock(s, view.info)?.replace(/\.$/, '');
   const at = (e: MouseEvent): [number, number] => [e.clientX || window.innerWidth - 60, e.clientY || window.innerHeight - 140];
   return (
     <div class="tt-clicker">
-      <div class="tt-energy" title="Siły franczyzobiorcy: każde stuknięcie je zużywa, noc oddaje tylko część">
+      <div class="tt-energy" title={ENERGY_TITLE}>
         <span>Siły {int(energy)}/{FATIGUE.pool}</span>
         <Bar value={energy / FATIGUE.pool} warn={energy < LOW_ENERGY} />
       </div>
@@ -108,10 +111,13 @@ export function ClickerBar({ game, onFloat }: { game: GameActions; onFloat: (x: 
         onClick={(e) => { const r = game.dispatch({ type: 'tapPallet' }); if (r.ok) onFloat(...at(e), `+${Math.round(r.value ?? 0)} szt.`, 'work'); }}>
         <span aria-hidden="true">📦</span>{pallets > 0 && <span class="tt-badge">{pallets}</span>}
       </button>
-      <button type="button" class="tt-fab" disabled={q < 1 || !isOpenForCustomers(s) || !!tillBlock} title={tillBlock} aria-label={`Obsłuż klienta (${q} w kolejce)`}
-        onClick={(e) => { const r = game.dispatch({ type: 'tapTill' }); if (r.ok) onFloat(...at(e), `+${(r.value ?? 0).toLocaleString('pl-PL', { maximumFractionDigits: 2 })} zł`, 'money'); }}>
-        <span aria-hidden="true">🧾</span>{q > 0 && <span class="tt-badge">{q}</span>}
-      </button>
+      <div class="tt-fab-slot">
+        {tillNote && <span class="tt-fab-note">{tillNote}</span>}
+        <button type="button" class="tt-fab" disabled={!!tillBlock} title={tillBlock} aria-label={`Obsłuż klienta (${q} w kolejce)`}
+          onClick={(e) => { const r = game.dispatch({ type: 'tapTill' }); if (r.ok) onFloat(...at(e), `+${(r.value ?? 0).toLocaleString('pl-PL', { maximumFractionDigits: 2 })} zł`, 'money'); }}>
+          <span aria-hidden="true">🧾</span>{q > 0 && <span class="tt-badge">{q}</span>}
+        </button>
+      </div>
     </div>
   );
 }
@@ -149,7 +155,7 @@ const centralaQuote = (text: string) => <p class="tt-quote">„{text}”<br /><s
 /**
  * Treść raportu miesięcznego. Z danymi tycoona (`detail`): wynik dużą liczbą, pozycje z `REPORT_LINE_LABEL` (koszty ze znakiem
  * minus), zaufanie Centrali z przyczynami, komentarz, jedna wskazówka i KPI miesiąca. Raport ze starego zapisu (`detail` równe
- * null) zostaje dawnym widokiem: marża i inne przychody, premie Centrali (osobny licznik) i koszty (z WUT ponad próg) sumują się
+ * null) zostaje dawnym widokiem: marża i inne przychody, premie Centrali (osobny licznik) i koszty (z ubytkami ponad limit Centrali) sumują się
  * do wyniku miesiąca. `closing` zastępuje komentarz Centrali (wypowiedzenie umowy przy końcu gry).
  */
 export function ReportBody({ r, closing }: { r: MonthReport; closing?: string }) {
@@ -166,11 +172,12 @@ export function ReportBody({ r, closing }: { r: MonthReport; closing?: string })
         <div class="tt-row"><span>Media</span><span>−{zl(c.media)}</span></div>
         <div class="tt-row"><span>Opłata franczyzowa</span><span>−{zl(c.fee)}</span></div>
         <div class="tt-row"><span>Mandaty</span><span>−{zl(c.fines)}</span></div>
-        <div class="tt-row"><span>WUT ponad próg</span><span>−{zl(c.wut)}</span></div>
+        <div class="tt-row"><span>Ubytki ponad limit Centrali</span><span>−{zl(c.wut)}</span></div>
         <div class="tt-row"><span>Logistyka</span><span>−{zl(c.logistics)}</span></div>
         <div class="tt-row total"><span>Wynik miesiąca</span><span>{signedZl(r.profit)}</span></div>
         <div class="tt-row"><span>Inwestycje</span><span>{zl(c.investments)}</span></div>
         <div class="tt-row"><span>Gotówka na koniec</span><span>{zl(r.cash)}</span></div>
+        {r.cash < DEBT_WARN && <p class="tt-hint warn">{debtWarningText(r.cash)}</p>}
         {centralaQuote(closing ?? r.comment)}
       </>
     );
@@ -187,6 +194,7 @@ export function ReportBody({ r, closing }: { r: MonthReport; closing?: string })
         <span class="tt-muted">Obrót {zl(d.revenue)} · klienci {int(c.customers)} (utraceni: {int(c.lost)})</span>
         <span class="tt-muted">Gotówka na koniec: {zl(r.cash)} · inwestycje: {zl(c.investments)}</span>
       </div>
+      {r.cash < DEBT_WARN && <p class="tt-hint warn">{debtWarningText(r.cash)}</p>}
       <div class="tt-report-lines">
         {d.lines.map((l) => (
           <div key={l.key} class="tt-row"><span>{REPORT_LINE_LABEL[l.key]}</span><span class={Math.round(l.amount) < 0 ? 'tt-neg' : undefined}>{lineAmount(l.amount)}</span></div>
@@ -214,16 +222,16 @@ export function ReportBody({ r, closing }: { r: MonthReport; closing?: string })
 const TERMINATION = 'Centrala dziękuje za współpracę. Rozliczenie końcowe: inwentaryzacja jutro o 6:00.';
 
 /**
- * Dlaczego Centrala wypowiedziała umowę, odczytane ze stanu (okno wraca po przeładowaniu, a toast z powodem nie): dług, czyli
- * ostatni raport zastał gotówkę poniżej `BANKRUPTCY_AT` (umowę kończy dopiero drugi taki raport z rzędu), albo zaufanie zero.
+ * Dlaczego Centrala wypowiedziała umowę, odczytane ze stanu (okno wraca po przeładowaniu, a toast z powodem nie): za duży debet,
+ * czyli gotówka poniżej `DEBT_LIMIT` (gra staje w tej minucie, więc gotówka w stanie to ta z chwili końca), albo zaufanie zero.
  * Gdy zachodzi jedno i drugie, nie zgadujemy, które rozstrzygnęło: tekst mówi o obu. Bez żadnego z nich (stary zapis) null.
  */
 export function terminationReason(s: EconomyState): string | null {
-  const debt = s.lastReport !== null && s.lastReport.cash < BANKRUPTCY_AT;
+  const debt = s.cash < DEBT_LIMIT;
   const distrust = trustTerminates(s.tycoon.trust.value);
-  const floor = signedZl(BANKRUPTCY_AT);
-  if (debt && distrust) return `Powód: zaufanie Centrali spadło do zera, a gotówka po raporcie była poniżej ${floor}.`;
-  if (debt) return `Powód: dług. Dwa raporty z rzędu zastały Cię z gotówką poniżej ${floor}, a Centrala nie doczekała się opłaty.`;
+  const floor = signedZl(DEBT_LIMIT);
+  if (debt && distrust) return `Powód: zaufanie Centrali spadło do zera, a gotówka spadła poniżej granicy debetu ${floor}.`;
+  if (debt) return `Powód: za duży debet. Gotówka spadła do ${signedZl(s.cash)}, poniżej granicy ${floor}, a wtedy Centrala od razu kończy współpracę.`;
   if (distrust) return 'Powód: zaufanie Centrali spadło do zera.';
   return null;
 }

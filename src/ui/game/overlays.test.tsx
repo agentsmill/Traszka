@@ -1,8 +1,8 @@
 import type { VNode } from 'preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { BANKRUPTCY_AT } from '@/sim/economy/catalog';
+import { DEBT_LIMIT } from '@/sim/economy/catalog';
 import type { Command } from '@/sim/economy/commands';
-import { createEconomy, emptyCounters, type CommandResult, type EconomyState, type MonthReport } from '@/sim/economy/economy';
+import { DEBT_WARN, createEconomy, debtWarningText, emptyCounters, type CommandResult, type EconomyState, type MonthReport } from '@/sim/economy/economy';
 import { EQUIPMENT } from '@/sim/economy/upgrades';
 import { computeStoreInfo, type StoreInfo } from '@/sim/economy/storeInfo';
 import { layoutFor } from '@/sim/store/layoutFor';
@@ -19,6 +19,7 @@ import {
 import { RankingButton, TrustChip } from './Hud';
 import { int, zl } from './format';
 import { Bar } from './panels';
+import { ENERGY_TITLE } from './tapBlock';
 import {
   ClickerBar, ComboChip, EPHEMERAL_BADGE, EPHEMERAL_NOTE, FIRST_DAY_HINTS, FirstDayHints, RANKED_NOTE, RESTART_CONFIRM, RankingSettings, ReportBody,
   ReportModal, STORY_GRACE_MS, SelectionCard, StoreActions, StoreBadge, StoryModal, WelcomeModal, abandonQuestion, refreshStoredRun, storedRun,
@@ -260,7 +261,7 @@ describe('przyciski nakładek wysyłają polecenia', () => {
 
   it('karta kasy: „Obsłuż klienta” jest nieaktywny bez sił, na pauzie i przy zamkniętym sklepie, a w przeciwnym razie aktywny', () => {
     const { s, info } = base();
-    s.queue = 2;
+    s.queue = 10;   // kolejka przerasta jednego kasjera, więc stukanie pomaga (`tillTapBlock`)
     publishState(s, info);
     selection.value = { kind: 'till' };
     const till = (): Vnode => buttonsOf(SelectionCard({ game: fakeGame() })).find((b) => textOf(b) === 'Obsłuż klienta')!;
@@ -274,6 +275,31 @@ describe('przyciski nakładek wysyłają polecenia', () => {
     s.tycoon.fatigue.energy = 100;
     s.minute = 3 * 60;
     expect(till().props.disabled).toBe(true);
+  });
+
+  it('kasa nie proponuje stukania, gdy kasjer nadąża: przycisk wyszarzony z krótkim powodem obok (decyzja z 29.10.2026)', () => {
+    const { s, info } = base();
+    s.queue = 1;
+    s.lastCashiers = 1;
+    publishState(s, info);
+    const till = (): Vnode => buttonsOf(ClickerBar({ game: fakeGame(), onFloat: vi.fn() }))[1]!;
+    const note = (): string | undefined => {
+      const v = walk(ClickerBar({ game: fakeGame(), onFloat: vi.fn() }) as Vnode).find((x) => x.props.class === 'tt-fab-note');
+      return v ? textOf(v) : undefined;
+    };
+    expect(till().props.disabled).toBe(true);
+    expect(note()).toBe('Kasjer nadąża z kolejką');
+    s.queue = 10;   // kolejka przerasta kasjera: przycisk działa i nie ma podpisu
+    publishState(s, info);
+    expect(till().props.disabled).toBe(false);
+    expect(note()).toBeUndefined();
+    s.queue = 1;
+    s.lastCashiers = 0;   // przy kasie nikogo: stukanie pomaga przy każdej kolejce
+    publishState(s, info);
+    expect(till().props.disabled).toBe(false);
+    s.queue = 0;
+    publishState(s, info);
+    expect(note()).toBe('Nikt nie czeka przy kasie');
   });
 
   it('karta slotu: zakup sprzętu wysyła buyEquipment z id slotu', () => {
@@ -303,7 +329,7 @@ describe('raport miesięczny: pozycje sumują się do wyniku', () => {
     const counters = { ...emptyCounters(), margin: 10_000, other: 500, bonus, wages: 2000, media: 600, fee: 4500, fines: 100, wut, logistics: 200 };
     return { label: 'wrzesień 2026', counters, profit: 10_000 + bonus + 500 - 2000 - 600 - 4500 - 100 - wut - 200, cash: 5000, comment: 'x', detail: null };
   };
-  const LINES = ['Marża i inne przychody', 'Premie Centrali', 'Płace', 'Media', 'Opłata franczyzowa', 'Mandaty', 'WUT ponad próg', 'Logistyka'];
+  const LINES = ['Marża i inne przychody', 'Premie Centrali', 'Płace', 'Media', 'Opłata franczyzowa', 'Mandaty', 'Ubytki ponad limit Centrali', 'Logistyka'];
 
   it('premia Centrali ma własny wiersz, a wiersze razem dają wynik miesiąca', () => {
     const r = report(300);
@@ -314,10 +340,10 @@ describe('raport miesięczny: pozycje sumują się do wyniku', () => {
     expect(v.get('Wynik miesiąca')).toBe(r.profit);
   });
 
-  it('WUT ponad próg ma własny wiersz jako koszt, a wiersze razem dalej dają wynik miesiąca', () => {
+  it('Ubytki ponad limit Centrali mają własny wiersz jako koszt, a wiersze razem dalej dają wynik miesiąca', () => {
     const r = report(300, 450);
     const v = rows(r);
-    expect(v.get('WUT ponad próg')).toBe(-450);
+    expect(v.get('Ubytki ponad limit Centrali')).toBe(-450);
     expect(LINES.reduce((n, label) => n + v.get(label)!, 0)).toBe(r.profit);
     expect(r.profit).toBe(report(300, 0).profit - 450);
   });
@@ -350,6 +376,8 @@ describe('pasek sił nad przyciskami klikera', () => {
     expect(gauge.props.value).toBeCloseTo(0.73);
     withEnergy(41.4);
     expect(textOf(bar())).toContain('Siły 41/100');
+    // dymek mówi jednym zdaniem, czym są Siły (to samo zdanie co w „Jak grać”)
+    expect(walk(tree).find((v) => v.props?.class === 'tt-energy')!.props.title).toBe(ENERGY_TITLE);
   });
 
   it('pasek ostrzega poniżej 20 sił, od 20 w górę nie', () => {
@@ -454,7 +482,7 @@ const plain = (text: string): string => text.replace(/[\s\u00a0\u202f]/g, ' ');
 /** Kwota po polsku jak w oknie, spacje zwykłe (pl-PL grupuje dopiero od 5 cyfr: „2950 zł”, ale „10 000 zł”). */
 const z = (n: number): string => plain(zl(n));
 
-/** Raport tycoona: wynik 2 950 zł, zaufanie 62 → 58 (pięć przyczyn), 3 KPI trafione i 1 nietrafione, wskazówka o WUT. */
+/** Raport tycoona: wynik 2 950 zł, zaufanie 62 → 58 (pięć przyczyn), 3 KPI trafione i 1 nietrafione, wskazówka o ubytkach. */
 function detailed(over: Partial<TycoonMonthReport> = {}): TycoonMonthReport {
   return {
     monthIndex: 0,
@@ -503,7 +531,7 @@ describe('raport miesięczny z danymi tycoona (detail)', () => {
     expect(rows.slice(0, 9)).toEqual([
       ['Marża ze sprzedaży', '10 000 zł'], ['Premie Centrali', '300 zł'], ['Inne przychody i koszty', '500 zł'],
       ['Płace', `−${z(2000)}`], ['Media', '−600 zł'], ['Opłata franczyzowa', `−${z(4500)}`],
-      ['Mandaty i kary', '−100 zł'], ['WUT ponad próg', '−450 zł'], ['Logistyka', '−200 zł'],
+      ['Mandaty i kary', '−100 zł'], ['Ubytki ponad limit Centrali', '−450 zł'], ['Logistyka', '−200 zł'],
     ]);
   });
 
@@ -512,7 +540,7 @@ describe('raport miesięczny z danymi tycoona (detail)', () => {
     const text = plain(textOf(tree(d)));
     expect(text).toContain('Inne przychody i koszty−300 zł');
     expect(text).toContain('Premie Centrali0 zł');
-    expect(text).toContain('WUT ponad próg0 zł');
+    expect(text).toContain('Ubytki ponad limit Centrali0 zł');
     expect(text).not.toContain('−0');
   });
 
@@ -553,7 +581,7 @@ describe('raport miesięczny z danymi tycoona (detail)', () => {
     const d = detailed({ hint: { id: 'wut', value: 45_000, impact: 45_000 } });
     const hint = byClass(tree(d), 'tt-report-hint');
     expect(textOf(hint)).toContain(hintText(d.hint, int));
-    expect(plain(textOf(hint))).toContain('Ubytki ponad próg WUT: 45 000 zł');
+    expect(plain(textOf(hint))).toContain('Ubytki ponad limit Centrali: 45 000 zł');
   });
 
   it('KPI w miesiącu: „X trafione, Y nietrafione”; bez rozliczonego tygodnia osobne zdanie', () => {
@@ -582,7 +610,7 @@ describe('raport miesięczny z danymi tycoona (detail)', () => {
     const d = detailed({ lines: [{ key: 'marza', amount: 10_000.5 }, { key: 'wut', amount: -450.5 }], result: 9550 });
     const rows = walk(tree(d)).filter((v) => v.props.class === 'tt-row')
       .map((v) => [textOf((v.props.children as Vnode[])[0]), plain(textOf((v.props.children as Vnode[])[1]))] as const);
-    expect(rows.slice(0, 2)).toEqual([['Marża ze sprzedaży', z(10_001)], ['WUT ponad próg', `−${z(450)}`]]);
+    expect(rows.slice(0, 2)).toEqual([['Marża ze sprzedaży', z(10_001)], ['Ubytki ponad limit Centrali', `−${z(450)}`]]);
     expect(plain(textOf(byClass(tree(d), 'tt-report-result')))).toBe(`+${z(9551)}`);
   });
 
@@ -602,7 +630,7 @@ describe('raport miesięczny z danymi tycoona (detail)', () => {
   it('raport bez detail (stary zapis) zostaje dawnym widokiem: te same wiersze, komentarz ze stanu, bez sekcji tycoona', () => {
     const old = tree(undefined, monthReport(null));
     const labelsOf = walk(old).filter((v) => String(v.props.class).startsWith('tt-row')).map((v) => textOf((v.props.children as Vnode[])[0]));
-    expect(labelsOf).toEqual(['Klienci', 'Obrót', 'Marża i inne przychody', 'Premie Centrali', 'Płace', 'Media', 'Opłata franczyzowa', 'Mandaty', 'WUT ponad próg', 'Logistyka',
+    expect(labelsOf).toEqual(['Klienci', 'Obrót', 'Marża i inne przychody', 'Premie Centrali', 'Płace', 'Media', 'Opłata franczyzowa', 'Mandaty', 'Ubytki ponad limit Centrali', 'Logistyka',
       'Wynik miesiąca', 'Inwestycje', 'Gotówka na koniec']);
     expect(textOf(byClass(old, 'tt-quote'))).toContain('Stary komentarz.');
     expect(walk(old).some((v) => String(v.props.class ?? '').startsWith('tt-report-'))).toBe(false);
@@ -637,7 +665,7 @@ describe('okno raportu miesiąca', () => {
     const game = fakeGame();
     const tree = ReportModal({ game }) as Vnode;
     expect(textOf(tree)).toContain('Koniec współpracy');
-    expect(textWithBody(tree)).toContain('WUT ponad próg');
+    expect(textWithBody(tree)).toContain('Ubytki ponad limit Centrali');
     expect(textWithBody(tree)).toContain('Centrala dziękuje za współpracę');
     expect(textWithBody(tree)).not.toContain(reportCommentText('strata-0'));
     expect(labels(tree)).toEqual(['Zacznij od nowa']);
@@ -702,61 +730,67 @@ describe('okno raportu miesiąca', () => {
 
 describe('okno końca współpracy podaje powód ze stanu gry', () => {
   const plain = (text: string): string => text.replace(/[\s\u00a0\u202f]/g, ' ');
-  const floor = plain(`−${zl(-BANKRUPTCY_AT)}`);
-  /** Gra zakończona; `cash` to gotówka z ostatniego raportu, `trust` zaufanie w chwili wypowiedzenia. */
-  const ended = (cash: number | null, trust: number): ReturnType<typeof base> => {
+  const floor = plain(`−${zl(-DEBT_LIMIT)}`);
+  /** Gra zakończona; `cash` to gotówka w chwili końca (gra staje w tej minucie), `trust` zaufanie w chwili wypowiedzenia. */
+  const ended = (cash: number, trust: number, withReport = true): ReturnType<typeof base> => {
     const b = base();
     b.s.gameOver = true;
-    b.s.lastReport = cash === null ? null : monthReport(detailed(), { cash });
+    b.s.cash = cash;
+    b.s.lastReport = withReport ? monthReport(detailed()) : null;
     b.s.tycoon.trust.value = trust;
     publishState(b.s, b.info);
     return b;
   };
   const modalText = (): string => plain(textOf(ReportModal({ game: fakeGame() })));
 
-  it('dług: ostatni raport poniżej BANKRUPTCY_AT, a zaufanie w porządku; kwota granicy ze stałej', () => {
-    ended(BANKRUPTCY_AT - 1, 55);
-    expect(modalText()).toContain(`Powód: dług. Dwa raporty z rzędu zastały Cię z gotówką poniżej ${floor}`);
+  it('debet: gotówka poniżej DEBT_LIMIT, a zaufanie w porządku; kwota granicy ze stałej i gotówka z chwili końca', () => {
+    ended(DEBT_LIMIT - 1234, 55);
+    expect(modalText()).toContain(`Powód: za duży debet. Gotówka spadła do ${plain(`−${zl(1234 - DEBT_LIMIT)}`)}, poniżej granicy ${floor}`);
     expect(modalText()).not.toContain('zaufanie Centrali spadło do zera');
   });
 
   it('zaufanie zero: gotówka powyżej granicy', () => {
-    ended(BANKRUPTCY_AT + 5000, 0);
+    ended(DEBT_LIMIT + 5000, 0);
     expect(modalText()).toContain('Powód: zaufanie Centrali spadło do zera.');
-    expect(modalText()).not.toContain('dług');
+    expect(modalText()).not.toContain('debet');
   });
 
-  it('gotówka równa granicy nie jest długiem (granica jest ostra: poniżej)', () => {
-    ended(BANKRUPTCY_AT, 0);
+  it('gotówka równa granicy nie jest za dużym debetem (granica jest ostra: poniżej)', () => {
+    ended(DEBT_LIMIT, 0);
     expect(modalText()).toContain('Powód: zaufanie Centrali spadło do zera.');
-    expect(modalText()).not.toContain('dług');
+    expect(modalText()).not.toContain('debet');
   });
 
-  it('dług i zaufanie zero naraz: tekst mówi o obu i nie rozstrzyga, które zakończyło umowę', () => {
-    ended(BANKRUPTCY_AT - 10_000, 0);
-    expect(modalText()).toContain(`Powód: zaufanie Centrali spadło do zera, a gotówka po raporcie była poniżej ${floor}.`);
+  it('debet i zaufanie zero naraz: tekst mówi o obu i nie rozstrzyga, które zakończyło umowę', () => {
+    ended(DEBT_LIMIT - 10_000, 0);
+    expect(modalText()).toContain(`Powód: zaufanie Centrali spadło do zera, a gotówka spadła poniżej granicy debetu ${floor}.`);
   });
 
-  it('powód wynika ze stanu, nie z toastu ani z okna raportu: jest po przeładowaniu (raport z zapisu, brak sygnału report)', () => {
-    const { s } = ended(BANKRUPTCY_AT - 1, 55);
+  it('powód wynika ze stanu, nie z toastu ani z okna raportu: jest po przeładowaniu (brak sygnału report), także bez raportu w zapisie', () => {
+    const { s } = ended(DEBT_LIMIT - 1, 55, false);
     expect(report.value).toBeNull();
-    expect(terminationReason(s)).toContain('dług');
-    expect(modalText()).toContain('Powód: dług');
+    expect(terminationReason(s)).toContain('za duży debet');
+    expect(modalText()).toContain('Powód: za duży debet');
   });
 
-  it('zapis sprzed raportu i bez zera zaufania: samo wypowiedzenie, bez zgadywania powodu', () => {
-    const { s } = ended(null, 55);
+  it('zapis bez debetu i bez zera zaufania: samo wypowiedzenie, bez zgadywania powodu', () => {
+    const { s } = ended(1000, 55, false);
     expect(terminationReason(s)).toBeNull();
     expect(modalText()).not.toContain('Powód');
   });
 
-  it('zwykły raport miesiąca (gra trwa) nie ma powodu, nawet gdy to pierwszy miesiąc z długiem', () => {
+  it('zwykły raport miesiąca (gra trwa) nie ma powodu; przy gotówce pod progiem ostrzeżenia mówi, ile zostało do granicy', () => {
     const { s, info } = base();
-    s.lastReport = monthReport(detailed(), { cash: BANKRUPTCY_AT - 1 });
+    s.lastReport = monthReport(detailed(), { cash: DEBT_WARN - 500 });
     publishState(s, info);
     report.value = s.lastReport;
     expect(modalText()).toContain('Raport: wrzesień 2026');
     expect(modalText()).not.toContain('Powód');
+    // ostrzeżenie stoi w treści raportu (ReportBody), w obu jego wersjach: ze szczegółami i ze starego zapisu
+    const bodyText = (r: MonthReport): string => plain(textOf(ReportBody({ r })));
+    expect(bodyText(s.lastReport)).toContain(plain(debtWarningText(DEBT_WARN - 500)));
+    expect(bodyText(monthReport(null, { cash: DEBT_WARN - 500 }))).toContain(plain(debtWarningText(DEBT_WARN - 500)));
+    expect(bodyText({ ...s.lastReport, cash: DEBT_WARN })).not.toContain('granicy debetu');
   });
 });
 

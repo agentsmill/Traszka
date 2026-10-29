@@ -140,10 +140,13 @@ const present = (redact, text) => {
 
 const at = (day, hour, minute = 0) => day * 1440 + hour * 60 + minute;
 /**
- * Stuknięcia przez pięć pierwszych dni sezonu (rano po dostawie i w szczycie), jedno zatrudnienie i jawne ustawienie domyślnego
- * profilu załogi (przechodzi przez parser i symulację, nie zmieniając wyniku). Kształt wpisów jak w `RunRecord.log`: minuta, numer,
- * polecenie. Wynik z tym dziennikiem różni się od biegu pustego (sprawdza to krok biegu B), więc próba widzi, że sędzia naprawdę
- * odtwarza dziennik, a zatrudnienie sprawia, że raz wypada lepiej, raz gorzej (test sprawdza zachowanie próby w obu przypadkach).
+ * Stuknięcia przez pięć pierwszych dni sezonu (rano po dostawie i w szczycie), ulotki na osiedlu drugiego dnia i jawne ustawienie
+ * domyślnego profilu załogi (przechodzi przez parser i symulację, nie zmieniając wyniku). Kształt wpisów jak w `RunRecord.log`:
+ * minuta, numer, polecenie. Wynik z tym dziennikiem różni się od biegu pustego (sprawdza to krok biegu B), więc próba widzi, że sędzia
+ * naprawdę odtwarza dziennik, a ulotki (więcej ruchu za 800 zł) sprawiają, że raz wypada lepiej, raz gorzej (test sprawdza zachowanie
+ * próby w obu przypadkach). Ulotki zmieniają obrót od pierwszego miesiąca, więc wynik różni się także wtedy, gdy bieg kończy się
+ * debetem przy wrześniowym raporcie (od SIM_VERSION 4 zdarza się to biernemu na słabszych sklepach). Dawniej było tu zatrudnienie,
+ * ale od SIM_VERSION 4 trzecia osoba w sklepie na start się nie zwraca i dziennik z nią wypadał gorzej na każdym sklepie.
  * Gdyby polecenia w grze zmieniły nazwy (jak przy C2: zniknęły `setPriority`, `claimGift` i `claimQuest`), symulacja je odrzuci,
  * wynik się zrówna z pustym i krok B zgłosi, że ten dziennik trzeba odświeżyć.
  */
@@ -153,7 +156,7 @@ export const SMOKE_LOG = [
     ...[0, 1, 2, 3].map((k) => [at(day, 7, 2 + k), { type: 'tapPallet' }]),
     ...[0, 1, 2].map((k) => [at(day, 8, 5 + k), { type: 'tapTill' }]),
   ]).flat(),
-  [at(2, 9), { type: 'hire' }],
+  [at(2, 9), { type: 'buyUpgrade', id: 'ulotki' }],
 ].sort((a, b) => a[0] - b[0]).map(([minute, cmd], seq) => ({ minute, seq, cmd }));
 
 /** Paczka zapisu w kształcie z gry (`traszka-przeniesienie`, wersja 1); polskie litery sprawdzają drogę UTF-8 przez bazę. Bez klucza gracza. */

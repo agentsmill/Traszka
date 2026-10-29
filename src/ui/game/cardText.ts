@@ -34,7 +34,7 @@ function certainLines(d: CardDelta, fmt: Fmt): DeltaLine[] {
   if (has(d.fine)) out.push({ text: zl(d.fine, fmt), tone: toneOf(d.fine) });
   if (has(d.logistics)) out.push({ text: zl(d.logistics, fmt), tone: toneOf(d.logistics) });
   if (has(d.trust)) out.push({ text: `zaufanie ${signed(d.trust, fmt)}`, tone: toneOf(d.trust) });
-  if (has(d.wut)) out.push({ text: `WUT ${zl(d.wut, fmt)}`, tone: toneOf(-d.wut) });
+  if (has(d.wut)) out.push({ text: `ubytki ${zl(d.wut, fmt)}`, tone: toneOf(-d.wut) });
   if (has(d.staffMinutes)) out.push({ text: `czas ludzi ${d.staffMinutes < 0 ? MINUS : ''}${fmt(Math.abs(d.staffMinutes))} min`, tone: toneOf(-d.staffMinutes) });
   if (has(d.energy)) out.push({ text: `siły ${signed(d.energy, fmt)}`, tone: toneOf(d.energy) });
   if (has(d.reputation)) out.push({ text: `reputacja ${signed(d.reputation, fmt)}`, tone: toneOf(d.reputation) });
@@ -44,7 +44,7 @@ function certainLines(d: CardDelta, fmt: Fmt): DeltaLine[] {
 
 /**
  * Skutki odpowiedzi jako krótkie wiersze (napis i ocena): pieniądze (cash, premia, mandat, logistyka ze znakiem i „zł”),
- * „zaufanie ±n”, „WUT +n zł”, „czas ludzi n min”, „siły −n”, „reputacja ±n”, „Ogonki +n”. Potem efekty na czas: „sklep zamknięty N h”
+ * „zaufanie ±n”, „ubytki +n zł”, „czas ludzi n min”, „siły −n”, „reputacja ±n”, „Ogonki +n”. Potem efekty na czas: „sklep zamknięty N h”
  * (koszt), „±N osoba na zmianie” (mniej osób to koszt, więcej to zysk) i jeden wspólny szacunek „ok. ±n zł” z `mods[].estimate`
  * (oceniany po znaku). Na końcu ryzyko: „ryzyko n%: skutki”, zawsze jako koszt (to szansa na stratę).
  * `fmt` formatuje liczbę bez znaku i bez jednostki (w grze: polski zapis z jednym miejscem po przecinku).

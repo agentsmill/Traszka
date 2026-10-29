@@ -1,14 +1,14 @@
 import { hashString } from '@/sim/rng';
 import {
-  BANKRUPTCY_AT, CATS, CAT_INFO, COMBO_WINDOW, CREDIT_LIMIT, DELIVERY_AT, DELIVERY_AT_AFTERNOON, DELIVERY_AT_NIGHT,
-  FINE_BASE, FINE_PER_PALLET, FRANCHISE_FEE_FIXED, FRANCHISE_FEE_SHARE,
+  ASSISTANT_UNLOAD_MIN, CATS, CAT_INFO, COMBO_WINDOW, CREDIT_LIMIT, DELIVERY_AT, DELIVERY_AT_AFTERNOON, DELIVERY_AT_NIGHT,
+  DEBT_LIMIT, DEBT_WARN_SHARE, FINE_BASE, FINE_PER_PALLET, FRANCHISE_FEE_FIXED, FRANCHISE_FEE_SHARE,
   HIRE_COST, HOT, HOUR_CURVE, ITEMS_PER_CUSTOMER,
   LOT_TRAFFIC, MARGIN_PER_CUSTOMER, MEDIA_PER_DAY, MINUTES_PER_DAY, OPEN_FROM, OPEN_TO, ORDER_DEADLINE, PALLET_FEE, PALLET_ITEMS,
-  PALLETS_FREE, PATIENCE, RESTOCK_RATE, RETURN_FEE, REVENUE_PER_CUSTOMER, SCO_ACCEPT, SCO_RATE, STAFF_MAX, STAFF_START, START_CASH,
-  TILL_RATE, TRAFFIC_PER_SHELF_ITEM, TRAFFIC_RANGE, UNLOAD_AT, UNLOAD_RATE, WAGE_PER_DAY, type Cat,
+  PALLETS_FREE, PATIENCE, RESTOCK_RATE, RETURN_FEE, REVENUE_PER_CUSTOMER, SCO_ACCEPT, SCO_RATE, STAFF_MAX, STAFF_START, START_CASH, STRAZ,
+  TILL_RATE, TILL_TAP_QUEUE_MIN, TRAFFIC_BASE, TRAFFIC_PER_SHELF_ITEM, TRAFFIC_RANGE, UNLOAD_AT, UNLOAD_RATE, WAGE_PER_DAY, WAVES,
+  type Cat,
 } from './catalog';
 import { dayOf, formatMonth, isLastDayOfMonth, isOpenAt, minuteOfDay } from './calendar';
-import { FINE_PALLET_POW } from './exactMath';
 import { rand01 } from './rand';
 import type { PalletLoc, StoreInfo } from './storeInfo';
 import {
@@ -126,6 +126,8 @@ export interface EconomyState {
   remontUntil: number | null;
   boostUntil: number;
   lastFineAt: number;
+  /** Minuta ostatniego upomnienia Straży Miejskiej (mandat dopiero przy kolejnym obchodzie tego samego dnia, `STRAZ`). */
+  lastWarnAt: number;
   today: Counters;
   month: Counters;
   total: Counters;
@@ -230,10 +232,10 @@ export function effects(s: EconomyState, info: StoreInfo): Effects {
 
 export const reputationFactor = (rep: number): number => 0.6 + 0.8 * (rep / 100);
 
-/** Klientów na godzinę przy krzywej 1, reputacji 50 i bez marketingu (catalog.ts: TRAFFIC_PER_SHELF_ITEM). */
+/** Klientów na godzinę przy krzywej 1, reputacji 50 i bez marketingu (catalog.ts: TRAFFIC_BASE, TRAFFIC_PER_SHELF_ITEM). */
 export function baseTraffic(info: StoreInfo): number {
   const [lo, hi] = TRAFFIC_RANGE;
-  return Math.min(hi, Math.max(lo, info.shelfCapTotal * TRAFFIC_PER_SHELF_ITEM)) * LOT_TRAFFIC[info.lotKind];
+  return Math.min(hi, Math.max(lo, TRAFFIC_BASE + info.shelfCapTotal * TRAFFIC_PER_SHELF_ITEM)) * LOT_TRAFFIC[info.lotKind];
 }
 
 // --- Zaufanie Centrali i liczniki KPI ----------------------------------------------------------------
@@ -299,6 +301,7 @@ export function createEconomy(seed: string, info: StoreInfo, partner: EconomySta
     remontUntil: null,
     boostUntil: 0,
     lastFineAt: -1e9,
+    lastWarnAt: -1e9,
     today: emptyCounters(),
     month: emptyCounters(),
     total: emptyCounters(),
@@ -349,6 +352,7 @@ export const awaitingDecision = (s: EconomyState): boolean => !s.gameOver && car
 /** Jedna minuta gry. Zdarzenia dla gracza (dostawa, mandat, raport…) trafiają do `out`. */
 export function stepMinute(s: EconomyState, info: StoreInfo, out: EconEvent[]): void {
   if (s.gameOver) return;
+  const cashBefore = s.cash;
   const mod = minuteOfDay(s.minute);
   // o północy pogoda dnia (zaczep: później ustawi ją system pogody) i karty dnia z jej wynikiem; dzień 0 ma jedno i drugie z `createEconomy`
   if (mod === 0) {
@@ -376,11 +380,12 @@ export function stepMinute(s: EconomyState, info: StoreInfo, out: EconEvent[]): 
   soilHall(s.tycoon.hall, arrivals, s.tycoon.waste.hall);
   wasteMinute(s.tycoon.waste);
   if (open) sampleHall(s.tycoon.hall);
-  if (mod >= 8 * 60 && mod < 20 * 60) checkFine(s, fx, out);
+  if (mod >= STRAZ.from && mod < STRAZ.to) checkFine(s, fx, out);
   if (mod === ORDER_DEADLINE) placeOrder(s, info, fx, out);
   if (mod === OPEN_TO) closeDay(s, info, out);
   if (mod % 60 === 0) checkMilestones(s, info, out);
   processLevels(s, out);
+  checkDebt(s, cashBefore, out);
 
   s.minute++;
   // karta, której godzina właśnie nadeszła: gra staje na niej (wołający sprawdzają `awaitingDecision`), a interfejs dostaje sygnał
@@ -410,11 +415,24 @@ export const patienceOf = (s: EconomyState, fx: Effects): number =>
   fx.patience + cleanlinessEffects(s.tycoon.hall.cleanliness).patience - hallObstacle(s.tycoon.waste);
 
 /**
+ * Mnożnik fali klientów w minucie (catalog.ts: WAVES). Blok zaczyna się na pełnej wielokrotności `WAVES.block` minut gry; czy
+ * w nim jest fala i od której minuty, losuje się z minuty początku bloku, więc każda minuta liczy to sama, bez stanu w zapisie.
+ * Średnia mnożnika po bloku to dokładnie 1.
+ */
+export function waveAt(seedHash: number, minute: number): number {
+  const { block, length, chance, depth } = WAVES;
+  const start = minute - (minute % block);
+  if (rand01(seedHash, start, 8) >= chance) return 1;
+  const t = minute - start - Math.floor(rand01(seedHash, start, 9) * (block - length + 1));
+  return t >= 0 && t < length ? 1 + depth * (block - length) / length : 1 - depth;
+}
+
+/**
  * Przyjście klientów w jednej minucie; ci, którzy widzą długą kolejkę, rezygnują (spec §6.1). Obsługa idzie przez pulę ludzi
  * (`runStaff`). Zwraca liczbę przyjść z tej minuty (brud sali liczy się od przychodzących, nie od obsłużonych).
  */
 function arrive(s: EconomyState, info: StoreInfo, fx: Effects): number {
-  s.arrivalAcc += arrivalRate(s, info, fx) * (0.75 + 0.5 * rand01(s.seedHash, s.minute, 1));
+  s.arrivalAcc += arrivalRate(s, info, fx) * waveAt(s.seedHash, s.minute) * (0.75 + 0.5 * rand01(s.seedHash, s.minute, 1));
   const arrivals = Math.floor(s.arrivalAcc);
   s.arrivalAcc -= arrivals;
 
@@ -491,9 +509,16 @@ export const robotFleet = (s: EconomyState): RobotFleet => ({
 const wasteRoom = (s: EconomyState, fx: Effects): number =>
   Math.max(0, fx.backroomSpots - s.pallets.filter((p) => p.loc === 'backroom' && p.total >= 0.5).length);
 
-/** Wolne miejsce na towar: zaplecze i półki. Bez niego nie ma co rozładowywać. */
-const stockRoom = (s: EconomyState, info: StoreInfo, fx: Effects): number =>
-  Math.max(0, fx.backroomCap - sum(s.backroom)) + CATS.reduce((n, c) => n + Math.max(0, info.shelfCap[c] - s.shelf[c]), 0);
+/**
+ * Wolne miejsce na towar z palet: zaplecze i luki na półkach, ale tylko w kategoriach, które palety wiozą. Bez niego nie ma co
+ * rozładowywać. Luka w kategorii, której na paletach nie ma, nie jest pracą przy rozładunku: liczona w całości trzymała ludzi przy
+ * paletach (profil „Dostawa”), choć nic z nich nie schodziło, a kolejka przy kasie rosła.
+ */
+function stockRoom(s: EconomyState, info: StoreInfo, fx: Effects): number {
+  const onPallets = perCat((c) => s.pallets.reduce((n, p) => n + p.items[c], 0));
+  return Math.max(0, fx.backroomCap - sum(s.backroom))
+    + CATS.reduce((n, c) => n + Math.min(onPallets[c], Math.max(0, info.shelfCap[c] - s.shelf[c])), 0);
+}
 
 const unloadRate = (fx: Effects, p: Pallet): number => UNLOAD_RATE * fx.unloadMult * UNLOAD_AT[p.loc];
 
@@ -541,8 +566,8 @@ function runStaff(s: EconomyState, info: StoreInfo, fx: Effects, open: boolean, 
     if (minutes <= 1e-9) break;
     const rate = unloadRate(fx, p);
     const use = Math.min(minutes, PEOPLE_PER_PALLET, p.total / rate);
-    unloadPallet(s, info, fx, p, use * rate, out);
-    minutes -= use;
+    // minuty idą za tym, co naprawdę zeszło: paleta z samym towarem bez miejsca nie zjada rąk potrzebnych przy następnej
+    minutes -= unloadPallet(s, info, fx, p, use * rate, out) / rate;
   }
   restock(s, info, 1, alloc.total.wykladanie * RESTOCK_RATE);
   removeEmptyPallets(s);
@@ -589,6 +614,18 @@ function unloadPallet(s: EconomyState, info: StoreInfo, fx: Effects, p: Pallet, 
     s.shelf[c] += toShelf;
     p.items[c] -= n;
     moved += n;
+  }
+  // reszta rąk na to, co się jeszcze zmieści: przy pełnym zapleczu ludzie biorą z palety kategorie z luką na półce, zamiast stać
+  // nad paletą (proporcja palety wysłałaby większość minut w kategorie, na które nie ma miejsca)
+  let left = take - moved;
+  for (const c of CATS) {
+    if (left <= 1e-9) break;
+    const n = Math.min(left, p.items[c], Math.max(0, info.shelfCap[c] - s.shelf[c]));
+    if (n <= 0) continue;
+    s.shelf[c] += n;
+    p.items[c] -= n;
+    moved += n;
+    left -= n;
   }
   p.total = Math.max(0, sum(p.items));
   // Liczy się tylko przejście poniżej progu. Paleta z ułamkiem sztuki zostaje do końca minuty (`removeEmptyPallets`), więc
@@ -682,8 +719,8 @@ function deliver(s: EconomyState, info: StoreInfo, count: number, out: EconEvent
   }
 }
 
-/** Szansa, że paleta z dostawy jest złota. */
-export const GOLDEN_CHANCE = 0.05;
+/** Szansa, że paleta z dostawy jest złota (przy 6 paletach dziennie wychodzi średnio jedna złota co ok. 7 dni). */
+export const GOLDEN_CHANCE = 0.025;
 /**
  * Premia za rozładowanie złotej palety: ćwierć marży typowego dnia, nie mniej niż 800 zł. Stała dolna granica trzyma premię
  * w podobnej wysokości w małym i dużym sklepie (przy udziale w marży premie rosłyby z kwadratem wielkości: więcej palet razy
@@ -709,7 +746,20 @@ export function expectedDailyCustomers(s: EconomyState, info: StoreInfo): number
 
 const stockItems = (s: EconomyState): number => sum(s.shelf) + sum(s.backroom) + s.pallets.reduce((n, p) => n + p.total, 0);
 
-/** Podpowiedź „Asystenta Traszki”: tyle palet, żeby jutro rano półki i pół zaplecza były pełne. Zawyżona o `overorder`. */
+/**
+ * Ile palet zmiana rozładuje spod sklepu w `ASSISTANT_UNLOAD_MIN` minut po dostawie: wszyscy poza jedną osobą przy kasie,
+ * z wózkiem i taśmociągiem (`unloadMult`). Co najmniej jedna paleta.
+ */
+export function crewPalletCap(s: EconomyState, info: StoreInfo): number {
+  const fx = effects(s, info);
+  const free = Math.max(1, s.staff - 1);
+  return Math.max(1, Math.floor(free * ASSISTANT_UNLOAD_MIN * UNLOAD_RATE * fx.unloadMult * UNLOAD_AT.sidewalk / PALLET_ITEMS));
+}
+
+/**
+ * Podpowiedź „Asystenta Traszki”: tyle palet, żeby jutro rano półki i pół zaplecza były pełne, zawyżona o `overorder`, ale nie
+ * więcej, niż zmiana rozładuje przed obchodem Straży (`crewPalletCap`; decyzja właściciela z 29.10.2026: „przychodzi za dużo”).
+ */
 export function assistantSuggestion(s: EconomyState, info: StoreInfo): number {
   const fx = effects(s, info);
   const inTransit = s.deliveries.reduce((n, d) => n + d.count, 0) * PALLET_ITEMS;
@@ -717,7 +767,7 @@ export function assistantSuggestion(s: EconomyState, info: StoreInfo): number {
   // od 11:00 do porannej dostawy sprzedaje się ok. 70% dziennego ruchu
   const consumption = 0.7 * expectedDailyCustomers(s, info) * ITEMS_PER_CUSTOMER;
   const need = Math.max(0, target - (stockItems(s) + inTransit - consumption));
-  return Math.ceil((need / PALLET_ITEMS) * fx.overorder);
+  return Math.min(Math.ceil((need / PALLET_ITEMS) * fx.overorder), crewPalletCap(s, info));
 }
 
 export function orderedPallets(s: EconomyState, info: StoreInfo): number {
@@ -755,15 +805,21 @@ function placeOrder(s: EconomyState, info: StoreInfo, fx: Effects, out: EconEven
   out.push({ kind: 'order', text: `${who} ${count} ${plPallets(count)} na jutro${fee > 0 ? ` (opłata logistyczna ${fee} zł)` : ''}.` });
 }
 
+/** Straż Miejska (`STRAZ`): obchód, upomnienie, a przy powtórce tego samego dnia mandat. */
 function checkFine(s: EconomyState, fx: Effects, out: EconEvent[]): void {
   const outside = s.pallets.filter((p) => p.loc === 'sidewalk');
-  if (outside.length === 0 || s.minute - s.lastFineAt < 180) return;
-  const oldest = Math.min(...outside.map((p) => p.since));
-  const hours = (s.minute - oldest) / 60;
-  if (hours < 1) return;   // godzina tolerancji po dostawie: „kierowca dopiero co odjechał”
-  // outside.length ** 1.4 z tablicy (wynik `**` bywa różny między silnikami); chodnik mieści najwyżej kilkanaście palet, tablica sięga 40
-  const p = 0.0003 * FINE_PALLET_POW[Math.min(outside.length, FINE_PALLET_POW.length - 1)] * (1 + 0.2 * (hours - 1)) * fx.fineMult;
+  if (outside.length === 0 || s.minute - s.lastFineAt < STRAZ.fineGapMin) return;
+  const overdue = s.minute - Math.min(...outside.map((p) => p.since)) - STRAZ.graceMin;
+  if (overdue < 0) return;   // tolerancja po dostawie: zmiana zdąży rozładować
+  const p = STRAZ.patrol * (1 + STRAZ.perPallet * (outside.length - 1)) * (1 + STRAZ.perHour * overdue / 60) * fx.fineMult;
   if (rand01(s.seedHash, s.minute, 7) >= p) return;
+  const warnedToday = dayOf(s.lastWarnAt) === dayOf(s.minute) && s.lastWarnAt >= 0;
+  if (!warnedToday || s.minute - s.lastWarnAt < STRAZ.warnGapMin) {
+    if (warnedToday) return;   // dopiero co upominał: patrol jeszcze nie wrócił
+    s.lastWarnAt = s.minute;
+    out.push({ kind: 'warning', text: `Straż Miejska: upomnienie za ${outside.length === 1 ? 'paletę' : `${outside.length} ${plPallets(outside.length)}`} pod sklepem. Przy następnym obchodzie mandat.` });
+    return;
+  }
   const fine = FINE_BASE + FINE_PER_PALLET * (outside.length - 1);
   charge(s, 'fines', fine);
   for (const k of [s.today, s.month, s.total]) k.fineCount++;
@@ -868,8 +924,6 @@ export function franchiseFee(revenue: number): number {
 function closeMonth(s: EconomyState, day: number, out: EconEvent[]): void {
   const m = s.month;
   const t = s.tycoon;
-  // spec §10: umowę wypowiada dopiero drugi miesiąc z rzędu bez opłacenia Centrali; poprzednie zamknięcie to `lastReport`
-  const unpaidBefore = s.lastReport !== null && s.lastReport.cash < BANKRUPTCY_AT;
   const fee = franchiseFee(m.revenue);
   charge(s, 'fee', fee, 'month');
   bonus(s, Math.round(turnoverBonusShare(t.trust.value) * m.revenue), 'month');
@@ -898,24 +952,36 @@ function closeMonth(s: EconomyState, day: number, out: EconEvent[]): void {
   s.lastReport = report;
   out.push({ kind: 'month', text: `Raport za ${label}: wynik ${profit >= 0 ? '+' : ''}${fmt(profit)} zł.`, report });
   s.month = emptyCounters();
-  if (s.cash < BANKRUPTCY_AT && unpaidBefore) {
-    s.gameOver = true;
-    out.push({ kind: 'gameover', text: 'Centrala wypowiada umowę franczyzową: drugi miesiąc z rzędu bez opłacenia Centrali. Dziękujemy za współpracę.' });
-  } else if (s.cash < BANKRUPTCY_AT) {
-    out.push({
-      kind: 'debt',
-      text: `Gotówka po raporcie: ${fmt(s.cash)} zł, czyli poniżej ${fmt(BANKRUPTCY_AT)} zł. Centrala czeka na opłatę jeszcze miesiąc. `
-        + `Jeśli przy następnym raporcie gotówka nadal będzie poniżej tej granicy, umowa zostanie wypowiedziana.`,
-    });
-  }
-  // zero w środku miesiąca to tylko ostrzeżenie; umowę wypowiada się przy zamknięciu miesiąca
-  if (!s.gameOver && trustTerminates(t.trust.value)) {
+  // zaufanie na zerze w środku miesiąca to tylko ostrzeżenie; umowę wypowiada się przy zamknięciu miesiąca (debet: `checkDebt`)
+  if (trustTerminates(t.trust.value)) {
     s.gameOver = true;
     out.push({ kind: 'gameover', text: 'Centrala wypowiada umowę franczyzową: zaufanie spadło do zera. Dziękujemy za współpracę.' });
   }
 }
 
 const fmt = (n: number): string => Math.round(n).toLocaleString('pl-PL');
+
+/** Próg ostrzeżenia o debecie (catalog.ts: `DEBT_LIMIT` razy `DEBT_WARN_SHARE`). */
+export const DEBT_WARN = DEBT_LIMIT * DEBT_WARN_SHARE;
+
+/** Ostrzeżenie o debecie: gotówka i ile zostało do granicy, za którą Centrala od razu wypowiada umowę. */
+export const debtWarningText = (cash: number): string =>
+  `Gotówka ${fmt(cash)} zł. Do granicy debetu (${fmt(DEBT_LIMIT)} zł) zostało ${fmt(cash - DEBT_LIMIT)} zł: poniżej niej Centrala od razu wypowiada umowę.`;
+
+/**
+ * Debet po zmianie gotówki w minucie gry albo po poleceniu gracza (`before`: gotówka sprzed niej). Poniżej `DEBT_LIMIT` koniec gry
+ * od razu; zejście poniżej `DEBT_WARN` to jedno ostrzeżenie z kwotą do końca. Liczy się przejście progu, więc stan zapisu nie
+ * potrzebuje nowego pola, a gracz, który wisi pod progiem, nie dostaje ostrzeżenia co minutę.
+ */
+export function checkDebt(s: EconomyState, before: number, out: EconEvent[]): void {
+  if (s.gameOver) return;
+  if (s.cash < DEBT_LIMIT) {
+    s.gameOver = true;
+    out.push({ kind: 'gameover', text: `Gotówka ${fmt(s.cash)} zł, poniżej granicy debetu ${fmt(DEBT_LIMIT)} zł: Centrala wypowiada umowę franczyzową. Dziękujemy za współpracę.` });
+  } else if (s.cash < DEBT_WARN && before >= DEBT_WARN) {
+    out.push({ kind: 'debt', text: debtWarningText(s.cash) });
+  }
+}
 
 // --- Kamienie milowe ------------------------------------------------------------------------------------
 
@@ -1001,13 +1067,26 @@ export function tapPallet(s: EconomyState, info: StoreInfo, id?: number, combo =
 }
 
 /**
+ * Kiedy stukanie w kasę nic nie da (powód dla gracza) albo null, gdy pomaga: franczyzobiorca staje przy drugiej kasie tylko
+ * wtedy, gdy przy kasie nikogo nie ma albo kolejka przerasta kasjerów (czekałaby dłużej niż `TILL_TAP_QUEUE_MIN` minut).
+ * Decyzja właściciela z 29.10.2026: „klikanie, kiedy kasjer stoi przy kasie, jest niepotrzebne”.
+ */
+export function tillTapBlock(s: EconomyState, info: StoreInfo): string | null {
+  if (!isOpenForCustomers(s)) return 'Sklep zamknięty.';
+  if (s.queue < 1) return 'Nikt nie czeka przy kasie.';
+  if (s.lastCashiers <= 0) return null;
+  const perMinute = s.lastCashiers * TILL_RATE * effects(s, info).tillSpeed;
+  return s.queue > perMinute * TILL_TAP_QUEUE_MIN ? null : 'Kasjer nadąża z kolejką.';
+}
+
+/**
  * Gracz stuka w kasę: franczyzobiorca obsługuje klienta z kolejki (z combo kilku naraz, a zmęczenie obsługuje ułamek). Sklep
  * zamknięty albo pusta kolejka to odmowa bez zużycia sił, a combo nie przekracza liczby stuknięć, jakiej potrzeba na kolejkę.
  * Zwraca zarobioną marżę.
  */
 export function tapTill(s: EconomyState, info: StoreInfo, combo = 1): CommandResult {
-  if (!isOpenForCustomers(s)) return { ok: false, text: 'Sklep zamknięty.' };
-  if (s.queue < 1) return { ok: false, text: 'Nikt nie czeka przy kasie.' };
+  const block = tillTapBlock(s, info);
+  if (block) return { ok: false, text: block };
   const needTaps = Math.max(1, Math.ceil(s.queue / fatigueEfficiency(s.tycoon.fatigue) - 1e-9));
   const r = fatigueTap(s.tycoon.fatigue, 'kasa', usableCombo(combo, needTaps));
   if (!r.ok) return { ok: false, text: r.text ?? 'Ręce odmawiają.' };

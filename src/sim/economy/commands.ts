@@ -1,7 +1,7 @@
 import { layoutFor } from '@/sim/store/layoutFor';
 import type { StoreLayout } from '@/sim/store/types';
 import {
-  answerCard, awaitingDecision, buyEquipment, buyUpgrade, campaign, commitTap, comboMult, fire, hire, movePallet,
+  answerCard, awaitingDecision, buyEquipment, buyUpgrade, campaign, checkDebt, commitTap, comboMult, fire, hire, movePallet,
   nextTapStreak, processLevels, relayout, returnPallet, rushRemont, setOrder, startRemont, tapPallet, tapTill,
   type CommandResult, type EconEvent, type EconomyState,
 } from './economy';
@@ -175,8 +175,10 @@ export function applyCommand(state: EconomyState, info: StoreInfo, cmd: Command)
 
   const events: EconEvent[] = [];
   const remontBefore = state.remontLevel;
+  const cashBefore = state.cash;
   const result = run(state, info, c, events);
   processLevels(state, events);   // poziom z nagrody albo stuknięcia od razu, także w pauzie (H1)
+  checkDebt(state, cashBefore, events);   // np. mandat z ryzyka karty: za duży debet kończy grę od razu, nie dopiero w następnej minucie
   if (state.remontLevel === remontBefore) return { result, events, layoutChanged: false };
 
   // remont zmienił wielkość sklepu: układ z seeda i poziomu, a palety i sprzęt na jego miejsca (H2)

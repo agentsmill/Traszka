@@ -103,6 +103,7 @@ const asLoaded = (e: EconomyState): Omit<EconomyState, 'tycoon'> => {
     shift: { staff: 0, human: { kasa: 0, rozladunek: 0, wykladanie: 0, sprzatanie: 0 }, people: [] },
     tapStreak: 0,
     lastTapAt: -1e9,
+    lastWarnAt: -1e9,   // zapis sprzed upomnień Straży: żadnego upomnienia
   };
 };
 

@@ -3,7 +3,7 @@ import { QUALITY, type QualityPresetId } from '@/render/quality';
 import { HOUR_CURVE, MINUTES_PER_DAY, OPEN_FROM, OPEN_TO } from '@/sim/economy/catalog';
 import { expectedDailyCustomers, isOpenForCustomers, isStoreOpen } from '@/sim/economy/economy';
 import { MemoryStorage } from './memoryStorage';
-import { CROWD_MAX, clearSeedFromUrl, crowdRateFor, timeOfDayAt } from './scene';
+import { CROWD_MAX, clearSeedFromUrl, crowdRateFor, timeOfDayAt, trafficPerHour } from './scene';
 import { createSession, type GameSession } from './session';
 
 /*
@@ -58,9 +58,9 @@ describe('timeOfDayAt: pora dnia z zegara gry', () => {
 });
 
 describe('crowdRateFor: gęstość tłumu z ekonomii', () => {
-  it('sklep zamknięty (przed otwarciem, po zamknięciu) nie wpuszcza nikogo', () => {
+  it('sklep zamknięty (przed otwarciem, po zamknięciu) nie wpuszcza nikogo i wyprasza tych w środku (closing)', () => {
     for (const hour of [0, 3, 5, 23]) {
-      for (const preset of PRESETS) expect(crowdRateFor(atHour(hour), preset)).toEqual({ targetCount: 0, spawnPerMinute: 0 });
+      for (const preset of PRESETS) expect(crowdRateFor(atHour(hour), preset)).toEqual({ targetCount: 0, spawnPerMinute: 0, closing: true });
     }
   });
 
@@ -68,7 +68,7 @@ describe('crowdRateFor: gęstość tłumu z ekonomii', () => {
     const s = atHour(12);
     expect(crowdRateFor(s, 'srednia').targetCount).toBeGreaterThan(0);
     s.econ.remontUntil = s.econ.minute + 120;
-    expect(crowdRateFor(s, 'srednia')).toEqual({ targetCount: 0, spawnPerMinute: 0 });
+    expect(crowdRateFor(s, 'srednia')).toEqual({ targetCount: 0, spawnPerMinute: 0, closing: true });
     s.econ.minute += 120;   // remont się skończył
     expect(crowdRateFor(s, 'srednia').targetCount).toBeGreaterThan(0);
   });
@@ -79,7 +79,7 @@ describe('crowdRateFor: gęstość tłumu z ekonomii', () => {
     s.econ.tycoon.cards.active.push({ kind: 'closed', value: 1, from: s.econ.minute, until: s.econ.minute + 60, seq: 1 });
     expect(isStoreOpen(s.econ)).toBe(true);   // dla samej ekonomii (godziny, remont) sklep stoi otwarty
     expect(isOpenForCustomers(s.econ)).toBe(false);
-    for (const preset of PRESETS) expect(crowdRateFor(s, preset)).toEqual({ targetCount: 0, spawnPerMinute: 0 });
+    for (const preset of PRESETS) expect(crowdRateFor(s, preset)).toEqual({ targetCount: 0, spawnPerMinute: 0, closing: true });
     s.econ.minute += 60;   // efekt się skończył
     expect(crowdRateFor(s, 'srednia').targetCount).toBeGreaterThan(0);
   });
@@ -97,6 +97,8 @@ describe('crowdRateFor: gęstość tłumu z ekonomii', () => {
   it('spokojny sklep ma dolną granicę: 4 postacie i 3 klientów na minutę', () => {
     const s = atHour(6);   // 6:00: krzywa 0,5, nowy sklep
     s.econ.reputation = 0;
+    s.info = { ...s.info, shelfCapTotal: 0 };   // sam ruch z ulicy (TRAFFIC_BASE), bez klientów, których ściągają półki
+    expect(trafficPerHour(s)).toBeLessThan(10);   // poniżej obu dolnych granic
     const rate = crowdRateFor(s, 'wysoka');
     expect(rate).toEqual({ targetCount: 4, spawnPerMinute: 3 });
   });

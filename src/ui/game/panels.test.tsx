@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { BANKRUPTCY_AT, WAGE_PER_DAY } from '@/sim/economy/catalog';
-import { createEconomy, franchiseFee, kpiScaleOf, nextRemont, upgradeBlocker, type CommandResult, type EconomyState, type MonthReport } from '@/sim/economy/economy';
+import { DEBT_LIMIT, WAGE_PER_DAY } from '@/sim/economy/catalog';
+import { DEBT_WARN, createEconomy, debtWarningText, franchiseFee, kpiScaleOf, nextRemont, upgradeBlocker, type CommandResult, type EconomyState, type MonthReport } from '@/sim/economy/economy';
 import type { Command } from '@/sim/economy/commands';
 import { KPI, KPI_FLAVOR, kpiTitle } from '@/sim/economy/tycoon/kpi';
 import { dayOfMinute, roundNice } from '@/sim/economy/tycoon/time';
@@ -284,7 +284,7 @@ describe('panele wysyłają polecenia przez game.dispatch, a nie wołają symula
     };
     expect(value('Dziś', 'Marża i premie (Twój przychód)')).toBe('1500zł');
     expect(value('Ten miesiąc', 'Marża i premie')).toBe('11200zł');
-    expect(value('Ten miesiąc', 'WUT ponad próg')).toBe('−150zł');
+    expect(value('Ten miesiąc', 'Ubytki ponad limit Centrali')).toBe('−150zł');
   });
 
   describe('cele: opłata franczyzowa w trakcie miesiąca', () => {
@@ -310,29 +310,29 @@ describe('panele wysyłają polecenia przez game.dispatch, a nie wołają symula
       expect(franchiseFee(300_000)).toBeGreaterThan(franchiseFee(90_000));
     });
 
-    describe('ostrzeżenie przed wypowiedzeniem umowy (ostatni raport zastał dług)', () => {
+    describe('ostrzeżenie o debecie (gotówka poniżej połowy granicy, za którą gra się kończy)', () => {
       const plain = (text: string): string => text.replace(/[\s\u00a0\u202f]/g, ' ');
-      const warning = `Poprzedni raport zastał Cię z gotówką poniżej ${plain(`−${zl(-BANKRUPTCY_AT)}`)}. Jeśli ten też, Centrala wypowie umowę.`;
-      const monthWith = (lastCash: number | null): { text: string; warn: Vnode[] } => {
+      const monthWith = (cash: number): { text: string; warn: Vnode[] } => {
         const { s, info } = rich();
-        s.lastReport = lastCash === null ? null : { label: 'wrzesień 2026', counters: s.month, profit: -1000, cash: lastCash, comment: '', detail: null } as MonthReport;
+        s.cash = cash;
         const section = sectionTitled(GoalsPanel({ s, info, game: fakeGame(), v: 1 }), 'Ten miesiąc');
         return { text: plain(textOf(section)), warn: walk(section).filter((v) => v.type === 'p' && String(v.props.class).includes('warn')) };
       };
 
-      it('ostatni raport poniżej BANKRUPTCY_AT: wiersz ostrzeżenia z kwotą ze stałej, w stylu innych ostrzeżeń (tt-hint warn)', () => {
-        const { text, warn } = monthWith(BANKRUPTCY_AT - 1);
-        expect(text).toContain(warning);
+      it('gotówka poniżej DEBT_WARN: wiersz ostrzeżenia z kwotą do granicy, w stylu innych ostrzeżeń (tt-hint warn)', () => {
+        const cash = DEBT_WARN - 1200;
+        const { text, warn } = monthWith(cash);
         expect(warn).toHaveLength(1);
-        expect(plain(textOf(warn[0]))).toBe(warning);
+        expect(plain(textOf(warn[0]))).toBe(plain(debtWarningText(cash)));
+        expect(text).toContain(`zostało ${plain((cash - DEBT_LIMIT).toLocaleString('pl-PL'))} zł`);
         expect(warn[0].props.class).toBe('tt-hint warn');
       });
 
-      it('gotówka równa granicy, powyżej niej albo brak raportu: bez ostrzeżenia', () => {
-        for (const cash of [BANKRUPTCY_AT, 0, 250_000, null]) {
+      it('gotówka równa progowi, powyżej niego albo dodatnia: bez ostrzeżenia', () => {
+        for (const cash of [DEBT_WARN, DEBT_WARN + 1, 0, 250_000]) {
           const { text, warn } = monthWith(cash);
-          expect(text, `ostatni raport: ${cash}`).not.toContain('Poprzedni raport');
-          expect(warn, `ostatni raport: ${cash}`).toHaveLength(0);
+          expect(text, `gotówka ${cash}`).not.toContain('granicy debetu');
+          expect(warn, `gotówka ${cash}`).toHaveLength(0);
         }
       });
     });
@@ -340,7 +340,7 @@ describe('panele wysyłają polecenia przez game.dispatch, a nie wołają symula
     it('stary napis „przed opłatą” zniknął, a podpowiedź każe zostawić gotówkę na opłatę', () => {
       const { text } = month(90_000);
       expect(text).not.toContain('przed opłatą');
-      expect(text).toContain('Opłatę franczyzową, WUT ponad próg i premię od obrotu Centrala rozlicza przy zamknięciu miesiąca. Zostaw gotówkę na opłaty.');
+      expect(text).toContain('Opłatę franczyzową, ubytki ponad limit Centrali i premię od obrotu Centrala rozlicza przy zamknięciu miesiąca. Zostaw gotówkę na opłaty.');
     });
   });
 });
@@ -523,7 +523,7 @@ describe('panel Ludzie: kto co robi, przypięcia i podsumowanie dnia', () => {
   });
 });
 
-describe('panel Sklep: zaufanie Centrali, WUT w miesiącu i czystość sali', () => {
+describe('panel Sklep: zaufanie Centrali, ubytki w miesiącu i czystość sali', () => {
   it('zaufanie pokazuje próg (nazwę) i jego opis', () => {
     const { s, info } = rich();
     s.tycoon.trust.value = 45;
@@ -537,43 +537,43 @@ describe('panel Sklep: zaufanie Centrali, WUT w miesiącu i czystość sali', ()
     expect(textOf(sectionTitled(StorePanel({ s, info, v: 1 }), 'Opinia'))).toContain(trustTier(92).flavor);
   });
 
-  it('WUT w tym miesiącu: suma ubytków wobec progu (próg × obrót miesiąca), pasek ostrzega po przekroczeniu', () => {
+  it('Ubytki w tym miesiącu: suma ubytków wobec limitu Centrali (limit × obrót miesiąca), pasek ostrzega po przekroczeniu', () => {
     const { s, info } = rich();
     s.month.revenue = 50_000;
     s.tycoon.wut.month.kradziez = 200;
     s.tycoon.wut.month.termin = 100;
     const limit = WUT.threshold * 50_000;   // 600 zł
     const tree = StorePanel({ s, info, v: 1 });
-    const section = sectionTitled(tree, 'WUT w tym miesiącu');
+    const section = sectionTitled(tree, 'Ubytki w tym miesiącu');
     const plain = (x: string): string => x.replace(/[\s\u00a0\u202f]/g, '');
     expect(plain(textOf(section))).toContain(plain(`${zl(wutTotal(s.tycoon.wut))} z ${zl(limit)}`));
     const bar = walk(section).find((v) => v.type === Bar)!;
     expect(bar.props.value).toBeCloseTo(300 / 600);
     expect(bar.props.warn).toBe(false);
     s.tycoon.wut.month.pomylki = 500;   // 800 > 600
-    const over = sectionTitled(StorePanel({ s, info, v: 1 }), 'WUT w tym miesiącu');
+    const over = sectionTitled(StorePanel({ s, info, v: 1 }), 'Ubytki w tym miesiącu');
     expect(walk(over).find((v) => v.type === Bar)!.props.warn).toBe(true);
     expect(plain(textOf(over))).toContain(plain(zl(200)));   // nadwyżka do zapłaty
   });
 
-  it('nadwyżka WUT to stan „na dziś”: obrót jeszcze rośnie, więc to nie opłata ostateczna', () => {
+  it('nadwyżka ubytków ponad limit to stan „na dziś”: obrót jeszcze rośnie, więc to nie opłata ostateczna', () => {
     const { s, info } = rich();
     s.month.revenue = 50_000;
     s.tycoon.wut.month.pomylki = 800;   // 800 > 600
-    const hint = textOf(sectionTitled(StorePanel({ s, info, v: 1 }), 'WUT w tym miesiącu'));
+    const hint = textOf(sectionTitled(StorePanel({ s, info, v: 1 }), 'Ubytki w tym miesiącu'));
     expect(hint).toContain('na dziś');
     expect(hint).toContain('obrót jeszcze rośnie');
     expect(hint).not.toContain('Tyle zapłacisz');   // dawne brzmienie obiecywało kwotę, która do końca miesiąca się zmienia
   });
 
-  it('WUT na początku miesiąca (obrót 0, próg 0) nie daje NaN ani dzielenia przez zero', () => {
+  it('ubytki na początku miesiąca (obrót 0, limit 0) nie dają NaN ani dzielenia przez zero', () => {
     const { s, info } = rich();
     s.month.revenue = 0;
-    let section = sectionTitled(StorePanel({ s, info, v: 1 }), 'WUT w tym miesiącu');
+    let section = sectionTitled(StorePanel({ s, info, v: 1 }), 'Ubytki w tym miesiącu');
     expect(walk(section).find((v) => v.type === Bar)!.props.value).toBe(0);
     expect(textOf(section)).not.toMatch(/NaN|Infinity/);
-    s.tycoon.wut.month.termin = 10;   // ubytek bez obrotu: już ponad progiem
-    section = sectionTitled(StorePanel({ s, info, v: 1 }), 'WUT w tym miesiącu');
+    s.tycoon.wut.month.termin = 10;   // ubytek bez obrotu: już ponad limitem
+    section = sectionTitled(StorePanel({ s, info, v: 1 }), 'Ubytki w tym miesiącu');
     expect(walk(section).find((v) => v.type === Bar)!.props.value).toBe(1);
     expect(walk(section).find((v) => v.type === Bar)!.props.warn).toBe(true);
     expect(textOf(section)).not.toMatch(/NaN|Infinity/);

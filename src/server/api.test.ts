@@ -106,7 +106,7 @@ describe('api/** na Vercelu (atrapa Upstash przez fetch)', () => {
     'ze zbudowanym bundlem sędziego: poprawny bieg bierny przez api/runs.ts daje 200, a score to wynik policzony wprost z src/sim', async () => {
       const passive: RunRecord = { seed: run.seed, gameVersion: run.gameVersion, generatorVersion: GENERATOR_VERSION, simVersion: SIM_VERSION, mode: 'ranked', log: [] };
       const expected = seasonScore(replayRun(passive, RANKED_SEASON_END_MINUTE));
-      expect(expected).toBeGreaterThan(0);   // wynik zerowy nie odróżniłby sędziego, który nic nie liczy
+      expect(expected).not.toBe(0);   // wynik zerowy nie odróżniłby sędziego, który nic nie liczy
       // własny klucz i adres: bramka `api/runs.ts` jest wspólna dla testów tego pliku, a wyczerpany limit trwa do końca okna
       const own = new Request(`${ORIGIN}/api/runs`, {
         method: 'POST', headers: { 'content-type': 'application/json', 'x-real-ip': '192.0.2.88' },

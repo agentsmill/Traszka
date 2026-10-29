@@ -7,17 +7,19 @@ import { layoutFor } from '@/sim/store/layoutFor';
 import { isModalOpen } from '@/game/frame';
 import { GoalsPanel, PalletItem, PalletsPanel, PeoplePanel, TabBar } from '../game/panels';
 import { App } from '../App';
+import { Hud } from '../game/Hud';
 import { HowToButton, Settings } from '../game/overlays';
-import { buttonLabelled, click, labels, sectionTitled, textOf, walk } from '../game/vnodeTree';
-import { howTo, showSettings, type Controls, type GameActions } from '../state';
+import { buttonAria, buttonLabelled, click, labels, sectionTitled, textOf, walk } from '../game/vnodeTree';
+import { econ, howTo, showSettings, type Controls, type GameActions } from '../state';
 import { HowTo } from './HowTo';
-import { howToSections } from './howToText';
+import { howToDetails, howToPoints } from './howToText';
 
-// Ustawienia mają haki (`useState`, `useEffect`). Poza renderem Preacta ich nie ma jak wołać, więc atrapa daje stan początkowy
-// i nic nie robi przy zmianie: wystarczy, żeby obejrzeć drzewo okna, które zwraca `Settings`.
+// Ustawienia i pasek (`Hud`) mają haki (`useState`, `useRef`, `useEffect`). Poza renderem Preacta ich nie ma jak wołać, więc atrapa
+// daje stan początkowy i nic nie robi przy zmianie: wystarczy, żeby obejrzeć drzewo okna, które zwraca `Settings`, i paska gry.
 vi.mock('preact/hooks', async (importOriginal) => ({
   ...(await importOriginal<typeof import('preact/hooks')>()),
   useState: <T,>(initial: T) => [initial, () => {}],
+  useRef: <T,>(initial: T) => ({ current: initial }),
   useEffect: () => {},
 }));
 
@@ -32,7 +34,7 @@ const controls: Controls = {
 };
 
 beforeEach(() => { howTo.value = false; showSettings.value = false; });
-afterEach(() => { howTo.value = false; showSettings.value = false; });
+afterEach(() => { howTo.value = false; showSettings.value = false; econ.value = null; });
 
 describe('okno „Jak grać”', () => {
   it('domyślnie zamknięte: nic nie rysuje i nie zatrzymuje gry', () => {
@@ -53,21 +55,27 @@ describe('okno „Jak grać”', () => {
     expect(String(dialog.props.class)).toContain('tt-modal');
   });
 
-  it('pokazuje wszystkie sekcje i akapity z howToText, a „Na start” jako listę', () => {
+  it('pokazuje punkty „co robić” jako jedną listę, a szczegóły jako zwinięte <details> z tytułem w <summary>', () => {
     howTo.value = true;
     const tree = HowTo()!;
     const shown = textOf(tree);
-    const sections = howToSections();
-    for (const s of sections) {
-      expect(shown).toContain(s.title);
-      for (const p of s.paragraphs) expect(shown).toContain(p);
-    }
-    const headings = walk(tree).filter((v) => v.type === 'h3').map((v) => textOf(v));
-    expect(headings).toEqual(sections.map((s) => s.title));
+    const points = howToPoints();
+    const details = howToDetails();
     const lists = walk(tree).filter((v) => v.type === 'ul');
     expect(lists).toHaveLength(1);
-    expect(walk(lists[0]!).filter((v) => v.type === 'li').map((v) => textOf(v))).toEqual(sections.find((s) => s.title === 'Na start')!.paragraphs);
-    expect(walk(tree).filter((v) => v.type === 'p')).toHaveLength(sections.filter((s) => !s.list).reduce((n, s) => n + s.paragraphs.length, 0));
+    expect(walk(lists[0]!).filter((v) => v.type === 'li').map((v) => textOf(v))).toEqual(points);
+    const blocks = walk(tree).filter((v) => v.type === 'details');
+    expect(blocks).toHaveLength(details.length);
+    blocks.forEach((block, i) => {
+      expect(block.props.open, details[i]!.title).toBeUndefined();   // zwinięte: okno mieści się na ekranie bez przewijania
+      expect(textOf(walk(block).find((v) => v.type === 'summary'))).toBe(details[i]!.title);
+      expect(walk(block).filter((v) => v.type === 'p').map((v) => textOf(v))).toEqual(details[i]!.paragraphs);
+    });
+    for (const d of details) for (const p of d.paragraphs) expect(shown).toContain(p);
+    expect(walk(tree).filter((v) => v.type === 'h2').map((v) => textOf(v))).toEqual(['Jak grać']);
+    // punkty są nad szczegółami: lista stoi w drzewie przed pierwszym <details>
+    const order = walk(tree).filter((v) => v.type === 'ul' || v.type === 'details');
+    expect(order[0]!.type).toBe('ul');
   });
 
   it('jeden przycisk „Zaczynamy” (tt-btn tt-primary) zamyka okno, a gra rusza', () => {
@@ -87,6 +95,38 @@ describe('okno „Jak grać”', () => {
 describe('montaż w aplikacji', () => {
   it('<HowTo /> jest w drzewie App: bez niego otwarte okno zatrzymałoby grę bez żadnego widocznego przycisku', () => {
     expect(walk(App({ controls, game })).some((v) => v.type === HowTo)).toBe(true);
+  });
+});
+
+describe('„?” w pasku gry (HUD)', () => {
+  const hud = (): ReturnType<typeof Hud> => {
+    const info = computeStoreInfo(layoutFor('instrukcja', 0));
+    econ.value = { s: createEconomy('instrukcja', info), info, v: 1 };
+    return Hud({ controls });
+  };
+
+  it('stały przycisk „?” z aria-label „Jak grać” na klasie tt-iconbtn, w tym samym wierszu co ⚙', () => {
+    const tree = hud();
+    const help = buttonAria(tree, 'Jak grać');
+    expect(textOf(help)).toBe('?');
+    expect(String(help.props.class).split(' ')).toContain('tt-iconbtn');
+    const row = walk(tree).find((v) => v.props.class === 'tt-hud-row')!;
+    expect(walk(row).includes(help)).toBe(true);
+    expect(walk(row).includes(buttonAria(tree, 'Ustawienia'))).toBe(true);
+  });
+
+  it('otwiera okno „Jak grać”: gra staje, a w drzewie wstaje instrukcja', () => {
+    expect(howTo.value).toBe(false);
+    click(buttonAria(hud(), 'Jak grać'));
+    expect(howTo.value).toBe(true);
+    expect(isModalOpen()).toBe(true);
+    expect(labels(HowTo())).toEqual(['Zaczynamy']);
+  });
+
+  it('nie rusza ustawień: ⚙ dalej otwiera tylko ustawienia', () => {
+    click(buttonAria(hud(), 'Ustawienia'));
+    expect(showSettings.value).toBe(true);
+    expect(howTo.value).toBe(false);
   });
 });
 
@@ -111,7 +151,7 @@ describe('⚙: przycisk „Jak grać”', () => {
 });
 
 describe('nazwy z interfejsu w treści zgadzają się z interfejsem', () => {
-  const all = (): string => howToSections().flatMap((s) => s.paragraphs).join('\n');
+  const all = (): string => [...howToPoints(), ...howToDetails().flatMap((s) => s.paragraphs)].join('\n');
   const info = computeStoreInfo(layoutFor('instrukcja', 0));
   const s = createEconomy('instrukcja', info);
 

@@ -1,10 +1,10 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { generateStore } from '@/sim/store/generateStore';
-import { CATS, COMBO_WINDOW, MINUTES_PER_DAY, OPEN_TO, TAP_ITEMS, type Cat } from './catalog';
+import { CATS, COMBO_WINDOW, MINUTES_PER_DAY, OPEN_TO, TAP_ITEMS, TILL_RATE, TILL_TAP_QUEUE_MIN, type Cat } from './catalog';
 import { applyCommand } from './commands';
 import {
-  commitTap, comboMult, createEconomy, nextTapStreak, stepMinute, tapCombo, tapPallet, tapTill,
+  commitTap, comboMult, createEconomy, nextTapStreak, stepMinute, tapCombo, tapPallet, tapTill, tillTapBlock,
   type CommandResult, type EconEvent, type EconomyState,
 } from './economy';
 import { LIMITS, sanitizeEconomy } from './sanitize';
@@ -91,9 +91,11 @@ describe('combo z czasu gry', () => {
 
 describe('siły franczyzobiorcy przy stukaniu', () => {
   /** Otwarty sklep (6:00 pierwszego dnia) z kolejką `queue` klientów i pełną pulą sił. */
+  /** Kolejka bez kasjera: stukanie zawsze pomaga (kiedy pomaga przy kasjerze, sprawdza `tillTapBlock` niżej). */
   const withQueue = (queue: number): EconomyState => {
     const s = fresh();
     s.queue = queue;
+    s.lastCashiers = 0;
     return s;
   };
   const refusalText = (r: CommandResult): string => (r.ok ? '' : r.text);
@@ -413,6 +415,40 @@ describe('siły franczyzobiorcy przy stukaniu', () => {
 
 const fixture = (name: string): Record<string, unknown> =>
   JSON.parse(readFileSync(new URL(`../../game/fixtures/${name}`, import.meta.url), 'utf8')) as Record<string, unknown>;
+
+describe('stukanie w kasę tylko wtedy, gdy pomaga (decyzja właściciela z 29.10.2026)', () => {
+  const ready = (queue: number, cashiers: number): EconomyState => {
+    const s = fresh();
+    s.queue = queue;
+    s.lastCashiers = cashiers;
+    return s;
+  };
+
+  it('kasjer nadąża: odmowa z powodem i bez zużycia sił', () => {
+    const s = ready(TILL_RATE * TILL_TAP_QUEUE_MIN, 1);   // kolejka dokładnie na granicy: kasjer obsłuży ją w czasie progu
+    expect(tillTapBlock(s, info)).toBe('Kasjer nadąża z kolejką.');
+    const r = tapTill(s, info);
+    expect(r.ok).toBe(false);
+    expect(s.tycoon.fatigue.energy).toBe(FATIGUE.pool);
+  });
+
+  it('kolejka przerasta kasjerów albo przy kasie nikogo nie ma: stukanie działa', () => {
+    expect(tillTapBlock(ready(TILL_RATE * TILL_TAP_QUEUE_MIN + 0.5, 1), info)).toBeNull();
+    expect(tillTapBlock(ready(1, 0), info)).toBeNull();
+    // dwóch kasjerów obsługuje dwa razy więcej: ta sama kolejka już ich nie przerasta
+    expect(tillTapBlock(ready(TILL_RATE * TILL_TAP_QUEUE_MIN + 0.5, 2), info)).toBe('Kasjer nadąża z kolejką.');
+    const s = ready(10, 1);
+    expect(tapTill(s, info).ok).toBe(true);
+    expect(s.queue).toBeCloseTo(9, 6);
+  });
+
+  it('pusta kolejka i sklep zamknięty mają własne powody', () => {
+    expect(tillTapBlock(ready(0, 0), info)).toBe('Nikt nie czeka przy kasie.');
+    const closed = ready(10, 0);
+    closed.minute = OPEN_TO + 5;
+    expect(tillTapBlock(closed, info)).toBe('Sklep zamknięty.');
+  });
+});
 
 describe('combo w zapisie', () => {
   const OLD_SAVES: [string, string, () => Record<string, unknown>][] = [
