@@ -1,25 +1,29 @@
 import { describe, expect, it } from 'vitest';
 import { generateStore } from '@/sim/store/generateStore';
 import {
-  BANKRUPTCY_AT, CATS, CAT_INFO, HOT, ITEMS_PER_CUSTOMER, MINUTES_PER_DAY, OPEN_FROM, START_CASH, TILL_RATE, UNLOAD_AT, UNLOAD_RATE,
+  BANKRUPTCY_AT, CATS, CAT_INFO, HOT, ITEMS_PER_CUSTOMER, MINUTES_PER_DAY, OPEN_FROM, OPEN_TO, START_CASH, TILL_RATE, UNLOAD_AT, UNLOAD_RATE,
   WAGE_PER_DAY,
 } from './catalog';
 import { dateOfDay, formatDate, isLastDayOfMonth } from './calendar';
 import { advanceEconomy } from './clock';
 import {
-  answerCard, arrivalRate, awaitingDecision, buyEquipment, buyUpgrade, cardContext, changeTrust, claimQuest, createEconomy, effects,
+  answerCard, arrivalRate, awaitingDecision, buyEquipment, buyUpgrade, cardContext, changeTrust, createEconomy, effects,
   estimatedDailyMargin, expectedDailyCustomers, fire, freeSpots, isOpenForCustomers, kpiMetricsOf, kpiScaleOf, movePallet, relayout,
-  returnPallet, robotFleet, slotFree, startRemont, stepMinute, tapPallet, tapTill, unlocksAt, upgradeBlocker, workshopUnlocked,
-  type CommandResult, type EconEvent, type EconomyState,
+  returnPallet, robotFleet, sell, slotFree, startRemont, stepMinute, tapPallet, tapTill, unlocksAt, upgradeBlocker, workshopUnlocked,
+  type CommandResult, type EconEvent, type EconomyState, type MonthReport,
 } from './economy';
 import { rand01 } from './rand';
 import { computeStoreInfo, type StoreInfo } from './storeInfo';
 import { cardDef, visibleCards, type CardDelta, type CardInstance } from './tycoon/cards';
 import { rollWeather } from './tycoon/cleanliness';
-import { pinStaff, setStaffProfile } from './tycoon/staff';
-import { dateOfGameDay, isSunday } from './tycoon/time';
+import { kpiTitle, newKpiWeek } from './tycoon/kpi';
+import { HINT_IDS, REPORT_LINES, reportCommentText } from './tycoon/report';
+import { emptyStaffStats, pinStaff, setStaffProfile } from './tycoon/staff';
+import { SUNDAY_TRAFFIC } from './tycoon/sunday';
+import { dateOfGameDay, isSunday, roundNice } from './tycoon/time';
 import { TRUST, trustTier } from './tycoon/trust';
 import { hallObstacle, palletBags } from './tycoon/waste';
+import { WUT } from './tycoon/wut';
 import { UPGRADE_BY_ID } from './upgrades';
 
 const SEED = 'kiełbasa-42';   // blok z 1 slotem SCO i 3 slotami 2×2
@@ -428,28 +432,6 @@ describe('nagrody i postęp', () => {
     expect(ups[0]!.level).toBe(2);
   });
 
-  it('trzy zlecenia; wykonane można odebrać, a na ich miejsce przychodzi nowe innego rodzaju', () => {
-    const s = createEconomy(SEED, info);
-    expect(s.quests).toHaveLength(3);
-    expect(new Set(s.quests.map((q) => q.kind)).size).toBe(3);
-    const q = s.quests[0]!;
-    expect(claimQuest(s, info, q.id).ok).toBe(false);
-    // wykonanie: podbijamy licznik zlecenia
-    const metric: Record<string, () => void> = {
-      serve: () => { s.total.customers += q.target; }, pallets: () => { s.total.palletsUnloaded += q.target; },
-      taps: () => { s.total.taps += q.target; }, margin: () => { s.total.margin += q.target; },
-      upgrade: () => { s.total.purchases += q.target; }, clean: () => { s.cleanDays += q.target; },
-      rep: () => { s.reputation = 100; }, hot: () => { s.total.hotSold += q.target; },
-    };
-    metric[q.kind]!();
-    const cash = s.cash;
-    const r = claimQuest(s, info, q.id);
-    expect(r.ok).toBe(true);
-    expect(s.cash).toBe(cash + q.reward.cash);
-    expect(s.quests).toHaveLength(3);
-    expect(s.quests.some((x) => x.id === q.id)).toBe(false);
-  });
-
   it('combo mnoży stuknięcia', () => {
     const s = createEconomy(SEED, info);
     for (const c of CATS) s.backroom[c] = 0;
@@ -638,10 +620,11 @@ describe('zaufanie Centrali przez moduł tycoona', () => {
     const s = createEconomy(SEED, info);
     toMonthEnd(s);
     s.tycoon.trust.value = 90;       // próg ulubieńca: 1,5% obrotu
+    const before = s.month.bonus;    // premie z KPI tygodnia (niedziele) i ze złotych palet są już w liczniku; liczy się to, co dojdzie przy zamknięciu
     const events = run(s, info, 2 * 60);
     const c = events.find((e) => e.kind === 'month')!.report!.counters;
-    expect(c.bonus).toBe(Math.round(0.015 * c.revenue));
-    expect(c.bonus).toBeGreaterThan(0);
+    expect(c.bonus - before).toBe(Math.round(0.015 * c.revenue));
+    expect(c.bonus - before).toBeGreaterThan(0);
     const report = events.find((e) => e.kind === 'month')!.report!;
     expect(report.profit).toBeCloseTo(c.margin + c.bonus + c.other - c.wages - c.media - c.fee - c.fines - c.logistics - c.wut, 6);
   });
@@ -650,8 +633,9 @@ describe('zaufanie Centrali przez moduł tycoona', () => {
     const s = createEconomy(SEED, info);
     toMonthEnd(s);
     s.tycoon.trust.value = 69;
+    const before = s.month.bonus;    // KPI tygodnia dały już premie w tym miesiącu; przy zamknięciu nie dochodzi nic
     const events = run(s, info, 2 * 60);
-    expect(events.find((e) => e.kind === 'month')!.report!.counters.bonus).toBe(0);
+    expect(events.find((e) => e.kind === 'month')!.report!.counters.bonus).toBe(before);
   });
 
   it('wynik miesiąca w zaufaniu ląduje w zamkniętym miesiącu (zmiana z przyczyną wynik przed closeTrustMonth)', () => {
@@ -671,6 +655,334 @@ describe('zaufanie Centrali przez moduł tycoona', () => {
     const restored = JSON.parse(JSON.stringify(s)) as EconomyState;
     expect(restored.total.fineCount).toBe(1);
     expect(restored.tycoon.trust.month.mandaty).toBe(-1);
+  });
+});
+
+describe('WUT, KPI tygodnia zamiast zleceń i raport miesięczny', () => {
+  const fmt = (n: number): string => Math.round(n).toLocaleString('pl-PL');
+  /** Stoi o 22:00 ostatniego dnia września: za godzinę zamknięcie dnia i miesiąca. */
+  const toMonthEnd = (s: EconomyState): void => {
+    run(s, info, 29 * MINUTES_PER_DAY + 16 * 60);
+    expect(dateOfDay(Math.floor(s.minute / MINUTES_PER_DAY)).date).toBe(30);
+  };
+  const monthReport = (events: EconEvent[]): MonthReport => events.find((e) => e.kind === 'month')!.report!;
+  const weekEvents = (events: EconEvent[]): EconEvent[] => events.filter((e) => e.kind === 'kpi-week');
+  /** Stoi o 22:59 pierwszej niedzieli (dzień 5): następna minuta to 23:00, zamknięcie dnia i tygodnia KPI. */
+  const toFirstSundayEnd = (s: EconomyState): EconEvent[] => run(s, info, 5 * MINUTES_PER_DAY + (OPEN_TO - OPEN_FROM));
+
+  describe('WUT w sprzedaży', () => {
+    /** Ubytki z `n` obsłużonych klientów, w tym `scoShare` przez SCO, przy `cameras` poziomach kamer. */
+    const sold = (scoShare: number, cameras: number): { margin: number; revenue: number; wut: EconomyState['tycoon']['wut']['month'] } => {
+      const s = createEconomy(SEED, info);
+      s.upgrades.kamery = cameras;
+      const margin = sell(s, effects(s, info), 40, scoShare);
+      return { margin, revenue: s.total.revenue, wut: { ...s.tycoon.wut.month } };
+    };
+
+    it('naturalne ubytki idą od każdej sprzedaży: 0,9% obrotu wg przyczyn', () => {
+      const { revenue, wut } = sold(0, 0);
+      expect(revenue).toBeGreaterThan(0);
+      expect(wut.termin).toBeCloseTo(revenue * WUT.baseline.termin, 9);
+      expect(wut.kradziez).toBeCloseTo(revenue * WUT.baseline.kradziez, 9);
+      expect(wut.pomylki).toBeCloseTo(revenue * WUT.baseline.pomylki, 9);
+      expect(wut.karty).toBe(0);
+    });
+
+    it('SCO dopisuje kradzieże do WUT, kamery mniej: 1000 zł obrotu przez SCO to 40 zł bez kamer i 24 zł z kamerami poziomu 1', () => {
+      for (const [cameras, perThousand] of [[0, 40], [1, 24]] as const) {
+        const none = sold(0, cameras);
+        const sco = sold(1, cameras);
+        expect(sco.revenue).toBe(none.revenue);
+        expect((sco.wut.kradziez - none.wut.kradziez) / sco.revenue * 1000, `kamery ${cameras}`).toBeCloseTo(perThousand, 9);
+        // pozostałe przyczyny się nie ruszają
+        expect(sco.wut.termin).toBe(none.wut.termin);
+        expect(sco.wut.pomylki).toBe(none.wut.pomylki);
+      }
+    });
+
+    it('„zapomniane” skany nie obcinają już marży: margin jest taki sam przez SCO i przez kasę', () => {
+      expect(sold(1, 0).margin).toBe(sold(0, 0).margin);
+      expect(sold(1, 0).margin).toBeGreaterThan(0);
+    });
+
+    it('stuknięcie w kasę też liczy naturalne ubytki (bez SCO)', () => {
+      const s = createEconomy(SEED, info);
+      s.minute = 12 * 60;
+      s.queue = 3;
+      tapTill(s, info, 1);
+      expect(s.tycoon.wut.month.termin).toBeGreaterThan(0);
+      expect(s.tycoon.wut.month.kradziez).toBeCloseTo(s.total.revenue * WUT.baseline.kradziez, 9);
+    });
+  });
+
+  describe('WUT w zamknięciu miesiąca', () => {
+    it('WUT ponad próg to pozycja raportu: opłata w liczniku wut, wiersz „wut” w szczegółach, miesiąc WUT wyzerowany', () => {
+      const s = createEconomy(SEED, info);
+      toMonthEnd(s);
+      const manual = 0.05 * s.month.revenue;               // 5% obrotu ręcznie: dużo ponad próg 1,2%
+      s.tycoon.wut.month.pomylki += manual;
+      const report = monthReport(run(s, info, 2 * 60));
+      const line = report.detail!.lines.find((l) => l.key === 'wut')!;
+      // naturalne ubytki to 0,9% obrotu, próg 1,2%: opłata to ręczny dopis minus 0,3% obrotu
+      expect(report.counters.wut).toBeGreaterThan(0);
+      expect(report.counters.wut).toBeCloseTo(manual - 0.003 * report.counters.revenue, 6);
+      expect(line.amount).toBe(0 - report.counters.wut);
+      expect(s.lastReport!.detail!.lines.map((l) => l.key)).toContain('wut');
+      // po zamknięciu nowy miesiąc: licznik opłaty i ubytki od zera, a opłata została w sumie gry
+      expect(s.month.wut).toBe(0);
+      expect(s.tycoon.wut.month).toEqual({ termin: 0, kradziez: 0, pomylki: 0, karty: 0 });
+      expect(s.total.wut).toBe(report.counters.wut);
+    });
+
+    it('WUT z kart wchodzi do sumy miesiąca i do opłaty (przyczyna „karty”)', () => {
+      const s = createEconomy(SEED, info);
+      s.tycoon.cards.pending = [];
+      const card: CardInstance = {
+        seq: s.tycoon.cards.seq++, id: 'fefo', day: 0, showAt: s.minute, params: {}, defaultAnswer: 0,
+        answers: [{ delta: { wut: 5000 }, mods: [], risk: null }],
+      };
+      s.tycoon.cards.pending.push(card);
+      expect(answerCard(s, card.seq, 0, []).ok).toBe(true);
+      expect(s.tycoon.wut.month.karty).toBe(5000);
+      toMonthEnd(s);
+      const report = monthReport(run(s, info, 2 * 60));
+      // 5000 zł z karty plus naturalne ubytki (0,9% obrotu) minus próg (1,2% obrotu)
+      expect(report.counters.wut).toBeCloseTo(5000 - 0.003 * report.counters.revenue, 6);
+      expect(s.tycoon.wut.month.karty).toBe(0);
+    });
+
+    it('ubytki mieszczące się w progu nie kosztują nic: bierny miesiąc ma opłatę 0, a pozycja „wut” w raporcie jest zerem', () => {
+      const s = createEconomy(SEED, info);
+      const report = monthReport(run(s, info, 30 * MINUTES_PER_DAY));
+      expect(report.counters.wut).toBe(0);
+      expect(report.detail!.lines.find((l) => l.key === 'wut')!.amount).toBe(0);
+    });
+  });
+
+  describe('raport miesięczny', () => {
+    it('wynik raportu = suma pozycji = wynik w historii (30 dni biernej gry), z dziewięcioma pozycjami', () => {
+      const s = createEconomy(SEED, info);
+      const report = monthReport(run(s, info, 30 * MINUTES_PER_DAY));
+      const detail = report.detail!;
+      expect(detail.lines.map((l) => l.key)).toEqual(REPORT_LINES);
+      expect(detail.lines.reduce((n, l) => n + l.amount, 0)).toBeCloseTo(detail.result, 6);
+      expect(detail.result).toBeCloseTo(s.history[0]!.profit, 6);
+      expect(detail.result).toBeCloseTo(report.profit, 6);
+      expect(detail.revenue).toBeCloseTo(s.history[0]!.revenue, 6);
+      expect(detail.monthIndex).toBe(0);
+      // pozycje z liczników miesiąca
+      const c = report.counters;
+      const line = (key: string): number => detail.lines.find((l) => l.key === key)!.amount;
+      expect(line('marza')).toBe(c.margin);
+      expect(line('premie')).toBe(c.bonus);
+      expect(line('place')).toBe(0 - c.wages);
+      expect(line('oplata')).toBe(0 - c.fee);
+      expect(line('logistyka')).toBe(0 - c.logistics);
+    });
+
+    it('komentarz to tekst z identyfikatora w raporcie, a szczegóły przeżywają zapis JSON bez zmian', () => {
+      const s = createEconomy(SEED, info);
+      const report = monthReport(run(s, info, 30 * MINUTES_PER_DAY));
+      expect(report.comment).toBe(reportCommentText(report.detail!.commentId));
+      expect(report.comment.length).toBeGreaterThan(10);
+      expect(s.lastReport).toEqual(report);
+      expect(JSON.parse(JSON.stringify(s.lastReport))).toEqual(report);
+    });
+
+    it('zaufanie w raporcie: początek, koniec i przyczyny, wynik miesiąca jest wśród nich (closeTrustMonth raz, po „wynik”)', () => {
+      const s = createEconomy(SEED, info);
+      toMonthEnd(s);
+      s.tycoon.trust.value = 60;
+      s.tycoon.trust.monthStart = 60;
+      s.tycoon.trust.month = {};
+      s.month.margin += 1e6;                     // wynik dodatni: +5
+      const report = monthReport(run(s, info, 2 * 60));
+      expect(report.detail!.trust).toEqual({ start: 60, end: 65, delta: 5, reasons: [['wynik', 5]] });
+      // nowy miesiąc zaczyna się od zaufania po zmianie z wyniku
+      expect(s.tycoon.trust.monthStart).toBe(65);
+      expect(s.tycoon.trust.month).toEqual({});
+    });
+
+    it('podsumowania modułów trafiają do raportu raz: ludzie, sala, siły, karty i KPI miesiąca zerują się', () => {
+      const s = createEconomy(SEED, info);
+      toMonthEnd(s);
+      s.tycoon.fatigue.exhaustedDays = 7;
+      s.tycoon.cards.month = { answered: 6, defaults: 5, riskHits: 0 };
+      const report = monthReport(run(s, info, 2 * 60));
+      const d = report.detail!;
+      expect(d.cleanlinessAvg).toBeGreaterThan(0);
+      expect(d.cleanlinessAvg).toBeLessThanOrEqual(100);
+      expect(s.tycoon.hall.monthMinutes).toBe(0);
+      expect(s.tycoon.staff.month).toEqual(emptyStaffStats());
+      expect(s.tycoon.staff.day).toEqual(emptyStaffStats());      // zamknięcie dnia zerowało statystyki dnia (22:00–23:00 coś w nich zostawiło)
+      expect(s.tycoon.fatigue.exhaustedDays).toBe(0);
+      expect(s.tycoon.cards.month).toEqual({ answered: 0, defaults: 0, riskHits: 0 });
+      // niedziele września: 6, 13, 20 i 27 dnia gry (dni 5, 12, 19, 26) = cztery tygodnie KPI w jednym miesiącu
+      expect(d.kpi.hit + d.kpi.miss).toBe(4);
+      expect(s.tycoon.kpi.month).toEqual({ hit: 0, miss: 0 });
+      expect(HINT_IDS).toContain(d.hint.id);
+    });
+
+    it('wypowiedzenie umowy po raporcie: raport z zaufaniem na zerze wychodzi przed końcem gry', () => {
+      const s = createEconomy(SEED, info);
+      toMonthEnd(s);
+      s.cash = 1e6;
+      s.tycoon.trust.value = 2;
+      s.tycoon.trust.monthStart = 2;
+      s.month.fines += 1e6;                       // strata: −8 (w połowie poniżej 30) zbija zaufanie do zera
+      const events = run(s, info, 2 * 60);
+      expect(s.gameOver).toBe(true);
+      expect(monthReport(events).detail!.trust).toMatchObject({ start: 2, end: 0, delta: -2 });
+    });
+  });
+
+  describe('KPI tygodnia', () => {
+    it('quests, questSeq i cleanDays zniknęły ze stanu', () => {
+      const s = createEconomy(SEED, info);
+      run(s, info, 8 * MINUTES_PER_DAY);
+      for (const k of ['quests', 'questSeq', 'cleanDays']) expect(k in s, k).toBe(false);
+      expect(JSON.stringify(s)).not.toMatch(/quest|cleanDays/);
+    });
+
+    it('tydzień zamyka się w niedzielę o 23:00: zdarzenie, zaufanie z przyczyną kpi, premia i XP przy trafieniu', () => {
+      const s = createEconomy(SEED, info);
+      expect(s.tycoon.kpi.toDay).toBe(5);
+      expect(isSunday(5)).toBe(true);
+      Object.assign(s.tycoon.kpi, { kind: 'klienci', target: 1 });   // trafione od pierwszego klienta
+      const early = toFirstSundayEnd(s);
+      expect(weekEvents(early)).toEqual([]);                 // ani poniedziałek–sobota, ani niedziela przed 23:00
+      expect(s.minute % MINUTES_PER_DAY).toBe(OPEN_TO);
+      expect(s.tycoon.trust.month.kpi).toBeUndefined();
+      s.level = 20;
+      s.xp = 0;
+      const bonusBefore = s.month.bonus;
+      const expectedBonus = roundNice(0.3 * kpiScaleOf(s, info).dailyMargin);
+
+      const events = run(s, info, 1);
+      const week = weekEvents(events);
+      expect(week).toHaveLength(1);
+      expect(week[0]!.text).toContain(kpiTitle('klienci', 1, fmt));
+      expect(week[0]!.text).toContain('trafione');
+      expect(s.tycoon.trust.month.kpi).toBe(3);
+      expect(s.month.bonus - bonusBefore).toBe(expectedBonus);
+      expect(expectedBonus).toBeGreaterThan(0);
+      expect(s.xp).toBe(40 + 10 * 20);
+      expect(s.tycoon.kpi.month).toEqual({ hit: 1, miss: 0 });
+    });
+
+    it('nietrafiony KPI odbiera zaufanie i nie daje premii ani XP', () => {
+      const s = createEconomy(SEED, info);
+      Object.assign(s.tycoon.kpi, { kind: 'klienci', target: 1e9 });
+      toFirstSundayEnd(s);
+      s.level = 20;
+      s.xp = 0;
+      const bonusBefore = s.month.bonus;
+      const events = run(s, info, 1);
+      expect(weekEvents(events)).toHaveLength(1);
+      expect(weekEvents(events)[0]!.text).toContain('nietrafione');
+      expect(s.tycoon.trust.month.kpi).toBe(-2);
+      expect(s.month.bonus).toBe(bonusBefore);
+      expect(s.xp).toBe(0);
+      expect(s.tycoon.kpi.month).toEqual({ hit: 0, miss: 1 });
+    });
+
+    it('zmiana progu zaufania po KPI daje zdarzenie trust-tier', () => {
+      const s = createEconomy(SEED, info);
+      Object.assign(s.tycoon.kpi, { kind: 'klienci', target: 1 });
+      toFirstSundayEnd(s);
+      s.tycoon.trust.value = 59;                     // „Pod obserwacją”; +3 przenosi do „W porządku”
+      const events = run(s, info, 1);
+      expect(events.some((e) => e.kind === 'trust-tier')).toBe(true);
+    });
+
+    it('po zamknięciu zaczyna się następny tydzień do kolejnej niedzieli, a zamknięcie dzieje się raz na tydzień', () => {
+      const s = createEconomy(SEED, info);
+      const events = run(s, info, 20 * MINUTES_PER_DAY);      // niedziele: dni 5, 12 i 19
+      expect(weekEvents(events)).toHaveLength(3);
+      expect(s.tycoon.kpi.seq).toBe(4);                      // tydzień 1 + trzy zamknięcia, bez drugiego wywołania
+      expect(s.tycoon.kpi.fromDay).toBe(20);
+      expect(s.tycoon.kpi.toDay).toBe(26);
+      expect(s.tycoon.kpi.month.hit + s.tycoon.kpi.month.miss).toBe(3);
+    });
+
+    it('cel tygodnia liczy niedzielny ruch (×1,35), a expectedDailyCustomers go nie zawiera', () => {
+      const s = createEconomy(SEED, info);
+      const scale = kpiScaleOf(s, info);
+      expect(scale.dailyCustomers).toBe(expectedDailyCustomers(s, info));
+      let seq = 1;
+      while (newKpiWeek(s.seedHash, seq, 0, kpiMetricsOf(s), scale).kind !== 'klienci') seq++;
+      const week = newKpiWeek(s.seedHash, seq, 0, kpiMetricsOf(s), scale);
+      const days = week.toDay - week.fromDay + 1;
+      expect(days).toBe(6);                                    // wtorek–niedziela
+      expect(week.target).toBe(Math.max(10, roundNice(1.08 * scale.dailyCustomers * (days - 1 + SUNDAY_TRAFFIC))));
+      expect(week.target).toBeGreaterThan(roundNice(1.08 * scale.dailyCustomers * days));
+    });
+
+    it('tydzień zamknięty w ostatnim dniu miesiąca (niedziela 31 stycznia) liczy się do raportu tego miesiąca', () => {
+      const s = createEconomy(SEED, info);
+      const sunday = 152;                                      // 31 stycznia 2027
+      expect(isSunday(sunday)).toBe(true);
+      expect(dateOfGameDay(sunday + 1).month).toBe(1);
+      s.minute = sunday * MINUTES_PER_DAY + 22 * 60;
+      Object.assign(s.tycoon.kpi, { kind: 'klienci', target: 1, fromDay: sunday - 6, toDay: sunday, seq: 20 });
+      s.tycoon.kpi.start = { ...kpiMetricsOf(s), customers: s.total.customers - 5 };
+      const events = run(s, info, 2 * 60);
+      expect(weekEvents(events)).toHaveLength(1);
+      expect(monthReport(events).detail!.kpi).toEqual({ hit: 1, miss: 0 });
+      expect(s.tycoon.kpi.month).toEqual({ hit: 0, miss: 0 });
+      expect(s.tycoon.kpi.fromDay).toBe(sunday + 1);
+    });
+  });
+
+  describe('premia ze złotej palety', () => {
+    it('złota paleta idzie do licznika premii Centrali, a nie do innych przychodów', () => {
+      const s = createEconomy(SEED, info);
+      for (const c of CATS) s.backroom[c] = 0;
+      const p = s.pallets[0]!;
+      p.golden = true;
+      const other = s.total.other;
+      for (let i = 0; i < 200 && s.pallets.some((x) => x.id === p.id); i++) {
+        s.tycoon.fatigue.energy = 100;
+        tapPallet(s, info, p.id, 5);
+      }
+      expect(s.pallets.some((x) => x.id === p.id)).toBe(false);
+      expect(s.total.bonus).toBeGreaterThanOrEqual(400);
+      expect(s.month.bonus).toBe(s.total.bonus);
+      expect(s.total.other).toBe(other);
+    });
+  });
+
+  describe('godziny pracy w statystykach ludzi', () => {
+    it('noc z paletami do rozładunku nie dolicza czekania ani niedoborów rąk: statystyki liczą tylko minuty zmiany', () => {
+      const s = createEconomy(SEED, info);
+      s.minute = 23 * 60 + 1;
+      s.staff = 2;
+      expect(s.pallets.length).toBeGreaterThan(0);                 // paleta czeka na rozładunek całą noc
+      run(s, info, 7 * 60 - 1);                                     // do 6:00
+      expect(s.minute % MINUTES_PER_DAY).toBe(OPEN_FROM);
+      const day = s.tycoon.staff.day;
+      expect(day.starved).toEqual({ kasa: 0, rozladunek: 0, wykladanie: 0, sprzatanie: 0 });
+      expect(day.waiting.rozladunek).toBe(0);
+      expect(s.tycoon.staff.month.starved.rozladunek).toBe(0);
+      // od 6:00 ludzie pracują i statystyki ruszają
+      run(s, info, 60);
+      expect(s.tycoon.staff.day.worked.rozladunek + s.tycoon.staff.day.worked.kasa + s.tycoon.staff.day.worked.wykladanie).toBeGreaterThan(0);
+    });
+
+    it('taśmociąg pracuje nocą mimo braku statystyk, a w godzinach pracy bez ludzi niedobór rąk się liczy', () => {
+      const night = createEconomy(SEED, info);
+      night.minute = 2 * 60;
+      night.upgrades.tasmociag = 1;
+      const before = night.pallets.reduce((n, p) => n + p.total, 0);
+      run(night, info, 30);
+      expect(night.pallets.reduce((n, p) => n + p.total, 0)).toBeLessThan(before);
+
+      const empty = createEconomy(SEED, info);
+      empty.staff = 0;                                              // w godzinach pracy nikogo: paleta czeka naprawdę
+      empty.order = { auto: false, manual: 0 };
+      run(empty, info, 30);
+      expect(empty.tycoon.staff.day.starved.rozladunek).toBeGreaterThan(0);
+    });
   });
 });
 

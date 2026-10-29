@@ -18,7 +18,7 @@ export function levelReward(level: number): { cash: number; ogonki: number } {
   return { cash: 200 * level, ogonki: 2 + Math.floor(level / 2) };
 }
 
-/** XP za czynności (poza zleceniami, które mają własną nagrodę). */
+/** XP za czynności (poza KPI tygodnia i kartami decyzji, które mają własną nagrodę). */
 export const XP = {
   customer: 1,
   pallet: 12,

@@ -16,6 +16,7 @@ const play = (s: EconomyState, inf: StoreInfo, days: number): void => {
   const events: EconEvent[] = [];
   for (let i = 0; i < days * MINUTES_PER_DAY; i++) stepMinute(s, inf, events);
 };
+const inspectDetail = (v: unknown): string => JSON.stringify(v) ?? String(v);
 const json = (s: unknown): Record<string, unknown> => JSON.parse(JSON.stringify(s)) as Record<string, unknown>;
 
 /** Szuka w stanie liczb nieskończonych albo NaN (JSON zapisuje je jako null, więc w pamięci sprawdzamy od razu). */
@@ -32,17 +33,13 @@ const fixture = (name: string): Record<string, unknown> =>
 /** Liczniki z zapisu sprzed tycoona: trzy nowe pola (premie Centrali, WUT, mandaty) są zerowe. */
 const withNewCounters = (c: unknown): Record<string, unknown> => ({ ...(c as Record<string, unknown>), bonus: 0, wut: 0, fineCount: 0 });
 
-/** Zlecenia z zapisu sprzed L9 (z polem `title`) bez tytułu, tak jak wczytuje je dziś `sanitizeEconomy`. */
-const dropQuestTitles = (quests: unknown): Record<string, unknown>[] =>
-  (quests as Record<string, unknown>[]).map(({ title: _, ...q }) => q);
-
 describe('sanitizeEconomy: poprawny stan przechodzi bez zmian', () => {
   it('nowa gra', () => {
     const s = defaults();
     expect(sanitizeEconomy(json(s), defaults(), info)).toEqual(s);
   });
 
-  it('gra po 30 dniach z zakupami, zleceniami i raportem miesięcznym', () => {
+  it('gra po 30 dniach z zakupami, KPI tygodnia i raportem miesięcznym', () => {
     const s = defaults();
     s.cash = 500_000;
     s.level = 12;
@@ -89,14 +86,15 @@ describe('sanitizeEconomy: poprawny stan przechodzi bez zmian', () => {
       const inf = computeStoreInfo(generateStore(seed));
       const out = sanitizeEconomy(raw, defaults(inf, seed), inf)!;
       expect(out).not.toBeNull();
-      // L9: tytuł zlecenia nie jest już częścią stanu. L1: zapis nie ma combo, więc dostaje brak serii i ostatnie stuknięcie
-      // dawno temu. Paczka od Centrali zniknęła: `giftSeq` i `tapBoostUntil` z zapisu przepadają (`giftAt` nie ma w żadnym).
-      // Tycoon: stare `trust` przechodzi do `tycoon.trust`, a liczniki dostają zerowe `bonus`, `wut` i `fineCount`.
-      // Pula ludzi: dawny `priority` zamienia się na profil w `tycoon.staff`, a `shift` (ostatnia minuta) startuje pusty.
-      const { trust, priority, giftSeq: _gs, tapBoostUntil: _tb, ...rest } = raw;
+      // L1: zapis nie ma combo, więc dostaje brak serii i ostatnie stuknięcie dawno temu. Paczka od Centrali zniknęła: `giftSeq`
+      // i `tapBoostUntil` z zapisu przepadają (`giftAt` nie ma w żadnym). Zlecenia Centrali też: `quests`, `questSeq` i `cleanDays`
+      // zastąpiło KPI tygodnia w `tycoon.kpi`. Tycoon: stare `trust` przechodzi do `tycoon.trust`, a liczniki dostają zerowe
+      // `bonus`, `wut` i `fineCount`. Pula ludzi: dawny `priority` zamienia się na profil w `tycoon.staff`, a `shift` (ostatnia
+      // minuta) startuje pusty.
+      const { trust, priority, giftSeq: _gs, tapBoostUntil: _tb, quests: _q, questSeq: _qs, cleanDays: _cd, ...rest } = raw;
       const { tycoon, ...progress } = out;
       expect(progress).toEqual({
-        ...rest, lastReport: null, quests: dropQuestTitles(raw.quests), shift: defaults(inf, seed).shift,
+        ...rest, lastReport: null, shift: defaults(inf, seed).shift,
         tapStreak: 0, lastTapAt: -1e9,
         today: withNewCounters(raw.today), month: withNewCounters(raw.month), total: withNewCounters(raw.total),
       });
@@ -122,7 +120,7 @@ describe('sanitizeEconomy: poprawny stan przechodzi bez zmian', () => {
     expect(JSON.stringify(out)).not.toMatch(/gift|tapBoost/i);
   });
 
-  it('zapisy z tytułami zleceń (v1 i v2 z produkcji): zlecenia wracają bez title, reszta pól ta sama', () => {
+  it('zapisy ze zleceniami (v1 i v2 z produkcji): wczytują się bez zleceń, a postęp gracza zostaje', () => {
     const cases: [string, string, Record<string, unknown>][] = [
       ['save-v1-blok-dzien40.json', 'kiełbasa-42', fixture('save-v1-blok-dzien40.json')],
       ['save-v1-remont1.json', 'traszka-1', fixture('save-v1-remont1.json')],
@@ -130,32 +128,17 @@ describe('sanitizeEconomy: poprawny stan przechodzi bez zmian', () => {
       ['save-v2-remont2.json', 'traszka-v2-b', fixture('save-v2-remont2.json').econ as Record<string, unknown>],
     ];
     for (const [file, seed, raw] of cases) {
-      const rawQuests = raw.quests as Record<string, unknown>[];
-      expect(rawQuests.length, file).toBeGreaterThan(0);
-      for (const q of rawQuests) expect(typeof q.title, `${file}: zapis sprzed L9 ma tytuł`).toBe('string');
-
+      expect((raw.quests as unknown[]).length, `${file}: zapis z produkcji ma zlecenia`).toBeGreaterThan(0);
+      expect(typeof raw.questSeq, file).toBe('number');
       const inf = computeStoreInfo(generateStore(seed));
       const out = sanitizeEconomy(raw, defaults(inf, seed), inf);
       expect(out, file).not.toBeNull();
-      expect(out!.quests, file).toHaveLength(rawQuests.length);
-      out!.quests.forEach((q, i) => {
-        const was = rawQuests[i]!;
-        expect('title' in q, `${file} #${i}`).toBe(false);
-        expect({ id: q.id, kind: q.kind, target: q.target, start: q.start, reward: q.reward }, `${file} #${i}`)
-          .toEqual({ id: was.id, kind: was.kind, target: was.target, start: was.start, reward: was.reward });
-      });
-      expect(JSON.stringify(out), file).not.toContain('"title"');
+      for (const k of ['quests', 'questSeq', 'cleanDays']) expect(k in out!, `${file}: ${k}`).toBe(false);
+      for (const field of ['cash', 'level', 'xp', 'upgrades', 'equipment', 'remontLevel', 'history'] as const) {
+        expect(out![field], `${file}: ${field}`).toEqual(raw[field]);
+      }
+      expect(JSON.stringify(out), file).not.toMatch(/"title"|quest/);
     }
-  });
-
-  it('zlecenie bez title przechodzi sanitizację (wcześniej wypadało)', () => {
-    const s = defaults();
-    const bare = (json(s).quests as Record<string, unknown>[]).map(({ title: _, ...q }) => q);
-    expect(bare).toHaveLength(3);
-    for (const q of bare) expect('title' in q).toBe(false);
-    const out = sanitizeEconomy({ ...json(s), quests: bare }, defaults(), info)!;
-    expect(out.quests).toEqual(s.quests);
-    expect(out).toEqual(s);
   });
 
   it('nie gubi żadnego pola stanu: klucze wyniku to klucze createEconomy, z tycoon i bez trust', () => {
@@ -179,6 +162,56 @@ describe('sanitizeEconomy: poprawny stan przechodzi bez zmian', () => {
       expect(JSON.stringify(sanitizeEconomy(json(s), defaults(), info))).toBe(JSON.stringify(s));
     }
     expect(s.history.length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe('sanitizeEconomy: zlecenia zniknęły, raport miesięczny ma szczegóły', () => {
+  const OLD_QUESTS = [
+    { id: 1, kind: 'serve', target: 100, start: 0, reward: { cash: 400, ogonki: 3, xp: 50 } },
+    { id: 2, kind: 'clean', target: 1, start: 0, reward: { cash: 300, ogonki: 2, xp: 50 } },
+  ];
+
+  it('zapis z quests, questSeq i cleanDays wczytuje się bez nich, a reszta stanu zostaje', () => {
+    const s = defaults();
+    s.cash = 123_456;
+    s.xp = 40;
+    const old = { ...json(s), quests: OLD_QUESTS, questSeq: 7, cleanDays: 3 };
+    for (const k of ['quests', 'questSeq', 'cleanDays']) expect(k in old, k).toBe(true);
+    const out = sanitizeEconomy(old, defaults(), info)!;
+    expect(out).not.toBeNull();
+    for (const k of ['quests', 'questSeq', 'cleanDays']) expect(k in out, k).toBe(false);
+    expect(out.cash).toBe(123_456);
+    expect(out.xp).toBe(40);
+    expect(JSON.stringify(out)).toBe(JSON.stringify(s));
+  });
+
+  it('uszkodzone quests (liczba zamiast listy) nie psują wczytania: pole i tak przepada', () => {
+    const out = sanitizeEconomy({ ...json(defaults()), quests: 3, questSeq: 'x', cleanDays: null }, defaults(), info)!;
+    expect(out).not.toBeNull();
+    expect(JSON.stringify(out)).toBe(JSON.stringify(defaults()));
+  });
+
+  const OLD_REPORT = { label: 'wrzesień 2026', counters: { ...json(defaults().total), margin: 9000 }, profit: 1234, cash: 5678, comment: 'Jest dodatnio!' };
+
+  it('lastReport bez detail (zapis sprzed raportu tycoona) daje detail: null i zachowuje resztę', () => {
+    const out = sanitizeEconomy({ ...json(defaults()), lastReport: OLD_REPORT }, defaults(), info)!;
+    expect(out.lastReport).toEqual({ ...OLD_REPORT, counters: { ...OLD_REPORT.counters, bonus: 0, wut: 0, fineCount: 0 }, detail: null });
+  });
+
+  it('lastReport z uszkodzonym detail (tekst, lista, brak pozycji) też daje detail: null', () => {
+    for (const detail of ['x', 7, [], {}, { lines: 3 }, null]) {
+      const out = sanitizeEconomy({ ...json(defaults()), lastReport: { ...OLD_REPORT, detail } }, defaults(), info)!;
+      expect(out.lastReport, inspectDetail(detail)).toMatchObject({ label: 'wrzesień 2026', profit: 1234, detail: null });
+    }
+  });
+
+  it('raport zamkniętego miesiąca ze szczegółami wraca z zapisu bajt w bajt, także przy rachunku z samych zer', () => {
+    const s = defaults();
+    play(s, info, 30);
+    expect(s.lastReport?.detail).not.toBeNull();
+    const out = sanitizeEconomy(json(s), defaults(), info)!;
+    expect(JSON.stringify(out.lastReport)).toBe(JSON.stringify(s.lastReport));
+    expect(out.lastReport!.detail!.lines.map((l) => l.key)).toHaveLength(9);
   });
 });
 
@@ -383,7 +416,6 @@ describe('sanitizeEconomy: napraw to, co da się naprawić', () => {
       equipment: [{ id: 'sco', slot: 'a' }, { id: 'czołg', slot: 'b' }, { id: 'piec', slot: 5 }, null],
       history: [{ label: 'wrzesień 2026', profit: null, revenue: 10 }, { profit: 1 }, 3],
       milestones: ['pallet1', 7, null, 'upgrade1'],
-      quests: [null, { id: 1 }, ...json(s).quests as unknown[]],
     }, defaults(), info)!;
     expect(out.pallets).toHaveLength(1);
     expect(out.pallets[0]!.id).toBe(s.pallets[0]!.id);
@@ -391,7 +423,6 @@ describe('sanitizeEconomy: napraw to, co da się naprawić', () => {
     expect(out.equipment).toEqual([{ id: 'sco', slot: 'a' }, { id: 'piec', slot: null }]);
     expect(out.history).toEqual([{ label: 'wrzesień 2026', profit: 0, revenue: 10 }]);
     expect(out.milestones).toEqual(['pallet1', 'upgrade1']);
-    expect(out.quests).toHaveLength(3);
   });
 
   it('ulepszenia: nieznane i zbyt wysokie poziomy są odrzucone albo przycięte', () => {
@@ -461,7 +492,6 @@ describe('sanitizeEconomy: czego nie da się naprawić', () => {
     expect(broken({ upgrades: null })).toBeNull();
     expect(broken({ upgrades: [] })).toBeNull();
     expect(broken({ equipment: 'sco' })).toBeNull();
-    expect(broken({ quests: 3 })).toBeNull();
     expect(broken({ shelf: 'pełna' })).toBeNull();
     expect(broken({ today: null })).toBeNull();
     expect(broken({ order: 4 })).toBeNull();
@@ -478,7 +508,7 @@ describe('sanitizeEconomy: czego nie da się naprawić', () => {
 // --- Absurdalne, ale skończone liczby ----------------------------------------------------------------------------
 
 describe('sanitizeEconomy: skończone, ale absurdalne liczby (zapis ręcznie zmieniony)', () => {
-  /** Stan po długiej grze z zakupami, zatrzymany tuż po porannej dostawie: ma palety, dostawy w drodze, zlecenia, historię i raport. */
+  /** Stan po długiej grze z zakupami, zatrzymany tuż po porannej dostawie: ma palety, dostawy w drodze, KPI tygodnia, historię i raport. */
   const rich = (): EconomyState => {
     const s = defaults();
     s.cash = 500_000;
@@ -574,20 +604,6 @@ describe('sanitizeEconomy: skończone, ale absurdalne liczby (zapis ręcznie zmi
     expect(deliveries.every((d) => d.at >= 0 && d.at <= 1000 * 366 * MINUTES_PER_DAY)).toBe(true);
   });
 
-  it('zlecenie: nagroda w XP nie przerośnie tego, co daje największy poziom, a odebranie nie zawiesza gry', () => {
-    const s = rich();
-    const quests = json(s).quests as Record<string, unknown>[];
-    const out = load({ quests: quests.map((q) => ({ ...q, start: -1e308, target: 1e308, reward: { cash: 1e308, ogonki: 1e308, xp: 1e308 } })) }, s);
-    for (const q of out.quests) {
-      expect(q.reward.xp).toBeLessThanOrEqual(40 + 10 * 1000);
-      expect(q.reward.cash).toBe(1e60);
-      expect(q.reward.ogonki).toBe(1e60);
-      expect(q.target).toBe(1e60);
-      expect(q.start).toBe(-1e60);
-    }
-    plays(out);
-  });
-
   it('paleta: sztuki w kategorii i na całej palecie nie przekraczają jednej palety, a numery i miejsca są w zakresie', () => {
     const s = rich();
     const p = json(s.pallets[0]) as Record<string, unknown>;
@@ -641,16 +657,14 @@ describe('sanitizeEconomy: skończone, ale absurdalne liczby (zapis ręcznie zmi
 
   it('sieć sklepów i numery: premia partnerska, serie numerów i hasz seeda mają granice', () => {
     const out = load({
-      partner: { points: 1e308, networkIncome: 1e308, stores: 1e308 }, nextPalletId: 1e308, questSeq: 1e308,
-      seedHash: 1e308, cleanDays: 1e308, lastCashiers: 1e308, lastWorkers: -1e308,
+      partner: { points: 1e308, networkIncome: 1e308, stores: 1e308 }, nextPalletId: 1e308,
+      seedHash: 1e308, lastCashiers: 1e308, lastWorkers: -1e308,
     });
     expect(out.partner.points).toBeLessThanOrEqual(1e7);
     expect(out.partner.networkIncome).toBe(1e60);
     expect(out.partner.stores).toBeLessThanOrEqual(1000);
     expect(out.nextPalletId).toBeLessThanOrEqual(2 ** 30 + 1);
-    expect(out.questSeq).toBeLessThanOrEqual(2 ** 30 + 1);
     expect(out.seedHash).toBeLessThanOrEqual(0xffffffff);
-    expect(out.cleanDays).toBeLessThanOrEqual(1000 * 366);
     expect(out.lastCashiers).toBeLessThanOrEqual(8);
     expect(out.lastWorkers).toBeGreaterThanOrEqual(0);
     plays(out, 1);

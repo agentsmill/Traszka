@@ -984,30 +984,16 @@
 
 /* --- Nagrody --------------------------------------------------------------------------------------- */
 
-.tt-tab.ready .tt-badge {
-  animation: tt-pulse 0.7s ease-in-out infinite alternate;
-}
-
 @keyframes tt-pulse {
   from { transform: scale(1); }
   to { transform: scale(1.18); }
 }
 
-.tt-quest {
+.tt-kpi {
   margin: 8px 0;
   padding: 10px 12px;
   border-radius: 12px;
   background: rgba(29, 107, 58, 0.06);
-}
-
-.tt-quest.done {
-  background: rgba(255, 209, 102, 0.35);
-  box-shadow: 0 0 0 2px var(--tt-orange) inset;
-}
-
-.tt-btn.tt-claim {
-  min-width: 96px;
-  animation: tt-pulse 0.7s ease-in-out infinite alternate;
 }
 
 .tt-item.locked {

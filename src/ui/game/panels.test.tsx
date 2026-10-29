@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createEconomy, nextRemont, upgradeBlocker, type CommandResult, type EconomyState } from '@/sim/economy/economy';
 import type { Command } from '@/sim/economy/commands';
-import { questMetric } from '@/sim/economy/quests';
+import { kpiTitle } from '@/sim/economy/tycoon/kpi';
 import { PROFILE_HINT, PROFILE_LABEL, STAFF_PROFILES } from '@/sim/economy/tycoon/staff';
 import { computeStoreInfo, type PalletLoc, type StoreInfo } from '@/sim/economy/storeInfo';
 import { EQUIPMENT, UPGRADES } from '@/sim/economy/upgrades';
@@ -160,21 +160,24 @@ describe('panele wysyłają polecenia przez game.dispatch, a nie wołają symula
     expect(game.dispatch).toHaveBeenCalledWith({ type: 'rushRemont' });
   });
 
-  it('cele: „Odbierz!” wysyła claimQuest z id zlecenia', () => {
+  it('cele: KPI tygodnia pokazuje tytuł celu i postęp, a nie ma już zleceń do odbioru', () => {
     const { s } = rich();
-    const q = s.quests[0]!;
-    q.start = questMetric(s, q.kind) - q.target - 1;   // cel już spełniony
+    Object.assign(s.tycoon.kpi, { kind: 'klienci', target: 400, start: { ...s.tycoon.kpi.start, customers: s.total.customers - 100 } });
     const game = fakeGame();
     const tree = GoalsPanel({ s, game, v: 1 });
-    click(buttonLabelled(tree, 'Odbierz!'));
-    expect(game.dispatch).toHaveBeenCalledTimes(1);
-    expect(game.dispatch).toHaveBeenCalledWith({ type: 'claimQuest', questId: q.id });
+    const section = sectionTitled(tree, 'KPI tygodnia');
+    const plain = (text: string): string => text.replace(/[\s\u00a0\u202f]/g, ' ');
+    expect(plain(textOf(section))).toContain(plain(kpiTitle('klienci', 400, (n) => Math.round(n).toLocaleString('pl-PL'))));
+    expect(textOf(section)).toContain('25%');                       // 100 z 400 klientów
+    expect(labels(tree)).not.toContain('Odbierz!');
+    expect(() => sectionTitled(tree, 'Zlecenia Centrali')).toThrow();
+    expect(game.dispatch).not.toHaveBeenCalled();
   });
 
   it('cele: premie Centrali wchodzą do marży i do wyniku miesiąca (osobny licznik bonus)', () => {
     const { s } = rich();
     Object.assign(s.today, { margin: 1000, other: 200, bonus: 300 });
-    Object.assign(s.month, { margin: 10_000, other: 500, bonus: 700, wages: 2000, media: 600, fines: 100, logistics: 200 });
+    Object.assign(s.month, { margin: 10_000, other: 500, bonus: 700, wages: 2000, media: 600, fines: 100, logistics: 200, wut: 150 });
     const tree = GoalsPanel({ s, game: fakeGame(), v: 1 });
     const value = (section: string, label: string): string => {
       const row = walk(sectionTitled(tree, section)).find((v) => v.props.label === label);
@@ -182,6 +185,7 @@ describe('panele wysyłają polecenia przez game.dispatch, a nie wołają symula
     };
     expect(value('Dziś', 'Marża i premie (Twój przychód)')).toBe('1500zł');
     expect(value('Ten miesiąc', 'Marża i premie')).toBe('11200zł');
-    expect(value('Ten miesiąc', 'Wynik (przed opłatą franczyzową)')).toBe('+8300zł');
+    expect(value('Ten miesiąc', 'WUT ponad próg')).toBe('−150zł');
+    expect(value('Ten miesiąc', 'Wynik (przed opłatą franczyzową)')).toBe('+8150zł');
   });
 });

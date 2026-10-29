@@ -4,11 +4,10 @@ import { layoutFor } from '@/sim/store/layoutFor';
 import { HIRE_COST } from './catalog';
 import { applyCommand, COMMAND_TYPES, isCommand, type Command } from './commands';
 import {
-  answerCard, awaitingDecision, buyEquipment, buyUpgrade, campaign, claimQuest, commitTap, createEconomy, fire, freeSpots, hire, movePallet,
+  answerCard, awaitingDecision, buyEquipment, buyUpgrade, campaign, commitTap, createEconomy, fire, freeSpots, hire, movePallet,
   processLevels, relayout, returnPallet, rushRemont, setOrder, startRemont, tapPallet, tapTill,
   type CommandResult, type EconomyState,
 } from './economy';
-import { questMetric } from './quests';
 import { computeStoreInfo, type StoreInfo } from './storeInfo';
 import { visibleCards } from './tycoon/cards';
 import { pinStaff, setStaffProfile } from './tycoon/staff';
@@ -43,12 +42,6 @@ const CASES: Record<Command['type'], () => Prepared> = {
     const { s, info } = base();
     s.queue = 3;
     return { s, info, cmd: { type: 'tapTill' }, legacy: (b, i) => { const r = tapTill(b, i, 1); if (r.ok) commitTap(b); return r; } };
-  },
-  claimQuest: () => {
-    const { s, info } = base();
-    const q = s.quests[0]!;
-    q.start = questMetric(s, q.kind) - q.target - 1;   // cel już spełniony
-    return { s, info, cmd: { type: 'claimQuest', questId: q.id }, legacy: (b, i) => claimQuest(b, i, q.id) };
   },
   movePallet: () => {
     const { s, info } = base();
@@ -402,13 +395,13 @@ describe('zepsute polecenia', () => {
     { type: 'movePallet', palletId: 1, loc: 'roof' },
     { type: 'setPriority', priority: 'palety' },
     { type: 'claimGift' },   // paczka od Centrali zniknęła; stare dzienniki odpadają jako nieznane polecenie
+    { type: 'claimQuest', questId: 1 },   // zlecenia Centrali zastąpiło KPI tygodnia (bez odbioru): to samo
     { type: 'setStaffProfile', profile: 'all' },
     { type: 'setStaffProfile', profile: '__proto__' },
     { type: 'pinStaff', task: 'kawa', count: 1 },
     { type: 'pinStaff', task: 'kasa', count: 1.5 },
     { type: 'setOrder', auto: 'yes' },
     { type: 'setOrder', auto: true, manual: NaN },
-    { type: 'claimQuest', questId: '1' },
     { type: 'tapPallet', palletId: 1.5 },
     null,
     'tapTill',
@@ -480,7 +473,6 @@ describe('isCommand', () => {
       { type: 'tapPallet', palletId: 3 },
       { type: 'tapPallet', palletId: undefined },
       { type: 'tapTill' },
-      { type: 'claimQuest', questId: 7 },
       { type: 'movePallet', palletId: 1, loc: 'sidewalk' },
       { type: 'movePallet', palletId: 1, loc: 'backroom' },
       { type: 'movePallet', palletId: 1, loc: 'floor' },
@@ -514,8 +506,8 @@ describe('isCommand', () => {
     const invalid: unknown[] = [
       undefined, 0, 1, true, '', {}, { type: 1 }, { type: 'toString' }, { type: '__proto__' }, { type: 'constructor' },
       { type: 'tapPallet', palletId: '1' }, { type: 'tapPallet', palletId: null }, { type: 'tapPallet', palletId: NaN },
-      { type: 'tapPallet', palletId: Infinity }, { type: 'claimQuest' }, { type: 'claimQuest', questId: 1.5 },
-      { type: 'claimQuest', questId: -Infinity }, { type: 'movePallet', palletId: 1 }, { type: 'movePallet', loc: 'floor' },
+      { type: 'tapPallet', palletId: Infinity }, { type: 'claimQuest', questId: 1 }, { type: 'claimQuest' },   // zlecenia zniknęły
+      { type: 'movePallet', palletId: 1 }, { type: 'movePallet', loc: 'floor' },
       { type: 'movePallet', palletId: 1, loc: 'constructor' }, { type: 'returnPallet' }, { type: 'returnPallet', palletId: NaN },
       { type: 'setOrder' }, { type: 'setOrder', auto: 1 }, { type: 'setOrder', auto: true, manual: '4' },
       { type: 'setOrder', auto: true, manual: Infinity }, { type: 'setOrder', auto: true, manual: null },

@@ -2,17 +2,17 @@ import type { ComponentChildren } from 'preact';
 import { CATS, CAT_INFO, HIRE_COST, HOUR_CURVE, ORDER_DEADLINE, RESTOCK_RATE, RETURN_FEE, SCO_RATE, STAFF_MAX, TILL_RATE, UNLOAD_RATE, WAGE_PER_DAY } from '@/sim/economy/catalog';
 import { formatClock, minuteOfDay } from '@/sim/economy/calendar';
 import {
-  LOC_LABEL, assistantSuggestion, effects, expectedDailyCustomers, freeSpots, isClosedForRemont, level, nextRemont, plPallets,
+  LOC_LABEL, assistantSuggestion, effects, expectedDailyCustomers, freeSpots, isClosedForRemont, kpiMetricsOf, level, nextRemont, plPallets,
   robotFleet, slotFree, slotUsage, upgradeBlocker, workshopUnlocked, type EconomyState,
 } from '@/sim/economy/economy';
 import { MILESTONES } from '@/sim/economy/milestones';
+import { KPI, KPI_FLAVOR, kpiProgress, kpiTitle } from '@/sim/economy/tycoon/kpi';
 import { PROFILE_HINT, PROFILE_LABEL, STAFF_PROFILES } from '@/sim/economy/tycoon/staff';
 import type { PalletLoc, StoreInfo } from '@/sim/economy/storeInfo';
 import {
   EQUIPMENT, GROUP_LABEL, UPGRADES, WORKSHOP_LEVEL, equipmentCost, upgradeCost, type UpgradeGroup,
 } from '@/sim/economy/upgrades';
 import { nextRankAt, rankFor, xpToNext } from '@/sim/economy/progress';
-import { questDone, questProgress, questTitle } from '@/sim/economy/quests';
 import { networkIncomeOf, prestigePoints, prestigeReady } from '@/game/meta';
 import { econ, metaView, selection, showPrestige, tab, type GameActions, type TabId } from '../state';
 import { duration, int, pct, people, plural, signedZl, zl } from './format';
@@ -51,12 +51,11 @@ export function TabBar() {
     badge.palety = view.s.pallets.filter((p) => p.loc === 'sidewalk').length || undefined;
     const affordable = UPGRADES.filter((u) => !upgradeBlocker(view.s, u) && upgradeCost(u, level(view.s, u.id)) <= view.s.cash).length;
     badge.ulepszenia = affordable || undefined;
-    badge.cele = view.s.quests.filter((q) => questDone(view.s, q)).length || undefined;
   }
   return (
     <nav class="tt-tabs" aria-label="Zakładki">
       {TABS.map((t) => (
-        <button key={t.id} type="button" class={`tt-tab${tab.value === t.id ? ' on' : ''}${t.id === 'cele' && badge.cele ? ' ready' : ''}`} aria-pressed={tab.value === t.id}
+        <button key={t.id} type="button" class={`tt-tab${tab.value === t.id ? ' on' : ''}`} aria-pressed={tab.value === t.id}
           onClick={() => { tab.value = tab.value === t.id ? null : t.id; selection.value = null; }}>
           <span class="tt-tab-icon" aria-hidden="true">{t.icon}</span>
           <span class="tt-tab-label">{t.label}</span>
@@ -351,32 +350,25 @@ export function ShopPanel({ s, info, game }: { s: EconomyState; info: StoreInfo;
 
 // --- Cele i wyniki -------------------------------------------------------------------------------------
 
-export function GoalsPanel({ s, game }: { s: EconomyState; game: GameActions; v: number }) {
+export function GoalsPanel({ s }: { s: EconomyState; game: GameActions; v: number }) {
   const t = s.today;
   const m = s.month;
-  const profit = (k: typeof t): number => k.margin + k.bonus + k.other - k.wages - k.media - k.fee - k.fines - k.logistics;
+  const profit = (k: typeof t): number => k.margin + k.bonus + k.other - k.wages - k.media - k.fee - k.fines - k.logistics - k.wut;
+  const kpi = s.tycoon.kpi;
+  const kpiDone = kpiProgress(kpi, kpiMetricsOf(s));
   const goals = MILESTONES.filter((x) => !s.milestones.includes(x.id)).slice(0, 3);
   const best = Math.max(1, ...s.history.map((h) => Math.abs(h.profit)));
   const nextRank = nextRankAt(s.level);
   const meta = metaView.value;
   return (
     <>
-      <Section title="Zlecenia Centrali">
-        {s.quests.map((q) => {
-          const done = questDone(s, q);
-          return (
-            <div key={q.id} class={`tt-quest${done ? ' done' : ''}`}>
-              <div class="tt-row"><b>{questTitle(q)}</b></div>
-              <Bar value={questProgress(s, q)} />
-              <div class="tt-row">
-                <span class="tt-muted">+{zl(q.reward.cash)} · +{q.reward.ogonki} 🦎 · +{q.reward.xp} XP</span>
-                {done
-                  ? <button type="button" class="tt-btn tt-primary tt-claim" onClick={() => game.dispatch({ type: 'claimQuest', questId: q.id })}>Odbierz!</button>
-                  : <span class="tt-muted">{pct(questProgress(s, q))}</span>}
-              </div>
-            </div>
-          );
-        })}
+      <Section title="KPI tygodnia">
+        <div class="tt-kpi">
+          <div class="tt-row"><b>{kpiTitle(kpi.kind, kpi.target, int)}</b></div>
+          <Bar value={kpiDone} />
+          <div class="tt-row"><span class="tt-muted">{KPI_FLAVOR[kpi.kind]}</span><span class="tt-muted">{pct(kpiDone)}</span></div>
+        </div>
+        <p class="tt-hint">Rozliczenie w niedzielę o 23:00. Trafiony cel: zaufanie Centrali +{KPI.trustHit}, premia i XP; nietrafiony: zaufanie −{-KPI.trustMiss}.</p>
       </Section>
       <Section title={`Poziom ${s.level}: ${rankFor(s.level)}`}>
         <Bar value={s.xp / xpToNext(s.level)} />
@@ -406,7 +398,7 @@ export function GoalsPanel({ s, game }: { s: EconomyState; game: GameActions; v:
         <Row label="Klienci">{int(t.customers)} (utraceni: {int(t.lost)})</Row>
         <Row label="Obrót">{zl(t.revenue)}</Row>
         <Row label="Marża i premie (Twój przychód)">{zl(t.margin + t.bonus + t.other)}</Row>
-        <Row label="Koszty (bez płac)">{zl(t.fines + t.logistics)}</Row>
+        <Row label="Koszty (bez płac)">{zl(t.fines + t.logistics + t.wut)}</Row>
         <p class="tt-hint">Płace i media rozliczają się przy zamknięciu, o 23:00.</p>
       </Section>
       <Section title="Ten miesiąc">
@@ -416,6 +408,7 @@ export function GoalsPanel({ s, game }: { s: EconomyState; game: GameActions; v:
         <Row label="Media">−{zl(m.media)}</Row>
         <Row label="Mandaty">−{zl(m.fines)}</Row>
         <Row label="Logistyka">−{zl(m.logistics)}</Row>
+        <Row label="WUT ponad próg">−{zl(m.wut)}</Row>
         <Row label="Wynik (przed opłatą franczyzową)"><b>{signedZl(profit(m))}</b></Row>
         <Row label="Inwestycje">{zl(m.investments)}</Row>
       </Section>

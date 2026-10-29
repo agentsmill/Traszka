@@ -1,11 +1,22 @@
 import { describe, expect, it } from 'vitest';
 import { FINE_PALLET_POW, pow10Floor, powInt, xpCurve } from './exactMath';
-import { niceRound } from './quests';
 import { rand01 } from './rand';
 import { EQUIPMENT, UPGRADES } from './upgrades';
 
 /** Dawny wzór na największą potęgę dziesięciu ≤ n. */
 const legacyPow10Floor = (n: number): number => 10 ** Math.floor(Math.log10(n));
+
+/**
+ * Zaokrąglenie do „ładnej” liczby (1, 2, 5 × 10^n), dawniej `niceRound` w zleceniach Centrali (`quests.ts`, usunięte w etapie 2C2).
+ * Zostaje tu jako jedyny użytkownik `pow10Floor`: dowód, że dokładna potęga dziesięciu daje te same liczby co dawny wzór.
+ */
+function niceRound(n: number): number {
+  if (n <= 10) return Math.max(1, Math.round(n));
+  const p = pow10Floor(n);
+  const m = n / p;
+  const step = m < 2 ? 0.2 : m < 5 ? 0.5 : 1;
+  return Math.round(m / step) * step * p;
+}
 
 /** `niceRound` sprzed zmiany (z `10 ** Math.floor(Math.log10(n))`). */
 function legacyNiceRound(n: number): number {

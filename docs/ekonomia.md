@@ -21,7 +21,10 @@ To uproszczona wersja §6–§8 specu, zrobiona tak, żeby gra była grywalna na
 - **Ludzie.** Osoby na zmianie dzielą się na kasę i palety według priorytetu (kasa, po równo, palety). Kto nie stoi
   na kasie, rozładowuje (6 szt./min, wózek +40%) i wykłada towar (20 szt./min). Gracz pomaga stukaniem (8 szt.).
 - **Koszty.** Płace 340 zł dziennie na osobę na zmianie, media, opłata franczyzowa 4500 zł + 3% obrotu, mandaty,
-  opłaty logistyczne. Na koniec miesiąca z gotówką poniżej −30 000 zł Centrala wypowiada umowę.
+  opłaty logistyczne i WUT ponad próg. Na koniec miesiąca z gotówką poniżej −30 000 zł Centrala wypowiada umowę.
+- **WUT** (ubytki towarowe) liczy się od każdej sprzedaży: naturalne 0,9% obrotu, a kasy samoobsługowe dopisują do kradzieży
+  „zapomniane” skany (4% obrotu przez SCO, kamery mniej). Do progu 1,2% obrotu miesiąca płaci Centrala, nadwyżkę
+  franczyzobiorca przy zamknięciu miesiąca (`tycoon/wut.ts`, pozycja „WUT ponad próg” w raporcie).
 
 ## Pętla nagród
 
@@ -30,8 +33,9 @@ Cel: nagroda w każdej skali czasu, a gra bez końca.
 | Skala | Nagroda | Kod |
 |---|---|---|
 | sekunda | stuknięcie w paletę albo kasę: liczba nad palcem, dźwięk, wibracja; combo co 4 szybkie stuknięcia (do ×5), a każde zużywa dzienną pulę sił (100; noc oddaje 70) | `tapPallet`, `tapTill`, `tycoon/fatigue.ts` |
-| minuta | Zlecenia Centrali (3 naraz, „Odbierz!”), złota paleta (8% palet) | `quests.ts`, `claimQuest` |
-| kilka minut | poziom gracza: XP z klientów, palet, zakupów i zleceń; nagroda i odblokowania na poziomach | `progress.ts`, `processLevels`, `unlocksAt` |
+| minuta | złota paleta (8% palet): premia Centrali po rozładunku | `unloadPallet` |
+| kilka minut | poziom gracza: XP z klientów, palet, zakupów i KPI; nagroda i odblokowania na poziomach | `progress.ts`, `processLevels`, `unlocksAt` |
+| tydzień | KPI tygodnia (jeden cel do niedzieli 23:00): zaufanie, premia (30% marży dnia) i XP (40 + 10 × poziom) | `tycoon/kpi.ts`, `closeDay` |
 | powrót | kierownik zmiany: 25% ostatniego dnia na godzinę nieobecności (do 8 h); seria dni do 7. dnia | `game/meta.ts` |
 | bez końca | „Otwórz kolejną Traszkę”: sklep dołącza do sieci (10% najlepszego dnia co dzień), Punkty Partnera (+4% marży, +3% ruchu każdy) | `game/meta.ts`, `partner` w stanie ekonomii |
 

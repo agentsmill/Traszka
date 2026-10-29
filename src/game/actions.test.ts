@@ -5,7 +5,6 @@ import { applyCommand, COMMAND_TYPES, type Command } from '@/sim/economy/command
 import { awaitingDecision, stepMinute, type CommandResult, type EconEvent } from '@/sim/economy/economy';
 import { cardDef, visibleCards } from '@/sim/economy/tycoon/cards';
 import { xpToNext } from '@/sim/economy/progress';
-import { questMetric } from '@/sim/economy/quests';
 import { UPGRADES } from '@/sim/economy/upgrades';
 import { layoutFor } from '@/sim/store/layoutFor';
 import * as layoutModule from '@/sim/store/layoutFor';
@@ -57,19 +56,12 @@ afterEach(() => {
 const fresh = (seed = SEED): GameSession => createSession(seed, true);
 const log = (s: GameSession): LogEntry[] => s.run!.record.log;
 
-/** Zlecenie gotowe do odebrania: początek licznika cofnięty o cel. */
-function finishQuest(s: GameSession, index = 0): number {
-  const q = s.econ.quests[index]!;
-  q.start = questMetric(s.econ, q.kind) - q.target;
-  return q.id;
-}
-
 describe('dziennik biegu', () => {
   it('polecenie trafia do dziennika z minutą stanu i kolejnym seq, także nieudane', () => {
     const s = fresh();
     const { fx } = recorder();
     const accepted: Command = { type: 'setOrder', auto: false, manual: 4 };
-    const refused: Command = { type: 'claimQuest', questId: 999 };
+    const refused: Command = { type: 'returnPallet', palletId: 999 };
 
     expect(dispatchCommand(s, accepted, fx).ok).toBe(true);
     expect(dispatchCommand(s, refused, fx).ok).toBe(false);
@@ -102,7 +94,7 @@ describe('dziennik biegu', () => {
       { type: 'tapPallet' }, { type: 'tapPallet', palletId: 2 }, { type: 'tapTill' }, { type: 'setOrder', auto: false, manual: 6 },
       { type: 'movePallet', palletId: 1, loc: 'backroom' }, { type: 'hire' }, { type: 'setStaffProfile', profile: 'dostawa' },
       { type: 'pinStaff', task: 'kasa', count: 1 }, { type: 'pinStaff', task: 'rozladunek', count: 9 },
-      { type: 'buyUpgrade', id: firstUpgrade }, { type: 'startRemont' }, { type: 'claimQuest', questId: 1 },
+      { type: 'buyUpgrade', id: firstUpgrade }, { type: 'startRemont' }, { type: 'returnPallet', palletId: 999 },
       { type: 'fire' }, { type: 'returnPallet', palletId: 2 }, { type: 'campaign' }, { type: 'rushRemont' }, { type: 'setOrder', auto: true },
     ];
     const results: CommandResult[] = [];
@@ -172,29 +164,28 @@ describe('kroki po poleceniu', () => {
   it('nieudane polecenie: toast error i dźwięk error, bez dźwięku sukcesu i bez zapisu', () => {
     const s = fresh();
     const rec = recorder();
-    const r = dispatchCommand(s, { type: 'claimQuest', questId: 999 }, rec.fx);
+    s.econ.cash = 0;
+    const r = dispatchCommand(s, { type: 'buyUpgrade', id: UPGRADES[0]!.id }, rec.fx);
 
-    expect(r).toEqual({ ok: false, text: 'Nie ma takiego zlecenia.' });
+    expect(r).toEqual({ ok: false, text: 'Za mało gotówki.' });
     expect(rec.calls).toEqual([
-      ['toast', 'Nie ma takiego zlecenia.', 'error'],
+      ['toast', 'Za mało gotówki.', 'error'],
       ['play', 'error'],
       ['handleEvents', []],
       ['refresh'],
-    ]);   // żadnego 'persist', 'play' sukcesu, 'buzz' ani 'confetti', choć claimQuest po sukcesie zapisuje
+    ]);   // żadnego 'persist' ani 'play' sukcesu (coins), choć buyUpgrade po sukcesie zapisuje
   });
 
-  it('claimQuest: coins, wibracja, konfetti 0.5/0.6/28 i zapis', () => {
+  it('buyUpgrade ok: toast z tekstem, dźwięk coins i zapis', () => {
     const s = fresh();
     const rec = recorder();
-    const id = finishQuest(s);
-    const r = dispatchCommand(s, { type: 'claimQuest', questId: id }, rec.fx);
+    s.econ.cash = 1e6;
+    const r = dispatchCommand(s, { type: 'buyUpgrade', id: UPGRADES[0]!.id }, rec.fx);
 
     expect(r.ok).toBe(true);
-    expect(rec.names()).toEqual(['toast', 'play', 'buzz', 'confetti', 'handleEvents', 'persist', 'refresh']);
+    expect(rec.names()).toEqual(['toast', 'play', 'handleEvents', 'persist', 'refresh']);
     expect(rec.calls[0]).toEqual(['toast', (r as { text: string }).text, 'ok']);
     expect(rec.calls[1]).toEqual(['play', 'coins']);
-    expect(rec.calls[2]).toEqual(['buzz', [15, 30, 15]]);
-    expect(rec.calls[3]).toEqual(['confetti', 0.5, 0.6, 28]);
   });
 
   /** Karta widoczna od teraz; zwraca jej numer i odpowiedź zaznaczoną z góry. */
@@ -279,13 +270,13 @@ describe('kroki po poleceniu', () => {
       expect(rec.named('toast')).toEqual([]);   // tapPallet nie pokazuje toastu: złotą paletę pokazuje samo zdarzenie
     });
 
-    it('odebranie zlecenia, które daje poziom: zdarzenie levelup z wyniku polecenia trafia do handleEvents', () => {
+    it('odpowiedź na kartę, która daje poziom: zdarzenia card-result i levelup z wyniku polecenia trafiają do handleEvents', () => {
       const s = fresh();
-      const id = finishQuest(s);
-      s.econ.xp = xpToNext(s.econ.level) - 1;   // nagroda zlecenia daje XP, więc wchodzi nowy poziom
-      const cmd: Command = { type: 'claimQuest', questId: id };
+      const { seq, answer } = cardNow(s);
+      s.econ.xp = xpToNext(s.econ.level) - 1;   // XP za kartę (10) przeskakuje na nowy poziom
+      const cmd: Command = { type: 'answerCard', seq, answer };
       const expected = eventsOn(s, cmd);
-      expect(expected.map((e) => e.kind)).toEqual(['levelup']);
+      expect(expected.map((e) => e.kind)).toContain('levelup');
 
       const rec = recorder();
       expect(dispatchCommand(s, cmd, rec.fx).ok).toBe(true);
@@ -401,7 +392,6 @@ describe('tabela AFTER', () => {
     expect(AFTER).toEqual({
       tapPallet: { okToast: false, sfx: 'tap', buzz: 8 },
       tapTill: { okToast: false, sfx: 'cash', buzz: 8 },
-      claimQuest: { okToast: true, sfx: 'coins', buzz: [15, 30, 15], confetti: { fx: 0.5, fy: 0.6, count: 28 }, persist: true },
       movePallet: { okToast: true },
       returnPallet: { okToast: true, clearSelection: 'after' },
       setOrder: { okToast: false },
@@ -998,7 +988,7 @@ describe('powłoka gry (createShell)', () => {
       const s = open(h, 'traszka-1');
       s.econ.cash = 777_777;
       saveSession(s);
-      ui.report.value = { label: 'x', counters: s.econ.total, profit: 0, cash: 0, comment: '' };
+      ui.report.value = { label: 'x', counters: s.econ.total, profit: 0, cash: 0, comment: '', detail: null };
 
       h.shell.game.restart();
 
@@ -1147,7 +1137,7 @@ describe('powłoka gry (createShell)', () => {
     it('handleEvents: dzień zapisuje, raport miesiąca idzie do interfejsu, reszta do toastów z dźwiękiem', () => {
       const h = harness();
       const s = open(h);
-      const report = { label: 'wrzesień', counters: s.econ.total, profit: 1, cash: 2, comment: 'ok' };
+      const report = { label: 'wrzesień', counters: s.econ.total, profit: 1, cash: 2, comment: 'ok', detail: null };
       h.shell.handleEvents([
         { kind: 'day', text: 'Dzień' },
         { kind: 'month', text: 'Miesiąc', report },

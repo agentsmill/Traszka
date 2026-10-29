@@ -98,4 +98,11 @@ describe('raport miesięczny', () => {
     expect(bad.commentId).toBe('zero-0');
     expect(bad.hint.id).toBe('brawo');
   });
+
+  it('wczytanie z zapisu przycina zmiany zaufania do ±100 (ręcznie zmieniony zapis nie przeniesie 1e308)', () => {
+    const r = buildMonthReport(input(), 3);
+    const raw = JSON.parse(JSON.stringify(r)) as TycoonMonthReport;
+    raw.trust.reasons = [['kpi', 1e308], ['mandaty', -1e308], ['wynik', 5]];
+    expect(sanitizeReport(raw)!.trust.reasons).toEqual([['kpi', 100], ['mandaty', -100], ['wynik', 5]]);
+  });
 });

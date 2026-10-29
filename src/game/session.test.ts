@@ -7,7 +7,6 @@ import {
   type Counters, type EconEvent, type EconomyState,
 } from '@/sim/economy/economy';
 import { newKpiWeek } from '@/sim/economy/tycoon/kpi';
-import { questTitle, type Quest } from '@/sim/economy/quests';
 import { LIMITS } from '@/sim/economy/sanitize';
 import { computeStoreInfo } from '@/sim/economy/storeInfo';
 import { REMONTS } from '@/sim/economy/upgrades';
@@ -67,22 +66,13 @@ const gameVersion = 'test';
 const effectsBackroomCap = (s: GameSession): number => effects(s.econ, s.info).backroomCap;
 
 /**
- * L9: tytuł zlecenia nie jest już częścią stanu. Zapisy z produkcji (fixtures) mają go jeszcze w `quests[]`,
- * a po wczytaniu stanu bez niego oczekiwany stan to fixture bez tytułów zleceń.
+ * Zlecenia Centrali zniknęły (zastąpiło je KPI tygodnia w `tycoon.kpi`): zapisy z produkcji (fixtures) mają jeszcze `quests`
+ * (z tytułami sprzed L9), `questSeq` i `cleanDays`, a po wczytaniu oczekiwany stan to fixture bez tych pól.
  */
-const withoutQuestTitles = (e: EconomyState): EconomyState => ({
-  ...e,
-  quests: (e.quests as (Quest & { title?: string })[]).map(({ title: _, ...q }) => q),
-});
-
-/**
- * Stan w kopercie zapisu: zlecenia znów z tytułem (`questTitle`), bo build sprzed L9 bez niego odrzuca zlecenia, a cofnięcie
- * wdrożenia zjadłoby graczom aktywne zlecenia i nieodebrane nagrody (patrz `saveSession`). Stan w pamięci tytułu nie ma.
- */
-const withQuestTitles = (e: EconomyState): EconomyState => ({
-  ...e,
-  quests: e.quests.map((q) => ({ ...q, title: questTitle(q) })),
-});
+const withoutQuests = (e: EconomyState): EconomyState => {
+  const { quests: _q, questSeq: _qs, cleanDays: _cd, ...rest } = e as EconomyState & { quests?: unknown; questSeq?: unknown; cleanDays?: unknown };
+  return rest;
+};
 
 /** Stan bez tycoona: zapisy z produkcji go nie mają, więc tycoon sprawdzamy osobno (zaufanie ze starego pola `trust`). */
 const withoutTycoon = (e: EconomyState): Omit<EconomyState, 'tycoon'> => {
@@ -93,14 +83,14 @@ const withoutTycoon = (e: EconomyState): Omit<EconomyState, 'tycoon'> => {
 const legacyTrust = (e: EconomyState): number => (e as unknown as { trust: number }).trust;
 
 /**
- * Stan, jaki daje wczytanie zapisu z produkcji (fixtures), bez `tycoon`: bez tytułów zleceń (L9), bez starego pola `trust`
+ * Stan, jaki daje wczytanie zapisu z produkcji (fixtures), bez `tycoon`: bez zleceń (`quests`, `questSeq`, `cleanDays`), bez starego pola `trust`
  * (przeszło do `tycoon.trust`), bez starego `priority` (przeszedł do profilu w `tycoon.staff`), z pustą zmianą (`shift`: zapis
- * nie pamięta ostatniej minuty), z zerowymi licznikami `bonus`, `wut` i `fineCount` (także w raporcie), z polami combo,
+ * nie pamięta ostatniej minuty), z zerowymi licznikami `bonus`, `wut` i `fineCount` (także w raporcie, który dostaje `detail: null`), z polami combo,
  * których zapisy sprzed L1 jeszcze nie mają, i bez pól paczki od Centrali (`giftSeq`, `tapBoostUntil`), które przepadają.
  * Migracja: brak serii (`tapStreak` 0) i ostatnie stuknięcie dawno temu (`lastTapAt` -1e9, jak `lastFineAt`).
  */
 const asLoaded = (e: EconomyState): Omit<EconomyState, 'tycoon'> => {
-  const { trust: _, priority: __, giftSeq: ___, tapBoostUntil: ____, ...rest } = withoutTycoon(withoutQuestTitles(e)) as
+  const { trust: _, priority: __, giftSeq: ___, tapBoostUntil: ____, ...rest } = withoutTycoon(withoutQuests(e)) as
     Omit<EconomyState, 'tycoon'> & { trust?: number; priority?: string; giftSeq?: number; tapBoostUntil?: number };
   const counters = (c: Counters): Counters => ({ ...c, bonus: 0, wut: 0, fineCount: 0 });
   return {
@@ -108,7 +98,7 @@ const asLoaded = (e: EconomyState): Omit<EconomyState, 'tycoon'> => {
     today: counters(rest.today),
     month: counters(rest.month),
     total: counters(rest.total),
-    lastReport: rest.lastReport && { ...rest.lastReport, counters: counters(rest.lastReport.counters) },
+    lastReport: rest.lastReport && { ...rest.lastReport, counters: counters(rest.lastReport.counters), detail: null },
     shift: { staff: 0, human: { kasa: 0, rozladunek: 0, wykladanie: 0, sprzatanie: 0 } },
     tapStreak: 0,
     lastTapAt: -1e9,
@@ -176,25 +166,21 @@ describe('koperta zapisu v2', () => {
     expect(saved.generatorVersion).toBe(GENERATOR_VERSION);
     expect(saved.seed).toBe(BLOK);
     expect(saved.layout).toEqual(JSON.parse(JSON.stringify(s.layout)));
-    expect(saved.econ).toEqual(JSON.parse(JSON.stringify(withQuestTitles(s.econ))));
+    expect(saved.econ).toEqual(JSON.parse(JSON.stringify(s.econ)));
     expect(lastSavedSeed()).toBe(BLOK);
   });
 
-  it('zlecenia w zapisie mają tytuł (cofnięcie wdrożenia ich nie gubi), a stan w pamięci i po wczytaniu go nie ma', () => {
+  it('zapis nie niesie zleceń Centrali, a KPI tygodnia przechodzi przez zapis bez zmian', () => {
     const s = playedSession(BLOK);
-    expect(s.econ.quests).toHaveLength(3);
-    const saved = JSON.parse(storage.getItem(key(BLOK))!) as { econ: { quests: (Quest & { title?: unknown })[] } };
-    expect(saved.econ.quests.map((q) => q.title)).toEqual(s.econ.quests.map((q) => questTitle(q)));
-    for (const q of saved.econ.quests) expect(typeof q.title === 'string' && q.title.length > 0, String(q.id)).toBe(true);
-    // zapis niczego nie dopisał do stanu w pamięci
-    for (const q of s.econ.quests) expect('title' in q).toBe(false);
+    const saved = JSON.parse(storage.getItem(key(BLOK))!) as { econ: Record<string, unknown> };
+    for (const k of ['quests', 'questSeq', 'cleanDays']) expect(k in saved.econ, k).toBe(false);
+    expect(JSON.stringify(saved.econ)).not.toMatch(/quest|"title"/);
 
     const loaded = createSession(BLOK);
     expect(loaded.fromSave).toBe(true);
-    for (const q of loaded.econ.quests) expect('title' in q).toBe(false);
     expect(loaded.econ).toEqual(s.econ);
-    expect(JSON.stringify(loaded.econ)).not.toContain('"title"');
-    // ponowny zapis po wczytaniu daje tę samą kopertę: tytuły nie kumulują się ani nie znikają
+    expect(loaded.econ.tycoon.kpi).toEqual(s.econ.tycoon.kpi);
+    // ponowny zapis po wczytaniu daje tę samą kopertę
     const before = storage.getItem(key(BLOK));
     saveSession(loaded);
     expect(storage.getItem(key(BLOK))).toBe(before);
@@ -305,7 +291,7 @@ describe('migracja zapisu v1 (sam stan ekonomii, bez układu)', () => {
       expect(saved.schema).toBe(2);
       expect(saved.seed).toBe(seed);
       expect(saved.layout).toEqual(JSON.parse(JSON.stringify(s.layout)));
-      expect(saved.econ).toEqual(JSON.parse(JSON.stringify(withQuestTitles(s.econ))));
+      expect(saved.econ).toEqual(JSON.parse(JSON.stringify(s.econ)));
       expect(storage.getItem(`${key(seed)}:broken`)).toBeNull();
 
       const again = createSession(seed);
@@ -324,7 +310,7 @@ describe('migracja zapisu v1 (sam stan ekonomii, bez układu)', () => {
 
 /**
  * Koperty v2 wygenerowane kodem produkcji (`src/sim` i `session.ts` sprzed zmian etapu 2) przez bota: stuka w palety i kasę,
- * odbiera zlecenia i paczki, kupuje ulepszenia i sprzęt, robi remonty. To dokładnie ten format, jaki mają zapisy graczy w
+ * odbiera zlecenia i paczki (wtedy jeszcze były), kupuje ulepszenia i sprzęt, robi remonty. To dokładnie ten format, jaki mają zapisy graczy w
  * przeglądarkach. Dalsze zmiany stanu gry wolno robić tylko tak, żeby te pliki wczytywały się dalej; jeśli któraś zmiana
  * wymaga innego wyniku wczytania, trzeba to opisać jawnie jako migrację (i zaktualizować tę próbę), a nie po cichu.
  */
@@ -339,12 +325,10 @@ describe('zapisy v2 z produkcji', () => {
         expect(e.lastReport?.label).toBe('wrzesień 2026');
         expect(e.pallets.length).toBeGreaterThan(0);
         expect(e.deliveries.length).toBeGreaterThan(0);
-        expect(e.quests).toHaveLength(3);
-        // zapis sprzed L9 niesie tytuły zleceń; po wczytaniu ich nie ma, a napis liczy się z rodzaju i celu
-        for (const q of e.quests) {
-          expect(typeof (q as Quest & { title?: unknown }).title).toBe('string');
-          expect(questTitle(q).length).toBeGreaterThan(0);
-        }
+        // zapis z produkcji niesie jeszcze zlecenia Centrali (z tytułami); po wczytaniu ich nie ma
+        const old = e as EconomyState & { quests: { title: unknown }[] };
+        expect(old.quests).toHaveLength(3);
+        for (const q of old.quests) expect(typeof q.title).toBe('string');
         expect(e.equipment.length).toBeGreaterThan(0);
       },
     },
@@ -392,7 +376,7 @@ describe('zapisy v2 z produkcji', () => {
         expect(s.layout).toEqual(f.layout);
         expect(withoutTycoon(s.econ)).toEqual(asLoaded(f.econ));
         expect(s.econ.tycoon.trust.value).toBe(legacyTrust(f.econ));
-        for (const q of s.econ.quests) expect('title' in q).toBe(false);
+        for (const k of ['quests', 'questSeq', 'cleanDays']) expect(k in s.econ, k).toBe(false);
         expect(s.layoutLevel).toBe(remont);
         expect(errorLog).not.toHaveBeenCalled();
 
@@ -429,19 +413,14 @@ describe('zapisy v2 z produkcji', () => {
         expect(saved.gameVersion).toBe(gameVersion);
         expect(saved.generatorVersion).toBe(GENERATOR_VERSION);
         expect(saved.layout).toEqual(f.layout);
-        // w kopercie zlecenia mają tytuły jak w zapisie z produkcji (build sprzed L9 bez nich je gubi); stan z koperty ich nie ma
-        expect(saved.econ).toEqual(withQuestTitles({ ...asLoaded(f.econ), tycoon: s.econ.tycoon }));
-        const savedQuests = saved.econ.quests as (Quest & { title: string })[];
-        expect(savedQuests.map((q) => q.title)).toEqual(s.econ.quests.map((q) => questTitle(q)));
-        // te same napisy co w zapisie z produkcji; spacja w liczbie (NBSP albo wąska) zależy od ICU, więc porównujemy bez rozróżniania spacji
-        const plain = (title: string): string => title.replace(/\s/g, ' ');
-        expect(savedQuests.map((q) => plain(q.title))).toEqual((f.econ.quests as (Quest & { title: string })[]).map((q) => plain(q.title)));
+        // w kopercie nie ma już zleceń (ani ich liczników); reszta stanu jest tym, co dała migracja
+        expect(saved.econ).toEqual({ ...asLoaded(f.econ), tycoon: s.econ.tycoon });
+        expect(JSON.stringify(saved.econ)).not.toMatch(/quest|"title"/);
         expect(storage.getItem(`${key(seed)}:broken`)).toBeNull();
 
         const again = createSession(seed, false, partner);
         expect(withoutTycoon(again.econ)).toEqual(asLoaded(f.econ));
         expect(again.econ.tycoon).toEqual(s.econ.tycoon);   // tycoon z migracji wraca z zapisu bez zmian
-        for (const q of again.econ.quests) expect('title' in q).toBe(false);
         expect(again.layout).toEqual(f.layout);
       });
     });
@@ -732,7 +711,7 @@ describe('pieniądze w zapisie: LIMITS.money to straż przed przepełnieniem, a 
     e.partner = { ...e.partner, networkIncome: value };
     for (const k of Object.keys(emptyCounters()) as (keyof Counters)[]) e.today[k] = e.month[k] = e.total[k] = value;
     e.history = [{ label: 'wrzesień 2026', profit: value, revenue: value }];
-    e.lastReport = { label: 'wrzesień 2026', counters: { ...e.total }, profit: value, cash: value, comment: 'Rekordowy miesiąc!' };
+    e.lastReport = { label: 'wrzesień 2026', counters: { ...e.total }, profit: value, cash: value, comment: 'Rekordowy miesiąc!', detail: null };
   }
   const savedEcon = (): EconomyState => (JSON.parse(storage.getItem(key(BLOK))!) as { econ: EconomyState }).econ;
 
@@ -1060,9 +1039,8 @@ describe('stan z zapisu pasuje do układu sklepu (palety, sprzęt i zapasy po r�
     for (const seed of [BLOK, PAWILON]) {
       const s = playedSession(seed);
       s.econ.cash += 1;   // coś zmienionego po zapisie nie ma znaczenia, liczy się zapisane
-      // zapis niesie tytuły zleceń dla starszego buildu; wczytany stan ich nie ma, reszta jest ta sama co do bajtu
       const savedEcon = JSON.parse(storage.getItem(key(seed))!).econ as EconomyState;
-      expect(JSON.stringify(createSession(seed).econ)).toBe(JSON.stringify(withoutQuestTitles(savedEcon)));
+      expect(JSON.stringify(createSession(seed).econ)).toBe(JSON.stringify(savedEcon));
     }
   });
 });

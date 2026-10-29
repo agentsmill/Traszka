@@ -17,28 +17,30 @@ import {
 } from './upgrades';
 import { MILESTONES } from './milestones';
 import { XP, levelReward, xpToNext } from './progress';
-import { QUESTS_ACTIVE, newQuest, questDone, type Quest, type QuestScale } from './quests';
 import {
-  cardDef, cardModifiers, cardsBlocking, drawDayCards, fillText, pruneCardMods, resolveCard, type CardContext,
+  cardDef, cardModifiers, cardsBlocking, closeCardsMonth, drawDayCards, fillText, pruneCardMods, resolveCard, type CardContext,
 } from './tycoon/cards';
 import {
   cleaningDemand, cleanHall, cleanlinessEffects, closeHallMonth, rollWeather, sampleHall, soilHall, type HallState,
 } from './tycoon/cleanliness';
-import { fatigueEfficiency, fatigueNight, tap as fatigueTap, tapItems } from './tycoon/fatigue';
-import { closeKpiWeek, type KpiMetrics, type KpiScale } from './tycoon/kpi';
+import { closeFatigueMonth, fatigueEfficiency, fatigueNight, tap as fatigueTap, tapItems } from './tycoon/fatigue';
+import { closeKpiMonth, closeKpiWeek, kpiTitle, type KpiMetrics, type KpiScale, type KpiWeekResult } from './tycoon/kpi';
+import { buildMonthReport, reportCommentText, type MonthFigures, type TycoonMonthReport } from './tycoon/report';
 import { createShift, peopleOnShift, type ShiftState } from './tycoon/shift';
 import {
-  PEOPLE_PER_PALLET, normalizePins, restockDemand, serveTill, stepStaff, tillDemand, unloadDemand, zeroTasks, type RobotFleet,
+  PEOPLE_PER_PALLET, allocateStaff, closeStaffDay, closeStaffMonth, normalizePins, restockDemand, serveTill, stepStaff, tillDemand,
+  unloadDemand, zeroTasks, type RobotFleet,
 } from './tycoon/staff';
 import { applyCardOutcome, createTycoon, type TycoonState } from './tycoon/state';
 import { dayTrafficMult } from './tycoon/sunday';
-import { dateOfGameDay, weekdayOf } from './tycoon/time';
+import { dateOfGameDay, monthIndexOf, weekdayOf } from './tycoon/time';
 import {
   TRUST, addTrust, closeTrustMonth, trustTerminates, trustTier, turnoverBonusShare, type TrustReason, type TrustTier,
 } from './tycoon/trust';
 import {
   addWaste, closeWasteMonth, hallObstacle, palletBags, removeWaste, settleWaste, wasteDemand, wasteSpots, wasteMinute,
 } from './tycoon/waste';
+import { closeWutMonth, wutFromSales, wutFromSco } from './tycoon/wut';
 
 // Ekonomia jednego sklepu (spec §6–§8) jako czysta symulacja z krokiem jednej minuty gry. Klienci są modelowani
 // zbiorczo (strumień przyjść, kolejka, przepustowość kas), a tłum w 3D to ich obraz, a nie źródło liczb.
@@ -91,7 +93,13 @@ export interface MonthReport {
   counters: Counters;
   profit: number;
   cash: number;
+  /** Komentarz Centrali: tekst z `detail.commentId` (`reportCommentText`). Raport ze starego zapisu niesie własny tekst. */
   comment: string;
+  /**
+   * Szczegóły raportu tycoona (pozycje, zaufanie z przyczynami, czystość, KPI, wskazówka): liczby i identyfikatory, teksty
+   * robi interfejs. `null` w raportach ze starych zapisów, sprzed raportu tycoona.
+   */
+  detail: TycoonMonthReport | null;
 }
 
 export interface EconomyState {
@@ -134,10 +142,6 @@ export interface EconomyState {
   /** Poziom gracza i XP zebrane na obecnym poziomie (progress.ts). */
   level: number;
   xp: number;
-  quests: Quest[];
-  questSeq: number;
-  /** Ile dni zamknięto bez mandatu (licznik do zleceń). */
-  cleanDays: number;
   /** Combo stukania w czasie gry (nie zegarem przeglądarki): stuknięcia w serii (0 = brak) i minuta ostatniego udanego. */
   tapStreak: number;
   lastTapAt: number;
@@ -150,7 +154,7 @@ export interface EconomyState {
 }
 
 export type EconEventKind = 'delivery' | 'order' | 'fine' | 'milestone' | 'day' | 'month' | 'remont' | 'info' | 'warning' | 'gameover'
-  | 'levelup' | 'golden' | 'quest' | 'trust-tier' | 'card' | 'card-result' | 'kpi-week';
+  | 'levelup' | 'golden' | 'trust-tier' | 'card' | 'card-result' | 'kpi-week';
 export interface EconEvent { kind: EconEventKind; text: string; report?: MonthReport; level?: number; unlocks?: string[] }
 
 export const emptyCounters = (): Counters => ({
@@ -185,7 +189,6 @@ export interface Effects {
   rampa: boolean;
   traffic: number;
   hotMult: number;
-  shrink: number;
   fineMult: number;
   humanoid: boolean;
   ogonkiMult: number;
@@ -218,7 +221,6 @@ export function effects(s: EconomyState, info: StoreInfo): Effects {
     traffic: (1 + 0.1 * level(s, 'ulotki') + 0.12 * level(s, 'traszkapka') + 0.04 * activeEquipment(s, 'bankomat')
       + 0.07 * activeEquipment(s, 'paczkownik')) * (1 + 0.1 * s.remontLevel) * (1 + 0.03 * s.partner.points),
     hotMult: 1 + 0.3 * level(s, 'kawa') + 0.4 * activeEquipment(s, 'piec'),
-    shrink: 0.03 * (1 - 0.4 * level(s, 'kamery')),
     fineMult: 1 - 0.25 * level(s, 'kamery'),
     humanoid,
     ogonkiMult: 1 + 0.5 * level(s, 'traszkapka'),
@@ -309,9 +311,6 @@ export function createEconomy(seed: string, info: StoreInfo, partner: EconomySta
     shift: createShift(),
     level: 1,
     xp: 0,
-    quests: [],
-    questSeq: 1,
-    cleanDays: 0,
     tapStreak: 0,
     lastTapAt: -1e9,
     lastDayProfit: 0,
@@ -328,7 +327,6 @@ export function createEconomy(seed: string, info: StoreInfo, partner: EconomySta
   });
   const ev: EconEvent[] = [];
   deliver(s, info, 2, ev);
-  fillQuests(s, info);
   drawDayCards(s.tycoon.cards, cardContext(s, info), seedHash);   // karty dnia 0 (w stepMinute losują się o północy)
   return s;
 }
@@ -426,8 +424,11 @@ function arrive(s: EconomyState, info: StoreInfo, fx: Effects): number {
   return arrivals;
 }
 
-/** Sprzedaż `served` klientów: koszyk z półek, marża, strefa hot, ubytki na SCO, reputacja. */
-function sell(s: EconomyState, fx: Effects, served: number, scoShare: number): number {
+/**
+ * Sprzedaż `served` klientów: koszyk z półek, marża, strefa hot, ubytki (WUT), reputacja. `scoShare` to część obsłużonych przez
+ * kasy samoobsługowe: ich „zapomniane” skany to ubytek w inwentaryzacji (WUT, kradzieże), a nie obcięta marża. Zwraca marżę.
+ */
+export function sell(s: EconomyState, fx: Effects, served: number, scoShare: number): number {
   let revenue = 0;
   let margin = 0;
   let want = 0;
@@ -444,9 +445,11 @@ function sell(s: EconomyState, fx: Effects, served: number, scoShare: number): n
   const hot = served * HOT.chance * fx.hotMult;
   revenue += hot * HOT.price;
   margin += hot * HOT.price * HOT.margin;
-  margin -= revenue * scoShare * fx.shrink;   // „zapomniane” skany na SCO
   margin *= fx.marginMult * cardModifiers(s.tycoon.cards, s.minute).margin;   // partner i efekt karty (rabat z glitcha, promocja)
   s.xp += served * XP.customer;
+  // ubytki towarowe: naturalne od obrotu i „zapomniane” skany na SCO (kamery zmniejszają); do progu płaci Centrala, nadwyżkę przy zamknięciu miesiąca franczyzobiorca
+  wutFromSales(s.tycoon.wut, revenue);
+  wutFromSco(s.tycoon.wut, revenue * scoShare, 1 - 0.4 * level(s, 'kamery'));
 
   const missing = want > 0 ? 1 - got / want : 0;
   s.reputation += served * (0.0025 * (1 - missing) - 0.02 * missing);
@@ -513,7 +516,10 @@ function runStaff(s: EconomyState, info: StoreInfo, fx: Effects, open: boolean, 
     CATS.reduce((n, c) => n + Math.max(0, Math.min(info.shelfCap[c] - s.shelf[c], s.backroom[c])), 0), RESTOCK_RATE,
   );
   demand.sprzatanie = wasteDemand(waste, press) + cleaningDemand(hall);
-  const alloc = stepStaff(s.tycoon.staff, { staff, demand, robots, scoFreed: till.freed });
+  const input = { staff, demand, robots, scoFreed: till.freed };
+  // statystyki dnia i miesiąca liczą tylko minuty zmiany: nocą pracuje sama automatyka, a zadania bez ludzi (palety czekające do
+  // rana) nie są niedoborem rąk, więc raport nie podpowiada fałszywych „braków”. Bez statystyk liczy czysty przydział.
+  const alloc = isOpenAt(minuteOfDay(s.minute)) ? stepStaff(s.tycoon.staff, input) : allocateStaff(s.tycoon.staff, input);
 
   // kasa: najpierw potwierdzenia wieku na SCO, potem kolejka; klient SCO bez potwierdzenia zostaje w kolejce
   if (open) {
@@ -581,14 +587,14 @@ function unloadPallet(s: EconomyState, info: StoreInfo, fx: Effects, p: Pallet, 
   }
   p.total = Math.max(0, sum(p.items));
   // Liczy się tylko przejście poniżej progu. Paleta z ułamkiem sztuki zostaje do końca minuty (`removeEmptyPallets`), więc
-  // automatyka warsztatu odwiedza ją jeszcze raz i bez tego warunku premia, XP i zlecenia szłyby drugi raz.
+  // automatyka warsztatu odwiedza ją jeszcze raz i bez tego warunku premia i XP szłyby drugi raz.
   if (before >= 0.5 && p.total < 0.5 && moved > 0) {
     for (const k of [s.today, s.month, s.total]) k.palletsUnloaded++;
     s.xp += XP.pallet;
     addWaste(s.tycoon.waste, p.bags ?? 1, wasteRoom(s, fx));   // kartony i folia po palecie
     if (p.golden) {
       const prize = Math.round(Math.max(400, estimatedDailyMargin(s, info) * 0.4));
-      income(s, prize);
+      bonus(s, prize);   // premia Centrali: raport pokazuje ją w „Premiach”, a nie w innych przychodach
       s.ogonki += 5;
       s.xp += XP.golden;
       out?.push({ kind: 'golden', text: `✨ Złota paleta rozładowana: +${fmt(prize)} zł i +5 Ogonków!` });
@@ -756,7 +762,7 @@ function checkFine(s: EconomyState, fx: Effects, out: EconEvent[]): void {
   out.push({ kind: 'fine', text: `Straż Miejska: mandat ${fine} zł za palety na chodniku. „Pan tu nie jest w hurtowni”.` });
 }
 
-function charge(s: EconomyState, field: 'wages' | 'media' | 'fee' | 'fines' | 'logistics' | 'investments' | 'other', amount: number): void {
+function charge(s: EconomyState, field: 'wages' | 'media' | 'fee' | 'fines' | 'wut' | 'logistics' | 'investments' | 'other', amount: number): void {
   s.cash -= amount;
   // `other` jest ze znakiem (przychody dodatnie, w wyniku dnia i miesiąca dodawane), więc koszt z karty zmniejsza licznik
   const sign = field === 'other' ? -1 : 1;
@@ -783,32 +789,79 @@ function closeDay(s: EconomyState, info: StoreInfo, out: EconEvent[]): void {
   const rent = 25 * activeEquipment(s, 'bankomat');
   if (rent > 0) income(s, rent);
   if (s.partner.networkIncome > 0) income(s, s.partner.networkIncome);
+  // KPI tygodnia kończy się w niedzielę o zamknięciu dnia. Premia należy do wyniku tego dnia, więc księguje się przed jego rachunkiem;
+  // zdarzenia (wynik tygodnia, ewentualny nowy próg zaufania) idą do gracza po komunikacie o dniu
+  const weekly: EconEvent[] = [];
+  if (day === s.tycoon.kpi.toDay) {
+    const r = closeKpiWeek(s.tycoon.kpi, kpiMetricsOf(s), s.seedHash, day + 1, kpiScaleOf(s, info));
+    weekly.push({ kind: 'kpi-week', text: kpiWeekText(r) });
+    changeTrust(s, 'kpi', r.trust, weekly);
+    if (r.bonus > 0) bonus(s, r.bonus);
+    s.xp += r.xp;
+  }
   const t = s.today;
   // bez `fee`: opłata franczyzowa jest miesięczna (do dziennego `today` trafia tylko przez zamknięcie miesiąca po zerowaniu dnia)
   const profit = t.margin + t.bonus + t.other - t.wages - t.media - t.fines - t.logistics - t.wut;
   s.lastDayProfit = profit;
   s.bestDayProfit = Math.max(s.bestDayProfit, profit);
-  if (t.fines === 0) s.cleanDays++;
   out.push({ kind: 'day', text: `Dzień zamknięty: ${Math.round(t.customers)} klientów, obrót ${fmt(t.revenue)} zł, wynik dnia ${profit >= 0 ? '+' : ''}${fmt(profit)} zł.` });
+  out.push(...weekly);
   s.today = emptyCounters();
   fatigueNight(s.tycoon.fatigue);   // noc oddaje część sił, reszta zmęczenia przechodzi na jutro
-
-  // Tymczasowo (zadanie 6 doda zaufanie, premię, XP i komunikat z wyniku): tydzień KPI przechodzi dalej w niedzielę. Bez tego
-  // stan z grającej gry nie wracałby z zapisu bez zmian, bo sanitizeKpi zastępuje tydzień, który już minął, świeżym.
-  if (day === s.tycoon.kpi.toDay) closeKpiWeek(s.tycoon.kpi, kpiMetricsOf(s), s.seedHash, day + 1, kpiScaleOf(s, info));
+  closeStaffDay(s.tycoon.staff);    // statystyki dnia ludzi od zera (miesięczne zostają do raportu)
 
   if (isLastDayOfMonth(day)) closeMonth(s, day, out);
 }
 
+/** Tekst zdarzenia `kpi-week`: cel (z tytułu), wynik i skutki. Liczby formatuje `fmt` (polskie spacje tysięcy). */
+function kpiWeekText(r: KpiWeekResult): string {
+  const title = kpiTitle(r.kind, r.target, fmt);
+  const trust = `${r.trust > 0 ? '+' : '−'}${Math.abs(r.trust)}`;
+  return r.hit
+    ? `KPI tygodnia trafione: ${title}. Wynik: ${fmt(r.value)}. Premia ${fmt(r.bonus)} zł, +${fmt(r.xp)} XP, zaufanie Centrali ${trust}.`
+    : `KPI tygodnia nietrafione: ${title}. Wynik: ${fmt(r.value)}. Zaufanie Centrali ${trust}.`;
+}
+
+/** Liczniki miesiąca w kształcie raportu tycoona (`report.ts`): koszty jako kwoty dodatnie, `other` ze znakiem. */
+const figuresOf = (m: Counters): MonthFigures => ({
+  revenue: m.revenue, margin: m.margin, bonuses: m.bonus, other: m.other, wages: m.wages, media: m.media, fee: m.fee, fines: m.fines,
+  wut: m.wut, logistics: m.logistics, customers: m.customers, lost: m.lost,
+});
+
+/** Średnia marża na klienta z katalogu: koszyk z półek i strefa hot (jak `MARGIN_PER_CUSTOMER` w makiecie). */
+const CATALOG_MARGIN_PER_CUSTOMER = CATS.reduce((n, c) => n + CAT_INFO[c].price * CAT_INFO[c].margin * CAT_INFO[c].basket, 0) * ITEMS_PER_CUSTOMER
+  + HOT.chance * HOT.price * HOT.margin;
+
+/** Marża z jednego klienta w miesiącu (do wyceny klientów odstraszonych kolejką w raporcie); bez klientów średnia z katalogu. */
+const marginPerCustomer = (m: Counters): number => (m.customers > 0 ? m.margin / m.customers : CATALOG_MARGIN_PER_CUSTOMER);
+
 function closeMonth(s: EconomyState, day: number, out: EconEvent[]): void {
   const m = s.month;
+  const t = s.tycoon;
   const fee = Math.round(FRANCHISE_FEE_FIXED + FRANCHISE_FEE_SHARE * m.revenue);
   charge(s, 'fee', fee);
-  bonus(s, Math.round(turnoverBonusShare(s.tycoon.trust.value) * m.revenue));
+  bonus(s, Math.round(turnoverBonusShare(t.trust.value) * m.revenue));
+  // WUT: ubytki miesiąca (naturalne, z SCO i z kart) do progu pokrywa Centrala, nadwyżkę płaci franczyzobiorca; ubytki liczą się od zera
+  charge(s, 'wut', closeWutMonth(t.wut, m.revenue).charge);
   const profit = m.margin + m.bonus + m.other - m.wages - m.media - m.fee - m.fines - m.logistics - m.wut;
   changeTrust(s, 'wynik', profit > 0 ? TRUST.monthProfit : TRUST.monthLoss, out);
+  // podsumowania modułów wchodzą do raportu raz każde i same zerują licznik miesiąca; zaufanie dopiero po zmianie z wyniku
+  const detail = buildMonthReport({
+    monthIndex: monthIndexOf(day),
+    figures: figuresOf(m),
+    trust: closeTrustMonth(t.trust),
+    cleanlinessAvg: closeHallMonth(t.hall),
+    staff: closeStaffMonth(t.staff),
+    days: dateOfGameDay(day).date,
+    staffCount: s.staff,
+    exhaustedDays: closeFatigueMonth(t.fatigue).exhaustedDays,
+    kpi: closeKpiMonth(t.kpi),
+    cards: closeCardsMonth(t.cards),
+    marginPerCustomer: marginPerCustomer(m),
+  }, s.seedHash);
+  closeWasteMonth(t.waste);
   const label = formatMonth(day);
-  const report: MonthReport = { label, counters: { ...m }, profit, cash: s.cash, comment: centralaComment(s, profit) };
+  const report: MonthReport = { label, counters: { ...m }, profit, cash: s.cash, comment: reportCommentText(detail.commentId), detail };
   s.history.push({ label, profit, revenue: m.revenue });
   s.lastReport = report;
   out.push({ kind: 'month', text: `Raport za ${label}: wynik ${profit >= 0 ? '+' : ''}${fmt(profit)} zł.`, report });
@@ -817,23 +870,11 @@ function closeMonth(s: EconomyState, day: number, out: EconEvent[]): void {
     s.gameOver = true;
     out.push({ kind: 'gameover', text: 'Centrala wypowiada umowę franczyzową. Dziękujemy za współpracę.' });
   }
-  // Tymczasowo tu: zadanie 6 weźmie podsumowania zaufania, czystości i śmieci do raportu. Zmiana z wyniku jest już w tym miesiącu.
-  closeTrustMonth(s.tycoon.trust);
-  closeHallMonth(s.tycoon.hall);
-  closeWasteMonth(s.tycoon.waste);
   // zero w środku miesiąca to tylko ostrzeżenie; umowę wypowiada się przy zamknięciu miesiąca
-  if (!s.gameOver && trustTerminates(s.tycoon.trust.value)) {
+  if (!s.gameOver && trustTerminates(t.trust.value)) {
     s.gameOver = true;
     out.push({ kind: 'gameover', text: 'Centrala wypowiada umowę franczyzową: zaufanie spadło do zera. Dziękujemy za współpracę.' });
   }
-}
-
-function centralaComment(s: EconomyState, profit: number): string {
-  if (s.cash < 0 && profit < 0) return 'Centrala z niepokojem obserwuje Twój wynik i przypomina, że wierzymy w Ciebie. Na razie.';
-  if (profit < 0) return 'Miesiąc na minusie. Centrala proponuje szkolenie „Jak zarabiać więcej, wydając mniej” (płatne).';
-  if (profit < 10_000) return 'Jest dodatnio! Centrala gratuluje i podnosi KPI na przyszły miesiąc.';
-  if (profit < 50_000) return 'Świetny wynik. Centrala rozważa wspomnienie o Tobie w newsletterze (strona 14).';
-  return 'Rekordowy miesiąc! Centrala przypisuje sukces nowej strategii Centrali.';
 }
 
 const fmt = (n: number): string => Math.round(n).toLocaleString('pl-PL');
@@ -1170,34 +1211,12 @@ export function answerCard(s: EconomyState, seq: number, answer: number, out: Ec
   return { ok: true };
 }
 
-// --- Poziomy, zlecenia, nagrody --------------------------------------------------------------------------
+// --- Poziomy i nagrody -----------------------------------------------------------------------------------
 
 /** Marża, jakiej sklep spodziewa się w typowy dzień (do skali nagród). */
 export function estimatedDailyMargin(s: EconomyState, info: StoreInfo): number {
   const avgMargin = CATS.reduce((n, c) => n + CAT_INFO[c].price * CAT_INFO[c].margin * CAT_INFO[c].basket, 0) * ITEMS_PER_CUSTOMER;
   return expectedDailyCustomers(s, info) * avgMargin * effects(s, info).marginMult;
-}
-
-function questScale(s: EconomyState, info: StoreInfo): QuestScale {
-  return { dailyCustomers: expectedDailyCustomers(s, info), dailyMargin: estimatedDailyMargin(s, info) };
-}
-
-/** Dobiera zleceń do trzech. */
-export function fillQuests(s: EconomyState, info: StoreInfo): void {
-  while (s.quests.length < QUESTS_ACTIVE) s.quests.push(newQuest(s, questScale(s, info)));
-}
-
-/** Odbiór nagrody za wykonane zlecenie; na jego miejsce przychodzi nowe. */
-export function claimQuest(s: EconomyState, info: StoreInfo, id: number): CommandResult {
-  const q = s.quests.find((x) => x.id === id);
-  if (!q) return { ok: false, text: 'Nie ma takiego zlecenia.' };
-  if (!questDone(s, q)) return { ok: false, text: 'Zlecenie jeszcze niewykonane.' };
-  income(s, q.reward.cash);
-  s.ogonki += q.reward.ogonki;
-  s.xp += q.reward.xp;
-  s.quests = s.quests.filter((x) => x !== q);
-  fillQuests(s, info);
-  return { ok: true, value: q.reward.cash, text: `Zlecenie wykonane! +${fmt(q.reward.cash)} zł, +${q.reward.ogonki} Ogonków, +${q.reward.xp} XP` };
 }
 
 /** Wejście na kolejne poziomy: nagroda i odblokowania (komunikat `levelup` z listą). */

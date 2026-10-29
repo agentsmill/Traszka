@@ -6,8 +6,8 @@ import {
   type MonthReport, type Pallet,
 } from './economy';
 import { xpToNext } from './progress';
-import { QUESTS_ACTIVE, QUEST_KINDS, type Quest, type QuestKind } from './quests';
 import { sanitizeHall } from './tycoon/cleanliness';
+import { sanitizeReport } from './tycoon/report';
 import { sanitizeShift } from './tycoon/shift';
 import { PROFILE_ORDER, type StaffProfile } from './tycoon/staff';
 import { sanitizeTycoon } from './tycoon/state';
@@ -62,7 +62,7 @@ export const LIMITS = {
   queue: 1000,
   /** Poziom gracza: do 1000. poziomu potrzeba ok. 2 mld XP (`xpToNext`), czyli tysięcy lat gry. */
   level: 1000,
-  /** Numery palet i zleceń: 2^30 (1 073 741 824); `rand01` liczy je jako int32. */
+  /** Numery palet (i serii stuknięć): 2^30 (1 073 741 824); `rand01` liczy je jako int32. */
   id: 1_073_741_824,
   /**
    * Punkty Partnera: sklep daje pierwiastek z marży / 20 000, a marża jednego sklepu jest mała (zmierzone 5094 punkty po 97
@@ -90,6 +90,8 @@ const LONGEST_REMONT = Math.max(...REMONTS.map((r) => r.days)) * MINUTES_PER_DAY
  * - zapis sprzed tycoona nie ma pola `tycoon`: dostaje świeży stan, a zaufanie Centrali bierze ze starego pola `trust`
  *   (`null`, tekst albo brak to 60, liczba spoza 0–100 jest przycinana). Tydzień KPI liczy się wtedy od dnia i liczników
  *   wczytanego zapisu, w skali sklepu (`info`). Uszkodzony `tycoon` naprawia się sam, kawałek po kawałku, i nie kasuje zapisu.
+ * - zlecenia Centrali zniknęły (zastąpiło je KPI tygodnia w `tycoon.kpi`): `quests`, `questSeq` i `cleanDays` z dawnego zapisu przepadają,
+ *   także uszkodzone. Ostatni raport miesiąca bez szczegółów tycoona (`detail`) wczytuje się z `detail: null`.
  * - ten sam zapis ma jeszcze dawny `priority` (kasa/po równo/palety): zamienia się na profil puli ludzi (`klienci` i `rowno`
  *   na `kolejka`, `palety` na `dostawa`). Zapis z `tycoon` zostaje przy profilu z własnej puli.
  * Wynik ma dokładnie pola `EconomyState` (test pilnuje, żeby nowe pole nie umknęło tej funkcji).
@@ -97,7 +99,7 @@ const LONGEST_REMONT = Math.max(...REMONTS.map((r) => r.days)) * MINUTES_PER_DAY
 export function sanitizeEconomy(raw: unknown, defaults: EconomyState, info: StoreInfo): EconomyState | null {
   if (!isRec(raw) || raw.version !== 1 || raw.seed !== defaults.seed) return null;
 
-  const wantsList = ['pallets', 'deliveries', 'equipment', 'history', 'milestones', 'quests'];
+  const wantsList = ['pallets', 'deliveries', 'equipment', 'history', 'milestones'];
   const wantsRecord = ['shelf', 'backroom', 'upgrades', 'order', 'today', 'month', 'total', 'partner'];
   if (wantsList.some((k) => raw[k] !== undefined && !Array.isArray(raw[k]))) return null;
   if (wantsRecord.some((k) => raw[k] !== undefined && !isRec(raw[k]))) return null;
@@ -106,7 +108,6 @@ export function sanitizeEconomy(raw: unknown, defaults: EconomyState, info: Stor
   const level = whole(raw.level, defaults.level, 1, LIMITS.level);
   const pallets = uniqueBy((raw.pallets as unknown[] | undefined)?.map((p) => pallet(p, minute)) ?? defaults.pallets, (p) => p.id)
     .slice(0, LIMITS.pallets);
-  const quests = uniqueBy((raw.quests as unknown[] | undefined)?.map(quest) ?? defaults.quests, (q) => q.id).slice(0, QUESTS_ACTIVE);
   const partner = raw.partner as Rec | undefined;
   const seedHash = whole(raw.seedHash, defaults.seedHash, 0, 0xffff_ffff);
   const staff = whole(raw.staff, defaults.staff, 1, STAFF_MAX);
@@ -149,11 +150,8 @@ export function sanitizeEconomy(raw: unknown, defaults: EconomyState, info: Stor
     lastWorkers: num(raw.lastWorkers, defaults.lastWorkers, 0, STAFF_MAX),
     shift: sanitizeShift(raw.shift),
     level,
-    // pasek XP mieści najwyżej kilka poziomów (nagroda ze zlecenia wpada przed `processLevels`); więcej to pętla bez końca
+    // pasek XP mieści najwyżej kilka poziomów (nagroda, np. za KPI, wpada przed `processLevels`); więcej to pętla bez końca
     xp: num(raw.xp, defaults.xp, 0, 3 * xpToNext(level)),
-    quests,
-    questSeq: Math.max(whole(raw.questSeq, defaults.questSeq, 1, LIMITS.id + 1), 1 + Math.max(0, ...quests.map((q) => q.id))),
-    cleanDays: whole(raw.cleanDays, defaults.cleanDays, 0, LIMITS.minute / MINUTES_PER_DAY),
     // zapis sprzed L1 nie ma combo: brak serii, ostatnie stuknięcie dawno temu (jak lastFineAt)
     tapStreak: whole(raw.tapStreak, defaults.tapStreak, 0, LIMITS.id),
     lastTapAt: whole(raw.lastTapAt, defaults.lastTapAt, defaults.lastTapAt, minute),
@@ -186,7 +184,7 @@ function notNull<T>(v: T | null): v is T {
 /** Kwota w złotych: skończona, w granicach ±`LIMITS.money` (ujemna to dług, nie błąd). */
 const money = (v: unknown, fallback: number): number => num(v, fallback, -LIMITS.money, LIMITS.money);
 
-/** Zostawia pierwszy element z danym kluczem (zdublowany numer palety albo zlecenia to uszkodzenie) i pomija wypadłe (null). */
+/** Zostawia pierwszy element z danym kluczem (zdublowany numer palety to uszkodzenie) i pomija wypadłe (null). */
 function uniqueBy<T>(items: (T | null)[], key: (item: T) => number): T[] {
   const seen = new Set<number>();
   return items.filter(notNull).filter((item) => {
@@ -227,22 +225,6 @@ function pallet(v: unknown, minute: number): Pallet | null {
   // paleta z zapisu sprzed worków nie ma pola: rozładunek bierze wtedy jeden worek, a zapis wraca co do bajta
   if (isNum(v.bags)) out.bags = whole(v.bags, 1, 1, LIMITS.palletBags);
   return out;
-}
-
-/** Zlecenie ze stanu albo zapisu. Pole `title` z zapisów sprzed L9 jest pomijane: tytuł liczy `questTitle` przy wyświetlaniu. */
-function quest(v: unknown): Quest | null {
-  if (!isRec(v) || !isNum(v.id) || !isNum(v.target) || v.target <= 0 || !isNum(v.start)) return null;
-  if (!QUEST_KINDS.includes(v.kind as QuestKind) || !isRec(v.reward)) return null;
-  const { cash, ogonki, xp } = v.reward;
-  if (!isNum(cash) || !isNum(ogonki) || !isNum(xp)) return null;
-  return {
-    id: whole(v.id, 0, 0, LIMITS.id),
-    kind: v.kind as QuestKind,
-    target: Math.min(v.target, LIMITS.money),
-    start: money(v.start, 0),
-    // XP z nagrody trafia do `processLevels`, więc nie więcej niż daje zlecenie na najwyższym poziomie (newQuest: 40 + 10 · poziom)
-    reward: { cash: num(cash, 0, 0, LIMITS.money), ogonki: num(ogonki, 0, 0, LIMITS.money), xp: num(xp, 0, 0, 40 + 10 * LIMITS.level) },
-  };
 }
 
 function delivery(v: unknown): Delivery | null {
@@ -294,7 +276,11 @@ function counters(v: unknown): Counters {
   return out;
 }
 
+/** Ostatni raport miesiąca. Raport ze starego zapisu nie ma szczegółów tycoona (`detail`): wczytuje się jako `null`, reszta zostaje. */
 function report(v: unknown): MonthReport | null {
   if (!isRec(v) || typeof v.label !== 'string' || typeof v.comment !== 'string' || !isRec(v.counters)) return null;
-  return { label: v.label, counters: counters(v.counters), profit: money(v.profit, 0), cash: money(v.cash, 0), comment: v.comment };
+  return {
+    label: v.label, counters: counters(v.counters), profit: money(v.profit, 0), cash: money(v.cash, 0), comment: v.comment,
+    detail: sanitizeReport(v.detail),
+  };
 }

@@ -6,7 +6,6 @@ import { MINUTES_PER_DAY, OPEN_FROM } from '@/sim/economy/catalog';
 import { applyCommand, COMMAND_TYPES, type Command } from '@/sim/economy/commands';
 import { awaitingDecision, isClosedForRemont, nextRemont, stepMinute, type EconEvent, type EconomyState } from '@/sim/economy/economy';
 import { rand01 } from '@/sim/economy/rand';
-import { questDone } from '@/sim/economy/quests';
 import type { StoreInfo } from '@/sim/economy/storeInfo';
 import { visibleCards } from '@/sim/economy/tycoon/cards';
 import { STAFF_PROFILES, STAFF_TASKS } from '@/sim/economy/tycoon/staff';
@@ -42,7 +41,6 @@ const BROKEN: unknown[] = [
   { type: 'buyEquipment', id: 'toString' },
   { type: 'setOrder', auto: 'yes' },
   { type: 'setOrder', auto: true, manual: NaN },
-  { type: 'claimQuest', questId: '1' },
   { type: 'movePallet', palletId: 1, loc: 'roof' },
   { type: 'setStaffProfile', profile: '__proto__' },
   { type: 'pinStaff', task: 'kasa', count: 1.5 },
@@ -54,7 +52,7 @@ const BROKEN: unknown[] = [
 const UPGRADE_IDS = UPGRADES.map((u) => u.id);
 const EQUIPMENT_IDS = EQUIPMENT.map((e) => e.id);
 
-/** Gracz-bot: odpowiada na karty, stuka, odbiera, kupuje, zatrudnia, robi remonty i co jakiś czas wysyła śmieci. Każda decyzja z `roll`. */
+/** Gracz-bot: odpowiada na karty, stuka, kupuje, zatrudnia, robi remonty i co jakiś czas wysyła śmieci. Każda decyzja z `roll`. */
 const bot: Policy = ({ state: s, roll, issue }) => {
   // gra stoi na karcie, dopóki gracz nie odpowie (pętla klatek nie wykona minuty): bot odpowiada na każdą widoczną, losowo,
   // a co trzecią razą zatwierdza odpowiedź zaznaczoną z góry
@@ -71,12 +69,14 @@ const bot: Policy = ({ state: s, roll, issue }) => {
     }
     if (s.pallets.length > 0 && roll(3) < 0.15) issue({ type: 'tapPallet' });   // drugie stuknięcie w tej samej minucie
   }
-  if (s.minute % 5 === 0) for (const q of s.quests) if (questDone(s, q)) issue({ type: 'claimQuest', questId: q.id });
-  if (s.minute % 60 === 0 && roll(5) < 0.6) {
+  // gdy poziom pozwala na kolejny remont, bot odkłada na niego (zleceń Centrali, które sypały gotówką, już nie ma)
+  const upcoming = nextRemont(s);
+  const saving = upcoming !== null && s.level >= upcoming.minLevel;
+  if (s.minute % 60 === 0 && roll(5) < 0.6 && !saving) {
     if (roll(6) < 0.7) issue({ type: 'buyUpgrade', id: UPGRADE_IDS[Math.floor(roll(7) * UPGRADE_IDS.length)] });
     else issue({ type: 'buyEquipment', id: EQUIPMENT_IDS[Math.floor(roll(7) * EQUIPMENT_IDS.length)] });
   }
-  if (s.queue > 6) issue({ type: 'hire' });
+  if (s.queue > 6 && s.staff < 4) issue({ type: 'hire' });   // bez limitu pensje zjadają całą gotówkę i do remontu nie dochodzi
   const next = nextRemont(s);
   if (next && s.level >= next.minLevel && s.cash >= next.cost) issue({ type: 'startRemont' });
   if (isClosedForRemont(s) && roll(8) < 0.002) issue({ type: 'rushRemont' });
@@ -344,7 +344,7 @@ describe('odtwarzanie biegu', () => {
       { type: 'movePallet', palletId: 1, loc: 'roof' }, { type: 'setStaffProfile', profile: 'all' }, { type: 'pinStaff', task: 'kawa', count: 1 },
       { type: 'pinStaff', task: 'kasa', count: NaN }, { type: 'pinStaff', task: 'kasa', count: -1 }, { type: 'setPriority', priority: 'palety' },
       { type: 'setOrder', auto: 'yes' },
-      { type: 'setOrder', auto: true, manual: NaN }, { type: 'setOrder', auto: true, manual: Infinity }, { type: 'claimQuest', questId: '1' },
+      { type: 'setOrder', auto: true, manual: NaN }, { type: 'setOrder', auto: true, manual: Infinity }, { type: 'claimQuest', questId: 1 },   // zlecenia zniknęły: stary klient jeszcze je wyśle
       { type: 'tapPallet', palletId: 1.5 }, { type: 'returnPallet', palletId: NaN }, { type: 'constructor' }, null, 'tapTill', [], 7, undefined,
     ].map((cmd, i) => ({ minute: START + 50 + i * 311, seq: 1_000_000 + i, cmd }));
     // wpisy bez minuty albo numeru, jakich nie da się uporządkować: pomijane w całości
@@ -354,7 +354,7 @@ describe('odtwarzanie biegu', () => {
       { minute: -Infinity, seq: 1, cmd }, { minute: '400', seq: 1, cmd }, { minute: START + 10, seq: NaN, cmd }, { minute: START + 10, seq: '1', cmd },
       { minute: START + 10, seq: undefined, cmd },
     ];
-    // po końcu: gdyby zadziałały, stan by się zmienił (profil pracy z 'kolejka' na 'porzadek', a zlecenia i dostawy poszłyby inaczej)
+    // po końcu: gdyby zadziałały, stan by się zmienił (profil pracy z 'kolejka' na 'porzadek', a dostawy poszłyby inaczej)
     const late = [until + 1, until + 5, until + MINUTES_PER_DAY, 1e9, Number.MAX_VALUE].map((minute, i) => ({ minute, seq: 2_000_000 + i, cmd }));
     // te działają: sprzed startu (lądują na starcie, w kolejności seq) i ze zdublowanym numerem (kolejność wpisów rozstrzyga remis)
     const early = [{ minute: -10, seq: 5, cmd: { type: 'setOrder', auto: false, manual: 9 } }, { minute: -1e9, seq: 0, cmd: { type: 'hire' } }];

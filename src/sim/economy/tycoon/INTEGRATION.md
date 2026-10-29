@@ -94,7 +94,9 @@ Wzorcem kolejności wywołań jest `sandbox.ts` (`stepSandbox`): to ta sama minu
 - **Automatyka:** `RobotFleet` z ulepszeń: `tasmociag = level('tasmociag')`, `wykladacz = level('wykladacz')`,
   `edward = humanoid ? 1 : 0`, `prasa` to nowe ulepszenie w grupie „warsztat”. Roboty zastępują osobominuty
   (`ROBOT_RATE`), więc `fx.autoUnload` i `fx.autoRestock` w obecnej postaci odchodzą. Roboty pracują całą dobę
-  (`staff: 0` poza godzinami, przydział i tak daje minuty robotom).
+  (`staff: 0` poza godzinami, przydział i tak daje minuty robotom). Statystyki (`stepStaff`) liczą tylko minuty zmiany
+  (6:00–23:00): nocą `runStaff` woła czysty `allocateStaff`, bo paleta czekająca do rana nie jest niedoborem rąk
+  i nie może dawać fałszywej wskazówki „braki” w raporcie.
 - **Polecenia:**
   - `{ type: 'staff.profile', profile: 'kolejka' | 'dostawa' | 'porzadek' }` → `setStaffProfile`;
   - `{ type: 'staff.order', order: ['kasa', 'wykladanie', 'rozladunek', 'sprzatanie'] }` → `setStaffOrder` (permutacja);
@@ -184,7 +186,8 @@ Wzorcem kolejności wywołań jest `sandbox.ts` (`stepSandbox`): to ta sama minu
 
 ### 7. WUT (`wut.ts`)
 
-- **Stan:** `tycoon.wut: WutState` (ubytki miesiąca wg przyczyny).
+- **Stan:** `tycoon.wut: WutState` (ubytki miesiąca wg przyczyny). Wdrożone: `sell` (eksportowane do testów) i `closeMonth`;
+  opłata idzie do licznika `Counters.wut` (pozycja raportu), a ubytki z kart (przyczyna `karty`) liczą się do sumy miesiąca.
 - **Zaczep:** `sell`: `wutFromSales(wut, revenue)` i zamiast dzisiejszego `margin −= revenue × scoShare × fx.shrink`:
   `wutFromSco(wut, revenue × scoShare, 1 − 0.4 × level('kamery'))` (decyzja użytkownika: jak w prawdziwym sklepie
   to ubytek w inwentaryzacji); koniec miesiąca: `closeWutMonth(wut, obrót)` i obciążenie `charge` (pozycja raportu
@@ -197,12 +200,15 @@ Wzorcem kolejności wywołań jest `sandbox.ts` (`stepSandbox`): to ta sama minu
 - **Zaczep:** liczniki z `s.total` (`customers`, `hotSold`, `lost`), liczba mandatów (nowy licznik w `Counters` albo
   `cleanDays` odwrotnie) i sumy czystości z `tycoon.hall`. `closeDay` w dniu `kpi.toDay` (niedziela):
   `closeKpiWeek` (z `level: s.level` w skali) → `addTrust('kpi', r.trust)`, premia `r.bonus` do premii Centrali,
-  `r.xp` do `s.xp`, komunikat `'kpi-week'` (`info`). Cel liczy niedzielny ruch (`SUNDAY_TRAFFIC`).
+  `r.xp` do `s.xp`, komunikat `'kpi-week'` (`info`). Cel liczy niedzielny ruch (`SUNDAY_TRAFFIC`: `kpi.ts` mnoży ruch dnia
+  przez `dni − 1 + SUNDAY_TRAFFIC`, a `expectedDailyCustomers` zostaje bez niedzieli). Wdrożone w `closeDay` przed rachunkiem
+  dnia (premia należy do wyniku niedzieli); tydzień zamknięty w ostatnim dniu miesiąca wchodzi do raportu tego miesiąca.
 - **Polecenia:** brak (cel jest automatyczny; dawne „Odbierz!” znika).
 
 ### 9. Raport miesięczny (`report.ts`)
 
-- **Stan:** `tycoon.lastReport: TycoonMonthReport | null` (obok albo zamiast `EconomyState.lastReport`).
+- **Stan:** raport trzyma ekonomia: `MonthReport.detail: TycoonMonthReport | null` (`null` w raportach ze starych zapisów),
+  a `MonthReport.comment` to `reportCommentText(detail.commentId)`. Wynik raportu równa się wynikowi w `history`.
 - **Zaczep:** `closeMonth`: `buildMonthReport({ monthIndex, figures, trust: closeTrustMonth(...), cleanlinessAvg:
   closeHallMonth(...), staff: closeStaffMonth(...), exhaustedDays: closeFatigueMonth(...).exhaustedDays,
   kpi: closeKpiMonth(...), cards: closeCardsMonth(...), marginPerCustomer, ... }, seedHash)`. Kolejność: najpierw opłata, premia

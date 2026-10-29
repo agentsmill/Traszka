@@ -1,7 +1,7 @@
 import { layoutFor } from '@/sim/store/layoutFor';
 import type { StoreLayout } from '@/sim/store/types';
 import {
-  answerCard, awaitingDecision, buyEquipment, buyUpgrade, campaign, claimQuest, commitTap, comboMult, fire, hire, movePallet,
+  answerCard, awaitingDecision, buyEquipment, buyUpgrade, campaign, commitTap, comboMult, fire, hire, movePallet,
   nextTapStreak, processLevels, relayout, returnPallet, rushRemont, setOrder, startRemont, tapPallet, tapTill,
   type CommandResult, type EconEvent, type EconomyState,
 } from './economy';
@@ -33,7 +33,6 @@ import { EQUIPMENT_BY_ID, UPGRADE_BY_ID, type EquipmentId, type UpgradeId } from
 export type Command =
   | { type: 'tapPallet'; palletId?: number }
   | { type: 'tapTill' }
-  | { type: 'claimQuest'; questId: number }
   | { type: 'movePallet'; palletId: number; loc: PalletLoc }
   | { type: 'returnPallet'; palletId: number }
   | { type: 'setOrder'; auto: boolean; manual?: number }
@@ -63,7 +62,7 @@ export type FlatCommands = MustBeNever<NestedFields<Command>>;
 
 /** Wszystkie typy poleceń (do testów pokrycia i do walidacji). */
 export const COMMAND_TYPES: readonly Command['type'][] = [
-  'tapPallet', 'tapTill', 'claimQuest', 'movePallet', 'returnPallet', 'setOrder', 'hire', 'fire', 'setStaffProfile', 'pinStaff',
+  'tapPallet', 'tapTill', 'movePallet', 'returnPallet', 'setOrder', 'hire', 'fire', 'setStaffProfile', 'pinStaff',
   'buyUpgrade', 'buyEquipment', 'startRemont', 'campaign', 'rushRemont', 'answerCard',
 ];
 
@@ -84,7 +83,6 @@ const noFields = (): boolean => true;
 const VALID = {
   tapPallet: (c) => c.palletId === undefined || isInt(c.palletId),
   tapTill: noFields,
-  claimQuest: (c) => isInt(c.questId),
   movePallet: (c) => isInt(c.palletId) && LOCS.includes(c.loc as PalletLoc),
   returnPallet: (c) => isInt(c.palletId),
   setOrder: (c) => typeof c.auto === 'boolean' && (c.manual === undefined || isFiniteNumber(c.manual)),
@@ -141,7 +139,6 @@ function run(s: EconomyState, info: StoreInfo, c: Command, events: EconEvent[]):
   switch (c.type) {
     case 'tapPallet': return awaitingDecision(s) ? { ok: false, text: CARD_FIRST } : tap(s, (combo) => tapPallet(s, info, c.palletId, combo, events));
     case 'tapTill': return awaitingDecision(s) ? { ok: false, text: CARD_FIRST } : tap(s, (combo) => tapTill(s, info, combo));
-    case 'claimQuest': return claimQuest(s, info, c.questId);
     case 'movePallet': return movePallet(s, info, c.palletId, c.loc);
     case 'returnPallet': return returnPallet(s, c.palletId, events);
     case 'setOrder': setOrder(s, c.auto, c.manual); return { ok: true };

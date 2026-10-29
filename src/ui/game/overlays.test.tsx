@@ -95,7 +95,7 @@ describe('plakietka sklepu tymczasowego', () => {
 });
 
 describe('podpowiedzi pierwszego dnia: dymki zamiast okna powitalnego', () => {
-  it('lista krótkich wskazówek z dawnego okna (cel gry, palety, kolejka, zlecenia, siły, sterowanie), każda krótka i po polsku', () => {
+  it('lista krótkich wskazówek z dawnego okna (cel gry, palety, kolejka, KPI tygodnia, siły, sterowanie), każda krótka i po polsku', () => {
     expect(FIRST_DAY_HINTS.length).toBeGreaterThanOrEqual(5);
     expect(new Set(FIRST_DAY_HINTS).size).toBe(FIRST_DAY_HINTS.length);
     for (const hint of FIRST_DAY_HINTS) {
@@ -227,25 +227,33 @@ describe('raport miesięczny: pozycje sumują się do wyniku', () => {
       .map((v) => [textOf((v.props.children as Vnode[])[0]), textOf((v.props.children as Vnode[])[1])] as const)
       .map(([label, text]) => [label, Number(text.replace(/[\s\u00a0\u202f]|zł/g, '').replace('−', '-').replace('+', '')) || 0]),
   );
-  const report = (bonus: number): MonthReport => {
-    const counters = { ...emptyCounters(), margin: 10_000, other: 500, bonus, wages: 2000, media: 600, fee: 4500, fines: 100, logistics: 200 };
-    return { label: 'wrzesień 2026', counters, profit: 10_000 + bonus + 500 - 2000 - 600 - 4500 - 100 - 200, cash: 5000, comment: 'x' };
+  const report = (bonus: number, wut = 0): MonthReport => {
+    const counters = { ...emptyCounters(), margin: 10_000, other: 500, bonus, wages: 2000, media: 600, fee: 4500, fines: 100, wut, logistics: 200 };
+    return { label: 'wrzesień 2026', counters, profit: 10_000 + bonus + 500 - 2000 - 600 - 4500 - 100 - wut - 200, cash: 5000, comment: 'x', detail: null };
   };
+  const LINES = ['Marża i inne przychody', 'Premie Centrali', 'Płace', 'Media', 'Opłata franczyzowa', 'Mandaty', 'WUT ponad próg', 'Logistyka'];
 
   it('premia Centrali ma własny wiersz, a wiersze razem dają wynik miesiąca', () => {
     const r = report(300);
     const v = rows(r);
     expect(v.get('Premie Centrali')).toBe(300);
-    const sum = ['Marża i inne przychody', 'Premie Centrali', 'Płace', 'Media', 'Opłata franczyzowa', 'Mandaty', 'Logistyka']
-      .reduce((n, label) => n + v.get(label)!, 0);
+    const sum = LINES.reduce((n, label) => n + v.get(label)!, 0);
     expect(sum).toBe(r.profit);
     expect(v.get('Wynik miesiąca')).toBe(r.profit);
+  });
+
+  it('WUT ponad próg ma własny wiersz jako koszt, a wiersze razem dalej dają wynik miesiąca', () => {
+    const r = report(300, 450);
+    const v = rows(r);
+    expect(v.get('WUT ponad próg')).toBe(-450);
+    expect(LINES.reduce((n, label) => n + v.get(label)!, 0)).toBe(r.profit);
+    expect(r.profit).toBe(report(300, 0).profit - 450);
   });
 
   it('raport bez premii (stary zapis) pokazuje zerowy wiersz i też się sumuje', () => {
     const r = report(0);
     const v = rows(r);
     expect(v.get('Premie Centrali')).toBe(0);
-    expect(['Marża i inne przychody', 'Płace', 'Media', 'Opłata franczyzowa', 'Mandaty', 'Logistyka'].reduce((n, l) => n + v.get(l)!, 0)).toBe(r.profit);
+    expect(LINES.filter((l) => l !== 'Premie Centrali').reduce((n, l) => n + v.get(l)!, 0)).toBe(r.profit);
   });
 });

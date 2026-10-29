@@ -223,8 +223,10 @@ export function sanitizeReport(raw: unknown): TycoonMonthReport | null {
   const t: Rec = isRec(raw.trust) ? raw.trust : {};
   const h: Rec = isRec(raw.hint) ? raw.hint : {};
   const k: Rec = isRec(raw.kpi) ? raw.kpi : {};
+  // zmiana zaufania z jednej przyczyny mieści się w ±100, jak w `TrustState.month` (zapis ręcznie zmieniony nie przeniesie 1e308 dalej)
   const reasons = Array.isArray(t.reasons) ? t.reasons.filter((x): x is [TrustReason, number] => Array.isArray(x)
-    && TRUST_REASONS.includes(x[0] as TrustReason) && typeof x[1] === 'number' && Number.isFinite(x[1])) : [];
+    && TRUST_REASONS.includes(x[0] as TrustReason) && typeof x[1] === 'number' && Number.isFinite(x[1]))
+    .map(([r, v]): [TrustReason, number] => [r, num(v, 0, -100, 100)]) : [];
   return {
     monthIndex: whole(raw.monthIndex, 0, 0, 12_000),
     lines,

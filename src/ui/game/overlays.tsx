@@ -110,7 +110,7 @@ export function Toasts() {
   );
 }
 
-/** Pozycje raportu: marża i inne przychody, premie Centrali (osobny licznik) i koszty sumują się do wyniku miesiąca. */
+/** Pozycje raportu: marża i inne przychody, premie Centrali (osobny licznik) i koszty (z WUT ponad próg) sumują się do wyniku miesiąca. */
 export function ReportBody({ r }: { r: MonthReport }) {
   const c = r.counters;
   return (
@@ -123,6 +123,7 @@ export function ReportBody({ r }: { r: MonthReport }) {
       <div class="tt-row"><span>Media</span><span>−{zl(c.media)}</span></div>
       <div class="tt-row"><span>Opłata franczyzowa</span><span>−{zl(c.fee)}</span></div>
       <div class="tt-row"><span>Mandaty</span><span>−{zl(c.fines)}</span></div>
+      <div class="tt-row"><span>WUT ponad próg</span><span>−{zl(c.wut)}</span></div>
       <div class="tt-row"><span>Logistyka</span><span>−{zl(c.logistics)}</span></div>
       <div class="tt-row total"><span>Wynik miesiąca</span><span>{signedZl(r.profit)}</span></div>
       <div class="tt-row"><span>Inwestycje</span><span>{zl(c.investments)}</span></div>
@@ -164,7 +165,7 @@ export const FIRST_DAY_HINTS: readonly string[] = [
   '🦎 Od dziś prowadzisz franczyzę Traszki. Cel: zbudować sieć Traszek i dojść do rangi Legendarnej Palety.',
   '📦 Palety przyjeżdżają pod sklep. Stukaj w nie, żeby rozładować, zanim przyjdzie Straż Miejska. Złota paleta to premia.',
   '🧾 Kolejka za długa? Klienci odchodzą. Stuknij w kasę, kup kasę samoobsługową albo zatrudnij pracownika.',
-  '🎯 Zlecenia Centrali (zakładka Cele) dają nagrody, a poziomy odblokowują sprzęt, remonty i warsztat.',
+  '🎯 Cele: KPI tygodnia od Centrali daje zaufanie, premię i XP, a poziomy odblokowują sprzęt i remonty.',
   '💪 Stukanie męczy: dzienna pula sił się kończy, a noc oddaje tylko część. Resztę robią pracownicy.',
   '👆 Przeciągnij, żeby przesunąć widok, a szczypnięciem albo kółkiem myszy przybliżysz. Gra zapisuje się sama.',
 ];

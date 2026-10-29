@@ -20,9 +20,9 @@ sklepu (dowolny tekst), i otwierasz sklep. Kasjer stoi potem za ladą. Nowy skle
   samoobsługowe. Remont generalny daje większy lokal i więcej slotów.
 - Koniec miesiąca to raport i opłata dla Centrali. Gra zapisuje się sama (osobno dla każdego seeda).
 
-Nagrody (🎯 Cele): szybkie stukanie daje combo do ×5, Zlecenia Centrali mają przycisk „Odbierz”, każdy poziom to
-premia (rangi od Drewnianej do Legendarnej Palety), a poziomy odblokowują sprzęt, remonty i warsztat. Złote palety
-i paczki od Centrali to losowe premie. Po powrocie czeka zarobek kierownika zmiany i premia za serię dni.
+Nagrody (🎯 Cele): szybkie stukanie daje combo do ×5 (ale zużywa siły), KPI tygodnia od Centrali rozlicza się w niedzielę
+o 23:00 (zaufanie, premia i XP), każdy poziom to premia (rangi od Drewnianej do Legendarnej Palety), a poziomy
+odblokowują sprzęt, remonty i warsztat. Złote palety to losowe premie od Centrali. Po powrocie czeka zarobek kierownika zmiany i premia za serię dni.
 Po drugim remoncie albo na 20. poziomie można otworzyć kolejną Traszkę: stary sklep zostaje w sieci i co dzień
 dokłada dochód, a Punkty Partnera trwale podnoszą marżę i ruch w każdym następnym sklepie.
 
