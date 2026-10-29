@@ -14,7 +14,7 @@ import {
 } from '../state';
 import { int, people, signedPts, signedZl, zl } from './format';
 import { Bar, PalletItem } from './panels';
-import { NO_ENERGY_TITLE, tapBlock, tillReason } from './tapBlock';
+import { ENERGY_TITLE, NO_ENERGY_TITLE, tapBlock, tillReason } from './tapBlock';
 
 export const DISCLAIMER = 'Wszystkie firmy, postacie i zdarzenia są fikcyjne.';
 
@@ -99,7 +99,7 @@ export function ClickerBar({ game, onFloat }: { game: GameActions; onFloat: (x: 
   const at = (e: MouseEvent): [number, number] => [e.clientX || window.innerWidth - 60, e.clientY || window.innerHeight - 140];
   return (
     <div class="tt-clicker">
-      <div class="tt-energy" title="Siły franczyzobiorcy: każde stuknięcie je zużywa, noc oddaje tylko część">
+      <div class="tt-energy" title={ENERGY_TITLE}>
         <span>Siły {int(energy)}/{FATIGUE.pool}</span>
         <Bar value={energy / FATIGUE.pool} warn={energy < LOW_ENERGY} />
       </div>

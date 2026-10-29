@@ -1,9 +1,17 @@
 import { awaitingDecision, tillTapBlock, type EconomyState } from '@/sim/economy/economy';
 import type { StoreInfo } from '@/sim/economy/storeInfo';
-import { tapCost, type TapKind } from '@/sim/economy/tycoon/fatigue';
+import { TAP_ITEMS } from '@/sim/economy/catalog';
+import { FATIGUE, tapCost, type TapKind } from '@/sim/economy/tycoon/fatigue';
 import { speed } from '../state';
 
 export const NO_ENERGY_TITLE = 'Ręce odmawiają, odpocznij do jutra';
+
+/**
+ * Czym są Siły, jednym zdaniem: dymek paska sił (`overlays.tsx`) i sekcja „Twoje ręce” w „Jak grać”. Cała pula wystarcza na mniej
+ * więcej jedną paletę (pula / koszt stuknięcia w paletę × sztuki na stuknięcie; pilnuje tego test treści instrukcji).
+ */
+export const ENERGY_TITLE = `Siły to Twoja energia na stukanie: stuknięcie w paletę to ${TAP_ITEMS} sztuk (cała pula to mniej więcej jedna `
+  + `paleta), w kasę – jeden klient; noc oddaje ${FATIGUE.nightRecovery}, a przemęczenie obniża jutrzejszą wydajność.`;
 
 /**
  * Powód, dla którego stuknięcie danego rodzaju jest teraz zablokowane (jako `title` przycisku), albo undefined, gdy wolno:

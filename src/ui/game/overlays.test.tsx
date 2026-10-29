@@ -16,6 +16,7 @@ import {
 import { TrustChip } from './Hud';
 import { int, zl } from './format';
 import { Bar } from './panels';
+import { ENERGY_TITLE } from './tapBlock';
 import {
   ClickerBar, ComboChip, EPHEMERAL_BADGE, EPHEMERAL_NOTE, FIRST_DAY_HINTS, FirstDayHints, RESTART_CONFIRM, ReportBody, ReportModal,
   STORY_GRACE_MS, SelectionCard, StoreActions, StoreBadge, StoryModal, WelcomeModal, terminationReason,
@@ -331,6 +332,8 @@ describe('pasek sił nad przyciskami klikera', () => {
     expect(gauge.props.value).toBeCloseTo(0.73);
     withEnergy(41.4);
     expect(textOf(bar())).toContain('Siły 41/100');
+    // dymek mówi jednym zdaniem, czym są Siły (to samo zdanie co w „Jak grać”)
+    expect(walk(tree).find((v) => v.props?.class === 'tt-energy')!.props.title).toBe(ENERGY_TITLE);
   });
 
   it('pasek ostrzega poniżej 20 sił, od 20 w górę nie', () => {

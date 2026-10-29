@@ -3,7 +3,8 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
   ASSISTANT_UNLOAD_MIN, BANKRUPTCY_AT, CATS, CAT_INFO, DELIVERY_AT, FRANCHISE_FEE_FIXED, FRANCHISE_FEE_SHARE, HOT, MINUTES_PER_DAY, MINUTES_PER_SECOND_CLOSED,
-  MINUTES_PER_SECOND_OPEN, OPEN_FROM, OPEN_TO, ORDER_DEADLINE, PALLETS_FREE, PALLET_FEE, RETURN_FEE, STAFF_MAX, STRAZ, TILL_TAP_QUEUE_MIN,
+  MINUTES_PER_SECOND_OPEN, OPEN_FROM, OPEN_TO, ORDER_DEADLINE, PALLETS_FREE, PALLET_FEE, PALLET_ITEMS, RETURN_FEE, STAFF_MAX, STRAZ, TAP_ITEMS,
+  TILL_TAP_QUEUE_MIN,
 } from '@/sim/economy/catalog';
 import { nextRankAt, rankFor } from '@/sim/economy/progress';
 import { FATIGUE } from '@/sim/economy/tycoon/fatigue';
@@ -14,8 +15,9 @@ import { TRUST, turnoverBonusShare } from '@/sim/economy/tycoon/trust';
 import { WUT } from '@/sim/economy/tycoon/wut';
 import { plural } from '../game/format';
 import { SPEEDS } from '../game/Hud';
+import { ENERGY_TITLE } from '../game/tapBlock';
 import { stringLiterals } from '../game/sourceLiterals';
-import { dayLengthText, daySeconds, finalRank, hourOf, howToDetails, howToPoints, marginRange, num, percent, trustBonusSteps } from './howToText';
+import { dayLengthText, daySeconds, finalRank, hourOf, hours, howToDetails, howToPoints, marginRange, num, percent, trustBonusSteps } from './howToText';
 
 /** Cały tekst okna: punkty, potem tytuły i akapity szczegółów, jeden na wiersz. */
 const text = (): string => [...howToPoints(), ...howToDetails().flatMap((s) => [s.title, ...s.paragraphs])].join('\n');
@@ -37,6 +39,14 @@ describe('funkcje pomocnicze treści', () => {
     expect(percent(0.012)).toBe('1,2%');
     expect(percent(0.035)).toBe('3,5%');
     expect(percent(1 - 0.15 - 0.6)).toBe('25%');   // 0,25000000000000006 w liczbach zmiennoprzecinkowych
+  });
+
+  it('hours: liczba godzin z odmianą, ułamek w dopełniaczu („7,5 godziny”)', () => {
+    expect(hours(1)).toBe('1 godzinę');
+    expect(hours(2)).toBe('2 godziny');
+    expect(hours(6)).toBe('6 godzin');
+    expect(hours(7.5)).toBe('7,5 godziny');
+    expect(hours(22)).toBe('22 godziny');
   });
 
   it('hourOf: godzina z minuty doby bez zera z przodu', () => {
@@ -148,14 +158,14 @@ describe('treść okna „Jak grać”', () => {
     expect(t).toContain(`od ${Math.round(CAT_INFO.alkohol.margin * 100)}% (alkohol) do ${Math.round(CAT_INFO.slodycze.margin * 100)}% (słodycze) ceny towaru`);
     expect(t).toContain(`hot-dogi i kawa dają ${Math.round(HOT.margin * 100)}%`);
     expect(HOT.margin).toBeGreaterThan(marginRange().high.margin);   // „dają więcej niż reszta” jest prawdą
-    expect(t).toContain(`Opłata franczyzowa to ${FRANCHISE_FEE_FIXED} zł plus ${Math.round(FRANCHISE_FEE_SHARE * 100)}% obrotu.`);
+    expect(t).toContain(`Opłata franczyzowa to ${FRANCHISE_FEE_FIXED} zł plus ${percent(FRANCHISE_FEE_SHARE)} obrotu.`);
     expect(t).toContain(`Do ${pl(WUT.threshold * 100)}% obrotu miesiąca pokrywa je Centrala, ponad limit płacisz Ty`);
     expect(t).toContain('Ubytki to przeterminowany towar, kradzieże, pomyłki i „zapomniane” skany');
   });
 
   it('każda liczba w szczegółach to stała gry: palety, ludzie, czas', () => {
     const t = detailsText();
-    expect(t).toContain(`Zamówienie na jutro zamyka się o ${ORDER_DEADLINE / 60}:00, a dostawa przyjeżdża zwykle o ${DELIVERY_AT / 60}:00`);
+    expect(t).toContain(`Zamówienie na jutro zamyka się o ${ORDER_DEADLINE / 60}:00, dostawa przyjeżdża zwykle o ${DELIVERY_AT / 60}:00`);
     expect(t).toContain('Domyślnie zamawia Asystent Traszki, ręcznie ustawisz je w zakładce Palety');
     expect(t).toContain(`Palety ponad ${PALLETS_FREE} w zamówieniu kosztują po ${PALLET_FEE} zł`);
     expect(t).toContain(`liczy ${RETURN_FEE} zł`);
@@ -166,11 +176,22 @@ describe('treść okna „Jak grać”', () => {
 
   it('Straż, limit asystenta i stukanie: liczby ze stałych (zmiany z 29.10.2026)', () => {
     const t = detailsText();
-    expect(t).toContain(`rozładują w ${pl(ASSISTANT_UNLOAD_MIN / 60)} godzin: więcej ludzi, więcej towaru`);
-    expect(t).toContain(`Straż Miejska zagląda od ${STRAZ.from / 60}:00, gdy palety stoją pod sklepem dłużej niż ${pl(STRAZ.graceMin / 60)} godziny`);
-    expect(t).toContain('Najpierw upomina, a mandat daje przy kolejnym obchodzie tego dnia');
-    expect(t).toContain(`kolejka czekałaby dłużej niż ${TILL_TAP_QUEUE_MIN} minuty`);
-    expect(t).toContain(`masz ich ${FATIGUE.pool} na dobę, a noc oddaje ${FATIGUE.nightRecovery}`);
+    expect(t).toContain(`rozładują w ${hours(ASSISTANT_UNLOAD_MIN / 60)}: więcej ludzi, więcej towaru`);
+    expect(t).toContain(`Straż Miejska zagląda od ${STRAZ.from / 60}:00, gdy palety stoją pod sklepem ponad ${hours(STRAZ.graceMin / 60)}: najpierw upomina, potem daje mandat`);
+    expect(t).toContain(`kolejka czekałaby ponad ${TILL_TAP_QUEUE_MIN} minuty`);
+  });
+
+  it('„Twoje ręce” zaczyna się od zdania o Siłach z dymka paska, a liczby w nim są ze stałych', () => {
+    const hands = howToDetails().find((s) => s.title === 'Twoje ręce')!;
+    expect(hands.paragraphs[0]).toBe(ENERGY_TITLE);
+    expect(ENERGY_TITLE).toMatch(/^Siły to Twoja energia na stukanie: /);
+    expect(ENERGY_TITLE).toContain(`stuknięcie w paletę to ${TAP_ITEMS} sztuk`);
+    expect(ENERGY_TITLE).toContain(`noc oddaje ${FATIGUE.nightRecovery}`);
+    // „cała pula to mniej więcej jedna paleta”: pełne siły w stuknięciach w paletę dają tyle sztuk co jedna paleta (±15%)
+    expect(ENERGY_TITLE).toContain('cała pula to mniej więcej jedna paleta');
+    const poolItems = FATIGUE.pool / FATIGUE.tapCost.paleta * TAP_ITEMS;
+    expect(Math.abs(poolItems / PALLET_ITEMS - 1)).toBeLessThanOrEqual(0.15);
+    expect(words(ENERGY_TITLE)).toBeLessThanOrEqual(32);   // jedno zdanie
   });
 
   it('każda liczba w szczegółach to stała gry: zaufanie, umowa i cele', () => {
@@ -178,8 +199,8 @@ describe('treść okna „Jak grać”', () => {
     expect(t).toContain(`Zaufanie startuje od ${TRUST.start} punktów`);
     expect(t).toContain(`trafione KPI (+${KPI.trustHit}) i miesiąc na plusie (+${TRUST.monthProfit})`);
     expect(t).toContain(`mandat (−${-TRUST.fine}), miesiąc na minusie (−${-TRUST.monthLoss}) i palety odesłane (−${-TRUST.returnedPallet}) lub zabrane (−${-TRUST.driverReturned})`);
-    expect([turnoverBonusShare(69), turnoverBonusShare(70), turnoverBonusShare(84), turnoverBonusShare(85)]).toEqual([0, 0.03, 0.03, 0.035]);
-    expect(t).toContain('Od 70 punktów Centrala oddaje premię od obrotu: 3%, od 85 punktów 3,5%.');
+    expect([turnoverBonusShare(69), turnoverBonusShare(70), turnoverBonusShare(84), turnoverBonusShare(85)]).toEqual([0, 0.02, 0.02, 0.03]);
+    expect(t).toContain('Od 70 punktów Centrala oddaje premię od obrotu: 2%, od 85 punktów 3%.');
     expect(t).toContain(`Umowę stracisz przy zerze na koniec miesiąca albo gdy dwa raporty z rzędu zastaną Cię z gotówką poniżej −${pl(-BANKRUPTCY_AT)} zł`);
     expect(t).toContain(`nietrafiony odbiera zaufanie (−${-KPI.trustMiss})`);
   });

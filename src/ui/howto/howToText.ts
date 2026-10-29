@@ -3,7 +3,6 @@ import {
   MINUTES_PER_SECOND_OPEN, OPEN_FROM, OPEN_TO, ORDER_DEADLINE, PALLETS_FREE, PALLET_FEE, RETURN_FEE, STAFF_MAX, STRAZ, TILL_TAP_QUEUE_MIN, type Cat,
 } from '@/sim/economy/catalog';
 import { nextRankAt, rankFor } from '@/sim/economy/progress';
-import { FATIGUE } from '@/sim/economy/tycoon/fatigue';
 import { KPI } from '@/sim/economy/tycoon/kpi';
 import { PROFILE_LABEL, PROFILE_ORDER, STAFF_PROFILES, type StaffTask } from '@/sim/economy/tycoon/staff';
 import { SUNDAY_TRAFFIC } from '@/sim/economy/tycoon/sunday';
@@ -11,6 +10,7 @@ import { TRUST, turnoverBonusShare } from '@/sim/economy/tycoon/trust';
 import { WUT } from '@/sim/economy/tycoon/wut';
 import { plural, signedPts, signedZl, zl } from '../game/format';
 import { SPEEDS } from '../game/Hud';
+import { ENERGY_TITLE } from '../game/tapBlock';
 
 /*
  * Treść okna „Jak grać”: na górze kilka punktów „co robić” (jedno zdanie: co kliknąć albo ustawić i po co), pod spodem krótkie
@@ -72,6 +72,8 @@ export function marginRange(): { low: { label: string; margin: number }; high: {
 }
 
 const persons = (n: number): string => `${num(n)} ${plural(n, 'osobę', 'osoby', 'osób')}`;
+/** Godziny po polsku: „2 godziny”, „6 godzin”, a ułamek „7,5 godziny”. */
+export const hours = (n: number): string => `${num(n)} ${Number.isInteger(n) ? plural(n, 'godzinę', 'godziny', 'godzin') : 'godziny'}`;
 
 
 /** Czym ludzie zajmują się najpierw w danym profilu pracy: pierwsze zadanie z kolejki profilu (biernik, po „co ludzie robią najpierw”). */
@@ -119,24 +121,24 @@ export function howToDetails(): HowToSection[] {
     {
       title: 'Palety i dostawy',
       paragraphs: [
-        `Zamówienie na jutro zamyka się o ${hourOf(ORDER_DEADLINE)}, a dostawa przyjeżdża zwykle o ${hourOf(DELIVERY_AT)}. Domyślnie zamawia Asystent Traszki, ręcznie ustawisz je w zakładce Palety.`,
-        `Asystent zamawia najwyżej tyle palet, ile ludzie poza kasą rozładują w ${num(ASSISTANT_UNLOAD_MIN / 60)} godzin: więcej ludzi, więcej towaru.`,
-        `Straż Miejska zagląda od ${hourOf(STRAZ.from)}, gdy palety stoją pod sklepem dłużej niż ${num(STRAZ.graceMin / 60)} godziny. Najpierw upomina, a mandat daje przy kolejnym obchodzie tego dnia.`,
+        `Zamówienie na jutro zamyka się o ${hourOf(ORDER_DEADLINE)}, dostawa przyjeżdża zwykle o ${hourOf(DELIVERY_AT)}. Domyślnie zamawia Asystent Traszki, ręcznie ustawisz je w zakładce Palety.`,
+        `Asystent zamawia najwyżej tyle palet, ile ludzie poza kasą rozładują w ${hours(ASSISTANT_UNLOAD_MIN / 60)}: więcej ludzi, więcej towaru.`,
+        `Straż Miejska zagląda od ${hourOf(STRAZ.from)}, gdy palety stoją pod sklepem ponad ${hours(STRAZ.graceMin / 60)}: najpierw upomina, potem daje mandat.`,
         `Palety ponad ${PALLETS_FREE} w zamówieniu kosztują po ${zl(PALLET_FEE)}, a gdy brakuje miejsca, kierowca zabiera paletę i liczy ${zl(RETURN_FEE)}.`,
-        'Paleta przestawiona „Do sali” przeszkadza klientom. Worki po rozładunku ktoś musi wynieść, inaczej zajmą zaplecze.',
+        'Paleta „Do sali” przeszkadza klientom. Worki po rozładunku trzeba wynieść, inaczej zajmą zaplecze.',
       ],
     },
     {
       title: 'Twoje ręce',
       paragraphs: [
-        `Stuknięcie w paletę przyspiesza rozładunek. W kasę stukasz tylko wtedy, gdy przy kasie nikogo nie ma albo kolejka czekałaby dłużej niż ${num(TILL_TAP_QUEUE_MIN)} minuty.`,
-        `Każde stuknięcie zużywa siły: masz ich ${num(FATIGUE.pool)} na dobę, a noc oddaje ${num(FATIGUE.nightRecovery)}.`,
+        ENERGY_TITLE,
+        `W kasę stukasz, gdy nikt przy niej nie stoi albo kolejka czekałaby ponad ${num(TILL_TAP_QUEUE_MIN)} minuty.`,
       ],
     },
     {
       title: 'Ludzie',
       paragraphs: [
-        `Najwięcej zatrudnisz ${persons(STAFF_MAX)}. Osobę możesz przypiąć do zadania, a „Kto co robi teraz” pokazuje, kto gdzie jest.`,
+        `Najwięcej zatrudnisz ${persons(STAFF_MAX)}. Osobę przypniesz do zadania, a „Kto co robi teraz” pokazuje, kto gdzie jest.`,
       ],
     },
     {
