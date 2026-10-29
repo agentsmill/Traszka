@@ -12,6 +12,13 @@ export const int = (n: number): string => Math.round(n).toLocaleString('pl-PL');
 /** Osoby albo osobominuty z jednym miejscem po przecinku, bez zbędnego „,0”: „1”, „0,4”, „1,7”. */
 export const people = (n: number): string => (Math.round(n * 10) / 10).toLocaleString('pl-PL');
 
+/** Zmiana punktów (zaufanie) ze znakiem: „+3”, „−2,5”. Jedno miejsce po przecinku, tylko gdy liczba nie jest całkowita; zero bez znaku. */
+export function signedPts(n: number): string {
+  const r = Math.round(n * 10) / 10;
+  if (r === 0) return '0';
+  return `${r > 0 ? '+' : '−'}${Math.abs(r).toLocaleString('pl-PL', { maximumFractionDigits: 1 })}`;
+}
+
 export const pct = (x: number): string => `${Math.round(Math.max(0, Math.min(1, x)) * 100)}%`;
 
 /** „1 h 20 min”, „35 min” */

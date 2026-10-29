@@ -5,7 +5,7 @@ import { CardDesk } from './game/cards';
 import { Hud } from './game/Hud';
 import {
   CelebrationBanner, ClickerBar, ComboChip, FirstDayHints, PrestigeModal, ReportModal, RotateButtons, SelectionCard, Settings,
-  StoreBadge, Toasts, WelcomeModal,
+  StoreBadge, StoryModal, Toasts, WelcomeModal,
 } from './game/overlays';
 import { Sheet, TabBar } from './game/panels';
 import { Notice } from './Notice';
@@ -49,6 +49,7 @@ export function App({ controls, game }: { controls: Controls | null; game: GameA
           <Sheet game={game} />
           <TabBar />
           <CardDesk game={game} />
+          <StoryModal />
           <ReportModal game={game} />
           <WelcomeModal game={game} />
           <PrestigeModal game={game} />

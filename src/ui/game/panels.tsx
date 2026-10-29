@@ -2,11 +2,12 @@ import type { ComponentChildren } from 'preact';
 import { CATS, CAT_INFO, HIRE_COST, HOUR_CURVE, ORDER_DEADLINE, RESTOCK_RATE, RETURN_FEE, SCO_RATE, STAFF_MAX, TILL_RATE, UNLOAD_RATE, WAGE_PER_DAY } from '@/sim/economy/catalog';
 import { formatClock, minuteOfDay } from '@/sim/economy/calendar';
 import {
-  LOC_LABEL, assistantSuggestion, effects, expectedDailyCustomers, freeSpots, isClosedForRemont, kpiMetricsOf, level, nextRemont, plPallets,
-  robotFleet, slotFree, slotUsage, upgradeBlocker, workshopUnlocked, type EconomyState,
+  LOC_LABEL, assistantSuggestion, effects, expectedDailyCustomers, freeSpots, isClosedForRemont, kpiMetricsOf, kpiScaleOf, level, nextRemont,
+  plPallets, robotFleet, slotFree, slotUsage, upgradeBlocker, workshopUnlocked, type EconomyState,
 } from '@/sim/economy/economy';
 import { MILESTONES } from '@/sim/economy/milestones';
 import { KPI, KPI_FLAVOR, kpiProgress, kpiTitle } from '@/sim/economy/tycoon/kpi';
+import { dayOfMinute, roundNice } from '@/sim/economy/tycoon/time';
 import { WEATHER_LABEL } from '@/sim/economy/tycoon/cleanliness';
 import { staffOnShift } from '@/sim/economy/tycoon/shift';
 import { PROFILE_HINT, PROFILE_LABEL, STAFF_PROFILES, STAFF_TASKS, TASK_LABEL } from '@/sim/economy/tycoon/staff';
@@ -90,7 +91,7 @@ export function Sheet({ game }: { game: GameActions }) {
         {open === 'palety' && <PalletsPanel s={view.s} info={view.info} game={game} v={view.v} />}
         {open === 'ludzie' && <PeoplePanel s={view.s} info={view.info} game={game} v={view.v} />}
         {open === 'ulepszenia' && <ShopPanel s={view.s} info={view.info} game={game} v={view.v} />}
-        {open === 'cele' && <GoalsPanel s={view.s} game={game} v={view.v} />}
+        {open === 'cele' && <GoalsPanel s={view.s} info={view.info} game={game} v={view.v} />}
       </div>
     </aside>
   );
@@ -417,12 +418,16 @@ export function ShopPanel({ s, info, game }: { s: EconomyState; info: StoreInfo;
 
 // --- Cele i wyniki -------------------------------------------------------------------------------------
 
-export function GoalsPanel({ s }: { s: EconomyState; game: GameActions; v: number }) {
+export function GoalsPanel({ s, info }: { s: EconomyState; info: StoreInfo; game: GameActions; v: number }) {
   const t = s.today;
   const m = s.month;
   const profit = (k: typeof t): number => k.margin + k.bonus + k.other - k.wages - k.media - k.fee - k.fines - k.logistics - k.wut;
   const kpi = s.tycoon.kpi;
   const kpiDone = kpiProgress(kpi, kpiMetricsOf(s));
+  const daysLeft = Math.max(0, kpi.toDay - dayOfMinute(s.minute));
+  // premia i XP liczy sim przy zamknięciu tygodnia (closeKpiWeek); tu ta sama zasada na bieżącej skali sklepu, stąd „ok.”
+  const kpiBonus = roundNice(KPI.bonusShare * Math.max(0, kpiScaleOf(s, info).dailyMargin));
+  const kpiXp = KPI.xpBase + KPI.xpPerLevel * Math.max(1, s.level);
   const goals = MILESTONES.filter((x) => !s.milestones.includes(x.id)).slice(0, 3);
   const best = Math.max(1, ...s.history.map((h) => Math.abs(h.profit)));
   const nextRank = nextRankAt(s.level);
@@ -434,8 +439,10 @@ export function GoalsPanel({ s }: { s: EconomyState; game: GameActions; v: numbe
           <div class="tt-row"><b>{kpiTitle(kpi.kind, kpi.target, int)}</b></div>
           <Bar value={kpiDone} />
           <div class="tt-row"><span class="tt-muted">{KPI_FLAVOR[kpi.kind]}</span><span class="tt-muted">{pct(kpiDone)}</span></div>
+          <div class="tt-kpi-days">do niedzieli: <b>{daysLeft === 0 ? 'dziś' : `${daysLeft} ${plural(daysLeft, 'dzień', 'dni', 'dni')}`}</b></div>
+          <div class="tt-kpi-reward">Nagroda: zaufanie +{KPI.trustHit}, premia ok. {zl(kpiBonus)}, +{kpiXp} XP</div>
         </div>
-        <p class="tt-hint">Rozliczenie w niedzielę o 23:00. Trafiony cel: zaufanie Centrali +{KPI.trustHit}, premia i XP; nietrafiony: zaufanie −{-KPI.trustMiss}.</p>
+        <p class="tt-hint">Rozliczenie w niedzielę o 23:00. Nietrafiony cel: zaufanie −{-KPI.trustMiss}.</p>
       </Section>
       <Section title={`Poziom ${s.level}: ${rankFor(s.level)}`}>
         <Bar value={s.xp / xpToNext(s.level)} />

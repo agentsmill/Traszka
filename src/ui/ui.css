@@ -1082,6 +1082,18 @@
   background: rgba(29, 107, 58, 0.06);
 }
 
+.tt-kpi-days {
+  margin-top: 2px;
+  font-size: 13px;
+}
+
+.tt-kpi-reward {
+  margin-top: 4px;
+  color: var(--tt-green-dark);
+  font-size: 13px;
+  font-weight: 700;
+}
+
 .tt-item.locked {
   opacity: 0.75;
 }
@@ -1785,4 +1797,95 @@
     max-height: 88vh;
     max-height: 88dvh;
   }
+}
+
+/* --- Raport miesięczny i okno ważnego zdarzenia ------------------------------------------------------ */
+
+.tt-neg {
+  color: #b3261e;
+}
+
+.tt-pos {
+  color: var(--tt-green-dark);
+}
+
+/* Nagłówek raportu: wynik miesiąca dużą liczbą, pod nim obrót, klienci i gotówka. */
+.tt-report-head {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  margin: 2px 0 12px;
+  text-align: center;
+}
+
+.tt-report-result {
+  font-size: 32px;
+  font-weight: 900;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.tt-report-result.pos {
+  color: var(--tt-green-dark);
+}
+
+.tt-report-result.neg {
+  color: #b3261e;
+}
+
+.tt-report-lines {
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(29, 107, 58, 0.2);
+}
+
+.tt-report-trust {
+  margin-top: 10px;
+}
+
+.tt-report-trust .tt-reason {
+  padding: 2px 0 2px 10px;
+  font-size: 13px;
+}
+
+.tt-report-hint {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--tt-orange);
+  border-radius: 12px;
+  background: rgba(255, 138, 31, 0.14);
+  font-weight: 600;
+}
+
+.tt-report-hint > b {
+  color: #9a4a00;
+  font-size: 11px;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+}
+
+.tt-report-kpi {
+  margin: 10px 0 0;
+  color: #4a5a50;
+  font-size: 13px;
+}
+
+/* Raport jest długi (na telefonie przewija się): „Dalej” zostaje przy dolnej krawędzi okna, a treść przesuwa się pod nim. */
+.tt-modal-foot {
+  position: sticky;
+  bottom: 0;
+  padding-bottom: 8px;
+  background: var(--tt-cream);
+}
+
+/* Tekst wpisu może mieć kilka wierszy (lista odblokowań w oknie poziomu): \n zostaje podziałem wiersza. */
+.tt-story-text {
+  margin: 8px 0 4px;
+  font-size: 15px;
+  line-height: 1.5;
+  white-space: pre-line;
 }

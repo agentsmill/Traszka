@@ -126,6 +126,22 @@ function forgetToast(t: Toast): void {
   toastTimers.delete(t.id);
 }
 
+/**
+ * Ważne zdarzenia fabularne (nowy próg zaufania, koniec remontu, poziom z odblokowaniami): gra stoi, aż gracz kliknie „OK”
+ * (`noticeLevel` w tycoon/notices.ts rozstrzyga, co się tu łapie; `handleEvents` w game/actions.ts je kieruje). Kolejka, bo
+ * w jednej chwili gry może ich przyjść kilka. `text` może mieć kilka wierszy (rozdzielonych `\n`). Nie jest częścią zapisu.
+ */
+export interface Story { id: number; title: string; text: string }
+export const story: Signal<Story[]> = signal<Story[]>([]);
+let storyId = 0;
+export function pushStory(title: string, text: string): void {
+  story.value = [...story.value, { id: ++storyId, title, text }];
+}
+/** „OK”: zdejmuje pierwszy wpis (pusta kolejka zostaje pusta). */
+export function dismissStory(): void {
+  if (story.value.length > 0) story.value = story.value.slice(1);
+}
+
 /** Wielki komunikat nagrody na środku ekranu (nowy poziom). Znika sam. */
 export interface Celebration { title: string; subtitle: string; lines: string[] }
 export const celebration: Signal<Celebration | null> = signal<Celebration | null>(null);

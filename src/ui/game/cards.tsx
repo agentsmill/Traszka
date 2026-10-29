@@ -1,6 +1,6 @@
 import { signal, type Signal } from '@preact/signals';
 import { cardDef, fillText, visibleCards } from '@/sim/economy/tycoon/cards';
-import { econ, report, type GameActions } from '../state';
+import { econ, report, story, type GameActions } from '../state';
 import { deltaLines } from './cardText';
 import { int, people } from './format';
 
@@ -17,12 +17,13 @@ export const OKOLNIK_BADGE = 'Okólnik Centrali';
  * Okno karty decyzji (spec §7.5): pokazuje się, gdy na biurku leży widoczna karta, i trzyma grę (symulacja stoi na minucie
  * karty, `cardsBlocking`), aż gracz wybierze. Nie ma krzyżyka ani zamykania tłem: karta czeka na odpowiedź. Pokazuje
  * najstarszą widoczną kartę, po odpowiedzi wchodzi następna. Odpowiedź domyślna jest zaznaczona z góry, więc gracz, który
- * nie czyta, naciska samo „Zatwierdź”. Raport miesiąca (i koniec gry) mają pierwszeństwo: karta czeka za nimi.
+ * nie czyta, naciska samo „Zatwierdź”. Raport miesiąca (i koniec gry) oraz ważne zdarzenie czekające na „OK” (`StoryModal`) mają
+ * pierwszeństwo: karta czeka za nimi (gra i tak stoi, a dwa okna naraz zasłaniałyby się nawzajem).
  * Wynik odpowiedzi to toast ze zdarzenia `card-result` (`handleEvents`), tu go nie dublujemy.
  */
 export function CardDesk({ game }: { game: GameActions }) {
   const view = econ.value;
-  if (!view || report.value || view.s.gameOver) return null;
+  if (!view || report.value || story.value.length > 0 || view.s.gameOver) return null;
   const cards = visibleCards(view.s.tycoon.cards, view.s.minute);
   const card = cards[0];
   if (!card) return null;

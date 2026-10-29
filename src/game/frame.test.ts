@@ -126,6 +126,7 @@ describe('isModalOpen', () => {
     ui.start.value = null;
     ui.welcome.value = null;
     ui.showPrestige.value = false;
+    ui.story.value = [];
   });
 
   it('bez żadnego okna gra się toczy, z sesją i bez niej', () => {
@@ -151,6 +152,17 @@ describe('isModalOpen', () => {
     expect(isModalOpen()).toBe(true);
     ui.showPrestige.value = false;
 
+    expect(isModalOpen()).toBe(false);
+  });
+
+  it('ważne zdarzenie czekające na „OK” zatrzymuje grę, a po „OK” (pusta kolejka) gra rusza', () => {
+    ui.pushStory('Remont zakończony', 'Sklep otwarty.');
+    expect(isModalOpen()).toBe(true);
+    expect(isModalOpen(fresh())).toBe(true);
+    ui.pushStory('Poziom 5', 'Nagroda');
+    ui.dismissStory();
+    expect(isModalOpen()).toBe(true);   // zostało jeszcze jedno
+    ui.dismissStory();
     expect(isModalOpen()).toBe(false);
   });
 

@@ -13,6 +13,7 @@ import { replayRun, type LogEntry } from '@/sim/run';
 import * as ui from '@/ui/state';
 import { AFTER, createShell, dispatchCommand, markOffLog, type CommandEffects, type GameShell, type ShellEffects, type ShellScene } from './actions';
 import type { CashierLook } from './cashier';
+import { isModalOpen } from './frame';
 import { MemoryStorage } from './memoryStorage';
 import { loadMeta, type Meta } from './meta';
 import {
@@ -502,11 +503,12 @@ describe('powłoka gry (createShell)', () => {
     ui.tab.value = null;
     ui.showSettings.value = false;
     ui.toasts.value = [];
+    ui.story.value = [];
     ui.econ.value = null;
     ui.ephemeral.value = false;
     ui.seed.value = '';
   });
-  afterEach(() => { vi.useRealTimers(); });
+  afterEach(() => { vi.useRealTimers(); ui.story.value = []; });
 
   describe('rozruch', () => {
     it('dźwięk i wibracja z mety, widok mety dla interfejsu, bez komunikatu', () => {
@@ -1187,17 +1189,81 @@ describe('powłoka gry (createShell)', () => {
       expect(withWord).toEqual(['okolnik-premia#0']);
     });
 
-    it('handleEvents: nowy poziom to feta (tytuł, ranga, odblokowania), dźwięk, wibracja i konfetti, bez toastu', () => {
+    it('handleEvents: nowy poziom z odblokowaniami to feta (baner, dźwięk, wibracja, konfetti) i okno „Poziom N” z listą, bez toastu', () => {
       const h = harness();
       open(h);
-      h.shell.handleEvents([{ kind: 'levelup', text: 'Poziom 5! Nowa półka', level: 5, unlocks: ['Ulotki', 'Kasa'] }]);
+      h.shell.handleEvents([{ kind: 'levelup', text: 'Poziom 5! Nagroda: +500 zł i +3 Ogonków.', level: 5, unlocks: ['Ulotki', 'Kasa'] }]);
       expect(ui.celebration.value).toEqual({
         title: 'POZIOM 5',
         subtitle: expect.any(String) as string,
-        lines: ['Nowa półka', '🔓 Ulotki', '🔓 Kasa'],
+        lines: ['Nagroda: +500 zł i +3 Ogonków.', '🔓 Ulotki', '🔓 Kasa'],
       });
       expect(h.calls).toEqual([['play', 'levelup'], ['buzz', [30, 40, 30]], ['confetti', undefined, undefined, undefined]]);
       expect(ui.toasts.value).toEqual([]);
+      expect(ui.story.value).toHaveLength(1);
+      expect(ui.story.value[0]).toMatchObject({ title: 'Poziom 5', text: 'Nagroda: +500 zł i +3 Ogonków.\n🔓 Ulotki\n🔓 Kasa' });
+      expect(isModalOpen()).toBe(true);   // gra czeka na „OK”
+    });
+
+    it('handleEvents: nowy poziom bez odblokowań to sama feta, gra się nie zatrzymuje', () => {
+      const h = harness();
+      open(h);
+      h.shell.handleEvents([{ kind: 'levelup', text: 'Poziom 6! Nagroda: +100 zł.', level: 6, unlocks: [] }]);
+      h.shell.handleEvents([{ kind: 'levelup', text: 'Poziom 7! Nagroda: +100 zł.', level: 7 }]);
+      expect(ui.celebration.value?.title).toBe('POZIOM 7');
+      expect(ui.story.value).toEqual([]);
+      expect(ui.toasts.value).toEqual([]);
+      expect(isModalOpen()).toBe(false);
+    });
+
+    it('handleEvents: nowy próg zaufania i koniec remontu czekają na „OK” zamiast toastu', () => {
+      const h = harness();
+      open(h);
+      h.shell.handleEvents([
+        { kind: 'trust-tier', text: 'Zaufanie Centrali: Zaufany partner. Lody wiralowe przyjeżdżają do Ciebie.' },
+        { kind: 'remont', text: 'Remont zakończony! Sklep otwarty, pachnie nową farbą i starym kurzem.' },
+      ]);
+      expect(ui.story.value.map((e) => [e.title, e.text])).toEqual([
+        ['Zaufanie Centrali', 'Zaufanie Centrali: Zaufany partner. Lody wiralowe przyjeżdżają do Ciebie.'],
+        ['Remont zakończony', 'Remont zakończony! Sklep otwarty, pachnie nową farbą i starym kurzem.'],
+      ]);
+      expect(ui.toasts.value).toEqual([]);
+      expect(isModalOpen()).toBe(true);
+    });
+
+    it('handleEvents: raport miesiąca ma własne okno, koniec gry też (okno końca współpracy), więc żadne nie trafia do story', () => {
+      const h = harness();
+      const s = open(h);
+      const report = { label: 'wrzesień', counters: s.econ.total, profit: 1, cash: 2, comment: 'ok', detail: null };
+      h.shell.handleEvents([
+        { kind: 'month', text: 'Raport za wrzesień', report },
+        { kind: 'gameover', text: 'Centrala wypowiada umowę franczyzową.' },
+      ]);
+      expect(ui.report.value).toBe(report);
+      expect(ui.story.value).toEqual([]);
+    });
+
+    it('handleEvents: karta, wynik karty, KPI tygodnia, dostawa, mandat i reszta informacji zostają toastami, bez zatrzymania gry', () => {
+      const h = harness();
+      open(h);
+      h.shell.handleEvents([{ kind: 'kpi-week', text: 'KPI trafione' }]);
+      h.shell.handleEvents([{ kind: 'card', text: 'Karta' }, { kind: 'card-result', text: 'Wynik' }]);
+      h.shell.handleEvents([{ kind: 'fine', text: 'Mandat' }, { kind: 'milestone', text: 'Kamień milowy' }]);
+      expect(ui.story.value).toEqual([]);
+      expect(ui.toasts.value.map((t) => t.text)).toEqual(['Mandat', 'Kamień milowy']);   // najwyżej dwa naraz
+      expect(isModalOpen()).toBe(false);
+    });
+
+    it('nowy sklep (setSeed) i „zacznij od nowa” zdejmują wpisy ze starej gry', () => {
+      const h = harness();
+      open(h);
+      h.shell.handleEvents([{ kind: 'trust-tier', text: 'Zaufanie Centrali: Na wylocie.' }]);
+      expect(ui.story.value).toHaveLength(1);
+      h.shell.game.restart();
+      expect(ui.story.value).toEqual([]);
+      h.shell.handleEvents([{ kind: 'remont', text: 'Remont zakończony!' }]);
+      expect(h.shell.setSeed('inny-sklep', true)).toBe(true);
+      expect(ui.story.value).toEqual([]);
     });
 
     it('handleEvents: złota paleta rozładowana to konfetti na środku ekranu, inne złote tylko dźwięk', () => {

@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { WAGE_PER_DAY } from '@/sim/economy/catalog';
-import { createEconomy, nextRemont, upgradeBlocker, type CommandResult, type EconomyState } from '@/sim/economy/economy';
+import { createEconomy, kpiScaleOf, nextRemont, upgradeBlocker, type CommandResult, type EconomyState } from '@/sim/economy/economy';
 import type { Command } from '@/sim/economy/commands';
-import { kpiTitle } from '@/sim/economy/tycoon/kpi';
+import { KPI, KPI_FLAVOR, kpiTitle } from '@/sim/economy/tycoon/kpi';
+import { dayOfMinute, roundNice } from '@/sim/economy/tycoon/time';
 import { staffOnShift } from '@/sim/economy/tycoon/shift';
 import { PROFILE_HINT, PROFILE_LABEL, STAFF_PROFILES, STAFF_TASKS, TASK_LABEL, type StaffTask } from '@/sim/economy/tycoon/staff';
 import { trustTier } from '@/sim/economy/tycoon/trust';
@@ -200,10 +201,10 @@ describe('panele wysyłają polecenia przez game.dispatch, a nie wołają symula
   });
 
   it('cele: KPI tygodnia pokazuje tytuł celu i postęp, a nie ma już zleceń do odbioru', () => {
-    const { s } = rich();
+    const { s, info } = rich();
     Object.assign(s.tycoon.kpi, { kind: 'klienci', target: 400, start: { ...s.tycoon.kpi.start, customers: s.total.customers - 100 } });
     const game = fakeGame();
-    const tree = GoalsPanel({ s, game, v: 1 });
+    const tree = GoalsPanel({ s, info, game, v: 1 });
     const section = sectionTitled(tree, 'KPI tygodnia');
     const plain = (text: string): string => text.replace(/[\s\u00a0\u202f]/g, ' ');
     expect(plain(textOf(section))).toContain(plain(kpiTitle('klienci', 400, (n) => Math.round(n).toLocaleString('pl-PL'))));
@@ -213,11 +214,67 @@ describe('panele wysyłają polecenia przez game.dispatch, a nie wołają symula
     expect(game.dispatch).not.toHaveBeenCalled();
   });
 
+  describe('cele: KPI tygodnia, dni do niedzieli i nagroda', () => {
+    const plain = (text: string): string => text.replace(/[\s\u00a0\u202f]/g, ' ');
+    const kpiSection = (daysLeft: number): { text: string; s: EconomyState; info: StoreInfo; section: Vnode } => {
+      const { s, info } = rich();
+      s.minute = 20 * 24 * 60 + 12 * 60;
+      Object.assign(s.tycoon.kpi, { kind: 'kawy', target: 150, toDay: dayOfMinute(s.minute) + daysLeft });
+      const section = sectionTitled(GoalsPanel({ s, info, game: fakeGame(), v: 1 }), 'KPI tygodnia');
+      return { text: plain(textOf(section)), s, info, section };
+    };
+
+    it('tytuł celu, tekst Centrali i pasek postępu z kpiProgress', () => {
+      const { text, section } = kpiSection(3);
+      expect(text).toContain(plain(kpiTitle('kawy', 150, (n) => Math.round(n).toLocaleString('pl-PL'))));
+      expect(text).toContain(KPI_FLAVOR.kawy);
+      expect(walk(section).some((v) => v.type === Bar)).toBe(true);
+    });
+
+    it('„do niedzieli: N dni” liczy dni od dziś do ostatniego dnia tygodnia, z odmianą i dzisiejszą niedzielą', () => {
+      expect(kpiSection(3).text).toContain('do niedzieli: 3 dni');
+      expect(kpiSection(2).text).toContain('do niedzieli: 2 dni');
+      expect(kpiSection(1).text).toContain('do niedzieli: 1 dzień');
+      expect(kpiSection(0).text).toContain('do niedzieli: dziś');
+      expect(kpiSection(5).text).toContain('do niedzieli: 5 dni');
+    });
+
+    it('nagroda: zaufanie +3, premia ok. (część marży dnia) i XP za poziom', () => {
+      const { text, s, info } = kpiSection(3);
+      const bonus = roundNice(KPI.bonusShare * kpiScaleOf(s, info).dailyMargin);
+      expect(bonus).toBeGreaterThan(0);
+      expect(text).toContain(`zaufanie +${KPI.trustHit}`);
+      expect(text).toContain(`premia ok. ${plain(zl(bonus))}`);
+      expect(text).toContain(`+${KPI.xpBase + KPI.xpPerLevel * s.level} XP`);   // poziom 30: 340
+    });
+
+    it('XP w nagrodzie idzie za poziom gracza', () => {
+      const low = kpiSection(3);
+      low.s.level = 2;
+      const lowText = plain(textOf(sectionTitled(GoalsPanel({ s: low.s, info: low.info, game: fakeGame(), v: 1 }), 'KPI tygodnia')));
+      expect(lowText).toContain(`+${KPI.xpBase + KPI.xpPerLevel * 2} XP`);
+      expect(lowText).not.toContain(`+${KPI.xpBase + KPI.xpPerLevel * 30} XP`);
+    });
+
+    it('kara za nietrafiony cel jest w podpowiedzi, a rozliczenie w niedzielę', () => {
+      const { text } = kpiSection(3);
+      expect(text).toContain('niedzielę');
+      expect(text).toContain(`zaufanie −${-KPI.trustMiss}`);
+    });
+  });
+
+  it('cele: kamienie milowe zostają pod KPI i poziomem', () => {
+    const { s, info } = rich();
+    const titles = walk(GoalsPanel({ s, info, game: fakeGame(), v: 1 })).filter((v) => typeof v.props.title === 'string').map((v) => v.props.title);
+    expect(titles.indexOf('KPI tygodnia')).toBe(0);
+    expect(titles.indexOf('Kamienie milowe')).toBeGreaterThan(titles.indexOf('KPI tygodnia'));
+  });
+
   it('cele: premie Centrali wchodzą do marży i do wyniku miesiąca (osobny licznik bonus)', () => {
-    const { s } = rich();
+    const { s, info } = rich();
     Object.assign(s.today, { margin: 1000, other: 200, bonus: 300 });
     Object.assign(s.month, { margin: 10_000, other: 500, bonus: 700, wages: 2000, media: 600, fines: 100, logistics: 200, wut: 150 });
-    const tree = GoalsPanel({ s, game: fakeGame(), v: 1 });
+    const tree = GoalsPanel({ s, info, game: fakeGame(), v: 1 });
     const value = (section: string, label: string): string => {
       const row = walk(sectionTitled(tree, section)).find((v) => v.props.label === label);
       return textOf(row!).replace(/[\s\u00a0\u202f]/g, '');

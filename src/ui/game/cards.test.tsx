@@ -6,11 +6,11 @@ import { cardDef, fillText, type AnswerInstance, type CardInstance } from '@/sim
 import { computeStoreInfo, type StoreInfo } from '@/sim/economy/storeInfo';
 import { layoutFor } from '@/sim/store/layoutFor';
 import { App } from '../App';
-import { econ, report, type Controls, type GameActions } from '../state';
+import { econ, pushStory, report, story, type Controls, type GameActions } from '../state';
 import { CardDesk, picked } from './cards';
 import { deltaLines } from './cardText';
 import { int, people } from './format';
-import { PrestigeModal, ReportModal, Settings, WelcomeModal } from './overlays';
+import { PrestigeModal, ReportModal, Settings, StoryModal, WelcomeModal } from './overlays';
 import { Sheet, TabBar } from './panels';
 import { buttonLabelled, buttonsOf, click, labels, textOf, walk, type Vnode } from './vnodeTree';
 
@@ -68,7 +68,7 @@ const checked = (tree: Vnode): boolean[] => answerButtons(tree).map((b) => b.pro
 const desk = (game: GameActions): Vnode => CardDesk({ game }) as Vnode;
 
 beforeEach(() => { picked.value = null; });
-afterEach(() => { econ.value = null; report.value = null; picked.value = null; });
+afterEach(() => { econ.value = null; report.value = null; picked.value = null; story.value = []; });
 
 describe('okno karty dnia: kiedy się pokazuje', () => {
   it('bez gry albo bez widocznej karty nic nie widać', () => {
@@ -92,6 +92,14 @@ describe('okno karty dnia: kiedy się pokazuje', () => {
     report.value = { label: 'wrzesień' } as unknown as MonthReport;
     expect(CardDesk({ game: fakeGame() })).toBeNull();
     report.value = null;
+    expect(CardDesk({ game: fakeGame() })).not.toBeNull();
+  });
+
+  it('ważne zdarzenie czekające na „OK” ma pierwszeństwo: karta czeka za nim, bo gra i tak stoi', () => {
+    publish(fefo(1, 1000));
+    pushStory('Remont zakończony', 'Sklep otwarty.');
+    expect(CardDesk({ game: fakeGame() })).toBeNull();
+    story.value = [];
     expect(CardDesk({ game: fakeGame() })).not.toBeNull();
   });
 
@@ -313,9 +321,11 @@ describe('okno karty dnia w układzie nakładek', () => {
   it('leży nad panelami i zakładkami, a pod raportem miesiąca, powitaniem, prestiżem i ustawieniami (kolejność w DOM to warstwy)', () => {
     const order = walk(App({ controls: {} as Controls, game: fakeGame() })).map((v) => v.type);
     const at = (c: unknown): number => order.indexOf(c as never);
-    for (const c of [CardDesk, Sheet, TabBar, ReportModal, WelcomeModal, PrestigeModal, Settings]) expect(at(c), String(c)).toBeGreaterThanOrEqual(0);
+    for (const c of [CardDesk, StoryModal, Sheet, TabBar, ReportModal, WelcomeModal, PrestigeModal, Settings]) expect(at(c), String(c)).toBeGreaterThanOrEqual(0);
     expect(at(CardDesk)).toBeGreaterThan(at(Sheet));
     expect(at(CardDesk)).toBeGreaterThan(at(TabBar));
+    expect(at(StoryModal)).toBeGreaterThan(at(CardDesk));   // raport > ważne zdarzenie > karta decyzji > reszta
+    expect(at(StoryModal)).toBeLessThan(at(ReportModal));
     expect(at(CardDesk)).toBeLessThan(at(ReportModal));
     expect(at(CardDesk)).toBeLessThan(at(WelcomeModal));
     expect(at(CardDesk)).toBeLessThan(at(PrestigeModal));

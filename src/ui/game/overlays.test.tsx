@@ -7,15 +7,17 @@ import { computeStoreInfo, type StoreInfo } from '@/sim/economy/storeInfo';
 import { layoutFor } from '@/sim/store/layoutFor';
 import { FATIGUE } from '@/sim/economy/tycoon/fatigue';
 import type { CardInstance } from '@/sim/economy/tycoon/cards';
+import { hintText, reportCommentText, type TycoonMonthReport } from '@/sim/economy/tycoon/report';
 import { trustTier } from '@/sim/economy/tycoon/trust';
 import {
-  econ, ephemeral, hints, report, selection, showHints, showSettings, speed, start, tab, welcome, type GameActions,
+  econ, ephemeral, hints, pushStory, report, selection, showHints, showSettings, speed, start, story, tab, welcome, type GameActions,
 } from '../state';
 import { TrustChip } from './Hud';
+import { int, zl } from './format';
 import { Bar } from './panels';
 import {
-  ClickerBar, ComboChip, EPHEMERAL_BADGE, EPHEMERAL_NOTE, FIRST_DAY_HINTS, FirstDayHints, RESTART_CONFIRM, ReportBody, SelectionCard,
-  StoreActions, StoreBadge,
+  ClickerBar, ComboChip, EPHEMERAL_BADGE, EPHEMERAL_NOTE, FIRST_DAY_HINTS, FirstDayHints, RESTART_CONFIRM, ReportBody, ReportModal,
+  SelectionCard, StoreActions, StoreBadge, StoryModal,
 } from './overlays';
 import { buttonsOf, click, labels, textOf, walk, type Vnode } from './vnodeTree';
 
@@ -30,6 +32,7 @@ const resetSignals = (): void => {
   start.value = null;
   showSettings.value = false;
   speed.value = 1;
+  story.value = [];
   showHints([]);
 };
 beforeEach(resetSignals);
@@ -396,5 +399,263 @@ describe('znaczek zaufania Centrali w pasku u góry', () => {
 
   it('wartość jest zaokrąglona do całości', () => {
     expect(textOf(TrustChip({ value: 61.6 }))).toContain('62');
+  });
+});
+
+// --- Raport miesięczny z danymi tycoona ---------------------------------------------------------------------------
+
+/** Spacje tysięcy bywają twarde (U+00A0, U+202F): do porównań zamieniamy je na zwykłe. */
+const plain = (text: string): string => text.replace(/[\s\u00a0\u202f]/g, ' ');
+/** Kwota po polsku jak w oknie, spacje zwykłe (pl-PL grupuje dopiero od 5 cyfr: „2950 zł”, ale „10 000 zł”). */
+const z = (n: number): string => plain(zl(n));
+
+/** Raport tycoona: wynik 2 950 zł, zaufanie 62 → 58 (pięć przyczyn), 3 KPI trafione i 1 nietrafione, wskazówka o WUT. */
+function detailed(over: Partial<TycoonMonthReport> = {}): TycoonMonthReport {
+  return {
+    monthIndex: 0,
+    lines: [
+      { key: 'marza', amount: 10_000 }, { key: 'premie', amount: 300 }, { key: 'inne', amount: 500 },
+      { key: 'place', amount: -2000 }, { key: 'media', amount: -600 }, { key: 'oplata', amount: -4500 },
+      { key: 'mandaty', amount: -100 }, { key: 'wut', amount: -450 }, { key: 'logistyka', amount: -200 },
+    ],
+    result: 2950,
+    revenue: 51_000,
+    trust: { start: 62, end: 58, delta: -4, reasons: [['mandaty', -4], ['kpi', 3], ['wynik', -2.5], ['audyt', -1], ['inne', 0.5]] },
+    cleanlinessAvg: 71,
+    kpi: { hit: 3, miss: 1 },
+    commentId: 'plus-0',
+    hint: { id: 'wut', value: 450, impact: 450 },
+    ...over,
+  };
+}
+function monthReport(detail: TycoonMonthReport | null, over: Partial<MonthReport> = {}): MonthReport {
+  const counters = { ...emptyCounters(), customers: 3200, lost: 40, revenue: 51_000, investments: 1500 };
+  return { label: 'wrzesień 2026', counters, profit: detail?.result ?? 0, cash: 12_345, comment: detail ? reportCommentText(detail.commentId) : 'Stary komentarz.', detail, ...over };
+}
+/** Element drzewa o danej klasie. */
+const byClass = (tree: Vnode, cls: string): Vnode => {
+  const found = walk(tree).filter((v) => String(v.props.class ?? '').split(' ').includes(cls));
+  if (found.length !== 1) throw new Error(`Elementów .${cls}: ${found.length}, oczekiwano jednego.`);
+  return found[0]!;
+};
+
+describe('raport miesięczny z danymi tycoona (detail)', () => {
+  const tree = (d = detailed(), r = monthReport(d)): Vnode => ReportBody({ r }) as Vnode;
+
+  it('na górze wynik miesiąca dużą liczbą ze znakiem: plus na zielono, minus na czerwono', () => {
+    const head = byClass(tree(), 'tt-report-result');
+    expect(plain(textOf(head))).toBe(`+${z(2950)}`);
+    expect(head.props.class).toContain('pos');
+    const loss = detailed({ result: -12_340 });
+    const negative = byClass(tree(loss), 'tt-report-result');
+    expect(plain(textOf(negative))).toBe('−12 340 zł');
+    expect(negative.props.class).toContain('neg');
+  });
+
+  it('pozycje z etykietami z REPORT_LINE_LABEL, w kolejności raportu; koszty ze znakiem minus, przychody bez', () => {
+    const rows = walk(tree()).filter((v) => v.props.class === 'tt-row')
+      .map((v) => [textOf((v.props.children as Vnode[])[0]), plain(textOf((v.props.children as Vnode[])[1]))] as const);
+    expect(rows.slice(0, 9)).toEqual([
+      ['Marża ze sprzedaży', '10 000 zł'], ['Premie Centrali', '300 zł'], ['Inne przychody i koszty', '500 zł'],
+      ['Płace', `−${z(2000)}`], ['Media', '−600 zł'], ['Opłata franczyzowa', `−${z(4500)}`],
+      ['Mandaty i kary', '−100 zł'], ['WUT ponad próg', '−450 zł'], ['Logistyka', '−200 zł'],
+    ]);
+  });
+
+  it('pozycje „inne” na minusie i zero nie psują znaków (bez „−0”)', () => {
+    const d = detailed({ lines: [{ key: 'inne', amount: -300 }, { key: 'premie', amount: 0 }, { key: 'wut', amount: 0 - 0.2 }] });
+    const text = plain(textOf(tree(d)));
+    expect(text).toContain('Inne przychody i koszty−300 zł');
+    expect(text).toContain('Premie Centrali0 zł');
+    expect(text).toContain('WUT ponad próg0 zł');
+    expect(text).not.toContain('−0');
+  });
+
+  it('obrót, klienci i gotówka na koniec zostają w raporcie (pod wynikiem)', () => {
+    const text = plain(textOf(byClass(tree(), 'tt-report-head')));
+    expect(text).toContain('51 000 zł');
+    expect(text).toContain(`klienci ${plain(int(3200))}`);
+    expect(text).toContain('utraceni: 40');
+    expect(text).toContain('12 345 zł');
+    expect(text).toContain(`inwestycje: ${z(1500)}`);
+  });
+
+  it('zaufanie: „start → koniec” i najwyżej cztery przyczyny z etykietami, ze znakiem i jednym miejscem po przecinku', () => {
+    const trust = byClass(tree(), 'tt-report-trust');
+    expect(textOf(trust)).toContain('Zaufanie Centrali: 62 → 58');
+    const reasons = walk(trust).filter((v) => String(v.props.class).split(' ').includes('tt-reason'))
+      .map((v) => [textOf((v.props.children as Vnode[])[0]), textOf((v.props.children as Vnode[])[1])] as const);
+    expect(reasons).toEqual([
+      ['Mandaty', '−4'], ['KPI tygodnia', '+3'], ['Wynik miesiąca', '−2,5'], ['Audyty i tajemniczy klient', '−1'],
+    ]);   // piąta („Inne”) już się nie mieści
+    expect(textOf(trust)).not.toContain('Inne');
+  });
+
+  it('zaufanie bez zmian w miesiącu: pokazuje to jednym zdaniem zamiast pustej listy', () => {
+    const d = detailed({ trust: { start: 70, end: 70, delta: 0, reasons: [] } });
+    const trust = byClass(tree(d), 'tt-report-trust');
+    expect(textOf(trust)).toContain('Zaufanie Centrali: 70 → 70');
+    expect(textOf(trust)).toContain('Bez zmian');
+  });
+
+  it('komentarz Centrali z commentId, kursywą (.tt-quote)', () => {
+    const quote = byClass(tree(), 'tt-quote');
+    expect(textOf(quote)).toContain(reportCommentText('plus-0'));
+    expect(textOf(quote)).toContain('Centrala');
+  });
+
+  it('wskazówka (hintText z polskim formatowaniem liczb) w wyróżnionym polu', () => {
+    const d = detailed({ hint: { id: 'wut', value: 45_000, impact: 45_000 } });
+    const hint = byClass(tree(d), 'tt-report-hint');
+    expect(textOf(hint)).toContain(hintText(d.hint, int));
+    expect(plain(textOf(hint))).toContain('Ubytki ponad próg WUT: 45 000 zł');
+  });
+
+  it('KPI w miesiącu: „X trafione, Y nietrafione”; bez rozliczonego tygodnia osobne zdanie', () => {
+    expect(textOf(byClass(tree(), 'tt-report-kpi'))).toBe('KPI tygodnia w miesiącu: 3 trafione, 1 nietrafione');
+    const none = byClass(tree(detailed({ kpi: { hit: 0, miss: 0 } })), 'tt-report-kpi');
+    expect(textOf(none)).not.toContain('trafione');
+    expect(textOf(none)).toContain('KPI tygodnia');
+  });
+
+  it('kolejność sekcji: wynik, pozycje, zaufanie, komentarz, wskazówka, KPI', () => {
+    const order = ['tt-report-head', 'tt-report-lines', 'tt-report-trust', 'tt-quote', 'tt-report-hint', 'tt-report-kpi'];
+    const classes = walk(tree()).map((v) => String(v.props.class ?? '').split(' ')[0]);
+    const at = order.map((c) => classes.indexOf(c));
+    expect(at.every((i) => i >= 0)).toBe(true);
+    expect([...at].sort((a, b) => a - b)).toEqual(at);
+  });
+
+  it('pozycje razem dają wynik w nagłówku', () => {
+    const d = detailed();
+    expect(d.lines.reduce((n, l) => n + l.amount, 0)).toBe(d.result);
+    expect(plain(textOf(byClass(tree(d), 'tt-report-result')))).toBe(`+${z(2950)}`);
+  });
+
+  it('bez porady o zatrudnianiu przy kolejce: wskazówka o kolejce odsyła do profilu i kasy samoobsługowej', () => {
+    const d = detailed({ hint: { id: 'kolejka', value: 80, impact: 900 } });
+    const text = textOf(byClass(tree(d), 'tt-report-hint'));
+    expect(text).not.toMatch(/zatrudni/i);
+    expect(text).toContain('Kolejka odstraszyła 80 klientów');
+  });
+
+  it('raport bez detail (stary zapis) zostaje dawnym widokiem: te same wiersze, komentarz ze stanu, bez sekcji tycoona', () => {
+    const old = tree(undefined, monthReport(null));
+    const labelsOf = walk(old).filter((v) => String(v.props.class).startsWith('tt-row')).map((v) => textOf((v.props.children as Vnode[])[0]));
+    expect(labelsOf).toEqual(['Klienci', 'Obrót', 'Marża i inne przychody', 'Premie Centrali', 'Płace', 'Media', 'Opłata franczyzowa', 'Mandaty', 'WUT ponad próg', 'Logistyka',
+      'Wynik miesiąca', 'Inwestycje', 'Gotówka na koniec']);
+    expect(textOf(byClass(old, 'tt-quote'))).toContain('Stary komentarz.');
+    expect(walk(old).some((v) => String(v.props.class ?? '').startsWith('tt-report-'))).toBe(false);
+  });
+});
+
+describe('okno raportu miesiąca', () => {
+  const closeButton = (tree: Vnode, label: string): Vnode => buttonsOf(tree).find((b) => textOf(b) === label)!;
+  /** Tekst okna razem z treścią raportu (komponent `ReportBody` w drzewie nie jest wołany, więc wołamy go z jego propsami). */
+  const textWithBody = (tree: Vnode): string => {
+    const body = walk(tree).find((v) => v.type === ReportBody);
+    return textOf(tree) + (body ? textOf(ReportBody(body.props as unknown as Parameters<typeof ReportBody>[0])) : '');
+  };
+
+  it('„Dalej” zamyka raport (sygnał report) i nie rusza gry', () => {
+    report.value = monthReport(detailed());
+    const tree = ReportModal({ game: fakeGame() }) as Vnode;
+    expect(textOf(tree)).toContain('Raport: wrzesień 2026');
+    click(closeButton(tree, 'Dalej'));
+    expect(report.value).toBeNull();
+  });
+
+  it('bez raportu i bez końca gry nic nie widać', () => {
+    expect(ReportModal({ game: fakeGame() })).toBeNull();
+  });
+
+  it('koniec gry z danymi tycoona: okno „Koniec współpracy” z pozycjami, bez monetarnego komentarza, z „Zacznij od nowa”', () => {
+    const { s, info } = base();
+    s.gameOver = true;
+    s.lastReport = monthReport(detailed({ result: -9000, commentId: 'strata-0' }));
+    publishState(s, info);
+    const game = fakeGame();
+    const tree = ReportModal({ game }) as Vnode;
+    expect(textOf(tree)).toContain('Koniec współpracy');
+    expect(textWithBody(tree)).toContain('WUT ponad próg');
+    expect(textWithBody(tree)).toContain('Centrala dziękuje za współpracę');
+    expect(textWithBody(tree)).not.toContain(reportCommentText('strata-0'));
+    expect(labels(tree)).toEqual(['Zacznij od nowa']);
+    click(closeButton(tree, 'Zacznij od nowa'));
+    expect(game.restart).toHaveBeenCalledTimes(1);
+  });
+
+  it('koniec gry w zapisie sprzed raportu: samo wypowiedzenie umowy', () => {
+    const { s, info } = base();
+    s.gameOver = true;
+    s.lastReport = null;
+    publishState(s, info);
+    const tree = ReportModal({ game: fakeGame() }) as Vnode;
+    expect(textOf(tree)).toContain('Koniec współpracy');
+    expect(textWithBody(tree)).toContain('Centrala dziękuje za współpracę');
+    expect(labels(tree)).toEqual(['Zacznij od nowa']);
+  });
+
+  it('koniec gry z raportem bez detail (stary zapis): dawne wiersze i wypowiedzenie', () => {
+    const { s, info } = base();
+    s.gameOver = true;
+    s.lastReport = monthReport(null);
+    publishState(s, info);
+    const tree = ReportModal({ game: fakeGame() }) as Vnode;
+    expect(textWithBody(tree)).toContain('Gotówka na koniec');
+    expect(textWithBody(tree)).toContain('Centrala dziękuje za współpracę');
+    expect(textWithBody(tree)).not.toContain('Stary komentarz.');
+  });
+});
+
+describe('okno ważnego zdarzenia (StoryModal): gra czeka na „OK”', () => {
+  it('bez wpisów nic nie widać', () => {
+    expect(StoryModal()).toBeNull();
+  });
+
+  it('pokazuje pierwszy wpis: tytuł, tekst (wiersze listy zostają) i jedyny przycisk „OK”', () => {
+    pushStory('Poziom 5', 'Nagroda: +500 zł.\n🔓 Ulotki\n🔓 Kasa');
+    pushStory('Remont zakończony', 'Sklep otwarty.');
+    const tree = StoryModal() as Vnode;
+    const dialog = walk(tree).find((v) => v.props.role === 'dialog')!;
+    expect(dialog.props['aria-label']).toBe('Poziom 5');
+    expect(dialog.props['aria-modal']).toBe('true');
+    expect(textOf(walk(tree).find((v) => v.type === 'h2'))).toBe('Poziom 5');
+    expect(textOf(byClass(tree, 'tt-story-text'))).toBe('Nagroda: +500 zł.\n🔓 Ulotki\n🔓 Kasa');
+    expect(textOf(tree)).not.toContain('Sklep otwarty');
+    expect(labels(tree)).toEqual(['OK']);
+  });
+
+  it('„OK” zdejmuje wpis: pokazuje się następny, a po ostatnim okno znika', () => {
+    pushStory('Zaufanie Centrali', 'Zaufanie Centrali: W porządku.');
+    pushStory('Remont zakończony', 'Sklep otwarty.');
+    click(buttonsOf(StoryModal())[0]!);
+    expect(story.value.map((e) => e.title)).toEqual(['Remont zakończony']);
+    const second = StoryModal() as Vnode;
+    expect(textOf(second)).toContain('Remont zakończony');
+    click(buttonsOf(second)[0]!);
+    expect(story.value).toEqual([]);
+    expect(StoryModal()).toBeNull();
+  });
+
+  it('raport miesiąca i koniec gry mają pierwszeństwo: okno czeka za nimi', () => {
+    pushStory('Zaufanie Centrali', 'Tekst.');
+    report.value = monthReport(detailed());
+    expect(StoryModal()).toBeNull();
+    report.value = null;
+    expect(StoryModal()).not.toBeNull();
+    const { s, info } = base();
+    s.gameOver = true;
+    publishState(s, info);
+    expect(StoryModal()).toBeNull();
+  });
+});
+
+describe('podpowiedź pierwszego dnia o kolejce', () => {
+  it('nie radzi zatrudniać: kasa obsługuje najwyżej jedną osobę na stanowisko, więc kolejki nie skróci kolejny pracownik', () => {
+    const hint = FIRST_DAY_HINTS.find((h) => h.includes('Kolejka'))!;
+    expect(hint).toBeDefined();
+    expect(hint).not.toMatch(/zatrudni/i);
+    expect(hint).toContain('kasę samoobsługową');
   });
 });

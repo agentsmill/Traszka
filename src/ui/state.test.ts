@@ -1,15 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NOTICE_MAX_READ_MS, NOTICE_MIN_READ_MS, readMs } from '@/sim/economy/tycoon/notices';
-import { HINT_MS, hints, nextHint, pushToast, showHints, toasts } from './state';
+import { HINT_MS, dismissStory, hints, nextHint, pushStory, pushToast, showHints, story, toasts } from './state';
 
 beforeEach(() => {
   vi.useFakeTimers();
   showHints([]);
   toasts.value = [];
+  story.value = [];
 });
 afterEach(() => {
   showHints([]);
   toasts.value = [];
+  story.value = [];
   vi.useRealTimers();
 });
 
@@ -125,5 +127,33 @@ describe('toasty: czas na przeczytanie zależy od długości tekstu (bez migania
     vi.advanceTimersByTime(NOTICE_MIN_READ_MS);
     expect(visible()).toEqual([]);
     expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+describe('ważne zdarzenia czekające na „OK” (story)', () => {
+  it('pushStory dokłada wpis na koniec kolejki z kolejnym id, dismissStory zdejmuje pierwszy', () => {
+    expect(story.value).toEqual([]);
+    pushStory('Remont zakończony', 'Sklep otwarty.');
+    pushStory('Poziom 5', 'Nagroda\n🔓 Ulotki');
+    expect(story.value.map((e) => [e.title, e.text])).toEqual([['Remont zakończony', 'Sklep otwarty.'], ['Poziom 5', 'Nagroda\n🔓 Ulotki']]);
+    const [first, second] = story.value;
+    expect(second!.id).toBeGreaterThan(first!.id);
+    dismissStory();
+    expect(story.value).toEqual([second]);
+    dismissStory();
+    expect(story.value).toEqual([]);
+  });
+
+  it('dismissStory na pustej kolejce niczego nie robi', () => {
+    const before = story.value;
+    dismissStory();
+    expect(story.value).toBe(before);
+  });
+
+  it('ten sam tekst dwa razy to dwa wpisy (każdy wymaga własnego „OK”), z różnymi id', () => {
+    pushStory('t', 'x');
+    pushStory('t', 'x');
+    expect(story.value).toHaveLength(2);
+    expect(story.value[0]!.id).not.toBe(story.value[1]!.id);
   });
 });

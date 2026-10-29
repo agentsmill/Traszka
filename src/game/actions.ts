@@ -1,9 +1,10 @@
 import type { CharacterFactory } from '@/render/characters/characterFactory';
 import { applyCommand, type Command } from '@/sim/economy/commands';
 import {
-  awaitingDecision, grantDaily, grantOffline, processLevels, stepMinute, tapCombo, type CommandResult, type EconEvent,
+  awaitingDecision, grantDaily, grantOffline, processLevels, stepMinute, tapCombo, type CommandResult, type EconEvent, type EconEventKind,
 } from '@/sim/economy/economy';
 import { rankFor } from '@/sim/economy/progress';
+import { noticeLevel } from '@/sim/economy/tycoon/notices';
 import type { Sfx } from '@/ui/sfx';
 import * as ui from '@/ui/state';
 import type { CashierLook } from './cashier';
@@ -264,6 +265,16 @@ function sfxOf(e: EconEvent): Sfx | undefined {
   return EVENT_SFX[e.kind];
 }
 
+/**
+ * Tytuł okna „OK” dla ważnych zdarzeń (poziom `story` w `notices.ts`: to tam żyje lista, co czeka na gracza). Rodzaj bez wpisu,
+ * który kiedyś dostanie poziom `story`, też trafi do okna, pod ogólnym tytułem. Karta (`decision`) tu nie wchodzi: zatrzymuje
+ * ją symulacja (`cardsBlocking`), a okno karty jest osobne (`CardDesk`).
+ */
+const STORY_TITLE: Partial<Record<EconEventKind, string>> = { 'trust-tier': 'Zaufanie Centrali', remont: 'Remont zakończony' };
+const STORY_FALLBACK_TITLE = 'Ważne zdarzenie';
+/** Mają własne okno, więc nie idą do wspólnego: raport miesiąca (`ui.report`) i koniec gry (okno końca współpracy w `ReportModal`, z `gameOver`). */
+const OWN_WINDOW: ReadonlySet<EconEventKind> = new Set<EconEventKind>(['month', 'gameover']);
+
 const money = (n: number): string => `+${n.toLocaleString('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} zł`;
 
 /**
@@ -303,14 +314,17 @@ export function createShell(deps: ShellDeps): GameShell {
       if (e.kind === 'day') { persist(); continue; }
       if (e.kind === 'month' && e.report) ui.report.value = e.report;
       if (e.kind === 'levelup' && e.level) {
-        ui.celebration.value = {
-          title: `POZIOM ${e.level}`,
-          subtitle: rankFor(e.level),
-          lines: [e.text.replace(/^Poziom \d+! /, ''), ...(e.unlocks ?? []).map((u) => `🔓 ${u}`)],
-        };
+        const lines = [e.text.replace(/^Poziom \d+! /, ''), ...(e.unlocks ?? []).map((u) => `🔓 ${u}`)];
+        ui.celebration.value = { title: `POZIOM ${e.level}`, subtitle: rankFor(e.level), lines };
         fx.play('levelup');
         fx.buzz([30, 40, 30]);
         fx.confetti();
+        // baner mija sam, a poziom, który coś odblokowuje, czeka jeszcze na „OK” (zwykły awans zostaje samą fetą)
+        if (noticeLevel('levelup', { unlocks: e.unlocks?.length ?? 0 }) === 'story') ui.pushStory(`Poziom ${e.level}`, lines.join('\n'));
+        continue;
+      }
+      if (!OWN_WINDOW.has(e.kind) && noticeLevel(e.kind, { unlocks: e.unlocks?.length ?? 0 }) === 'story') {
+        ui.pushStory(STORY_TITLE[e.kind] ?? STORY_FALLBACK_TITLE, e.text);
         continue;
       }
       const sfx = sfxOf(e);
@@ -355,6 +369,7 @@ export function createShell(deps: ShellDeps): GameShell {
     }
     deps.writeSeedToUrl(next);
     ui.seed.value = next;
+    ui.story.value = [];   // wpisy z poprzedniego sklepu (także po „Zacznij od nowa”) nie mają czego czekać w nowym
     publish();
     persist();
     if (shell.session?.loadNotice) fx.notice(shell.session.loadNotice);
