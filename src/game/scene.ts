@@ -404,6 +404,8 @@ export function createSceneHost(deps: SceneDeps): SceneHost {
         if (staffView) {
           staffView.setCharacterShadows(QUALITY[ctx.preset].characterShadows);
           staffView.update(realDt * speed, animDt, cues.serving);
+          // drzwi na zaplecze otwierają się przed załogą (klienci tam nie chodzą), w tym samym czasie widoku co jej marsz
+          loaded.view.updateDoor(realDt * speed, staffView.crew.members);
         }
         if (cashierView) {
           cashierView.setCharacterShadows(QUALITY[ctx.preset].characterShadows);
