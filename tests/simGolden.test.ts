@@ -7,6 +7,7 @@ import { RANKED_SEASON_END_MINUTE, RANKED_SEASON_MONTHS, seasonScore } from '@/s
 import { freshRun, replayRun, type LogEntry, type RunRecord } from '@/sim/run';
 import { SIM_VERSION } from '@/sim/simVersion';
 import { GENERATOR_VERSION } from '@/sim/store/generateStore';
+import { layoutFor } from '@/sim/store/layoutFor';
 
 /**
  * „Złote odtworzenie”: stały bieg (seed + dziennik poleceń zbudowany w tym pliku) odtwarzany `replayRun` do kilku punktów
@@ -14,6 +15,9 @@ import { GENERATOR_VERSION } from '@/sim/store/generateStore';
  * `simVersion` równa się `SIM_VERSION` (src/sim/simVersion.ts), więc ta sama wersja ma zawsze dawać ten sam wynik. Ktoś, kto zmieni
  * wynik symulacji (ekonomia, generator sklepu, polecenia, kolejność odtwarzania) i nie podbije wersji, zobaczy tu czerwony test
  * z nowym skrótem. Test nie czyta zegara ani `Math.random`, a bieg wynika wyłącznie z poniższych stałych.
+ *
+ * Generator sklepów pilnuje osobny, tańszy skrót (`LAYOUTS_GOLDEN`): układy `layoutFor(seed, 0)` ze stałej listy seedów pod
+ * `GENERATOR_VERSION`. Sam numer wersji nie wie, że ktoś zmienił wygląd sklepu i go nie podbił; skrót to wyłapuje bez odtwarzania biegu.
  */
 
 /**
@@ -251,6 +255,80 @@ describe('SIM_VERSION i tabela GOLDEN', () => {
       : `Wynik symulacji się zmienił. Jeśli to zamierzone, podbij SIM_VERSION w src/sim/simVersion.ts i dopisz \`${SIM_VERSION + 1}: '${actual}'\` do GOLDEN; jeśli nie, cofnij zmianę.`;
     expect(actual, hint).toBe(expected);
   }, TIMEOUT);
+});
+
+// --- Skrót układów sklepu -------------------------------------------------------------------------------------------------------
+
+/**
+ * Seedy, z których powstają układy do skrótu. Lista jest stała (zmiana listy zmienia skrót, więc dopisuj wersję w
+ * `LAYOUTS_GOLDEN`): zwykłe słowa i numery, sąsiednie lokale `seed·N` (gdy generator nie złoży sklepu z samego seeda, gra próbuje
+ * `seed·1` … `seed·5`), polskie litery, emoji (także sekwencja ze spójnikiem ZWJ) oraz skrajne długości (1 znak i 40 znaków, limit seeda
+ * w grze). Pięćdziesiąt układów składa się w kilkadziesiąt milisekund (pomiar z 29.10.2026: 36 ms przy obciążonej maszynie), więc
+ * nie trzeba ograniczać listy.
+ */
+const LAYOUT_SEEDS: readonly string[] = [
+  // zwykłe słowa i numery
+  'traszka-1', 'pawilon-7', 'rynek-3', 'kamienica-3', 'alfa', 'beta-12', 'seed-0', 'seed-2', 'seed-5', 'seed-6',
+  'seed-16', 'pierogi-731', 'bigos', 'zapiekanka', 'oscypek', 'sernik-8', 'makowiec', 'barszcz-2', 'kluski-9', 'placek-4',
+  'x', '12345', 'x'.repeat(40),
+  // sąsiednie lokale
+  'pierogi-731·1', 'pierogi-731·2', 'pierogi-731·5', 'rynek-3·1', 'kamienica-3·3', `${'x'.repeat(40)}·5`,
+  // polskie litery
+  'kiełbasa-42', 'żółw-3', 'gęś', 'źdźbło-8', 'łódź-1', 'ząb-77', 'wąż-5', 'świętokrzyska-12', 'Zażółć gęślą jaźń', 'ŻÓŁĆ-9', 'sklep-ąę',
+  // emoji
+  '👩‍🍳 kuchnia', 'żurek 🥣', '🐸', '🐸🐸🐸', '🏪-1', '🍞', '🥟-7', 'pierogi 🥟·2', 'rynek ☕', 'koło 🚲',
+];
+
+/**
+ * Wersja generatora → skrót układów `layoutFor(seed, 0)` dla `LAYOUT_SEEDS` (`layoutsDigest`). Podbicie `GENERATOR_VERSION` dopisuje
+ * tu nowy wpis; stare zostają jako historia, jak w `GOLDEN`.
+ */
+const LAYOUTS_GOLDEN: Record<number, string> = {
+  1: 'ed4ce4c64290f0d98b8f8d5740600b052543735c9c5e8c2978fcc141783d7b1f',
+};
+
+/** Skrót SHA-256 z kanonicznego JSON-a układów poziomu 0 wszystkich seedów z `LAYOUT_SEEDS` (razem z seedami, więc zmiana listy też go zmienia). */
+function layoutsDigest(): string {
+  const layouts = LAYOUT_SEEDS.map((seed) => ({ seed, layout: layoutFor(seed, 0) }));
+  return createHash('sha256').update(canonical(layouts)).digest('hex');
+}
+
+describe('GENERATOR_VERSION i tabela LAYOUTS_GOLDEN', () => {
+  it('GENERATOR_VERSION to dodatnia liczba całkowita', () => {
+    expect(Number.isInteger(GENERATOR_VERSION) && GENERATOR_VERSION >= 1, `GENERATOR_VERSION = ${GENERATOR_VERSION}`).toBe(true);
+  });
+
+  it('dla GENERATOR_VERSION jest wpis w LAYOUTS_GOLDEN', () => {
+    expect(LAYOUTS_GOLDEN, `GENERATOR_VERSION = ${GENERATOR_VERSION} nie ma wpisu w LAYOUTS_GOLDEN: dopisz \`${GENERATOR_VERSION}: '<skrót>'\`; skrót wypisuje test poniżej`)
+      .toHaveProperty(String(GENERATOR_VERSION));
+  });
+
+  it('LAYOUTS_GOLDEN nie ma wpisów dla wersji wyższych niż GENERATOR_VERSION', () => {
+    const ahead = Object.keys(LAYOUTS_GOLDEN).map(Number).filter((v) => v > GENERATOR_VERSION);
+    expect(ahead, 'wpis z przyszłej wersji: podbij GENERATOR_VERSION w src/sim/store/generateStore.ts albo usuń wpis').toEqual([]);
+  });
+
+  it('każdy wpis LAYOUTS_GOLDEN to skrót SHA-256 zapisany szesnastkowo', () => {
+    for (const [version, hash] of Object.entries(LAYOUTS_GOLDEN)) expect(hash, `wersja ${version}`).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it('lista seedów nie ma powtórzeń i obejmuje zwykłe słowa, sąsiednie lokale, polskie litery i emoji', () => {
+    expect(new Set(LAYOUT_SEEDS).size, 'powtórzony seed na liście').toBe(LAYOUT_SEEDS.length);
+    expect(LAYOUT_SEEDS.some((s) => /^[a-z0-9-]+$/.test(s)), 'zwykłe słowo').toBe(true);
+    expect(LAYOUT_SEEDS.some((s) => /·[1-5]$/.test(s)), 'sąsiedni lokal seed·N').toBe(true);
+    expect(LAYOUT_SEEDS.some((s) => /[ąćęłńóśźż]/i.test(s)), 'polskie litery').toBe(true);
+    expect(LAYOUT_SEEDS.some((s) => /\p{Extended_Pictographic}/u.test(s)), 'emoji').toBe(true);
+  });
+
+  it('skrót układów sklepu równa się LAYOUTS_GOLDEN[GENERATOR_VERSION]', () => {
+    const actual = layoutsDigest();
+    const expected = LAYOUTS_GOLDEN[GENERATOR_VERSION];
+    // Po samym podbiciu GENERATOR_VERSION (bez wpisu) układy nie zmieniły się od podbicia, więc podpowiedź mówi o brakującym wpisie dla tej wersji.
+    const hint = expected === undefined
+      ? `GENERATOR_VERSION = ${GENERATOR_VERSION} nie ma wpisu w LAYOUTS_GOLDEN. Dopisz \`${GENERATOR_VERSION}: '${actual}'\`.`
+      : `Generator złożył inne sklepy niż dotąd. Jeśli to zamierzone, podbij GENERATOR_VERSION w src/sim/store/generateStore.ts (a z nim SIM_VERSION i, gdy stare biegi mają dalej przechodzić, KNOWN_GENERATOR_VERSIONS w src/server/config.ts) i dopisz \`${GENERATOR_VERSION + 1}: '${actual}'\` do LAYOUTS_GOLDEN; jeśli nie, cofnij zmianę.`;
+    expect(actual, hint).toBe(expected);
+  });
 });
 
 describe('dziennik stałego biegu naprawdę coś robi', () => {

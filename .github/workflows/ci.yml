@@ -25,4 +25,4 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
-      - run: npm run build   # tsc --noEmit && vite build
+      - run: npm run build   # build:judge (bundle sędziego rankingu) && tsc --noEmit && vite build
