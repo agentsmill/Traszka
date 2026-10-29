@@ -125,3 +125,86 @@
   border-radius: 10px;
   background: rgba(243, 146, 0, 0.15);
 }
+
+/*
+ * Okno końca sezonu (FinishWindow): kolumna, wynik na górze, komunikat Centrali w jednym regionie, pole nicka i przyciski na całą
+ * szerokość (w 375 px nic się nie zawija w bok).
+ */
+.tt-finish {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tt-finish p {
+  margin: 0;
+}
+
+.tt-finish-score {
+  font-size: 18px;
+  color: var(--tt-green-dark, #0f4d2a);
+  font-variant-numeric: tabular-nums;
+}
+
+.tt-finish-status {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(29, 107, 58, 0.08);
+}
+
+.tt-finish-ok {
+  font-weight: 800;
+  color: var(--tt-green-dark, #0f4d2a);
+}
+
+.tt-finish-places {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-variant-numeric: tabular-nums;
+}
+
+.tt-finish-record {
+  font-weight: 800;
+  color: #b45309;
+}
+
+.tt-finish-form {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.tt-finish-form label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--tt-green-dark, #0f4d2a);
+}
+
+.tt-finish-form .tt-input {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 40px;
+  font-size: 16px;   /* poniżej 16 px iOS przybliża stronę po dotknięciu pola */
+}
+
+.tt-finish-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.tt-finish-actions .tt-btn,
+.tt-finish-actions .tt-btn.big {
+  width: 100%;
+  min-height: 46px;
+  margin: 0;
+  box-sizing: border-box;
+}

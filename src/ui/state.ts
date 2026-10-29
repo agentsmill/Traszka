@@ -194,6 +194,25 @@ export const ranked: Signal<RankedView | null> = signal<RankedView | null>(null)
 export interface UnsentRun { seed: string; score: number }
 export const unsent: Signal<UnsentRun | null> = signal<UnsentRun | null>(null);
 /**
+ * Okno końca sezonu i ponownej wysyłki wyniku (`ui/ranking/FinishWindow.tsx`): otwarte, gdy sygnał ma wartość. Otwiera je powłoka gry,
+ * gdy sezon się kończy i bieg czeka na wysłanie (`concludeSeason`), oraz `openFinish` (z panelu rankingu i ⚙). Dopóki jest otwarte, gra
+ * stoi (`isWindowOpen`), a okno leży nad kartą decyzji, wpisem „OK” i raportem miesiąca (kolejność w App.tsx). Zamyka je `closeFinish`.
+ * Nie jest częścią zapisu.
+ */
+export const finish: Signal<{ open: true } | null> = signal<{ open: true } | null>(null);
+
+/**
+ * Zamyka okno końca sezonu. W skończonym biegu rankingowym (`ranked.phase === 'over'`) gracz nie ma po co zostawać w zatrzymanym
+ * sezonie, więc zamknięcie (z dowolnym wynikiem, także gdy bieg nie został przyjęty i czeka w szufladzie) wychodzi do zwykłej gry
+ * (`leaveRanked`). Okno otwarte z panelu rankingu albo z ⚙ w zwykłej grze się tylko zamyka. Sygnał schodzi przed wyjściem z biegu,
+ * żeby zwykły sklep nie otworzył się pod oknem, które gra jeszcze uważa za otwarte.
+ */
+export function closeFinish(game: Pick<GameActions, 'leaveRanked'>): void {
+  finish.value = null;
+  if (ranked.value?.phase === 'over') game.leaveRanked();
+}
+
+/**
  * Prośba o decyzję gracza: start nowego biegu rankingowego na `seed` porzuciłby coś, co jeszcze żyje. `unsent`: szuflada niewysłanego
  * biegu jest pełna; `active`: trwa bieg rankingowy (też taki z innej wersji gry, którego nie da się wznowić). Pytanie zadaje
  * `startRanked` (bez `replace` nic wtedy nie zmienia); odpowiedź „porzuć i zacznij” to `startRanked(seed, { replace: true })`.
@@ -230,15 +249,19 @@ export interface GameActions {
   leaveRanked(): void;
   /** Porzuca aktywny bieg rankingowy (kasuje zapis) i wraca do zwykłej gry; szuflada niewysłanego biegu zostaje. */
   abandonRanked(): void;
+  /** Otwiera okno końca sezonu dla niewysłanego biegu (szuflada albo pamięć karty); bez takiego biegu nic nie robi. Otwarte okna nie podmienia. */
+  openFinish(): void;
+  /** Zapamiętuje nick w mecie gracza po przyjęciu biegu (klucz gracza zostaje). Bez gracza w mecie nic nie robi. */
+  rememberNick(nick: string): void;
 }
 
 /**
  * Czy otwarte jest okno, które zatrzymuje grę i ma swój sygnał: raport miesiąca, ważne zdarzenie czekające na „OK”, ekran startowy,
- * powitanie, prestiż albo „Jak grać”. Czyta to `isModalOpen` (game/frame.ts: pętla klatek) i `hintsHeld`. Karta decyzji i koniec
- * gry nie mają sygnału okna: wynikają ze stanu gry.
+ * powitanie, prestiż, „Jak grać” albo okno końca sezonu (`finish`). Czyta to `isModalOpen` (game/frame.ts: pętla klatek) i `hintsHeld`.
+ * Karta decyzji i koniec gry nie mają sygnału okna: wynikają ze stanu gry.
  */
 export const isWindowOpen = (): boolean =>
-  !!report.value || story.value.length > 0 || !!start.value || !!welcome.value || showPrestige.value || howTo.value;
+  !!report.value || story.value.length > 0 || !!start.value || !!welcome.value || showPrestige.value || howTo.value || !!finish.value;
 
 /**
  * Czy dymki pierwszego dnia mają czekać: pod każdym oknem, które zatrzymuje grę (`isWindowOpen`), pod kartą decyzji, która ją trzyma

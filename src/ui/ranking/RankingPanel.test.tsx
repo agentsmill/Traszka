@@ -45,6 +45,7 @@ function fakeClient(boards: Partial<Record<RankingTab, ApiResult<BoardResponse>>
     }),
     uploadSave: vi.fn(),
     downloadSave: vi.fn(),
+    submitRun: vi.fn(),
   };
   return { client, calls };
 }

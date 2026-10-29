@@ -11,6 +11,8 @@ import { Sheet, TabBar } from './game/panels';
 import { HowTo } from './howto/HowTo';
 import { Notice } from './Notice';
 import { PerfOverlay } from './PerfOverlay';
+import type { FinishModel } from './ranking/finishModel';
+import { FinishHost } from './ranking/FinishWindow';
 import { StartHost } from './start/StartScreen';
 import { floatText } from './worldOverlay';
 import type { Controls, GameActions } from './state';
@@ -28,9 +30,10 @@ const brandVars = {
  * Cała nakładka. Bez `controls` (renderer nie wstał, benchmark albo gra jeszcze nie ruszyła) zostaje komunikat, wyniki benchmarku
  * i ekran startowy „Twój kasjer”, który otwiera się przy pierwszym wejściu, zanim powstanie gra. W grze: górny pasek, zakładki
  * z arkuszami, karta zaznaczenia, przyciski klikera, podpowiedzi pierwszego dnia, komunikaty i okna. Kolejność okien to ich
- * warstwy: karta decyzji leży nad panelami, a pod raportem miesiąca, „Jak grać”, powitaniem i ustawieniami.
+ * warstwy: karta decyzji leży nad panelami, a pod raportem miesiąca, „Jak grać”, powitaniem i ustawieniami. Okno końca sezonu
+ * rankingowego leży nad wszystkimi: karta decyzji na minutę końca sezonu trzyma grę i nie może go zasłonić.
  */
-export function App({ controls, game }: { controls: Controls | null; game: GameActions | null }) {
+export function App({ controls, game, finishModel = null }: { controls: Controls | null; game: GameActions | null; finishModel?: FinishModel | null }) {
   return (
     <div class="tt-ui" style={brandVars}>
       {controls && game && <Hud controls={controls} />}
@@ -57,6 +60,7 @@ export function App({ controls, game }: { controls: Controls | null; game: GameA
           <PrestigeModal game={game} />
           <CelebrationBanner />
           <Settings controls={controls} game={game} />
+          <FinishHost game={game} model={finishModel} />
         </>
       )}
       {controls && <PerfOverlay />}
@@ -66,6 +70,6 @@ export function App({ controls, game }: { controls: Controls | null; game: GameA
 }
 
 /** Montuje albo odświeża nakładkę w `root` (kontener `#ui` z index.html). */
-export function renderUi(root: HTMLElement, controls: Controls | null, game: GameActions | null): void {
-  render(<App controls={controls} game={game} />, root);
+export function renderUi(root: HTMLElement, controls: Controls | null, game: GameActions | null, finishModel: FinishModel | null = null): void {
+  render(<App controls={controls} game={game} finishModel={finishModel} />, root);
 }

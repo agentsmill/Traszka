@@ -39,6 +39,7 @@ function setup(over: Partial<RecoveryDeps> = {}, download: ApiResult<SaveDownloa
     player: vi.fn(async () => ({ ok: true as const, nicks: ['Mateusz', 'Kasjer Roku'] })),
     uploadSave: vi.fn(async (_k: string, save: string) => ({ ok: true as const, bytes: save.length, savedAt: 1 })),
     downloadSave: vi.fn(async () => download),
+    submitRun: vi.fn(),
   };
   const deps: RecoveryDeps = {
     client,

@@ -25,6 +25,7 @@ const game: GameActions = {
   dispatch: (_cmd: Command): CommandResult => ({ ok: true }),
   claimWelcome: () => {}, openNextStore: () => {}, setSound: () => {}, setVibration: () => {}, restart: () => {}, newStore: () => {},
   startRanked: () => false, resumeRanked: () => false, leaveRanked: () => {}, abandonRanked: () => {},
+  openFinish: () => {}, rememberNick: () => {},
 };
 const controls: Controls = {
   setSpeed: () => {}, rotate: () => {}, setTimeOfDay: () => {}, setPreset: () => {}, generate: () => {}, randomize: () => {},

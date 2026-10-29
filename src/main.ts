@@ -6,11 +6,12 @@ import { MAX_FRAME_DT } from '@/game/loop';
 import { randomSeed } from '@/game/seedWords';
 import { entrySeed } from '@/game/seeds';
 import { lastSavedSeed } from '@/game/session';
-import { createShell } from '@/game/actions';
+import { createShell, dropUnsentRun } from '@/game/actions';
 import { openAtBoot } from '@/game/boot';
 import { bindControls } from '@/game/controls';
 import { advanceSession, debugHandleEnabled, debugHandleOf, installDebugHandle, isModalOpen, isSceneHeld } from '@/game/frame';
 import { loadMeta, needsStartScreen, saveMeta } from '@/game/meta';
+import { pendingFinished } from '@/game/rankedRun';
 import { clearSeedFromUrl, createSceneHost, startTestScene, writeSeedToUrl } from '@/game/scene';
 import { initialStartForm, playerOf, type StartChoice } from '@/game/start';
 import { play, buzz, setSound, setVibration } from '@/ui/sfx';
@@ -19,6 +20,8 @@ import type { EconEvent } from '@/sim/economy/economy';
 import { renderUi } from '@/ui/App';
 import { listenForNotices, postNotice } from '@/ui/Notice';
 import { FIRST_DAY_HINTS } from '@/ui/game/overlays';
+import { createRankingClient } from '@/ui/ranking/client';
+import { bindFinishOpen, createFinishModel } from '@/ui/ranking/finishModel';
 import { createWorldOverlay } from '@/ui/worldOverlay';
 import { FrameMeter } from '@/ui/perfMeter';
 import * as ui from '@/ui/state';
@@ -101,6 +104,13 @@ function startGame(
       floater: (x, y, text, kind) => overlay?.floater(x, y, text, kind),
     },
   });
+
+  // Okno końca sezonu rankingowego i ponownej wysyłki wyniku: wysyła bieg z szuflady (albo z pamięci karty), a po przyjęciu go kasuje
+  // (`dropUnsentRun`). Model odświeża się przy każdym otwarciu okna (`ui.finish`), także gdy sezon skończył się zaraz po rozruchu.
+  const finishModel = createFinishModel({
+    client: createRankingClient(), finished: pendingFinished, clear: dropUnsentRun, player: () => shell.meta.player, rememberNick: shell.game.rememberNick,
+  });
+  bindFinishOpen(finishModel, ui.finish);
 
   if (!benchMode && zoom > 0) ctx.rig.zoomBy(14 / zoom);
   const yaw = Number(params.get('yaw'));
@@ -203,7 +213,7 @@ function startGame(
   // uchwyt do ręcznych testów w konsoli (pola odczytywane na bieżąco); tylko w buildzie deweloperskim albo pod adresem z `?debug=1` (M11)
   installDebugHandle(window, debugHandleOf({ ctx, shell, scene }), debugHandleEnabled(import.meta.env.DEV, params));
 
-  if (!benchMode) renderUi(root, controls, shell.game);   // sterowanie działa od tej chwili; benchmark zostaje z samą nakładką wyników
+  if (!benchMode) renderUi(root, controls, shell.game, finishModel);   // sterowanie działa od tej chwili; benchmark zostaje z samą nakładką wyników
 }
 
 /**

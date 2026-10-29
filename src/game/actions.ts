@@ -274,7 +274,8 @@ export interface GameShell {
   setSeed(next: string, fresh?: boolean, ephemeral?: boolean): boolean;
   /**
    * Zdarzenia ekonomii: zapis na koniec dnia, raport miesiąca, feta poziomu, dźwięki i toasty. Pętla klatek woła to co klatkę, także z pustą
-   * listą; na końcu sprawdza koniec sezonu biegu rankingowego i zamyka bieg raz (`finishRun`, szuflada, `ui.unsent`, faza `over`).
+   * listą; na końcu sprawdza koniec sezonu biegu rankingowego i zamyka bieg raz (`finishRun`, szuflada, `ui.unsent`, faza `over`, okno
+   * końca sezonu `ui.finish`).
    */
   handleEvents(events: EconEvent[]): void;
   /** Stuknięcie w scenę (`hit` z `SceneHost.pick`, `x`, `y` to punkt ekranu w px): rozładunek, obsługa klienta, karta zakupu albo zdjęcie zaznaczenia. */
@@ -376,6 +377,18 @@ export function syncUnsent(): void {
   ui.unsent.value = next;
 }
 
+/**
+ * Niewysłany bieg przestaje istnieć: serwer go przyjął albo gracz kliknął „Odrzuć bieg”. Opróżnia szufladę i pamięć karty
+ * (`clearFinished`), kasuje aktywny zapis biegu (`discardRanked`: gdy szuflada nie przyjęła biegu przy końcu sezonu, zapis czeka na
+ * przeładowanie, które zamknęłoby ten sam sezon od nowa i oddało bieg do szuflady) i odświeża `ui.unsent`. Aktywnego biegu, który
+ * jeszcze się toczy, to nie dotyczy: niewysłany bieg i trwający bieg nie istnieją naraz (`startRanked` pyta o to, zanim cokolwiek skasuje).
+ */
+export function dropUnsentRun(): void {
+  clearFinished();
+  discardRanked();
+  syncUnsent();
+}
+
 /** Zwykły sklep stoi: zapamiętany tryb to `casual`. Zapisuje tylko powrót z `ranked`, więc gracz, który nie grał o ranking, nie dostaje klucza `traszka:mode`. */
 function rememberCasual(): void {
   if (getPlayMode() !== 'casual') setPlayMode('casual');
@@ -467,7 +480,8 @@ export function createShell(deps: ShellDeps): GameShell {
    * zostaje w pamięci karty (`holdFinished`) z jednym ostrzeżeniem. Bieg bez dziennika (`run === null`: unieważniony) nie daje szuflady.
    * Aktywny zapis znika dopiero, gdy bieg jest bezpieczny w szufladzie (`saveFinished` zwróciło true) albo nie ma czego ratować (bieg bez dziennika);
    * `persist` sesji zamkniętej go nie odnawia. Gdy szuflada bieg odrzuci albo `finishRun` rzuci (błąd w kodzie, nie w dzienniku), aktywny zapis
-   * zostaje, a po przeładowaniu bieg wznowi się z końca sezonu i zamknie ponownie (to samo wejście, ten sam wynik).
+   * zostaje, a po przeładowaniu bieg wznowi się z końca sezonu i zamknie ponownie (to samo wejście, ten sam wynik). Bieg do wysłania
+   * (w szufladzie albo w pamięci karty) otwiera okno końca sezonu (`ui.finish`): gracz widzi wynik i wysyła go albo zamyka okno.
    */
   function concludeSeason(): void {
     const { session } = shell;
@@ -494,6 +508,13 @@ export function createShell(deps: ShellDeps): GameShell {
     }
     syncUnsent();
     publish();   // faza `over` od razu, nie dopiero przy następnej publikacji
+    if (finished !== null) openFinishWindow();   // bieg do wysłania (w szufladzie albo w pamięci karty): okno z wynikiem, nad kartą decyzji i raportem
+  }
+
+  /** Otwiera okno końca sezonu, jeśli jest co wysłać; otwartego okna nie podmienia (jego model odświeża się tylko przy otwarciu). */
+  function openFinishWindow(): void {
+    if (ui.finish.value || pendingFinished() === null) return;
+    ui.finish.value = { open: true };
   }
 
   /**
@@ -811,6 +832,13 @@ export function createShell(deps: ShellDeps): GameShell {
     resumeRanked,
     leaveRanked,
     abandonRanked,
+    openFinish: openFinishWindow,
+    rememberNick: (nick) => {
+      const { player } = shell.meta;
+      if (!player) return;   // bez gracza nie ma komu zapamiętać nicka (a bez klucza nic by nie poszło do serwera)
+      shell.meta.player = { ...player, nick };   // reszta gracza, w tym klucz, zostaje
+      saveMeta(shell.meta);
+    },
   };
 
   const shell: GameShell = {

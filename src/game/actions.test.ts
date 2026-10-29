@@ -15,10 +15,10 @@ import * as generatorModule from '@/sim/store/generateStore';
 import { replayRun, type LogEntry } from '@/sim/run';
 import * as ui from '@/ui/state';
 import {
-  AFTER, createShell, dispatchCommand, markOffLog, syncUnsent, type CommandEffects, type GameShell, type ShellEffects, type ShellScene,
+  AFTER, createShell, dispatchCommand, dropUnsentRun, markOffLog, syncUnsent, type CommandEffects, type GameShell, type ShellEffects, type ShellScene,
 } from './actions';
 import { openAtBoot } from './boot';
-import type { CashierLook } from './cashier';
+import { DEFAULT_CASHIER_LOOK, type CashierLook } from './cashier';
 import { advanceSession, isModalOpen } from './frame';
 import { MemoryStorage } from './memoryStorage';
 import { loadMeta, type Meta } from './meta';
@@ -528,8 +528,9 @@ describe('powłoka gry (createShell)', () => {
     ui.ranked.value = null;
     ui.unsent.value = null;
     ui.confirmRankedStart.value = null;
+    ui.finish.value = null;
   });
-  afterEach(() => { vi.useRealTimers(); ui.story.value = []; ui.picked.value = null; });
+  afterEach(() => { vi.useRealTimers(); ui.story.value = []; ui.picked.value = null; ui.finish.value = null; });
 
   describe('rozruch', () => {
     it('dźwięk i wibracja z mety, widok mety dla interfejsu, bez komunikatu', () => {
@@ -2506,6 +2507,185 @@ describe('powłoka gry (createShell)', () => {
           expect(drawer.record.log.every((e) => e.minute < END)).toBe(true);
           expect(drawer.record.log.at(-1)).toMatchObject({ minute: END - 1, cmd: { type: 'setOrder', manual: 5 } });
         }, FULL_SEASON_MS);
+      });
+
+      describe('okno końca sezonu (ui.finish)', () => {
+        const PLAYER_KEY = 'K7QX9MBD2HFAP3WN8RTE';
+
+        /** Zmiany sygnału `finish` od chwili podpięcia (bez wartości początkowej). */
+        function watchFinish(): { seen: (typeof ui.finish.value)[]; stop: () => void } {
+          const seen: (typeof ui.finish.value)[] = [];
+          let first = true;
+          const stop = ui.finish.subscribe((v) => { if (first) { first = false; return; } seen.push(v); });
+          return { seen, stop };
+        }
+
+        it('koniec sezonu z biegiem w szufladzie otwiera okno raz: szuflada, ui.unsent i faza over są już ustawione, gra stoi', () => {
+          const h = harness();
+          h.shell.startRanked(RANKED_SEED);
+          const s = h.shell.session!;
+          s.econ.minute = END - 3;
+          s.econ.tycoon.cards.pending = s.econ.tycoon.cards.pending.slice(0, 1).map((c) => ({ ...c, showAt: END }));   // karta na minutę końca: trzyma grę, ale nie może zasłonić okna
+          const { seen, stop } = watchFinish();
+          let atOpen: unknown = null;
+          const off = ui.finish.subscribe((v) => {
+            if (v) atOpen = { drawer: loadFinished()?.seed, unsent: ui.unsent.value?.seed, phase: ui.ranked.value?.phase };
+          });
+
+          frame(h);
+          for (let i = 0; i < 4; i++) frame(h, 10, 8, true);
+
+          expect(seen).toEqual([{ open: true }]);
+          expect(atOpen).toEqual({ drawer: RANKED_SEED, unsent: RANKED_SEED, phase: 'over' });
+          expect(ui.isWindowOpen()).toBe(true);
+          expect(isModalOpen(s)).toBe(true);
+          expect(awaitingDecision(s.econ)).toBe(true);
+          off();
+          stop();
+        }, FULL_SEASON_MS);
+
+        it('wypowiedzenie umowy przed końcem sezonu też otwiera okno z wynikiem', () => {
+          const h = harness();
+          h.shell.startRanked(RANKED_SEED);
+          const s = h.shell.session!;
+          s.econ.minute = 40 * MINUTES_PER_DAY + OPEN_FROM;
+          s.econ.gameOver = true;
+          h.shell.handleEvents([{ kind: 'gameover', text: 'Koniec współpracy' }]);
+          expect(ui.finish.value).toEqual({ open: true });
+          expect(ui.unsent.value?.seed).toBe(RANKED_SEED);
+        }, FULL_SEASON_MS);
+
+        it('szuflada nie przyjęła biegu (bieg tylko w pamięci karty): okno też się otwiera', () => {
+          const h = harness();
+          const s = rankedNearEnd(h, 1);
+          s.econ.minute = END;
+          storage.failWrites = true;
+          h.shell.handleEvents([]);
+          storage.failWrites = false;
+          expect(loadFinished()).toBeNull();
+          expect(pendingFinished()).not.toBeNull();
+          expect(ui.finish.value).toEqual({ open: true });
+        }, FULL_SEASON_MS);
+
+        it('bieg bez dziennika (nie do wysłania) albo błąd podliczenia nie otwierają okna', () => {
+          const off = harness();
+          const s = rankedNearEnd(off, 1);
+          markOffLog(s);
+          s.econ.minute = END;
+          off.shell.handleEvents([]);
+          expect(ui.finish.value).toBeNull();
+          expect(ui.ranked.value?.phase).toBe('over');
+
+          const broken = harness();
+          const b = rankedNearEnd(broken, 1);
+          vi.spyOn(rankedRunModule, 'finishRun').mockImplementation(() => { throw new Error('rozjazd wersji'); });
+          vi.spyOn(console, 'error').mockImplementation(() => {});
+          b.econ.minute = END;
+          broken.shell.handleEvents([]);
+          expect(ui.finish.value).toBeNull();
+        });
+
+        it('w trakcie sezonu okno się nie otwiera, a niewysłany bieg z poprzedniej wizyty nie otwiera go przy rozruchu', () => {
+          saveFinished(drawerRun('bieg-a'));
+          const h = harness();
+          expect(ui.unsent.value).toMatchObject({ seed: 'bieg-a' });
+          expect(ui.finish.value).toBeNull();
+          h.shell.startRanked(RANKED_SEED, { replace: true });
+          h.shell.handleEvents([{ kind: 'day', text: 'Dzień' }]);
+          expect(ui.finish.value).toBeNull();
+        });
+
+        describe('openFinish', () => {
+          it('otwiera okno dla niewysłanego biegu z szuflady, a ponowne wywołanie niczego nie podmienia', () => {
+            saveFinished(drawerRun('bieg-a'));
+            const h = harness();
+            h.shell.game.openFinish();
+            const opened = ui.finish.value;
+            expect(opened).toEqual({ open: true });
+            h.shell.game.openFinish();
+            expect(ui.finish.value).toBe(opened);
+            expect(ui.isWindowOpen()).toBe(true);
+          });
+
+          it('otwiera okno także dla biegu trzymanego tylko w pamięci karty', () => {
+            const h = harness();
+            rankedRunModule.holdFinished(drawerRun('w-pamieci'));
+            h.shell.game.openFinish();
+            expect(ui.finish.value).toEqual({ open: true });
+          });
+
+          it('bez niewysłanego biegu nic nie otwiera', () => {
+            const h = harness();
+            h.shell.game.openFinish();
+            expect(ui.finish.value).toBeNull();
+            storage.setItem('traszka:ranked:done', 'śmieci');
+            h.shell.game.openFinish();
+            expect(ui.finish.value).toBeNull();
+          });
+        });
+
+        describe('rememberNick', () => {
+          const playerMeta = (over: Partial<NonNullable<Meta['player']>> = {}): Meta => ({
+            ...loadMeta(), player: { nick: 'Stary', look: DEFAULT_CASHIER_LOOK, specialOutfits: false, key: PLAYER_KEY, ...over },
+          });
+
+          it('zapisuje nick w mecie (w pamięci i w przeglądarce), klucz i reszta gracza zostają', () => {
+            const h = harness({ meta: playerMeta() });
+            h.shell.game.rememberNick('Nowy Nick');
+            expect(h.shell.meta.player).toEqual({ nick: 'Nowy Nick', look: DEFAULT_CASHIER_LOOK, specialOutfits: false, key: PLAYER_KEY });
+            expect(savedMeta().player).toEqual({ nick: 'Nowy Nick', look: DEFAULT_CASHIER_LOOK, specialOutfits: false, key: PLAYER_KEY });
+          });
+
+          it('gracz bez klucza zostaje bez klucza (nick nie tworzy go z niczego)', () => {
+            const noKey = { ...playerMeta().player! };
+            delete noKey.key;
+            const h = harness({ meta: { ...loadMeta(), player: noKey } });
+            h.shell.game.rememberNick('Nowy Nick');
+            expect(h.shell.meta.player).toEqual({ ...noKey, nick: 'Nowy Nick' });
+          });
+
+          it('bez gracza w mecie (przed ekranem startowym) niczego nie zapisuje i nie rzuca', () => {
+            const h = harness({ meta: { ...loadMeta(), player: undefined } });
+            expect(() => h.shell.game.rememberNick('Nowy Nick')).not.toThrow();
+            expect(h.shell.meta.player).toBeUndefined();
+            expect(storage.getItem('traszka:meta')).toBeNull();
+          });
+
+          it('meta z nowszej wersji gry (tylko do odczytu): nick tylko w pamięci karty, pod kluczem mety nic nowego', () => {
+            const h = harness({ meta: { ...playerMeta(), readOnly: true } });
+            h.shell.game.rememberNick('Nowy Nick');
+            expect(h.shell.meta.player?.nick).toBe('Nowy Nick');
+            expect(storage.getItem('traszka:meta')).toBeNull();
+          });
+        });
+
+        describe('dropUnsentRun: bieg przyjęty przez serwer albo odrzucony przez gracza', () => {
+          it('opróżnia szufladę, pamięć karty i aktywny zapis biegu (inaczej przeładowanie wskrzesiłoby bieg) i zdejmuje ui.unsent', () => {
+            const h = harness();
+            const s = rankedNearEnd(h, 1);
+            s.econ.minute = END;
+            h.shell.persist();   // aktywny zapis na końcu sezonu
+            storage.failWrites = true;
+            h.shell.handleEvents([]);   // szuflada odmawia: bieg w pamięci karty, aktywny zapis zostaje
+            storage.failWrites = false;
+            expect(storage.getItem('traszka:ranked')).not.toBeNull();
+            expect(ui.unsent.value).not.toBeNull();
+
+            dropUnsentRun();
+
+            expect(storage.getItem('traszka:ranked')).toBeNull();
+            expect(storage.getItem('traszka:ranked:done')).toBeNull();
+            expect(pendingFinished()).toBeNull();
+            expect(ui.unsent.value).toBeNull();
+            expect(loadRanked().status).toBe('none');
+          }, FULL_SEASON_MS);
+
+          it('bez niczego do skasowania nie rzuca i nie rusza reszty pamięci', () => {
+            storage.setItem('traszka:last', 'traszka-1');
+            expect(() => dropUnsentRun()).not.toThrow();
+            expect(storage.getItem('traszka:last')).toBe('traszka-1');
+          });
+        });
       });
 
       describe('polecenia po końcu sezonu i limit dziennika', () => {

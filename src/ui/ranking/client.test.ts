@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { BOARD_LIMITS } from '@/server/config';
+import type { RunRecord } from '@/sim/run';
+import { BOARD_LIMITS, KNOWN_GENERATOR_VERSIONS } from '@/server/config';
 import { API_ERRORS } from '@/server/errors';
-import { handleLeaderboard, handleSaveUpload, type ServerDeps } from '@/server/http';
+import { handleLeaderboard, handleRuns, handleSaveUpload, type ServerDeps } from '@/server/http';
 import { MemoryRedis } from '@/server/memoryRedis';
 import { testBundle } from '@/server/testBundle';
 import { replayNotAvailable } from '@/server/verify';
@@ -19,6 +20,11 @@ function fake(respond: (url: string, init: RequestInit) => Response | Promise<Re
 
 const WEEK = { id: '2026-W44', seed: 'babka-834', endsAt: 1 };
 const KEY = 'K7QX9MBD2HFAP3WN8RTE';
+const OTHER_KEY = 'M2N3P4Q5R6S7T8V9W0XY';
+const RUN: RunRecord = {
+  seed: 'pierogi-731', gameVersion: '0.0.0+abc123def456', generatorVersion: KNOWN_GENERATOR_VERSIONS[0]!, simVersion: 1, mode: 'ranked',
+  log: [{ minute: 400, seq: 0, cmd: { type: 'tapTill' } }],
+};
 
 describe('klient API rankingu w grze', () => {
   it('ranking: GET z parametrami w adresie (seed zakodowany), odpowiedź serwera bez zmian', async () => {
@@ -128,5 +134,28 @@ describe('klient API rankingu w grze', () => {
       const { fetchFn } = fake(() => res);
       expect(await createRankingClient(fetchFn).board('global')).toEqual({ ok: false, error: 'unavailable', message: UNAVAILABLE_ERROR });
     }
+  });
+
+  it('wysłanie biegu: POST /api/runs z { key, nick, run } w ciele, klucz nigdy w adresie', async () => {
+    const { fetchFn, calls } = fake(() => Response.json({ ok: true, nick: 'Mateusz', score: 1, best: 1, improved: true, ranks: { global: 1, seed: 1, week: null } }));
+    const client = createRankingClient(fetchFn);
+    await client.submitRun(KEY, 'Mateusz', RUN);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.url).toBe('/api/runs');
+    expect(calls[0]!.url).not.toContain(KEY);
+    expect(calls[0]!.init.method).toBe('POST');
+    expect(JSON.parse(String(calls[0]!.init.body))).toEqual({ key: KEY, nick: 'Mateusz', run: RUN });
+  });
+
+  it('wysłanie biegu przez prawdziwą obsługę na serwerze: przyjęty bieg niesie wynik, rekord i miejsca (liczby), zajęty nick wraca jako nick-taken', async () => {
+    const redis = new MemoryRedis();
+    const deps: ServerDeps = { redis, readRedis: redis, verifyRun: () => ({ ok: true, score: 25_000 }), now: () => Date.UTC(2026, 9, 28, 12) };
+    const toServer = (async (input: RequestInfo | URL, init?: RequestInit) =>
+      handleRuns(new Request(`https://traszka.test${String(input)}`, init), deps)) as typeof fetch;
+    const client = createRankingClient(toServer);
+    const accepted = await client.submitRun(KEY, 'Mateusz', RUN);
+    expect(accepted).toEqual({ ok: true, nick: 'Mateusz', score: 25_000, best: 25_000, improved: true, ranks: { global: 1, seed: 1, week: null } });
+    expect(await client.submitRun(OTHER_KEY, 'MATEUSZ', RUN)).toMatchObject({ ok: false, error: 'nick-taken' });
+    expect(await client.submitRun(KEY, 'Mateusz', { ...RUN, mode: 'casual' })).toMatchObject({ ok: false, error: 'not-ranked' });
   });
 });

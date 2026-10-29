@@ -6,8 +6,8 @@ import { awaitingDecision, createEconomy, stepMinute, type EconomyState, type Mo
 import { computeStoreInfo } from '@/sim/economy/storeInfo';
 import { visibleCards } from '@/sim/economy/tycoon/cards';
 import {
-  HINT_MS, closeHowTo, dismissStory, econ, hints, howTo, isWindowOpen, nextHint, openHowTo, pushStory, pushToast, report, showHints,
-  showPrestige, start, story, toasts, welcome,
+  HINT_MS, closeFinish, closeHowTo, dismissStory, econ, finish, hints, howTo, isWindowOpen, nextHint, openHowTo, pushStory, pushToast, ranked,
+  report, showHints, showPrestige, start, story, toasts, welcome, type GameActions,
 } from './state';
 
 /** Wszystko, co zatrzymuje grę albo dymki, do stanu wyjściowego. */
@@ -19,6 +19,8 @@ const clearWindows = (): void => {
   start.value = null;
   econ.value = null;
   story.value = [];
+  finish.value = null;
+  ranked.value = null;
 };
 
 beforeEach(() => {
@@ -256,6 +258,9 @@ describe('podpowiedzi pierwszego dnia czekają pod każdym oknem, które zatrzym
     () => { welcome.value = { hours: 2, offline: 0, streak: 1, daily: { cash: 0, ogonki: 2 } }; }, () => { welcome.value = null; },
   ));
   it('prestiż', () => holdsUntilClosed(() => { showPrestige.value = true; }, () => { showPrestige.value = false; }));
+  it('okno końca sezonu rankingowego i ponownej wysyłki wyniku', () => holdsUntilClosed(
+    () => { finish.value = { open: true }; }, () => { finish.value = null; },
+  ));
   it('ekran „Nowy sklep”', () => holdsUntilClosed(
     () => { start.value = {} as NonNullable<typeof start.value>; }, () => { start.value = null; },
   ));
@@ -309,5 +314,41 @@ describe('podpowiedzi pierwszego dnia czekają pod każdym oknem, które zatrzym
     showHints([]);
     report.value = null;
     expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+describe('closeFinish: zamknięcie okna końca sezonu', () => {
+  const game = (): Pick<GameActions, 'leaveRanked'> => ({ leaveRanked: vi.fn() });
+
+  it('zdejmuje sygnał, a gra przestaje stać pod oknem', () => {
+    finish.value = { open: true };
+    expect(isWindowOpen()).toBe(true);
+    closeFinish(game());
+    expect(finish.value).toBeNull();
+    expect(isWindowOpen()).toBe(false);
+  });
+
+  it('w skończonym biegu rankingowym (faza „over”) wychodzi do zwykłej gry, w pozostałych przypadkach tylko zamyka', () => {
+    ranked.value = { seed: 'x', day: 91, days: 91, phase: 'over' };
+    finish.value = { open: true };
+    const over = game();
+    closeFinish(over);
+    expect(over.leaveRanked).toHaveBeenCalledTimes(1);
+
+    for (const view of [null, { seed: 'x', day: 5, days: 91, phase: 'playing' as const }]) {
+      ranked.value = view;
+      finish.value = { open: true };
+      const other = game();
+      closeFinish(other);
+      expect(other.leaveRanked).not.toHaveBeenCalled();
+    }
+  });
+
+  it('okno zamknięte przed wyjściem z biegu: sygnał jest już pusty, gdy gra przechodzi do zwykłego sklepu', () => {
+    ranked.value = { seed: 'x', day: 91, days: 91, phase: 'over' };
+    finish.value = { open: true };
+    let seenWhenLeaving: unknown = 'nie wywołano';
+    closeFinish({ leaveRanked: () => { seenWhenLeaving = finish.value; } });
+    expect(seenWhenLeaving).toBeNull();
   });
 });

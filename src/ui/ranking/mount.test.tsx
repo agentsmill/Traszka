@@ -11,7 +11,7 @@ const { createRecoveryModel } = await import('./recoveryModel');
 
 const client = {
   board: vi.fn(async () => ({ ok: true as const, board: 'global' as const, week: { id: '2026-W44', seed: 'babka-834', endsAt: 0 }, rows: [] })),
-  player: vi.fn(), uploadSave: vi.fn(), downloadSave: vi.fn(),
+  player: vi.fn(), uploadSave: vi.fn(), downloadSave: vi.fn(), submitRun: vi.fn(),
 };
 const el = { nodeType: 1 } as unknown as Element;
 

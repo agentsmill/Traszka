@@ -1,5 +1,6 @@
-import type { BoardRow } from '@/server/leaderboard';
+import type { BoardRow, Ranks } from '@/server/leaderboard';
 import type { NickStatus } from '@/server/nicks';
+import type { RunRecord } from '@/sim/run';
 
 /**
  * Klient API rankingu po stronie gry (spec §14.7). Klucz gracza wysyłamy tylko w ciele POST (nigdy w adresie, który ląduje w logach
@@ -16,6 +17,12 @@ export interface PlayerResponse {
   nick?: { nick: string; status: NickStatus | 'invalid'; message?: string };
   ranks?: Record<RankingTab, Place | null>;
 }
+/**
+ * Odpowiedź na przyjęty bieg (`POST /api/runs`, `handleRuns`): nick, wynik policzony przez sędziego, najlepszy wynik tego nicka,
+ * czy ten bieg go poprawił i miejsca w rankingach (globalnym, seeda, tygodnia). Miejsce to sama liczba (od 1) albo null, gdy bieg
+ * w danym rankingu nie widnieje (inny seed niż seed tygodnia, wypadł poza listę); to nie `Place` z `/api/player`, który niesie też wynik.
+ */
+export interface RunAccepted { nick: string; score: number; best: number; improved: boolean; ranks: Ranks }
 export interface SaveUploaded { bytes: number; savedAt: number }
 export interface SaveDownloaded { save: string; savedAt: number }
 
@@ -38,6 +45,12 @@ export interface RankingClient {
    */
   uploadSave(key: string, save: string, opts?: SaveUploadOptions): Promise<SaveUploadResult>;
   downloadSave(key: string): Promise<ApiResult<SaveDownloaded>>;
+  /**
+   * Wysyła skończony bieg rankingowy: serwer sam odtwarza go z dziennika i liczy wynik (nasz `score` do niego nie jedzie). Klucz i nick
+   * idą w ciele razem z `run`. Błąd z serwera (`nick-taken`, `old-version`, `ranking-off`…) wraca jak przyszedł; brak sieci i odpowiedź
+   * spoza API to `network` i `unavailable`, jak przy innych zapytaniach.
+   */
+  submitRun(key: string, nick: string, run: RunRecord): Promise<ApiResult<RunAccepted>>;
 }
 
 export const NETWORK_ERROR = 'Brak połączenia z Centralą. Sprawdź internet i spróbuj jeszcze raz.';
@@ -73,5 +86,6 @@ export function createRankingClient(fetchFn: typeof fetch = (input, init) => fet
       key, save, ...(opts?.expected !== undefined ? { expected: opts.expected } : {}), ...(opts?.force !== undefined ? { force: opts.force } : {}),
     }),
     downloadSave: (key) => post<SaveDownloaded>('/save/download', { key }),
+    submitRun: (key, nick, run) => post<RunAccepted>('/runs', { key, nick, run }),
   };
 }
