@@ -465,8 +465,9 @@ export function createShell(deps: ShellDeps): GameShell {
    * które powstały): zamyka bieg dokładnie raz. `finishRun` odtwarza cały sezon z dziennika (około sekundy), więc gra staje na ten czas;
    * to cena za wynik liczony tym samym kodem co serwer. Gotowy bieg trafia do szuflady (`saveFinished`), a gdy przeglądarka jej nie przyjmie,
    * zostaje w pamięci karty (`holdFinished`) z jednym ostrzeżeniem. Bieg bez dziennika (`run === null`: unieważniony) nie daje szuflady.
-   * Aktywny zapis znika zawsze, a `persist` sesji zamkniętej go nie odnawia. Jedyny wyjątek: `finishRun` rzuca (błąd w kodzie, nie w dzienniku),
-   * wtedy aktywny zapis zostaje, żeby bieg przetrwał do kolejnej próby po odświeżeniu.
+   * Aktywny zapis znika dopiero, gdy bieg jest bezpieczny w szufladzie (`saveFinished` zwróciło true) albo nie ma czego ratować (bieg bez dziennika);
+   * `persist` sesji zamkniętej go nie odnawia. Gdy szuflada bieg odrzuci albo `finishRun` rzuci (błąd w kodzie, nie w dzienniku), aktywny zapis
+   * zostaje, a po przeładowaniu bieg wznowi się z końca sezonu i zamknie ponownie (to samo wejście, ten sam wynik).
    */
   function concludeSeason(): void {
     const { session } = shell;
@@ -484,11 +485,13 @@ export function createShell(deps: ShellDeps): GameShell {
     }
     if (finished === null) {
       fx.notice(RANKED_NOT_COUNTED_NOTICE);
-    } else if (!saveFinished(finished)) {
-      holdFinished(finished);
+      discardRanked();   // nie ma czego odzyskać: bieg unieważniony nie wróci w żadnej postaci
+    } else if (saveFinished(finished)) {
+      discardRanked();   // szuflada ma bieg: aktywny zapis kasujemy dopiero teraz
+    } else {
+      holdFinished(finished);   // aktywny zapis zostaje: po przeładowaniu bieg wznowi się z końca sezonu i zamknie się ponownie
       fx.notice(RANKED_RESULT_NOT_SAVED_NOTICE);
     }
-    discardRanked();
     syncUnsent();
     publish();   // faza `over` od razu, nie dopiero przy następnej publikacji
   }

@@ -227,7 +227,8 @@ export function terminationReason(s: EconomyState): string | null {
 }
 
 /**
- * Raport miesięczny (pauzuje grę). Przy wypowiedzeniu umowy: koniec gry i nowy start. Okno końca gry wynika ze stanu
+ * Raport miesięczny (pauzuje grę). Przy wypowiedzeniu umowy: koniec gry i nowy start (w biegu rankingowym wyjście do zwykłej gry, a bieg
+ * czeka w szufladzie niewysłanych). Okno końca gry wynika ze stanu
  * (`gameOver` i ostatni raport w zapisie), więc wraca po przeładowaniu strony; zapis sprzed tej poprawki nie ma raportu
  * i pokazuje samo wypowiedzenie.
  */
@@ -246,7 +247,10 @@ export function ReportModal({ game }: { game: GameActions }) {
         {r ? <ReportBody r={r} closing={over ? TERMINATION : undefined} /> : centralaQuote(TERMINATION)}
         <div class="tt-modal-foot">
           {over
-            ? <button type="button" class="tt-btn tt-primary big" onClick={() => game.restart()}>Zacznij od nowa</button>
+            ? ranked.value
+              // bieg rankingowy nie zaczyna się od nowa (`restart` odmawia): wyjście do zwykłej gry, bieg czeka w szufladzie niewysłanych
+              ? <button type="button" class="tt-btn tt-primary big" onClick={() => game.leaveRanked()}>Wróć do zwykłej gry</button>
+              : <button type="button" class="tt-btn tt-primary big" onClick={() => game.restart()}>Zacznij od nowa</button>
             : <button type="button" class="tt-btn tt-primary big" onClick={() => { report.value = null; }}>Dalej</button>}
         </div>
       </div>

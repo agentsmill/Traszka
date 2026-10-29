@@ -636,6 +636,38 @@ describe('okno raportu miesiąca', () => {
     expect(labels(tree)).toEqual(['Zacznij od nowa']);
     click(closeButton(tree, 'Zacznij od nowa'));
     expect(game.restart).toHaveBeenCalledTimes(1);
+    expect(game.leaveRanked).not.toHaveBeenCalled();
+  });
+
+  it('koniec gry w biegu rankingowym: zamiast „Zacznij od nowa” (tu odmawiane) przycisk „Wróć do zwykłej gry”, który wychodzi z biegu', () => {
+    const { s, info } = base();
+    s.gameOver = true;
+    s.lastReport = monthReport(detailed({ result: -9000, commentId: 'strata-0' }));
+    publishState(s, info);
+    ranked.value = { seed: s.seed, day: 41, days: 91, phase: 'over' };
+    const game = fakeGame();
+    const tree = ReportModal({ game }) as Vnode;
+    expect(textOf(tree)).toContain('Koniec współpracy');
+    expect(textWithBody(tree)).toContain('Centrala dziękuje za współpracę');   // treść okna ta sama
+    expect(labels(tree)).toEqual(['Wróć do zwykłej gry']);
+    click(closeButton(tree, 'Wróć do zwykłej gry'));
+    expect(game.leaveRanked).toHaveBeenCalledTimes(1);
+    expect(game.restart).not.toHaveBeenCalled();
+
+    ranked.value = null;   // ten sam stan gry w zwykłym sklepie: dawny przycisk i dawna czynność
+    const casual = fakeGame();
+    const casualTree = ReportModal({ game: casual }) as Vnode;
+    expect(labels(casualTree)).toEqual(['Zacznij od nowa']);
+    click(closeButton(casualTree, 'Zacznij od nowa'));
+    expect(casual.restart).toHaveBeenCalledTimes(1);
+    expect(casual.leaveRanked).not.toHaveBeenCalled();
+  });
+
+  it('raport miesiąca w biegu rankingowym nadal ma „Dalej” (przycisk wyjścia dotyczy tylko końca współpracy)', () => {
+    ranked.value = { seed: 'x', day: 30, days: 91, phase: 'playing' };
+    report.value = monthReport(detailed());
+    const tree = ReportModal({ game: fakeGame() }) as Vnode;
+    expect(labels(tree)).toEqual(['Dalej']);
   });
 
   it('koniec gry w zapisie sprzed raportu: samo wypowiedzenie umowy', () => {

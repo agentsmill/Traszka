@@ -2340,30 +2340,67 @@ describe('powłoka gry (createShell)', () => {
           expect(h.shell.session).not.toBe(s);
         });
 
-        it('przeglądarka odmawia zapisu szuflady: bieg zostaje w pamięci karty (pendingFinished, ui.unsent), jedno ostrzeżenie, nowy start pyta o niewysłany bieg', () => {
+        it('przeglądarka odmawia zapisu szuflady: bieg zostaje w pamięci karty (pendingFinished, ui.unsent), jedno ostrzeżenie, aktywny zapis nietknięty, nowy start pyta o niewysłany bieg', () => {
           const h = harness();
           const s = rankedNearEnd(h, 1);
           s.econ.minute = END;
+          h.shell.persist();   // aktywny zapis ze stanem na końcu sezonu, jak po zapisie dnia z ostatniej klatki
+          const active = storage.getItem('traszka:ranked');
+          expect(active).not.toBeNull();
+          const finish = vi.spyOn(rankedRunModule, 'finishRun');
           storage.failWrites = true;
 
           h.shell.handleEvents([]);
           h.shell.handleEvents([]);
 
+          expect(finish).toHaveBeenCalledTimes(1);   // druga klatka nie zamyka biegu ponownie
           expect(h.notices).toEqual([RESULT_NOT_SAVED_NOTICE]);   // jedno, nie przy każdej klatce
           expect(loadFinished()).toBeNull();
           const held = pendingFinished()!;
           expect(held).toMatchObject({ v: 1, seed: RANKED_SEED });
           expect(ui.unsent.value).toEqual({ seed: RANKED_SEED, score: held.score });
           expect(ui.ranked.value?.phase).toBe('over');
-          expect(storage.getItem('traszka:ranked')).toBeNull();
+          expect(storage.getItem('traszka:ranked')).toBe(active);   // szuflada nie przyjęła biegu, więc aktywny zapis zostaje, bajt w bajt
 
           storage.failWrites = false;
+          h.shell.persist();
+          h.shell.handleEvents([{ kind: 'day', text: 'Dzień' }]);
+          expect(storage.getItem('traszka:ranked')).toBe(active);   // sesja zamknięta nie odnawia aktywnego zapisu
           expect(h.shell.startRanked('inny-bieg')).toBe(false);   // bieg z pamięci blokuje start tak jak szuflada
           expect(ui.confirmRankedStart.value).toEqual({ seed: 'inny-bieg', reason: 'unsent' });
           expect(h.shell.session).toBe(s);
           clearFinished();   // „Odrzuć bieg” (albo przyjęcie przez serwer) zabiera bieg z pamięci
           syncUnsent();
           expect(ui.unsent.value).toBeNull();
+        }, FULL_SEASON_MS);
+
+        it('po odmowie zapisu szuflady przeładowanie wznawia bieg ze stanu na końcu sezonu i zamyka go ponownie: szuflada, bez aktywnego zapisu', () => {
+          const first = harness();
+          const s = rankedNearEnd(first, 1);
+          s.econ.minute = END;
+          first.shell.persist();
+          storage.failWrites = true;
+          first.shell.handleEvents([]);
+          storage.failWrites = false;
+          expect(loadFinished()).toBeNull();
+          expect(storage.getItem('traszka:ranked')).not.toBeNull();
+
+          // nowa karta: pamięć karty jest pusta, zostaje tylko zapis w przeglądarce
+          clearFinished();
+          ui.unsent.value = null;
+          ui.ranked.value = null as ui.RankedView | null;   // jak po świeżym załadowaniu strony
+          const second = harness();
+          expect(second.shell.resumeRanked()).toBe(true);
+          expect(second.shell.session!.econ.minute).toBe(END);
+          second.shell.handleEvents([]);
+          second.shell.handleEvents([]);
+
+          const drawer = loadFinished()!;
+          expect(drawer.seed).toBe(RANKED_SEED);
+          expect(storage.getItem('traszka:ranked')).toBeNull();
+          expect(ui.unsent.value).toEqual({ seed: RANKED_SEED, score: drawer.score });
+          expect(ui.ranked.value?.phase).toBe('over');
+          expect(second.notices).toEqual([]);
         }, FULL_SEASON_MS);
 
         it('wyjątek z odtwarzania nie wychodzi z handleEvents ani nie powtarza się co klatkę: komunikat, faza over, aktywny zapis zostaje', () => {

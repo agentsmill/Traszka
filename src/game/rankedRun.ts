@@ -239,9 +239,9 @@ export function holdFinished(f: FinishedRun): void {
 }
 
 /**
- * Wkłada gotowy bieg do szuflady. Zwraca false, gdy przeglądarka odmówiła: bieg zostaje wtedy u wołającego (w pamięci, i aktywny
- * zapis biegu, jeśli wołający go jeszcze nie skasował; kasować go wolno dopiero po `true`). Udany zapis zdejmuje z pamięci karty
- * bieg trzymany przez `holdFinished`: szuflada ma teraz najnowszy.
+ * Wkłada gotowy bieg do szuflady. Zwraca false, gdy przeglądarka odmówiła: bieg zostaje wtedy u wołającego (w pamięci karty, `holdFinished`)
+ * i aktywny zapis biegu zostaje na miejscu: wołający kasuje go (`discardRanked`) dopiero po `true`, żeby bieg przetrwał przeładowanie strony.
+ * Udany zapis zdejmuje z pamięci karty bieg trzymany przez `holdFinished`: szuflada ma teraz najnowszy.
  */
 export function saveFinished(f: FinishedRun): boolean {
   try {
