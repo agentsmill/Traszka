@@ -5,10 +5,11 @@ import { asNumber, asString, RedisError, type RedisExec } from './redis.js';
 
 /**
  * Limit zgłoszeń w stałych oknach czasu, osobno na klucz gracza i na adres klienta (spec §14.7). Adresu serwer nie przechowuje:
- * w bazie jest tylko jego skrót z solą tego okna, a sól i liczniki giną z końcem okna (czas życia względny, patrz `checkRate`),
- * więc po oknie nie da się już powiedzieć, czyj to był skrót. Dwa zapytania do bazy: sól, potem liczniki (drugiego nie da się
- * dołączyć do pierwszego, bo nazwy liczników zależą od soli). Na końcu pliku globalny budżet dzienny (`checkBudget`), niezależny
- * od klucza i adresu.
+ * w bazie jest tylko jego skrót (sha256 z solą okna albo, z sekretem `RANKING_SALT`, HMAC), a skrót i liczniki giną z końcem okna
+ * (czas życia względny, patrz `checkRate`), więc po oknie nie da się już powiedzieć, czyj to był skrót. Z sekretem liczniki idą
+ * w jednym zapytaniu do bazy, bez sekretu w dwóch: sól, potem liczniki (nazwy liczników zależą od soli). Przed bazą stoi bramka
+ * w pamięci instancji (`createRateGate`), która zapamiętaną odmowę kosztuje zero zapytań. Na końcu pliku globalny budżet dzienny
+ * (`checkBudget`), niezależny od klucza i adresu.
  */
 export interface RateCheck { ok: boolean; retryAfter: number }
 export interface Requester { owner: string | null; address: string }
