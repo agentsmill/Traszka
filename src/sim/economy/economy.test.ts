@@ -1176,6 +1176,21 @@ describe('śmieci z palet, czystość sali, pogoda, niedziela i prasa', () => {
     id, loc, spot, items: { ...emptyItems(), napoje: total }, total, initial: total, since: 0, ...(bags === undefined ? {} : { bags }),
   });
 
+  it('pełne zaplecze, a najstarsza paleta wiezie tylko towar bez miejsca: ręce idą do następnej palety i do kasy, nie stoją nad pierwszą', () => {
+    const s = quiet();
+    setStaffProfile(s.tycoon.staff, 'dostawa');   // palety przed kasą: dawniej obie osoby „rozładowywały” pierwszą paletę bez końca
+    for (const c of CATS) { s.shelf[c] = info.shelfCap[c]; s.backroom[c] = 0; }
+    s.backroom.napoje = effects(s, info).backroomCap;   // zaplecze pełne
+    s.shelf.pieczywo = info.shelfCap.pieczywo - 40;    // luka tylko w pieczywie
+    const bread = { ...drinkPallet(901, 'sidewalk', 1, 60), items: { ...emptyItems(), pieczywo: 60 }, since: 5 };
+    s.pallets = [drinkPallet(900, 'sidewalk', 0, 320), bread];
+    s.queue = 3;
+    run(s, info, 15);
+    expect(s.pallets.find((p) => p.id === 900)!.total).toBeGreaterThan(300);   // napoje schodzą tylko tyle, ile klienci zwolnią na półce
+    expect(s.pallets.find((p) => p.id === 901)!.total).toBeLessThan(60 - 30);   // pieczywo poszło na półkę
+    expect(s.today.customers).toBeGreaterThan(5);   // przy kasie ktoś stał
+  });
+
   /** Półki i zaplecze pełne wszystkiego poza napojami: najbliższa dostawa to prawie same napoje. */
   const drinksSoldOut = (s: EconomyState): void => {
     const backroomCap = effects(s, info).backroomCap;

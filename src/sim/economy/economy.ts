@@ -507,9 +507,16 @@ export const robotFleet = (s: EconomyState): RobotFleet => ({
 const wasteRoom = (s: EconomyState, fx: Effects): number =>
   Math.max(0, fx.backroomSpots - s.pallets.filter((p) => p.loc === 'backroom' && p.total >= 0.5).length);
 
-/** Wolne miejsce na towar: zaplecze i półki. Bez niego nie ma co rozładowywać. */
-const stockRoom = (s: EconomyState, info: StoreInfo, fx: Effects): number =>
-  Math.max(0, fx.backroomCap - sum(s.backroom)) + CATS.reduce((n, c) => n + Math.max(0, info.shelfCap[c] - s.shelf[c]), 0);
+/**
+ * Wolne miejsce na towar z palet: zaplecze i luki na półkach, ale tylko w kategoriach, które palety wiozą. Bez niego nie ma co
+ * rozładowywać. Luka w kategorii, której na paletach nie ma, nie jest pracą przy rozładunku: liczona w całości trzymała ludzi przy
+ * paletach (profil „Dostawa”), choć nic z nich nie schodziło, a kolejka przy kasie rosła.
+ */
+function stockRoom(s: EconomyState, info: StoreInfo, fx: Effects): number {
+  const onPallets = perCat((c) => s.pallets.reduce((n, p) => n + p.items[c], 0));
+  return Math.max(0, fx.backroomCap - sum(s.backroom))
+    + CATS.reduce((n, c) => n + Math.min(onPallets[c], Math.max(0, info.shelfCap[c] - s.shelf[c])), 0);
+}
 
 const unloadRate = (fx: Effects, p: Pallet): number => UNLOAD_RATE * fx.unloadMult * UNLOAD_AT[p.loc];
 
@@ -557,8 +564,8 @@ function runStaff(s: EconomyState, info: StoreInfo, fx: Effects, open: boolean, 
     if (minutes <= 1e-9) break;
     const rate = unloadRate(fx, p);
     const use = Math.min(minutes, PEOPLE_PER_PALLET, p.total / rate);
-    unloadPallet(s, info, fx, p, use * rate, out);
-    minutes -= use;
+    // minuty idą za tym, co naprawdę zeszło: paleta z samym towarem bez miejsca nie zjada rąk potrzebnych przy następnej
+    minutes -= unloadPallet(s, info, fx, p, use * rate, out) / rate;
   }
   restock(s, info, 1, alloc.total.wykladanie * RESTOCK_RATE);
   removeEmptyPallets(s);
@@ -605,6 +612,18 @@ function unloadPallet(s: EconomyState, info: StoreInfo, fx: Effects, p: Pallet, 
     s.shelf[c] += toShelf;
     p.items[c] -= n;
     moved += n;
+  }
+  // reszta rąk na to, co się jeszcze zmieści: przy pełnym zapleczu ludzie biorą z palety kategorie z luką na półce, zamiast stać
+  // nad paletą (proporcja palety wysłałaby większość minut w kategorie, na które nie ma miejsca)
+  let left = take - moved;
+  for (const c of CATS) {
+    if (left <= 1e-9) break;
+    const n = Math.min(left, p.items[c], Math.max(0, info.shelfCap[c] - s.shelf[c]));
+    if (n <= 0) continue;
+    s.shelf[c] += n;
+    p.items[c] -= n;
+    moved += n;
+    left -= n;
   }
   p.total = Math.max(0, sum(p.items));
   // Liczy się tylko przejście poniżej progu. Paleta z ułamkiem sztuki zostaje do końca minuty (`removeEmptyPallets`), więc
