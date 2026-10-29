@@ -262,7 +262,7 @@ describe('sanitizeEconomy: dawny priorytet pracy a profil puli ludzi', () => {
     const s = defaults();
     s.lastCashiers = 0.4375;
     s.lastWorkers = 1.25;
-    s.shift = { staff: 2, human: { kasa: 0.4375, rozladunek: 1, wykladanie: 0.25, sprzatanie: 0 } };
+    s.shift = { staff: 2, human: { kasa: 0.4375, rozladunek: 1, wykladanie: 0.25, sprzatanie: 0 }, people: ['rozladunek', 'kasa'] };
     const out = sanitizeEconomy(json(s), defaults(), info)!;
     expect(out.lastCashiers).toBe(0.4375);
     expect(out.lastWorkers).toBe(1.25);
@@ -475,7 +475,7 @@ describe('sanitizeEconomy: napraw to, co da się naprawić', () => {
   it('profil puli ludzi po zepsuciu wraca do domyślnego, a zmiana z ostatniej minuty do pustej', () => {
     const raw = json(defaults());
     (raw.tycoon as { staff: { profile: unknown } }).staff.profile = 'szalony';
-    raw.shift = { staff: 'dwóch', human: { kasa: -1, rozladunek: 'x' } };
+    raw.shift = { staff: 'dwóch', human: { kasa: -1, rozladunek: 'x' }, people: 'kasa' };
     const out = sanitizeEconomy(raw, defaults(), info)!;
     expect(out.tycoon.staff.profile).toBe('kolejka');
     expect(out.shift).toEqual(defaults().shift);

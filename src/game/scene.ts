@@ -14,12 +14,13 @@ import { cashierCues, type CashierLook } from './cashier';
 import { bindControls } from './controls';
 import { advanceClock, clockAlpha } from './loop';
 import type { GameSession } from './session';
-import { palletRefsOf, staffFromEconomy } from './staffAdapter';
+import { palletRefsOf } from './palletRefs';
 import { SIM_STEP, payLook, setCrowdExtras, setCrowdRate, stepCrowd, type CrowdOptions } from '@/sim/crowd/crowd';
 import { CATS, HOUR_CURVE } from '@/sim/economy/catalog';
 import { minuteOfDay } from '@/sim/economy/calendar';
 import { effects, expectedDailyCustomers, isClosedForRemont, isStoreOpen, slotUsage } from '@/sim/economy/economy';
 import { slotUnits } from '@/sim/economy/slots';
+import { staffOnShift } from '@/sim/economy/tycoon/shift';
 import { spotCells } from '@/sim/economy/storeInfo';
 import { generateStore } from '@/sim/store/generateStore';
 import { CELL_SIZE_M } from '@/sim/grid';
@@ -238,11 +239,11 @@ export function createSceneHost(deps: SceneDeps): SceneHost {
       .map((u) => ({ cell: u.access!, look: payLook(u.fixture.facing) }));
     setCrowdExtras(loaded.world.crowd, obstacles, pay);
     setCrowdRate(loaded.world.crowd, crowdRateFor(session, ctx.preset));
-    // załoga: kto jest na zmianie i co robi, oraz palety (przeszkody i cele rozładunku); scena tylko to odgrywa
-    // (wymiana na etap 2C2: `staffFromEconomy(s, info)` → `staffOnShift(s)`, nic więcej)
+    // załoga: kto jest na zmianie i co robi (numery osób są stałe, `shift.people`), oraz palety (przeszkody i cele rozładunku);
+    // scena tylko to odgrywa
     // Błąd w teatrze załogi nie może przerwać reszty tej metody (pora dnia, znaczniki, nakładka kasy) ani klatki: raz do konsoli.
     try {
-      loaded.staffView?.sync({ people: staffFromEconomy(s, info), minute: s.minute, pallets: palletRefsOf(s, info) });
+      loaded.staffView?.sync({ people: staffOnShift(s), minute: s.minute, pallets: palletRefsOf(s, info) });
     } catch (error) {
       if (!staffSyncFailed) console.error('Nie udało się zsynchronizować załogi z ekonomią.', error);
       staffSyncFailed = true;

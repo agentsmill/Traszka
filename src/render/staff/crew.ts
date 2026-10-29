@@ -16,7 +16,7 @@ import { STAFF_WALK_SPEED, StaffWalker } from './walker';
 const LEAVE_TIMEOUT_S = 20;
 
 export interface CrewInput {
-  /** Osoby na zmianie z tym, czego chce ekonomia (adapter albo `staffOnShift`). */
+  /** Osoby na zmianie z tym, czego chce ekonomia (`staffOnShift`). */
   people: readonly StaffAssignment[];
   /** Minuta gry. */
   minute: number;

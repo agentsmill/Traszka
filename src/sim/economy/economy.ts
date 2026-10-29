@@ -26,7 +26,7 @@ import {
 import { closeFatigueMonth, fatigueEfficiency, fatigueNight, tap as fatigueTap, tapItems } from './tycoon/fatigue';
 import { closeKpiMonth, closeKpiWeek, kpiTitle, type KpiMetrics, type KpiScale, type KpiWeekResult } from './tycoon/kpi';
 import { buildMonthReport, reportCommentText, type MonthFigures, type TycoonMonthReport } from './tycoon/report';
-import { createShift, peopleOnShift, type ShiftState } from './tycoon/shift';
+import { createShift, peopleOnShift, placePeople, type ShiftState } from './tycoon/shift';
 import {
   PEOPLE_PER_PALLET, allocateStaff, closeStaffDay, closeStaffMonth, normalizePins, restockDemand, serveTill, stepStaff, tillDemand,
   unloadDemand, zeroTasks, type RobotFleet,
@@ -551,7 +551,7 @@ function runStaff(s: EconomyState, info: StoreInfo, fx: Effects, open: boolean, 
   const sweep = alloc.total.sprzatanie;
   cleanHall(hall, sweep - removeWaste(waste, sweep, press));
 
-  s.shift = { staff, human: alloc.human };
+  s.shift = { staff, human: alloc.human, people: placePeople(s.shift.people, staff, alloc.human, s.tycoon.staff.pinned) };
   s.lastCashiers = alloc.human.kasa;
   s.lastWorkers = alloc.human.rozladunek + alloc.human.wykladanie + alloc.human.sprzatanie;
 }

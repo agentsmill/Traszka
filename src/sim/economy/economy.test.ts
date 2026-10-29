@@ -343,7 +343,7 @@ describe('pula ludzi zamiast priorytetu', () => {
     const sum = Object.values(s.shift.human).reduce((n, v) => n + v, 0);
     expect(sum).toBeGreaterThan(0);
     expect(sum).toBeLessThanOrEqual(3 + 1e-9);
-    // pola dla interfejsu i adaptera „Ludzie na ekranie” to ten sam przydział
+    // pola dla interfejsu (`lastCashiers`, `lastWorkers`) to ten sam przydział co `shift.human`
     const h = s.shift.human;
     expect(s.lastCashiers).toBe(h.kasa);
     expect(s.lastWorkers).toBe(h.rozladunek + h.wykladanie + h.sprzatanie);

@@ -121,7 +121,7 @@ describe('panele wysyłają polecenia przez game.dispatch, a nie wołają symula
   it('palety: rozładunek teraz pokazuje pracę ludzi z ostatniej minuty i automatykę', () => {
     const { s, info } = rich();
     const game = fakeGame();
-    s.shift = { staff: 2, human: { kasa: 0, rozladunek: 1.5, wykladanie: 0, sprzatanie: 0 } };
+    s.shift = { staff: 2, human: { kasa: 0, rozladunek: 1.5, wykladanie: 0, sprzatanie: 0 }, people: ['rozladunek', 'rozladunek'] };
     expect(textOf(PalletsPanel({ s, info, game, v: 1 }))).toContain('~540 szt./h (1,5 os.)');
     s.upgrades.tasmociag = 1;
     expect(textOf(PalletsPanel({ s, info, game, v: 1 }))).toContain('+ automatyka');
@@ -202,7 +202,7 @@ describe('panel Ludzie: kto co robi, przypięcia i podsumowanie dnia', () => {
     const { s, info } = rich();
     s.staff = 4;
     s.minute = 12 * 60;
-    s.shift = { staff: 4, human: { kasa: 2, rozladunek: 1, wykladanie: 0, sprzatanie: 0 } };
+    s.shift = { staff: 4, human: { kasa: 2, rozladunek: 1, wykladanie: 0, sprzatanie: 0 }, people: ['kasa', 'kasa', 'rozladunek', 'wolny'] };
     return { s, info };
   }
   /** Wiersz zadania w sekcji „Kto co robi teraz” (etykieta wiersza to prop, nie dziecko). */

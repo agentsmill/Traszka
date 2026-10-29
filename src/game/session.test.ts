@@ -99,7 +99,7 @@ const asLoaded = (e: EconomyState): Omit<EconomyState, 'tycoon'> => {
     month: counters(rest.month),
     total: counters(rest.total),
     lastReport: rest.lastReport && { ...rest.lastReport, counters: counters(rest.lastReport.counters), detail: null },
-    shift: { staff: 0, human: { kasa: 0, rozladunek: 0, wykladanie: 0, sprzatanie: 0 } },
+    shift: { staff: 0, human: { kasa: 0, rozladunek: 0, wykladanie: 0, sprzatanie: 0 }, people: [] },
     tapStreak: 0,
     lastTapAt: -1e9,
   };
