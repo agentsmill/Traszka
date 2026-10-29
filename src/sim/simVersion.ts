@@ -5,7 +5,9 @@
  *
  * Podbij o 1 przy każdej zmianie, po której `replayRun` dla tego samego seeda i dziennika daje inny stan: ekonomia (stałe w
  * `catalog.ts`, ulepszenia, zlecenia, krok minuty), generator sklepu, polecenia (`commands.ts`), kolejność odtwarzania (`run.ts`).
- * NIE podbijaj przy zmianach interfejsu, renderu i dźwięków ani przy refaktorach, które nie zmieniają wyniku.
+ * NIE podbijaj przy zmianach interfejsu, renderu i dźwięków ani przy refaktorach, które nie zmieniają wyniku. Skrót w teście obejmuje
+ * cały stan, więc zmiana kształtu stanu, także samych napisów w nim (`comment` Centrali, `label` raportu), też wymaga podbicia
+ * (bezpieczniej o jedno podbicie za dużo niż odrzucić uczciwy bieg, który wynik policzyłby inaczej).
  *
  * Pilnuje tego `tests/simGolden.test.ts`: odtwarza stały bieg i porównuje skrót stanu z tabelą `GOLDEN`. Podbicie wymaga
  * dopisania do `GOLDEN` nowego wpisu (nowa wersja → nowy skrót; test przy zmianie wyniku sam drukuje gotowy wpis).

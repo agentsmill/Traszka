@@ -211,6 +211,9 @@ function digest(log: readonly LogEntry[], checkpoints: readonly number[] = CHECK
 /** Skrót pełnego biegu w punktach kontrolnych, liczony raz (czysta funkcja stałych, więc kolejność testów nie ma znaczenia). */
 let fullDigest: string | undefined;
 const goldenDigest = (): string => (fullDigest ??= digest(LOG));
+/** Skrót samego końca sezonu pełnego dziennika (baza porównań w testach „bez tego polecenia”), też liczony raz. */
+let endDigest: string | undefined;
+const seasonDigest = (): string => (endDigest ??= digest(LOG, [RANKED_SEASON_END_MINUTE]));
 
 // --- Testy ------------------------------------------------------------------------------------------------------------------------
 
@@ -283,13 +286,16 @@ describe('dziennik stałego biegu naprawdę coś robi', () => {
 
   it('kolejność wpisów w tablicy nie ma znaczenia, liczy się (minute, seq)', () => {
     const season = [RANKED_SEASON_END_MINUTE];
-    expect(digest([...LOG].reverse(), season)).toBe(digest(LOG, season));
+    expect(digest([...LOG].reverse(), season)).toBe(seasonDigest());
   }, TIMEOUT);
 
   // Bez któregoś typu wynik biegu musi być inny: polecenie jest w dzienniku, jest przyjmowane i wpływa na stan.
   it.each(COMMAND_TYPES)('%s: bez tego polecenia wynik biegu jest inny', (type) => {
     const season = [RANKED_SEASON_END_MINUTE];
-    expect(digest(LOG.filter((e) => e.cmd.type !== type), season), `dziennik bez ${type}`).not.toBe(digest(LOG, season));
+    expect(
+      digest(LOG.filter((e) => e.cmd.type !== type), season),
+      `Polecenie ${type} nie zmienia wyniku biegu: ekonomia je odrzuca (zmieniły się ceny albo progi: popraw terminy w PLAN) albo nic nie robi`,
+    ).not.toBe(seasonDigest());
   }, TIMEOUT);
 });
 
