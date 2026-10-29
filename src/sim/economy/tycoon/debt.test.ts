@@ -4,15 +4,15 @@ import { DEBT_LIMIT, MINUTES_PER_DAY } from '../catalog';
 import { applyCommand } from '../commands';
 import { DEBT_WARN, cardContext, type EconEvent } from '../economy';
 import { BOTS, runBot } from './bots';
-import type { CardInstance } from './cards';
+import { cardDef, type CardInstance } from './cards';
+import { MINOR_SALE_FINE } from './deck';
 import { economyEnv } from './economyEnv';
 
 /**
  * Granica debetu na biernym graczu (decyzja właściciela z 29.10.2026): bierny bez pecha przeżywa dwa miesiące, dwa duże koszty to
- * spory problem (gotówka w strefie ostrzeżenia), trzy to koniec gry. Duży koszt to tu mandat w wysokości dwóch typowych marż dnia
- * (nie mniej niż 4000 zł), wymuszony tą samą drogą co odpowiedź na kartę (`applyCommand`, `answerCard`). Dziś żaden pojedynczy
- * koszt w grze nie jest tak duży (największy to mandat z ryzyka karty „Nastolatek po energetyka”, ok. 1,1 tys. zł); test pilnuje
- * granicy i ostrzeżenia, a nie konkretnej karty.
+ * spory problem (gotówka w strefie ostrzeżenia), trzy to koniec gry. Duży koszt to mandat z ryzyka karty „Nastolatek po energetyka”
+ * (`minorSaleFine`: dwie typowe marże dnia, nie mniej niż 4000 zł), wymuszony tą samą drogą co odpowiedź na kartę (`applyCommand`,
+ * `answerCard`): skutek ryzyka z definicji karty trafia do odpowiedzi, którą test wybiera.
  */
 const SEED = 'makieta';
 const DAYS = 61;
@@ -31,11 +31,11 @@ function passiveWith(hits: number): PassiveRun {
   let minCash = s.cash;
   while (s.minute < DAYS * MINUTES_PER_DAY && !s.gameOver) {
     if (at.has(s.minute)) {
-      const cost = Math.max(4000, 2 * cardContext(s, run.info).dailyMargin);
-      costs.push(cost);
+      const delta = cardDef('wiek')!.answers[1]!.risk!.delta(cardContext(s, run.info), {});   // „Sprzedaję”, kontrola weszła
+      costs.push(-(delta.fine ?? 0));
       const card: CardInstance = {
         seq: s.tycoon.cards.seq++, id: 'wiek', day: Math.floor(s.minute / MINUTES_PER_DAY), showAt: s.minute, params: {},
-        answers: [{ delta: { fine: -cost, trust: -2 }, mods: [], risk: null }], defaultAnswer: 0,
+        answers: [{ delta, mods: [], risk: null }], defaultAnswer: 0,
       };
       s.tycoon.cards.pending.push(card);
       events.push(...applyCommand(s, run.info, { type: 'answerCard', seq: card.seq, answer: 0 }).events);
@@ -57,7 +57,7 @@ describe('granica debetu na biernym graczu (dwa miesiące, wymuszone duże koszt
   it('dwa duże koszty: gotówka w strefie ostrzeżenia (60–90% granicy), jedno ostrzeżenie, gra trwa', () => {
     const r = passiveWith(2);
     expect(r.costs).toHaveLength(2);
-    for (const c of r.costs) expect(c).toBeGreaterThanOrEqual(4000);
+    for (const c of r.costs) expect(c).toBeGreaterThanOrEqual(MINOR_SALE_FINE.min);
     expect(r.gameOver).toBe(false);
     expect(r.warnings).toBeGreaterThanOrEqual(1);
     expect(r.minCash / DEBT_LIMIT).toBeGreaterThanOrEqual(0.6);

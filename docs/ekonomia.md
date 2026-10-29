@@ -94,9 +94,9 @@ pracownikiem, kiedy jedyna osoba stoi przy kasie i palet nikt nie rusza. Złotyc
 losowa liczba rozjeżdżała wynik między seedami.
 
 Granica debetu (`DEBT_LIMIT`, −10 tys. zł; `tycoon/debt.test.ts`): bierny bez pecha kończy miesiąc po opłacie z gotówką od ok. −1,5
-do +2,7 tys. zł. Dwa duże koszty (po dwie typowe marże dnia, ok. 4,4 tys. zł) spychają go do 50–70% granicy z ostrzeżeniem, trzy
-kończą grę przy raporcie za październik. Tak dużego pojedynczego kosztu w grze dziś nie ma: największy to mandat z ryzyka karty
-„Nastolatek po energetyka” (ok. 1,1 tys. zł), więc dwa takie zdarzenia biernemu jeszcze nie szkodzą.
+do +2,7 tys. zł. Duży koszt to mandat z ryzyka karty „Nastolatek po energetyka” (`MINOR_SALE_FINE` w `tycoon/deck.ts`: dwie typowe
+marże dnia, nie mniej niż 4000 zł, czyli ok. 4,2–4,7 tys. zł). Dwa takie spychają biernego do 52–70% granicy z ostrzeżeniem, trzy
+kończą grę przy raporcie za październik; na słabszych sklepach (`traszka-1`, `lublin-9`) koniec przychodzi już po dwóch.
 
 Bierny gracz traci na mandatach po zignorowanych upomnieniach i na zaufaniu: odpowiedzi domyślne je zjadają, a bez zaufania od
 70 nie ma premii od obrotu. Widełki są ciasne, bo płace są stałe, a losowe zdarzenia (dni z chorobą, złote palety, trafione KPI) różnią się między seedami; nie każdy seed się w nich
