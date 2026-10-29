@@ -23,6 +23,7 @@ import { GENERATOR_VERSION } from '@/sim/store/generateStore';
 const GOLDEN: Record<number, string> = {
   1: 'f782942df6a06a7b9cda5ef1c0e5678e9765faeccde5a6c16aa4efa8d9695d26',
   2: 'de237366de4f5c764dde1bdbdd3f7adcc7fb7b80ff80673a4f73785a24e8cdca',   // C2: karty, profile i przypięcia załogi, KPI zamiast zleceń, bez prezentu
+  3: '1c05f23716a31cb5f11cbb41a82f5f0eeebaf4e88f1b2d46456b39b4ce5aa79b',   // Straż z upomnieniem, limit asystenta, stukanie w kasę tylko gdy pomaga
 };
 
 const SEED = 'kiełbasa-42';

@@ -63,8 +63,9 @@ const LOG: LogEntry[] = (() => {
     { minute: at(2, 9), cmd: { type: 'hire' } },
     { minute: at(3, 7), cmd: { type: 'setOrder', auto: true } },
     { minute: at(4, 12), cmd: { type: 'buyEquipment', id: 'sco' } },
-    { minute: at(28, 7), cmd: { type: 'startRemont' } },
-    { minute: at(28, 7, 5), cmd: { type: 'rushRemont' } },
+    // dzień 29 rano: po stuknięciach z czterech tygodni sklep ma ok. 25,6 tys. zł (SIM_VERSION 3), dzień wcześniej brakuje ok. 120 zł
+    { minute: at(29, 7), cmd: { type: 'startRemont' } },
+    { minute: at(29, 7, 5), cmd: { type: 'rushRemont' } },
     { minute: at(40, 12), cmd: { type: 'campaign' } },
   ];
   for (let day = 0; day < 28; day++) {
