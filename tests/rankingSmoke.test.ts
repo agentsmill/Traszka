@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -33,6 +33,8 @@ import type { VerifyRun } from '../src/server/verify';
  * katalogu tymczasowego, tak jak w tests/judgeBundle.test.ts). Nic nie wychodzi poza 127.0.0.1, a zmienne środowiskowe procesu
  * zostają nietknięte (`route` dostaje własne `env`).
  */
+vi.setConfig({ testTimeout: 60_000 });   // sędzia odtwarza trzy miesiące gry w każdym biegu, a pliki testów idą równolegle
+
 const ROOT = resolve(__dirname, '..');
 const SCRIPT = join(ROOT, 'scripts', 'ranking-smoke.mjs');
 const UPSTASH_URL = 'https://atrapa.upstash.test';
@@ -115,14 +117,14 @@ async function startServer(opts: { redis?: MemoryRedis; tamper?: Tamper } = {}):
   return { url: await listen(server), sent, redis, upstash };
 }
 
-/** Serwer, który na każde żądanie odpowiada tym, co poda `reply` (do odpowiedzi śmieciowych). */
-async function startReplyServer(reply: () => Response): Promise<{ url: string; hits: () => number }> {
+/** Serwer, który na każde żądanie odpowiada tym, co poda `reply` (do odpowiedzi śmieciowych i przekierowań). */
+async function startReplyServer(reply: (request: { method: string; url: URL }) => Response): Promise<{ url: string; hits: () => number }> {
   let hits = 0;
   const server = createServer((req, res) => {
     hits++;
     req.resume();
     void (async () => {
-      const r = reply();
+      const r = reply({ method: req.method ?? 'GET', url: new URL(req.url ?? '/', 'http://127.0.0.1') });
       res.writeHead(r.status, Object.fromEntries(r.headers)).end(await r.text());
     })();
   });
@@ -448,6 +450,30 @@ describe('identyfikatory próby', () => {
   });
 });
 
+describe('wersje symulacji i generatora', () => {
+  it('skrypt czyta je z plików src/sim obok siebie, a nie ma ich wpisanych na stałe', async () => {
+    // kopia skryptu w katalogu z własnym src/sim/simVersion.ts (inna wersja niż w repozytorium): serwer musi zobaczyć tę, a nie wersję stąd
+    const fake = SIM_VERSION + 6;
+    const copy = join(dir, 'kopia');
+    mkdirSync(join(copy, 'scripts'), { recursive: true });
+    mkdirSync(join(copy, 'src', 'sim', 'store'), { recursive: true });
+    copyFileSync(SCRIPT, join(copy, 'scripts', 'ranking-smoke.mjs'));
+    writeFileSync(join(copy, 'src', 'sim', 'simVersion.ts'), `// komentarz o SIM_VERSION = 1\nexport const SIM_VERSION = ${fake};\n`);
+    writeFileSync(join(copy, 'src', 'sim', 'store', 'generateStore.ts'), 'export const GENERATOR_VERSION: number = 1;\n');
+    const server = await startServer();
+    const res = await new Promise<Cli>((done, fail) => {
+      const child = spawn(process.execPath, [join(copy, 'scripts', 'ranking-smoke.mjs'), server.url, '--write'], { cwd: copy });
+      let stdout = '';
+      child.stdout.on('data', (d: Buffer) => { stdout += d.toString('utf8'); });
+      child.on('error', fail);
+      child.on('close', (code) => { done({ code, stdout, stderr: '' }); });
+    });
+    expect(res.stdout).toContain(`symulacja v${fake}, generator v1`);
+    expect(res.code).toBe(1);   // sędzia z tego repozytorium zna swoją wersję, więc odrzuca obcą
+    expect(runBodies(server)[0]!.run).toMatchObject({ simVersion: fake, generatorVersion: 1 });
+  });
+});
+
 describe('zła wersja symulacji (--sim-version)', () => {
   it('niezgodna simVersion kończy się porażką na kroku biegu (409 old-version), a do rankingu nic nie trafia', async () => {
     const server = await startServer();
@@ -480,6 +506,7 @@ describe('uszkodzone albo kłamiące odpowiedzi serwera dają FAIL', () => {
     ['JSON bez pól', () => Response.json({ ok: true })],
     ['tablica zamiast obiektu', () => Response.json([])],
     ['ok:false z kodem serwera', () => Response.json({ ok: false, error: 'server', message: 'Coś poszło nie tak' }, { status: 500 })],
+    ['status 200, ale ok:false', () => Response.json({ ok: false, error: 'server', message: 'Coś poszło nie tak' })],
     ['ranking w złym kształcie', () => Response.json({ ok: true, board: 'seed', rows: 'brak', week: {} })],
     ['wiersze bez wyników', () => Response.json({ ok: true, board: 'seed', rows: [{ rank: 1 }], week: { id: '2026-W44', seed: 'x-100', endsAt: 1 } })],
     ['odpowiedź bez ciała', () => new Response(null, { status: 204 })],
@@ -505,6 +532,21 @@ describe('uszkodzone albo kłamiące odpowiedzi serwera dają FAIL', () => {
     expect(result.ok).toBe(false);
     expect(result.steps).toHaveLength(1);
     expect(result.steps[0]!.error).toMatch(/fetch failed/);
+  });
+
+  it('przekierowanie żądania z kluczem to porażka, a klucz nie jedzie pod inny adres', async () => {
+    const elsewhere = await startReplyServer(() => Response.json({ ok: true, nicks: [] }));
+    const redirecting = await startReplyServer(({ method, url }) => {
+      if (method !== 'GET') return new Response(null, { status: 307, headers: { location: `${elsewhere.url}/api/player` } });
+      const board = url.searchParams.get('board');
+      const week = { id: '2026-W44', seed: 'pierogi-731', endsAt: 1_900_000_000_000 };
+      return Response.json({ ok: true, board, ...(board === 'seed' ? { seed: url.searchParams.get('seed') } : board === 'week' ? { seed: week.seed } : {}), week, rows: [] });
+    });
+    const result = await runSmoke({ baseUrl: redirecting.url, write: true, fetch: localFetch, log: () => undefined });
+    expect(result.ok).toBe(false);
+    expect(result.steps.at(-1)).toMatchObject({ id: 'gracz-nowy', ok: false });
+    expect(result.steps.at(-1)!.error).toMatch(/brak odpowiedzi/);
+    expect(elsewhere.hits()).toBe(0);
   });
 
   it('jako polecenie wobec serwera ze śmieciami: kod 1 i FAIL', async () => {
