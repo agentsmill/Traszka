@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { BOARD_LIMITS } from '@/server/config';
-import { handleLeaderboard, type ServerDeps } from '@/server/http';
+import { API_ERRORS } from '@/server/errors';
+import { handleLeaderboard, handleSaveUpload, type ServerDeps } from '@/server/http';
 import { MemoryRedis } from '@/server/memoryRedis';
+import { testBundle } from '@/server/testBundle';
 import { replayNotAvailable } from '@/server/verify';
 import { NETWORK_ERROR, UNAVAILABLE_ERROR, createRankingClient } from './client';
 
@@ -58,6 +60,59 @@ describe('klient API rankingu w grze', () => {
     expect(calls.map((c) => JSON.parse(String(c.init.body)))).toEqual([
       { key: KEY, nick: 'Mateusz', seed: 'pierogi-731' }, { key: KEY, save: '{"a":1}' }, { key: KEY },
     ]);
+  });
+
+  it('wysłanie zapisu: expected i force jadą w ciele tylko wtedy, gdy podane (null też jest wartością), nigdy w adresie', async () => {
+    const { fetchFn, calls } = fake(() => Response.json({ ok: true, bytes: 7, savedAt: 1 }));
+    const client = createRankingClient(fetchFn);
+    await client.uploadSave(KEY, '{"a":1}');
+    await client.uploadSave(KEY, '{"a":1}', {});
+    await client.uploadSave(KEY, '{"a":1}', { expected: null });
+    await client.uploadSave(KEY, '{"a":1}', { expected: 1_700_000_000_000 });
+    await client.uploadSave(KEY, '{"a":1}', { force: true });
+    await client.uploadSave(KEY, '{"a":1}', { expected: 1_700_000_000_000, force: false });
+    await client.uploadSave(KEY, '{"a":1}', { expected: undefined, force: undefined });
+    for (const c of calls) {
+      expect(c.url).toBe('/api/save/upload');
+      expect(c.init.method).toBe('POST');
+    }
+    expect(calls.map((c) => JSON.parse(String(c.init.body)))).toEqual([
+      { key: KEY, save: '{"a":1}' },
+      { key: KEY, save: '{"a":1}' },
+      { key: KEY, save: '{"a":1}', expected: null },
+      { key: KEY, save: '{"a":1}', expected: 1_700_000_000_000 },
+      { key: KEY, save: '{"a":1}', force: true },
+      { key: KEY, save: '{"a":1}', expected: 1_700_000_000_000, force: false },
+      { key: KEY, save: '{"a":1}' },
+    ]);
+    // „expected: null” ma w ciele jawne null (urządzenie nie widziało kopii), a nie brak pola
+    expect(String(calls[2]!.init.body)).toContain('"expected":null');
+  });
+
+  it('konflikt zapisu (409 save-conflict z savedAt kopii na serwerze) przechodzi przez klienta bez zmian', async () => {
+    const conflict = { ok: false, error: 'save-conflict', message: API_ERRORS['save-conflict'].message, savedAt: 1_700_000_000_000 };
+    const { fetchFn } = fake(() => Response.json(conflict, { status: 409 }));
+    const result = await createRankingClient(fetchFn).uploadSave(KEY, '{"a":1}', { expected: null });
+    expect(result).toEqual(conflict);
+    if (!result.ok) expect(result.savedAt).toBe(1_700_000_000_000);   // typ błędu niesie savedAt
+  });
+
+  it('wysłanie zapisu przez prawdziwą obsługę na serwerze: nazwy pól się zgadzają (pierwsze wysłanie, konflikt, zgodny expected, force)', async () => {
+    const redis = new MemoryRedis();
+    const clock = { now: Date.UTC(2026, 9, 28, 12) };
+    const deps: ServerDeps = { redis, readRedis: redis, verifyRun: replayNotAvailable, now: () => clock.now };
+    const toServer = (async (input: RequestInfo | URL, init?: RequestInit) =>
+      handleSaveUpload(new Request(`https://traszka.test${String(input)}`, init), deps)) as typeof fetch;
+    const client = createRankingClient(toServer);
+    const first = await client.uploadSave(KEY, testBundle(), { expected: null });
+    expect(first).toMatchObject({ ok: true, savedAt: clock.now });
+    clock.now += 1000;
+    const stale = await client.uploadSave(KEY, testBundle({ seed: 'bigos-111' }), { expected: null });
+    expect(stale).toMatchObject({ ok: false, error: 'save-conflict', savedAt: Date.UTC(2026, 9, 28, 12) });
+    expect(await client.uploadSave(KEY, testBundle({ seed: 'bigos-111' }), { expected: Date.UTC(2026, 9, 28, 12) })).toMatchObject({ ok: true, savedAt: clock.now });
+    clock.now += 1000;
+    expect(await client.uploadSave(KEY, testBundle(), { expected: null })).toMatchObject({ ok: false, error: 'save-conflict', savedAt: clock.now - 1000 });
+    expect(await client.uploadSave(KEY, testBundle(), { expected: null, force: true })).toMatchObject({ ok: true, savedAt: clock.now });
   });
 
   it('błąd z serwera (JSON z kodem i komunikatem) wraca do interfejsu tak, jak przyszedł', async () => {

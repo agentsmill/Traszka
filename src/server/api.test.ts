@@ -137,6 +137,52 @@ describe('api/** na Vercelu (atrapa Upstash przez fetch)', () => {
     expect(redis.keys().every((k) => /^tr:(save|rl|salt|budget):/.test(k))).toBe(true);
   });
 
+  it('zapis pyta o nowszą kopię: 409 save-conflict z savedAt, bez zapisu i bez zużycia budżetu; zgodny expected i force przechodzą', async () => {
+    // własny klucz i adres: bramka api/save/upload.ts jest wspólna dla testów tego pliku, a wyczerpany limit trwa do końca okna
+    vi.stubEnv('RANKING_SALT', 'sekretny-ciag-0123456789');   // z sekretem limit to same INCR i PEXPIRE, więc w logu widać tylko to, co robi sam zapis
+    const own = 'W0XY-M2N3-P4Q5-R6S7-T8V9';
+    const send = (extra: Record<string, unknown>, save = testBundle()) => upload(new Request(`${ORIGIN}/api/save/upload`, {
+      method: 'POST', headers: { 'content-type': 'application/json', 'x-real-ip': '192.0.2.99' }, body: JSON.stringify({ key: own, save, ...extra }),
+    }));
+    const budget = async (): Promise<number> => {
+      const values = await Promise.all(redis.keys().filter((k) => k.startsWith('tr:budget:save:')).map(async (k) => Number((await redis.exec([['GET', k]]))[0])));
+      return values.reduce((a, b) => a + b, 0);
+    };
+    const first = await (await send({})).json() as { ok: boolean; savedAt: number };
+    expect(first.ok).toBe(true);
+    expect(await budget()).toBe(1);
+    const asked = upstash.log.length;
+    const stale = await send({ expected: null }, testBundle({ seed: 'bigos-111' }));
+    expect(stale.status).toBe(409);
+    expect(await stale.json()).toEqual({ ok: false, error: 'save-conflict', message: API_ERRORS['save-conflict'].message, savedAt: first.savedAt });
+    // konflikt: limit (INCR i PEXPIRE na adresie i kluczu), potem sam początek wpisu (GETRANGE, nie GET) tokenem zapisu; ani SET, ani licznik budżetu
+    const during = upstash.log.slice(asked);
+    expect(during.flatMap((l) => l.commands)).toEqual(['INCR', 'PEXPIRE', 'INCR', 'PEXPIRE', 'GETRANGE']);
+    expect(during.every((l) => l.token === 'rw')).toBe(true);
+    expect(await budget()).toBe(1);
+    expect(await (await download(post('/api/save/download', { key: own }))).json()).toMatchObject({ ok: true, save: testBundle(), savedAt: first.savedAt });
+    const forced = await send({ expected: null, force: true }, testBundle({ seed: 'bigos-111' }));
+    expect(forced.status).toBe(200);
+    const forcedAt = (await forced.json() as { savedAt: number }).savedAt;
+    expect(await budget()).toBe(2);
+    expect((await send({ expected: forcedAt }, testBundle({ seed: 'golabki-222' }))).status).toBe(200);
+    expect(await budget()).toBe(3);
+    expect((await send({ expected: 'x' })).status).toBe(400);
+    expect(await budget()).toBe(3);
+  });
+
+  it('atrapa: token tylko do odczytu może wykonać GETRANGE (polecenie odczytu), choć sam handler zapisu używa tokenu zapisu', async () => {
+    await redis.exec([['SET', 'k', '1700000000000\n{"a":1}']]);
+    const ask = async (token: string): Promise<{ result?: unknown; error?: string }[]> => {
+      const res = await upstash.fetch(`${URL_}/pipeline`, {
+        method: 'POST', headers: { authorization: `Bearer ${token}` }, body: JSON.stringify([['GETRANGE', 'k', '0', '24'], ['GETRANGE', 'brak', '0', '24']]),
+      });
+      return await res.json() as { result?: unknown; error?: string }[];
+    };
+    expect(await ask(RO)).toEqual([{ result: '1700000000000\n{"a":1}' }, { result: '' }]);
+    expect(await ask(RW)).toEqual([{ result: '1700000000000\n{"a":1}' }, { result: '' }]);
+  });
+
   it('zapis, który nie jest paczką z gry, nie trafia do bazy', async () => {
     const res = await upload(post('/api/save/upload', { key: KEY, save: JSON.stringify({ schema: 2, seed: 'pierogi-731' }) }));
     expect(res.status).toBe(400);

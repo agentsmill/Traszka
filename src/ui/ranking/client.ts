@@ -20,13 +20,23 @@ export interface SaveUploaded { bytes: number; savedAt: number }
 export interface SaveDownloaded { save: string; savedAt: number }
 
 export interface ApiError { ok: false; error: string; message: string }
-export type ApiResult<T> = ({ ok: true } & T) | ApiError;
+/** `E` to pola, które błąd niesie poza `error` i `message` (domyślnie żadne). */
+export type ApiResult<T, E extends object = object> = ({ ok: true } & T) | (ApiError & E);
+
+/** Warunek wysłania zapisu: `expected` to chwila kopii, którą to urządzenie wysłało albo pobrało (`null`: jeszcze żadnej nie widziało), `force` wysyła mimo konfliktu. */
+export interface SaveUploadOptions { expected?: number | null; force?: boolean }
+/** Wysłanie zapisu: 409 `save-conflict` niesie `savedAt` kopii, która leży na serwerze. */
+export type SaveUploadResult = ApiResult<SaveUploaded, { savedAt?: number }>;
 
 export interface RankingClient {
   /** `limit` to 10, 20, 50 albo 100 wierszy (domyślnie 20): serwer odrzuca inne wartości, żeby pamięć podręczna Vercela miała mało kluczy. */
   board(tab: RankingTab, seed?: string, limit?: number): Promise<ApiResult<BoardResponse>>;
   player(key: string, nick?: string, seed?: string): Promise<ApiResult<PlayerResponse>>;
-  uploadSave(key: string, save: string): Promise<ApiResult<SaveUploaded>>;
+  /**
+   * Bez `opts` serwer traktuje wysłanie jak `expected: null`: gdy na serwerze leży już kopia, odpowiada 409 `save-conflict` (z `savedAt`
+   * tej kopii) i niczego nie zapisuje. Pola `expected` i `force` jadą w ciele tylko wtedy, gdy podane (`null` też jest wartością).
+   */
+  uploadSave(key: string, save: string, opts?: SaveUploadOptions): Promise<SaveUploadResult>;
   downloadSave(key: string): Promise<ApiResult<SaveDownloaded>>;
 }
 
@@ -36,7 +46,7 @@ export const UNAVAILABLE_ERROR = 'Ranking jest teraz nieczynny. Centrala robi in
 const DEFAULT_LIMIT = 20;
 
 export function createRankingClient(fetchFn: typeof fetch = (input, init) => fetch(input, init), base = '/api'): RankingClient {
-  async function call<T>(path: string, init?: RequestInit): Promise<ApiResult<T>> {
+  async function call<T, E extends object = object>(path: string, init?: RequestInit): Promise<ApiResult<T, E>> {
     let res: Response;
     try {
       res = await fetchFn(`${base}${path}`, init);
@@ -47,10 +57,10 @@ export function createRankingClient(fetchFn: typeof fetch = (input, init) => fet
     if (typeof data !== 'object' || data === null || Array.isArray(data) || typeof (data as { ok?: unknown }).ok !== 'boolean') {
       return { ok: false, error: 'unavailable', message: UNAVAILABLE_ERROR };
     }
-    return data as ApiResult<T>;
+    return data as ApiResult<T, E>;
   }
-  const post = <T>(path: string, body: Record<string, unknown>): Promise<ApiResult<T>> =>
-    call<T>(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  const post = <T, E extends object = object>(path: string, body: Record<string, unknown>): Promise<ApiResult<T, E>> =>
+    call<T, E>(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
 
   return {
     board(tab, seed, limit = DEFAULT_LIMIT) {
@@ -59,7 +69,9 @@ export function createRankingClient(fetchFn: typeof fetch = (input, init) => fet
       return call<BoardResponse>(`/leaderboard?${q.toString().replace(/\+/g, '%20')}`);
     },
     player: (key, nick, seed) => post<PlayerResponse>('/player', { key, ...(nick !== undefined ? { nick } : {}), ...(seed !== undefined ? { seed } : {}) }),
-    uploadSave: (key, save) => post<SaveUploaded>('/save/upload', { key, save }),
+    uploadSave: (key, save, opts) => post<SaveUploaded, { savedAt?: number }>('/save/upload', {
+      key, save, ...(opts?.expected !== undefined ? { expected: opts.expected } : {}), ...(opts?.force !== undefined ? { force: opts.force } : {}),
+    }),
     downloadSave: (key) => post<SaveDownloaded>('/save/download', { key }),
   };
 }

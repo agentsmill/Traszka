@@ -12,7 +12,7 @@ import { claimNick, nickStatus, ownedNicks } from './nicks.js';
 import { checkBudget, checkRate, type RateCheck, type RateGate } from './rateLimit.js';
 import type { RedisExec } from './redis.js';
 import { isShowableSeed, parseSubmission } from './runs.js';
-import { checkSave, getSave, putSave } from './saves.js';
+import { checkSave, getSave, putSave, savedAtOf } from './saves.js';
 import type { VerifyRun } from './verify.js';
 import { isWeekSeed, weekOf } from './week.js';
 
@@ -50,8 +50,9 @@ export function json(body: unknown, status = 200, headers: Record<string, string
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json; charset=utf-8', ...headers } });
 }
 
-export function apiError(code: ApiErrorCode, message?: string, headers: Record<string, string> = {}): Response {
-  return json({ ok: false, error: code, message: message ?? API_ERRORS[code].message }, API_ERRORS[code].status, { ...NO_STORE, ...headers });
+/** Odpowiedź błędu: `{ ok: false, error, message }`, a `extra` dokłada pola do ciała (np. `savedAt` przy `save-conflict`). */
+export function apiError(code: ApiErrorCode, message?: string, headers: Record<string, string> = {}, extra: Record<string, unknown> = {}): Response {
+  return json({ ok: false, error: code, message: message ?? API_ERRORS[code].message, ...extra }, API_ERRORS[code].status, { ...NO_STORE, ...headers });
 }
 
 const failure = (f: ApiFailure): Response => apiError(f.error, f.message);
@@ -268,11 +269,30 @@ export const handlePlayer: Handler = async (request, deps) => {
 };
 
 /**
- * `POST /api/save/upload` z `{ key, save }`: kładzie paczkę zapisu z gry (tekst JSON do 64 KB, kształt `TransferBundle`) do jedynej
- * szuflady tego klucza na 30 dni. Zapis z samym kluczem gracza w środku odpada (gra wysyła paczkę bez klucza), bo serwer kluczy nie
- * przechowuje. Po kontroli kształtu i limitu na klucz i adres liczy się globalny budżet dzienny (429 do północy UTC): bez niego
- * kto zmienia klucze i adresy, wypełniłby bazę, a limity na klucz i adres go nie zatrzymają. Budżet idzie po limicie na adres,
- * żeby jeden adres nie wypalił go w całości.
+ * Warunek wysłania zapisu z ciała żądania: `expected` to brak pola, `null` (jeszcze żadnej kopii nie widziało) albo chwila kopii
+ * (liczba całkowita nieujemna, bezpieczna w JSON-ie), `force` brak pola albo wartość logiczna. Cokolwiek innego to `bad-request`.
+ */
+function uploadCondition(body: Record<string, unknown>): Checked<{ expected: number | null; force: boolean }> {
+  const { expected = null, force = false } = body;   // domyślne wartości tylko dla braku pola (undefined); null w `force` odpada niżej
+  if (typeof force !== 'boolean') return fail('bad-request');
+  if (expected !== null && !(typeof expected === 'number' && Number.isSafeInteger(expected) && expected >= 0)) return fail('bad-request');
+  return { ok: true, value: { expected, force } };
+}
+
+/**
+ * `POST /api/save/upload` z `{ key, save, expected?, force? }`: kładzie paczkę zapisu z gry (tekst JSON do 64 KB, kształt
+ * `TransferBundle`) do jedynej szuflady tego klucza na 30 dni. Zapis z samym kluczem gracza w środku odpada (gra wysyła paczkę bez
+ * klucza), bo serwer kluczy nie przechowuje.
+ *
+ * Wysłanie jest warunkowe: `expected` to chwila kopii, którą to urządzenie ostatnio wysłało albo pobrało (brak pola i `null`: jeszcze
+ * żadnej nie widziało). Gdy na serwerze leży kopia o innej chwili, a nie ma `force: true`, odpowiedź to 409 `save-conflict` z
+ * `savedAt` tej kopii, bez zapisu i bez zużycia budżetu, żeby urządzenie nie nadpisało po cichu nowszej kopii z innego urządzenia.
+ * Kontrola i zapis to dwa osobne zapytania (bez transakcji), więc dwa wysłania w tej samej chwili mogą się minąć; chroni to przed
+ * pomyłką człowieka między urządzeniami, a nie przed wyścigiem w milisekundach.
+ *
+ * Kolejność kontroli: kształt ciała (`expected`, `force`, zapis), limit na klucz i adres, konflikt, na końcu globalny budżet dzienny
+ * (429 do północy UTC): bez niego kto zmienia klucze i adresy, wypełniłby bazę, a limity na klucz i adres go nie zatrzymają. Budżet
+ * idzie po limicie na adres, żeby jeden adres nie wypalił go w całości, i po konflikcie, bo odrzucone wysłanie niczego nie zajmuje.
  */
 export const handleSaveUpload: Handler = async (request, deps) => {
   const bad = wrongMethod(request, 'POST');
@@ -284,11 +304,17 @@ export const handleSaveUpload: Handler = async (request, deps) => {
   if (!body.ok) return failure(body.error === 'too-large' ? fail('save-too-large') : body);
   const who = await ownerFrom(body.value);
   if (!who.ok) return failure(who);
+  const condition = uploadCondition(who.value.body);
+  if (!condition.ok) return failure(condition);
   const save = checkSave(who.value.body.save);
   if (!save.ok) return failure(save);
   if (save.value.toUpperCase().replace(/-/g, '').includes(who.value.key)) return apiError('bad-save');
   const limit = await rate.limited(who.value.owner);
   if (limit) return limit;
+  if (!condition.value.force) {
+    const onServer = await savedAtOf(deps.redis, who.value.owner);
+    if (onServer !== null && onServer !== condition.value.expected) return apiError('save-conflict', undefined, {}, { savedAt: onServer });
+  }
   const now = deps.now();
   const budget = await checkBudget(deps.redis, 'save', SAVE_DAILY_BUDGET, now);
   if (!budget.ok) return apiError('save-budget', undefined, { 'retry-after': String(budget.retryAfter) });

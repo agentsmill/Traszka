@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { SAVE_BUNDLE_FORMAT, SAVE_BUNDLE_VERSION, SAVE_MAX_BYTES, SAVE_TTL } from './config';
 import { KEYS } from './keys';
 import { MemoryRedis } from './memoryRedis';
-import { asString, run } from './redis';
-import { checkSave, getSave, putSave } from './saves';
+import { asString, run, type RedisCommand, type RedisExec } from './redis';
+import { checkSave, getSave, putSave, savedAtOf } from './saves';
 import { testBundle } from './testBundle';
 
 const A = 'a'.repeat(64);
@@ -104,5 +104,58 @@ describe('zapis gry w szufladzie Centrali: tylko paczka z gry (jedna kopia na kl
     }
     await run(redis, ['SET', KEYS.save(A), '12\n{}']);
     expect(await getSave(redis, A)).toEqual({ save: '{}', savedAt: 12 });
+  });
+});
+
+describe('savedAtOf: chwila kopii na serwerze bez czytania całego zapisu', () => {
+  it('pusta szuflada to null, po wysłaniu chwila wysłania, po kolejnym wysłaniu nowa chwila; inny klucz ma swoją szufladę', async () => {
+    const clock = { now: Date.UTC(2026, 9, 28) };
+    const redis = new MemoryRedis(() => clock.now);
+    expect(await savedAtOf(redis, A)).toBeNull();
+    await putSave(redis, A, testBundle(), clock.now);
+    expect(await savedAtOf(redis, A)).toBe(clock.now);
+    expect(await savedAtOf(redis, B)).toBeNull();
+    const first = clock.now;
+    clock.now += 1000;
+    await putSave(redis, A, testBundle({ seed: 'bigos-111' }), clock.now);
+    expect(await savedAtOf(redis, A)).toBe(first + 1000);
+  });
+
+  it('czyta tylko początek wpisu (GETRANGE 0 24), nigdy GET: zapis 64 KB nie jedzie przez sieć, a odpowiedź ma najwyżej 25 bajtów', async () => {
+    const now = Date.UTC(2026, 9, 28, 12);
+    const redis = new MemoryRedis(() => now);
+    const save = testBundle({ bytes: SAVE_MAX_BYTES });
+    await putSave(redis, A, save, now);
+    const seen: { commands: readonly RedisCommand[]; results: unknown[] }[] = [];
+    const spy: RedisExec = {
+      async exec(commands) {
+        const results = await redis.exec(commands);
+        seen.push({ commands, results });
+        return results;
+      },
+    };
+    expect(await savedAtOf(spy, A)).toBe(now);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]!.commands).toEqual([['GETRANGE', KEYS.save(A), 0, 24]]);
+    expect(asString(seen[0]!.results[0])).toBe(`${now}\n${save}`.slice(0, 25));   // 25 bajtów: chwila (13 cyfr), nowa linia i początek paczki
+  });
+
+  it('zapis, który wygasł, to null (tak jak dla getSave)', async () => {
+    const clock = { now: Date.UTC(2026, 9, 28) };
+    const redis = new MemoryRedis(() => clock.now);
+    await putSave(redis, A, testBundle(), clock.now);
+    clock.now += 31 * DAY_MS;
+    expect(await savedAtOf(redis, A)).toBeNull();
+  });
+
+  it('uszkodzony początek wpisu to null (brak liczby przed pierwszą linią, znak inny niż cyfra, za dużo cyfr), poprawny to liczba', async () => {
+    const redis = new MemoryRedis();
+    const broken = ['nie json', '{"savedAt":1}', '\n{}', 'abc\n{}', '-5\n{}', '1.5\n{}', ' 12\n{}', `${'9'.repeat(17)}\n{}`, '12{}', '12', ''];
+    for (const raw of broken) {
+      await run(redis, ['SET', KEYS.save(A), raw]);
+      expect(await savedAtOf(redis, A), JSON.stringify(raw)).toBeNull();
+    }
+    await run(redis, ['SET', KEYS.save(A), '12\n{}']);
+    expect(await savedAtOf(redis, A)).toBe(12);
   });
 });

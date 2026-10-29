@@ -64,6 +64,25 @@ describe('MemoryRedis: atrapa Upstash do testów (te same polecenia, te same ksz
       .toEqual([2, ['d', 'c'], 1, 1]);
   });
 
+  it('GETRANGE: przedział włącznie, ujemne indeksy od końca, koniec poza napisem przycięty, brak klucza i pusty przedział to pusty tekst', async () => {
+    const { redis, clock } = redisAt(0);
+    await redis.exec([['SET', 'k', '0123456789'], ['SET', 'ttl', 'abcdef', 'PX', 100]]);
+    expect(await redis.exec([
+      ['GETRANGE', 'k', 0, 2], ['GETRANGE', 'k', 3, 3], ['GETRANGE', 'k', 0, 24], ['GETRANGE', 'k', 0, -1], ['GETRANGE', 'k', -3, -1],
+      ['GETRANGE', 'k', -100, 2], ['GETRANGE', 'k', 5, 2], ['GETRANGE', 'k', 20, 30], ['GETRANGE', 'nie-ma', 0, 24], ['GETRANGE', 'k', '1', '3'],
+    ])).toEqual(['012', '3', '0123456789', '0123456789', '789', '012', '', '', '', '123']);
+    clock.now = 100;
+    expect(await run(redis, ['GETRANGE', 'ttl', 0, 2])).toBe('');   // wygasły klucz jak brak klucza
+  });
+
+  it('GETRANGE liczy bajty UTF-8, jak Redis (dwubajtowa litera zajmuje dwa miejsca), a na kluczu złego typu rzuca RedisError', async () => {
+    const { redis } = redisAt();
+    await redis.exec([['SET', 'pl', 'żółw'], ['ZADD', 'z', 1, 'a']]);
+    expect(await redis.exec([['GETRANGE', 'pl', 0, 1], ['GETRANGE', 'pl', 2, 3], ['GETRANGE', 'pl', 0, -1]])).toEqual(['ż', 'ó', 'żółw']);
+    await expect(run(redis, ['GETRANGE', 'z', 0, 1])).rejects.toBeInstanceOf(RedisError);
+    await expect(run(redis, ['GETRANGE', 'pl', 'a', 1])).rejects.toBeInstanceOf(RedisError);
+  });
+
   it('zbiory: SADD, SMEMBERS, SREM', async () => {
     const { redis } = redisAt();
     expect(await redis.exec([['SADD', 's', 'a', 'b'], ['SADD', 's', 'a'], ['SREM', 's', 'b', 'x'], ['SMEMBERS', 's'], ['SMEMBERS', 'nic']]))

@@ -6,6 +6,7 @@ import { RedisError } from './redis.js';
  * Tylko do testów: `fetch`, który udaje Upstash REST nad `MemoryRedis` (nic nie idzie do sieci). Sprawdza adres `/pipeline` i token
  * z nagłówka, a token tylko do odczytu odrzuca polecenia zapisu tak jak Upstash (NOPERM), więc testy widzą, którym tokenem co poszło.
  */
+// Wszystko spoza tej listy to odczyt (GET, MGET, GETRANGE, ZSCORE, ZREVRANGE, …), który wykona także token tylko do odczytu.
 const WRITES = new Set(['SET', 'DEL', 'INCR', 'EXPIRE', 'PEXPIRE', 'PEXPIREAT', 'ZADD', 'ZREM', 'ZREMRANGEBYRANK', 'SADD', 'SREM']);
 
 export interface FakeUpstash {

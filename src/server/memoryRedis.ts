@@ -98,6 +98,7 @@ export class MemoryRedis implements RedisExec {
     const key = text(args[0]);
     switch (text(name).toUpperCase()) {
       case 'GET': return this.typed(key, 'string')?.value ?? null;
+      case 'GETRANGE': return this.getRange(this.typed(key, 'string')?.value ?? '', int(args[1]), int(args[2]));
       case 'MGET': return args.map((k) => {
         const e = this.entry(text(k));
         return e && e.data.kind === 'string' ? e.data.value : null;
@@ -174,6 +175,19 @@ export class MemoryRedis implements RedisExec {
       case 'SMEMBERS': return [...(this.typed(key, 'set')?.value ?? [])].sort();
       default: throw new RedisError(`ERR unknown command '${text(name)}'`);
     }
+  }
+
+  /**
+   * `GETRANGE`: przedział bajtów UTF-8 włącznie z oboma końcami, ujemne indeksy liczone od końca (jak w Redisie, który indeksuje
+   * bajty, a nie znaki). Koniec poza napisem jest przycinany, a pusty przedział i brak klucza dają pusty tekst.
+   */
+  private getRange(value: string, start: number, end: number): string {
+    const bytes = new TextEncoder().encode(value);
+    const len = bytes.length;
+    if (start < 0 && end < 0 && start > end) return '';
+    const from = Math.max(0, start < 0 ? len + start : start);
+    const to = Math.min(len - 1, Math.max(0, end < 0 ? len + end : end));
+    return len === 0 || from > to ? '' : new TextDecoder().decode(bytes.slice(from, to + 1));
   }
 
   private set(key: string, value: string, opts: string[]): string | null {

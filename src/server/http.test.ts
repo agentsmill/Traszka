@@ -311,8 +311,10 @@ describe('POST /api/player: moje nicki i miejsca (po wpisaniu kodu, przed sezone
 
 describe('POST /api/save/upload i /api/save/download: zapis kodem odzyskiwania', () => {
   const save = testBundle();
-  const upload = (deps: ServerDeps, key: string, text: unknown = save, headers?: Record<string, string>) =>
-    handleSaveUpload(post('/api/save/upload', { key, save: text }, headers), deps);
+  const upload = (deps: ServerDeps, key: string, text: unknown = save, headers?: Record<string, string>, extra: Record<string, unknown> = {}) =>
+    handleSaveUpload(post('/api/save/upload', { key, save: text, ...extra }, headers), deps);
+  /** Wysłanie `force: true`: powtórzone dla tego samego klucza nie kończy się konfliktem (kopia już leży), więc liczy się jak każde wysłanie. */
+  const forced = (deps: ServerDeps, key: string, text: unknown = save, headers?: Record<string, string>) => upload(deps, key, text, headers, { force: true });
 
   it('wysłany zapis wraca na drugim urządzeniu z tym samym kodem; inny kod nie ma zapisu (404)', async () => {
     const { deps } = setup();
@@ -364,9 +366,9 @@ describe('POST /api/save/upload i /api/save/download: zapis kodem odzyskiwania',
     const { deps, redis } = setup();
     const budgetKey = KEYS.budget('save', '2026-10-28');
     await runCommand(redis, ['SET', budgetKey, String(SAVE_DAILY_BUDGET - 1)]);
-    expect((await upload(deps, KEY_A, save, { 'x-real-ip': '203.0.113.1' })).status).toBe(200);
+    expect((await forced(deps, KEY_A, save, { 'x-real-ip': '203.0.113.1' })).status).toBe(200);
     for (const [key, ip] of [[KEY_B, '198.51.100.9'], [KEY_A, '203.0.113.1'], [KEY_B, '192.0.2.77']] as const) {
-      const res = await upload(deps, key, save, { 'x-real-ip': ip });
+      const res = await forced(deps, key, save, { 'x-real-ip': ip });
       expect(res.status, `${key} ${ip}`).toBe(429);
       expect(res.headers.get('retry-after')).toBe(String(12 * 3600));   // NOW to 12:00 UTC
       expect(res.headers.get('cache-control')).toBe('no-store');
@@ -381,7 +383,7 @@ describe('POST /api/save/upload i /api/save/download: zapis kodem odzyskiwania',
     const { deps, redis, clock } = setup();
     const budgetKey = KEYS.budget('save', '2026-10-28');
     await upload(deps, KEY_A, 'to nie paczka');                                  // zły kształt: bez licznika
-    for (let i = 0; i < RATE_LIMITS.saveUp.perKey; i++) await upload(deps, KEY_B, save, { 'x-real-ip': `10.0.0.${i}` });
+    for (let i = 0; i < RATE_LIMITS.saveUp.perKey; i++) await forced(deps, KEY_B, save, { 'x-real-ip': `10.0.0.${i}` });
     expect((await upload(deps, KEY_B, save, { 'x-real-ip': '10.0.1.1' })).status).toBe(429);   // limit na klucz: też bez licznika
     expect(await runCommand(redis, ['GET', budgetKey])).toBe(String(RATE_LIMITS.saveUp.perKey));
     await runCommand(redis, ['SET', budgetKey, String(SAVE_DAILY_BUDGET)]);
@@ -389,6 +391,166 @@ describe('POST /api/save/upload i /api/save/download: zapis kodem odzyskiwania',
     clock.now = Date.UTC(2026, 9, 29, 0, 0, 5);
     expect((await upload(deps, KEY_A, save, { 'x-real-ip': '10.1.0.1' })).status).toBe(200);
     expect(await runCommand(redis, ['GET', KEYS.budget('save', '2026-10-29')])).toBe('1');
+  });
+});
+
+/**
+ * Wysłanie zapisu pyta o nowszą kopię (przegląd, „Drobne 6”): urządzenie podaje w `expected` chwilę kopii, którą ostatnio wysłało
+ * albo pobrało (brak i `null`: jeszcze żadnej nie widziało). Gdy na serwerze leży kopia o innej chwili, wysłanie bez `force: true`
+ * kończy się 409 `save-conflict`, bez zapisu i bez zużycia budżetu dziennego.
+ */
+describe('POST /api/save/upload z expected i force: nowsza kopia na serwerze (save-conflict)', () => {
+  const KEY_C = 'P3WN8RTEK7QX9MBD2HFA';
+  const KEY_D = 'H2F3A4B5C6D7E8G9J0KM';
+  const first = testBundle();
+  const second = testBundle({ seed: 'bigos-111' });
+  const third = testBundle({ seed: 'golabki-222' });
+  const send = (deps: ServerDeps, key: string, extra: Record<string, unknown> = {}, text: unknown = first, headers?: Record<string, string>) =>
+    handleSaveUpload(post('/api/save/upload', { key, save: text, ...extra }, headers), deps);
+  const stored = async (deps: ServerDeps, key: string) => body(await handleSaveDownload(post('/api/save/download', { key }), deps));
+  const conflict = (savedAt: number) => ({ ok: false, error: 'save-conflict', message: API_ERRORS['save-conflict'].message, savedAt });
+
+  it('komunikat i status błędu: 409 „Na serwerze leży nowsza kopia zapisu, której to urządzenie jeszcze nie widziało.”', () => {
+    expect(API_ERRORS['save-conflict']).toEqual({
+      status: 409, message: 'Na serwerze leży nowsza kopia zapisu, której to urządzenie jeszcze nie widziało.',
+    });
+  });
+
+  it('gdy na serwerze nie ma kopii, wysłanie przechodzi: bez expected, z expected: null i z liczbą (kopia zdążyła wygasnąć)', async () => {
+    const { deps } = setup();
+    expect(await body(await send(deps, KEY_A))).toEqual({ ok: true, bytes: first.length, savedAt: NOW });
+    expect((await send(deps, KEY_B, { expected: null })).status).toBe(200);
+    expect((await send(deps, KEY_C, { expected: NOW - 5000 })).status).toBe(200);
+    expect((await send(deps, KEY_D, { expected: 0 })).status).toBe(200);
+  });
+
+  it('kolejne wysłanie z expected równym savedAt z poprzedniej odpowiedzi przechodzi i podmienia kopię, i tak dalej', async () => {
+    const { deps, clock } = setup();
+    const up1 = await body(await send(deps, KEY_A, {}, first));
+    expect(up1.savedAt).toBe(NOW);
+    clock.now += 1000;
+    const up2 = await send(deps, KEY_A, { expected: up1.savedAt }, second);
+    expect(up2.status).toBe(200);
+    expect(await body(up2)).toEqual({ ok: true, bytes: second.length, savedAt: NOW + 1000 });
+    expect(await stored(deps, KEY_A)).toEqual({ ok: true, save: second, savedAt: NOW + 1000 });
+    clock.now += 1000;
+    expect((await send(deps, KEY_A, { expected: NOW + 1000 }, third)).status).toBe(200);
+    expect(await stored(deps, KEY_A)).toEqual({ ok: true, save: third, savedAt: NOW + 2000 });
+  });
+
+  it('kopia na serwerze, a urządzenie podaje expected: null albo nic: 409 z savedAt kopii, kopia bez zmian (download oddaje starą)', async () => {
+    const { deps, clock } = setup();
+    await send(deps, KEY_A, {}, first);
+    clock.now += 1000;
+    for (const extra of [{ expected: null }, {}, { expected: undefined }, { force: false }, { expected: null, force: false }]) {
+      const res = await send(deps, KEY_A, extra, second);
+      expect(res.status, JSON.stringify(extra)).toBe(409);
+      expect(res.headers.get('cache-control')).toBe('no-store');
+      expect(await body(res)).toEqual(conflict(NOW));
+    }
+    expect(await stored(deps, KEY_A)).toEqual({ ok: true, save: first, savedAt: NOW });
+  });
+
+  it('drugie urządzenie wysłało w międzyczasie: pierwsze, ze starym expected, dostaje 409 z nowszą chwilą, a kopia drugiego leży nietknięta', async () => {
+    const { deps, clock } = setup();
+    const t0 = (await body(await send(deps, KEY_A, {}, first))).savedAt as number;   // urządzenie 1 wysyła i zapamiętuje t0
+    clock.now += 60_000;
+    const t1 = (await body(await send(deps, KEY_A, { expected: t0 }, second))).savedAt as number;   // urządzenie 2 pobrało t0 i wysyła
+    clock.now += 60_000;
+    const res = await send(deps, KEY_A, { expected: t0 }, third);   // urządzenie 1 nie wie o t1
+    expect(res.status).toBe(409);
+    expect(await body(res)).toEqual(conflict(t1));
+    expect(t1).toBe(t0 + 60_000);
+    expect(await stored(deps, KEY_A)).toEqual({ ok: true, save: second, savedAt: t1 });
+    // expected z przyszłości też nie jest chwilą kopii z serwera
+    expect((await send(deps, KEY_A, { expected: t1 + 1 }, third)).status).toBe(409);
+  });
+
+  it('force: true wysyła mimo konfliktu i podmienia kopię (z expected: null, ze starym expected i bez expected)', async () => {
+    const { deps, clock } = setup();
+    await send(deps, KEY_A, {}, first);
+    for (const [i, extra] of [{ expected: null }, { expected: NOW - 1 }, {}].entries()) {
+      clock.now += 1000;
+      const text = [second, third, first][i]!;
+      const res = await send(deps, KEY_A, { ...extra, force: true }, text);
+      expect(res.status, JSON.stringify(extra)).toBe(200);
+      expect(await body(res)).toEqual({ ok: true, bytes: text.length, savedAt: clock.now });
+      expect(await stored(deps, KEY_A)).toEqual({ ok: true, save: text, savedAt: clock.now });
+    }
+  });
+
+  it('konflikt nie zużywa budżetu dziennego, nie zapisuje niczego i nie odnawia czasu życia kopii; zapis i force zużywają po jednym', async () => {
+    const { deps, redis, clock } = setup();
+    const budgetKey = KEYS.budget('save', '2026-10-28');
+    const saveKey = KEYS.save(await ownerOf(KEY_A));
+    await send(deps, KEY_A, {}, first);
+    expect(await runCommand(redis, ['GET', budgetKey])).toBe('1');
+    clock.now += 86_400_000 / 2 - 3_600_000;   // jeszcze ten sam dzień UTC (23:00)
+    const ttl = Number(await runCommand(redis, ['PTTL', saveKey]));
+    for (let i = 0; i < 5; i++) {
+      expect((await send(deps, KEY_A, { expected: null }, second, { 'x-real-ip': `198.51.100.${i}` })).status).toBe(409);
+    }
+    expect(await runCommand(redis, ['GET', budgetKey])).toBe('1');
+    expect(Number(await runCommand(redis, ['PTTL', saveKey]))).toBe(ttl);
+    expect(redis.keys().filter((k) => k.startsWith('tr:save:'))).toEqual([saveKey]);
+    expect(await runCommand(redis, ['GET', saveKey])).toBe(`${NOW}\n${first}`);
+    expect((await send(deps, KEY_A, { expected: NOW }, second)).status).toBe(200);
+    expect((await send(deps, KEY_A, { expected: null, force: true }, third)).status).toBe(200);
+    expect(await runCommand(redis, ['GET', budgetKey])).toBe('3');
+  });
+
+  it('kolejność kontroli: kształt zapisu i limit na klucz wygrywają z konfliktem, a konflikt z budżetem dziennym', async () => {
+    const { deps, redis } = setup();
+    await send(deps, KEY_A, {}, first);
+    // zły kształt (także zapis z kluczem w środku) to 400 bad-save, nie 409
+    expect((await body(await send(deps, KEY_A, { expected: null }, '[]'))).error).toBe('bad-save');
+    const withKey = JSON.stringify({ ...(JSON.parse(first) as object), meta: { player: { key: KEY_A } } });
+    expect((await body(await send(deps, KEY_A, { expected: null }, withKey))).error).toBe('bad-save');
+    // budżet wyczerpany: konflikt nadal jest 409 (jeszcze przed budżetem), a wysyłanie zgodne z kopią albo z force to 429
+    await runCommand(redis, ['SET', KEYS.budget('save', '2026-10-28'), String(SAVE_DAILY_BUDGET)]);
+    const stale = await send(deps, KEY_A, { expected: null }, second);
+    expect([stale.status, (await body(stale)).error]).toEqual([409, 'save-conflict']);
+    expect((await send(deps, KEY_A, { expected: NOW }, second)).status).toBe(429);
+    expect((await send(deps, KEY_A, { expected: null, force: true }, second)).status).toBe(429);
+    expect(await stored(deps, KEY_A)).toEqual({ ok: true, save: first, savedAt: NOW });
+  });
+
+  it('limit na klucz liczy też żądania zakończone konfliktem: po limicie 429 rate-limited zamiast 409', async () => {
+    const { deps } = setup();
+    const results: number[] = [];
+    for (let i = 0; i < RATE_LIMITS.saveUp.perKey; i++) results.push((await send(deps, KEY_A, {}, first, { 'x-real-ip': `10.0.0.${i}` })).status);
+    expect(results).toEqual([200, ...Array<number>(RATE_LIMITS.saveUp.perKey - 1).fill(409)]);
+    const limited = await send(deps, KEY_A, {}, first, { 'x-real-ip': '10.0.1.1' });
+    expect(limited.status).toBe(429);
+    expect((await body(limited)).error).toBe('rate-limited');
+  });
+
+  it('expected musi być liczbą całkowitą nieujemną (bezpieczną) albo null, force wartością logiczną: inaczej 400 bad-request, bez sięgania do bazy', async () => {
+    const { deps, redis } = setup();
+    await send(deps, KEY_A, {}, first);
+    const calls = redis.commands;
+    const badExpected: unknown[] = ['x', '123', '', -1, -0.5, 1.5, 2 ** 53, true, false, [], [1], {}];
+    for (const expected of badExpected) {
+      const res = await send(deps, KEY_A, { expected });
+      expect(res.status, JSON.stringify(expected)).toBe(400);
+      expect(await body(res)).toEqual({ ok: false, error: 'bad-request', message: API_ERRORS['bad-request'].message });
+    }
+    for (const force of ['tak', 'true', 1, 0, null, [], [true], {}]) {
+      const res = await send(deps, KEY_A, { expected: null, force });
+      expect(res.status, JSON.stringify(force)).toBe(400);
+      expect((await body(res)).error).toBe('bad-request');
+    }
+    expect(redis.commands).toBe(calls);
+    // granice poprawnych wartości
+    expect((await send(deps, KEY_B, { expected: 0, force: false })).status).toBe(200);
+    expect((await send(deps, KEY_C, { expected: Number.MAX_SAFE_INTEGER, force: true })).status).toBe(200);
+  });
+
+  it('wpis z uszkodzonym początkiem nie blokuje wysyłania (nie ma czytelnej chwili kopii, więc nie ma z czym się kłócić)', async () => {
+    const { deps, redis } = setup();
+    await runCommand(redis, ['SET', KEYS.save(await ownerOf(KEY_A)), 'nie json']);
+    expect((await send(deps, KEY_A, { expected: null }, second)).status).toBe(200);
+    expect(await stored(deps, KEY_A)).toEqual({ ok: true, save: second, savedAt: NOW });
   });
 });
 
