@@ -30,7 +30,7 @@ export interface RouteOptions {
   env?: () => EnvSource;
   fetch?: typeof fetch;
   now?: () => number;
-  /** Sędzia biegu; domyślnie „odtwarzanie jeszcze niedostępne”, do czasu scalenia strumienia A. */
+  /** Sędzia biegu; domyślnie `replayNotAvailable` (żaden bieg nie jest przyjęty). `api/runs.ts` podaje sędziego z bundla symulacji (`judge.ts`). */
   verifyRun?: VerifyRun;
   /**
    * Bramka limitu w pamięci instancji. Domyślnie `route` tworzy własną, jedną na wywołanie `route(...)`, czyli na plik `api/*.ts`

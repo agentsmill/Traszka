@@ -19,7 +19,7 @@ export type VerifyFailure = 'replay-unavailable' | 'replay-failed' | 'old-versio
 export type VerifyResult = { ok: true; score: number } | { ok: false; reason: VerifyFailure };
 export type VerifyRun = (run: SubmittedRun) => VerifyResult | Promise<VerifyResult>;
 
-/** Domyślny sędzia, zanim strumień A dostarczy `replayRun`. */
+/** Domyślny sędzia, gdy nie podano innego: żaden bieg nie jest odtwarzany (`api/runs.ts` podaje sędziego z bundla, `judge.ts`). */
 export const replayNotAvailable: VerifyRun = () => ({ ok: false, reason: 'replay-unavailable' });
 
 /** Tekst do logu: jedna linia i najwyżej 200 znaków (treść błędu bywa złożona z tekstu zgłoszonego biegu). */

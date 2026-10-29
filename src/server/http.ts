@@ -99,7 +99,7 @@ async function readJson(request: Request, maxBytes: number): Promise<Checked<unk
   }
 }
 
-/** Adres klienta z nagłówków Vercela (pierwszy na liście). Trafia do bazy tylko jako skrót z solą okna limitu. */
+/** Adres klienta z nagłówków Vercela (pierwszy na liście). Trafia do bazy tylko jako skrót (z solą okna w bazie albo HMAC z `RANKING_SALT`), a do pamięci instancji jako skrót z solą bramki. */
 export function clientAddress(request: Request): string {
   const first = (name: string): string | null => request.headers.get(name)?.split(',')[0]?.trim() || null;
   return first('x-real-ip') ?? first('x-vercel-forwarded-for') ?? first('x-forwarded-for') ?? 'nieznany';

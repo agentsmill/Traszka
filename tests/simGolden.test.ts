@@ -261,7 +261,10 @@ describe('dziennik stałego biegu naprawdę coś robi', () => {
 
   it('dziennik używa każdego typu polecenia', () => {
     const used = new Set(LOG.map((e) => e.cmd.type));
-    expect(COMMAND_TYPES.filter((t) => !used.has(t))).toEqual([]);
+    expect(
+      COMMAND_TYPES.filter((t) => !used.has(t)),
+      'Brakuje typu polecenia w dzienniku: dodaj go do PLAN w tym pliku i do COMMANDS w scripts/judge-worst-case.mjs (kopie planu są też w tests/judgeBundle.test.ts i scripts/ranking-smoke.mjs)',
+    ).toEqual([]);
   });
 
   it('pusty dziennik daje inny skrót niż pełny', () => {

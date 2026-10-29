@@ -524,7 +524,7 @@ describe('wersje symulacji i generatora', () => {
     mkdirSync(join(copy, 'src', 'sim', 'store'), { recursive: true });
     copyFileSync(SCRIPT, join(copy, 'scripts', 'ranking-smoke.mjs'));
     writeFileSync(join(copy, 'src', 'sim', 'simVersion.ts'), `// komentarz o SIM_VERSION = 1\nexport const SIM_VERSION = ${fake};\n`);
-    writeFileSync(join(copy, 'src', 'sim', 'store', 'generateStore.ts'), 'export const GENERATOR_VERSION: number = 1;\n');
+    writeFileSync(join(copy, 'src', 'sim', 'store', 'generateStore.ts'), `export const GENERATOR_VERSION: number = ${GENERATOR_VERSION};\n`);
     const server = await startServer();
     const res = await new Promise<Cli>((done, fail) => {
       const child = spawn(process.execPath, [join(copy, 'scripts', 'ranking-smoke.mjs'), server.url, '--write'], { cwd: copy });

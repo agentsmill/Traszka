@@ -160,10 +160,10 @@ describe('skrypt scripts/build-judge.mjs jako polecenie (npm run build:judge)', 
     expect(DEFAULT_BUNDLE_FILE).toBe(resolve(ROOT, 'api', '../src/server/judgeBundle.js'));
     expect(readFileSync(join(ROOT, 'api', 'runs.ts'), 'utf8')).toContain("import('../src/server/judgeBundle.js')");
     expect(readFileSync(join(ROOT, '.gitignore'), 'utf8').split('\n')).toContain('src/server/judgeBundle.js');
-    expect(JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).scripts).toMatchObject({
-      'build:judge': 'node scripts/build-judge.mjs',
-      build: 'npm run build:judge && tsc --noEmit && vite build',
-    });
+    const scripts = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).scripts as Record<string, string>;
+    expect(scripts['build:judge']).toBe('node scripts/build-judge.mjs');
+    // bundle musi powstać przed kompilacją i budowaniem gry; kolejne kroki `build` mogą się zmieniać
+    expect(scripts.build).toMatch(/^npm run build:judge && /);
   });
 });
 
