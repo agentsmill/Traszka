@@ -20,7 +20,7 @@ import type * as Declared from '../src/server/judgeBundle';
  * ESM bez aliasów i bez Vite.
  */
 const ROOT = resolve(__dirname, '..');
-const NAMES = ['GENERATOR_VERSION', 'RANKED_SEASON_END_MINUTE', 'SIM_VERSION', 'replayRun', 'seasonScore'];
+const NAMES = ['GENERATOR_VERSION', 'RANKED_SEASON_END_MINUTE', 'SIM_VERSION', 'replayRun', 'seasonBankrupt', 'seasonScore'];
 
 // Kontrola typów (tsc): ręcznie pisany `judgeBundle.d.ts` opisuje dokładnie to, co eksportuje wejście bundla. Wejście musi pasować do
 // deklaracji (każda zadeklarowana nazwa istnieje i ma zgodny typ), a zbiory nazw w obu plikach są identyczne.
@@ -109,7 +109,7 @@ describe('buildJudge: jeden samodzielny plik z aktualnej symulacji', () => {
     expect(text).not.toContain('@/');
   });
 
-  it('da się go zaimportować w zwykłym Node, bez Vite i bez aliasów, i eksportuje dokładnie pięć nazw', () => {
+  it('da się go zaimportować w zwykłym Node, bez Vite i bez aliasów, i eksportuje dokładnie sześć nazw', () => {
     const script = `
       const m = await import(process.argv[1]);
       console.log(JSON.stringify({
@@ -123,7 +123,7 @@ describe('buildJudge: jeden samodzielny plik z aktualnej symulacji', () => {
     expect(res.status).toBe(0);
     const out = JSON.parse(res.stdout) as { names: string[]; types: Record<string, string>; SIM_VERSION: number; GENERATOR_VERSION: number; END: number; score: number };
     expect(out.names).toEqual(NAMES);
-    expect(out.types).toEqual({ SIM_VERSION: 'number', GENERATOR_VERSION: 'number', RANKED_SEASON_END_MINUTE: 'number', seasonScore: 'function', replayRun: 'function' });
+    expect(out.types).toEqual({ SIM_VERSION: 'number', GENERATOR_VERSION: 'number', RANKED_SEASON_END_MINUTE: 'number', seasonScore: 'function', seasonBankrupt: 'function', replayRun: 'function' });
     expect([out.SIM_VERSION, out.GENERATOR_VERSION, out.END]).toEqual([SIM_VERSION, GENERATOR_VERSION, RANKED_SEASON_END_MINUTE]);
     expect(out.score).toBe(direct(RUN));   // ten sam wynik z czystego Node i z kodu źródłowego w Vitest
   }, 60_000);   // dwa pełne sezony (w osobnym Node i tutaj): w CI dłużej niż domyślne 5 s

@@ -14,9 +14,10 @@ import type { RunRecord } from '../sim/run.js';
  * - `old-version`: bieg rozegrany w innej wersji symulacji niż ta, którą ma sędzia (`run.simVersion !== SIM_VERSION` z bundla sędziego),
  *   więc odtworzenie mogłoby dać inny stan niż w grze. To sędzia porównuje wersje, bo tylko on zna `SIM_VERSION` (parser go nie ma);
  * - `replay-failed`: odtwarzanie rzuciło albo wynik nie jest liczbą;
- * - `season-bankrupt`: bieg odtworzony do końca sezonu ma koniec gry (granica debetu albo wypowiedzenie umowy), więc do rankingu
- *   nie wchodzi, choćby miał raporty z wcześniejszych miesięcy (decyzja właściciela i koordynatora, 2026-10-29: inaczej gracz,
- *   któremu idzie źle, mógłby celowo zbankrutować i zamrozić wynik);
+ * - `season-bankrupt`: bieg odtworzony do końca sezonu skończył się grą (granica debetu albo wypowiedzenie umowy) przed ostatnim,
+ *   trzecim raportem miesięcznym (`seasonBankrupt` z `src/sim/ranked.ts`), więc do rankingu nie wchodzi, choćby miał raporty z wcześniejszych
+ *   miesięcy (decyzja właściciela i koordynatora, 2026-10-29: inaczej gracz, któremu idzie źle, mógłby celowo zbankrutować i zamrozić wynik).
+ *   Bieg z trzema raportami wchodzi, także gdy dopiero zamknięcie 30 listopada skończyło grę: ta strata jest już w wyniku;
  * - `replay-unavailable`: sędziego nie ma (bundle niezbudowany albo zepsuty).
  */
 export type VerifyFailure = 'replay-unavailable' | 'replay-failed' | 'old-version' | 'season-bankrupt';
@@ -37,7 +38,7 @@ export function describeError(err: unknown): [name: string, message: string] {
 
 /**
  * Co sędzia musi wiedzieć o symulacji: odtworzenie biegu (pasuje do niego `replayRun` z gry, który bierze `RunRecord`), koniec sezonu,
- * wynik i, opcjonalnie, czy stan po odtworzeniu to bankructwo (`bankrupt`: koniec gry przed końcem sezonu). Bez `bankrupt` żaden
+ * wynik i, opcjonalnie, czy stan po odtworzeniu to bankructwo (`bankrupt`: koniec gry przed ostatnim raportem sezonu). Bez `bankrupt` żaden
  * bieg nie jest uznany za bankruta.
  */
 export interface SeasonJudge<S> {
@@ -51,8 +52,8 @@ export interface SeasonJudge<S> {
  * Sędzia z odtwarzaniem: bieg odtworzony do końca sezonu; wyjątek przy odtwarzaniu (nieznane polecenie, zepsuty dziennik) albo
  * wynik, który nie jest liczbą, to `replay-failed`. Wyjątek idzie też do logu (`[ranking] replay`, nazwa i treść błędu), żeby
  * błąd sędziego przy uczciwym biegu nie znikał bez śladu. Bieg, który po odtworzeniu jest bankrutem (`judge.bankrupt`, czyli
- * koniec gry przed końcem listopada), dostaje `season-bankrupt` i wyniku nie ma: do rankingu wchodzą tylko biegi, które
- * przeżyły sezon (decyzja właściciela i koordynatora, 2026-10-29; zastąpiła liczenie z raportów, które zdążyły powstać).
+ * koniec gry przed ostatnim raportem), dostaje `season-bankrupt` i wyniku nie ma: do rankingu wchodzą tylko biegi, które
+ * mają wszystkie raporty sezonu (decyzja właściciela i koordynatora, 2026-10-29; zastąpiła liczenie z raportów, które zdążyły powstać).
  * Wersji symulacji ta funkcja nie porównuje: `old-version` zwraca sędzia z bundla (ma `SIM_VERSION`) przed odtwarzaniem.
  */
 export function makeReplayVerifier<S>(judge: SeasonJudge<S>): VerifyRun {

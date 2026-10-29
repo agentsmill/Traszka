@@ -3,8 +3,10 @@ import { MINUTES_PER_DAY, OPEN_TO } from './economy/catalog';
 import { dateOfDay, dayOf, isLastDayOfMonth, minuteOfDay } from './economy/calendar';
 import { createEconomy, stepMinute, type EconEvent, type EconomyState } from './economy/economy';
 import { computeStoreInfo } from './economy/storeInfo';
-import { generateStore } from './store/generateStore';
-import { RANKED_SEASON_END_MINUTE, RANKED_SEASON_MONTHS, seasonScore } from './ranked';
+import { GENERATOR_VERSION, generateStore } from './store/generateStore';
+import { RANKED_SEASON_END_MINUTE, RANKED_SEASON_MONTHS, seasonBankrupt, seasonScore } from './ranked';
+import { replayRun, type RunRecord } from './run';
+import { SIM_VERSION } from './simVersion';
 
 const history = (...profits: number[]): Pick<EconomyState, 'history'> => ({
   history: profits.map((profit, i) => ({ label: `miesiąc ${i + 1}`, profit, revenue: 100_000 })),
@@ -59,5 +61,33 @@ describe('wynik sezonu', () => {
   it('-0 i liczby ujemne zaokrąglone do zera dają zwykłe 0 (wynik idzie do JSON i do Redisa)', () => {
     expect(Object.is(seasonScore(history(-0.2, 0, 0)), 0)).toBe(true);
     expect(Object.is(seasonScore(history()), 0)).toBe(true);
+  });
+});
+
+describe('seasonBankrupt: koniec gry przed ostatnim raportem', () => {
+  const state = (gameOver: boolean, reports: number): Pick<EconomyState, 'gameOver' | 'history'> => ({ gameOver, ...history(...Array<number>(reports).fill(1000)) });
+
+  it('gra, która się nie skończyła, nie jest bankrutem, ile by raportów nie miała', () => {
+    for (const n of [0, 1, 2, 3]) expect(seasonBankrupt(state(false, n)), `${n} raportów`).toBe(false);
+  });
+
+  it('koniec gry przy zero, jednym albo dwóch raportach to bankrut (wynik z wcześniejszych miesięcy nie może zostać zamrożony)', () => {
+    for (const n of [0, 1, 2]) expect(seasonBankrupt(state(true, n)), `${n} raportów`).toBe(true);
+  });
+
+  it('koniec gry z trzema raportami nie jest bankrutem: bieg dotrwał do końca, a ostatnia strata jest już w wyniku', () => {
+    expect(seasonBankrupt(state(true, RANKED_SEASON_MONTHS))).toBe(false);
+  });
+
+  it('prawdziwa symulacja: bierny sezon sklepu kiełbasa-42 kończy grę dopiero przy zamknięciu 30 listopada, z trzema raportami, a strata listopada jest w wyniku', () => {
+    const passive: RunRecord = { seed: 'kiełbasa-42', gameVersion: 'test', generatorVersion: GENERATOR_VERSION, simVersion: SIM_VERSION, mode: 'ranked', log: [] };
+    const s = replayRun(passive, RANKED_SEASON_END_MINUTE);
+    // gdyby przestrojenie ekonomii zmieniło ten sklep, test musi to powiedzieć wprost, a nie przejść po cichu
+    expect(s.gameOver, 'ostatnie zamknięcie spycha ten sklep poniżej granicy debetu').toBe(true);
+    expect(s.history, 'raport listopada powstał razem z końcem gry').toHaveLength(RANKED_SEASON_MONTHS);
+    expect(s.history[2]!.profit, 'listopad kończy się stratą').toBeLessThan(0);
+    expect(seasonBankrupt(s)).toBe(false);
+    expect(seasonScore(s)).toBe(Math.round(s.history[0]!.profit + s.history[1]!.profit + s.history[2]!.profit));
+    expect(seasonScore(s)).toBeLessThan(Math.round(s.history[0]!.profit + s.history[1]!.profit));
   });
 });

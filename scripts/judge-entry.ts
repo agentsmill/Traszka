@@ -8,5 +8,5 @@
  */
 export { SIM_VERSION } from '@/sim/simVersion';
 export { GENERATOR_VERSION } from '@/sim/store/generateStore';
-export { RANKED_SEASON_END_MINUTE, seasonScore } from '@/sim/ranked';
+export { RANKED_SEASON_END_MINUTE, seasonBankrupt, seasonScore } from '@/sim/ranked';
 export { replayRun } from '@/sim/run';

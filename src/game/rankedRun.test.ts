@@ -646,6 +646,19 @@ describe('finishRun', () => {
     expect(finishRun(alive, 1)).toMatchObject({ v: 1, seed: SEED });
   }, SEASON_TIMEOUT);
 
+  it('bieg, który kończy grę dopiero przy ostatnim zamknięciu (trzy raporty, debet z listopada), jest do wysłania: wynik zawiera listopadową stratę', () => {
+    const seed = 'kiełbasa-42';   // bierny sezon tego sklepu schodzi poniżej granicy debetu przy zamknięciu 30 listopada (test w src/sim/ranked.test.ts)
+    const s = createRankedSession(seed);
+    s.econ.minute = END - 1;
+    const replayed = replayRun({ ...s.run!.record, log: [] }, END);
+    expect(replayed.gameOver, 'debet z ostatniego zamknięcia kończy grę').toBe(true);
+    expect(replayed.history).toHaveLength(3);
+    const f = finishRun(s, 1);
+    expect(f).toMatchObject({ v: 1, seed });
+    expect(f!.score).toBe(seasonScore(replayed));
+    expect(f!.score).toBeLessThan(Math.round(replayed.history[0]!.profit + replayed.history[1]!.profit));   // strata z listopada jest w wyniku
+  }, SEASON_TIMEOUT);
+
   it('wynik jest kopią: późniejsza gra nie zmienia gotowego biegu', () => {
     const s = createRankedSession(SEED);
     play(s, 300);

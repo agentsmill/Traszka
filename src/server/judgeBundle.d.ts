@@ -9,6 +9,8 @@ export declare const SIM_VERSION: number;
 export declare const GENERATOR_VERSION: number;
 /** Pierwsza minuta po sezonie rankingowym (src/sim/ranked.ts): do niej odtwarza się bieg. */
 export declare const RANKED_SEASON_END_MINUTE: number;
+/** Czy stan po odtworzeniu to bankrut bez miejsca w rankingu: koniec gry przed ostatnim raportem (src/sim/ranked.ts). */
+export declare function seasonBankrupt(state: Pick<EconomyState, 'gameOver' | 'history'>): boolean;
 /** Wynik sezonu ze stanu (src/sim/ranked.ts). */
 export declare function seasonScore(state: Pick<EconomyState, 'history'>): number;
 /** Odtworzenie biegu do minuty `untilMinute` (src/sim/run.ts). */

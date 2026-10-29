@@ -10,7 +10,7 @@ type JudgeBundle = typeof JudgeBundleModule;
 const isCount = (v: unknown): v is number => Number.isSafeInteger(v) && (v as number) >= 0;
 
 /**
- * Czy `mod` jest bundlem sędziego: pięć eksportów z `judge-entry.ts` we właściwych typach, a koniec sezonu to liczba całkowita
+ * Czy `mod` jest bundlem sędziego: sześć eksportów z `judge-entry.ts` we właściwych typach, a koniec sezonu to liczba całkowita
  * dodatnia nie większa niż sezon znany serwerowi (`SEASON_END_MINUTE`, przypięty testem do `RANKED_SEASON_END_MINUTE` z gry).
  * Czas odtwarzania rośnie z końcem sezonu, więc to jedyna granica, której nie pilnuje parser. Zwraca bundle albo opis problemu.
  */
@@ -24,6 +24,7 @@ function checkBundle(mod: unknown): { bundle: JudgeBundle } | { problem: string 
     return { problem: `eksport RANKED_SEASON_END_MINUTE poza zakresem 1…${SEASON_END_MINUTE}` };
   }
   if (typeof m.seasonScore !== 'function') return { problem: 'eksport seasonScore nie jest funkcją' };
+  if (typeof m.seasonBankrupt !== 'function') return { problem: 'eksport seasonBankrupt nie jest funkcją' };
   if (typeof m.replayRun !== 'function') return { problem: 'eksport replayRun nie jest funkcją' };
   return { bundle: m as unknown as JudgeBundle };
 }
@@ -39,7 +40,7 @@ function checkBundle(mod: unknown): { bundle: JudgeBundle } | { problem: string 
  * startem dzielą jedną próbę. Wyjątek nie wychodzi na zewnątrz.
  *
  * Bieg z inną `simVersion` niż `SIM_VERSION` bundla to `old-version`, bez odtwarzania. Reszta (odtworzenie do końca sezonu,
- * wynik, `replay-failed`, `season-bankrupt` dla stanu z `gameOver`) to `makeReplayVerifier` z `verify.ts`; wyjątek z `replayRun`
+ * wynik, `replay-failed`, `season-bankrupt` dla biegu zakończonego grą przed ostatnim raportem) to `makeReplayVerifier` z `verify.ts`; wyjątek z `replayRun`
  * loguje on, więc tu nie ma drugiego try/catch.
  */
 export function makeBundleVerifier(load: () => Promise<unknown>): VerifyRun {
@@ -76,7 +77,7 @@ export function makeBundleVerifier(load: () => Promise<unknown>): VerifyRun {
       replay: judge.replayRun,
       endMinute: judge.RANKED_SEASON_END_MINUTE,
       score: judge.seasonScore,
-      bankrupt: (state) => state.gameOver === true,   // koniec gry przed końcem sezonu (debet albo wypowiedzenie umowy): `season-bankrupt`
+      bankrupt: judge.seasonBankrupt,   // koniec gry przed ostatnim raportem (debet albo wypowiedzenie umowy): `season-bankrupt`
     })(run);
   };
 }

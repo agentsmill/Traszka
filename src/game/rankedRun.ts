@@ -2,7 +2,7 @@ import { dayOf } from '@/sim/economy/calendar';
 import { isCommand } from '@/sim/economy/commands';
 import type { EconomyState } from '@/sim/economy/economy';
 import { isRec } from '@/sim/guards';
-import { RANKED_SEASON_END_MINUTE, seasonScore } from '@/sim/ranked';
+import { RANKED_SEASON_END_MINUTE, seasonBankrupt, seasonScore } from '@/sim/ranked';
 import { freshRun, isLogEntry, isRunRecord, replayRun, type LogEntry, type RunRecord } from '@/sim/run';
 import { SIM_VERSION } from '@/sim/simVersion';
 import { GENERATOR_VERSION } from '@/sim/store/generateStore';
@@ -307,10 +307,11 @@ export function setPlayMode(mode: 'casual' | 'ranked'): void {
 export const rankedRunStale = (s: GameSession): boolean => s.run !== null && s.run.record.simVersion !== SIM_VERSION;
 
 /**
- * Dlaczego bieg zakończony grą (bankructwo: granica debetu albo wypowiedzenie umowy) nie trafia do rankingu. Taki tekst dostaje gracz
- * w komunikacie, gdy bieg się kończy, i w raporcie końca współpracy; serwer odrzuca takie biegi jako `season-bankrupt` (`src/server/verify.ts`).
+ * Dlaczego bieg zakończony grą przed ostatnim raportem (bankructwo: granica debetu albo wypowiedzenie umowy; `seasonBankrupt`) nie trafia
+ * do rankingu. Taki tekst dostaje gracz w komunikacie, gdy bieg się kończy, i w raporcie końca współpracy; serwer odrzuca takie biegi jako
+ * `season-bankrupt` (`src/server/verify.ts`).
  */
-export const RANKED_BANKRUPT_TEXT = 'Ten bieg nie trafi do rankingu: Centrala wypowiedziała umowę.';
+export const RANKED_BANKRUPT_TEXT = 'Ten bieg nie trafi do rankingu: Centrala wypowiedziała umowę przed ostatnim raportem sezonu.';
 
 /** Czy sezon się skończył: pierwsza minuta po zamknięciu 30 listopada (`RANKED_SEASON_END_MINUTE`) i każda późniejsza. */
 export const seasonOver = (econ: Pick<EconomyState, 'minute'>): boolean => econ.minute >= RANKED_SEASON_END_MINUTE;
@@ -337,9 +338,10 @@ export function storedRankedBlock(): 'unsent' | 'active' | null {
  * Kończy bieg: wynik sezonu liczy lokalnie `seasonScore(replayRun(record, RANKED_SEASON_END_MINUTE))`, czyli tym samym kodem co sędzia na
  * serwerze, a nie ze stanu żywej gry. Dziennik w wyniku to kopia samych wpisów z minutą mniejszą od końca sezonu (parser serwera
  * nie przyjmuje innych), więc gra żywa zostaje nietknięta. Zwraca null, gdy sesja nie ma dziennika (`markOffLog`, sesja z
- * zapisu zwykłego, przekroczony `RUN_LOG_MAX`) albo gdy odtworzony bieg kończy się grą (`gameOver`: granica debetu albo wypowiedzenie
- * umowy, `RANKED_BANKRUPT_TEXT`): sędzia odrzuciłby go jako `season-bankrupt`, więc taki bieg jest nie do wysłania. (Powłoka gry nie
- * woła tu bankruta w ogóle, bo wie o tym ze stanu żywej gry; to obrona na wypadek, gdyby żywa gra i odtworzenie się rozjechały.)
+ * zapisu zwykłego, przekroczony `RUN_LOG_MAX`) albo gdy odtworzony bieg jest bankrutem (`seasonBankrupt`: koniec gry przed ostatnim
+ * raportem, `RANKED_BANKRUPT_TEXT`): sędzia odrzuciłby go jako `season-bankrupt`, więc taki bieg jest nie do wysłania. Bieg, który ma
+ * trzy raporty, jest wysyłalny także wtedy, gdy dopiero zamknięcie 30 listopada skończyło grę. (Powłoka gry nie woła tu bankruta w ogóle,
+ * bo wie o tym ze stanu żywej gry; to obrona na wypadek, gdyby żywa gra i odtworzenie się rozjechały.)
  * Pełne odtworzenie sezonu trwa ok. 0,6 s, więc to nie jest funkcja do pętli klatek. Nie zapisuje szuflady (robi to wołający:
  * `saveFinished`) i nie rzuca z powodu dziennika; rzucić może tylko `replayRun` przy niezgodnej wersji generatora, której dziennik
  * tej sesji mieć nie może.
@@ -351,6 +353,6 @@ export function finishRun(s: GameSession, now: number): FinishedRun | null {
     .map((e) => ({ minute: e.minute, seq: e.seq, cmd: { ...e.cmd } }));   // pola poleceń są płaskie: kopia płytka wystarcza
   const record: RunRecord = { ...s.run.record, mode: 'ranked', log };
   const state = replayRun(record, RANKED_SEASON_END_MINUTE);
-  if (state.gameOver) return null;
+  if (seasonBankrupt(state)) return null;
   return { v: 1, seed: s.seed, record, score: seasonScore(state), finishedAt: now };
 }

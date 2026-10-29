@@ -11,6 +11,7 @@ import { TRUST_REASON_LABEL, trustTerminates } from '@/sim/economy/tycoon/trust'
 import { EQUIPMENT, EQUIPMENT_BY_ID, equipmentCost } from '@/sim/economy/upgrades';
 import type { QualityPresetId } from '@/render/quality';
 import { networkIncomeOf, prestigePoints } from '@/game/meta';
+import { seasonBankrupt } from '@/sim/ranked';
 import { RANKED_BANKRUPT_TEXT, RANKED_DAYS, loadRanked, rankedDayOf, storedRankedBlock } from '@/game/rankedRun';
 import {
   celebration, dismissStory, ephemeral, econ, hints, howTo, metaView, nextHint, openHowTo, openPanel, openRanking, preset, ranked, report, selection,
@@ -239,7 +240,8 @@ export function terminationReason(s: EconomyState): string | null {
 /**
  * Raport miesięczny (pauzuje grę). Raport za listopad kończy sezon rankingowy: jego „Dalej” otwiera okno z wynikiem sezonu (`openFinish`),
  * żeby okno nie zasłoniło raportu. Przy wypowiedzeniu umowy: koniec gry i nowy start (w biegu rankingowym wyjście do zwykłej gry; taki bieg
- * nie trafia do rankingu ani do szuflady niewysłanych, o czym mówi akapit pod powodem). Okno końca gry wynika ze stanu
+ * nie trafia do rankingu ani do szuflady niewysłanych, o czym mówi akapit pod powodem). Wyjątek: wypowiedzenie przy ostatnim zamknięciu
+ * (trzy raporty, `seasonBankrupt` fałsz) kończy sezon doigrany, więc bieg ma wynik i „Dalej: wynik sezonu” otwiera okno z nim. Okno końca gry wynika ze stanu
  * (`gameOver` i ostatni raport w zapisie), więc wraca po przeładowaniu strony; zapis sprzed tej poprawki nie ma raportu
  * i pokazuje samo wypowiedzenie.
  */
@@ -250,19 +252,23 @@ export function ReportModal({ game }: { game: GameActions }) {
   if (!r && !over) return null;
   const title = over ? 'Koniec współpracy' : `Raport: ${r!.label}`;
   const reason = over && view ? terminationReason(view.s) : null;
-  const seasonEnd = !over && ranked.value?.phase === 'over';   // koniec sezonu rankingowego (nie bankructwo): za raportem czeka okno z wynikiem
+  const bankrupt = over && !!view && seasonBankrupt(view.s);   // koniec gry przed ostatnim raportem: poza rankingiem
+  const seasonEnd = ranked.value?.phase === 'over' && !bankrupt;   // sezon doigrany (też z debetem z ostatniego zamknięcia): za raportem czeka okno z wynikiem
   return (
     <div class="tt-modal-wrap">
       <div class="tt-modal" role="dialog" aria-modal="true" aria-label={title}>
         <h2>{title}</h2>
         {reason && <p class="tt-end-reason" role="note"><b>{reason}</b></p>}
-        {over && ranked.value && <p class="tt-end-reason" role="note">{RANKED_BANKRUPT_TEXT}</p>}
+        {bankrupt && ranked.value && <p class="tt-end-reason" role="note">{RANKED_BANKRUPT_TEXT}</p>}
         {r ? <ReportBody r={r} closing={over ? TERMINATION : undefined} /> : centralaQuote(TERMINATION)}
         <div class="tt-modal-foot">
           {over
             ? ranked.value
-              // bieg rankingowy nie zaczyna się od nowa (`restart` odmawia): wyjście do zwykłej gry (bankrut nie ma czego wysyłać)
-              ? <button type="button" class="tt-btn tt-primary big" onClick={() => game.leaveRanked()}>Wróć do zwykłej gry</button>
+              // bieg rankingowy nie zaczyna się od nowa (`restart` odmawia): wyjście do zwykłej gry. Bankrut nie ma czego wysyłać; sezon doigrany
+              // z debetem z ostatniego zamknięcia ma wynik w szufladzie, więc najpierw okno z wynikiem
+              ? seasonEnd && unsent.value
+                ? <button type="button" class="tt-btn tt-primary big" onClick={() => { report.value = null; game.openFinish(); }}>Dalej: wynik sezonu</button>
+                : <button type="button" class="tt-btn tt-primary big" onClick={() => game.leaveRanked()}>Wróć do zwykłej gry</button>
               : <button type="button" class="tt-btn tt-primary big" onClick={() => game.restart()}>Zacznij od nowa</button>
             : seasonEnd
               // raport za listopad zamyka sezon: „Dalej” zdejmuje raport i otwiera okno z wynikiem (`concludeSeason` nie otwiera go nad raportem)

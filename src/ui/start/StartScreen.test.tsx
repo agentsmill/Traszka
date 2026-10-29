@@ -101,7 +101,7 @@ describe('ekran startowy: przyciski i seed tygodnia', () => {
     expect(all).toContain('Start rankingowy');
     expect(all).toContain('Seed tygodnia');
     expect(all.indexOf('Otwieramy sklep!')).toBeLessThan(all.indexOf('Start rankingowy'));
-    expect(RANKED_NOTE).toBe('Trzy miesiące na jednym seedzie, bez premii z sieci. Wynik wyślesz po sezonie; gdy ranking nie działa, bieg poczeka w przeglądarce. Bieg zakończony bankructwem nie trafia do rankingu.');
+    expect(RANKED_NOTE).toBe('Trzy miesiące na jednym seedzie, bez premii z sieci. Wynik wyślesz po sezonie; gdy ranking nie działa, bieg poczeka w przeglądarce. Bankructwo przed ostatnim raportem sezonu wyklucza bieg z rankingu.');
     expect(textOf(tree)).toContain(RANKED_NOTE);
     const seedRow = walk(tree).find((v) => v.props.class === 'tt-seedrow')!;
     expect(labels(seedRow)).toEqual(['Seed tygodnia', '🎲']);

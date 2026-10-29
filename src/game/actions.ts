@@ -5,6 +5,7 @@ import {
 } from '@/sim/economy/economy';
 import { rankFor } from '@/sim/economy/progress';
 import { noticeLevel } from '@/sim/economy/tycoon/notices';
+import { seasonBankrupt } from '@/sim/ranked';
 import type { Sfx } from '@/ui/sfx';
 import * as ui from '@/ui/state';
 import { bootMeta } from './bootMeta';
@@ -495,12 +496,12 @@ export function createShell(deps: ShellDeps): GameShell {
   }
 
   /**
-   * Koniec biegu rankingowego: sezon się skończył (`seasonOver`) albo bieg zakończył się grą przed jego końcem (`gameOver`: granica
-   * debetu albo wypowiedzenie umowy). Zamyka bieg dokładnie raz.
-   * - Bankrut (`gameOver`) nie wchodzi do rankingu: serwer odrzuciłby go jako `season-bankrupt`, a lokalnie wiadomo to samo, więc nie ma
-   *   odtwarzania (`finishRun`) ani szuflady. Aktywny zapis przepada, gracz dostaje jeden komunikat, a okno końca współpracy
-   *   (`ReportModal`) mówi to samo pod powodem; okna końca sezonu nie ma.
-   * - Sezon doigrany do końca: `finishRun` odtwarza cały sezon z dziennika (około sekundy), więc gra staje na ten czas; to cena za
+   * Koniec biegu rankingowego: sezon się skończył (`seasonOver`) albo bieg zakończył się grą (`gameOver`: granica debetu albo wypowiedzenie
+   * umowy). Zamyka bieg dokładnie raz.
+   * - Bankrut (`seasonBankrupt`: gra skończona przed ostatnim raportem) nie wchodzi do rankingu: serwer odrzuciłby go jako `season-bankrupt`,
+   *   a lokalnie wiadomo to samo (ta sama funkcja), więc nie ma odtwarzania (`finishRun`) ani szuflady. Aktywny zapis przepada, gracz dostaje
+   *   jeden komunikat, a okno końca współpracy (`ReportModal`) mówi to samo pod powodem; okna końca sezonu nie ma.
+   * - Sezon doigrany do końca (także z `gameOver` przy ostatnim zamknięciu, gdy są już trzy raporty): `finishRun` odtwarza cały sezon z dziennika (około sekundy), więc gra staje na ten czas; to cena za
    *   wynik liczony tym samym kodem co serwer. Gotowy bieg trafia do szuflady (`saveFinished`), a gdy przeglądarka jej nie przyjmie,
    *   zostaje w pamięci karty (`holdFinished`) z jednym ostrzeżeniem. Bieg bez dziennika (`run === null`: unieważniony) nie daje szuflady.
    *   Aktywny zapis znika dopiero, gdy bieg jest bezpieczny w szufladzie (`saveFinished` zwróciło true) albo nie ma czego ratować
@@ -516,7 +517,7 @@ export function createShell(deps: ShellDeps): GameShell {
     if (!session || session.mode !== 'ranked' || concluded.has(session)) return;
     if (!seasonOver(session.econ) && !session.econ.gameOver) return;
     concluded.add(session);   // przed `finishRun`: ani wyjątek, ani następna klatka nie powtórzy kosztownego odtwarzania
-    if (session.econ.gameOver) {
+    if (seasonBankrupt(session.econ)) {
       discardRanked();   // bankrut nie wraca w żadnej postaci: ani w szufladzie, ani z aktywnego zapisu
       syncUnsent();
       publish();   // faza `over` od razu
@@ -545,8 +546,10 @@ export function createShell(deps: ShellDeps): GameShell {
     publish();   // faza `over` od razu, nie dopiero przy następnej publikacji
     // Bieg do wysłania (w szufladzie albo w pamięci karty): okno z wynikiem. Raport za listopad zamyka sezon w tej samej klatce co
     // `concludeSeason`, a „Zamknij” w oknie wychodzi z biegu i czyści raport, więc okno nad raportem zabrałoby graczowi raport końcowy:
-    // gdy raport jest na ekranie, okno otwiera jego przycisk „Dalej” (`ReportModal`). Bez raportu (strona otwarta po końcu sezonu) otwiera się od razu.
-    if (finished !== null && ui.report.value === null) openFinishWindow();
+    // gdy raport jest na ekranie, okno otwiera jego przycisk „Dalej” (`ReportModal`). To samo przy `gameOver` z trzema raportami: okno końca
+    // współpracy stoi ze stanu (także po przeładowaniu, bez sygnału raportu), a jego przycisk otwiera okno z wynikiem. Bez raportu
+    // (strona otwarta po końcu sezonu bez `gameOver`) okno otwiera się od razu.
+    if (finished !== null && ui.report.value === null && !session.econ.gameOver) openFinishWindow();
   }
 
   /** Otwiera okno końca sezonu, jeśli jest co wysłać; otwartego okna nie podmienia (jego model odświeża się tylko przy otwarciu). */

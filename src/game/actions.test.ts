@@ -2543,7 +2543,7 @@ describe('powłoka gry (createShell)', () => {
       const TAP_LOG_FULL_TEXT = 'Dziennik biegu jest prawie pełny: ręczne stukanie się skończyło. Zakupy i decyzje działają dalej.';
       const TERMINATED_TEXT = 'Umowa wypowiedziana: bieg się zakończył.';
       const NOT_COUNTED_NOTICE = 'Ten bieg nie liczy się do rankingu.';
-      const BANKRUPT_NOTICE = 'Ten bieg nie trafi do rankingu: Centrala wypowiedziała umowę.';
+      const BANKRUPT_NOTICE = 'Ten bieg nie trafi do rankingu: Centrala wypowiedziała umowę przed ostatnim raportem sezonu.';
       const RESULT_NOT_SAVED_NOTICE = 'Przeglądarka nie ma miejsca na zapis wyniku. Wyślij go teraz, zanim zamkniesz kartę.';
       const NO_NETWORK_NOTICE = 'W biegu rankingowym nie ma sieci sklepów.';
       const NO_RESTART_NOTICE = 'W biegu rankingowym nie zaczyna się od nowa. Porzuć bieg w ustawieniach.';
@@ -2620,6 +2620,7 @@ describe('powłoka gry (createShell)', () => {
           h.shell.persist();
           expect(storage.getItem('traszka:ranked')).not.toBeNull();   // aktywny zapis jest, zanim bieg się skończy
           s.econ.minute = 40 * MINUTES_PER_DAY + OPEN_FROM;
+          s.econ.history = [{ label: 'wrzesień 2026', profit: 5000, revenue: 20_000 }] as typeof s.econ.history;   // październik: jeden raport za nami
           s.econ.gameOver = true;
           const finish = vi.spyOn(rankedRunModule, 'finishRun');
           const writes = vi.spyOn(storage, 'setItem');
@@ -2647,10 +2648,11 @@ describe('powłoka gry (createShell)', () => {
           expect(h.shell.session).not.toBe(s);
         });
 
-        it('bankrut w tej samej klatce co ostatni raport sezonu (gameOver na końcu sezonu): też bez szuflady i bez okna', () => {
+        it('bankrut na końcu sezonu, ale przed ostatnim raportem (dwa raporty, gameOver w minucie końca): też bez szuflady i bez okna', () => {
           const h = harness();
           const s = rankedNearEnd(h, 1);
           s.econ.minute = END;
+          s.econ.history = [1000, 2000].map((profit, i) => ({ label: `m${i}`, profit, revenue: 10_000 })) as typeof s.econ.history;
           s.econ.gameOver = true;
           const finish = vi.spyOn(rankedRunModule, 'finishRun');
 
@@ -2661,6 +2663,29 @@ describe('powłoka gry (createShell)', () => {
           expect(ui.finish.value).toBeNull();
           expect(h.notices).toEqual([BANKRUPT_NOTICE]);
         });
+
+        it('gameOver przy ostatnim zamknięciu (trzy raporty, debet z listopada) to sezon doigrany: bieg w szufladzie z wynikiem, bez komunikatu o bankructwie, okno wyniku otwiera dopiero „Dalej”', () => {
+          const h = harness();
+          const s = rankedNearEnd(h, 1);
+          s.econ.minute = END;
+          s.econ.history = [1000, 2000, -9000].map((profit, i) => ({ label: `m${i}`, profit, revenue: 10_000 })) as typeof s.econ.history;
+          s.econ.gameOver = true;
+          const finish = vi.spyOn(rankedRunModule, 'finishRun');
+
+          h.shell.handleEvents([]);
+          h.shell.handleEvents([]);   // następna klatka niczego nie powtarza
+
+          expect(finish).toHaveBeenCalledTimes(1);
+          const drawer = loadFinished();
+          expect(drawer).toMatchObject({ v: 1, seed: RANKED_SEED });
+          expect(storage.getItem('traszka:ranked')).toBeNull();   // bieg jest bezpieczny w szufladzie
+          expect(ui.unsent.value).toEqual({ seed: RANKED_SEED, score: drawer!.score });
+          expect(ui.ranked.value).toMatchObject({ phase: 'over' });
+          expect(h.notices).toEqual([]);   // nie ma komunikatu o bankructwie
+          expect(ui.finish.value).toBeNull();   // okno końca współpracy stoi ze stanu, a okno wyniku otwiera jego przycisk
+          h.shell.game.openFinish();
+          expect(ui.finish.value).toEqual({ open: true });
+        }, FULL_SEASON_MS);
 
         it('po bankructwie „Wróć do zwykłej gry” (leaveRanked) otwiera zwykły sklep, a ranking nie ma czego wznawiać ani wysyłać', () => {
           const h = harness();

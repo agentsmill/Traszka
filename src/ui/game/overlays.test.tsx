@@ -710,7 +710,7 @@ describe('okno raportu miesiąca', () => {
     const found = notes(tree);
     expect(found).toHaveLength(2);   // powód końca współpracy i akapit o rankingu, w tej kolejności
     expect(found[0]).toMatch(/^Powód: /);
-    expect(found[1]).toBe('Ten bieg nie trafi do rankingu: Centrala wypowiedziała umowę.');
+    expect(found[1]).toBe('Ten bieg nie trafi do rankingu: Centrala wypowiedziała umowę przed ostatnim raportem sezonu.');
     expect(found[1]).toBe(RANKED_BANKRUPT_TEXT);
     expect(labels(tree)).toEqual(['Wróć do zwykłej gry']);   // przycisk zostaje
 
@@ -732,6 +732,32 @@ describe('okno raportu miesiąca', () => {
     ranked.value = { seed: s.seed, day: 30, days: 91, phase: 'playing' };
     report.value = monthReport(detailed());
     expect(notes(ReportModal({ game: fakeGame() }) as Vnode)).toEqual([]);
+  });
+
+  it('gameOver przy ostatnim zamknięciu (trzy raporty) to sezon doigrany: bez akapitu „nie trafi do rankingu”, „Dalej: wynik sezonu” otwiera okno z wynikiem, a bez wyniku do wysłania jest „Wróć do zwykłej gry”', () => {
+    const { s, info } = base();
+    s.gameOver = true;
+    s.cash = DEBT_LIMIT - 500;
+    s.history = [1000, 2000, -9000].map((profit, i) => ({ label: `m${i}`, profit, revenue: 10_000 })) as typeof s.history;
+    s.lastReport = monthReport(detailed());
+    publishState(s, info);
+    ranked.value = { seed: s.seed, day: 91, days: 91, phase: 'over' };
+    unsent.value = { seed: s.seed, score: -6000 };
+    const game = fakeGame();
+    const tree = ReportModal({ game }) as Vnode;
+    expect(textOf(tree)).toContain('Koniec współpracy');   // powód końca gry zostaje
+    expect(textOf(tree)).not.toContain(RANKED_BANKRUPT_TEXT);
+    expect(labels(tree)).toEqual(['Dalej: wynik sezonu']);
+    click(closeButton(tree, 'Dalej: wynik sezonu'));
+    expect(game.openFinish).toHaveBeenCalledTimes(1);
+    expect(game.leaveRanked).not.toHaveBeenCalled();
+
+    unsent.value = null;   // bieg bez dziennika: nie ma czego wysyłać, więc jedyne wyjście to powrót do zwykłej gry
+    const bare = fakeGame();
+    expect(labels(ReportModal({ game: bare }) as Vnode)).toEqual(['Wróć do zwykłej gry']);
+    click(closeButton(ReportModal({ game: bare }) as Vnode, 'Wróć do zwykłej gry'));
+    expect(bare.leaveRanked).toHaveBeenCalledTimes(1);
+    expect(bare.openFinish).not.toHaveBeenCalled();
   });
 
   it('raport za listopad kończący sezon rankingowy: „Dalej: wynik sezonu” zdejmuje raport i otwiera okno z wynikiem (openFinish)', () => {

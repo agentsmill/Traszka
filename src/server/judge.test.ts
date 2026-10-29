@@ -19,6 +19,7 @@ interface FakeBundle {
   GENERATOR_VERSION: unknown;
   RANKED_SEASON_END_MINUTE: unknown;
   seasonScore: unknown;
+  seasonBankrupt: unknown;
   replayRun: unknown;
 }
 const bundle = (over: Partial<FakeBundle> = {}): FakeBundle => ({
@@ -26,6 +27,7 @@ const bundle = (over: Partial<FakeBundle> = {}): FakeBundle => ({
   GENERATOR_VERSION: 1,
   RANKED_SEASON_END_MINUTE: END,
   seasonScore: (state: Pick<EconomyState, 'history'>) => state.history.reduce((sum, h) => sum + h.profit, 0),
+  seasonBankrupt: () => false,
   replayRun: (_run: RunRecord, _until: number) => history(10, 20, 30),
   ...over,
 });
@@ -48,6 +50,16 @@ describe('sędzia z bundla: zgodny bieg', () => {
   it('wynik, który nie jest liczbą, to replay-failed (reszta kontroli jak w makeReplayVerifier)', async () => {
     const verify = makeBundleVerifier(loader(bundle({ seasonScore: () => NaN })));
     expect(await verify(RUN)).toEqual({ ok: false, reason: 'replay-failed' });
+  });
+
+  it('bankrut według bundla (seasonBankrupt) to season-bankrupt bez wyniku; reguła jest po stronie bundla, nie sędziego', async () => {
+    const seasonBankrupt = vi.fn((state: unknown) => state === states.broke);
+    const states = { broke: history(10, 20), fine: history(10, 20, 30) };
+    const replay = (run: RunRecord) => (run.seed === 'bankrut' ? states.broke : states.fine);
+    const verify = makeBundleVerifier(loader(bundle({ replayRun: replay, seasonBankrupt })));
+    expect(await verify({ ...RUN, seed: 'bankrut' })).toEqual({ ok: false, reason: 'season-bankrupt' });
+    expect(await verify(RUN)).toEqual({ ok: true, score: 60 });
+    expect(seasonBankrupt).toHaveBeenCalledTimes(2);
   });
 
   it('wyjątek z replayRun to replay-failed, z logiem „[ranking] replay” (nazwa i treść), a bez wyjątku na zewnątrz', async () => {
@@ -110,7 +122,7 @@ describe('sędzia z bundla: brak albo zepsuty bundle to replay-unavailable, nigd
     expect(errors.mock.calls[0]![0]).toBe('[ranking] sędzia');
   });
 
-  it.each(['SIM_VERSION', 'GENERATOR_VERSION', 'RANKED_SEASON_END_MINUTE', 'seasonScore', 'replayRun'] as const)(
+  it.each(['SIM_VERSION', 'GENERATOR_VERSION', 'RANKED_SEASON_END_MINUTE', 'seasonScore', 'seasonBankrupt', 'replayRun'] as const)(
     'bundle bez eksportu %s (albo z eksportem złego typu): replay-unavailable, a w logu nazwa brakującego eksportu',
     async (name) => {
       const missing = bundle();

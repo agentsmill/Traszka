@@ -4,7 +4,7 @@ import { COMMAND_TYPES, type Command } from '@/sim/economy/commands';
 import { awaitingDecision, type EconEvent, type EconomyState } from '@/sim/economy/economy';
 import { BOT_VALUATION } from '@/sim/economy/tycoon/bots';
 import { bestAnswer, visibleCards } from '@/sim/economy/tycoon/cards';
-import { RANKED_SEASON_END_MINUTE, RANKED_SEASON_MONTHS, seasonScore } from '@/sim/ranked';
+import { RANKED_SEASON_END_MINUTE, RANKED_SEASON_MONTHS, seasonBankrupt, seasonScore } from '@/sim/ranked';
 import { replayRun, type LogEntry, type RunRecord } from '@/sim/run';
 import { SIM_VERSION } from '@/sim/simVersion';
 import { GENERATOR_VERSION } from '@/sim/store/generateStore';
@@ -380,8 +380,8 @@ describe('cały sezon rankingowy z gry przechodzi sędziego z tym samym wynikiem
     expect(parsed.value.run, 'bieg po drodze przez szufladę, JSON i parser').toEqual(finished.record);
     expect(parsed.value.run.log).toHaveLength(finished.record.log.length);
 
-    // sędzia tak jak w `makeBundleVerifier`: z regułą bankructwa (bieg z gameOver przed końcem sezonu nie wchodzi do rankingu)
-    const verify = makeReplayVerifier({ replay: replayRun, endMinute: END, score: seasonScore, bankrupt: (state) => state.gameOver === true });
+    // sędzia tak jak w `makeBundleVerifier`: z regułą bankructwa (bieg z gameOver przed ostatnim raportem nie wchodzi do rankingu)
+    const verify = makeReplayVerifier({ replay: replayRun, endMinute: END, score: seasonScore, bankrupt: seasonBankrupt });
     expect(await verify(parsed.value.run)).toEqual({ ok: true, score: finished.score });
     expect(replayRun(parsed.value.run, END).gameOver).toBe(false);
   }, TIMEOUT);

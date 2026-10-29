@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { RANKED_SEASON_END_MINUTE, seasonScore } from '@/sim/ranked';
+import { RANKED_SEASON_END_MINUTE, RANKED_SEASON_MONTHS, seasonScore } from '@/sim/ranked';
 import { replayRun, type RunRecord } from '@/sim/run';
 import { SIM_VERSION } from '@/sim/simVersion';
 import { GENERATOR_VERSION } from '@/sim/store/generateStore';
@@ -132,6 +132,7 @@ describe('api/** na Vercelu (atrapa Upstash przez fetch)', () => {
       const state = replayRun(bankrupt, RANKED_SEASON_END_MINUTE);
       expect(state.gameOver, 'dziennik naprawdę kończy grę').toBe(true);
       expect(state.minute).toBeLessThan(RANKED_SEASON_END_MINUTE);
+      expect(state.history.length, 'koniec gry przed ostatnim raportem').toBeLessThan(RANKED_SEASON_MONTHS);
 
       const own = new Request(`${ORIGIN}/api/runs`, {
         method: 'POST', headers: { 'content-type': 'application/json', 'x-real-ip': '192.0.2.77' },
@@ -146,6 +147,31 @@ describe('api/** na Vercelu (atrapa Upstash przez fetch)', () => {
       expect(board.rows).toEqual([]);
       const other = await (await player(post('/api/player', { key: KEY, nick: 'Bankrut' }))).json();
       expect(other).toMatchObject({ ok: true, nick: { nick: 'Bankrut', status: 'free' } });
+    }, 60_000,
+  );
+
+  // Ta sama reguła od drugiej strony: gra, która kończy się dopiero przy zamknięciu 30 listopada, ma trzy raporty, więc wchodzi do rankingu,
+  // a jej wynik zawiera listopadową stratę (debet z ostatniego zamknięcia jest już w raporcie).
+  it.runIf(bundleOnDisk)(
+    'ze zbudowanym bundlem sędziego: bieg z debetem dopiero przy zamknięciu listopada (trzy raporty) jest przyjęty, a wynik zawiera listopadową stratę', async () => {
+      const lateDebt: RunRecord = { seed: 'kiełbasa-42', gameVersion: run.gameVersion, generatorVersion: GENERATOR_VERSION, simVersion: SIM_VERSION, mode: 'ranked', log: [] };
+      const state = replayRun(lateDebt, RANKED_SEASON_END_MINUTE);
+      expect(state.gameOver, 'ostatnie zamknięcie kończy grę (jeśli ekonomia się zmieniła, dobierz inny sklep)').toBe(true);
+      expect(state.history).toHaveLength(RANKED_SEASON_MONTHS);
+      const expected = seasonScore(state);
+      expect(expected).toBe(Math.round(state.history[0]!.profit + state.history[1]!.profit + state.history[2]!.profit));
+      expect(state.history[2]!.profit, 'listopad kończy się stratą').toBeLessThan(0);
+      expect(expected).toBeLessThan(Math.round(state.history[0]!.profit + state.history[1]!.profit));
+
+      const own = new Request(`${ORIGIN}/api/runs`, {
+        method: 'POST', headers: { 'content-type': 'application/json', 'x-real-ip': '192.0.2.66' },
+        body: JSON.stringify({ key: 'M3N4-P5Q6-R7S8-T9V0-W1XY', nick: 'Listopad', run: lateDebt }),
+      });
+      const res = await runs(own);
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({ ok: true, score: expected, best: expected });
+      const board = await (await leaderboard(new Request(`${ORIGIN}/api/leaderboard?board=global`))).json() as { rows: { nick: string; score: number }[] };
+      expect(board.rows.map((r) => [r.nick, r.score])).toContainEqual(['Listopad', expected]);
     }, 60_000,
   );
 
