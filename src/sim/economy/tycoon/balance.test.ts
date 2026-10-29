@@ -26,8 +26,15 @@ beforeAll(() => {
 const results = (bot: (typeof BOT_NAMES)[number]): [string, number][] => SEEDS.map((seed, i) => [seed, run.totals[bot][i]!]);
 
 describe('balans na prawdziwej ekonomii (dwa miesiące, boty z bots.ts)', () => {
-  it('bierny gracz kończy dwa miesiące w okolicy zera: najwyżej 5 000 zł na plus albo minus na każdym sklepie', () => {
-    for (const [seed, total] of results('bierny')) expect(Math.abs(total), `${seed}: bierny ${Math.round(total)} zł`).toBeLessThanOrEqual(5000);
+  it('bierny gracz po mandatach i opłacie Centrali ledwo wiąże koniec z końcem: od −4 000 do +2 000 zł, mediana najwyżej +1 000 zł', () => {
+    // decyzja właściciela z 29.10.2026: w okolicy zera albo lekko na minusie, nie wygodnie na plusie
+    const totals = results('bierny');
+    for (const [seed, total] of totals) {
+      expect(total, `${seed}: bierny ${Math.round(total)} zł`).toBeGreaterThanOrEqual(-4000);
+      expect(total, `${seed}: bierny ${Math.round(total)} zł`).toBeLessThanOrEqual(2000);
+    }
+    const sorted = totals.map(([, t]) => t).sort((a, b) => a - b);
+    expect(sorted[Math.floor(sorted.length / 2)], `mediana biernego: ${sorted.map(Math.round).join(', ')}`).toBeLessThanOrEqual(1000);
   });
 
   it('mistrz (decyzje i stukanie) zarabia 20–40 tys. zł na każdym sklepie', () => {

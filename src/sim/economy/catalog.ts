@@ -128,7 +128,7 @@ export const MEDIA_PER_DAY = 140;
  * w budce, i w flagowcu (balans: tycoon/balance.test.ts). Zaufana Centrali część wraca jako premia od obrotu (trust.ts).
  */
 export const FRANCHISE_FEE_FIXED = 2000;
-export const FRANCHISE_FEE_SHARE = 0.152;
+export const FRANCHISE_FEE_SHARE = 0.151;
 /** Palet w dostawie bez opłaty logistycznej; każda kolejna kosztuje. */
 export const PALLETS_FREE = 6;
 export const PALLET_FEE = 60;
@@ -162,7 +162,14 @@ export const STRAZ = {
 /** Kredyt kupiecki: wartość towaru w sklepie (półki, zaplecze, palety) ponad limit wstrzymuje zamówienie. */
 export const CREDIT_LIMIT = 70_000;
 /** Gotówka poniżej tego przy zamknięciu miesiąca to miesiąc bez opłacenia Centrali; drugi taki z rzędu kończy umowę (spec §10). */
-export const BANKRUPTCY_AT = -30_000;
+/**
+ * Granica debetu (decyzja właściciela z 29.10.2026: „za duży debet to koniec gry”): gotówka poniżej niej kończy grę od razu, także
+ * w środku miesiąca. Opłata franczyzowa schodzi na koniec miesiąca, więc wtedy gotówka ma dołek; bierny gracz bez pecha kończy go
+ * w okolicy zera (balans: tycoon/balance.test.ts), a granica stoi na tyle daleko, żeby sam ten dołek gry nie kończył. Od
+ * `DEBT_WARN_SHARE` granicy Centrala ostrzega, ile zostało do końca.
+ */
+export const DEBT_LIMIT = -10_000;
+export const DEBT_WARN_SHARE = 0.5;
 export const START_CASH = 2000;
 
 /** Cierpliwość: ilu ludzi w kolejce klient jeszcze toleruje. */

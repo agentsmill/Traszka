@@ -257,11 +257,12 @@ describe('boty przechodzą dwa miesiące prawdziwej gry', () => {
     expect(table.totals.mistrz[0]).not.toBe(table.totals.mistrz[2]);   // seedy dają różne sklepy
   }, 60_000);
 
-  it('bankructwo przy zamknięciu miesiąca kończy grę bota: to ten sygnał measureBots zwraca w gameOver', () => {
+  it('za duży debet kończy grę bota od razu: to ten sygnał measureBots zwraca w gameOver, a dalsze kroki niczego nie liczą', () => {
     const run = freshRun(SEED);
-    run.state.cash = -1e6;   // dwa zamknięcia miesiąca z rzędu bez opłacenia Centrali: wypowiedzenie umowy
+    run.state.cash = -1e6;   // poniżej granicy debetu: Centrala wypowiada umowę w pierwszej minucie
     runBot(BOTS.bierny, economyEnv(run), 61 * MINUTES_PER_DAY - OPEN_FROM);
     expect(run.state.gameOver).toBe(true);
-    expect(cardsAnswered(run.state)).toBeGreaterThan(0);
+    expect(run.state.minute).toBe(OPEN_FROM + 1);
+    expect(cardsAnswered(run.state)).toBe(0);
   }, 60_000);
 });

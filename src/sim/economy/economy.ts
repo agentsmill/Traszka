@@ -1,7 +1,7 @@
 import { hashString } from '@/sim/rng';
 import {
-  ASSISTANT_UNLOAD_MIN, BANKRUPTCY_AT, CATS, CAT_INFO, COMBO_WINDOW, CREDIT_LIMIT, DELIVERY_AT, DELIVERY_AT_AFTERNOON, DELIVERY_AT_NIGHT,
-  FINE_BASE, FINE_PER_PALLET, FRANCHISE_FEE_FIXED, FRANCHISE_FEE_SHARE,
+  ASSISTANT_UNLOAD_MIN, CATS, CAT_INFO, COMBO_WINDOW, CREDIT_LIMIT, DELIVERY_AT, DELIVERY_AT_AFTERNOON, DELIVERY_AT_NIGHT,
+  DEBT_LIMIT, DEBT_WARN_SHARE, FINE_BASE, FINE_PER_PALLET, FRANCHISE_FEE_FIXED, FRANCHISE_FEE_SHARE,
   HIRE_COST, HOT, HOUR_CURVE, ITEMS_PER_CUSTOMER,
   LOT_TRAFFIC, MARGIN_PER_CUSTOMER, MEDIA_PER_DAY, MINUTES_PER_DAY, OPEN_FROM, OPEN_TO, ORDER_DEADLINE, PALLET_FEE, PALLET_ITEMS,
   PALLETS_FREE, PATIENCE, RESTOCK_RATE, RETURN_FEE, REVENUE_PER_CUSTOMER, SCO_ACCEPT, SCO_RATE, STAFF_MAX, STAFF_START, START_CASH, STRAZ,
@@ -352,6 +352,7 @@ export const awaitingDecision = (s: EconomyState): boolean => !s.gameOver && car
 /** Jedna minuta gry. Zdarzenia dla gracza (dostawa, mandat, raport…) trafiają do `out`. */
 export function stepMinute(s: EconomyState, info: StoreInfo, out: EconEvent[]): void {
   if (s.gameOver) return;
+  const cashBefore = s.cash;
   const mod = minuteOfDay(s.minute);
   // o północy pogoda dnia (zaczep: później ustawi ją system pogody) i karty dnia z jej wynikiem; dzień 0 ma jedno i drugie z `createEconomy`
   if (mod === 0) {
@@ -384,6 +385,7 @@ export function stepMinute(s: EconomyState, info: StoreInfo, out: EconEvent[]): 
   if (mod === OPEN_TO) closeDay(s, info, out);
   if (mod % 60 === 0) checkMilestones(s, info, out);
   processLevels(s, out);
+  checkDebt(s, cashBefore, out);
 
   s.minute++;
   // karta, której godzina właśnie nadeszła: gra staje na niej (wołający sprawdzają `awaitingDecision`), a interfejs dostaje sygnał
@@ -717,8 +719,8 @@ function deliver(s: EconomyState, info: StoreInfo, count: number, out: EconEvent
   }
 }
 
-/** Szansa, że paleta z dostawy jest złota (przy 6 paletach dziennie wychodzi średnio jedna złota co 5–6 dni). */
-export const GOLDEN_CHANCE = 0.03;
+/** Szansa, że paleta z dostawy jest złota (przy 6 paletach dziennie wychodzi średnio jedna złota co ok. 7 dni). */
+export const GOLDEN_CHANCE = 0.025;
 /**
  * Premia za rozładowanie złotej palety: ćwierć marży typowego dnia, nie mniej niż 800 zł. Stała dolna granica trzyma premię
  * w podobnej wysokości w małym i dużym sklepie (przy udziale w marży premie rosłyby z kwadratem wielkości: więcej palet razy
@@ -922,8 +924,6 @@ export function franchiseFee(revenue: number): number {
 function closeMonth(s: EconomyState, day: number, out: EconEvent[]): void {
   const m = s.month;
   const t = s.tycoon;
-  // spec §10: umowę wypowiada dopiero drugi miesiąc z rzędu bez opłacenia Centrali; poprzednie zamknięcie to `lastReport`
-  const unpaidBefore = s.lastReport !== null && s.lastReport.cash < BANKRUPTCY_AT;
   const fee = franchiseFee(m.revenue);
   charge(s, 'fee', fee, 'month');
   bonus(s, Math.round(turnoverBonusShare(t.trust.value) * m.revenue), 'month');
@@ -952,24 +952,36 @@ function closeMonth(s: EconomyState, day: number, out: EconEvent[]): void {
   s.lastReport = report;
   out.push({ kind: 'month', text: `Raport za ${label}: wynik ${profit >= 0 ? '+' : ''}${fmt(profit)} zł.`, report });
   s.month = emptyCounters();
-  if (s.cash < BANKRUPTCY_AT && unpaidBefore) {
-    s.gameOver = true;
-    out.push({ kind: 'gameover', text: 'Centrala wypowiada umowę franczyzową: drugi miesiąc z rzędu bez opłacenia Centrali. Dziękujemy za współpracę.' });
-  } else if (s.cash < BANKRUPTCY_AT) {
-    out.push({
-      kind: 'debt',
-      text: `Gotówka po raporcie: ${fmt(s.cash)} zł, czyli poniżej ${fmt(BANKRUPTCY_AT)} zł. Centrala czeka na opłatę jeszcze miesiąc. `
-        + `Jeśli przy następnym raporcie gotówka nadal będzie poniżej tej granicy, umowa zostanie wypowiedziana.`,
-    });
-  }
-  // zero w środku miesiąca to tylko ostrzeżenie; umowę wypowiada się przy zamknięciu miesiąca
-  if (!s.gameOver && trustTerminates(t.trust.value)) {
+  // zaufanie na zerze w środku miesiąca to tylko ostrzeżenie; umowę wypowiada się przy zamknięciu miesiąca (debet: `checkDebt`)
+  if (trustTerminates(t.trust.value)) {
     s.gameOver = true;
     out.push({ kind: 'gameover', text: 'Centrala wypowiada umowę franczyzową: zaufanie spadło do zera. Dziękujemy za współpracę.' });
   }
 }
 
 const fmt = (n: number): string => Math.round(n).toLocaleString('pl-PL');
+
+/** Próg ostrzeżenia o debecie (catalog.ts: `DEBT_LIMIT` razy `DEBT_WARN_SHARE`). */
+export const DEBT_WARN = DEBT_LIMIT * DEBT_WARN_SHARE;
+
+/** Ostrzeżenie o debecie: gotówka i ile zostało do granicy, za którą Centrala od razu wypowiada umowę. */
+export const debtWarningText = (cash: number): string =>
+  `Gotówka ${fmt(cash)} zł. Do granicy debetu (${fmt(DEBT_LIMIT)} zł) zostało ${fmt(cash - DEBT_LIMIT)} zł: poniżej niej Centrala od razu wypowiada umowę.`;
+
+/**
+ * Debet po zmianie gotówki w minucie gry albo po poleceniu gracza (`before`: gotówka sprzed niej). Poniżej `DEBT_LIMIT` koniec gry
+ * od razu; zejście poniżej `DEBT_WARN` to jedno ostrzeżenie z kwotą do końca. Liczy się przejście progu, więc stan zapisu nie
+ * potrzebuje nowego pola, a gracz, który wisi pod progiem, nie dostaje ostrzeżenia co minutę.
+ */
+export function checkDebt(s: EconomyState, before: number, out: EconEvent[]): void {
+  if (s.gameOver) return;
+  if (s.cash < DEBT_LIMIT) {
+    s.gameOver = true;
+    out.push({ kind: 'gameover', text: `Gotówka ${fmt(s.cash)} zł, poniżej granicy debetu ${fmt(DEBT_LIMIT)} zł: Centrala wypowiada umowę franczyzową. Dziękujemy za współpracę.` });
+  } else if (s.cash < DEBT_WARN && before >= DEBT_WARN) {
+    out.push({ kind: 'debt', text: debtWarningText(s.cash) });
+  }
+}
 
 // --- Kamienie milowe ------------------------------------------------------------------------------------
 

@@ -1,13 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { generateStore } from '@/sim/store/generateStore';
 import {
-  BANKRUPTCY_AT, CATS, CAT_INFO, FRANCHISE_FEE_FIXED, FRANCHISE_FEE_SHARE, HOT, ITEMS_PER_CUSTOMER, MARGIN_PER_CUSTOMER, MINUTES_PER_DAY, OPEN_FROM, OPEN_TO, REVENUE_PER_CUSTOMER,
+  CATS, CAT_INFO, DEBT_LIMIT, FRANCHISE_FEE_FIXED, FRANCHISE_FEE_SHARE, HOT, ITEMS_PER_CUSTOMER, MARGIN_PER_CUSTOMER, MINUTES_PER_DAY, OPEN_FROM, OPEN_TO, REVENUE_PER_CUSTOMER,
   START_CASH, STRAZ, TILL_RATE, UNLOAD_AT, UNLOAD_RATE, WAGE_PER_DAY, WAVES,
 } from './catalog';
 import { dateOfDay, dayOf, formatDate, isLastDayOfMonth, minuteOfDay } from './calendar';
 import { advanceEconomy } from './clock';
+import { applyCommand } from './commands';
 import {
-  answerCard, arrivalRate, assistantSuggestion, awaitingDecision, buyEquipment, buyUpgrade, cardContext, changeTrust, createEconomy, crewPalletCap, effects,
+  DEBT_WARN, answerCard, arrivalRate, assistantSuggestion, awaitingDecision, buyEquipment, buyUpgrade, cardContext, changeTrust, checkDebt, createEconomy,
+  crewPalletCap, debtWarningText, effects,
   estimatedDailyMargin, expectedDailyCustomers, fire, franchiseFee, freeSpots, GOLDEN_PRIZE, isOpenForCustomers, kpiMetricsOf, kpiScaleOf, movePallet, orderedPallets, relayout,
   returnPallet, robotFleet, sell, slotFree, startRemont, stepMinute, tapPallet, tapTill, unlocksAt, upgradeBlocker, waveAt, workshopUnlocked,
   type CommandResult, type EconEvent, type EconomyState, type MonthReport,
@@ -449,41 +451,75 @@ describe('ostatni raport miesięczny w stanie', () => {
     expect((JSON.parse(JSON.stringify(s)) as EconomyState).lastReport).toEqual(report);
   });
 
-  it('bankructwo: stan z wypowiedzianą umową niesie raport, który okno końca gry pokaże po przeładowaniu', () => {
+  it('za duży debet kończy grę od razu, w środku miesiąca: gra stoi, a stan niesie gotówkę z chwili końca i ostatni raport', () => {
     const s = createEconomy(SEED, info);
-    s.cash = -1e6;
-    run(s, info, 61 * MINUTES_PER_DAY);
+    run(s, info, 30 * MINUTES_PER_DAY + 6 * 60);   // wrzesień zamknięty, 1 października w południe
+    expect(s.lastReport?.label).toBe('wrzesień 2026');
+    s.cash = DEBT_LIMIT - 1000;
+    const events = run(s, info, 1);
     expect(s.gameOver).toBe(true);
+    expect(events.filter((e) => e.kind === 'gameover')).toHaveLength(1);
+    expect(events.find((e) => e.kind === 'gameover')!.text).toContain('granicy debetu');
+    const { minute, cash } = s;
+    run(s, info, 60);
+    expect([s.minute, s.cash]).toEqual([minute, cash]);   // po końcu gry symulacja nic już nie liczy
     const restored = JSON.parse(JSON.stringify(s)) as EconomyState;
     expect(restored.gameOver).toBe(true);
-    expect(restored.lastReport?.label).toBe('październik 2026');
-    expect(restored.lastReport?.cash).toBeLessThan(BANKRUPTCY_AT);
+    expect(restored.cash).toBeLessThan(DEBT_LIMIT);
+    expect(restored.lastReport?.label).toBe('wrzesień 2026');
   });
 
-  it('pierwszy miesiąc bez opłacenia Centrali to ostrzeżenie, drugi z rzędu kończy umowę (spec §10)', () => {
+  it('checkDebt: zejście pod próg ostrzeżenia to jedno zdarzenie z kwotą do granicy, wiszenie pod progiem już nie, a poniżej granicy koniec', () => {
     const s = createEconomy(SEED, info);
-    s.cash = -1e6;
-    const first = run(s, info, 30 * MINUTES_PER_DAY);
-    expect(s.gameOver).toBe(false);
-    expect(first.filter((e) => e.kind === 'debt')).toHaveLength(1);
-    expect(first.some((e) => e.kind === 'gameover')).toBe(false);
-    const second = run(s, info, 31 * MINUTES_PER_DAY);
+    const out: EconEvent[] = [];
+    expect(DEBT_WARN).toBe(DEBT_LIMIT / 2);
+    s.cash = DEBT_WARN;
+    checkDebt(s, 0, out);   // równo progowi: jeszcze nad nim
+    expect(out).toEqual([]);
+    s.cash = DEBT_WARN - 300;
+    checkDebt(s, DEBT_WARN, out);
+    expect(out.map((e) => e.kind)).toEqual(['debt']);
+    expect(out[0]!.text).toBe(debtWarningText(DEBT_WARN - 300));
+    expect(out[0]!.text).toContain(`zostało ${(DEBT_WARN - 300 - DEBT_LIMIT).toLocaleString('pl-PL')} zł`);
+    checkDebt(s, s.cash - 100, out);   // gotówka wisi pod progiem: bez powtórki
+    expect(out).toHaveLength(1);
+    s.cash = DEBT_LIMIT;
+    checkDebt(s, DEBT_WARN - 300, out);
+    expect(s.gameOver).toBe(false);   // granica jest ostra: koniec dopiero poniżej
+    s.cash = DEBT_LIMIT - 0.5;
+    checkDebt(s, DEBT_LIMIT, out);
     expect(s.gameOver).toBe(true);
-    expect(second.some((e) => e.kind === 'gameover')).toBe(true);
-    expect(second.some((e) => e.kind === 'debt')).toBe(false);
+    expect(out.map((e) => e.kind)).toEqual(['debt', 'gameover']);
   });
 
-  it('miesiąc z opłaconą Centralą między dwoma nieopłaconymi zeruje licznik', () => {
-    const s = createEconomy(SEED, info);
-    s.cash = -1e6;
-    run(s, info, 30 * MINUTES_PER_DAY);   // wrzesień: ostrzeżenie
-    s.cash = 1e6;
-    run(s, info, 31 * MINUTES_PER_DAY);   // październik: opłacony
-    expect(s.gameOver).toBe(false);
-    s.cash = -1e6;
-    const third = run(s, info, 30 * MINUTES_PER_DAY);   // listopad: znów pierwszy z rzędu
-    expect(s.gameOver).toBe(false);
-    expect(third.some((e) => e.kind === 'debt')).toBe(true);
+  it('opłata na koniec miesiąca: gotówka po niej między progiem a granicą to ostrzeżenie i gra trwa, poniżej granicy koniec z raportem', () => {
+    /** 30 września, 23:00: następna minuta zamyka dzień i miesiąc (opłata, premia, WUT). */
+    const atClose = (): EconomyState => {
+      const s = createEconomy(SEED, info);
+      run(s, info, 29 * MINUTES_PER_DAY + 17 * 60);
+      return s;
+    };
+    const base = atClose();
+    const probe = JSON.parse(JSON.stringify(base)) as EconomyState;
+    probe.cash = 0;
+    run(probe, info, 1);
+    const delta = probe.cash;   // o tyle zamknięcie zmienia gotówkę (deterministycznie)
+    expect(delta).toBeLessThan(DEBT_LIMIT);   // sama opłata jest większa niż granica: bez zarobku z miesiąca byłby koniec
+
+    const warned = atClose();
+    warned.cash = DEBT_WARN - 1000 - delta;
+    const ev1 = run(warned, info, 1);
+    expect(warned.cash).toBeCloseTo(DEBT_WARN - 1000, 6);
+    expect(warned.gameOver).toBe(false);
+    expect(ev1.map((e) => e.kind)).toEqual(expect.arrayContaining(['month', 'debt']));
+    expect(ev1.some((e) => e.kind === 'gameover')).toBe(false);
+
+    const ended = atClose();
+    ended.cash = DEBT_LIMIT - 1000 - delta;
+    const ev2 = run(ended, info, 1);
+    expect(ended.gameOver).toBe(true);
+    expect(ev2.map((e) => e.kind)).toEqual(expect.arrayContaining(['month', 'gameover']));
+    expect(ended.lastReport?.label).toBe('wrzesień 2026');   // okno końca gry pokaże raport tego miesiąca
   });
 });
 
@@ -1677,6 +1713,17 @@ describe('karty dnia i okólniki', () => {
       s.reputation = 2;
       answer(s, plant(s, 'fefo', [{ reputation: -5 }]), 0);
       expect(s.reputation).toBe(0);
+    });
+
+    it('mandat z karty, po którym gotówka spada poniżej granicy debetu, kończy grę od razu (applyCommand), a kolejne polecenia odpadają', () => {
+      const s = quiet();
+      s.cash = DEBT_LIMIT + 500;
+      const card = plant(s, 'fefo', [{ fine: -2000 }]);
+      const out = applyCommand(s, info, { type: 'answerCard', seq: card.seq, answer: 0 });
+      expect(out.result.ok).toBe(true);
+      expect(s.gameOver).toBe(true);
+      expect(out.events.filter((e) => e.kind === 'gameover')).toHaveLength(1);
+      expect(applyCommand(s, info, { type: 'tapTill' }).result.ok).toBe(false);
     });
 
     it('skutki karty tycoona (zaufanie z przyczyną, WUT, siły) idą przez applyCardOutcome', () => {
