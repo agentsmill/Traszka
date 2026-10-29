@@ -218,12 +218,16 @@ Wzorcem kolejności wywołań jest `sandbox.ts` (`stepSandbox`): to ta sama minu
 
 ### 10. Boty (`bots.ts`) i makieta (`sandbox.ts`)
 
-- Boty widzą `BotView` i wydają `BotCommand` w kształcie poleceń warstwy komend. W części 2 wystarczy napisać
-  `EconomyEnv: BotEnv` (widok z `EconomyState`, polecenia przez warstwę komend strumienia A, krok `stepMinute`, który
-  zwraca false, gdy gra stoi na karcie) i puścić te same cztery boty na prawdziwej ekonomii, żeby sprawdzić cele
-  balansu ze specu. Bierny gracz i „stukanie bez decyzji” zatwierdzają odpowiedzi zaznaczone z góry; bot, który nie
-  odpowie na kartę, zatrzymałby grę, więc `runBot` rzuca wtedy wyjątek.
-- Makieta zostaje jako test modułów albo znika, gdy `EconomyEnv` ją zastąpi.
+- Boty widzą `BotView` i wydają `BotCommand` w kształcie poleceń warstwy komend. Na prawdziwej ekonomii puszcza je
+  `economyEnv.ts` (część 2): `economyEnv({ state, info })` buduje widok z `EconomyState` (`economyView`), mapuje polecenia
+  na `applyCommand` (`card.answer` → `answerCard`, `staff.profile` → `setStaffProfile`, `tap.till` → `tapTill`,
+  `tap.pallet` → `tapPallet`; combo z `BotCommand` pomija, bo ekonomia liczy je z serii stuknięć) i robi minutę przez
+  `stepMinute`, który zwraca false, gdy gra stoi na karcie. `playBot(bot, seed, minutes)` puszcza bota od `freshRun(seed)`,
+  a `measureBots(seeds, minutes)` daje sumę wyników miesięcy (`history[].profit`) każdego bota na każdym seedzie: to jest
+  pomiar do wyważenia (cele balansu niżej). Bierny gracz i „stukanie bez decyzji” zatwierdzają odpowiedzi zaznaczone
+  z góry; bot, który nie odpowie na kartę, zatrzymałby grę, więc `runBot` rzuca wtedy wyjątek.
+- Plik stoi nad `economy.ts` (nikt z ekonomii go nie importuje), więc jako jedyny w `tycoon/` bierze jej wartości, nie tylko
+  typy (wyjątek w `purity.test.ts`). Makieta zostaje jako test modułów.
 
 ## Cele balansu do sprawdzenia w części 2 (spec §7.5)
 

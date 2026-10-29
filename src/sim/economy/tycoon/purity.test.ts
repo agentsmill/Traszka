@@ -42,8 +42,17 @@ describe('moduły tycoona: czystość', () => {
     });
   }
 
-  it('z economy.ts importujemy tylko typy (economy.ts zaimportuje te moduły w części 2 bez cyklu)', () => {
-    expect(sources.filter((f) => /^import (?!type )[^;]*from ['"]\.\.\/economy['"]/m.test(code(f)))).toEqual([]);
+  // Wyjątek: pliki NAD ekonomią (boty na prawdziwej grze), których `economy.ts` nie importuje, więc nie robią cyklu.
+  const ABOVE_ECONOMY = ['economyEnv.ts'];
+
+  it('z economy.ts importujemy tylko typy (economy.ts importuje te moduły bez cyklu), poza plikami nad ekonomią', () => {
+    expect(sources.filter((f) => !ABOVE_ECONOMY.includes(f) && /^import (?!type )[^;]*from ['"]\.\.\/economy['"]/m.test(code(f)))).toEqual([]);
+  });
+
+  it('economy.ts nie importuje plików nad ekonomią (inaczej wyjątek wyżej robiłby cykl)', () => {
+    const economy = code('../economy.ts');
+    for (const f of ABOVE_ECONOMY) expect(economy, f).not.toContain(`./tycoon/${f.replace(/\.ts$/, '')}`);
+    for (const f of ABOVE_ECONOMY) expect(sources).toContain(f);
   });
 
   it('żadnych prawdziwych marek w tekstach modułów (tylko parodie: Traszka, Centrala, Szop 24h, Kawka Express)', () => {
