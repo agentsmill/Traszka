@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { MARGIN_PER_CUSTOMER, MINUTES_PER_DAY } from '../catalog';
-import { BOTS, BOT_NAMES, chooseProfile, runBot, type BotName, type BotView } from './bots';
+import { BOTS, BOT_NAMES, chooseProfile, runBot, type BotCommand, type BotName, type BotView } from './bots';
 import { FATIGUE, dailyTapCeiling } from './fatigue';
 import {
   TWO_MONTHS, createSandbox, sandboxEnv, sandboxScale, stepPassive, stepSandbox, summarize, SANDBOX_DEFAULT,
@@ -10,6 +10,13 @@ import { NO_ROBOTS } from './staff';
 import { SUNDAY_TRAFFIC, dayTrafficMult } from './sunday';
 
 const SEEDS = ['makieta', 'kiełbasa-42', 'traszka-1'];
+
+/** Widok z godziny szczytu bez palet i kart: testy podmieniają pojedyncze pola. */
+const BASE_VIEW: BotView = {
+  minute: 600, mod: 600, open: true, queue: 0, patience: 6, sidewalkPallets: 0, pallets: 0, palletList: [], freeSpots: { backroom: 0, floor: 0 },
+  cleanliness: 90, hallBags: 0, backroomBags: 0, energy: 100, spentToday: 0, tapCost: { kasa: 2, paleta: 2.5 }, profile: 'kolejka', cards: [],
+  wutSlack: 0, trust: 60,
+};
 
 function play(name: BotName, cfg: Partial<SandboxConfig> = {}, minutes = TWO_MONTHS): SandboxState {
   const s = createSandbox(cfg);
@@ -233,10 +240,7 @@ describe('boty i balans na poziomie modułów (spec §7.5)', () => {
   });
 
   it('profil ludzi bota: kolejka, gdy klienci zaczynają odchodzić; palety z chodnika, gdy jest spokojnie', () => {
-    const base: BotView = {
-      minute: 600, mod: 600, open: true, queue: 0, patience: 6, sidewalkPallets: 0, pallets: 0, cleanliness: 90, hallBags: 0,
-      backroomBags: 0, energy: 100, spentToday: 0, tapCost: { kasa: 2, paleta: 2.5 }, profile: 'kolejka', cards: [], wutSlack: 0, trust: 60,
-    };
+    const base = BASE_VIEW;
     expect(chooseProfile({ ...base, queue: 5, sidewalkPallets: 2 })).toBe('kolejka');
     expect(chooseProfile({ ...base, queue: 1, sidewalkPallets: 2 })).toBe('dostawa');
     expect(chooseProfile({ ...base, queue: 1, cleanliness: 60 })).toBe('porzadek');
@@ -244,5 +248,20 @@ describe('boty i balans na poziomie modułów (spec §7.5)', () => {
     expect(BOTS.bierny.act({ ...base, queue: 9 })).toEqual([]);
     expect(BOTS.stukacz.act({ ...base, queue: 3.4 })).toEqual([{ type: 'tap.till', combo: 3 }]);
     expect(BOTS.stukacz.act({ ...base, energy: 1, queue: 3 })).toEqual([]);
+  });
+
+  it('palety spod sklepu: decydent i mistrz przenoszą je na zaplecze, póki jest miejsce; bierny i stukacz ich nie ruszają', () => {
+    const view: BotView = {
+      ...BASE_VIEW, sidewalkPallets: 3, pallets: 4, freeSpots: { backroom: 2, floor: 3 },
+      palletList: [{ id: 5, loc: 'sidewalk' }, { id: 6, loc: 'backroom' }, { id: 7, loc: 'sidewalk' }, { id: 8, loc: 'sidewalk' }],
+    };
+    const moves = (name: BotName, v: BotView): BotCommand[] => BOTS[name].act(v).filter((c) => c.type === 'pallet.move');
+    const toBackroom = [{ type: 'pallet.move', palletId: 5, loc: 'backroom' }, { type: 'pallet.move', palletId: 7, loc: 'backroom' }];
+    expect(moves('decydent', view)).toEqual(toBackroom);   // dwa wolne miejsca, trzy palety na chodniku: dwie pierwsze
+    expect(moves('mistrz', view)).toEqual(toBackroom);
+    expect(moves('bierny', view)).toEqual([]);
+    expect(moves('stukacz', { ...view, queue: 3 })).toEqual([]);
+    expect(moves('decydent', { ...view, freeSpots: { backroom: 0, floor: 3 } })).toEqual([]);   // zaplecze pełne: nic nie ruszają
+    expect(moves('decydent', { ...view, sidewalkPallets: 0, palletList: [{ id: 6, loc: 'backroom' }] })).toEqual([]);
   });
 });

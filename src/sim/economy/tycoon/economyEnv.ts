@@ -2,8 +2,8 @@ import { freshRun } from '@/sim/run';
 import { MINUTES_PER_DAY } from '../catalog';
 import { applyCommand, type Command } from '../commands';
 import {
-  awaitingDecision, effects, estimatedDailyRevenue, isOpenForCustomers, patienceOf, stepMinute, type EconEvent, type EconomyState,
-  type MonthReport,
+  awaitingDecision, effects, estimatedDailyRevenue, freeSpots, isOpenForCustomers, patienceOf, stepMinute, type EconEvent,
+  type EconomyState, type MonthReport,
 } from '../economy';
 import type { StoreInfo } from '../storeInfo';
 import { BOTS, BOT_NAMES, runBot, type BotCommand, type BotEnv, type BotName, type BotView } from './bots';
@@ -42,6 +42,8 @@ export function economyView(s: EconomyState, info: StoreInfo): BotView {
     patience: patienceOf(s, effects(s, info)),
     sidewalkPallets: s.pallets.filter((p) => p.loc === 'sidewalk').length,
     pallets: s.pallets.length,
+    palletList: s.pallets.map((p) => ({ id: p.id, loc: p.loc })),
+    freeSpots: { backroom: freeSpots(s, info, 'backroom'), floor: freeSpots(s, info, 'floor') },
     cleanliness: t.hall.cleanliness,
     hallBags: t.waste.hall,
     backroomBags: t.waste.backroom,
@@ -62,6 +64,7 @@ function toCommand(cmd: BotCommand): Command {
     case 'staff.profile': return { type: 'setStaffProfile', profile: cmd.profile };
     case 'tap.till': return { type: 'tapTill' };
     case 'tap.pallet': return { type: 'tapPallet' };
+    case 'pallet.move': return { type: 'movePallet', palletId: cmd.palletId, loc: cmd.loc };
   }
 }
 
@@ -107,11 +110,27 @@ export function playBot(name: BotName, seed: string, minutes: number): BotPlay {
   return { state: run.state, reports };
 }
 
-/** Suma wyników miesięcy (`history[].profit`) każdego bota na każdym seedzie, w kolejności `seeds`. */
-export function measureBots(seeds: readonly string[], minutes: number): Record<BotName, number[]> {
-  const out = {} as Record<BotName, number[]>;
+/** Karty, na które bot odpowiedział w przebiegu: wylosowane (`seq` liczy od 1) bez tych, które jeszcze czekają na biurku. */
+export const cardsAnswered = (s: EconomyState): number => s.tycoon.cards.seq - 1 - s.tycoon.cards.pending.length;
+
+/** Wynik pomiaru botów, każda tablica w kolejności seedów. */
+export interface BotMeasure {
+  /** Suma wyników miesięcy (`history[].profit`) każdego bota na każdym seedzie. */
+  totals: Record<BotName, number[]>;
+  /** Czy gra bota skończyła się w czasie przebiegu (Centrala wypowiedziała umowę): wynik takiej gry nic nie mówi o balansie. */
+  gameOver: Record<BotName, boolean[]>;
+  /** Ile kart bot rozstrzygnął w całym przebiegu (do tempa kart na dobę). */
+  cards: Record<BotName, number[]>;
+}
+
+/** Mierzy każdego bota na każdym seedzie przez `minutes` minut prawdziwej gry. */
+export function measureBots(seeds: readonly string[], minutes: number): BotMeasure {
+  const out: BotMeasure = { totals: {} as BotMeasure['totals'], gameOver: {} as BotMeasure['gameOver'], cards: {} as BotMeasure['cards'] };
   for (const name of BOT_NAMES) {
-    out[name] = seeds.map((seed) => playBot(name, seed, minutes).state.history.reduce((n, h) => n + h.profit, 0));
+    const plays = seeds.map((seed) => playBot(name, seed, minutes));
+    out.totals[name] = plays.map((p) => p.state.history.reduce((n, h) => n + h.profit, 0));
+    out.gameOver[name] = plays.map((p) => p.state.gameOver);
+    out.cards[name] = plays.map((p) => cardsAnswered(p.state));
   }
   return out;
 }

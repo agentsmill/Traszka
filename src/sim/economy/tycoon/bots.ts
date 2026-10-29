@@ -5,12 +5,15 @@ import type { StaffProfile } from './staff';
 /**
  * Boty do sprawdzania balansu (spec §7.5): bierny gracz, „stukanie bez decyzji”, „decyzje bez stukania” i gracz, który
  * robi jedno i drugie. Bot widzi tylko to, co widzi gracz (`BotView`), i wydaje te same polecenia, co interfejs
- * (`BotCommand`, w kształcie poleceń z warstwy komend strumienia A). Środowisko (`BotEnv`) to dziś makieta sklepu
- * (`sandbox.ts`), a w części 2 prawdziwa ekonomia: boty się nie zmienią.
+ * (`BotCommand`, w kształcie poleceń z warstwy komend strumienia A). Środowisko (`BotEnv`) to makieta sklepu
+ * (`sandbox.ts`) albo prawdziwa ekonomia (`economyEnv.ts`): boty są te same.
  */
 
 export type BotName = 'bierny' | 'stukacz' | 'decydent' | 'mistrz';
 export const BOT_NAMES: readonly BotName[] = ['bierny', 'stukacz', 'decydent', 'mistrz'];
+
+/** Gdzie stoi paleta (te same trzy miejsca, co w ekonomii). */
+export type BotPalletLoc = 'sidewalk' | 'backroom' | 'floor';
 
 export interface BotView {
   minute: number;
@@ -22,6 +25,10 @@ export interface BotView {
   patience: number;
   sidewalkPallets: number;
   pallets: number;
+  /** Palety w sklepie i gdzie stoją (numer jak w poleceniu `pallet.move`). */
+  palletList: { id: number; loc: BotPalletLoc }[];
+  /** Wolne miejsca na paletę: na zapleczu (po odjęciu miejsc, które zajmują worki) i w sali. */
+  freeSpots: { backroom: number; floor: number };
   cleanliness: number;
   hallBags: number;
   backroomBags: number;
@@ -40,7 +47,8 @@ export type BotCommand =
   | { type: 'card.answer'; seq: number; answer: number }
   | { type: 'staff.profile'; profile: StaffProfile }
   | { type: 'tap.till'; combo: number }
-  | { type: 'tap.pallet'; combo: number };
+  | { type: 'tap.pallet'; combo: number }
+  | { type: 'pallet.move'; palletId: number; loc: 'backroom' | 'floor' };
 
 export interface Bot { name: BotName; label: string; act(v: BotView): BotCommand[] }
 
@@ -91,6 +99,22 @@ function greedyTap(v: BotView): BotCommand[] {
   return [];
 }
 
+/**
+ * Palety spod sklepu: na zaplecze, póki jest tam miejsce (Straż Miejska karze za chodnik, zaplecze nic nie kosztuje). Bot
+ * robi to od razu po dostawie, przed godzinami Straży. Na salę nie przenosi: paleta w sali to przeszkoda (cierpliwość
+ * klientów, czystość), a samo zaplecze zbija mandaty z kilkudziesięciu na kilka w dwa miesiące.
+ */
+function palletMoves(v: BotView): BotCommand[] {
+  let room = v.freeSpots.backroom;
+  const out: BotCommand[] = [];
+  for (const p of v.palletList) {
+    if (p.loc !== 'sidewalk' || room <= 0) continue;
+    out.push({ type: 'pallet.move', palletId: p.id, loc: 'backroom' });
+    room--;
+  }
+  return out;
+}
+
 /** Siły, które rozsądny gracz zostawia na wieczorne karty (sejf, szkolenie z okólnika). */
 const EVENING_RESERVE = 20;
 
@@ -117,12 +141,12 @@ export const BOTS: Record<BotName, Bot> = {
     name: 'decydent',
     label: 'Decyzje bez stukania',
     // nie stuka, więc siły ma tylko na karty („stanę za niego sam”)
-    act: (v) => [...answerBest(v, valuationFor(v, 0)), ...profileCmd(v)],
+    act: (v) => [...answerBest(v, valuationFor(v, 0)), ...profileCmd(v), ...palletMoves(v)],
   },
   mistrz: {
     name: 'mistrz',
     label: 'Decyzje i stukanie',
-    act: (v) => [...answerBest(v, valuationFor(v, BOT_VALUATION.energy)), ...profileCmd(v), ...smartTap(v)],
+    act: (v) => [...answerBest(v, valuationFor(v, BOT_VALUATION.energy)), ...profileCmd(v), ...palletMoves(v), ...smartTap(v)],
   },
 };
 

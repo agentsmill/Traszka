@@ -429,6 +429,7 @@ export function applySandboxCommand(s: SandboxState, cmd: BotCommand): boolean {
       unload(s, p, tapItems(r.power));
       return true;
     }
+    case 'pallet.move': return false;   // palety w makiecie stoją tam, gdzie je zostawiła dostawa
   }
 }
 
@@ -446,6 +447,8 @@ export function sandboxView(s: SandboxState): BotView {
     patience: patienceOf(s),
     sidewalkPallets: s.pallets.filter((p) => p.loc === 'sidewalk').length,
     pallets: s.pallets.length,
+    palletList: [],                              // makieta nie przestawia palet: bot nie ma czego ruszać
+    freeSpots: { backroom: 0, floor: 0 },
     cleanliness: t.hall.cleanliness,
     hallBags: t.waste.hall,
     backroomBags: t.waste.backroom,

@@ -2,10 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { freshRun } from '@/sim/run';
 import { MINUTES_PER_DAY, OPEN_FROM, PATIENCE } from '../catalog';
 import { awaitingDecision, type EconomyState } from '../economy';
-import { BOT_NAMES, runBot, type Bot } from './bots';
+import { BOTS, BOT_NAMES, runBot, type Bot } from './bots';
 import type { CardInstance } from './cards';
 import { FATIGUE } from './fatigue';
-import { economyEnv, economyView, measureBots, playBot } from './economyEnv';
+import { cardsAnswered, economyEnv, economyView, measureBots, playBot } from './economyEnv';
 import { TWO_MONTHS } from './sandbox';
 
 const SEED = 'traszka-1';
@@ -168,6 +168,38 @@ describe('polecenia botów idą przez applyCommand', () => {
     expect(nonFinite(run.state)).toEqual([]);
   });
 
+  it('pallet.move przenosi paletę spod sklepu na zaplecze, a widok pokazuje palety i wolne miejsca; bez miejsca i dla złej palety to false', () => {
+    const run = quietRun();
+    const env = economyEnv(run);
+    const before = env.view();
+    expect(before.palletList.map((p) => p.loc)).toEqual(['sidewalk', 'sidewalk']);
+    expect(before.freeSpots.backroom).toBe(2);
+    expect(before.freeSpots.floor).toBeGreaterThan(0);
+    const [first, second] = before.palletList;
+    expect(env.apply({ type: 'pallet.move', palletId: first!.id, loc: 'backroom' })).toBe(true);
+    const after = env.view();
+    expect(after.palletList.find((p) => p.id === first!.id)!.loc).toBe('backroom');
+    expect(after.sidewalkPallets).toBe(1);
+    expect(after.freeSpots.backroom).toBe(1);
+    expect(env.apply({ type: 'pallet.move', palletId: first!.id, loc: 'backroom' })).toBe(false);   // już tam stoi
+    expect(env.apply({ type: 'pallet.move', palletId: 999, loc: 'floor' })).toBe(false);            // nie ma takiej palety
+    expect(env.apply({ type: 'pallet.move', palletId: second!.id, loc: 'floor' })).toBe(true);      // sala też jest miejscem
+    expect(env.view().palletList.map((p) => p.loc)).toEqual(['backroom', 'floor']);
+    expect(env.view().sidewalkPallets).toBe(0);
+  });
+
+  it('pallet.move: zaplecze bez wolnych miejsc to odmowa i paleta zostaje pod sklepem', () => {
+    const run = quietRun();
+    const env = economyEnv(run);
+    const [a, b] = env.view().palletList;
+    expect(env.apply({ type: 'pallet.move', palletId: a!.id, loc: 'backroom' })).toBe(true);
+    expect(env.apply({ type: 'pallet.move', palletId: b!.id, loc: 'backroom' })).toBe(true);
+    expect(env.view().freeSpots.backroom).toBe(0);
+    run.state.pallets.push({ ...run.state.pallets[0]!, id: 99, loc: 'sidewalk', spot: 9 });
+    expect(env.apply({ type: 'pallet.move', palletId: 99, loc: 'backroom' })).toBe(false);
+    expect(env.view().palletList.find((p) => p.id === 99)!.loc).toBe('sidewalk');
+  });
+
   it('bot, który nie odpowie na kartę, nie zawiesza gry w nieskończoność: runBot rzuca wyjątek', () => {
     const mute: Bot = { name: 'bierny', label: 'Niemy', act: () => [] };
     expect(() => runBot(mute, economyEnv(freshRun(SEED)), 3 * MINUTES_PER_DAY)).toThrow(/nie odpowiedział na kartę/);
@@ -206,18 +238,29 @@ describe('boty przechodzą dwa miesiące prawdziwej gry', () => {
 
   // Pomiar na trzech seedach to dwanaście przebiegów, więc test bierze jeden miesiąc (do raportu za wrzesień); dwa miesiące
   // ma wyżej każdy bot na jednym seedzie. Limit czasu z zapasem, bo pełny zestaw testów liczy równolegle.
-  it('measureBots: suma wyników miesięcy każdego bota na każdym seedzie, w kolejności seedów', () => {
+  it('measureBots: suma wyników miesięcy każdego bota na każdym seedzie, w kolejności seedów; do tego koniec gry i liczba kart', () => {
     const month = 30 * MINUTES_PER_DAY - OPEN_FROM;
     const seeds = ['makieta', 'kielbasa-42', SEED];
     const table = measureBots(seeds, month);
-    expect(Object.keys(table).sort()).toEqual([...BOT_NAMES].sort());
+    for (const part of [table.totals, table.gameOver, table.cards]) expect(Object.keys(part).sort()).toEqual([...BOT_NAMES].sort());
     for (const name of BOT_NAMES) {
-      expect(table[name]).toHaveLength(seeds.length);
-      expect(nonFinite(table[name])).toEqual([]);
+      expect(table.totals[name]).toHaveLength(seeds.length);
+      expect(nonFinite(table.totals[name])).toEqual([]);
+      expect(table.gameOver[name]).toEqual([false, false, false]);   // miesiąc nie kończy umowy żadnego bota
+      expect(table.cards[name].every((n) => n >= 15 && n <= 45), name).toBe(true);
     }
     const play = playBot('mistrz', SEED, month).state;
     expect(play.history).toHaveLength(1);
-    expect(table.mistrz[2]).toBe(play.history[0]!.profit);
-    expect(table.mistrz[0]).not.toBe(table.mistrz[2]);   // seedy dają różne sklepy
+    expect(table.totals.mistrz[2]).toBe(play.history[0]!.profit);
+    expect(table.cards.mistrz[2]).toBe(cardsAnswered(play));
+    expect(table.totals.mistrz[0]).not.toBe(table.totals.mistrz[2]);   // seedy dają różne sklepy
+  }, 60_000);
+
+  it('bankructwo przy zamknięciu miesiąca kończy grę bota: to ten sygnał measureBots zwraca w gameOver', () => {
+    const run = freshRun(SEED);
+    run.state.cash = -1e6;   // przy zamknięciu miesiąca Centrala wypowiada umowę
+    runBot(BOTS.bierny, economyEnv(run), 30 * MINUTES_PER_DAY - OPEN_FROM);
+    expect(run.state.gameOver).toBe(true);
+    expect(cardsAnswered(run.state)).toBeGreaterThan(0);
   }, 60_000);
 });
