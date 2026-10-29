@@ -762,11 +762,22 @@ function checkFine(s: EconomyState, fx: Effects, out: EconEvent[]): void {
   out.push({ kind: 'fine', text: `Straż Miejska: mandat ${fine} zł za palety na chodniku. „Pan tu nie jest w hurtowni”.` });
 }
 
-function charge(s: EconomyState, field: 'wages' | 'media' | 'fee' | 'fines' | 'wut' | 'logistics' | 'investments' | 'other', amount: number): void {
+/**
+ * Do których liczników wchodzi pozycja: `day` to dzień, miesiąc i suma gry; `month` tylko miesiąc i suma gry. Pozycje zamknięcia
+ * miesiąca (opłata, premia od obrotu, WUT) są miesięczne i nie należą do wyniku żadnego dnia: `closeMonth` biegnie po zerowaniu
+ * `today`, więc z zakresem `day` zniekształciłyby wynik, rekord i zarobek nieobecnego gracza pierwszego dnia nowego miesiąca.
+ */
+type Scope = 'day' | 'month';
+const ledgers = (s: EconomyState, scope: Scope): Counters[] => (scope === 'month' ? [s.month, s.total] : [s.today, s.month, s.total]);
+
+function charge(
+  s: EconomyState, field: 'wages' | 'media' | 'fee' | 'fines' | 'wut' | 'logistics' | 'investments' | 'other', amount: number,
+  scope: Scope = 'day',
+): void {
   s.cash -= amount;
   // `other` jest ze znakiem (przychody dodatnie, w wyniku dnia i miesiąca dodawane), więc koszt z karty zmniejsza licznik
   const sign = field === 'other' ? -1 : 1;
-  for (const k of [s.today, s.month, s.total]) k[field] += sign * amount;
+  for (const k of ledgers(s, scope)) k[field] += sign * amount;
 }
 
 function income(s: EconomyState, amount: number): void {
@@ -775,9 +786,9 @@ function income(s: EconomyState, amount: number): void {
 }
 
 /** Premia Centrali: jak `income`, ale na własnym liczniku, bo raport pokazuje ją osobno. */
-function bonus(s: EconomyState, amount: number): void {
+function bonus(s: EconomyState, amount: number, scope: Scope = 'day'): void {
   s.cash += amount;
-  for (const k of [s.today, s.month, s.total]) k.bonus += amount;
+  for (const k of ledgers(s, scope)) k.bonus += amount;
 }
 
 // --- Koniec dnia i miesiąca -------------------------------------------------------------------------------
@@ -794,13 +805,16 @@ function closeDay(s: EconomyState, info: StoreInfo, out: EconEvent[]): void {
   const weekly: EconEvent[] = [];
   if (day === s.tycoon.kpi.toDay) {
     const r = closeKpiWeek(s.tycoon.kpi, kpiMetricsOf(s), s.seedHash, day + 1, kpiScaleOf(s, info));
-    weekly.push({ kind: 'kpi-week', text: kpiWeekText(r) });
-    changeTrust(s, 'kpi', r.trust, weekly);
+    // tekst niesie zaufanie naliczone (miękkie granice: połowa od 75 i poniżej 30, nic na 100 i na 0), nie nominalne +3/−2;
+    // ewentualny nowy próg idzie za nim
+    const tier: EconEvent[] = [];
+    const applied = changeTrust(s, 'kpi', r.trust, tier);
+    weekly.push({ kind: 'kpi-week', text: kpiWeekText(r, applied) }, ...tier);
     if (r.bonus > 0) bonus(s, r.bonus);
     s.xp += r.xp;
   }
   const t = s.today;
-  // bez `fee`: opłata franczyzowa jest miesięczna (do dziennego `today` trafia tylko przez zamknięcie miesiąca po zerowaniu dnia)
+  // bez `fee`, a premia od obrotu i WUT z zamknięcia miesiąca są poza `today` (zakres `month` w `closeMonth`): wynik dnia to dzień
   const profit = t.margin + t.bonus + t.other - t.wages - t.media - t.fines - t.logistics - t.wut;
   s.lastDayProfit = profit;
   s.bestDayProfit = Math.max(s.bestDayProfit, profit);
@@ -813,10 +827,14 @@ function closeDay(s: EconomyState, info: StoreInfo, out: EconEvent[]): void {
   if (isLastDayOfMonth(day)) closeMonth(s, day, out);
 }
 
-/** Tekst zdarzenia `kpi-week`: cel (z tytułu), wynik i skutki. Liczby formatuje `fmt` (polskie spacje tysięcy). */
-function kpiWeekText(r: KpiWeekResult): string {
+/** Zmiana zaufania ze znakiem i przecinkiem dziesiętnym („+1,5”, „−2”), a gdy nic się nie zmieniło, „bez zmian”. */
+const trustDeltaText = (delta: number): string =>
+  delta === 0 ? 'bez zmian' : `${delta > 0 ? '+' : '−'}${Math.abs(delta).toLocaleString('pl-PL', { maximumFractionDigits: 1 })}`;
+
+/** Tekst zdarzenia `kpi-week`: cel (z tytułu), wynik i skutki. `trust` to zmiana zaufania, którą naprawdę naliczono (`changeTrust`). */
+function kpiWeekText(r: KpiWeekResult, trustApplied: number): string {
   const title = kpiTitle(r.kind, r.target, fmt);
-  const trust = `${r.trust > 0 ? '+' : '−'}${Math.abs(r.trust)}`;
+  const trust = trustDeltaText(trustApplied);
   return r.hit
     ? `KPI tygodnia trafione: ${title}. Wynik: ${fmt(r.value)}. Premia ${fmt(r.bonus)} zł, +${fmt(r.xp)} XP, zaufanie Centrali ${trust}.`
     : `KPI tygodnia nietrafione: ${title}. Wynik: ${fmt(r.value)}. Zaufanie Centrali ${trust}.`;
@@ -839,10 +857,10 @@ function closeMonth(s: EconomyState, day: number, out: EconEvent[]): void {
   const m = s.month;
   const t = s.tycoon;
   const fee = Math.round(FRANCHISE_FEE_FIXED + FRANCHISE_FEE_SHARE * m.revenue);
-  charge(s, 'fee', fee);
-  bonus(s, Math.round(turnoverBonusShare(t.trust.value) * m.revenue));
+  charge(s, 'fee', fee, 'month');
+  bonus(s, Math.round(turnoverBonusShare(t.trust.value) * m.revenue), 'month');
   // WUT: ubytki miesiąca (naturalne, z SCO i z kart) do progu pokrywa Centrala, nadwyżkę płaci franczyzobiorca; ubytki liczą się od zera
-  charge(s, 'wut', closeWutMonth(t.wut, m.revenue).charge);
+  charge(s, 'wut', closeWutMonth(t.wut, m.revenue).charge, 'month');
   const profit = m.margin + m.bonus + m.other - m.wages - m.media - m.fee - m.fines - m.logistics - m.wut;
   changeTrust(s, 'wynik', profit > 0 ? TRUST.monthProfit : TRUST.monthLoss, out);
   // podsumowania modułów wchodzą do raportu raz każde i same zerują licznik miesiąca; zaufanie dopiero po zmianie z wyniku

@@ -728,6 +728,11 @@ describe('WUT, KPI tygodnia zamiast zleceń i raport miesięczny', () => {
       expect(report.counters.wut).toBeCloseTo(manual - 0.003 * report.counters.revenue, 6);
       expect(line.amount).toBe(0 - report.counters.wut);
       expect(s.lastReport!.detail!.lines.map((l) => l.key)).toContain('wut');
+      // tożsamość raportu przy WUT > 0: wynik szczegółów = wynik raportu = suma pozycji = wynik w historii
+      const detail = report.detail!;
+      expect(detail.result).toBeCloseTo(report.profit, 6);
+      expect(detail.lines.reduce((n, l) => n + l.amount, 0)).toBeCloseTo(detail.result, 6);
+      expect(s.history[s.history.length - 1]!.profit).toBeCloseTo(report.profit, 6);
       // po zamknięciu nowy miesiąc: licznik opłaty i ubytki od zera, a opłata została w sumie gry
       expect(s.month.wut).toBe(0);
       expect(s.tycoon.wut.month).toEqual({ termin: 0, kradziez: 0, pomylki: 0, karty: 0 });
@@ -823,6 +828,38 @@ describe('WUT, KPI tygodnia zamiast zleceń i raport miesięczny', () => {
       expect(HINT_IDS).toContain(d.hint.id);
     });
 
+    it('pozycje zamknięcia miesiąca (opłata, premia od obrotu, WUT) są w miesiącu i sumie gry, ale nie w wyniku następnego dnia', () => {
+      const s = createEconomy(SEED, info);
+      toMonthEnd(s);
+      s.tycoon.trust.value = 90;                                  // premia od obrotu 1,5%
+      s.tycoon.trust.monthStart = 90;
+      s.tycoon.wut.month.pomylki += 0.05 * s.month.revenue;       // dużo ponad próg
+      const totalBefore = { ...s.total };
+      const report = monthReport(run(s, info, 61));               // 22:00–23:00: zamknięcie dnia i miesiąca
+      const c = report.counters;
+      const turnoverBonus = Math.round(0.015 * c.revenue);
+      expect(c.fee).toBeGreaterThan(0);
+      expect(c.wut).toBeGreaterThan(0);
+      expect(turnoverBonus).toBeGreaterThan(0);
+      // suma gry i miesiąc je mają
+      expect(s.total.fee - totalBefore.fee).toBe(c.fee);
+      expect(s.total.wut - totalBefore.wut).toBeCloseTo(c.wut, 6);
+      expect(s.total.bonus - totalBefore.bonus).toBe(turnoverBonus);
+      // a dzień, który zaczyna się po zamknięciu, nie
+      expect(s.today.fee).toBe(0);
+      expect(s.today.wut).toBe(0);
+      expect(s.today.bonus).toBe(0);
+      // wynik pierwszego dnia nowego miesiąca liczy tylko jego własne pozycje
+      const t0 = { ...s.total };
+      run(s, info, MINUTES_PER_DAY);                              // do zamknięcia 1 października o 23:00
+      const t1 = s.total;
+      const ownProfit = t1.margin - t0.margin + t1.bonus - t0.bonus + t1.other - t0.other - (t1.wages - t0.wages)
+        - (t1.media - t0.media) - (t1.fines - t0.fines) - (t1.logistics - t0.logistics) - (t1.wut - t0.wut);
+      expect(t1.fee).toBe(t0.fee);
+      expect(s.lastDayProfit).toBeCloseTo(ownProfit, 6);
+      expect(s.bestDayProfit).toBeGreaterThanOrEqual(s.lastDayProfit);
+    });
+
     it('wypowiedzenie umowy po raporcie: raport z zaufaniem na zerze wychodzi przed końcem gry', () => {
       const s = createEconomy(SEED, info);
       toMonthEnd(s);
@@ -884,6 +921,27 @@ describe('WUT, KPI tygodnia zamiast zleceń i raport miesięczny', () => {
       expect(s.month.bonus).toBe(bonusBefore);
       expect(s.xp).toBe(0);
       expect(s.tycoon.kpi.month).toEqual({ hit: 0, miss: 1 });
+    });
+
+    it('tekst zdarzenia niesie zaufanie naliczone po miękkich granicach: połowa od 75, nic przy 100, połowa strat do 30', () => {
+      /** Zmiana zaufania z ostatniego zdania tekstu KPI tygodnia (trafiony: „…, zaufanie Centrali +3.”, nietrafiony: „Zaufanie Centrali −2.”). */
+      const shown = (target: number, trust: number): string => {
+        const s = createEconomy(SEED, info);
+        Object.assign(s.tycoon.kpi, { kind: 'klienci', target });
+        toFirstSundayEnd(s);
+        s.tycoon.trust.value = trust;
+        s.tycoon.trust.monthStart = trust;
+        s.tycoon.trust.month = {};
+        const week = weekEvents(run(s, info, 1));
+        expect(week).toHaveLength(1);
+        return /aufanie Centrali (.+)\.$/.exec(week[0]!.text)![1]!;
+      };
+      expect(shown(1, 60)).toBe('+3');             // trafiony, poniżej progu: pełne +3
+      expect(shown(1, 80)).toBe('+1,5');           // od 75 zyski liczą się w połowie
+      expect(shown(1, 100)).toBe('bez zmian');     // na 100 nie ma co dodać
+      expect(shown(1e9, 60)).toBe('−2');           // nietrafiony: pełne −2
+      expect(shown(1e9, 20)).toBe('−1');           // poniżej 30 straty liczą się w połowie
+      expect(shown(1e9, 0)).toBe('bez zmian');     // na zerze nie ma co zabrać
     });
 
     it('zmiana progu zaufania po KPI daje zdarzenie trust-tier', () => {
