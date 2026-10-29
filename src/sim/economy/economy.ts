@@ -5,7 +5,8 @@ import {
   HIRE_COST, HOT, HOUR_CURVE, ITEMS_PER_CUSTOMER,
   LOT_TRAFFIC, MARGIN_PER_CUSTOMER, MEDIA_PER_DAY, MINUTES_PER_DAY, OPEN_FROM, OPEN_TO, ORDER_DEADLINE, PALLET_FEE, PALLET_ITEMS,
   PALLETS_FREE, PATIENCE, RESTOCK_RATE, RETURN_FEE, REVENUE_PER_CUSTOMER, SCO_ACCEPT, SCO_RATE, STAFF_MAX, STAFF_START, START_CASH, STRAZ,
-  TILL_RATE, TILL_TAP_QUEUE_MIN, TRAFFIC_PER_SHELF_ITEM, TRAFFIC_RANGE, UNLOAD_AT, UNLOAD_RATE, WAGE_PER_DAY, type Cat,
+  TILL_RATE, TILL_TAP_QUEUE_MIN, TRAFFIC_BASE, TRAFFIC_PER_SHELF_ITEM, TRAFFIC_RANGE, UNLOAD_AT, UNLOAD_RATE, WAGE_PER_DAY, WAVES,
+  type Cat,
 } from './catalog';
 import { dayOf, formatMonth, isLastDayOfMonth, isOpenAt, minuteOfDay } from './calendar';
 import { rand01 } from './rand';
@@ -231,10 +232,10 @@ export function effects(s: EconomyState, info: StoreInfo): Effects {
 
 export const reputationFactor = (rep: number): number => 0.6 + 0.8 * (rep / 100);
 
-/** Klientów na godzinę przy krzywej 1, reputacji 50 i bez marketingu (catalog.ts: TRAFFIC_PER_SHELF_ITEM). */
+/** Klientów na godzinę przy krzywej 1, reputacji 50 i bez marketingu (catalog.ts: TRAFFIC_BASE, TRAFFIC_PER_SHELF_ITEM). */
 export function baseTraffic(info: StoreInfo): number {
   const [lo, hi] = TRAFFIC_RANGE;
-  return Math.min(hi, Math.max(lo, info.shelfCapTotal * TRAFFIC_PER_SHELF_ITEM)) * LOT_TRAFFIC[info.lotKind];
+  return Math.min(hi, Math.max(lo, TRAFFIC_BASE + info.shelfCapTotal * TRAFFIC_PER_SHELF_ITEM)) * LOT_TRAFFIC[info.lotKind];
 }
 
 // --- Zaufanie Centrali i liczniki KPI ----------------------------------------------------------------
@@ -412,11 +413,24 @@ export const patienceOf = (s: EconomyState, fx: Effects): number =>
   fx.patience + cleanlinessEffects(s.tycoon.hall.cleanliness).patience - hallObstacle(s.tycoon.waste);
 
 /**
+ * Mnożnik fali klientów w minucie (catalog.ts: WAVES). Blok zaczyna się na pełnej wielokrotności `WAVES.block` minut gry; czy
+ * w nim jest fala i od której minuty, losuje się z minuty początku bloku, więc każda minuta liczy to sama, bez stanu w zapisie.
+ * Średnia mnożnika po bloku to dokładnie 1.
+ */
+export function waveAt(seedHash: number, minute: number): number {
+  const { block, length, chance, depth } = WAVES;
+  const start = minute - (minute % block);
+  if (rand01(seedHash, start, 8) >= chance) return 1;
+  const t = minute - start - Math.floor(rand01(seedHash, start, 9) * (block - length + 1));
+  return t >= 0 && t < length ? 1 + depth * (block - length) / length : 1 - depth;
+}
+
+/**
  * Przyjście klientów w jednej minucie; ci, którzy widzą długą kolejkę, rezygnują (spec §6.1). Obsługa idzie przez pulę ludzi
  * (`runStaff`). Zwraca liczbę przyjść z tej minuty (brud sali liczy się od przychodzących, nie od obsłużonych).
  */
 function arrive(s: EconomyState, info: StoreInfo, fx: Effects): number {
-  s.arrivalAcc += arrivalRate(s, info, fx) * (0.75 + 0.5 * rand01(s.seedHash, s.minute, 1));
+  s.arrivalAcc += arrivalRate(s, info, fx) * waveAt(s.seedHash, s.minute) * (0.75 + 0.5 * rand01(s.seedHash, s.minute, 1));
   const arrivals = Math.floor(s.arrivalAcc);
   s.arrivalAcc -= arrivals;
 
@@ -684,8 +698,8 @@ function deliver(s: EconomyState, info: StoreInfo, count: number, out: EconEvent
   }
 }
 
-/** Szansa, że paleta z dostawy jest złota. */
-export const GOLDEN_CHANCE = 0.05;
+/** Szansa, że paleta z dostawy jest złota (przy 6 paletach dziennie wychodzi średnio jedna złota co 5–6 dni). */
+export const GOLDEN_CHANCE = 0.03;
 /**
  * Premia za rozładowanie złotej palety: ćwierć marży typowego dnia, nie mniej niż 800 zł. Stała dolna granica trzyma premię
  * w podobnej wysokości w małym i dużym sklepie (przy udziale w marży premie rosłyby z kwadratem wielkości: więcej palet razy

@@ -13,9 +13,10 @@ import {
 import { weekdayOf } from './time';
 
 describe('zaufanie Centrali', () => {
-  it('start 60 („W porządku”), widoczne od pierwszego dnia', () => {
+  it('start 65 („W porządku”), widoczne od pierwszego dnia', () => {
     const t = createTrust();
     expect(t.value).toBe(TRUST.start);
+    expect(TRUST.start).toBe(65);
     expect(trustTier(t.value).label).toBe('W porządku');
   });
 
@@ -26,8 +27,8 @@ describe('zaufanie Centrali', () => {
     addTrust(t, 'kpi', TRUST.kpiHit);
     addTrust(t, 'palety', TRUST.returnedPallet);
     const m = closeTrustMonth(t);
-    expect(m).toEqual({ start: 60, end: 57, delta: -3, reasons: [['palety', -4], ['kpi', 3], ['mandaty', -2]] });
-    expect(t.monthStart).toBe(57);
+    expect(m).toEqual({ start: 65, end: 62, delta: -3, reasons: [['palety', -4], ['kpi', 3], ['mandaty', -2]] });
+    expect(t.monthStart).toBe(62);
     expect(t.month).toEqual({});
   });
 

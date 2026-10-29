@@ -8,7 +8,11 @@ To uproszczona wersja §6–§8 specu, zrobiona tak, żeby gra była grywalna na
 - **Czas.** Krok symulacji to minuta gry. Przy ×1 dzień sklepu (6:00–23:00) trwa 2 min 50 s, noc 30 s, cała doba ~3 min 20 s (miesiąc ~100 min przy ×1, ~12,5 min przy ×8). Start 1 września 2026.
   Ostatniego dnia miesiąca o 23:00 jest raport i opłata franczyzowa. Noc (20:00–6:00) zmienia oświetlenie sceny.
 - **Klienci** są liczeni zbiorczo: strumień przyjść = ruch bazowy × krzywa godzinowa × reputacja × marketing.
-  Ruch bazowy wynika z pojemności półek (pojemność / 75 klientów na godzinę), więc większy sklep sam ściąga ludzi.
+  Ruch bazowy to 23 klientów na godzinę z ulicy plus pojemność półek / 180 (`TRAFFIC_BASE`, `TRAFFIC_PER_SHELF_ITEM`), razy lokal:
+  sklep na start ma 450–550 klientów dziennie, a większy po remoncie sam ściąga ludzi.
+  Klienci przychodzą falami (`WAVES`, autobus albo przerwa w szkole): w bloku 20 minut z szansą 75% przez 5 minut przychodzi ich
+  ponad dwa razy więcej, a w pozostałych minutach o 35% mniej. Średnia bloku zostaje ta sama, więc w szczycie kolejka dochodzi do
+  3–5 osób kilka razy dziennie, a poza szczytem stoją przy kasie najwyżej 1–2. Fale liczy `waveAt` z minuty bloku (bez stanu w zapisie).
   Tłum w 3D to obraz tego strumienia (gęstość zależy od ruchu), a nie źródło liczb.
 - **Kolejka.** Kasjer obsługuje 0,7 klienta na minutę (szkolenia +15%), kasa samoobsługowa 0,4 (część klientów jej unika).
   Gdy w kolejce stoi więcej osób, niż wynosi cierpliwość (6 + klimatyzacja − palety w sali), nowi klienci odchodzą.
@@ -16,10 +20,10 @@ To uproszczona wersja §6–§8 specu, zrobiona tak, żeby gra była grywalna na
   sprzedaż i spadek reputacji. Półki w 3D pustoszeją razem z zapasem.
 - **Palety.** Zamówienie zamyka się o 11:00, dostawa jest rano (z ulepszeniem o 5:00, z drugą dostawą także o 15:00).
   Asystent liczy zapas docelowy (półki + 60% zaplecza w proporcji do sprzedaży) i mnoży wynik przez 1,3, ale zamawia najwyżej
-  tyle palet, ile ludzie poza kasą rozładują spod sklepu w 5 godzin po dostawie (`crewPalletCap`; dwie osoby: 4 palety,
+  tyle palet, ile ludzie poza kasą rozładują spod sklepu w 7,5 godziny po dostawie (`crewPalletCap`; dwie osoby: 6 palet,
   każda kolejna osoba więcej). Ręczne zamówienie nie ma tego limitu.
   Palety stoją pod sklepem, w sali (korek) albo na zapleczu. Straż Miejska (`STRAZ`) patroluje od 9:00 do 20:00 i palety
-  obchodzą ją dopiero po dwóch godzinach od dostawy; pierwszy obchód dnia to upomnienie, mandat przychodzi przy kolejnym
+  obchodzą ją dopiero po sześciu godzinach od dostawy (tyle dwie osoby rozładowują 6 palet); pierwszy obchód dnia to upomnienie, mandat przychodzi przy kolejnym
   obchodzie tego samego dnia (co najmniej godzinę później), więc gracz ma czas zareagować.
   Gdy nie ma gdzie ich postawić, kierowca je zabiera za opłatą.
 - **Ludzie.** Czas osób na zmianie to wspólna pula osobominut dla czterech zadań: kasy, rozładunku palet (6 szt./min,
@@ -27,9 +31,9 @@ To uproszczona wersja §6–§8 specu, zrobiona tak, żeby gra była grywalna na
   „Porządek”) albo układa kolejność sam i może przypiąć osobę do zadania (bez pracy wraca do puli). Zadanie, na które
   nie starcza ludzi, czeka. Gracz pomaga stukaniem w paletę (8 szt.), a w kasę tylko wtedy, gdy przy kasie nikogo nie ma albo
   kolejka czekałaby dłużej niż 3 minuty (`tillTapBlock`; inaczej „Kasjer nadąża z kolejką.”).
-- **Koszty.** Płace 340 zł dziennie na osobę na zmianie, media, opłata franczyzowa 2000 zł + 12% obrotu (`FRANCHISE_FEE_*`),
-  mandaty (800 zł + 250 zł za każdą dalszą paletę, po upomnieniu), opłaty logistyczne i WUT ponad próg. Franczyzobiorca, któremu Centrala ufa
-  (zaufanie od 70), dostaje z powrotem 3% obrotu miesiąca, od 85 trzy i pół (`turnoverBonusShare`). Gotówka poniżej −30 000 zł
+- **Koszty.** Płace 340 zł dziennie na osobę na zmianie, media, opłata franczyzowa 2000 zł + 15,2% obrotu (`FRANCHISE_FEE_*`),
+  mandaty (800 zł + 100 zł za każdą dalszą paletę, po upomnieniu), opłaty logistyczne i WUT ponad próg. Zaufanie Centrali startuje
+  od 65; franczyzobiorca, któremu Centrala ufa (zaufanie od 70), dostaje z powrotem 2% obrotu miesiąca, od 85 trzy (`turnoverBonusShare`). Gotówka poniżej −30 000 zł
   przy zamknięciu miesiąca to miesiąc bez opłacenia Centrali: pierwszy kończy się ostrzeżeniem, drugi z rzędu wypowiedzeniem umowy.
 - **WUT** (ubytki towarowe) liczy się od każdej sprzedaży: naturalne 0,9% obrotu, a kasy samoobsługowe dopisują do kradzieży
   „zapomniane” skany (4% obrotu przez SCO, kamery mniej). Do progu 1,2% obrotu miesiąca płaci Centrala, nadwyżkę
@@ -43,7 +47,7 @@ Cel: nagroda w każdej skali czasu, a gra bez końca.
 |---|---|---|
 | sekunda | stuknięcie w paletę albo kasę: liczba nad palcem, dźwięk, wibracja; combo co 4 szybkie stuknięcia (do ×5), a każde zużywa dzienną pulę sił (100; noc oddaje 70) | `tapPallet`, `tapTill`, `tycoon/fatigue.ts` |
 | kilka minut | poziom gracza: XP z klientów, palet, zakupów i KPI; nagroda (400 zł + 200 zł za poziom) i odblokowania na poziomach | `progress.ts`, `processLevels`, `unlocksAt` |
-| kilkanaście minut | złota paleta (5% palet, czyli co kilka dni gry): premia Centrali po rozładunku, ćwierć marży typowego dnia, nie mniej niż 800 zł | `unloadPallet`, `GOLDEN_PRIZE` |
+| kilkanaście minut | złota paleta (3% palet, czyli co kilka dni gry): premia Centrali po rozładunku, ćwierć marży typowego dnia, nie mniej niż 800 zł | `unloadPallet`, `GOLDEN_PRIZE` |
 | tydzień | KPI tygodnia (jeden cel do niedzieli 23:00): zaufanie, premia (30% marży dnia) i XP (40 + 10 × poziom) | `tycoon/kpi.ts`, `closeDay` |
 | powrót | kierownik zmiany: 25% średniego dziennego wyniku ostatniego miesiąca (po opłacie franczyzowej) na godzinę nieobecności, do 8 h, nic przy wyniku ≤ 0; seria dni do 7. dnia daje tylko drobne Ogonki | `game/meta.ts` |
 | bez końca | „Otwórz kolejną Traszkę”: sklep dołącza do sieci (10% najlepszego dnia co dzień), Punkty Partnera (+4% marży, +3% ruchu każdy) | `game/meta.ts`, `partner` w stanie ekonomii |
@@ -75,17 +79,19 @@ Kryterium właściciela, pilnowane przez `tycoon/balance.test.ts`: boty z `tycoo
 
 | Sklep (seed) | Bierny | Stukanie bez decyzji | Decyzje bez stukania | Decyzje i stukanie |
 |---|---|---|---|---|
-| `traszka-1` (pawilon) | +4,6 | +5,4 | +33,8 | +33,4 |
-| `kopytka-541` | −2,7 | −1,3 | +20,7 | +20,4 |
-| `makieta` | −0,2 | +2,5 | +34,9 | +34,3 |
-| `lublin-9` | −1,2 | +2,6 | +31,2 | +30,9 |
-| `seed-3` | +1,5 | +3,4 | +28,9 | +28,3 |
+| `traszka-1` (pawilon) | −2,6 | +0,9 | +22,5 | +22,3 |
+| `kopytka-541` | −0,3 | +0,1 | +23,5 | +23,3 |
+| `makieta` | +2,4 | +3,1 | +32,6 | +32,5 |
+| `lublin-9` | −3,3 | −2,4 | +28,4 | +28,2 |
+| `seed-3` | +2,9 | +2,6 | +24,4 | +24,2 |
 
-Po zmianie Straży i asystenta (29.10.2026, wieczór): bierny dostaje 2–10 mandatów w dwa miesiące (wcześniej do 36), zawsze po
-upomnieniu, a gracz, który przenosi palety na zaplecze, żadnego. Asystent przywozi 3,3–4 palety dziennie (wcześniej do 5,4),
-więc duży sklep z dwiema osobami sprzedaje mniej, niż mógłby: trzecia osoba podnosi limit dostawy. Stukanie w kasę, które
-pomaga tylko przy kolejce ponad kasjera, nie dokłada już mistrzowi nic ponad decyzje.
+Po „ruchu i falach” (29.10.2026, SIM_VERSION 4): sklep na start ma ok. 500 klientów dziennie zamiast 300–350, kasjer w szczycie
+pracuje przy 80–100% i ma kolejkę, a druga osoba rozładowuje 6 palet do wczesnego popołudnia zamiast siedzieć bez zajęcia (bezczynne
+osobominuty dnia na dwuosobowej zmianie spadły o ok. 40%). Obrót dwóch miesięcy to 680–760 tys. zł zamiast 410–530, więc udział
+Centrali wzrósł do 15,2%, a premia od obrotu spadła do 2% / 3%. Mandaty biernego (4–11 w dwa miesiące) biorą się z dni z chorym
+pracownikiem, kiedy jedyna osoba stoi przy kasie i palet nikt nie rusza. Złotych palet jest mniej (3%), bo palet jest więcej, a ich
+losowa liczba rozjeżdżała wynik między seedami.
 
 Bierny gracz traci na mandatach po zignorowanych upomnieniach i na zaufaniu: odpowiedzi domyślne je zjadają, a bez zaufania od
-70 nie ma premii od obrotu. Widełki są ciasne, bo płace są stałe, a obrót sklepów różni się ok. 1,7 raza; nie każdy seed się w nich
+70 nie ma premii od obrotu. Widełki są ciasne, bo płace są stałe, a losowe zdarzenia (dni z chorobą, złote palety, trafione KPI) różnią się między seedami; nie każdy seed się w nich
 mieści (np. `kiełbasa-42` daje mistrzowi ok. 42 tys.). Przed strojeniem (opłata 4500 zł + 3% obrotu) bierny gracz wychodził od +23 do +50 tys. zł, a mistrz od +34 do +67 tys. zł.

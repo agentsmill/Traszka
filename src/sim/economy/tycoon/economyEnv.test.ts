@@ -7,6 +7,7 @@ import type { CardInstance } from './cards';
 import { FATIGUE } from './fatigue';
 import { cardsAnswered, economyEnv, economyView, measureBots, playBot } from './economyEnv';
 import { TWO_MONTHS } from './sandbox';
+import { TRUST } from './trust';
 
 const SEED = 'traszka-1';
 
@@ -36,12 +37,12 @@ function quietRun(): ReturnType<typeof freshRun> {
 }
 
 describe('widok bota z prawdziwej ekonomii', () => {
-  it('świeża gra: sklep otwarty o 6:00, dwie palety pod drzwiami, pełne siły, profil „kolejka”, zaufanie 60', () => {
+  it('świeża gra: sklep otwarty o 6:00, dwie palety pod drzwiami, pełne siły, profil „kolejka”, zaufanie startowe', () => {
     const { state, info } = quietRun();
     const v = economyView(state, info);
     expect(v).toMatchObject({
       minute: OPEN_FROM, mod: OPEN_FROM, open: true, queue: 0, sidewalkPallets: 2, pallets: 2, hallBags: 0, backroomBags: 0,
-      energy: FATIGUE.pool, spentToday: 0, profile: 'kolejka', cards: [], trust: 60,
+      energy: FATIGUE.pool, spentToday: 0, profile: 'kolejka', cards: [], trust: TRUST.start,
     });
     expect(v.patience).toBeGreaterThanOrEqual(PATIENCE - 2);
     expect(v.cleanliness).toBeGreaterThan(0);

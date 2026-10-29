@@ -2,14 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { generateStore } from '@/sim/store/generateStore';
 import {
   BANKRUPTCY_AT, CATS, CAT_INFO, FRANCHISE_FEE_FIXED, FRANCHISE_FEE_SHARE, HOT, ITEMS_PER_CUSTOMER, MARGIN_PER_CUSTOMER, MINUTES_PER_DAY, OPEN_FROM, OPEN_TO, REVENUE_PER_CUSTOMER,
-  START_CASH, STRAZ, TILL_RATE, UNLOAD_AT, UNLOAD_RATE, WAGE_PER_DAY,
+  START_CASH, STRAZ, TILL_RATE, UNLOAD_AT, UNLOAD_RATE, WAGE_PER_DAY, WAVES,
 } from './catalog';
 import { dateOfDay, dayOf, formatDate, isLastDayOfMonth, minuteOfDay } from './calendar';
 import { advanceEconomy } from './clock';
 import {
   answerCard, arrivalRate, assistantSuggestion, awaitingDecision, buyEquipment, buyUpgrade, cardContext, changeTrust, createEconomy, crewPalletCap, effects,
   estimatedDailyMargin, expectedDailyCustomers, fire, franchiseFee, freeSpots, GOLDEN_PRIZE, isOpenForCustomers, kpiMetricsOf, kpiScaleOf, movePallet, orderedPallets, relayout,
-  returnPallet, robotFleet, sell, slotFree, startRemont, stepMinute, tapPallet, tapTill, unlocksAt, upgradeBlocker, workshopUnlocked,
+  returnPallet, robotFleet, sell, slotFree, startRemont, stepMinute, tapPallet, tapTill, unlocksAt, upgradeBlocker, waveAt, workshopUnlocked,
   type CommandResult, type EconEvent, type EconomyState, type MonthReport,
 } from './economy';
 import { rand01 } from './rand';
@@ -1364,10 +1364,38 @@ describe('śmieci z palet, czystość sali, pogoda, niedziela i prasa', () => {
       const s = quiet(day);
       s.arrivalAcc = 0;
       const lambda = arrivalRate(s, info);
-      const expected = lambda * (0.75 + 0.5 * rand01(s.seedHash, s.minute, 1));
+      const expected = lambda * waveAt(s.seedHash, s.minute) * (0.75 + 0.5 * rand01(s.seedHash, s.minute, 1));
       stepMinute(s, info, []);
       expect(s.arrivalAcc).toBeCloseTo(expected - Math.floor(expected), 9);
     }
+  });
+
+  it('fale klientów: w każdym bloku średnia mnożnika to dokładnie 1, fala trwa `length` minut, a bloków z falą jest ok. `chance`', () => {
+    const { block, length, chance, depth } = WAVES;
+    const peak = 1 + depth * (block - length) / length;
+    const blocks = 3000;
+    let withWave = 0;
+    for (let b = 0; b < blocks; b++) {
+      const m = (s: number): number => waveAt(1234567, b * block + s);
+      const values = Array.from({ length: block }, (_, i) => m(i));
+      expect(values.reduce((n, v) => n + v, 0), `blok ${b}`).toBeCloseTo(block, 9);
+      const inWave = values.filter((v) => Math.abs(v - peak) < 1e-9).length;
+      if (inWave === 0) {
+        expect(values.every((v) => v === 1), `blok ${b} bez fali`).toBe(true);
+        continue;
+      }
+      withWave++;
+      expect(inWave, `blok ${b}`).toBe(length);
+      // fala to jeden ciąg minut, reszta bloku ma mniej klientów
+      const first = values.findIndex((v) => Math.abs(v - peak) < 1e-9);
+      expect(values.slice(first, first + length).every((v) => Math.abs(v - peak) < 1e-9), `blok ${b}`).toBe(true);
+      expect(values.filter((v) => Math.abs(v - (1 - depth)) < 1e-9).length, `blok ${b}`).toBe(block - length);
+    }
+    expect(withWave / blocks).toBeGreaterThan(chance - 0.03);
+    expect(withWave / blocks).toBeLessThan(chance + 0.03);
+    // bez stanu: ta sama minuta i ten sam seed dają ten sam mnożnik, a inny seed układa fale inaczej
+    expect(waveAt(42, 9000)).toBe(waveAt(42, 9000));
+    expect(Array.from({ length: 200 }, (_, i) => waveAt(42, i)).join()).not.toBe(Array.from({ length: 200 }, (_, i) => waveAt(43, i)).join());
   });
 
   it('pogoda losuje się o północy: po przejściu przez 0:00 jest taka, jaką daje rollWeather dla tego dnia', () => {
@@ -1640,7 +1668,7 @@ describe('karty dnia i okólniki', () => {
       const s = quiet();
       const energy = s.tycoon.fatigue.energy;
       answer(s, plant(s, 'fefo', [{ trust: 2, wut: 80, energy: -10 }]), 0);
-      expect(s.tycoon.trust.value).toBe(62);
+      expect(s.tycoon.trust.value).toBe(TRUST.start + 2);
       expect(s.tycoon.trust.month.karty).toBe(2);
       expect(s.tycoon.wut.month.karty).toBe(80);
       expect(s.tycoon.fatigue.energy).toBe(energy - 10);

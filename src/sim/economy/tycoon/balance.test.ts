@@ -8,10 +8,11 @@ import { measureBots, type BotMeasure } from './economyEnv';
  * (wrzesień i październik, 61 dni) na kilku sklepach. Wynik to suma wyników miesięcy (`history[].profit`). Liczby gry stroi
  * się tak, żeby te asercje przechodziły: opłata franczyzowa, mandaty, złota paleta, nagroda za poziom i premia od obrotu.
  *
- * Seedy dają sklepy o różnej wielkości (obrót dwóch miesięcy od ok. 400 do 670 tys. zł). Płace są stałe, więc wynik biernego i zysk
- * z decyzji zależą od wielkości sklepu: widełki są ciasne i trzymają na tych pięciu seedach, ale nie na każdym sklepie (na próbie
- * czternastu seedów wynik biernego wychodził od −8 do +12 tys. zł, mistrza od 21 do 55 tys. zł; np. `kiełbasa-42` daje mistrzowi
- * 42 tys. zł). Dodając seed, trzeba więc wiedzieć, że może nie przejść bez dalszego strojenia.
+ * Seedy dają sklepy o różnej wielkości, ale obrót dwóch miesięcy wychodzi podobny (ok. 680–760 tys. zł), bo sprzedaż ogranicza
+ * dostawa, jaką rozładuje dwuosobowa zmiana. Wynik biernego rozjeżdżają losowe zdarzenia: dni z chorym pracownikiem (mandaty), złote
+ * palety i trafione KPI. Widełki są ciasne i trzymają na tych pięciu seedach, ale nie na każdym sklepie (na próbie dziewięciu innych
+ * seedów, SIM_VERSION 4, wynik biernego wychodził od −8 do +10 tys. zł, mistrza od 22 do 34 tys. zł; np. `kiełbasa-42` daje biernemu
+ * −7,6 tys. zł). Dodając seed, trzeba więc wiedzieć, że może nie przejść bez dalszego strojenia.
  */
 const SEEDS = ['traszka-1', 'kopytka-541', 'makieta', 'lublin-9', 'seed-3'];
 const DAYS = 61;

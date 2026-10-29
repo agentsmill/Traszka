@@ -3,7 +3,7 @@ import { QUALITY, type QualityPresetId } from '@/render/quality';
 import { HOUR_CURVE, MINUTES_PER_DAY, OPEN_FROM, OPEN_TO } from '@/sim/economy/catalog';
 import { expectedDailyCustomers, isOpenForCustomers, isStoreOpen } from '@/sim/economy/economy';
 import { MemoryStorage } from './memoryStorage';
-import { CROWD_MAX, crowdRateFor, timeOfDayAt } from './scene';
+import { CROWD_MAX, crowdRateFor, timeOfDayAt, trafficPerHour } from './scene';
 import { createSession, type GameSession } from './session';
 
 /*
@@ -97,6 +97,8 @@ describe('crowdRateFor: gęstość tłumu z ekonomii', () => {
   it('spokojny sklep ma dolną granicę: 4 postacie i 3 klientów na minutę', () => {
     const s = atHour(6);   // 6:00: krzywa 0,5, nowy sklep
     s.econ.reputation = 0;
+    s.info = { ...s.info, shelfCapTotal: 0 };   // sam ruch z ulicy (TRAFFIC_BASE), bez klientów, których ściągają półki
+    expect(trafficPerHour(s)).toBeLessThan(10);   // poniżej obu dolnych granic
     const rate = crowdRateFor(s, 'wysoka');
     expect(rate).toEqual({ targetCount: 4, spawnPerMinute: 3 });
   });

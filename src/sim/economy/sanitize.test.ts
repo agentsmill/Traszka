@@ -7,6 +7,7 @@ import { buyEquipment, buyUpgrade, createEconomy, stepMinute, type EconEvent, ty
 import { LIMITS, sanitizeEconomy } from './sanitize';
 import { xpToNext } from './progress';
 import { computeStoreInfo, type StoreInfo } from './storeInfo';
+import { TRUST } from './tycoon/trust';
 
 const SEED = 'kiełbasa-42';
 const info = computeStoreInfo(generateStore(SEED));
@@ -295,9 +296,9 @@ describe('sanitizeEconomy: migracja do stanu tycoona', () => {
   it('zapis bez pola tycoon bierze zaufanie ze starego trust', () => {
     expect(trustOf(legacy(42))).toBe(42);
     expect(trustOf(legacy(0))).toBe(0);
-    expect(trustOf(legacy(null))).toBe(60);
-    expect(trustOf(legacy('x'))).toBe(60);
-    expect(trustOf(legacy(undefined))).toBe(60);
+    expect(trustOf(legacy(null))).toBe(TRUST.start);
+    expect(trustOf(legacy('x'))).toBe(TRUST.start);
+    expect(trustOf(legacy(undefined))).toBe(TRUST.start);
     expect(trustOf(legacy(150))).toBe(100);
     expect(trustOf(legacy(-30))).toBe(0);
   });
@@ -314,7 +315,7 @@ describe('sanitizeEconomy: migracja do stanu tycoona', () => {
     expect(trustOf({ ...json(s), trust: 80 })).toBe(33);
     expect(trustOf({ ...json(s), trust: 80, tycoon: 'zepsute' })).toBe(80);
     expect(trustOf({ ...json(s), trust: 80, tycoon: [] })).toBe(80);
-    expect(trustOf({ ...json(s), tycoon: { ...json(s.tycoon), version: 2 } })).toBe(60);
+    expect(trustOf({ ...json(s), tycoon: { ...json(s.tycoon), version: 2 } })).toBe(TRUST.start);
   });
 
   it('świeży tydzień KPI liczy się od dnia i liczników wczytanego zapisu, w skali sklepu z zapisu', () => {
@@ -381,8 +382,8 @@ describe('sanitizeEconomy: napraw to, co da się naprawić', () => {
   it('reputacja, zaufanie, kolejka, pracownicy: zła wartość daje domyślną, a skrajna jest przycięta do zakresu', () => {
     const s = repaired({ reputation: null, tycoon: { ...json(defaults()).tycoon as object, trust: { value: 'x', monthStart: 'y', month: null } }, queue: -4, staff: 99, level: -3, remontLevel: 17 });
     expect(s.reputation).toBe(50);
-    expect(s.tycoon.trust.value).toBe(60);
-    expect(s.tycoon.trust.monthStart).toBe(60);
+    expect(s.tycoon.trust.value).toBe(TRUST.start);
+    expect(s.tycoon.trust.monthStart).toBe(TRUST.start);
     expect(s.queue).toBe(0);
     expect(s.staff).toBe(8);
     expect(s.level).toBe(1);

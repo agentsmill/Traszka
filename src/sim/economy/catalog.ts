@@ -77,11 +77,19 @@ export const HOUR_CURVE: Record<number, number> = {
 };
 
 /**
- * Klientów na godzinę przy krzywej 1, reputacji 50 i bez marketingu: tylu, ilu obsłużą półki sklepu (pojemność / 75),
- * razy położenie lokalu (kamienica w śródmieściu ma więcej przechodniów). Większy sklep po remoncie sam ściąga ludzi.
+ * Klientów na godzinę przy krzywej 1, reputacji 50 i bez marketingu: stały ruch z ulicy (`TRAFFIC_BASE`) plus tyle, ile
+ * ściągną półki (pojemność / 180), razy położenie lokalu (kamienica w śródmieściu ma więcej przechodniów). Sklep na start
+ * (1200–2100 sztuk na półkach) ma tak 450–550 klientów dziennie, a większy po remoncie sam ściąga ludzi.
  */
-export const TRAFFIC_PER_SHELF_ITEM = 1 / 75;
+export const TRAFFIC_BASE = 23;
+export const TRAFFIC_PER_SHELF_ITEM = 1 / 180;
 export const TRAFFIC_RANGE: [number, number] = [12, 60];
+/**
+ * Fale klientów (autobus, przerwa w szkole): godzina dzieli się na bloki po `block` minut i w bloku z szansą `chance` przez
+ * `length` minut przychodzi ich więcej, a w pozostałych minutach bloku o `depth` mniej. Średnia bloku zostaje równa
+ * `arrivalRate`, więc dzień ma tylu klientów co bez fal, tylko kolejka rośnie w falach i schodzi między nimi.
+ */
+export const WAVES = { block: 20, length: 5, chance: 0.75, depth: 0.35 } as const;
 export const LOT_TRAFFIC: Record<'blok' | 'kamienica' | 'pawilon', number> = { blok: 1, kamienica: 1.15, pawilon: 0.95 };
 
 // --- Ludzie i kasy ----------------------------------------------------------------------------------
@@ -120,26 +128,31 @@ export const MEDIA_PER_DAY = 140;
  * w budce, i w flagowcu (balans: tycoon/balance.test.ts). Zaufana Centrali część wraca jako premia od obrotu (trust.ts).
  */
 export const FRANCHISE_FEE_FIXED = 2000;
-export const FRANCHISE_FEE_SHARE = 0.12;
+export const FRANCHISE_FEE_SHARE = 0.152;
 /** Palet w dostawie bez opłaty logistycznej; każda kolejna kosztuje. */
 export const PALLETS_FREE = 6;
 export const PALLET_FEE = 60;
 export const RETURN_FEE = 150;
 export const FINE_BASE = 800;
-export const FINE_PER_PALLET = 250;
+export const FINE_PER_PALLET = 100;
+/**
+ * Asystent Traszki nie zamawia więcej palet, niż zmiana rozładuje w tyle minut po dostawie (`crewPalletCap`): przy dwóch osobach
+ * to 6 palet, mniej więcej tyle, ile sprzeda sklep na start przy 450–550 klientach dziennie.
+ */
+export const ASSISTANT_UNLOAD_MIN = 450;
 /**
  * Straż Miejska (decyzja właściciela z 29.10.2026: mandat to rzadkość i skutek zaniedbania, a nie codzienność). Patrol zagląda
- * od `from` do `to`; palety spod sklepu obchodzą go dopiero, gdy najstarsza stoi `graceMin` (zmiana zdąży po porannej dostawie).
+ * od `from` do `to`; palety spod sklepu obchodzą go dopiero, gdy najstarsza stoi `graceMin`: mniej więcej tyle dwuosobowa zmiana
+ * rozładowuje pełną dostawę asystenta (6 palet, kasjer dorzuca ręce między falami klientów), więc mandat dostaje sklep, w którym
+ * palet nikt nie rusza (np. dzień z chorym pracownikiem, kiedy jedyna osoba stoi przy kasie).
  * Pierwszy obchód dnia z takimi paletami to upomnienie bez kary; mandat dopiero przy kolejnym obchodzie tego samego dnia, co
  * najmniej `warnGapMin` po upomnieniu, i nie częściej niż co `fineGapMin`. Szansa obchodu na minutę: `patrol` razy
  * (1 + `perPallet` × liczba palet ponad jedną) razy (1 + `perHour` × godziny ponad tolerancję), razy kamery (`fineMult`).
  */
-/** Asystent Traszki nie zamawia więcej palet, niż zmiana rozładuje w tyle minut po dostawie (`crewPalletCap`). */
-export const ASSISTANT_UNLOAD_MIN = 300;
 export const STRAZ = {
   from: 9 * 60,
   to: 20 * 60,
-  graceMin: 120,
+  graceMin: 360,
   warnGapMin: 60,
   fineGapMin: 180,
   patrol: 0.002,

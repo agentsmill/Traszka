@@ -21,9 +21,13 @@ export const TRUST_REASON_LABEL: Record<TrustReason, string> = {
   inne: 'Inne',
 };
 
-/** Zmiany zaufania ze zdarzeń gry (te same, które dziś liczy economy.ts, plus nowe z kart, KPI i audytu). */
+/**
+ * Zmiany zaufania ze zdarzeń gry (te same, które dziś liczy economy.ts, plus nowe z kart, KPI i audytu). Start 65 (ten sam próg
+ * „W porządku” co dawne 60): gracz, który dobrze decyduje, kończy pierwszy miesiąc nad progiem premii od obrotu (70), a bierny pod
+ * nim. Przy 60 dobry gracz kończył wrzesień akurat na progu i premię za pierwszy miesiąc rozstrzygała jedna karta.
+ */
 export const TRUST = {
-  start: 60,
+  start: 65,
   fine: -1,
   returnedPallet: -4,
   driverReturned: -3,
@@ -84,10 +88,10 @@ export function trustTier(value: number): TrustTier {
 export const viralShare = (value: number): number => clamp((value - 20) / 70, 0, 1);
 
 /**
- * Premia Centrali od obrotu miesiąca: zaufany franczyzobiorca dostaje z powrotem część opłaty franczyzowej (od 70 trzy procent
- * obrotu, od 85 trzy i pół). To główny zysk z dobrych decyzji w małym sklepie, gdzie mandatów jest mało (balans: balance.test.ts).
+ * Premia Centrali od obrotu miesiąca: zaufany franczyzobiorca dostaje z powrotem część opłaty franczyzowej (od 70 dwa procent
+ * obrotu, od 85 trzy). To główny zysk z dobrych decyzji w małym sklepie, gdzie mandatów jest mało (balans: balance.test.ts).
  */
-export const turnoverBonusShare = (value: number): number => (value >= 85 ? 0.035 : value >= 70 ? 0.03 : 0);
+export const turnoverBonusShare = (value: number): number => (value >= 85 ? 0.03 : value >= 70 ? 0.02 : 0);
 
 /** Mnożnik szansy na zapowiedź audytu: przy niskim zaufaniu Centrala przyjeżdża częściej (do ×3 przy zerze). */
 export const auditWeight = (value: number): number => 1 + Math.max(0, 60 - value) / 30;
