@@ -368,6 +368,8 @@
 @media (max-width: 400px) {
   .tt-hud-row { gap: 4px; }
   .tt-hud-row .tt-iconbtn { min-width: 30px; padding: 0 4px; }
+  /* siedmiocyfrowa gotówka (1 234 567 zł) obok „?” i ⚙: węższe znaczki, żeby rząd się nie wylewał przy 375 px */
+  .tt-hud-row .tt-stat { padding: 4px 5px; }
 }
 
 @media (min-width: 820px) {
