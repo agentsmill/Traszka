@@ -7,10 +7,14 @@
 //
 //   node scripts/ranking-smoke.mjs <adres> [--write] [--sim-version <n>]
 //
+// UWAGA: Skrypt zapisuje w bazie za tym adresem (rezerwacja nicka, wynik w rankingu, zapis gry). Upewnij się, że to baza TESTOWA:
+// wdrożenie podglądu bierze zmienne `KV_*` z ustawień Vercela i bez nadpisania wskazuje na produkcyjną bazę. Skrypt tego nie sprawdzi:
+// wdrożenia podglądu nie da się rozpoznać po nazwie hosta, więc za to, co jest za adresem, odpowiada ten, kto go podaje.
+//
 // Zabezpieczenia (obowiązkowe):
 //  - bez `--write` skrypt tylko opisuje plan i kończy kodem 0, niczego nie wysyłając;
-//  - odmawia (kod 2) dla traszka.vercel.app i każdej jej subdomeny, także z `--write`: próba zapisuje w bazie rezerwację nicka,
-//    wynik w rankingach i zapis gry, a w produkcji tego nie chcemy. Host liczy się ze sparsowanego adresu, nie z tekstu;
+//  - odmawia (kod 2) dla trzech domen produkcyjnych projektu i ich subdomen (`PROTECTED_HOSTS`), także z `--write`: w produkcji
+//    nie chcemy zapisów próby. Host liczy się ze sparsowanego adresu, nie z tekstu;
 //  - nick, seed i klucz gracza są losowane przy każdym uruchomieniu (`crypto.randomBytes`), w kodzie nie ma żadnych sekretów;
 //  - `simVersion` biegu bierze z `src/sim/simVersion.ts` (czyta plik tekstem), `--sim-version` ją nadpisuje;
 //  - nie zapisuje nic na dysku, a klucza gracza nie wypisuje (tylko ostatnie 4 znaki; reszta jest maskowana także w komunikatach serwera).
@@ -25,8 +29,20 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const SIM_VERSION_FILE = resolve(HERE, '..', 'src', 'sim', 'simVersion.ts');
 const GENERATOR_FILE = resolve(HERE, '..', 'src', 'sim', 'store', 'generateStore.ts');
 
-/** Hosty produkcji: te i ich subdomeny są zablokowane bez względu na flagi. */
-export const PROTECTED_HOSTS = ['traszka.vercel.app'];
+/**
+ * Domeny produkcyjne projektu na Vercelu (nazwa projektu, domena zespołu i domena gałęzi głównej): te nazwy hostów i ich subdomeny są
+ * zablokowane bez względu na flagi. Dopasowanie jest po całych etykietach nazwy ze sparsowanego adresu. Wdrożeń podglądu gałęzi
+ * (`traszka-git-<gałąź>-…`) po nazwie nie da się odróżnić od produkcji, więc nie ma na nie wzorca ani flagi obejścia: przed nimi
+ * ostrzega `DATABASE_WARNING`.
+ */
+export const PROTECTED_HOSTS = [
+  'traszka.vercel.app',
+  'traszka-mateuszs-projects-73382f2a.vercel.app',
+  'traszka-git-main-mateuszs-projects-73382f2a.vercel.app',
+];
+
+/** Ostrzeżenie o bazie za wskazanym adresem: w planie (także bez `--write`), na początku przebiegu i w nagłówku tego pliku. */
+export const DATABASE_WARNING = 'Skrypt zapisuje w bazie za tym adresem (rezerwacja nicka, wynik w rankingu, zapis gry). Upewnij się, że to baza TESTOWA: wdrożenie podglądu bierze zmienne `KV_*` z ustawień Vercela i bez nadpisania wskazuje na produkcyjną bazę.';
 
 /** Ile najwyżej czeka się na jedną odpowiedź (ms): sędzia odtwarza trzy miesiące gry, a zimny start funkcji bywa wolny. */
 const REQUEST_TIMEOUT_MS = 60_000;
@@ -108,6 +124,18 @@ function redactor(keys) {
   return (text) => variants.reduce((out, { pattern, mask }) => out.replace(pattern, mask), String(text));
 }
 
+/** Najwięcej znaków jednej linii wyjścia i komunikatu porażki; reszta jest ucinana (odpowiedź serwera bywa stroną HTML albo całą tabelą). */
+const MAX_LINE = 600;
+/**
+ * Tekst do pokazania człowiekowi: najpierw maskowanie kluczy, dopiero potem obcięcie. Odwrotna kolejność rozcięłaby klucz granicą
+ * obcięcia i jego początek (nierozpoznawalny już dla maskowania, które szuka całego klucza) przeszedłby do wyjścia. To jedyne miejsce,
+ * w którym skrypt ucina tekst, więc `show` i `summary` oddają treść w całości.
+ */
+const present = (redact, text) => {
+  const masked = redact(text);
+  return masked.length > MAX_LINE ? `${masked.slice(0, MAX_LINE)}…` : masked;
+};
+
 // ——— dziennik biegu B i paczka zapisu ———
 
 const at = (day, hour) => day * 1440 + hour * 60;
@@ -131,10 +159,8 @@ const saveBundle = (t) => JSON.stringify({
 // ——— żądania i sprawdzanie odpowiedzi ———
 
 const isRec = (v) => typeof v === 'object' && v !== null && !Array.isArray(v);
-const show = (v) => {
-  const text = v === undefined ? 'brak' : JSON.stringify(v);
-  return text.length > 200 ? `${text.slice(0, 200)}…` : text;
-};
+/** Wartość w komunikacie porażki (JSON); nie ucina, bo obcięcie przed maskowaniem kluczy rozcinałoby klucz (patrz `present`). */
+const show = (v) => (v === undefined ? 'brak' : JSON.stringify(v));
 
 /** Równość strukturalna (kolejność pól w obiektach nie ma znaczenia). */
 function isDeepEqual(a, b) {
@@ -149,7 +175,21 @@ function isDeepEqual(a, b) {
 const same = (actual, expected, what) => check(isDeepEqual(actual, expected), `${what}: oczekiwano ${show(expected)}, jest ${show(actual)}`);
 const isRank = (v) => Number.isInteger(v) && v >= 1;
 
-/** Jedno żądanie: odpowiedź jako `{ status, json, text, headers }` (json to null, gdy treść nie jest JSON-em). Przekierowanie to błąd. */
+/**
+ * Przyczyna błędu `fetch` (`err.cause`): jej komunikat, a gdy pusty (`AggregateError` przy kilku adresach, np. `localhost` na ::1
+ * i 127.0.0.1, ma pusty `message`, a powód w `errors` i `code`) komunikat pierwszego z błędów składowych albo kod. Pusty napis,
+ * gdy nie ma nic z tego.
+ */
+function causeText(cause) {
+  if (!(cause instanceof Error)) return '';
+  if (cause.message !== '') return cause.message;
+  const first = Array.isArray(cause.errors) ? cause.errors[0] : undefined;
+  if (first instanceof Error && first.message !== '') return first.message;
+  return typeof cause.code === 'string' ? cause.code : '';
+}
+const REDIRECT_HINT = ' (serwer odpowiedział przekierowaniem, którego skrypt nie śledzi, bo w ciele żądania jedzie klucz gracza: sprawdź, czy adres nie ma http:// zamiast https:// (http przekierowuje na https) i czy wdrożenie podglądu nie jest za ochroną Deployment Protection, która przekierowuje na logowanie Vercela; użyj docelowego adresu wdrożenia bez ochrony albo lokalnego `vercel dev`)';
+
+/** Jedno żądanie: odpowiedź jako `{ status, json, text, headers, path }` (json to null, gdy treść nie jest JSON-em). Przekierowanie to błąd. */
 async function call(t, method, path, body) {
   let res;
   let text;
@@ -163,20 +203,32 @@ async function call(t, method, path, body) {
     });
     text = await res.text();
   } catch (err) {
-    const why = err instanceof Error ? `${err.name}: ${err.message}${err.cause instanceof Error ? ` (${err.cause.message})` : ''}` : 'nieznany błąd';
-    throw new StepError(`brak odpowiedzi od serwera (${method} ${path.split('?')[0]}): ${why}`);
+    const reason = err instanceof Error ? causeText(err.cause) : '';
+    const why = err instanceof Error ? `${err.name}: ${err.message}${reason === '' ? '' : ` (${reason})`}` : 'nieznany błąd';
+    throw new StepError(`brak odpowiedzi od serwera (${method} ${path.split('?')[0]}): ${why}${/redirect/i.test(reason) ? REDIRECT_HINT : ''}`);
   }
   let json = null;
   try { json = JSON.parse(text); } catch { /* treść nie jest JSON-em: zostaje null */ }
-  return { status: res.status, json, text, headers: res.headers };
+  return { status: res.status, json, text, headers: res.headers, path: path.split('?')[0] };
 }
 
-/** Odpowiedź w jednej linii do komunikatu: status, kod i komunikat błędu albo początek treści, która nie jest JSON-em. */
+/**
+ * Odpowiedź w jednej linii do komunikatu: status, kod i komunikat błędu albo treść, która nie jest JSON-em (obcina ją dopiero
+ * `present`, po zamaskowaniu kluczy). Podpowiedzi o 401/403 i o limicie (429) stoją przed treścią, żeby obcięcie ich nie zjadło.
+ */
 function summary(res) {
-  if (isRec(res.json)) return `status ${res.status}, ok=${show(res.json.ok)}${res.json.error !== undefined ? `, error=${show(res.json.error)}, message=${show(res.json.message)}` : ''}`;
-  const guard = res.status === 401 || res.status === 403
-    ? ' (wdrożenia podglądu bywają za ochroną Vercela, Deployment Protection: użyj lokalnego `vercel dev` albo wdrożenia bez ochrony)' : '';
-  return `status ${res.status}, treść nie jest obiektem JSON: ${show(res.text.slice(0, 120))}${guard}`;
+  const hint = res.status === 429 ? `, ${rateLimitHint(res)}`
+    : res.status === 401 || res.status === 403
+      ? ' (wdrożenia podglądu bywają za ochroną Vercela, Deployment Protection: użyj lokalnego `vercel dev` albo wdrożenia bez ochrony)' : '';
+  if (isRec(res.json)) return `status ${res.status}${hint}, ok=${show(res.json.ok)}${res.json.error !== undefined ? `, error=${show(res.json.error)}, message=${show(res.json.message)}` : ''}`;
+  return `status ${res.status}${hint}, treść nie jest obiektem JSON: ${show(res.text)}`;
+}
+/** 429: ile czekać według `Retry-After` i które okno limitu to było (`/api/player` ma krótsze niż biegi i zapisy; liczby są w `RATE_LIMITS`). */
+function rateLimitHint(res) {
+  const raw = res.headers.get('retry-after');
+  const seconds = raw === null || raw.trim() === '' ? Number.NaN : Number(raw);
+  const span = res.path === '/api/player' ? 'krótkie okno' : 'godzinne okno';
+  return `limit zgłoszeń (${span}), ${Number.isFinite(seconds) && seconds >= 0 ? `poczekaj ${seconds} s` : 'brak poprawnego nagłówka Retry-After'}`;
 }
 const expectOk = (res, status = 200) => {
   check(res.status === status && isRec(res.json) && res.json.ok === true, `oczekiwano statusu ${status} i ok=true, jest ${summary(res)}`);
@@ -306,6 +358,7 @@ export const STEPS = [
   },
   {
     id: 'bieg-a',
+    runs: 1,
     name: 'bieg A bez poleceń: sędzia liczy wynik, nick zarezerwowany, wpis w rankingach (SET NX, ZADD GT CH, ZCOUNT)',
     async run(t) {
       const body = await submit(t, { seed: t.seed, log: [] });
@@ -328,6 +381,7 @@ export const STEPS = [
   },
   {
     id: 'bieg-b',
+    runs: 1,
     name: 'bieg B z kilkoma poleceniami: inny wynik, najlepszy zostaje lepszym z dwóch (ZADD GT)',
     async run(t) {
       const body = await submit(t, { seed: t.seed, log: SMOKE_LOG });
@@ -341,6 +395,7 @@ export const STEPS = [
   },
   {
     id: 'bieg-gorszy',
+    runs: 1,
     name: 'ponowny gorszy bieg nie psuje najlepszego wyniku (ZADD GT nie obniża)',
     async run(t) {
       const worse = t.a <= t.b ? { log: [], score: t.a } : { log: SMOKE_LOG, score: t.b };
@@ -364,6 +419,7 @@ export const STEPS = [
   },
   {
     id: 'nick-cudzy-bieg',
+    runs: 1,
     name: 'inny klucz nie zgłosi biegu pod cudzym nickiem (409 nick-taken, nic się nie zapisuje)',
     async run(t) {
       expectError(await t.post('/api/runs', {
@@ -395,6 +451,7 @@ export const STEPS = [
   },
   {
     id: 'bieg-tygodnia',
+    runs: 1,
     name: 'bieg na seedzie tygodnia trafia do rankingu tygodnia (ZADD GT CH + EXPIRE)',
     async run(t) {
       const body = await submit(t, { seed: t.week.seed, log: [] });
@@ -480,6 +537,7 @@ export const STEPS = [
 
 /** Plan próby do wypisania bez `--write`. */
 function planLines(origin, simVersion) {
+  const submissions = STEPS.reduce((sum, step) => sum + (step.runs ?? 0), 0);
   return [
     `Próba rankingu na ${origin} (symulacja v${simVersion}).`,
     'Bez --write nic nie jest wysyłane: to tylko plan.',
@@ -487,11 +545,13 @@ function planLines(origin, simVersion) {
     `Plan (${STEPS.length} kroków, po jednym wywołaniu każdego endpointu, w tej kolejności):`,
     ...STEPS.map((s, i) => `  ${String(i + 1).padStart(2)}. ${s.name}`),
     '',
+    `UWAGA: ${DATABASE_WARNING}`,
     'Próba zapisze w bazie wskazanego wdrożenia: rezerwację nicka „Smoke…”, wyniki w rankingach (globalnym, seeda próby i seeda tygodnia)',
     'i zapis gry (żyje 30 dni). Nic na dysku. Nick, seed i klucz gracza losują się przy każdym uruchomieniu; klucza skrypt nie wypisuje',
-    '(tylko ostatnie 4 znaki). Zgłoszeń biegu jest 5, a limit biegów liczy się na adres w oknie godzinnym (RATE_LIMITS.runs w src/server/config.ts,',
-    'obecnie 30), więc nie puszczaj próby w kółko.',
-    'Puszczaj wyłącznie na osobnej bazie testowej. Produkcja (traszka.vercel.app) jest zablokowana.',
+    `(tylko ostatnie 4 znaki). Zgłoszeń biegu jest ${submissions}, a limit biegów liczy się na adres w oknie godzinnym (RATE_LIMITS.runs`,
+    'w src/server/config.ts), więc nie puszczaj próby w kółko.',
+    'Puszczaj wyłącznie na osobnej bazie testowej. Domeny produkcyjne projektu (PROTECTED_HOSTS) są zablokowane, ale wdrożenia podglądu',
+    'po nazwie nie odróżnisz od produkcji: za to, czyja baza stoi za adresem, odpowiadasz Ty.',
     'Żeby wykonać: node scripts/ranking-smoke.mjs <adres> --write',
   ];
 }
@@ -521,13 +581,15 @@ export async function runSmoke({
   }
 
   const id = newIdentity(random);
-  const say = (line) => log(redactor([id.key, id.otherKey])(line));
+  const redact = redactor([id.key, id.otherKey]);
+  const say = (line) => log(present(redact, line));
   const t = {
     ...id, origin: target.origin, fetch: fetchFn, simVersion: sim, generatorVersion: generator,
     get: (path) => call(t, 'GET', path),
     post: (path, body) => call(t, 'POST', path, body),
   };
   say(`Próba rankingu na ${target.origin} (symulacja v${sim}, generator v${generator}).`);
+  say(`UWAGA: ${DATABASE_WARNING}`);
   say(`Klucz gracza: …${id.key.slice(-4)} (tylko ostatnie 4 znaki), nick: ${id.nick}, seed: ${id.seed}`);
 
   const steps = [];
@@ -538,7 +600,7 @@ export async function runSmoke({
       steps.push({ id: step.id, name: step.name, ok: true });
       say(` PASS  ${label}`);
     } catch (err) {
-      const error = redactor([id.key, id.otherKey])(err instanceof StepError ? err.message : `nieoczekiwany błąd: ${err instanceof Error ? `${err.name}: ${err.message}` : String(err)}`);
+      const error = present(redact, err instanceof StepError ? err.message : `nieoczekiwany błąd: ${err instanceof Error ? `${err.name}: ${err.message}` : String(err)}`);
       steps.push({ id: step.id, name: step.name, ok: false, error });
       say(` FAIL  ${label}`);
       say(`       ${error}`);
@@ -557,7 +619,7 @@ const USAGE = [
   '  <adres>            adres wdrożenia z osobną bazą testową albo lokalnego serwera (np. http://localhost:3000)',
   '  --write            wykonaj próbę (bez tego tylko plan, nic nie jest wysyłane)',
   '  --sim-version <n>  wyślij biegi z tą wersją symulacji zamiast SIM_VERSION z src/sim/simVersion.ts',
-  'Produkcja (traszka.vercel.app i subdomeny) jest zablokowana.',
+  'Domeny produkcyjne projektu (PROTECTED_HOSTS) i ich subdomeny są zablokowane.',
 ].join('\n');
 
 /** Argumenty wiersza poleceń → `{ baseUrl, write, simVersion, help }`; rzuca `Error` z opisem, gdy argumenty są złe. */

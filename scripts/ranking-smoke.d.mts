@@ -44,10 +44,13 @@ export interface SmokeLogEntry { minute: number; seq: number; cmd: { type: strin
 export interface SmokeTarget { ok: boolean; origin?: string; error?: string }
 export interface SmokeArgs { baseUrl?: string; write: boolean; simVersion?: number; help: boolean }
 
+/** Domeny produkcyjne projektu (gołe nazwy hostów): te i ich subdomeny są zablokowane bez względu na flagi. */
 export const PROTECTED_HOSTS: readonly string[];
+/** Ostrzeżenie o bazie za wskazanym adresem: w planie, na początku przebiegu i w nagłówku skryptu. */
+export const DATABASE_WARNING: string;
 export const SMOKE_LOG: readonly SmokeLogEntry[];
-/** Kroki próby w kolejności wykonania (bez funkcji `run`). */
-export const STEPS: readonly { id: string; name: string }[];
+/** Kroki próby w kolejności wykonania (bez funkcji `run`); `runs` to liczba zgłoszeń biegu (`POST /api/runs`) w kroku, domyślnie 0. */
+export const STEPS: readonly { id: string; name: string; runs?: number }[];
 export function runSmoke(options: SmokeOptions): Promise<SmokeResult>;
 export function checkTarget(baseUrl: string): SmokeTarget;
 export function newIdentity(random?: RandomBytes): SmokeIdentity;

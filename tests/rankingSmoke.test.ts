@@ -8,7 +8,7 @@ import { pathToFileURL } from 'node:url';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { buildJudge } from '../scripts/build-judge.mjs';
 import {
-  cli, checkTarget, newIdentity, parseArgs, readGeneratorVersion, readSimVersion, runSmoke, SMOKE_LOG, STEPS, type RandomBytes,
+  cli, checkTarget, DATABASE_WARNING, newIdentity, parseArgs, PROTECTED_HOSTS, readGeneratorVersion, readSimVersion, runSmoke, SMOKE_LOG, STEPS, type RandomBytes,
 } from '../scripts/ranking-smoke.mjs';
 import { CROCKFORD, parseRecoveryCode } from '@/game/playerKey';
 import { normalizeNick } from '@/game/nick';
@@ -16,6 +16,7 @@ import { RANKED_SEASON_END_MINUTE, seasonScore } from '@/sim/ranked';
 import { replayRun } from '@/sim/run';
 import { SIM_VERSION } from '@/sim/simVersion';
 import { GENERATOR_VERSION } from '@/sim/store/generateStore';
+import { RATE_LIMITS } from '../src/server/config';
 import { fakeUpstash, type FakeUpstash } from '../src/server/fakeUpstash';
 import { route } from '../src/server/env';
 import {
@@ -42,7 +43,10 @@ const TOKEN = 'atrapa-token-zapisu';
 
 type Json = Record<string, any>;   // eslint-disable-line @typescript-eslint/no-explicit-any
 interface Sent { method: string; path: string; body: Json | undefined }
-/** Podmiana odpowiedzi serwera (kłamiący serwer): `nth` to numer żądania do tej ścieżki; undefined zostawia odpowiedź bez zmian. */
+/**
+ * Podmiana odpowiedzi serwera (kłamiący serwer): `nth` to numer żądania do tej ścieżki. `undefined` zostawia odpowiedź bez zmian,
+ * `Response` zastępuje ją w całości (status, nagłówki, treść), a cokolwiek innego to nowe ciało JSON (status i nagłówki zostają).
+ */
 type Tamper = (path: string, body: Json, nth: number, request: Sent) => unknown;
 interface TestServer {
   url: string;
@@ -110,6 +114,10 @@ async function startServer(opts: { redis?: MemoryRedis; tamper?: Tamper } = {}):
       const count = (counts.get(`${method} ${url.pathname}`) ?? 0) + 1;
       counts.set(`${method} ${url.pathname}`, count);
       const replaced = opts.tamper?.(url.pathname + url.search, JSON.parse(body) as Json, count, entry);
+      if (replaced instanceof Response) {
+        res.writeHead(replaced.status, Object.fromEntries(replaced.headers)).end(await replaced.text());
+        return;
+      }
       if (replaced !== undefined) body = JSON.stringify(replaced);
       res.writeHead(response.status, Object.fromEntries(response.headers)).end(body);
     })().catch((err: unknown) => { res.writeHead(500).end(String(err)); });
@@ -158,11 +166,15 @@ const keyOf = (server: TestServer): string => {
 };
 const runBodies = (server: TestServer): Json[] => server.sent.filter((s) => s.path === '/api/runs').map((s) => s.body as Json);
 
-/** Żadnego fragmentu klucza dłuższego niż 7 znaków (w postaci z łącznikami i bez), więc najwyżej ostatnie 4 znaki. */
+/**
+ * Żadnego fragmentu klucza dłuższego niż 7 znaków, więc najwyżej ostatnie 4 znaki. Łączniki nie ukrywają fragmentu: klucz
+ * rozcięty w środku („XXXX-XXXX-XX”) liczy się po wycięciu łączników z wyjścia, tak jak jego zwarta postać.
+ */
 function expectNoKey(text: string, key: string): void {
   const compact = key.replaceAll('-', '');
+  const bare = text.replaceAll('-', '');
   expect(text).not.toContain(key);
-  for (let i = 0; i + 8 <= compact.length; i++) expect(text).not.toContain(compact.slice(i, i + 8));
+  for (let i = 0; i + 8 <= compact.length; i++) expect(bare).not.toContain(compact.slice(i, i + 8));
 }
 
 interface Cli { code: number | null; stdout: string; stderr: string }
@@ -185,8 +197,21 @@ function runCli(args: string[], opts: { blockNetwork?: boolean } = {}): Promise<
 const scoreOf = (seed: string, log: readonly unknown[]): number =>
   seasonScore(replayRun({ seed, gameVersion: 'test', generatorVersion: GENERATOR_VERSION, mode: 'ranked', log } as never, RANKED_SEASON_END_MINUTE));
 
-describe('odmowa dla produkcji (traszka.vercel.app i jej subdomeny)', () => {
+/** Trzy domeny produkcyjne projektu na Vercelu (nazwa projektu, domena zespołu, domena gałęzi głównej). */
+const PRODUCTION_DOMAINS = [
+  'traszka.vercel.app',
+  'traszka-mateuszs-projects-73382f2a.vercel.app',
+  'traszka-git-main-mateuszs-projects-73382f2a.vercel.app',
+] as const;
+
+describe('odmowa dla produkcji (trzy domeny projektu i subdomeny traszka.vercel.app)', () => {
+  // wszystkie trzy domeny w tych samych odmianach zapisu: schemat, wielkie litery, kropka na końcu, port, użytkownik, ścieżka
+  const VARIANTS = PRODUCTION_DOMAINS.flatMap((d) => [
+    `https://${d}`, `http://${d}/`, `https://${d.toUpperCase()}`, `https://${d}.`, `https://${d}:8443/x?y=1`, `https://uzytkownik:haslo@${d}`, `https://${d}/api/leaderboard`,
+    `https://podglad.${d}`,   // ta sama reguła dla wszystkich trzech: dokładna nazwa albo jej subdomena
+  ]);
   const PRODUCTION = [
+    ...VARIANTS,
     'https://traszka.vercel.app', 'https://traszka.vercel.app/', 'http://traszka.vercel.app', 'https://TRASZKA.VERCEL.APP', 'https://Traszka.Vercel.App/api/leaderboard',
     'https://traszka.vercel.app.', 'https://traszka.vercel.app..', 'https://traszka.vercel.app\u{3002}',
     'https://traszka.vercel.app:443', 'https://traszka.vercel.app:8443/x?y=1',
@@ -195,14 +220,14 @@ describe('odmowa dla produkcji (traszka.vercel.app i jej subdomeny)', () => {
     'https://podglad.traszka.vercel.app', 'https://a.b.traszka.vercel.app.', 'https://PODGLAD.traszka.vercel.app:8443',
   ];
 
-  it.each(PRODUCTION)('%s: odmowa, także z --write, i żadne żądanie nie wychodzi', async (baseUrl) => {
+  it.each([...new Set(PRODUCTION)])('%s: odmowa, także z --write, i żadne żądanie nie wychodzi', async (baseUrl) => {
     for (const write of [true, false]) {
       const spy = noNetwork();
       const out = collect();
       const result = await runSmoke({ baseUrl, write, fetch: spy, log: out.log });
       expect(result).toMatchObject({ ok: false, refused: true, steps: [] });
       expect(result.error).toMatch(/Odmowa/);
-      expect(result.error).toContain('traszka.vercel.app');
+      expect(PRODUCTION_DOMAINS.some((d) => result.error!.includes(d)), result.error).toBe(true);   // komunikat wskazuje chronioną domenę
       expect(result.error).not.toContain('haslo');   // adres może nieść hasło: komunikat go nie powtarza
       expect(spy).not.toHaveBeenCalled();
       expect(out.lines).toEqual([]);
@@ -212,6 +237,11 @@ describe('odmowa dla produkcji (traszka.vercel.app i jej subdomeny)', () => {
   it.each([
     'https://nie-traszka.vercel.app', 'https://xtraszka.vercel.app', 'https://traszka-git-ranking-agentsmill.vercel.app', 'https://traszka.vercel.app.przyklad.test',
     'https://vercel.app', 'https://traszka.vercel.com', 'http://127.0.0.1:3000', 'http://localhost:3000', 'https://podglad-rankingu.vercel.app',
+    'https://traszka-inna.vercel.app',                                                   // tylko podobna nazwa
+    'https://traszka-mateuszs-projects-73382f2b.vercel.app',                              // domena zespołu z jedną różnicą w znaku
+    'https://traszka-git-main-mateuszs-projects-73382f2a.vercel.com',                     // inna końcówka
+    'https://traszka-git-main-mateuszs-projects-73382f2a.vercel.app.przyklad.test',       // produkcja tylko jako początek obcej domeny
+    'https://traszka-git-claude-ranking-mateuszs-projects-73382f2a.vercel.app',           // wdrożenie podglądu gałęzi: po nazwie nie do odróżnienia, więc przechodzi (ostrzega plan)
   ])('%s: to nie produkcja, więc plan się wypisuje (bez --write nic nie jest wysyłane)', async (baseUrl) => {
     const spy = noNetwork();
     const result = await runSmoke({ baseUrl, write: false, fetch: spy, log: () => undefined });
@@ -300,6 +330,41 @@ describe('bez --write skrypt tylko opisuje plan', () => {
     expect(text).toMatch(/--write/);
     for (const step of STEPS) expect(text).toContain(step.name);
   });
+
+  it('plan ostrzega, że skrypt zapisuje w bazie za adresem, a wdrożenie podglądu może wskazywać na produkcyjną bazę', async () => {
+    const out = collect();
+    await runSmoke({ baseUrl: 'http://127.0.0.1:3000', write: false, fetch: noNetwork(), log: out.log });
+    expect(out.lines.join('\n')).toContain(DATABASE_WARNING);
+    expect(out.lines.filter((l) => l.includes('baza TESTOWA'))).toHaveLength(1);   // jedna wyraźna linia
+    expect(DATABASE_WARNING).toMatch(/rezerwacja nicka, wynik w rankingu, zapis gry/);
+    expect(DATABASE_WARNING).toMatch(/baza TESTOWA/);
+    expect(DATABASE_WARNING).toMatch(/`KV_\*` z ustawień Vercela/);
+    expect(DATABASE_WARNING).toMatch(/produkcyjną bazę/);
+  });
+
+  it('ostrzeżenie jest też na początku właściwego przebiegu (przed pierwszym żądaniem), a jako polecenie bez --write na stdout', async () => {
+    const server = await startServer();
+    const out = collect();
+    await runSmoke({ baseUrl: server.url, write: true, fetch: localFetch, log: out.log, simVersion: SIM_VERSION + 1 });
+    expect(out.lines.slice(0, 3).join('\n')).toContain(DATABASE_WARNING);
+    const res = await runCli([server.url]);
+    expect(res.stdout).toContain(DATABASE_WARNING);
+  });
+
+  it('plan podaje liczbę zgłoszeń biegu policzoną z kroków (tyle, ile serwer naprawdę dostaje) i nie wpisuje limitu na stałe', async () => {
+    const server = await startServer();
+    const plan = collect();
+    await runSmoke({ baseUrl: server.url, write: false, fetch: localFetch, log: plan.log });
+    expect(await runSmoke({ baseUrl: server.url, write: true, fetch: localFetch, log: () => undefined })).toMatchObject({ ok: true });
+    const sent = runBodies(server).length;
+    const text = plan.lines.join('\n');
+    expect(text).toContain(`Zgłoszeń biegu jest ${sent},`);
+    expect(text).toContain('RATE_LIMITS.runs');
+    expect(text).not.toMatch(/obecnie\s+\d/);   // liczby limitu nie ma w tekście, więc nie rozjedzie się z konfiguracją
+    // jeden przebieg nie może sam wyczerpać limitu klucza ani adresu (inaczej próba kończyłaby się 429 sama od siebie)
+    expect(sent).toBeLessThanOrEqual(RATE_LIMITS.runs.perKey);
+    expect(sent).toBeLessThanOrEqual(RATE_LIMITS.runs.perAddress);
+  }, 60_000);
 
   it('jako polecenie bez --write: kod 0, plan na stdout, serwer bez żądań', async () => {
     const server = await startServer();
@@ -544,6 +609,220 @@ describe('uszkodzone albo kłamiące odpowiedzi serwera dają FAIL', () => {
     expect(result.steps[0]!.error).toMatch(/fetch failed/);
   });
 
+  describe('przyczyna błędu połączenia w komunikacie', () => {
+    const failing = (cause: unknown): typeof fetch => async () => { throw new TypeError('fetch failed', { cause }); };
+    const errorOf = async (fetchFn: typeof fetch): Promise<string> => {
+      const result = await runSmoke({ baseUrl: 'http://127.0.0.1:9', write: true, log: () => undefined, fetch: fetchFn });
+      expect(result.ok).toBe(false);
+      return result.steps[0]!.error!;
+    };
+
+    it('przyczyna z komunikatem: pokazana w nawiasie', async () => {
+      expect(await errorOf(failing(new Error('connect ECONNREFUSED 127.0.0.1:9')))).toMatch(/TypeError: fetch failed \(connect ECONNREFUSED 127\.0\.0\.1:9\)/);
+    });
+
+    it('AggregateError z pustym komunikatem (kilka adresów, np. localhost na ::1 i 127.0.0.1): komunikat pierwszego z błędów składowych, a nie puste „()”', async () => {
+      const aggregate = Object.assign(new AggregateError([new Error('connect ECONNREFUSED ::1:9'), new Error('connect ECONNREFUSED 127.0.0.1:9')], ''), { code: 'ECONNREFUSED' });
+      const error = await errorOf(failing(aggregate));
+      expect(error).toMatch(/fetch failed \(connect ECONNREFUSED ::1:9\)/);
+      expect(error).not.toContain('()');
+    });
+
+    it('AggregateError bez błędów składowych, za to z kodem: kod', async () => {
+      const error = await errorOf(failing(Object.assign(new AggregateError([], ''), { code: 'ECONNREFUSED' })));
+      expect(error).toMatch(/fetch failed \(ECONNREFUSED\)/);
+      expect(error).not.toContain('()');
+    });
+
+    it('przyczyna bez komunikatu, kodu i błędów składowych: bez pustych nawiasów', async () => {
+      const error = await errorOf(failing(new Error('')));
+      expect(error).toMatch(/TypeError: fetch failed$/);
+      expect(error).not.toContain('()');
+    });
+
+    it('naprawdę zamknięty port na localhost (dwa adresy, więc AggregateError): w komunikacie ECONNREFUSED, a nie puste „()”', async () => {
+      const closed = await startReplyServer(() => new Response('x'));
+      const port = new URL(closed.url).port;
+      await Promise.all(open.splice(0).map((srv) => new Promise<void>((done) => { srv.closeAllConnections(); srv.close(() => done()); })));
+      const result = await runSmoke({ baseUrl: `http://localhost:${port}`, write: true, log: () => undefined });
+      expect(result.ok).toBe(false);
+      expect(result.steps[0]!.error).toMatch(/ECONNREFUSED/);
+      expect(result.steps[0]!.error).not.toContain('()');
+    });
+  });
+
+  it('przekierowanie: komunikat podpowiada o http zamiast https i o ochronie wdrożenia (Deployment Protection)', async () => {
+    const redirecting = await startReplyServer(() => new Response(null, { status: 308, headers: { location: 'https://przyklad.test/api/leaderboard' } }));
+    const result = await runSmoke({ baseUrl: redirecting.url, write: true, fetch: localFetch, log: () => undefined });
+    expect(result.ok).toBe(false);
+    expect(result.steps).toHaveLength(1);
+    const error = result.steps[0]!.error!;
+    expect(error).toMatch(/brak odpowiedzi/);
+    expect(error).toMatch(/przekierowani/);
+    expect(error).toMatch(/http:\/\/.*https:\/\//);
+    expect(error).toMatch(/Deployment Protection/);
+    expect(redirecting.hits()).toBe(1);
+  });
+
+  it('inny błąd połączenia nie dostaje podpowiedzi o przekierowaniu', async () => {
+    const result = await runSmoke({
+      baseUrl: 'http://127.0.0.1:9', write: true, log: () => undefined,
+      fetch: async () => { throw new TypeError('fetch failed', { cause: new Error('connect ECONNREFUSED 127.0.0.1:9') }); },
+    });
+    expect(result.steps[0]!.error).not.toMatch(/przekierowani|Deployment Protection/);
+  });
+
+  describe('429: limit zgłoszeń', () => {
+    const limited = (retryAfter?: string): Response => new Response(
+      JSON.stringify({ ok: false, error: 'rate-limited', message: 'Za dużo prób, spróbuj później.' }),
+      { status: 429, headers: { 'content-type': 'application/json', ...(retryAfter === undefined ? {} : { 'retry-after': retryAfter }) } },
+    );
+
+    it('bieg zgłoszony ponad limit: osobny komunikat „limit zgłoszeń (godzinne okno), poczekaj N s” z Retry-After', async () => {
+      const server = await startServer({ tamper: (path, _body, nth) => (path === '/api/runs' && nth === 1 ? limited('1234') : undefined) });
+      const result = await runSmoke({ baseUrl: server.url, write: true, fetch: localFetch, log: () => undefined });
+      expect(result.ok).toBe(false);
+      expect(result.steps.at(-1)).toMatchObject({ id: 'bieg-a', ok: false });
+      expect(result.steps.at(-1)!.error).toMatch(/status 429, limit zgłoszeń \(godzinne okno\), poczekaj 1234 s/);
+      expect(result.steps.at(-1)!.error).toContain('rate-limited');   // dalej widać też kod i komunikat serwera
+    });
+
+    it('/api/player ma krótsze okno niż biegi i zapisy, więc komunikat nie mówi o godzinie', async () => {
+      const server = await startServer({ tamper: (path, _body, nth) => (path === '/api/player' && nth === 1 ? limited('321') : undefined) });
+      const result = await runSmoke({ baseUrl: server.url, write: true, fetch: localFetch, log: () => undefined });
+      expect(result.steps.at(-1)).toMatchObject({ id: 'gracz-nowy', ok: false });
+      expect(result.steps.at(-1)!.error).toMatch(/limit zgłoszeń \(krótkie okno\), poczekaj 321 s/);
+      expect(result.steps.at(-1)!.error).not.toContain('godzinne');
+    });
+
+    it('bez nagłówka Retry-After (albo z nieliczbowym): komunikat mówi o jego braku, a nie o „NaN s”', async () => {
+      for (const header of [undefined, 'jutro']) {
+        const server = await startServer({ tamper: (path, _body, nth) => (path === '/api/runs' && nth === 1 ? limited(header) : undefined) });
+        const result = await runSmoke({ baseUrl: server.url, write: true, fetch: localFetch, log: () => undefined });
+        const error = result.steps.at(-1)!.error!;
+        expect(error, String(header)).toMatch(/limit zgłoszeń \(godzinne okno\), brak poprawnego nagłówka Retry-After/);
+        expect(error).not.toMatch(/NaN|undefined/);
+      }
+    });
+
+    it('inne statusy nie dostają komunikatu o limicie', async () => {
+      const server = await startServer({ tamper: (path, _body, nth) => (path === '/api/runs' && nth === 1 ? new Response(JSON.stringify({ ok: false, error: 'server', message: 'x' }), { status: 500, headers: { 'content-type': 'application/json' } }) : undefined) });
+      const result = await runSmoke({ baseUrl: server.url, write: true, fetch: localFetch, log: () => undefined });
+      expect(result.steps.at(-1)!.error).not.toMatch(/limit zgłoszeń/);
+    });
+  });
+
+  describe('odczyt rankingu po zapisie: kolejny limit tylko przy odpowiedzi z pamięci podręcznej Vercela', () => {
+    /** Przedpisana, nieaktualna odpowiedź rankingu globalnego z ustawionym nagłówkiem pamięci podręcznej (bez mojego wiersza). */
+    const staleGlobal = (cache: string | undefined): Tamper => (path, body) => (path.endsWith('board=global&limit=100')
+      ? new Response(JSON.stringify({ ...body, rows: [] }), { headers: { 'content-type': 'application/json', ...(cache === undefined ? {} : { 'x-vercel-cache': cache }) } })
+      : undefined);
+    const globalLimits = (server: TestServer): string[] => server.sent
+      .filter((s) => s.path.startsWith('/api/leaderboard?board=global&'))
+      .map((s) => /limit=(\d+)/.exec(s.path)![1]!);
+
+    it.each(['HIT', 'STALE', 'hit'])('x-vercel-cache: %s bez mojego wiersza: skrypt prosi o następny limit (100, potem 50) i krok przechodzi', async (cache) => {
+      const server = await startServer({ tamper: staleGlobal(cache) });
+      const result = await runSmoke({ baseUrl: server.url, write: true, fetch: localFetch, log: () => undefined });
+      expect(result.steps.filter((s) => !s.ok)).toEqual([]);
+      expect(result.ok).toBe(true);
+      expect(globalLimits(server)).toEqual(['10', '100', '50']);   // odczyt przed zapisem (10), nieaktualna z pamięci podręcznej (100), aktualna (50)
+    });
+
+    it.each([undefined, 'MISS', 'BYPASS', 'PRERENDER'])('x-vercel-cache: %s (odpowiedź prosto od funkcji) bez mojego wiersza: bez ponawiania, krok kończy się porażką', async (cache) => {
+      const server = await startServer({ tamper: staleGlobal(cache) });
+      const result = await runSmoke({ baseUrl: server.url, write: true, fetch: localFetch, log: () => undefined });
+      expect(result.ok).toBe(false);
+      expect(result.steps.at(-1)).toMatchObject({ id: 'global-po-biegach', ok: false });
+      expect(result.steps.at(-1)!.error).toMatch(/nie ma wiersza/);
+      expect(globalLimits(server)).toEqual(['10', '100']);   // żadnego ponowienia
+    });
+
+    it('odpowiedź z pamięci podręcznej, która ma mój wiersz, nie jest ponawiana', async () => {
+      const server = await startServer({
+        tamper: (path, body) => (path.endsWith('board=global&limit=100')
+          ? new Response(JSON.stringify(body), { headers: { 'content-type': 'application/json', 'x-vercel-cache': 'HIT' } }) : undefined),
+      });
+      const result = await runSmoke({ baseUrl: server.url, write: true, fetch: localFetch, log: () => undefined });
+      expect(result.ok).toBe(true);
+      expect(globalLimits(server)).toEqual(['10', '100']);
+    });
+  });
+
+  describe('klucz gracza w komunikatach o błędach serwera: maskowanie przed obcięciem tekstu', () => {
+    const KEY_AT_CUT = (key: string): string => `${'x'.repeat(180)}${key}`;
+
+    it('odpowiedź 200 z ok:false, której komunikat ma 180 znaków i dopiero potem klucz z żądania: w wyjściu ani fragmentu klucza dłuższego niż 7 znaków', async () => {
+      const server = await startServer({
+        tamper: (path, _body, nth, request) => (path === '/api/player' && nth === 1
+          ? { ok: false, error: 'server', message: KEY_AT_CUT(request.body!.key as string) } : undefined),
+      });
+      const out = collect();
+      const result = await runSmoke({ baseUrl: server.url, write: true, fetch: localFetch, log: out.log });
+      expect(result.steps.at(-1)).toMatchObject({ id: 'gracz-nowy', ok: false });
+      const key = keyOf(server);
+      const everything = [...out.lines, ...result.steps.map((s) => s.error ?? '')].join('\n');
+      expect(everything).toContain('x'.repeat(100));   // komunikat serwera dociera do człowieka
+      expectNoKey(everything, key);
+      expect(everything).toContain(key.slice(-4));      // zamiast klucza zostają ostatnie 4 znaki
+    });
+
+    it.each([150, 170, 180, 190, 199])('klucz zaczyna się po %i znakach komunikatu: żaden fragment nie przechodzi, niezależnie od miejsca obcięcia', async (before) => {
+      const server = await startServer({
+        tamper: (path, _body, nth, request) => (path === '/api/player' && nth === 1
+          ? { ok: false, error: 'server', message: `${'x'.repeat(before)}${request.body!.key as string}` } : undefined),
+      });
+      const out = collect();
+      const result = await runSmoke({ baseUrl: server.url, write: true, fetch: localFetch, log: out.log });
+      expect(result.ok).toBe(false);
+      expectNoKey([...out.lines, ...result.steps.map((s) => s.error ?? '')].join('\n'), keyOf(server));
+    });
+
+    it('odpowiedź, która nie jest JSON-em (strona błędu z kluczem po 100 znakach): fragment klucza nie zostaje w skróconym początku treści', async () => {
+      const server = await startServer({
+        tamper: (path, _body, nth, request) => (path === '/api/player' && nth === 1
+          ? new Response(`<html>${'x'.repeat(100)}${request.body!.key as string}</html>`, { status: 502, headers: { 'content-type': 'text/html' } }) : undefined),
+      });
+      const out = collect();
+      const result = await runSmoke({ baseUrl: server.url, write: true, fetch: localFetch, log: out.log });
+      expect(result.steps.at(-1)).toMatchObject({ id: 'gracz-nowy', ok: false });
+      expect(result.steps.at(-1)!.error).toMatch(/status 502/);
+      expectNoKey([...out.lines, ...result.steps.map((s) => s.error ?? '')].join('\n'), keyOf(server));
+    });
+
+    it('klucz w dowolnym miejscu komunikatu, także na granicy ostatecznego skrócenia linii: żaden fragment nie przechodzi (przesuwamy klucz co 2 znaki od 100 do 700)', async () => {
+      let before = 0;
+      let key = '';
+      const server = await startServer({
+        tamper: (path, _body, _nth, request) => {
+          if (path !== '/api/player' || request.body?.nick !== undefined) return undefined;   // tylko pierwsze pytanie o nicki, bez nicka
+          key = request.body!.key as string;
+          return { ok: false, error: 'server', message: `${'x'.repeat(before)}${key}` };
+        },
+      });
+      let cut = 0;
+      for (before = 100; before <= 700; before += 2) {
+        const out = collect();
+        const result = await runSmoke({ baseUrl: server.url, write: true, fetch: localFetch, log: out.log });
+        expect(result.steps.at(-1), `przesunięcie ${before}`).toMatchObject({ id: 'gracz-nowy', ok: false });
+        const everything = [...out.lines, ...result.steps.map((s) => s.error ?? '')].join('\n');
+        expectNoKey(everything, key);
+        if (everything.includes('…')) cut++;
+      }
+      expect(cut).toBeGreaterThan(100);   // test nie jest pusty: w większości przesunięć wyjście było skracane
+    }, 60_000);
+
+    it('komunikat jest nadal skracany: bardzo długa treść błędu nie zalewa wyjścia', async () => {
+      const server = await startServer({
+        tamper: (path, _body, nth) => (path === '/api/player' && nth === 1 ? { ok: false, error: 'server', message: 'y'.repeat(50_000) } : undefined),
+      });
+      const out = collect();
+      const result = await runSmoke({ baseUrl: server.url, write: true, fetch: localFetch, log: out.log });
+      expect(result.steps.at(-1)!.error!.length).toBeLessThan(1_000);
+      expect(Math.max(...out.lines.map((l) => l.length))).toBeLessThan(1_000);
+    });
+  });
+
   it('przekierowanie żądania z kluczem to porażka, a klucz nie jedzie pod inny adres', async () => {
     const elsewhere = await startReplyServer(() => Response.json({ ok: true, nicks: [] }));
     const redirecting = await startReplyServer(({ method, url }) => {
@@ -625,7 +904,24 @@ describe('skrypt jest bezpieczny z założenia (czytany jako tekst)', () => {
     expect(code).not.toMatch(/Math\.random/);   // losowość tylko z crypto
   });
 
-  it('adres produkcji jest w kodzie jako jawna lista hostów', () => {
-    expect(source).toContain("PROTECTED_HOSTS = ['traszka.vercel.app']");
+  it('ostrzeżenie o bazie testowej jest też w nagłówku skryptu (komentarz przed pierwszym importem)', () => {
+    const header = source.slice(0, source.indexOf('\nimport '));
+    expect(header).toMatch(/baza TESTOWA/);
+    expect(header).toMatch(/`KV_\*`/);
+  });
+});
+
+describe('lista chronionych hostów (PROTECTED_HOSTS)', () => {
+  it('to dokładnie trzy domeny produkcyjne projektu, jako gołe nazwy hostów (małe litery, bez schematu, portu i kropki), bo dopasowanie jest po nazwie', () => {
+    expect([...PROTECTED_HOSTS].sort()).toEqual([...PRODUCTION_DOMAINS].sort());
+    for (const host of PROTECTED_HOSTS) expect(host).toMatch(/^[a-z0-9]+(-[a-z0-9]+)*(\.[a-z0-9]+(-[a-z0-9]+)*)+$/);
+  });
+
+  it.each(PRODUCTION_DOMAINS)('%s: odmowa podaje tę domenę, a nazwa z jedną literą więcej przechodzi', (domain) => {
+    const refused = checkTarget(`https://${domain}`);
+    expect(refused.ok).toBe(false);
+    expect(refused.error).toContain(domain);
+    expect(checkTarget(`https://x${domain}`).ok).toBe(true);
+    expect(checkTarget(`https://${domain.replace('.vercel.app', '-inna.vercel.app')}`).ok).toBe(true);
   });
 });
