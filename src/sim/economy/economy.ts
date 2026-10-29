@@ -782,7 +782,7 @@ function checkFine(s: EconomyState, fx: Effects, out: EconEvent[]): void {
   if (!warnedToday || s.minute - s.lastWarnAt < STRAZ.warnGapMin) {
     if (warnedToday) return;   // dopiero co upominał: patrol jeszcze nie wrócił
     s.lastWarnAt = s.minute;
-    out.push({ kind: 'warning', text: `Straż Miejska: upomnienie za ${outside.length} ${plPallets(outside.length)} pod sklepem. Przy następnym obchodzie mandat.` });
+    out.push({ kind: 'warning', text: `Straż Miejska: upomnienie za ${outside.length === 1 ? 'paletę' : `${outside.length} ${plPallets(outside.length)}`} pod sklepem. Przy następnym obchodzie mandat.` });
     return;
   }
   const fine = FINE_BASE + FINE_PER_PALLET * (outside.length - 1);
