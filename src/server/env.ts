@@ -1,4 +1,5 @@
 import { apiError, type Handler, type ServerDeps } from './http.js';
+import { createRateGate, type RateGate } from './rateLimit.js';
 import { createUpstash } from './upstash.js';
 import { replayNotAvailable, type VerifyRun } from './verify.js';
 
@@ -24,6 +25,11 @@ export interface RouteOptions {
   now?: () => number;
   /** Sędzia biegu; domyślnie „odtwarzanie jeszcze niedostępne”, do czasu scalenia strumienia A. */
   verifyRun?: VerifyRun;
+  /**
+   * Bramka limitu w pamięci instancji. Domyślnie `route` tworzy własną, jedną na wywołanie `route(...)`, czyli na plik `api/*.ts`
+   * i instancję funkcji (a nie na żądanie: jej pamięć ma przeżyć wiele żądań). Do podmiany w testach, np. wspólnej dla dwóch `route`.
+   */
+  rateGate?: RateGate;
 }
 
 /** Czy właściciel włączył ranking: tylko dokładnie `RANKING_ENABLED=1` (nie „true”, nie „ 1”, nie pusta wartość). */
@@ -45,15 +51,20 @@ export function depsFromEnv(env: EnvSource, opts: RouteOptions = {}): ServerDeps
     readRedis: readToken ? createUpstash({ url, token: readToken, fetch: opts.fetch }) : redis,
     verifyRun: opts.verifyRun ?? replayNotAvailable,
     now: opts.now ?? Date.now,
+    rateGate: opts.rateGate,
   };
 }
 
-/** Funkcja dla Vercela (`export const GET = route(handleLeaderboard)`): zależności z env przy każdym wywołaniu. */
+/**
+ * Funkcja dla Vercela (`export const GET = route(handleLeaderboard)`): zależności z env przy każdym wywołaniu, a bramka limitu
+ * (pamięć instancji) jedna na całe życie tej funkcji.
+ */
 export function route(handler: Handler, opts: RouteOptions = {}): (request: Request) => Promise<Response> {
+  const rateGate = opts.rateGate ?? createRateGate();   // raz na wywołanie `route`, nie na żądanie
   return async (request) => {
     const env = (opts.env ?? processEnv)();
     if (!rankingEnabled(env)) return apiError('ranking-off');
-    const deps = depsFromEnv(env, opts);
+    const deps = depsFromEnv(env, { ...opts, rateGate });
     if (deps === null) return apiError('not-configured');
     try {
       return await handler(request, deps);

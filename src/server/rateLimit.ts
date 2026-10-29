@@ -1,4 +1,4 @@
-import { BUDGET_TTL, RATE_LIMITS, type RateAction } from './config.js';
+import { BUDGET_TTL, RATE_GATE_MAX_ENTRIES, RATE_LIMITS, type RateAction } from './config.js';
 import { randomHex, sha256Hex, type RandomBytes } from './hash.js';
 import { KEYS } from './keys.js';
 import { asNumber, asString, RedisError, type RedisExec } from './redis.js';
@@ -50,24 +50,120 @@ export function addressBucket(address: string): string {
   return `${n.slice(0, 4).map((x) => x.toString(16)).join(':')}/64`;
 }
 
+/** Okno limitu, w którym leży `now`: numer, koniec (ms), ms do końca (dla czasu życia kluczy) i `Retry-After` w sekundach. */
+function windowOf(action: RateAction, now: number): { window: number; index: number; end: number; left: number; retryAfter: number } {
+  const { window } = RATE_LIMITS[action];
+  const index = Math.floor(now / (window * 1000));
+  const end = (index + 1) * window * 1000;
+  return { window, index, end, left: Math.max(1, Math.ceil(end - now)), retryAfter: Math.max(1, Math.ceil((end - now) / 1000)) };
+}
+
+/** Co baza odpowiedziała na `INCR` liczników jednego żądania (klucz `null`, gdy żądanie nie ma klucza gracza). */
+export interface RateSeen { address: number; key: number | null }
+
+/**
+ * Bramka limitu w pamięci jednej instancji funkcji (Fluid compute współdzieli instancję między wywołaniami). Odmawia tanio, bez
+ * pytania bazy, temu, komu baza i tak by odmówiła; wszystko inne puszcza dalej, do bazy.
+ *
+ * Zasada: bramka trzyma dla (akcji, okna, kubełka adresu) i dla (akcji, okna, właściciela) największą liczbę, jaką baza oddała
+ * jako wynik `INCR` tego licznika. Liczniki w oknie tylko rosną, więc to dolna granica prawdziwego licznika: nigdy go nie
+ * przekracza, także gdy odpowiedzi wracają w odwrotnej kolejności albo licznik rośnie od żądań innych instancji. Odmowa z pamięci
+ * (zapamiętana liczba już `>= limit`) znaczy więc, że następny `INCR` dałby więcej niż limit, czyli baza odrzuciłaby to żądanie
+ * tak samo, z tym samym `Retry-After` (do końca okna). Odmowa z pamięci niczego nie liczy: nie dochodzi do bazy.
+ * Do pamięci trafia tylko to, co baza faktycznie odpowiedziała (`record` po udanym `exec`), więc błąd bazy niczego nie psuje.
+ *
+ * Pamięć jest tylko przyspieszeniem i jest ograniczona (`maxEntries`): wpisy z minionych okien wypadają, przy przepełnieniu
+ * wypada najstarszy (odświeżany wpis jest najmłodszy), a wypadnięty wpis oznacza jedno zapytanie do bazy więcej, nie inną decyzję.
+ * Adresy nie leżą w pamięci wprost: nazwa wpisu to skrót `sha256` z losową solą instancji, wylosowaną przy tworzeniu bramki.
+ */
+export interface RateGate {
+  /** Odmowa z pamięci (`ok: false`, `retryAfter` do końca okna) albo `null`: pytać bazę. Z `owner: null` sprawdza sam adres. */
+  peek(action: RateAction, who: Requester, now: number): Promise<RateCheck | null>;
+  /** Zapamiętuje liczniki odczytane z odpowiedzi bazy (po udanym `exec`). */
+  record(action: RateAction, who: Requester, now: number, seen: RateSeen): Promise<void>;
+  /** Ile wpisów leży teraz w pamięci i jak się nazywają (do testów). */
+  readonly size: number;
+  keys(): string[];
+}
+
+export interface RateGateOptions {
+  /** Losowość do podmiany w testach (sól instancji). */
+  random?: RandomBytes;
+  /** Ile wpisów najwyżej (domyślnie `RATE_GATE_MAX_ENTRIES`). */
+  maxEntries?: number;
+}
+
+export function createRateGate(opts: RateGateOptions = {}): RateGate {
+  const salt = randomHex(16, opts.random);
+  const max = Math.max(1, opts.maxEntries ?? RATE_GATE_MAX_ENTRIES);
+  const slots = new Map<string, { seen: number; end: number }>();
+  let earliestEnd = Infinity;   // najwcześniejszy koniec okna wśród wpisów: dopóki `now` go nie dogoni, nie ma czego wyrzucać
+
+  const names = async (action: RateAction, who: Requester, index: number): Promise<{ address: string; key: string | null }> => {
+    const hash = (await sha256Hex(`${salt}:${addressBucket(who.address)}`)).slice(0, 32);
+    return { address: `${action}:${index}:a:${hash}`, key: who.owner === null ? null : `${action}:${index}:k:${who.owner.slice(0, 32)}` };
+  };
+
+  function purge(now: number): void {
+    earliestEnd = Infinity;
+    for (const [name, slot] of slots) {
+      if (slot.end <= now) slots.delete(name);
+      else earliestEnd = Math.min(earliestEnd, slot.end);
+    }
+  }
+
+  function remember(name: string, seen: number, end: number, now: number): void {
+    const previous = slots.get(name);
+    if (previous) slots.delete(name);   // zapis odświeża kolejność: aktywny wpis wypada ostatni
+    else {
+      if (now >= earliestEnd) purge(now);
+      while (slots.size >= max) slots.delete(slots.keys().next().value as string);
+    }
+    slots.set(name, { seen: Math.max(previous?.seen ?? 0, seen), end });
+    earliestEnd = Math.min(earliestEnd, end);
+  }
+
+  return {
+    async peek(action, who, now) {
+      const { perKey, perAddress } = RATE_LIMITS[action];
+      const w = windowOf(action, now);
+      const n = await names(action, who, w.index);
+      const full = (name: string | null, limit: number): boolean => name !== null && (slots.get(name)?.seen ?? 0) >= limit;
+      return full(n.address, perAddress) || full(n.key, perKey) ? { ok: false, retryAfter: w.retryAfter } : null;
+    },
+    async record(action, who, now, seen) {
+      const w = windowOf(action, now);
+      const n = await names(action, who, w.index);
+      remember(n.address, seen.address, w.end, now);
+      if (n.key !== null && seen.key !== null) remember(n.key, seen.key, w.end, now);
+    },
+    get size() { return slots.size; },
+    keys: () => [...slots.keys()],
+  };
+}
+
 export interface RateOptions {
   /** Losowość do podmiany w testach (sól okna w bazie). */
   random?: RandomBytes;
+  /** Bramka w pamięci instancji: odmawia bez pytania bazy temu, komu baza i tak by odmówiła (patrz `createRateGate`). */
+  gate?: RateGate;
 }
 
 /**
- * Jedno sprawdzenie limitu: `ok: false`, gdy licznik adresu albo klucza w tym oknie przekroczył limit. Dwa zapytania do bazy:
- * sól okna, potem liczniki. Czas życia kluczy jest względny (`PX`, `PEXPIRE`: tyle ms, ile zostało do końca okna według zegara
- * funkcji): zegar bazy może się różnić od zegara funkcji, a klucz z bezwzględnym końcem okna (`PXAT`) powstałby wtedy
- * przeterminowany albo żyłby za długo. Licznik dostaje czas życia przy każdym żądaniu, więc nie zostaje nigdy bez niego,
- * także gdy klucz wygasł między poleceniami (`INCR` zakłada go wtedy od nowa, a `PEXPIRE` zaraz po nim ustawia czas).
- * Sól, której baza nie oddała, to błąd: skrót z pustą solą byłby tym samym skrótem u każdego klienta i w każdym oknie.
+ * Jedno sprawdzenie limitu: `ok: false`, gdy licznik adresu albo klucza w tym oknie przekroczył limit. Najpierw bramka w pamięci
+ * (jeśli jest): zapamiętana odmowa kosztuje 0 zapytań i 0 poleceń. Inaczej dwa zapytania do bazy: sól okna, potem liczniki.
+ * Czas życia kluczy jest względny (`PX`, `PEXPIRE`: tyle ms, ile zostało do końca okna według zegara funkcji): zegar bazy może się
+ * różnić od zegara funkcji, a klucz z bezwzględnym końcem okna (`PXAT`) powstałby wtedy przeterminowany albo żyłby za długo.
+ * Licznik dostaje czas życia przy każdym żądaniu, więc nie zostaje nigdy bez niego, także gdy klucz wygasł między poleceniami
+ * (`INCR` zakłada go wtedy od nowa, a `PEXPIRE` zaraz po nim ustawia czas). Sól, której baza nie oddała, to błąd: skrót z pustą
+ * solą byłby tym samym skrótem u każdego klienta i w każdym oknie. Błąd bazy wychodzi na zewnątrz i niczego nie zapisuje w bramce.
  */
 export async function checkRate(redis: RedisExec, action: RateAction, who: Requester, now: number, opts: RateOptions = {}): Promise<RateCheck> {
-  const { window, perKey, perAddress } = RATE_LIMITS[action];
-  const index = Math.floor(now / (window * 1000));
-  const end = (index + 1) * window * 1000;
-  const left = Math.max(1, Math.ceil(end - now));   // ms do końca okna; zero albo minus usunęłoby klucz od razu
+  const { perKey, perAddress } = RATE_LIMITS[action];
+  const { window, index, left, retryAfter } = windowOf(action, now);
+  const local = await opts.gate?.peek(action, who, now);
+  if (local) return local;
+
   const saltKey = KEYS.salt(window, index);
   const [, saltRaw] = await redis.exec([['SET', saltKey, randomHex(16, opts.random), 'NX', 'PX', left], ['GET', saltKey]]);
   const salt = asString(saltRaw);
@@ -78,9 +174,10 @@ export async function checkRate(redis: RedisExec, action: RateAction, who: Reque
   if (who.owner !== null) counters.push(KEYS.rate(action, index, `k:${who.owner.slice(0, 32)}`));
   const results = await redis.exec(counters.flatMap((k) => [['INCR', k], ['PEXPIRE', k, left]]));
   const byAddress = asNumber(results[0]) ?? 0;
-  const byKey = who.owner !== null ? asNumber(results[2]) ?? 0 : 0;
-  const ok = byAddress <= perAddress && byKey <= perKey;
-  return { ok, retryAfter: ok ? 0 : Math.max(1, Math.ceil((end - now) / 1000)) };
+  const byKey = who.owner !== null ? asNumber(results[2]) ?? 0 : null;
+  await opts.gate?.record(action, who, now, { address: byAddress, key: byKey });
+  const ok = byAddress <= perAddress && (byKey ?? 0) <= perKey;
+  return { ok, retryAfter: ok ? 0 : retryAfter };
 }
 
 const DAY_MS = 86_400_000;

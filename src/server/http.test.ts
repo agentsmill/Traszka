@@ -10,6 +10,7 @@ import {
 } from './http';
 import { KEYS, ownerOf } from './keys';
 import { MemoryRedis } from './memoryRedis';
+import { createRateGate } from './rateLimit';
 import { run as runCommand } from './redis';
 import type { SubmittedRun } from './runs';
 import { testBundle } from './testBundle';
@@ -441,6 +442,92 @@ describe('limit zgłoszeń na poziomie handlerów: 429 z Retry-After na klucz i 
       expect((await c.call(deps, perAddress + 1, keyN(perAddress + 1), { 'x-real-ip': '2001:db8:abcd:13::1' })).status).not.toBe(429);
     });
   }
+
+  /**
+   * Bramka w pamięci instancji (`deps.rateGate`): kto przekroczył limit w bazie, przy kolejnych żądaniach z tego adresu albo tego
+   * klucza nie kosztuje już ani zapytania, ani polecenia, aż do końca okna. Bez bramki (reszta tego pliku) każde żądanie idzie do bazy.
+   */
+  for (const c of cases) {
+    const { perKey, perAddress, window } = RATE_LIMITS[c.action];
+    const gated = () => { const t = setup(); return { ...t, deps: { ...t.deps, rateGate: createRateGate() } as ServerDeps }; };
+
+    it(`${c.name} z bramką: po odmowie bazy na adres 100 następnych żądań z tego adresu to 429 za 0 zapytań i 0 poleceń`, async () => {
+      const { deps, redis } = gated();
+      for (let i = 0; i < perAddress; i++) expect((await c.call(deps, i, keyN(i), { 'x-real-ip': '203.0.113.7' })).status, `żądanie ${i + 1}`).not.toBe(429);
+      expect((await c.call(deps, perAddress, keyN(perAddress), { 'x-real-ip': '203.0.113.7' })).status).toBe(429);   // tę odrzuca baza
+      const [calls, commands] = [redis.calls, redis.commands];
+      for (let i = 0; i < 100; i++) {
+        const denied = await c.call(deps, perAddress + 1 + i, keyN(perAddress + 1 + i), { 'x-real-ip': '203.0.113.7' });
+        expect(denied.status).toBe(429);
+        expect((await body(denied)).error).toBe('rate-limited');
+        expect(denied.headers.get('cache-control')).toBe('no-store');
+        expect(Number(denied.headers.get('retry-after'))).toBe(window - (NOW / 1000) % window);
+      }
+      expect([redis.calls - calls, redis.commands - commands]).toEqual([0, 0]);
+      expect((await c.call(deps, 9999, keyN(9999), { 'x-real-ip': '198.51.100.9' })).status).not.toBe(429);   // inny adres przechodzi
+    });
+
+    it(`${c.name} z bramką: po odmowie bazy na klucz kolejne żądania tego klucza (z dowolnych adresów) kosztują 0, inny klucz przechodzi`, async () => {
+      const { deps, redis } = gated();
+      for (let i = 0; i < perKey; i++) expect((await c.call(deps, i, KEY_A, { 'x-real-ip': ipv4(i) })).status, `żądanie ${i + 1}`).not.toBe(429);
+      expect((await c.call(deps, perKey, KEY_A, { 'x-real-ip': ipv4(perKey) })).status).toBe(429);
+      const [calls, commands] = [redis.calls, redis.commands];
+      for (let i = 0; i < 100; i++) expect((await c.call(deps, 500 + i, KEY_A, { 'x-real-ip': ipv4(500 + i) })).status).toBe(429);
+      expect([redis.calls - calls, redis.commands - commands]).toEqual([0, 0]);
+      expect((await c.call(deps, 9999, KEY_B, { 'x-real-ip': ipv4(9999) })).status).not.toBe(429);
+    });
+
+    it(`${c.name} z bramką: odmowa trwa do końca okna, a w następnym oknie żądanie znów przechodzi przez bazę`, async () => {
+      const { deps, redis, clock } = gated();
+      for (let i = 0; i <= perAddress; i++) await c.call(deps, i, keyN(i), { 'x-real-ip': '203.0.113.7' });
+      const calls = redis.calls;
+      clock.now += (window - (NOW / 1000) % window) * 1000 - 1;   // ostatnia milisekunda okna
+      expect((await c.call(deps, 7000, keyN(7000), { 'x-real-ip': '203.0.113.7' })).status).toBe(429);
+      expect(redis.calls).toBe(calls);
+      clock.now += 1;
+      expect((await c.call(deps, 7001, keyN(7001), { 'x-real-ip': '203.0.113.7' })).status).not.toBe(429);
+      expect(redis.calls).toBeGreaterThan(calls);
+    });
+  }
+
+  const endpoints: [string, typeof handleRuns, string, RateAction][] = [
+    ['POST /api/runs', handleRuns, '/api/runs', 'runs'],
+    ['POST /api/player', handlePlayer, '/api/player', 'player'],
+    ['POST /api/save/upload', handleSaveUpload, '/api/save/upload', 'saveUp'],
+    ['POST /api/save/download', handleSaveDownload, '/api/save/download', 'saveDown'],
+  ];
+  for (const [name, handler, path, action] of endpoints) {
+    it(`${name}: adres, któremu bramka już odmawia, dostaje 429 przed odczytem ciała (nawet z żądaniem, które inaczej byłoby 400 albo 413), a inny adres jak dotąd`, async () => {
+      const { deps, redis } = setup();
+      const rateGate = createRateGate();
+      await rateGate.record(action, { owner: null, address: '203.0.113.7' }, NOW, { address: RATE_LIMITS[action].perAddress, key: null });
+      const gated = { ...deps, rateGate };
+      const bad = post(path, 'to nie JSON', { 'x-real-ip': '203.0.113.7' });
+      const huge = post(path, { key: KEY_A }, { 'x-real-ip': '203.0.113.7', 'content-length': '99999999' });
+      for (const req of [bad, huge]) {
+        const read = vi.spyOn(req, 'text');
+        const res = await handler(req, gated);
+        expect(res.status).toBe(429);
+        expect((await body(res)).error).toBe('rate-limited');
+        expect(Number(res.headers.get('retry-after'))).toBeGreaterThan(0);
+        expect(read).not.toHaveBeenCalled();
+      }
+      expect(redis.calls).toBe(0);
+      expect((await handler(post(path, 'to nie JSON', { 'x-real-ip': '198.51.100.9' }), gated)).status).toBe(400);
+      expect((await handler(post(path, { key: KEY_A }, { 'x-real-ip': '198.51.100.9', 'content-length': '99999999' }), gated)).status).toBe(413);
+      expect((await handler(get(path), gated)).status).toBe(405);   // metoda jest sprawdzana przed bramką
+    });
+  }
+
+  it('wczesna kontrola niczego nie liczy: żądania z poprawnym i niepoprawnym ciałem nie przybliżają adresu do odmowy', async () => {
+    const { deps, redis } = setup();
+    const rateGate = createRateGate();
+    const gated = { ...deps, rateGate };
+    for (let i = 0; i < 3 * RATE_LIMITS.player.perAddress; i++) await handlePlayer(post('/api/player', 'to nie JSON'), gated);
+    expect(redis.calls).toBe(0);
+    expect(rateGate.size).toBe(0);
+    expect((await handlePlayer(post('/api/player', { key: KEY_A }), gated)).status).toBe(200);
+  });
 
   it('odmowa limitu nie dotyka niczego poza licznikami: nick, wynik i zapis nie powstają', async () => {
     const { deps, redis } = setup();

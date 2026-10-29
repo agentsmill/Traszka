@@ -6,12 +6,13 @@ import { POST as player } from '../../api/player';
 import { POST as runs } from '../../api/runs';
 import { POST as download } from '../../api/save/download';
 import { POST as upload } from '../../api/save/upload';
-import { KNOWN_GENERATOR_VERSIONS } from './config';
+import { KNOWN_GENERATOR_VERSIONS, RATE_LIMITS } from './config';
 import { depsFromEnv, route } from './env';
 import { API_ERRORS } from './errors';
 import { fakeUpstash, type FakeUpstash } from './fakeUpstash';
-import { handleRuns } from './http';
+import { handlePlayer, handleRuns } from './http';
 import { MemoryRedis } from './memoryRedis';
+import { createRateGate } from './rateLimit';
 import { testBundle } from './testBundle';
 
 /**
@@ -150,6 +151,64 @@ describe('api/** na Vercelu (atrapa Upstash przez fetch)', () => {
       expect(logged).not.toContain(secret);
     }
     errors.mockRestore();
+  });
+});
+
+/**
+ * Bramka limitu to pamięć instancji funkcji: `route(...)` tworzy ją raz (plik `api/*.ts` ładuje się raz na instancję), a nie przy
+ * każdym żądaniu. Pliki `api/*.ts` w tym teście są ładowane raz na cały plik testowy, więc ich bramka jest wspólna dla testów,
+ * a baza w każdym teście nowa: testy, które wyczerpują limit, używają własnego klucza i adresu, żeby nie psuć pozostałych.
+ */
+describe('bramka limitu w pamięci instancji: route tworzy ją raz na instancję', () => {
+  const KEY2 = 'M2N3-P4Q5-R6S7-T8V9-W0XY';
+  const playerReq = (ip: string, key = KEY2): Request => new Request(`${ORIGIN}/api/player`, {
+    method: 'POST', headers: { 'content-type': 'application/json', 'x-real-ip': ip }, body: JSON.stringify({ key }),
+  });
+  const envOf = () => ({ RANKING_ENABLED: '1', KV_REST_API_URL: URL_, KV_REST_API_TOKEN: RW });
+  const KEY3 = 'W0XY-M2N3-P4Q5-R6S7-T8V9';
+  const exhaust = async (handler: (r: Request) => Promise<Response>, key = KEY2): Promise<void> => {
+    for (let i = 0; i < RATE_LIMITS.player.perKey; i++) expect((await handler(playerReq(`192.0.2.${i}`, key))).status, `żądanie ${i + 1}`).toBe(200);
+    expect((await handler(playerReq('192.0.2.200', key))).status).toBe(429);   // tę odrzuca baza
+  };
+
+  it('po odmowie bazy kolejne żądania przez ten sam route (nowe adresy, ten sam klucz) nie wołają fetch: 429 z Retry-After', async () => {
+    const handler = route(handlePlayer, { env: envOf, fetch: fetchSpy });
+    await exhaust(handler);
+    const [sent, logged] = [fetchSpy.mock.calls.length, upstash.log.length];
+    for (let i = 0; i < 100; i++) {
+      const res = await handler(playerReq(`192.0.3.${i}`));
+      expect(res.status).toBe(429);
+      expect(Number(res.headers.get('retry-after'))).toBeGreaterThan(0);
+    }
+    expect([fetchSpy.mock.calls.length, upstash.log.length]).toEqual([sent, logged]);
+  });
+
+  it('osobne wywołanie route to osobna pamięć (własna bramka), a bramka z RouteOptions może być wspólna', async () => {
+    await exhaust(route(handlePlayer, { env: envOf, fetch: fetchSpy, rateGate: createRateGate() }));
+    const calls = () => fetchSpy.mock.calls.length;
+    const before = calls();
+    expect((await route(handlePlayer, { env: envOf, fetch: fetchSpy })(playerReq('192.0.4.1'))).status).toBe(429);
+    expect(calls() - before).toBe(2);   // nowa instancja pyta bazę (sól, liczniki) i dopiero tę odmowę zapamiętuje
+    const shared = createRateGate();
+    await exhaust(route(handlePlayer, { env: envOf, fetch: fetchSpy, rateGate: shared }), KEY3);
+    const other = route(handlePlayer, { env: envOf, fetch: fetchSpy, rateGate: shared });
+    const again = calls();
+    expect((await other(playerReq('192.0.4.2', KEY3))).status).toBe(429);
+    expect(calls()).toBe(again);
+  });
+
+  it('wyłączony ranking nie dotyka ani bazy, ani bramki', async () => {
+    const gate = createRateGate();
+    const handler = route(handlePlayer, { env: () => ({ KV_REST_API_URL: URL_, KV_REST_API_TOKEN: RW }), fetch: fetchSpy, rateGate: gate });
+    expect((await handler(playerReq('192.0.5.1'))).status).toBe(503);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(gate.size).toBe(0);
+  });
+
+  it('depsFromEnv bez bramki w opcjach jej nie dodaje (handlery wołane wprost zachowują się jak dotąd)', () => {
+    expect(depsFromEnv({ ...envOf() })!.rateGate).toBeUndefined();
+    const gate = createRateGate();
+    expect(depsFromEnv({ ...envOf() }, { rateGate: gate })!.rateGate).toBe(gate);
   });
 });
 

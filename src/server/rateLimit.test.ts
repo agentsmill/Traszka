@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { BUDGET_TTL, RATE_LIMITS } from './config';
+import { BUDGET_TTL, RATE_GATE_MAX_ENTRIES, RATE_LIMITS, type RateAction } from './config';
 import { KEYS } from './keys';
 import { MemoryRedis } from './memoryRedis';
-import { addressBucket, checkBudget, checkRate, utcDay } from './rateLimit';
+import { addressBucket, checkBudget, checkRate, createRateGate, utcDay, type RateCheck } from './rateLimit';
 import { RedisError, run, type RedisExec } from './redis';
 
 const OWNER = 'a'.repeat(64);
@@ -163,6 +163,286 @@ describe('sól okna w bazie jest wymagana', () => {
     const err = await checkRate(lost, 'runs', who, NOON).catch((e: unknown) => e);
     expect(String((err as Error).message)).not.toContain(ADDRESS);
   });
+});
+
+/**
+ * Bramka w pamięci instancji. Zasada, którą pilnują poniższe testy: licznik w bramce to odczyt prawdziwego licznika z odpowiedzi
+ * bazy (`INCR`), więc nigdy go nie przekracza (liczniki w oknie tylko rosną), a odmowa z pamięci (licznik już na limicie) nie
+ * odrzuca niczego, czego baza by nie odrzuciła. Zapamiętana odmowa kosztuje 0 zapytań i 0 poleceń aż do końca okna.
+ */
+describe('bramka limitu w pamięci instancji (createRateGate)', () => {
+  const NOON = Date.UTC(2026, 9, 28, 12, 0, 0);
+  const owner = (i: number): string => i.toString(16).padStart(8, '0').padEnd(64, 'f');
+  const windowEnd = (action: RateAction, now: number): number => (Math.floor(now / (RATE_LIMITS[action].window * 1000)) + 1) * RATE_LIMITS[action].window * 1000;
+  const denial = (action: RateAction, now: number): RateCheck => ({ ok: false, retryAfter: Math.ceil((windowEnd(action, now) - now) / 1000) });
+  const cost = async (redis: MemoryRedis, fn: () => Promise<unknown>): Promise<{ calls: number; commands: number }> => {
+    const [calls, commands] = [redis.calls, redis.commands];
+    await fn();
+    return { calls: redis.calls - calls, commands: redis.commands - commands };
+  };
+
+  it('świeża bramka niczego nie odrzuca; licznik poniżej limitu też nie', async () => {
+    const gate = createRateGate();
+    const who = { owner: owner(1), address: ADDRESS };
+    expect(await gate.peek('runs', who, NOON)).toBeNull();
+    await gate.record('runs', who, NOON, { address: RATE_LIMITS.runs.perAddress - 1, key: RATE_LIMITS.runs.perKey - 1 });
+    expect(await gate.peek('runs', who, NOON)).toBeNull();
+  });
+
+  it('licznik adresu na limicie: odmowa dla każdego klucza z tego adresu (też kubełek IPv6 /64), nie dla innego adresu', async () => {
+    const gate = createRateGate();
+    const { perAddress } = RATE_LIMITS.runs;
+    await gate.record('runs', { owner: owner(1), address: '2001:db8:aaaa:bbbb::1' }, NOON, { address: perAddress, key: 1 });
+    expect(await gate.peek('runs', { owner: owner(2), address: '2001:db8:aaaa:bbbb:ffff::9' }, NOON)).toEqual(denial('runs', NOON));
+    expect(await gate.peek('runs', { owner: null, address: '2001:db8:aaaa:bbbb::7' }, NOON)).toEqual(denial('runs', NOON));
+    expect(await gate.peek('runs', { owner: owner(1), address: '2001:db8:aaaa:bbbc::1' }, NOON)).toBeNull();   // inny prefiks
+    expect(await gate.peek('runs', { owner: owner(1), address: '203.0.113.7' }, NOON)).toBeNull();
+  });
+
+  it('licznik klucza na limicie: odmowa dla tego klucza z dowolnego adresu, nie dla innego klucza', async () => {
+    const gate = createRateGate();
+    const { perKey } = RATE_LIMITS.runs;
+    await gate.record('runs', { owner: owner(1), address: '10.0.0.1' }, NOON, { address: 1, key: perKey });
+    expect(await gate.peek('runs', { owner: owner(1), address: '10.9.9.9' }, NOON)).toEqual(denial('runs', NOON));
+    expect(await gate.peek('runs', { owner: owner(2), address: '10.0.0.1' }, NOON)).toBeNull();
+    expect(await gate.peek('runs', { owner: null, address: '10.0.0.1' }, NOON)).toBeNull();   // sam adres (wczesna kontrola) klucza nie zna
+  });
+
+  it('limit jest dokładnie na progu: licznik równy limitowi odmawia (następny INCR dałby limit + 1), poniżej przepuszcza', async () => {
+    const gate = createRateGate();
+    const { perAddress } = RATE_LIMITS.player;
+    await gate.record('player', { owner: null, address: '10.0.0.1' }, NOON, { address: perAddress - 1, key: null });
+    expect(await gate.peek('player', { owner: null, address: '10.0.0.1' }, NOON)).toBeNull();
+    await gate.record('player', { owner: null, address: '10.0.0.1' }, NOON, { address: perAddress, key: null });
+    expect(await gate.peek('player', { owner: null, address: '10.0.0.1' }, NOON)).toMatchObject({ ok: false });
+  });
+
+  it('odczyt z odpowiedzi nie cofa zapamiętanej odmowy (odpowiedzi mogą wracać w odwrotnej kolejności)', async () => {
+    const gate = createRateGate();
+    const who = { owner: owner(1), address: ADDRESS };
+    await gate.record('runs', who, NOON, { address: RATE_LIMITS.runs.perAddress + 5, key: 1 });
+    await gate.record('runs', who, NOON, { address: 3, key: 1 });
+    expect(await gate.peek('runs', who, NOON)).toMatchObject({ ok: false });
+  });
+
+  it('odmowa jest osobna dla każdej akcji', async () => {
+    const gate = createRateGate();
+    const who = { owner: owner(1), address: ADDRESS };
+    await gate.record('runs', who, NOON, { address: RATE_LIMITS.runs.perAddress, key: 1 });
+    expect(await gate.peek('runs', who, NOON)).toMatchObject({ ok: false });
+    expect(await gate.peek('saveUp', who, NOON)).toBeNull();
+    expect(await gate.peek('player', who, NOON)).toBeNull();
+  });
+
+  it('Retry-After to czas do końca okna, malejący z upływem okna, i zawsze co najmniej sekunda; w następnym oknie odmowy już nie ma', async () => {
+    const gate = createRateGate();
+    const who = { owner: owner(1), address: ADDRESS };
+    await gate.record('runs', who, NOON, { address: RATE_LIMITS.runs.perAddress, key: 1 });
+    const end = windowEnd('runs', NOON);
+    expect(await gate.peek('runs', who, NOON)).toEqual({ ok: false, retryAfter: (end - NOON) / 1000 });
+    expect(await gate.peek('runs', who, end - 1_500)).toEqual({ ok: false, retryAfter: 2 });
+    expect(await gate.peek('runs', who, end - 1)).toEqual({ ok: false, retryAfter: 1 });
+    expect(await gate.peek('runs', who, end)).toBeNull();
+    expect(await gate.peek('runs', who, end + 3_600_000)).toBeNull();
+  });
+
+  it('w pamięci nie leży surowy adres ani prefiks IPv6, a skrót zależy od soli instancji (dwie bramki nazywają ten sam adres inaczej)', async () => {
+    const [a, b] = [createRateGate(), createRateGate()];
+    for (const address of [ADDRESS, '2001:db8:aaaa:bbbb::1', 'nieznany']) {
+      await a.record('runs', { owner: null, address }, NOON, { address: 1, key: null });
+      await b.record('runs', { owner: null, address }, NOON, { address: 1, key: null });
+    }
+    const names = a.keys().join(' ');
+    for (const leak of [ADDRESS, '2001', 'db8', 'bbbb', '/64', 'nieznany']) expect(names).not.toContain(leak);
+    expect(a.keys()).toHaveLength(3);
+    expect(a.keys().some((k) => b.keys().includes(k))).toBe(false);
+  });
+
+  it('wpisy z minionych okien wypadają, gdy bramka zapisuje coś w następnym oknie', async () => {
+    const gate = createRateGate();
+    for (let i = 0; i < 20; i++) await gate.record('runs', { owner: owner(i), address: `10.0.0.${i}` }, NOON, { address: 1, key: 1 });
+    for (let i = 0; i < 5; i++) await gate.record('player', { owner: null, address: `10.1.0.${i}` }, NOON, { address: 1, key: null });
+    expect(gate.size).toBe(20 * 2 + 5);
+    const end = windowEnd('player', NOON);   // krótsze okno (10 min) kończy się pierwsze
+    await gate.record('runs', { owner: owner(99), address: '10.9.9.9' }, end, { address: 1, key: 1 });
+    expect(gate.size).toBe(20 * 2 + 2);   // pięć wpisów okna „player” wypadło, bieżące zapisy dopisane
+    const later = windowEnd('runs', NOON);
+    await gate.record('runs', { owner: owner(100), address: '10.9.9.10' }, later, { address: 1, key: 1 });
+    expect(gate.size).toBe(2);   // wszystko ze starych okien wypadło, zostały dwa wpisy nowego okna
+  });
+
+  it('pamięć jest ograniczona: po przepełnieniu najstarsze wpisy wypadają, najnowsze zostają', async () => {
+    const gate = createRateGate({ maxEntries: 50 });
+    const full = RATE_LIMITS.runs.perAddress;
+    for (let i = 0; i < 500; i++) await gate.record('runs', { owner: null, address: `10.${i >> 8}.${i & 255}.1` }, NOON, { address: full, key: null });
+    expect(gate.size).toBe(50);
+    expect(await gate.peek('runs', { owner: null, address: '10.0.0.1' }, NOON)).toBeNull();   // dawna odmowa wypadła z pamięci
+    expect(await gate.peek('runs', { owner: null, address: `10.${499 >> 8}.${499 & 255}.1` }, NOON)).toMatchObject({ ok: false });
+  });
+
+  it('wpis odświeżany częściej wypada później (aktywny adres nie ginie przed nieaktywnymi)', async () => {
+    const gate = createRateGate({ maxEntries: 3 });
+    const at = (n: number) => ({ owner: null, address: `10.0.0.${n}` });
+    const seen = (address: number) => ({ address, key: null });
+    await gate.record('runs', at(1), NOON, seen(1));
+    await gate.record('runs', at(2), NOON, seen(1));
+    await gate.record('runs', at(3), NOON, seen(1));
+    await gate.record('runs', at(1), NOON, seen(RATE_LIMITS.runs.perAddress));   // odświeżony: najmłodszy
+    await gate.record('runs', at(4), NOON, seen(1));   // przepełnienie: wypada najstarszy, czyli adres 2
+    expect(gate.size).toBe(3);
+    expect(await gate.peek('runs', at(1), NOON)).toMatchObject({ ok: false });
+    await gate.record('runs', at(2), NOON, seen(RATE_LIMITS.runs.perAddress));   // adres 2 wraca jako nowy wpis, wypada 3
+    expect(await gate.peek('runs', at(2), NOON)).toMatchObject({ ok: false });
+  });
+
+  it('domyślny limit pamięci to 10 000 wpisów', () => {
+    expect(RATE_GATE_MAX_ENTRIES).toBe(10_000);
+  });
+
+  describe('razem z checkRate', () => {
+    const who = (i: number, address = ADDRESS) => ({ owner: owner(i), address });
+
+    it('żądanie odrzucone przez bazę zostaje zapamiętane: następne 100 z tego adresu kosztuje 0 zapytań i 0 poleceń, z tym samym wynikiem', async () => {
+      const redis = new MemoryRedis(() => NOON);
+      const gate = createRateGate();
+      const { perAddress } = RATE_LIMITS.runs;
+      for (let i = 0; i < perAddress; i++) expect((await checkRate(redis, 'runs', who(i), NOON, { gate })).ok).toBe(true);
+      const first = await checkRate(redis, 'runs', who(1000), NOON, { gate });
+      expect(first).toEqual(denial('runs', NOON));
+      const spent = await cost(redis, async () => {
+        for (let i = 0; i < 100; i++) expect(await checkRate(redis, 'runs', who(2000 + i), NOON, { gate })).toEqual(denial('runs', NOON));
+      });
+      expect(spent).toEqual({ calls: 0, commands: 0 });
+    });
+
+    it('to samo dla klucza: po odmowie na kluczu 100 następnych z różnych adresów kosztuje 0, a inny klucz przechodzi', async () => {
+      const redis = new MemoryRedis(() => NOON);
+      const gate = createRateGate();
+      for (let i = 0; i < RATE_LIMITS.runs.perKey; i++) await checkRate(redis, 'runs', who(7, `10.0.0.${i}`), NOON, { gate });
+      expect(await checkRate(redis, 'runs', who(7, '10.0.1.1'), NOON, { gate })).toEqual(denial('runs', NOON));
+      const spent = await cost(redis, async () => {
+        for (let i = 0; i < 100; i++) expect((await checkRate(redis, 'runs', who(7, `10.1.0.${i}`), NOON, { gate })).ok).toBe(false);
+      });
+      expect(spent).toEqual({ calls: 0, commands: 0 });
+      expect((await checkRate(redis, 'runs', who(8, '10.1.1.1'), NOON, { gate })).ok).toBe(true);
+    });
+
+    it('odmowa na kluczu nie zużywa limitu adresu (odrzucone z pamięci nie dochodzi do bazy, więc nie liczy się nigdzie)', async () => {
+      const redis = new MemoryRedis(() => NOON);
+      const gate = createRateGate();
+      for (let i = 0; i < RATE_LIMITS.runs.perKey; i++) await checkRate(redis, 'runs', who(7, `10.0.0.${i}`), NOON, { gate });
+      for (let i = 0; i < 100; i++) await checkRate(redis, 'runs', who(7, '10.7.7.7'), NOON, { gate });   // odmowy z pamięci
+      for (let i = 0; i < RATE_LIMITS.runs.perAddress; i++) expect((await checkRate(redis, 'runs', who(100 + i, '10.7.7.7'), NOON, { gate })).ok, `żądanie ${i + 1}`).toBe(true);
+      expect((await checkRate(redis, 'runs', who(999, '10.7.7.7'), NOON, { gate })).ok).toBe(false);
+    });
+
+    it('odmowa zapamiętana z odpowiedzi bazy, której instancja sama nie spowodowała (liczniki innych instancji): pierwsze żądanie idzie do bazy, następne już nie', async () => {
+      const redis = new MemoryRedis(() => NOON);
+      const other = createRateGate();
+      for (let i = 0; i < RATE_LIMITS.runs.perAddress; i++) await checkRate(redis, 'runs', who(i), NOON, { gate: other });
+      const mine = createRateGate();   // druga instancja, ta sama baza, pusta pamięć
+      expect(await cost(redis, () => checkRate(redis, 'runs', who(1000), NOON, { gate: mine }))).toEqual({ calls: 2, commands: 6 });
+      expect(await cost(redis, async () => {
+        for (let i = 0; i < 100; i++) await checkRate(redis, 'runs', who(2000 + i), NOON, { gate: mine });
+      })).toEqual({ calls: 0, commands: 0 });
+    });
+
+    it('odmowa trwa do końca okna, a w następnym oknie żądanie znów dochodzi do bazy i przechodzi', async () => {
+      const clock = { now: NOON };
+      const redis = new MemoryRedis(() => clock.now);
+      const gate = createRateGate();
+      for (let i = 0; i <= RATE_LIMITS.runs.perAddress; i++) await checkRate(redis, 'runs', who(i), clock.now, { gate });
+      const end = windowEnd('runs', NOON);
+      for (const t of [NOON + 1, end - 1_000, end - 1]) {
+        clock.now = t;
+        expect(await cost(redis, () => checkRate(redis, 'runs', who(5000), clock.now, { gate })), `t=${t}`).toEqual({ calls: 0, commands: 0 });
+      }
+      clock.now = end;
+      const next = await cost(redis, async () => expect((await checkRate(redis, 'runs', who(5000), clock.now, { gate })).ok).toBe(true));
+      expect(next.calls).toBeGreaterThan(0);
+    });
+
+    it('błąd bazy nie zapisuje niczego w bramce (licznik w bramce nigdy nie przekracza prawdziwego)', async () => {
+      const gate = createRateGate();
+      const broken: RedisExec = { exec: async () => { throw new RedisError('Upstash: brak połączenia'); } };
+      for (let i = 0; i < 3 * RATE_LIMITS.runs.perAddress; i++) await expect(checkRate(broken, 'runs', who(i), NOON, { gate })).rejects.toBeInstanceOf(RedisError);
+      expect(gate.size).toBe(0);
+      expect(await gate.peek('runs', who(1), NOON)).toBeNull();
+    });
+
+    it('równoległe żądania nie dostają odmowy na zapas: o przepuszczeniu decyduje baza, a potem bramka pamięta odmowę', async () => {
+      const redis = new MemoryRedis(() => NOON);
+      const gate = createRateGate();
+      const { perAddress } = RATE_LIMITS.runs;
+      const results = await Promise.all(Array.from({ length: perAddress + 20 }, (_, i) => checkRate(redis, 'runs', who(i), NOON, { gate })));
+      expect(results.filter((r) => r.ok)).toHaveLength(perAddress);
+      expect(await cost(redis, () => checkRate(redis, 'runs', who(9999), NOON, { gate }))).toEqual({ calls: 0, commands: 0 });
+    });
+
+    it('bez bramki każde żądanie idzie do bazy (zachowanie jak dotąd): 100 odmów kosztuje 200 zapytań i 600 poleceń', async () => {
+      const redis = new MemoryRedis(() => NOON);
+      for (let i = 0; i <= RATE_LIMITS.runs.perAddress; i++) await checkRate(redis, 'runs', who(i), NOON);
+      expect(await cost(redis, async () => {
+        for (let i = 0; i < 100; i++) await checkRate(redis, 'runs', who(2000 + i), NOON);
+      })).toEqual({ calls: 200, commands: 600 });
+    });
+  });
+});
+
+/** Ziarnisty generator (mulberry32): testy losowe mają się powtarzać. */
+function seeded(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+describe('własność: bramka nigdy nie odrzuca tego, czego sama baza nie odrzuciłaby', () => {
+  const ACTIONS: RateAction[] = ['runs', 'player', 'saveUp', 'saveDown'];
+  // Mało adresów i kluczy, żeby limity (12 do 120 na okno) naprawdę się przekraczały; dwa adresy IPv6 to jeden kubełek /64.
+  const ADDRESSES = ['203.0.113.7', '198.51.100.1', '2001:db8:aaaa:bbbb::1', '2001:db8:aaaa:bbbb:ffff::2', 'nieznany'];
+  const OWNERS = Array.from({ length: 3 }, (_, i) => i.toString(16).padStart(8, '0').padEnd(64, 'e'));
+
+  for (const [name] of [['sól okna w bazie']] as const) {
+    for (const seed of [1, 2, 3]) {
+      it(`${name}, ziarno ${seed}: 4000 żądań z 3 instancji na wspólnej bazie; odmowa z pamięci ⇒ baza bez bramki też odmawia, z tym samym Retry-After`, async () => {
+        const rand = seeded(seed);
+        const pick = <T,>(xs: readonly T[]): T => xs[Math.floor(rand() * xs.length)]!;
+        const clock = { now: Date.UTC(2026, 9, 28, 12) };
+        const shared = new MemoryRedis(() => clock.now);       // baza z bramkami (3 instancje)
+        const reference = new MemoryRedis(() => clock.now);    // ta sama historia żądań, bez bramek
+        const gates = [createRateGate(), createRateGate(), createRateGate()];
+        let local = 0;
+        let windows = 0;
+        let lastIndex = Math.floor(clock.now / 3_600_000);
+        for (let step = 0; step < 4000; step++) {
+          if (rand() < 0.01) clock.now += Math.floor(rand() * 2_400_000);   // rzadkie skoki: okna się zmieniają, ale limity są osiągane
+          const index = Math.floor(clock.now / 3_600_000);
+          if (index !== lastIndex) { windows++; lastIndex = index; }
+          const action = pick(ACTIONS);
+          const requester = { owner: rand() < 0.15 ? null : pick(OWNERS), address: pick(ADDRESSES) };
+          const calls = shared.calls;
+          const withGate = await checkRate(shared, action, requester, clock.now, { gate: pick(gates) });
+          const denied = shared.calls === calls;
+          const plain = await checkRate(reference, action, requester, clock.now);
+          if (denied) {
+            local++;
+            expect(withGate, `krok ${step}`).toEqual({ ok: false, retryAfter: plain.retryAfter });
+            expect(plain.ok, `krok ${step}: baza bez bramki przepuściłaby to, co bramka odrzuciła`).toBe(false);
+          }
+          if (plain.ok) expect(withGate.ok, `krok ${step}: bramka odrzuciła przepuszczone przez bazę`).toBe(true);
+        }
+        expect(local).toBeGreaterThan(300);   // test nie jest pusty: bramka naprawdę odrzucała
+        expect(windows).toBeGreaterThan(2);   // i przeżyła zmiany okien
+        expect(shared.calls).toBeLessThan(reference.calls);
+        expect(shared.commands).toBeLessThan(reference.commands);
+      });
+    }
+  }
 });
 
 describe('doba UTC', () => {
