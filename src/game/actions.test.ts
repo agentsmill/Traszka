@@ -3034,6 +3034,61 @@ describe('powłoka gry (createShell)', () => {
             expect(() => dropUnsentRun()).not.toThrow();
             expect(storage.getItem('traszka:last')).toBe('traszka-1');
           });
+
+          it('spóźnione przyjęcie (okno zamknięte w trakcie wysyłania, potem „Porzuć i zacznij”) nie rusza aktywnego zapisu nowego biegu', () => {
+            saveFinished(drawerRun('bieg-a'));   // seed 'bieg-a', finishedAt 1000: ten bieg poszedł do serwera
+            const h = harness();
+            expect(ui.unsent.value).toMatchObject({ seed: 'bieg-a' });
+            // gracz zamknął okno i zaczął nowy bieg, porzucając niewysłany: szuflada pusta, w przeglądarce aktywny zapis nowego biegu
+            expect(h.shell.startRanked('nowy-bieg', { replace: true })).toBe(true);
+            expect(loadFinished()).toBeNull();
+            const active = storage.getItem('traszka:ranked');
+            expect(active).not.toBeNull();
+            expect(loadRanked()).toMatchObject({ status: 'ok', session: { seed: 'nowy-bieg' } });
+            ui.finish.value = null;
+            ui.toasts.value = [];
+
+            dropUnsentRun({ seed: 'bieg-a', finishedAt: 1_000 });   // odpowiedź serwera „przyjęty” dla biegu, którego już nie ma w szufladzie
+
+            expect(storage.getItem('traszka:ranked')).toBe(active);   // aktywny zapis nowego biegu bajt w bajt
+            expect(h.shell.session!.seed).toBe('nowy-bieg');
+            expect(ui.unsent.value).toBeNull();
+            expect(ui.toasts.value.map((t) => t.text)).toEqual(['Bieg przyjęty do rankingu.']);   // okno zamknięte: gracz dowiaduje się z toastu
+          });
+
+          it('przyjęcie innego biegu niż ten w szufladzie (inny seed albo inna chwila końca) zostawia szufladę i aktywny zapis', () => {
+            const kept = drawerRun('bieg-a');
+            saveFinished(kept);
+            storage.setItem('traszka:ranked', '{"zapis":"aktywny"}');
+            harness();
+            for (const sent of [{ seed: 'bieg-b', finishedAt: 1_000 }, { seed: 'bieg-a', finishedAt: 999 }]) {
+              dropUnsentRun(sent);
+              expect(loadFinished(), JSON.stringify(sent)).toEqual(kept);
+              expect(storage.getItem('traszka:ranked')).toBe('{"zapis":"aktywny"}');
+              expect(ui.unsent.value).toMatchObject({ seed: 'bieg-a' });
+            }
+          });
+
+          it('przyjęcie tego samego biegu opróżnia szufladę i aktywny zapis; toast tylko przy zamkniętym oknie', () => {
+            saveFinished(drawerRun('bieg-a'));
+            storage.setItem('traszka:ranked', '{"zapis":"aktywny"}');
+            harness();
+            ui.toasts.value = [];
+            ui.finish.value = { open: true };   // okno otwarte: przyjęcie pokazuje samo okno
+            dropUnsentRun({ seed: 'bieg-a', finishedAt: 1_000 });
+            expect(loadFinished()).toBeNull();
+            expect(storage.getItem('traszka:ranked')).toBeNull();
+            expect(ui.unsent.value).toBeNull();
+            expect(ui.toasts.value).toEqual([]);
+
+            saveFinished(drawerRun('bieg-a'));
+            ui.finish.value = null;
+            dropUnsentRun({ seed: 'bieg-a', finishedAt: 1_000 });
+            expect(ui.toasts.value.map((t) => t.text)).toEqual(['Bieg przyjęty do rankingu.']);
+            ui.toasts.value = [];
+            dropUnsentRun();   // ręczne „Odrzuć bieg”: bez toastu o przyjęciu
+            expect(ui.toasts.value).toEqual([]);
+          });
         });
       });
 

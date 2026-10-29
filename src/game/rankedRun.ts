@@ -54,6 +54,9 @@ export interface FinishedRun {
   finishedAt: number;
 }
 
+/** Który bieg poszedł do serwera: seed i chwila końca (`finishedAt`) wystarczają, żeby odróżnić go od innego biegu w szufladzie. */
+export type SentRun = Pick<FinishedRun, 'seed' | 'finishedAt'>;
+
 // --- localStorage bez wyjątków ------------------------------------------------------------------------------------------
 
 function read(key: string): string | null {

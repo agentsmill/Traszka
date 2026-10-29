@@ -45,6 +45,22 @@ describe('classify: odpowiedź serwera na wysłany bieg', () => {
     expect(classify(weird)).toMatchObject({ kind: 'accepted', accepted: { ranks: { global: null, seed: null, week: 4 } } });
   });
 
+  it('goły { ok: true } (bez wyniku i nicka) to nie przyjęcie: „spróbuj później”, bo przyjęcie kasuje bieg z szuflady', () => {
+    const bare = [
+      { ok: true },
+      { ok: true, queued: true },
+      { ok: true, nick: 'Ala' },
+      { ok: true, score: 5 },
+      { ok: true, nick: 'Ala', score: Number.NaN },
+      { ok: true, nick: 'Ala', score: '5' },
+      { ok: true, nick: 7, score: 5 },
+      { ok: true, nick: 'Ala', score: Number.POSITIVE_INFINITY },
+    ] as unknown as ApiResult<RunAccepted>[];
+    for (const res of bare) expect(classify(res), JSON.stringify(res)).toEqual({ kind: 'later', message: LATER_TEXT });
+    expect(classify({ ok: true, nick: 'Ala', score: 0, best: 0, improved: false } as ApiResult<RunAccepted>)).toMatchObject({ kind: 'accepted' });   // zero i ujemny to wynik
+    expect(classify({ ok: true, nick: 'Ala', score: -5, best: -5, improved: true } as ApiResult<RunAccepted>)).toMatchObject({ kind: 'accepted' });
+  });
+
   it('zajęty nick i stara wersja mają własne wyniki', () => {
     expect(classify(failure('nick-taken'))).toEqual({ kind: 'nick-taken', message: NICK_TAKEN_TEXT });
     expect(classify(failure('old-version'))).toEqual({ kind: 'old-version', message: OLD_VERSION_TEXT });
@@ -143,6 +159,48 @@ describe('model okna końca sezonu', () => {
     expect(rememberNick).toHaveBeenCalledWith('Kasjer Roku');
   });
 
+  it('clear po przyjęciu dostaje bieg, który poszedł do serwera (seed i chwilę końca), także gdy szuflada zmieniła się w trakcie wysyłania', async () => {
+    let finish!: (r: ApiResult<RunAccepted>) => void;
+    const { model, clear } = setup({ replies: [() => new Promise<ApiResult<RunAccepted>>((resolve) => { finish = resolve; })] });
+    const sending = model.send();
+    saveFinished(finishedRun({ seed: 'nowszy-bieg', finishedAt: 2_000 }));   // gracz zamknął okno i zaczął kolejny bieg
+    finish(accepted());
+    await sending;
+    expect(clear).toHaveBeenCalledTimes(1);
+    expect(clear).toHaveBeenCalledWith({ seed: SEED, finishedAt: 1_000 });
+  });
+
+  it('odrzucenie (discard) woła clear bez argumentu: kasuje to, co jest w szufladzie', () => {
+    const { model, clear } = setup();
+    model.discard();
+    expect(clear).toHaveBeenCalledTimes(1);
+    expect(clear).toHaveBeenCalledWith();
+  });
+
+  it('setNick nie czyta szuflady (parsowanie do ~1 MB na klawisz): komunikat wraca ze stanu modelu', async () => {
+    const finished = vi.fn(pendingFinished);
+    saveFinished(finishedRun());
+    const player = { key: KEY as string | undefined, nick: 'Mateusz' as string | null };
+    const client: RankingClient = { board: vi.fn(), player: vi.fn(), uploadSave: vi.fn(), downloadSave: vi.fn(), submitRun: vi.fn(async () => failure('ranking-off')) };
+    const model = createFinishModel({ client, finished, clear: vi.fn(), player: () => player, rememberNick: vi.fn() });
+    model.open();
+    await model.send();
+    expect(model.phase.value).toBe('later');
+    const reads = finished.mock.calls.length;
+    for (const text of ['A', 'Al', 'Ala', 'Ala ', 'Ala K']) model.setNick(text);
+    expect(finished.mock.calls.length).toBe(reads);
+    expect(model.message.value).toBe(LATER_TEXT);   // komunikat fazy po poprawce nicka, jak dotąd
+    model.setNick('x'.repeat(30));
+    expect(model.nick.value).toHaveLength(30);
+
+    // bez biegu w modelu (szuflada pusta przy otwarciu) setNick nic nie zmienia w komunikacie
+    clearFinished();
+    model.open();
+    expect(model.message.value).toBe(NOTHING_TO_SEND_TEXT);
+    model.setNick('Inny');
+    expect(model.message.value).toBe(NOTHING_TO_SEND_TEXT);
+  });
+
   it('w trakcie wysyłania: faza „sending”, komunikat o wysyłaniu, bieg jeszcze w szufladzie', async () => {
     let finish!: (r: ApiResult<RunAccepted>) => void;
     const { model, clear } = setup({ replies: [() => new Promise<ApiResult<RunAccepted>>((resolve) => { finish = resolve; })] });
@@ -193,6 +251,19 @@ describe('model okna końca sezonu', () => {
       expect(clear).not.toHaveBeenCalled();
       expect(rememberNick).not.toHaveBeenCalled();
       expect(model.places.value).toBeNull();
+    });
+
+    it.each([{ ok: true }, { ok: true, queued: true }])('goły sukces %j nie kasuje biegu: faza „later”, szuflada i clear nietknięte', async (bare) => {
+      const { model, clear, rememberNick } = setup({ replies: [bare as unknown as ApiResult<RunAccepted>] });
+      const before = loadFinished()!;
+      await model.send();
+      expect(model.phase.value).toBe('later');
+      expect(model.message.value).toBe(LATER_TEXT);
+      expect(model.accepted.value).toBeNull();
+      expect(clear).not.toHaveBeenCalled();
+      expect(rememberNick).not.toHaveBeenCalled();
+      expect(loadFinished()).toEqual(before);
+      expect(pendingFinished()).toEqual(before);
     });
 
     it('odpowiedź bez JSON-a (strona 404 zamiast API) to „spróbuj później”, a bieg zostaje', async () => {

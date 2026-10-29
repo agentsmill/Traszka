@@ -13,7 +13,7 @@ import { addToNetwork, claimDaily, partnerOf, saveMeta, startupWindow, type Meta
 import { openStore } from './openStore';
 import {
   RANKED_BANKRUPT_TEXT, RANKED_DAYS, clearFinished, createRankedSession, discardRanked, finishRun, getPlayMode, holdFinished, loadRanked, pendingFinished,
-  rankedDayOf, rankedRunStale, saveFinished, saveRanked, seasonOver, setPlayMode, storedRankedBlock, type FinishedRun,
+  rankedDayOf, rankedRunStale, saveFinished, saveRanked, seasonOver, setPlayMode, storedRankedBlock, type FinishedRun, type SentRun,
 } from './rankedRun';
 import type { ScenePick } from './scene';
 import { chooseStore, freeSeed } from './seeds';
@@ -385,15 +385,28 @@ export function syncUnsent(): void {
   ui.unsent.value = next;
 }
 
+/** Toast, gdy serwer przyjął bieg po zamknięciu okna końca sezonu (okno otwarte pokazuje przyjęcie samo). */
+export const RANKED_ACCEPTED_LATE_TEXT = 'Bieg przyjęty do rankingu.';
+
 /**
- * Niewysłany bieg przestaje istnieć: serwer go przyjął albo gracz kliknął „Odrzuć bieg”. Opróżnia szufladę i pamięć karty
- * (`clearFinished`), kasuje aktywny zapis biegu (`discardRanked`: gdy szuflada nie przyjęła biegu przy końcu sezonu, zapis czeka na
- * przeładowanie, które zamknęłoby ten sam sezon od nowa i oddało bieg do szuflady) i odświeża `ui.unsent`. Aktywnego biegu, który
- * jeszcze się toczy, to nie dotyczy: niewysłany bieg i trwający bieg nie istnieją naraz (`startRanked` pyta o to, zanim cokolwiek skasuje).
+ * Niewysłany bieg przestaje istnieć: serwer go przyjął (`sent`: który bieg poszedł) albo gracz kliknął „Odrzuć bieg” (bez argumentu).
+ * Opróżnia szufladę i pamięć karty (`clearFinished`), kasuje aktywny zapis biegu (`discardRanked`: gdy szuflada nie przyjęła biegu przy
+ * końcu sezonu, zapis czeka na „Kontynuuj bieg rankingowy” albo przeładowanie przed „Zamknij”, które zamknęłyby ten sam sezon od nowa
+ * i oddały bieg do szuflady) i odświeża `ui.unsent`. Aktywnego biegu, który jeszcze się toczy, to nie dotyczy: niewysłany bieg i trwający
+ * bieg nie istnieją naraz (`startRanked` pyta o to, zanim cokolwiek skasuje).
+ *
+ * Odpowiedź serwera bywa spóźniona: gracz zamknął okno w trakcie wysyłania i zaczął nowy bieg („Porzuć i zacznij” już opróżniło szufladę
+ * i zapisało aktywny bieg nowego sezonu). Gdy podano `sent`, a niewysłany bieg to już nie ten (inny `seed` albo `finishedAt`, albo nie
+ * ma żadnego), zapisu nie ruszamy: tylko odświeżamy `ui.unsent`. Gdy okno końca sezonu jest zamknięte, przyjęcie dostaje toast, bo nikt
+ * inny nie powie graczowi, że bieg jest w rankingu.
  */
-export function dropUnsentRun(): void {
-  clearFinished();
-  discardRanked();
+export function dropUnsentRun(sent?: SentRun): void {
+  if (sent !== undefined && !ui.finish.value) ui.pushToast(RANKED_ACCEPTED_LATE_TEXT, 'info');
+  const pending = pendingFinished();
+  if (sent === undefined || (pending !== null && pending.seed === sent.seed && pending.finishedAt === sent.finishedAt)) {
+    clearFinished();
+    discardRanked();
+  }
   syncUnsent();
 }
 

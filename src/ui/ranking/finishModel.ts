@@ -1,6 +1,6 @@
 import { computed, signal, type ReadonlySignal } from '@preact/signals';
 import { normalizeNick } from '@/game/nick';
-import type { FinishedRun } from '@/game/rankedRun';
+import type { FinishedRun, SentRun } from '@/game/rankedRun';
 import { NETWORK_ERROR, type ApiResult, type RankingClient, type RunAccepted } from './client';
 
 /**
@@ -35,6 +35,15 @@ const REJECTED_CODES: ReadonlySet<string> = new Set(['bad-request', 'bad-log', '
 /** Miejsce w rankingu to liczba skończona od 1; cokolwiek innego (brak pola, tekst, NaN) znaczy „nie ma go tam”. */
 const placeOf = (x: unknown): number | null => (typeof x === 'number' && Number.isFinite(x) ? x : null);
 
+/**
+ * Czy odpowiedź `ok` jest naprawdę przyjęciem biegu: ma wynik (liczbę skończoną) i nick, które policzył i zapisał serwer. Goły `{ ok: true }`
+ * (strona pośrednia, proxy, serwer w pół drogi) nie dowodzi, że bieg jest w rankingu, a przyjęcie kasuje bieg z szuflady, więc taka
+ * odpowiedź to „spróbuj później”: bieg zostaje.
+ */
+function isAcceptance(res: { ok: true } & Partial<RunAccepted>): res is { ok: true } & RunAccepted {
+  return typeof res.score === 'number' && Number.isFinite(res.score) && typeof res.nick === 'string';
+}
+
 function acceptedOf(res: { ok: true } & RunAccepted): RunAccepted {
   const ranks: Partial<Record<keyof RunAccepted['ranks'], unknown>> = res.ranks ?? {};
   return {
@@ -50,7 +59,7 @@ function acceptedOf(res: { ok: true } & RunAccepted): RunAccepted {
  * odpowiedź spoza API i każdy nieznany kod) to „spróbuj później”: z tym samym biegiem za chwilę może pójść.
  */
 export function classify(res: ApiResult<RunAccepted>): SendOutcome {
-  if (res.ok) return { kind: 'accepted', accepted: acceptedOf(res) };
+  if (res.ok) return isAcceptance(res) ? { kind: 'accepted', accepted: acceptedOf(res) } : { kind: 'later', message: LATER_TEXT };
   if (res.error === 'nick-taken') return { kind: 'nick-taken', message: NICK_TAKEN_TEXT };
   if (res.error === 'old-version') return { kind: 'old-version', message: OLD_VERSION_TEXT };
   if (res.error === 'season-bankrupt') return { kind: 'rejected', message: BANKRUPT_TEXT };
@@ -66,9 +75,12 @@ export interface FinishDeps {
   finished: () => FinishedRun | null;
   /**
    * Opróżnia wszystko, co trzyma bieg po przyjęciu albo odrzuceniu: szufladę i pamięć karty, aktywny zapis biegu (gdyby zapis szuflady
-   * się nie udał, wskrzesiłby bieg po przeładowaniu) i widok niewysłanego biegu w interfejsie (`dropUnsentRun` w actions.ts).
+   * się nie udał, wskrzesiłby bieg po przeładowaniu) i widok niewysłanego biegu w interfejsie (`dropUnsentRun` w actions.ts). Po
+   * przyjęciu dostaje `sent`: bieg, który poszedł do serwera. Odpowiedź bywa spóźniona (gracz zamknął okno w trakcie wysyłania i zaczął
+   * nowy bieg), więc `clear` ma ruszyć szufladę i aktywny zapis tylko wtedy, gdy nadal należą do tego biegu. Bez argumentu (ręczne
+   * „Odrzuć bieg”) kasuje to, co jest.
    */
-  clear: () => void;
+  clear: (sent?: SentRun) => void;
   /** Gracz z mety: klucz i nick (undefined przed ekranem startowym). */
   player: () => { key?: string; nick: string | null } | undefined;
   /** Zapamiętuje nick, pod którym bieg został przyjęty (gra zapisuje go w mecie). */
@@ -139,7 +151,7 @@ export function createFinishModel(deps: FinishDeps): FinishModel {
 
   function setNick(text: string): void {
     nick.value = text;
-    if (phase.value !== 'sending' && deps.finished()) settle();   // błąd poprzedniej próby nie zostaje przy już poprawionym nicku
+    if (phase.value !== 'sending' && score.value !== null) settle();   // błąd poprzedniej próby nie zostaje przy już poprawionym nicku; stan modelu, bo szuflada to do ~1 MB JSON-a na klawisz
   }
 
   async function send(): Promise<void> {
@@ -160,6 +172,7 @@ export function createFinishModel(deps: FinishDeps): FinishModel {
       return;
     }
 
+    const sent: SentRun = { seed: run.seed, finishedAt: run.finishedAt };   // odpowiedź może przyjść, gdy szuflada ma już inny bieg
     phase.value = 'sending';
     settle();
     let result: ApiResult<RunAccepted>;
@@ -170,7 +183,7 @@ export function createFinishModel(deps: FinishDeps): FinishModel {
     }
     const outcome = classify(result);
     if (outcome.kind === 'accepted') {
-      deps.clear();
+      deps.clear(sent);
       outcomeMessage = null;
       accepted.value = outcome.accepted;
       if (Number.isFinite(outcome.accepted.score)) score.value = outcome.accepted.score;
