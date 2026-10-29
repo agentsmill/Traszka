@@ -8,6 +8,7 @@
     "assets": "node scripts/process-assets.mjs",
     "audio": "node scripts/process-audio.mjs",
     "build:judge": "node scripts/build-judge.mjs",
+    "ranking:smoke": "node scripts/ranking-smoke.mjs",
     "build": "npm run build:judge && tsc --noEmit && vite build",
     "preview": "vite preview",
     "test": "vitest run",
