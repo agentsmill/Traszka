@@ -508,7 +508,8 @@ export function createShell(deps: ShellDeps): GameShell {
    *   nie w dzienniku), aktywny zapis zostaje: przeładowanie strony przed „Zamknij” wznowi bieg z końca sezonu i zamknie go ponownie
    *   (to samo wejście, ten sam wynik), a po „Zamknij” (`leaveRanked` ustawia tryb `casual`) bieg wraca przez wiersz „Kontynuuj bieg
    *   rankingowy” w ustawieniach. Bieg do wysłania (w szufladzie albo w pamięci karty) otwiera okno końca sezonu (`ui.finish`): gracz
-   *   widzi wynik i wysyła go albo zamyka okno.
+   *   widzi wynik i wysyła go albo zamyka okno. Gdy na ekranie stoi raport miesiąca (listopadowy, z tej samej klatki), okno otwiera dopiero
+   *   jego „Dalej”, żeby gracz zobaczył raport końcowy sezonu.
    */
   function concludeSeason(): void {
     const { session } = shell;
@@ -542,7 +543,10 @@ export function createShell(deps: ShellDeps): GameShell {
     }
     syncUnsent();
     publish();   // faza `over` od razu, nie dopiero przy następnej publikacji
-    if (finished !== null) openFinishWindow();   // bieg do wysłania (w szufladzie albo w pamięci karty): okno z wynikiem, nad kartą decyzji i raportem
+    // Bieg do wysłania (w szufladzie albo w pamięci karty): okno z wynikiem. Raport za listopad zamyka sezon w tej samej klatce co
+    // `concludeSeason`, a „Zamknij” w oknie wychodzi z biegu i czyści raport, więc okno nad raportem zabrałoby graczowi raport końcowy:
+    // gdy raport jest na ekranie, okno otwiera jego przycisk „Dalej” (`ReportModal`). Bez raportu (strona otwarta po końcu sezonu) otwiera się od razu.
+    if (finished !== null && ui.report.value === null) openFinishWindow();
   }
 
   /** Otwiera okno końca sezonu, jeśli jest co wysłać; otwartego okna nie podmienia (jego model odświeża się tylko przy otwarciu). */

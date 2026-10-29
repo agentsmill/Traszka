@@ -2869,27 +2869,51 @@ describe('powłoka gry (createShell)', () => {
           return { seen, stop };
         }
 
-        it('koniec sezonu z biegiem w szufladzie otwiera okno raz: szuflada, ui.unsent i faza over są już ustawione, gra stoi', () => {
+        it('koniec sezonu bez raportu na ekranie (strona otwarta po końcu sezonu) otwiera okno od razu i raz: szuflada, ui.unsent i faza over są już ustawione, gra stoi', () => {
           const h = harness();
-          h.shell.startRanked(RANKED_SEED);
-          const s = h.shell.session!;
-          s.econ.minute = END - 3;
-          s.econ.tycoon.cards.pending = s.econ.tycoon.cards.pending.slice(0, 1).map((c) => ({ ...c, showAt: END }));   // karta na minutę końca: trzyma grę, ale nie może zasłonić okna
+          const s = rankedNearEnd(h, 1);
+          s.econ.minute = END;   // stan już za końcem; raportu miesiąca nie ma, bo nie powstał w tej sesji strony
+          expect(ui.report.value).toBeNull();
           const { seen, stop } = watchFinish();
           let atOpen: unknown = null;
           const off = ui.finish.subscribe((v) => {
             if (v) atOpen = { drawer: loadFinished()?.seed, unsent: ui.unsent.value?.seed, phase: ui.ranked.value?.phase };
           });
 
-          frame(h);
-          for (let i = 0; i < 4; i++) frame(h, 10, 8, true);
+          h.shell.handleEvents([]);
+          for (let i = 0; i < 4; i++) h.shell.handleEvents([]);
 
           expect(seen).toEqual([{ open: true }]);
           expect(atOpen).toEqual({ drawer: RANKED_SEED, unsent: RANKED_SEED, phase: 'over' });
           expect(ui.isWindowOpen()).toBe(true);
           expect(isModalOpen(s)).toBe(true);
-          expect(awaitingDecision(s.econ)).toBe(true);
           off();
+          stop();
+        }, FULL_SEASON_MS);
+
+        it('koniec sezonu w jednej klatce z raportem za listopad: okno nie zasłania raportu, otwiera je dopiero jego „Dalej” (karta decyzji nie przeszkadza)', () => {
+          const h = harness();
+          h.shell.startRanked(RANKED_SEED);
+          const s = h.shell.session!;
+          s.econ.minute = END - 3;
+          s.econ.tycoon.cards.pending = s.econ.tycoon.cards.pending.slice(0, 1).map((c) => ({ ...c, showAt: END }));   // karta na minutę końca: trzyma grę, ale nie może zasłonić okna
+          const { seen, stop } = watchFinish();
+
+          frame(h);
+          for (let i = 0; i < 4; i++) frame(h, 10, 8, true);
+
+          expect(ui.report.value, 'raport za listopad na ekranie').not.toBeNull();
+          expect(seen, 'okno nie otwiera się nad raportem').toEqual([]);
+          expect(ui.finish.value).toBeNull();
+          expect(ui.unsent.value).toMatchObject({ seed: RANKED_SEED });   // bieg jest w szufladzie, tylko okno czeka
+          expect(ui.ranked.value?.phase).toBe('over');
+          expect(awaitingDecision(s.econ)).toBe(true);
+
+          // „Dalej” w raporcie (ReportModal): zdejmuje raport i woła openFinish
+          ui.report.value = null;
+          h.shell.game.openFinish();
+          expect(seen).toEqual([{ open: true }]);
+          expect(ui.isWindowOpen()).toBe(true);
           stop();
         }, FULL_SEASON_MS);
 

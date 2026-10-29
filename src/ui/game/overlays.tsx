@@ -237,7 +237,8 @@ export function terminationReason(s: EconomyState): string | null {
 }
 
 /**
- * Raport miesięczny (pauzuje grę). Przy wypowiedzeniu umowy: koniec gry i nowy start (w biegu rankingowym wyjście do zwykłej gry; taki bieg
+ * Raport miesięczny (pauzuje grę). Raport za listopad kończy sezon rankingowy: jego „Dalej” otwiera okno z wynikiem sezonu (`openFinish`),
+ * żeby okno nie zasłoniło raportu. Przy wypowiedzeniu umowy: koniec gry i nowy start (w biegu rankingowym wyjście do zwykłej gry; taki bieg
  * nie trafia do rankingu ani do szuflady niewysłanych, o czym mówi akapit pod powodem). Okno końca gry wynika ze stanu
  * (`gameOver` i ostatni raport w zapisie), więc wraca po przeładowaniu strony; zapis sprzed tej poprawki nie ma raportu
  * i pokazuje samo wypowiedzenie.
@@ -249,6 +250,7 @@ export function ReportModal({ game }: { game: GameActions }) {
   if (!r && !over) return null;
   const title = over ? 'Koniec współpracy' : `Raport: ${r!.label}`;
   const reason = over && view ? terminationReason(view.s) : null;
+  const seasonEnd = !over && ranked.value?.phase === 'over';   // koniec sezonu rankingowego (nie bankructwo): za raportem czeka okno z wynikiem
   return (
     <div class="tt-modal-wrap">
       <div class="tt-modal" role="dialog" aria-modal="true" aria-label={title}>
@@ -262,7 +264,10 @@ export function ReportModal({ game }: { game: GameActions }) {
               // bieg rankingowy nie zaczyna się od nowa (`restart` odmawia): wyjście do zwykłej gry (bankrut nie ma czego wysyłać)
               ? <button type="button" class="tt-btn tt-primary big" onClick={() => game.leaveRanked()}>Wróć do zwykłej gry</button>
               : <button type="button" class="tt-btn tt-primary big" onClick={() => game.restart()}>Zacznij od nowa</button>
-            : <button type="button" class="tt-btn tt-primary big" onClick={() => { report.value = null; }}>Dalej</button>}
+            : seasonEnd
+              // raport za listopad zamyka sezon: „Dalej” zdejmuje raport i otwiera okno z wynikiem (`concludeSeason` nie otwiera go nad raportem)
+              ? <button type="button" class="tt-btn tt-primary big" onClick={() => { report.value = null; game.openFinish(); }}>{unsent.value ? 'Dalej: wynik sezonu' : 'Dalej'}</button>
+              : <button type="button" class="tt-btn tt-primary big" onClick={() => { report.value = null; }}>Dalej</button>}
         </div>
       </div>
     </div>

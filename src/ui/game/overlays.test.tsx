@@ -734,6 +734,42 @@ describe('okno raportu miesiąca', () => {
     expect(notes(ReportModal({ game: fakeGame() }) as Vnode)).toEqual([]);
   });
 
+  it('raport za listopad kończący sezon rankingowy: „Dalej: wynik sezonu” zdejmuje raport i otwiera okno z wynikiem (openFinish)', () => {
+    const { s, info } = base();
+    publishState(s, info);
+    ranked.value = { seed: s.seed, day: 91, days: 91, phase: 'over' };
+    unsent.value = { seed: s.seed, score: 12_345 };
+    report.value = monthReport(detailed());
+    const game = fakeGame();
+    const tree = ReportModal({ game }) as Vnode;
+    expect(textOf(tree)).toContain('Raport: wrzesień 2026');
+    expect(labels(tree)).toEqual(['Dalej: wynik sezonu']);
+    click(closeButton(tree, 'Dalej: wynik sezonu'));
+    expect(report.value).toBeNull();
+    expect(game.openFinish).toHaveBeenCalledTimes(1);
+    expect(game.leaveRanked).not.toHaveBeenCalled();
+
+    // sezon skończony, ale nie ma czego wysyłać (bieg bez dziennika): zwykłe „Dalej”, a openFinish i tak nic nie otworzy
+    unsent.value = null;
+    report.value = monthReport(detailed());
+    const bare = fakeGame();
+    expect(labels(ReportModal({ game: bare }) as Vnode)).toEqual(['Dalej']);
+    click(closeButton(ReportModal({ game: bare }) as Vnode, 'Dalej'));
+    expect(report.value).toBeNull();
+    expect(bare.openFinish).toHaveBeenCalledTimes(1);
+  });
+
+  it('raport miesiąca w trwającym biegu rankingowym i w zwykłym sklepie zamyka się bez otwierania okna z wynikiem', () => {
+    for (const view of [{ seed: 'x', day: 30, days: 91, phase: 'playing' as const }, null]) {
+      ranked.value = view;
+      report.value = monthReport(detailed());
+      const game = fakeGame();
+      click(closeButton(ReportModal({ game }) as Vnode, 'Dalej'));
+      expect(report.value).toBeNull();
+      expect(game.openFinish).not.toHaveBeenCalled();
+    }
+  });
+
   it('raport miesiąca w biegu rankingowym nadal ma „Dalej” (przycisk wyjścia dotyczy tylko końca współpracy)', () => {
     ranked.value = { seed: 'x', day: 30, days: 91, phase: 'playing' };
     report.value = monthReport(detailed());
