@@ -8,6 +8,7 @@ import { freshRun, replayRun, type LogEntry, type RunRecord } from '@/sim/run';
 import { SIM_VERSION } from '@/sim/simVersion';
 import { GENERATOR_VERSION } from '@/sim/store/generateStore';
 import { layoutFor } from '@/sim/store/layoutFor';
+import type { StoreLayout } from '@/sim/store/types';
 
 /**
  * „Złote odtworzenie”: stały bieg (seed + dziennik poleceń zbudowany w tym pliku) odtwarzany `replayRun` do kilku punktów
@@ -284,14 +285,24 @@ const LAYOUT_SEEDS: readonly string[] = [
  * tu nowy wpis; stare zostają jako historia, jak w `GOLDEN`.
  */
 const LAYOUTS_GOLDEN: Record<number, string> = {
-  1: 'ed4ce4c64290f0d98b8f8d5740600b052543735c9c5e8c2978fcc141783d7b1f',
+  1: '1c14dfce679a4dff814708e17bfbe58043a04cc85e3f6a4d39e7536152ca8ca9',
 };
 
-/** Skrót SHA-256 z kanonicznego JSON-a układów poziomu 0 wszystkich seedów z `LAYOUT_SEEDS` (razem z seedami, więc zmiana listy też go zmienia). */
-function layoutsDigest(): string {
-  const layouts = LAYOUT_SEEDS.map((seed) => ({ seed, layout: layoutFor(seed, 0) }));
-  return createHash('sha256').update(canonical(layouts)).digest('hex');
+/** Układy poziomu 0 wszystkich seedów z `LAYOUT_SEEDS`, w kolejności listy. */
+const listedLayouts = (): { seed: string; layout: StoreLayout }[] => LAYOUT_SEEDS.map((seed) => ({ seed, layout: layoutFor(seed, 0) }));
+
+/**
+ * Skrót SHA-256 z kanonicznego JSON-a podanych układów (razem z seedami, więc zmiana listy też go zmienia). Pole `generatorVersion`
+ * układu jest pominięte (`canonical` pomija `undefined`): generator wpisuje tam `GENERATOR_VERSION`, więc po podbiciu wersji skrót
+ * zmieniłby się sam z tego powodu i wpis `LAYOUTS_GOLDEN` pod nową wersją nigdy by się nie zgodził. Numer wersji pilnuje osobny test.
+ */
+function digestOfLayouts(layouts: readonly { seed: string; layout: StoreLayout }[]): string {
+  const hashed = layouts.map(({ seed, layout }) => ({ seed, layout: { ...layout, generatorVersion: undefined } }));
+  return createHash('sha256').update(canonical(hashed)).digest('hex');
 }
+
+/** Skrót układów poziomu 0 dla `LAYOUT_SEEDS`, czyli to, co zapisuje `LAYOUTS_GOLDEN`. */
+const layoutsDigest = (): string => digestOfLayouts(listedLayouts());
 
 describe('GENERATOR_VERSION i tabela LAYOUTS_GOLDEN', () => {
   it('GENERATOR_VERSION to dodatnia liczba całkowita', () => {
@@ -320,13 +331,24 @@ describe('GENERATOR_VERSION i tabela LAYOUTS_GOLDEN', () => {
     expect(LAYOUT_SEEDS.some((s) => /\p{Extended_Pictographic}/u.test(s)), 'emoji').toBe(true);
   });
 
+  it('każdy układ z listy niesie generatorVersion równe GENERATOR_VERSION (skrót tego pola nie hasza)', () => {
+    const wrong = listedLayouts().filter(({ layout }) => layout.generatorVersion !== GENERATOR_VERSION).map(({ seed }) => seed);
+    expect(wrong, `układy z inną wersją generatora niż GENERATOR_VERSION = ${GENERATOR_VERSION}`).toEqual([]);
+  });
+
+  it('skrót nie zależy od numeru wersji zapisanego w układach, więc wpis przeżywa podbicie GENERATOR_VERSION', () => {
+    const layouts = listedLayouts();
+    const bumped = layouts.map(({ seed, layout }) => ({ seed, layout: { ...layout, generatorVersion: GENERATOR_VERSION + 1 } }));
+    expect(digestOfLayouts(bumped)).toBe(digestOfLayouts(layouts));
+  });
+
   it('skrót układów sklepu równa się LAYOUTS_GOLDEN[GENERATOR_VERSION]', () => {
     const actual = layoutsDigest();
     const expected = LAYOUTS_GOLDEN[GENERATOR_VERSION];
     // Po samym podbiciu GENERATOR_VERSION (bez wpisu) układy nie zmieniły się od podbicia, więc podpowiedź mówi o brakującym wpisie dla tej wersji.
     const hint = expected === undefined
       ? `GENERATOR_VERSION = ${GENERATOR_VERSION} nie ma wpisu w LAYOUTS_GOLDEN. Dopisz \`${GENERATOR_VERSION}: '${actual}'\`.`
-      : `Generator złożył inne sklepy niż dotąd. Jeśli to zamierzone, podbij GENERATOR_VERSION w src/sim/store/generateStore.ts (a z nim SIM_VERSION i, gdy stare biegi mają dalej przechodzić, KNOWN_GENERATOR_VERSIONS w src/server/config.ts) i dopisz \`${GENERATOR_VERSION + 1}: '${actual}'\` do LAYOUTS_GOLDEN; jeśli nie, cofnij zmianę.`;
+      : `Generator złożył inne sklepy niż dotąd. Jeśli to zamierzone, podbij GENERATOR_VERSION w src/sim/store/generateStore.ts (razem z SIM_VERSION), dopisz nową wersję do KNOWN_GENERATOR_VERSIONS w src/server/config.ts i dodaj do LAYOUTS_GOLDEN wpis \`${GENERATOR_VERSION + 1}: '${actual}'\`; jeśli nie, cofnij zmianę.`;
     expect(actual, hint).toBe(expected);
   });
 });
