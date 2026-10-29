@@ -1,6 +1,10 @@
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { RANKED_SEASON_END_MINUTE, seasonScore } from '@/sim/ranked';
+import { replayRun } from '@/sim/run';
+import { SIM_VERSION } from '@/sim/simVersion';
+import { GENERATOR_VERSION } from '@/sim/store/generateStore';
 import { GET as leaderboard } from '../../api/leaderboard';
 import { POST as player } from '../../api/player';
 import { POST as runs } from '../../api/runs';
@@ -13,6 +17,7 @@ import { fakeUpstash, type FakeUpstash } from './fakeUpstash';
 import { handlePlayer, handleRuns } from './http';
 import { MemoryRedis } from './memoryRedis';
 import { createRateGate } from './rateLimit';
+import type { SubmittedRun } from './runs';
 import { testBundle } from './testBundle';
 
 /**
@@ -46,6 +51,8 @@ afterEach(() => {
 const post = (path: string, body: unknown): Request => new Request(`${ORIGIN}${path}`, {
   method: 'POST', headers: { 'content-type': 'application/json', 'x-real-ip': '203.0.113.7' }, body: JSON.stringify(body),
 });
+/** Czy na dysku leży bundle sędziego (`npm run build:judge`): od tego zależy, który z dwóch testów `api/runs.ts` się wykonuje. */
+const bundleOnDisk = existsSync(resolve(__dirname, 'judgeBundle.js'));
 const run = { seed: 'pierogi-731', gameVersion: '0.0.0+abc123def456', generatorVersion: KNOWN_GENERATOR_VERSIONS[0], simVersion: 1, mode: 'ranked', log: [] };
 
 describe('api/** na Vercelu (atrapa Upstash przez fetch)', () => {
@@ -77,10 +84,11 @@ describe('api/** na Vercelu (atrapa Upstash przez fetch)', () => {
     expect(upstash.log.every((l) => l.token === 'rw')).toBe(true);
   });
 
-  // `api/runs.ts` ładuje bundle sędziego z `src/server/judgeBundle.js` (budowany przez `npm run build:judge`, w repozytorium go nie ma).
-  // Test dotyczy świeżego klonu, bez bundla; po zbudowaniu go lokalnie byłby fałszywy, więc wtedy się pomija. Bundle na prawdziwym
-  // kodzie sprawdza tests/judgeBundle.test.ts (buduje własny), a wstrzyknięcie braku bundla do `route` src/server/judge.test.ts.
-  it.skipIf(existsSync(resolve(__dirname, 'judgeBundle.js')))(
+  // `api/runs.ts` ładuje bundle sędziego z `src/server/judgeBundle.js` (budowany przez `npm run build:judge`, w repozytorium go nie ma;
+  // CI puszcza `npm test` przed buildem). Dwa testy poniżej są sobie przeciwne i dokładnie jeden z nich się wykonuje: bez bundla na dysku
+  // sprawdzamy 503 „sędzia się szkoli”, z bundlem prawdziwą drogę przez `api/runs.ts`. Bundle na prawdziwym kodzie sprawdza też
+  // tests/judgeBundle.test.ts (buduje własny), a wstrzyknięcie braku bundla do `route` src/server/judge.test.ts.
+  it.skipIf(bundleOnDisk)(
     'bez zbudowanego bundla sędziego: 503 „sędzia się szkoli” i wpis w logu, a w bazie tylko liczniki limitu', async () => {
       const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
       const res = await runs(post('/api/runs', { key: KEY, nick: 'Mateusz', run }));
@@ -91,6 +99,26 @@ describe('api/** na Vercelu (atrapa Upstash przez fetch)', () => {
       expect(errors.mock.calls[0]![0]).toBe('[ranking] sędzia');
       errors.mockRestore();
     },
+  );
+
+  // Gdy test poniżej czerwieni się wynikiem innym niż policzony z src/sim albo 409 `old-version`, bundle na dysku jest nieświeży
+  // (zbudowany ze starszego kodu symulacji): `npm run build:judge` (albo `npm run build`) go odświeża.
+  it.runIf(bundleOnDisk)(
+    'ze zbudowanym bundlem sędziego: poprawny bieg bierny przez api/runs.ts daje 200, a score to wynik policzony wprost z src/sim', async () => {
+      const passive: SubmittedRun = { seed: run.seed, gameVersion: run.gameVersion, generatorVersion: GENERATOR_VERSION, simVersion: SIM_VERSION, mode: 'ranked', log: [] };
+      const expected = seasonScore(replayRun(passive, RANKED_SEASON_END_MINUTE));
+      expect(expected).toBeGreaterThan(0);   // wynik zerowy nie odróżniłby sędziego, który nic nie liczy
+      // własny klucz i adres: bramka `api/runs.ts` jest wspólna dla testów tego pliku, a wyczerpany limit trwa do końca okna
+      const own = new Request(`${ORIGIN}/api/runs`, {
+        method: 'POST', headers: { 'content-type': 'application/json', 'x-real-ip': '192.0.2.88' },
+        body: JSON.stringify({ key: 'P3WN-8RTE-K7QX-9MBD-2HFA', nick: 'Mateusz', run: passive }),
+      });
+      const res = await runs(own);
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({ ok: true, score: expected, best: expected, ranks: { global: 1, seed: 1 } });
+      const board = await (await leaderboard(new Request(`${ORIGIN}/api/leaderboard?board=global`))).json() as { rows: { nick: string; score: number }[] };
+      expect(board.rows.map((r) => [r.nick, r.score])).toEqual([['Mateusz', expected]]);
+    }, 60_000,
   );
 
   it('z podpiętym sędzią (jak po scaleniu A) bieg trafia do rankingu, który widać przez api/leaderboard', async () => {

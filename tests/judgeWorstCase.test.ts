@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BODY_LIMIT_BYTES, BUDGET_MS, COMMANDS, LOG_ENTRIES, worstCaseRuns } from '../scripts/judge-worst-case.mjs';
+import { BODY_LIMIT_BYTES, COMMANDS, LOG_ENTRIES, worstCaseRuns, type WorstCaseRun } from '../scripts/judge-worst-case.mjs';
 import { COMMAND_TYPES, isCommand } from '@/sim/economy/commands';
 import { RANKED_SEASON_END_MINUTE } from '@/sim/ranked';
 import { SIM_VERSION } from '@/sim/simVersion';
@@ -15,11 +15,23 @@ import { parseSubmission } from '../src/server/runs';
 const KEY = 'K7QX-9MBD-2HFA-P3WN-8RTE';
 const opts = { generatorVersion: GENERATOR_VERSION, simVersion: SIM_VERSION, endMinute: RANKED_SEASON_END_MINUTE };
 
+/**
+ * Pierwsze `count` scenariuszy, bez rozwijania reszty: `worstCaseRuns` to generator, bo każdy dziennik to 100 000 obiektów, a całych
+ * dziewiętnaście naraz to ok. 160 MB. `break` zamyka generator, więc kolejne scenariusze w ogóle nie powstają.
+ */
+function firstScenarios(count: number): { name: string; run: WorstCaseRun }[] {
+  const taken: { name: string; run: WorstCaseRun }[] = [];
+  for (const scenario of worstCaseRuns(opts)) {
+    taken.push(scenario);
+    if (taken.length === count) break;
+  }
+  return taken;
+}
+
 describe('pomiar najgorszego przypadku (scripts/judge-worst-case.mjs): scenariusze zgodne z parserem', () => {
   it('limity w skrypcie to limity serwera (liczba wpisów dziennika i rozmiar ciała żądania)', () => {
     expect(LOG_ENTRIES).toBe(RUN_MAX_LOG_ENTRIES);
     expect(BODY_LIMIT_BYTES).toBe(RUN_MAX_BODY_BYTES);
-    expect(BUDGET_MS).toBe(8_000);
   });
 
   it('każdy typ polecenia z symulacji ma w skrypcie polecenie do obciążenia (nowy typ w Command wymaga dopisania go tam)', () => {
@@ -43,7 +55,7 @@ describe('pomiar najgorszego przypadku (scripts/judge-worst-case.mjs): scenarius
   }, 30_000);
 
   it('mieszanka z planem zawiera remonty, ruchy palet i zakupy, rozłożone na cały sezon; „jedna minuta” trzyma wszystko w jednej', () => {
-    const [, mix, burst] = [...worstCaseRuns(opts)].slice(0, 3);
+    const [, mix, burst] = firstScenarios(3);
     const count = (type: string): number => mix!.run.log.filter((e) => e.cmd.type === type).length;
     for (const type of ['startRemont', 'rushRemont', 'movePallet', 'returnPallet', 'buyUpgrade', 'buyEquipment', 'claimQuest', 'tapTill']) {
       expect(count(type), type).toBeGreaterThan(0);
