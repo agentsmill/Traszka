@@ -22,8 +22,8 @@ To uproszczona wersja §6–§8 specu, zrobiona tak, żeby gra była grywalna na
   na kasie, rozładowuje (6 szt./min, wózek +40%) i wykłada towar (20 szt./min). Gracz pomaga stukaniem (8 szt.).
 - **Koszty.** Płace 340 zł dziennie na osobę na zmianie, media, opłata franczyzowa 2000 zł + 12% obrotu (`FRANCHISE_FEE_*`),
   mandaty (400 zł + 120 zł za każdą dalszą paletę), opłaty logistyczne i WUT ponad próg. Franczyzobiorca, któremu Centrala ufa
-  (zaufanie od 70), dostaje z powrotem 3% obrotu miesiąca, od 85 trzy i pół (`turnoverBonusShare`). Na koniec miesiąca z gotówką
-  poniżej −30 000 zł Centrala wypowiada umowę.
+  (zaufanie od 70), dostaje z powrotem 3% obrotu miesiąca, od 85 trzy i pół (`turnoverBonusShare`). Gotówka poniżej −30 000 zł
+  przy zamknięciu miesiąca to miesiąc bez opłacenia Centrali: pierwszy kończy się ostrzeżeniem, drugi z rzędu wypowiedzeniem umowy.
 - **WUT** (ubytki towarowe) liczy się od każdej sprzedaży: naturalne 0,9% obrotu, a kasy samoobsługowe dopisują do kradzieży
   „zapomniane” skany (4% obrotu przez SCO, kamery mniej). Do progu 1,2% obrotu miesiąca płaci Centrala, nadwyżkę
   franczyzobiorca przy zamknięciu miesiąca (`tycoon/wut.ts`, pozycja „WUT ponad próg” w raporcie).
@@ -75,5 +75,5 @@ Kryterium właściciela, pilnowane przez `tycoon/balance.test.ts`: boty z `tycoo
 | `seed-3` | +0,4 | +2,9 | +30,0 | +34,5 |
 
 Bierny gracz traci głównie na mandatach (palety stoją na chodniku) i na zaufaniu: odpowiedzi domyślne je zjadają, a bez zaufania od
-70 nie ma premii od obrotu. Widełki są ciasne, bo płace są stałe, a obrót sklepów różni się dwukrotnie; nie każdy seed się w nich
+70 nie ma premii od obrotu. Widełki są ciasne, bo płace są stałe, a obrót sklepów różni się ok. 1,7 raza; nie każdy seed się w nich
 mieści (np. `kiełbasa-42` daje mistrzowi ok. 42 tys.). Przed strojeniem (opłata 4500 zł + 3% obrotu) bierny gracz wychodził od +23 do +50 tys. zł, a mistrz od +34 do +67 tys. zł.

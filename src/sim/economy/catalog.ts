@@ -127,7 +127,7 @@ export const FINE_BASE = 400;
 export const FINE_PER_PALLET = 120;
 /** Kredyt kupiecki: wartość towaru w sklepie (półki, zaplecze, palety) ponad limit wstrzymuje zamówienie. */
 export const CREDIT_LIMIT = 70_000;
-/** Na koniec miesiąca z gotówką poniżej tego Centrala wypowiada umowę. */
+/** Gotówka poniżej tego przy zamknięciu miesiąca to miesiąc bez opłacenia Centrali; drugi taki z rzędu kończy umowę (spec §10). */
 export const BANKRUPTCY_AT = -30_000;
 export const START_CASH = 2000;
 

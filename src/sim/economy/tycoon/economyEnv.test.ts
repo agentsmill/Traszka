@@ -258,8 +258,8 @@ describe('boty przechodzą dwa miesiące prawdziwej gry', () => {
 
   it('bankructwo przy zamknięciu miesiąca kończy grę bota: to ten sygnał measureBots zwraca w gameOver', () => {
     const run = freshRun(SEED);
-    run.state.cash = -1e6;   // przy zamknięciu miesiąca Centrala wypowiada umowę
-    runBot(BOTS.bierny, economyEnv(run), 30 * MINUTES_PER_DAY - OPEN_FROM);
+    run.state.cash = -1e6;   // dwa zamknięcia miesiąca z rzędu bez opłacenia Centrali: wypowiedzenie umowy
+    runBot(BOTS.bierny, economyEnv(run), 61 * MINUTES_PER_DAY - OPEN_FROM);
     expect(run.state.gameOver).toBe(true);
     expect(cardsAnswered(run.state)).toBeGreaterThan(0);
   }, 60_000);

@@ -113,7 +113,7 @@ describe('treść okna „Jak grać”', () => {
   it('każda liczba w treści to stała gry: cel, czas i pieniądze', () => {
     const t = text();
     expect(t).toContain(`rangi „${rankFor(50)}” (poziom 50)`);
-    expect(t).toContain(`mniej niż −${pl(-BANKRUPTCY_AT)} zł`);
+    expect(t).toContain(`dwa raporty z rzędu zastaną Cię z gotówką poniżej −${pl(-BANKRUPTCY_AT)} zł`);
     expect(t).toContain(`od ${OPEN_FROM / 60}:00 do ${OPEN_TO / 60}:00`);
     expect(t).toContain(`${SPEEDS[1]!.label}–${SPEEDS[SPEEDS.length - 1]!.label}`);
     expect(t).toContain('doba trwa ok. 3 min 20 s');

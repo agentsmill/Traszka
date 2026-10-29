@@ -153,7 +153,7 @@ export interface EconomyState {
   tycoon: TycoonState;
 }
 
-export type EconEventKind = 'delivery' | 'order' | 'fine' | 'milestone' | 'day' | 'month' | 'remont' | 'info' | 'warning' | 'gameover'
+export type EconEventKind = 'delivery' | 'order' | 'fine' | 'milestone' | 'day' | 'month' | 'remont' | 'info' | 'warning' | 'debt' | 'gameover'
   | 'levelup' | 'golden' | 'trust-tier' | 'card' | 'card-result' | 'kpi-week';
 export interface EconEvent { kind: EconEventKind; text: string; report?: MonthReport; level?: number; unlocks?: string[] }
 
@@ -868,6 +868,8 @@ export function franchiseFee(revenue: number): number {
 function closeMonth(s: EconomyState, day: number, out: EconEvent[]): void {
   const m = s.month;
   const t = s.tycoon;
+  // spec §10: umowę wypowiada dopiero drugi miesiąc z rzędu bez opłacenia Centrali; poprzednie zamknięcie to `lastReport`
+  const unpaidBefore = s.lastReport !== null && s.lastReport.cash < BANKRUPTCY_AT;
   const fee = franchiseFee(m.revenue);
   charge(s, 'fee', fee, 'month');
   bonus(s, Math.round(turnoverBonusShare(t.trust.value) * m.revenue), 'month');
@@ -896,9 +898,15 @@ function closeMonth(s: EconomyState, day: number, out: EconEvent[]): void {
   s.lastReport = report;
   out.push({ kind: 'month', text: `Raport za ${label}: wynik ${profit >= 0 ? '+' : ''}${fmt(profit)} zł.`, report });
   s.month = emptyCounters();
-  if (s.cash < BANKRUPTCY_AT) {
+  if (s.cash < BANKRUPTCY_AT && unpaidBefore) {
     s.gameOver = true;
-    out.push({ kind: 'gameover', text: 'Centrala wypowiada umowę franczyzową. Dziękujemy za współpracę.' });
+    out.push({ kind: 'gameover', text: 'Centrala wypowiada umowę franczyzową: drugi miesiąc z rzędu bez opłacenia Centrali. Dziękujemy za współpracę.' });
+  } else if (s.cash < BANKRUPTCY_AT) {
+    out.push({
+      kind: 'debt',
+      text: `Gotówka po raporcie: ${fmt(s.cash)} zł, czyli poniżej ${fmt(BANKRUPTCY_AT)} zł. Centrala czeka na opłatę jeszcze miesiąc. `
+        + `Jeśli przy następnym raporcie gotówka nadal będzie poniżej tej granicy, umowa zostanie wypowiedziana.`,
+    });
   }
   // zero w środku miesiąca to tylko ostrzeżenie; umowę wypowiada się przy zamknięciu miesiąca
   if (!s.gameOver && trustTerminates(t.trust.value)) {

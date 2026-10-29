@@ -397,12 +397,38 @@ describe('ostatni raport miesięczny w stanie', () => {
   it('bankructwo: stan z wypowiedzianą umową niesie raport, który okno końca gry pokaże po przeładowaniu', () => {
     const s = createEconomy(SEED, info);
     s.cash = -1e6;
-    run(s, info, 30 * MINUTES_PER_DAY);
+    run(s, info, 61 * MINUTES_PER_DAY);
     expect(s.gameOver).toBe(true);
     const restored = JSON.parse(JSON.stringify(s)) as EconomyState;
     expect(restored.gameOver).toBe(true);
-    expect(restored.lastReport?.label).toBe('wrzesień 2026');
+    expect(restored.lastReport?.label).toBe('październik 2026');
     expect(restored.lastReport?.cash).toBeLessThan(BANKRUPTCY_AT);
+  });
+
+  it('pierwszy miesiąc bez opłacenia Centrali to ostrzeżenie, drugi z rzędu kończy umowę (spec §10)', () => {
+    const s = createEconomy(SEED, info);
+    s.cash = -1e6;
+    const first = run(s, info, 30 * MINUTES_PER_DAY);
+    expect(s.gameOver).toBe(false);
+    expect(first.filter((e) => e.kind === 'debt')).toHaveLength(1);
+    expect(first.some((e) => e.kind === 'gameover')).toBe(false);
+    const second = run(s, info, 31 * MINUTES_PER_DAY);
+    expect(s.gameOver).toBe(true);
+    expect(second.some((e) => e.kind === 'gameover')).toBe(true);
+    expect(second.some((e) => e.kind === 'debt')).toBe(false);
+  });
+
+  it('miesiąc z opłaconą Centralą między dwoma nieopłaconymi zeruje licznik', () => {
+    const s = createEconomy(SEED, info);
+    s.cash = -1e6;
+    run(s, info, 30 * MINUTES_PER_DAY);   // wrzesień: ostrzeżenie
+    s.cash = 1e6;
+    run(s, info, 31 * MINUTES_PER_DAY);   // październik: opłacony
+    expect(s.gameOver).toBe(false);
+    s.cash = -1e6;
+    const third = run(s, info, 30 * MINUTES_PER_DAY);   // listopad: znów pierwszy z rzędu
+    expect(s.gameOver).toBe(false);
+    expect(third.some((e) => e.kind === 'debt')).toBe(true);
   });
 });
 

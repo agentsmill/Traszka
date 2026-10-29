@@ -95,7 +95,7 @@ export function howToSections(): HowToSection[] {
       title: 'Cel gry',
       paragraphs: [
         `Prowadzisz franczyzę sklepu Traszka: zarabiasz, zdobywasz poziomy i dochodzisz do rangi „${rank.name}” (poziom ${rank.level}).`,
-        `Centrala wypowiada umowę, gdy zaufanie spadnie do zera przy zamknięciu miesiąca albo gdy po raporcie masz mniej niż ${signedZl(BANKRUPTCY_AT)}.`,
+        `Centrala wypowiada umowę, gdy zaufanie spadnie do zera przy zamknięciu miesiąca albo gdy dwa raporty z rzędu zastaną Cię z gotówką poniżej ${signedZl(BANKRUPTCY_AT)}.`,
       ],
     },
     {

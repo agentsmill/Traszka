@@ -75,7 +75,7 @@ describe('sanitizeEconomy: poprawny stan przechodzi bez zmian', () => {
     expect(sanitizeEconomy(json(closed), defaults(), info)).toEqual(closed);
     const bankrupt = defaults();
     bankrupt.cash = -1e6;
-    play(bankrupt, info, 30);
+    play(bankrupt, info, 61);   // dwa zamknięcia z rzędu bez opłacenia Centrali
     expect(bankrupt.gameOver).toBe(true);
     expect(JSON.stringify(sanitizeEconomy(json(bankrupt), defaults(), info))).toBe(JSON.stringify(bankrupt));
   });

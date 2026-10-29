@@ -270,7 +270,7 @@ function sfxOf(e: EconEvent): Sfx | undefined {
  * który kiedyś dostanie poziom `story`, też trafi do okna, pod ogólnym tytułem. Karta (`decision`) tu nie wchodzi: zatrzymuje
  * ją symulacja (`cardsBlocking`), a okno karty jest osobne (`CardDesk`).
  */
-const STORY_TITLE: Partial<Record<EconEventKind, string>> = { 'trust-tier': 'Zaufanie Centrali', remont: 'Remont zakończony' };
+const STORY_TITLE: Partial<Record<EconEventKind, string>> = { 'trust-tier': 'Zaufanie Centrali', remont: 'Remont zakończony', debt: 'Centrala czeka na opłatę' };
 const STORY_FALLBACK_TITLE = 'Ważne zdarzenie';
 /** Mają własne okno, więc nie idą do wspólnego: raport miesiąca (`ui.report`) i koniec gry (okno końca współpracy w `ReportModal`, z `gameOver`). */
 const OWN_WINDOW: ReadonlySet<EconEventKind> = new Set<EconEventKind>(['month', 'gameover']);

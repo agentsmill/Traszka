@@ -5,7 +5,7 @@ import { clamp } from './time';
  * Komunikaty dla gracza według wagi (decyzja użytkownika z 28.10.2026):
  * - `info`: informacja bez decyzji (dostawa, mandat, wynik karty, KPI tygodnia). Zamyka się sama, ale nie miga: zostaje
  *   na ekranie co najmniej `readMs(tekst)` czasu rzeczywistego, także przy ×8, a stuknięcie zamyka ją wcześniej;
- * - `story`: ważne zdarzenie fabularne (raport miesięczny, koniec remontu, nowy próg zaufania, koniec gry). Gra staje
+ * - `story`: ważne zdarzenie fabularne (raport miesięczny, koniec remontu, nowy próg zaufania, nieopłacona Centrala, koniec gry). Gra staje
  *   i czeka na „OK”, żeby gracz wiedział, co się stało;
  * - `decision`: karta decyzji. Gra stoi, aż gracz wybierze odpowiedź (`cardsBlocking` w `cards.ts`).
  * Symulacja niczego tu nie mierzy w czasie rzeczywistym: to umowa dla pętli gry i interfejsu (część 2 i strumień A).
@@ -22,6 +22,7 @@ const LEVEL: Partial<Record<EconEventKind | TycoonNoticeKind, NoticeLevel>> = {
   report: 'story',
   remont: 'story',
   gameover: 'story',
+  debt: 'story',
   'trust-tier': 'story',
 };
 
