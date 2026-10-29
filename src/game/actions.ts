@@ -18,7 +18,7 @@ import {
 import type { ScenePick } from './scene';
 import { chooseStore, freeSeed } from './seeds';
 import {
-  NEWER_SAVE_NOTICE, RUN_LOG_MAX, UNBUILDABLE_SAVE_NOTICE, createSession, discardSave, hasStoredSave, lastSavedSeed, retireSession, reviveSession,
+  NEWER_SAVE_NOTICE, RANKED_TAP_LOG_MAX, RUN_LOG_MAX, UNBUILDABLE_SAVE_NOTICE, createSession, discardSave, hasStoredSave, lastSavedSeed, retireSession, reviveSession,
   saveSession, type GameSession,
 } from './session';
 import { initialStartForm, noticeAfterOpen, openChosen, openRequestFor, type StartChoice, type StartForm, type StoreSwitch } from './start';
@@ -99,15 +99,23 @@ export function markOffLog(session: GameSession): void {
 
 const SEASON_OVER_TEXT = 'Sezon dobiegł końca.';
 const LOG_FULL_TEXT = 'Dziennik biegu rankingowego jest pełny.';
+const TAP_LOG_FULL_TEXT = 'Dziennik biegu jest prawie pełny: ręczne stukanie się skończyło. Zakupy i decyzje działają dalej.';
+
+/** Stuknięcia: jedyne polecenia, które gracz może wysyłać bez końca (odrzucone też trafiają do dziennika), więc kończą się przed rezerwą dziennika. */
+const TAP_COMMANDS: ReadonlySet<Command['type']> = new Set<Command['type']>(['tapPallet', 'tapTill']);
 
 /**
- * Czy sesja rankingowa nie przyjmuje już poleceń i dlaczego: sezon się skończył (`seasonOver`) albo umowa została wypowiedziana
- * (`gameOver`: bieg też się wtedy zamyka), albo dziennik doszedł do `RUN_LOG_MAX` (bieg rankingowy bez dziennika byłby nie do wysłania,
- * więc polecenie przepada, zamiast po cichu go unieważnić). Tekst to to, co zobaczy gracz.
+ * Czy sesja rankingowa nie przyjmuje polecenia `type` i dlaczego: sezon się skończył (`seasonOver`) albo umowa została wypowiedziana
+ * (`gameOver`: bieg też się wtedy zamyka), albo dziennik jest pełny. Stuknięcia kończą się już na `RANKED_TAP_LOG_MAX` wpisach (rezerwa
+ * `RANKED_LOG_RESERVE` zostaje na zakupy i karty), reszta poleceń na `RUN_LOG_MAX`. Bieg rankingowy bez dziennika byłby nie do wysłania,
+ * więc polecenie przepada, zamiast po cichu go unieważnić. Tekst to to, co zobaczy gracz.
  */
-function rankedRefusal(session: GameSession): string | null {
+function rankedRefusal(session: GameSession, type: Command['type']): string | null {
   if (seasonOver(session.econ) || session.econ.gameOver) return SEASON_OVER_TEXT;
-  if (session.run && session.run.record.log.length >= RUN_LOG_MAX) return LOG_FULL_TEXT;
+  if (session.run === null) return null;
+  const entries = session.run.record.log.length;
+  if (entries >= RUN_LOG_MAX) return LOG_FULL_TEXT;
+  if (entries >= RANKED_TAP_LOG_MAX && TAP_COMMANDS.has(type)) return TAP_LOG_FULL_TEXT;
   return null;
 }
 
@@ -145,7 +153,7 @@ export function dispatchCommand(session: GameSession, cmd: Command, fx: CommandE
   // Bieg rankingowy: po końcu sezonu (albo wypowiedzeniu umowy) i przy pełnym dzienniku polecenie jest odmawiane przed wszystkim innym,
   // żeby stan i dziennik zostały takie, jakie serwer odtworzy. Zwykła sesja nie ma sezonu, a pełny dziennik tylko wyłącza (`markOffLog`).
   if (session.mode === 'ranked') {
-    const refusal = rankedRefusal(session);
+    const refusal = rankedRefusal(session, command.type);
     if (refusal) return refuse(refusal, fx);
   }
 

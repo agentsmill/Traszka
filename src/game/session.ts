@@ -32,6 +32,15 @@ export interface RunLog {
  */
 export const RUN_LOG_MAX = 20_000;
 
+/**
+ * Rezerwa dziennika biegu rankingowego dla poleceń innych niż stuknięcia. `dispatchCommand` loguje także polecenia odrzucone (serwer
+ * odtwarza je tak samo), więc zmęczenie ogranicza przyjęte stuknięcia, ale nie liczbę wpisów: gracz stukający bez sił mógłby zapełnić
+ * dziennik do `RUN_LOG_MAX`, a wtedy bieg odmawiałby wszystkiego, także odpowiedzi na kartę, i sezon by stanął. Dlatego w biegu rankingowym
+ * stuknięcia (`tapPallet`, `tapTill`) kończą się na `RANKED_TAP_LOG_MAX` wpisach, a zakupy, karty i reszta mają jeszcze `RANKED_LOG_RESERVE`.
+ */
+export const RANKED_LOG_RESERVE = 4_000;
+export const RANKED_TAP_LOG_MAX = RUN_LOG_MAX - RANKED_LOG_RESERVE;
+
 /** Rozgrywka jednego sklepu: stan ekonomii i układ, w którym się toczy (po remoncie układ się zmienia). */
 export interface GameSession {
   seed: string;

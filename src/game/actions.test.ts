@@ -29,7 +29,7 @@ import {
 import { entrySeed } from './seeds';
 import type { StartChoice } from './start';
 import {
-  NEWER_SAVE_NOTICE, RUN_LOG_MAX, createSession, hasStoredSave, lastSavedSeed, newRunLog, saveSession, withLayoutFromSeed, type GameSession,
+  NEWER_SAVE_NOTICE, RANKED_LOG_RESERVE, RANKED_TAP_LOG_MAX, RUN_LOG_MAX, createSession, hasStoredSave, lastSavedSeed, newRunLog, saveSession, withLayoutFromSeed, type GameSession,
 } from './session';
 
 const SEED = 'traszka-1';
@@ -2522,6 +2522,7 @@ describe('powłoka gry (createShell)', () => {
       const END = RANKED_SEASON_END_MINUTE;
       const SEASON_OVER_TEXT = 'Sezon dobiegł końca.';
       const LOG_FULL_TEXT = 'Dziennik biegu rankingowego jest pełny.';
+      const TAP_LOG_FULL_TEXT = 'Dziennik biegu jest prawie pełny: ręczne stukanie się skończyło. Zakupy i decyzje działają dalej.';
       const NOT_COUNTED_NOTICE = 'Ten bieg nie liczy się do rankingu.';
       const RESULT_NOT_SAVED_NOTICE = 'Przeglądarka nie ma miejsca na zapis wyniku. Wyślij go teraz, zanim zamkniesz kartę.';
       const NO_NETWORK_NOTICE = 'W biegu rankingowym nie ma sieci sklepów.';
@@ -3073,6 +3074,125 @@ describe('powłoka gry (createShell)', () => {
           expect(casual.run).toBeNull();
           expect(casual.econ.order.auto).toBe(false);
         });
+      });
+
+      describe('rezerwa w dzienniku biegu rankingowego: stuknięcia kończą się przed zakupami i kartami', () => {
+        /** Dopełnia dziennik do `n` wpisów (poprawnych: minuta i numer rosną), jak po długiej grze. */
+        const fillTo = (s: GameSession, n: number): void => {
+          const log = s.run!.record.log;
+          while (log.length < n) log.push({ minute: OPEN_FROM, seq: log.length, cmd: { type: 'setOrder', auto: true } });
+          s.run!.seq = n;
+        };
+        /** Karta na biurku, na którą wolno odpowiedzieć już teraz. */
+        const visibleCard = (s: GameSession) => {
+          s.econ.tycoon.cards.pending[0]!.showAt = s.econ.minute;
+          return visibleCards(s.econ.tycoon.cards, s.econ.minute)[0]!;
+        };
+
+        it('stałe: rezerwa 4000 wpisów, stuknięcia kończą się 4000 przed RUN_LOG_MAX', () => {
+          expect(RANKED_LOG_RESERVE).toBe(4_000);
+          expect(RANKED_TAP_LOG_MAX).toBe(RUN_LOG_MAX - RANKED_LOG_RESERVE);
+          expect(RANKED_TAP_LOG_MAX).toBe(16_000);
+        });
+
+        it('przy RANKED_TAP_LOG_MAX − 1 wpisach stuknięcie jest przyjęte i dopisane, od RANKED_TAP_LOG_MAX odmówione bez wpisu i bez zmiany stanu', () => {
+          const rec = recorder();
+          const s = createRankedSession(RANKED_SEED);
+          fillTo(s, RANKED_TAP_LOG_MAX - 1);
+
+          const accepted = dispatchCommand(s, { type: 'tapTill' }, rec.fx);
+          expect(accepted.text).not.toBe(TAP_LOG_FULL_TEXT);
+          expect(s.run!.record.log).toHaveLength(RANKED_TAP_LOG_MAX);
+          expect(s.run!.record.log.at(-1)).toMatchObject({ seq: RANKED_TAP_LOG_MAX - 1, cmd: { type: 'tapTill' } });
+
+          rec.calls.length = 0;
+          const before = JSON.stringify(s.econ);
+          const seq = s.run!.seq;
+          for (const cmd of [{ type: 'tapTill' }, { type: 'tapPallet', palletId: 1 }, { type: 'tapPallet' }] as const) {
+            expect(dispatchCommand(s, cmd, rec.fx)).toEqual({ ok: false, text: TAP_LOG_FULL_TEXT });
+          }
+          expect(rec.named('toast')).toEqual(Array.from({ length: 3 }, () => ['toast', TAP_LOG_FULL_TEXT, 'error']));
+          expect(rec.names()).not.toContain('persist');
+          expect(rec.names()).not.toContain('handleEvents');
+          expect(s.run!.record.log).toHaveLength(RANKED_TAP_LOG_MAX);
+          expect(s.run!.seq).toBe(seq);
+          expect(s.run).not.toBeNull();
+          expect(JSON.stringify(s.econ)).toBe(before);
+        });
+
+        it('w rezerwie zakupy, karty i inne polecenia są przyjmowane i logowane aż do RUN_LOG_MAX; dopiero tam odmowa wszystkiego starym tekstem (także stuknięć)', () => {
+          const rec = recorder();
+          const s = createRankedSession(RANKED_SEED);
+          fillTo(s, RANKED_TAP_LOG_MAX);
+          s.econ.cash = 1e7;
+          s.econ.level = 30;
+          const log = s.run!.record.log;
+
+          const bought = dispatchCommand(s, { type: 'buyUpgrade', id: UPGRADES[0]!.id }, rec.fx);
+          expect(bought.ok).toBe(true);
+          expect(log).toHaveLength(RANKED_TAP_LOG_MAX + 1);
+          expect(log.at(-1)!.cmd.type).toBe('buyUpgrade');
+
+          const card = visibleCard(s);
+          expect(dispatchCommand(s, { type: 'answerCard', seq: card.seq, answer: card.defaultAnswer }, rec.fx).ok).toBe(true);
+          expect(log).toHaveLength(RANKED_TAP_LOG_MAX + 2);
+          expect(log.at(-1)!.cmd.type).toBe('answerCard');
+          expect(awaitingDecision(s.econ)).toBe(false);   // odpowiedź naprawdę zadziałała
+
+          fillTo(s, RUN_LOG_MAX - 1);
+          expect(dispatchCommand(s, { type: 'setOrder', auto: false }, rec.fx).ok).toBe(true);   // ostatni wpis się mieści
+          expect(log).toHaveLength(RUN_LOG_MAX);
+
+          const before = JSON.stringify(s.econ);
+          rec.calls.length = 0;
+          for (const cmd of [
+            { type: 'tapTill' }, { type: 'tapPallet' }, { type: 'buyUpgrade', id: UPGRADES[1]!.id }, { type: 'answerCard', seq: card.seq + 1, answer: 0 }, { type: 'setOrder', auto: true },
+          ] as const) {
+            expect(dispatchCommand(s, cmd, rec.fx)).toEqual({ ok: false, text: LOG_FULL_TEXT });
+          }
+          expect(rec.named('toast')).toEqual(Array.from({ length: 5 }, () => ['toast', LOG_FULL_TEXT, 'error']));
+          expect(log).toHaveLength(RUN_LOG_MAX);
+          expect(s.run).not.toBeNull();
+          expect(JSON.stringify(s.econ)).toBe(before);
+        });
+
+        it('zwykła sesja bez zmian: stuknięcia logowane do RUN_LOG_MAX (także powyżej RANKED_TAP_LOG_MAX), potem markOffLog, a stuknięcie się wykonuje', () => {
+          const rec = recorder();
+          const casual = fresh();
+          fillTo(casual, RANKED_TAP_LOG_MAX + 5);
+          const tapped = dispatchCommand(casual, { type: 'tapTill' }, rec.fx);
+          expect(tapped.text).not.toBe(TAP_LOG_FULL_TEXT);
+          expect(casual.run!.record.log).toHaveLength(RANKED_TAP_LOG_MAX + 6);
+          expect(casual.run!.record.log.at(-1)!.cmd.type).toBe('tapTill');
+          expect(rec.named('toast').filter(([, text]) => text === TAP_LOG_FULL_TEXT)).toEqual([]);
+
+          fillTo(casual, RUN_LOG_MAX);
+          const cash = casual.econ.cash;
+          dispatchCommand(casual, { type: 'tapTill' }, rec.fx);
+          expect(casual.run).toBeNull();   // ten wpis przekroczyłby limit: dziennika już nie prowadzimy
+          expect(casual.econ.cash).toBeGreaterThanOrEqual(cash);
+          expect(rec.named('toast').filter(([, text]) => text === TAP_LOG_FULL_TEXT || text === LOG_FULL_TEXT)).toEqual([]);
+        });
+
+        it('sezon zamyka się też z dziennikiem w strefie rezerwy: szuflada z całym dziennikiem, wynik, aktywny zapis zdjęty', () => {
+          const h = harness();
+          h.shell.startRanked(RANKED_SEED);
+          const s = h.shell.session!;
+          fillTo(s, RANKED_TAP_LOG_MAX + 1_000);   // 17 000 wpisów: stuknięcia już odmawiane, reszta działa
+          expect(h.shell.game.dispatch({ type: 'tapTill' })).toEqual({ ok: false, text: TAP_LOG_FULL_TEXT });
+          s.econ.minute = END;
+
+          h.shell.handleEvents([]);
+
+          const drawer = loadFinished()!;
+          expect(drawer.seed).toBe(RANKED_SEED);
+          expect(drawer.record.log).toHaveLength(RANKED_TAP_LOG_MAX + 1_000);
+          expect(Number.isInteger(drawer.score)).toBe(true);
+          expect(storage.getItem('traszka:ranked')).toBeNull();
+          expect(ui.unsent.value).toEqual({ seed: RANKED_SEED, score: drawer.score });
+          expect(ui.ranked.value?.phase).toBe('over');
+          expect(h.notices).toEqual([]);
+        }, FULL_SEASON_MS);
       });
 
       describe('nagrody poza dziennikiem są wyłączone w biegu rankingowym', () => {
