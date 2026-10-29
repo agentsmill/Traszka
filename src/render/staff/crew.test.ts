@@ -97,6 +97,32 @@ function until(crew: StaffCrew, done: () => boolean, limitS = 120, each?: () => 
 }
 const advance = (crew: StaffCrew, seconds: number): void => { until(crew, () => false, seconds); };
 
+/**
+ * Jak w grze: dwa kroki `DT`, potem `sync` z tą samą listą (co 2 kroki = 0,125 s, czyli ok. 100 ms), aż `done()` albo upłynie
+ * `seconds` s czasu widoku. `each` woła się po każdym kroku i po każdym `sync`. Zwraca czas, który minął.
+ */
+function play(
+  crew: StaffCrew,
+  seconds: number,
+  who: readonly StaffAssignment[],
+  pallets: readonly PalletRef[],
+  minute: number,
+  each?: () => void,
+  done?: () => boolean,
+): number {
+  let t = 0;
+  while (t < seconds && !done?.()) {
+    crew.step(DT);
+    each?.();
+    crew.step(DT);
+    each?.();
+    crew.sync(input(who, pallets, minute));
+    each?.();
+    t += 2 * DT;
+  }
+  return t;
+}
+
 function deepFreeze<T>(value: T): T {
   if (typeof value === 'object' && value !== null && !Object.isFrozen(value)) {
     Object.freeze(value);
@@ -341,7 +367,7 @@ describe('StaffCrew: zatrudnienie i zwolnienie', () => {
     expect(crew.members).toEqual([]);
   });
 
-  it('osoba, która wraca na listę w trakcie wychodzenia, wychodzi do końca; potem pojawia się od nowa z chodnika', () => {
+  it('osoba, która zniknęła na chodniku, po powrocie id pojawia się od nowa z chodnika: to nowy obiekt, nie ciało kasjera', () => {
     const { layout, pallets, street } = SCENES[1]!;
     const crew = new StaffCrew(layout);
     const both = assign([0, 'kasa'], [1, 'sprzatanie']);
@@ -350,11 +376,7 @@ describe('StaffCrew: zatrudnienie i zwolnienie', () => {
 
     crew.sync(input(assign([0, 'kasa']), pallets));
     expect(first.leaving).toBe(true);
-    crew.sync(input(both, pallets));                  // wróciła, ale zdążyła już ruszyć do wyjścia
-    expect(first.leaving).toBe(true);
-    expect(member(crew, 1)).toBe(first);
-
-    until(crew, () => !crew.members.includes(first), 20);
+    until(crew, () => !crew.members.includes(first), 20);   // doszła na chodnik i zniknęła: zawrócić już nie ma kogo
     expect(idsOf(crew)).toEqual([0]);
 
     crew.sync(input(both, pallets));                  // ta sama lista: id 1 jest znów „nowe”
@@ -378,6 +400,141 @@ describe('StaffCrew: zatrudnienie i zwolnienie', () => {
     crew.sync(input(assign([0, 'kasa']), pallets));
     crew.step(DT);
     expect(idsOf(crew)).toEqual([0]);
+  });
+});
+
+describe('StaffCrew: zawracanie wychodzących', () => {
+  // Wychodzenie nie jest lepkie: gdy id osoby, która już idzie do wyjścia, wraca do listy ekonomii, osoba zawraca (ten sam obiekt,
+  // to samo ciało) i dostaje miejsce jak każdy zostający. „Nowy” jest tylko ten, kogo w sklepie w ogóle nie ma.
+  const team = assign([0, 'kasa'], [1, 'sprzatanie'], [2, 'wykladanie']);
+  const rest = assign([2, 'wykladanie']);
+
+  describe.each(SCENES)('$seed', (sc) => {
+    const { layout, pallets, street } = sc;
+    /** Ekipa po zwolnieniu 0 i 1 (kasjer i sprzątająca) i pół sekundy marszu do wyjścia. */
+    const halfwayOut = (): { crew: StaffCrew; cashier: CrewMember; cleaner: CrewMember } => {
+      const crew = new StaffCrew(layout);
+      crew.sync(input(team, pallets));
+      const cashier = member(crew, 0);
+      const cleaner = member(crew, 1);
+      crew.sync(input(rest, pallets));
+      expect(cashier.leaving && cleaner.leaving).toBe(true);
+      play(crew, 0.5, rest, pallets, MINUTE);
+      expect(crew.members).toContain(cashier);
+      expect(crew.members).toContain(cleaner);
+      return { crew, cashier, cleaner };
+    };
+
+    it('zwolniony i od razu zatrudniony ponownie (to samo id) zawraca: ten sam obiekt, to samo ciało, nie znika i nie przeskakuje', () => {
+      const { crew, cashier, cleaner } = halfwayOut();
+      const where = [pos(cashier), pos(cleaner)];
+      crew.sync(input(team, pallets));
+
+      expect(crew.members.map((m) => m.id)).toEqual([0, 1, 2]);
+      expect(member(crew, 0)).toBe(cashier);
+      expect(member(crew, 1)).toBe(cleaner);
+      expect(cashier.leaving || cleaner.leaving).toBe(false);
+      expect(cashier.isCashier).toBe(true);
+      expect(cleaner.isCashier).toBe(false);
+      expect(cashiers(crew)).toEqual([0]);
+      expect([pos(cashier), pos(cleaner)]).toEqual(where);   // zawraca stamtąd, gdzie była: bez teleportu na chodnik
+      expect(cashier.task).toBe('kasa');
+      expect(cleaner.task).toBe('sprzatanie');
+
+      play(crew, 60, team, pallets, MINUTE, () => {
+        expect(crew.members).toContain(cashier);
+        expect(crew.members).toContain(cleaner);
+        expect(cashiers(crew)).toEqual([0]);
+      }, () => crew.members.every((m) => m.walker.atGoal));
+      expect(crew.members.every((m) => m.walker.atGoal && !m.leaving)).toBe(true);
+      expect(idsOf(crew)).toEqual([0, 1, 2]);
+      expect(member(crew, 0)).toBe(cashier);
+      expect(member(crew, 1)).toBe(cleaner);
+    });
+
+    it('zawrócony dostaje zwykłe liczenie celów: jego cel to nowe miejsce z targets (nie ulica) i tam staje', () => {
+      const { crew, cashier, cleaner } = halfwayOut();
+      expect(cleaner.walker.goal).toEqual(street);       // dotąd szła na ulicę
+      pickSpy.mockClear();
+      crew.sync(input(team, pallets));
+
+      expect(pickSpy).toHaveBeenCalledTimes(1);
+      const spots = pickSpy.mock.results[0]!.value as Map<number, StaffSpot>;
+      expect(pickSpy.mock.calls[0]![3].map((a) => a.id)).toEqual([0, 1, 2]);   // zawrócony liczy się jak zostający
+      for (const m of [cashier, cleaner]) {
+        const spot = spots.get(m.id)!;
+        expect(m.walker.goal).toEqual(spot.cell);
+        expect(m.walker.goal).not.toEqual(street);
+      }
+      play(crew, 60, team, pallets, MINUTE, undefined, () => crew.members.every((m) => m.walker.atGoal));
+      for (const m of [cashier, cleaner]) {
+        const spot = spots.get(m.id)!;
+        expect(m.walker.atGoal).toBe(true);
+        expect(pos(m)).toEqual(centre(spot.cell));
+        expect(m.walker.heading).toBe(spot.heading);
+      }
+    });
+  });
+
+  it('zawrócony kasjer nie oddaje ciała przybyszowi o mniejszym id z tego samego sync', () => {
+    const { layout, pallets } = SCENES[0]!;
+    const crew = new StaffCrew(layout);
+    crew.sync(input(assign([3, 'kasa'], [5, 'wolny']), pallets));
+    const cashier = member(crew, 3);
+    crew.sync(input(assign([5, 'wolny']), pallets));     // 3 wychodzi jako kasjer
+    play(crew, 0.5, assign([5, 'wolny']), pallets, MINUTE);
+    expect(cashier.leaving && cashier.isCashier).toBe(true);
+
+    crew.sync(input(assign([1, 'kasa'], [3, 'kasa'], [5, 'wolny']), pallets));   // 3 wraca, 1 przychodzi
+    expect(member(crew, 3)).toBe(cashier);
+    expect(cashier.leaving).toBe(false);
+    expect(cashiers(crew)).toEqual([3]);
+    expect(member(crew, 1).isCashier).toBe(false);
+    expect(crew.members.length).toBeLessThanOrEqual(STAFF_VIEW_MAX);
+  });
+
+  it('wyjątek w liczeniu miejsc przy wychodzeniu nie sprawia, że zawrócony zostaje z celem na ulicę', () => {
+    const { layout, pallets, street } = SCENES[0]!;
+    const crew = new StaffCrew(layout);
+    crew.sync(input(team, pallets));
+    const cleaner = member(crew, 1);
+    pickSpy.mockImplementationOnce(() => { throw new Error('boom'); });
+    expect(() => crew.sync(input(assign([0, 'kasa'], [2, 'wykladanie']), pallets))).toThrow('boom');
+    expect(cleaner.leaving).toBe(true);                  // wychodzenie ruszyło przed wyjątkiem
+    expect(cleaner.walker.goal).toEqual(street);
+
+    crew.sync(input(team, pallets));                     // lista jak przed zwolnieniem, więc podpis liczenia się nie zmienił
+    expect(cleaner.leaving).toBe(false);
+    expect(cleaner.walker.goal).not.toEqual(street);     // mimo to dostał miejsce
+    expect(cleaner.walker.goal).toEqual((pickSpy.mock.results[pickSpy.mock.results.length - 1]!.value as Map<number, StaffSpot>).get(1)!.cell);
+  });
+
+  it('zawrócony nie podlega staremu limitowi 20 s: po ponownym wyjściu limit liczy się od nowa', () => {
+    const { layout } = SCENES[0]!;
+    const crew = new StaffCrew(layout);
+    const one = assign([0, 'kasa']);
+    crew.sync(input(one));
+    advance(crew, 5);
+    // Paleta 2×2 na obu kratkach wejścia zamyka salę od chodnika: kto wychodzi, stoi w miejscu.
+    const sealed: PalletRef[] = [{ loc: 'floor', spot: { x: layout.entrance[0]!.x, y: layout.entrance[0]!.y }, since: 0 }];
+    crew.sync(input([], sealed));
+    const stuck = member(crew, 0);
+    expect(stuck.leaving).toBe(true);                    // pierwsze wyjście: czas 5
+
+    play(crew, 10, [], sealed, MINUTE);                  // do czasu 15
+    expect(crew.members).toContain(stuck);
+    crew.sync(input(one, sealed));
+    expect(stuck.leaving).toBe(false);
+    expect(member(crew, 0)).toBe(stuck);
+    play(crew, 12, one, sealed, MINUTE);                 // do czasu 27, czyli po 20 s od pierwszego wyjścia
+    expect(crew.members).toContain(stuck);               // zawróconego dawny limit nie dotyczy
+
+    crew.sync(input([], sealed));                        // drugie wyjście: czas 27
+    expect(stuck.leaving).toBe(true);
+    play(crew, 19, [], sealed, MINUTE);
+    expect(crew.members).toContain(stuck);               // 19 s po drugim wyjściu: jeszcze jest
+    play(crew, 2, [], sealed, MINUTE);
+    expect(crew.members).not.toContain(stuck);           // 21 s po drugim wyjściu: zniknął (limit liczony od nowa)
   });
 });
 
@@ -645,52 +802,99 @@ describe('StaffCrew: kasjer', () => {
   });
 
   describe.each(SCENES)('noc w grze trwa ~5 s widoku, a wyjście z zaplecza dłużej: $seed', (sc) => {
-    // Rano poprzednia ekipa (z kasjerem) jeszcze wychodzi. Kasjerem jest najmniejsze id, tu z zadaniem „wolny” na zapleczu, więc
-    // idzie do wyjścia najdłużej (9-12 s), a inni z poprzedniego dnia zdążają wyjść wcześniej i rano wchodzą z chodnika.
+    // Rano wczorajsza ekipa (z kasjerem) jeszcze wychodzi. Kasjerem jest najmniejsze id, tu z zadaniem „wolny” na zapleczu, więc
+    // idzie do wyjścia najdłużej (9-12 s), a inni z poprzedniego dnia zdążają wyjść wcześniej. Id wracają na listę, więc kto
+    // jeszcze idzie, zawraca (kasjer razem z ciałem), a kto już zniknął, wchodzi z chodnika jak nowy i ciała nie przejmuje.
     const tasks: StaffDuty[] = ['wolny', 'rozladunek', 'kasa', 'sprzatanie', 'wykladanie'];
     const day = tasks.map((task, id) => ({ id, task }));
+    const dayIds = day.map((p) => p.id);
+    const close = 22 * 60;
+    const morning = 30 * 60;                           // następny dzień, 6:00
 
-    it('wychodzący kasjer nie blokuje ciała: pierwszy przybysz je obejmuje, stary znika w drodze, a rano jest dokładnie jeden kasjer', () => {
+    /** Sklep po zamknięciu: wczorajsza ekipa dostała pustą listę i wychodzi. */
+    const closed = (): { crew: StaffCrew; old: CrewMember; check: () => void } => {
       const crew = new StaffCrew(sc.layout);
       crew.sync(input(day, sc.pallets));
       const old = member(crew, 0);
       expect(old.isCashier).toBe(true);
-      crew.sync(input([], sc.pallets, 22 * 60));         // zamknięcie: lista pusta
-      advance(crew, 5);                                  // noc: ok. 5 s widoku
-      expect(crew.members).toContain(old);               // z zaplecza nie zdążył wyjść
-      expect(old.leaving && old.isCashier).toBe(true);
-
-      let oldVanished: 'w drodze' | 'po dojściu' | undefined;
-      let claimed = false;
+      crew.sync(input([], sc.pallets, close));
       const check = (): void => {
         expect(crew.members.length).toBeLessThanOrEqual(STAFF_VIEW_MAX);
         expect(cashiers(crew).length).toBeLessThanOrEqual(1);
-        if (oldVanished === undefined && !crew.members.includes(old)) oldVanished = old.walker.atGoal ? 'po dojściu' : 'w drodze';
       };
-      const morning = 30 * 60;                           // następny dzień, 6:00
-      let t = 0;
-      const settled = (): boolean => crew.members.length === day.length && crew.members.every((m) => !m.leaving && m.walker.atGoal);
-      while (!settled() && t < 120) {
-        const here = new Set(idsOf(crew));
-        const fresh = day.map((p) => p.id).filter((id) => !here.has(id));   // id, których ciała już nie ma, więc wejdą w tym sync
-        crew.sync(input(day, sc.pallets, morning));
-        if (!claimed && fresh.length > 0) {
-          claimed = true;
-          expect(cashiers(crew)).toEqual([Math.min(...fresh)]);   // najmniejsze id spośród przybyłych w tym sync
-          expect(crew.members).not.toContain(old);                // a wychodzący kasjer znika od razu
-        }
-        check();
-        crew.step(DT);
-        crew.step(DT);
-        t += 2 * DT;
-        check();
+      return { crew, old, check };
+    };
+    const standing = (crew: StaffCrew): boolean =>
+      crew.members.length === day.length && crew.members.every((m) => !m.leaving && m.walker.atGoal);
+
+    it('poranek: po ~5 s nocy wraca ta sama lista, a kasjer (id 0) zawraca razem z resztą idących: ten sam obiekt, to samo ciało, nikt nie znika w pół drogi', () => {
+      const { crew, old, check } = closed();
+      play(crew, 5, [], sc.pallets, close, check);       // noc: ok. 5 s widoku
+      expect(crew.members).toContain(old);               // z zaplecza nie zdążył wyjść
+      expect(old.leaving && old.isCashier).toBe(true);
+      const walking = [...crew.members];                 // ci jeszcze idą do wyjścia
+      const entering = dayIds.filter((id) => !walking.some((m) => m.id === id));
+
+      crew.sync(input(day, sc.pallets, morning));
+      check();
+      expect(member(crew, 0)).toBe(old);
+      expect(cashiers(crew)).toEqual([0]);
+      expect(old.isCashier).toBe(true);
+      for (const m of walking) {
+        expect(member(crew, m.id)).toBe(m);
+        expect(m.leaving).toBe(false);
+        expect(m.walker.goal).not.toEqual(sc.street);    // idzie na swoje miejsce, nie na ulicę
       }
-      expect(claimed).toBe(true);
-      expect(settled()).toBe(true);
-      expect(oldVanished).toBe('w drodze');              // znikł na rzecz nowego kasjera, zanim doszedł na chodnik
-      expect(idsOf(crew)).toEqual(day.map((p) => p.id));
-      expect(cashiers(crew)).toHaveLength(1);
-      expect(crew.members.filter((m) => m.isCashier).every((m) => !m.leaving)).toBe(true);
+      for (const id of entering) {
+        expect(walking.some((m) => m.id === id)).toBe(false);
+        expect(member(crew, id).isCashier).toBe(false);  // przybysz nie przejmuje ciała po zawróconym kasjerze
+      }
+
+      play(crew, 120, day, sc.pallets, morning, () => {
+        check();
+        for (const m of walking) expect(crew.members).toContain(m);   // nikt z zawróconych nie znika (pop)
+      }, () => standing(crew));
+      expect(standing(crew)).toBe(true);
+      expect(idsOf(crew)).toEqual(dayIds);
+      for (const m of walking) expect(member(crew, m.id)).toBe(m);
+      expect(cashiers(crew)).toEqual([0]);
+      expect(member(crew, 0)).toBe(old);
+    });
+
+    it('część ekipy zdążyła zniknąć na chodniku, część jeszcze idzie: idący zawracają (kasjer z ciałem), a „nowi” to tylko ci, których już nie ma', () => {
+      const { crew, old, check } = closed();
+      play(crew, 30, [], sc.pallets, close, check, () => crew.members.length < day.length);   // aż ktoś zniknie na chodniku
+      expect(crew.members.length).toBeLessThan(day.length);
+      expect(crew.members).toContain(old);               // a kasjer (najdłuższa droga) jeszcze idzie
+      expect(old.leaving && old.isCashier).toBe(true);
+      const walking = [...crew.members];
+      const gone = dayIds.filter((id) => !walking.some((m) => m.id === id));
+      expect(gone.length).toBeGreaterThan(0);
+
+      crew.sync(input(day, sc.pallets, morning));
+      check();
+      expect(idsOf(crew)).toEqual(dayIds);
+      expect(member(crew, 0)).toBe(old);
+      expect(cashiers(crew)).toEqual([0]);
+      for (const m of walking) {
+        expect(member(crew, m.id)).toBe(m);
+        expect(m.leaving).toBe(false);
+      }
+      for (const id of gone) {
+        const fresh = member(crew, id);
+        expect(walking).not.toContain(fresh);
+        expect(fresh.leaving).toBe(false);
+        expect(fresh.isCashier).toBe(false);
+        expect(fresh.walker.atGoal).toBe(false);         // wchodzi z chodnika
+      }
+
+      play(crew, 120, day, sc.pallets, morning, () => {
+        check();
+        for (const m of walking) expect(crew.members).toContain(m);
+      }, () => standing(crew));
+      expect(standing(crew)).toBe(true);
+      expect(cashiers(crew)).toEqual([0]);
+      expect(member(crew, 0)).toBe(old);
     });
   });
 

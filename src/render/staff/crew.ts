@@ -29,11 +29,15 @@ export interface CrewMember {
   /** Zadanie trzymane (po histerezie), nie chwilowe. */
   readonly task: StaffDuty;
   readonly walker: StaffWalker;
-  /** Wychodzi ze sklepu (zwolniony albo koniec zmiany); znika po dojściu na chodnik albo po 20 s czasu widoku. */
+  /**
+   * Wychodzi ze sklepu (zwolniony albo koniec zmiany); znika po dojściu na chodnik albo po 20 s czasu widoku. Wychodzenie nie
+   * jest lepkie: gdy jej id wróci do listy ekonomii, zanim zniknie, osoba zawraca (`leaving` znów fałsz, ten sam obiekt).
+   */
   readonly leaving: boolean;
   /**
    * To ciało „kasjera z ekranu startowego” (wygląd gracza). Najwyżej jedna osoba naraz. Kasjer trzyma je do zniknięcia ze
-   * sklepu (zwolniony wychodzi z nim), ale gdy ktoś nowy obejmuje ciało kasjera, wychodzący kasjer znika od razu.
+   * sklepu (zwolniony wychodzi z nim, a gdy jego id wróci do listy, zawraca z nim), ale gdy ktoś nowy obejmuje ciało kasjera,
+   * wychodzący kasjer znika od razu.
    */
   readonly isCashier: boolean;
 }
@@ -140,12 +144,13 @@ export class StaffCrew {
     const wantedIds = new Set(wanted.map((a) => a.id));
     for (const p of this.list) if (!p.leaving && !wantedIds.has(p.id)) this.startLeaving(p);
 
-    // Miejsca dostają tylko ci, którzy zostają. Kto już wychodzi, wychodzi do końca, także gdy ekonomia znów go wymienia
-    // (wróci jako nowa osoba, gdy zniknie ze sklepu): w połowie drogi do wyjścia nie zawracamy nikogo.
+    // Miejsca dostają ci, których ekonomia chce, także ci, którzy już wychodzą: osoba, której id wróciło do listy, zawraca
+    // (noc w grze to kilka sekund widoku, a marsz z zaplecza na chodnik dłużej, więc rano wczorajsza ekipa jeszcze idzie do
+    // wyjścia i ma wrócić na miejsca, a nie znikać w pół drogi). Przybyszem jest wyłącznie id, którego w ogóle nie ma w sklepie.
     const active: StaffAssignment[] = [];
     for (const { id, task: desired } of wanted) {
       const person = byId.get(id);
-      if (person?.leaving) continue;
+      if (person?.leaving) this.turnBack(person);
       // `hold.get` jest puste tylko wtedy, gdy histereza pominęła to wywołanie (minuta nie jest liczbą): wtedy liczy się chcenie.
       const task = this.hold.get(id) ?? desired;
       if (person) person.task = task;
@@ -200,9 +205,21 @@ export class StaffCrew {
   }
 
   /**
-   * Liczy miejsca dla osób, które zostają, i ustawia im cele. Poprzednie miejsce dostają do `pickStaffSpots` ci, których zadanie
-   * trzymane nie zmieniło się od ostatniego liczenia, więc zmiana składu ekipy albo pojawienie się palety nie przegania ludzi
-   * bez powodu. Nowych (jeszcze bez ciała) wpuszcza tak, jak opisuje `arrive`.
+   * Wychodząca osoba, którą ekonomia znów chce: przestaje wychodzić (zachowuje obiekt, ciało kasjera i miejsce, w którym jest),
+   * a cel na miejsce dostaje od najbliższego liczenia, jak każdy zostający. Podpis liczenia kasujemy, żeby to liczenie na pewno
+   * się odbyło (inaczej osoba zawróciłaby z celem na ulicę, gdyby poprzednie liczenie przerwał wyjątek i podpis się nie zmienił).
+   */
+  private turnBack(p: Person): void {
+    p.leaving = false;
+    p.leaveSince = 0;
+    this.signature = null;
+  }
+
+  /**
+   * Liczy miejsca dla osób, które zostają (także zawróconych), i ustawia im cele. Poprzednie miejsce dostają do `pickStaffSpots`
+   * ci, których zadanie trzymane nie zmieniło się od ostatniego liczenia, więc zmiana składu ekipy albo pojawienie się palety
+   * nie przegania ludzi bez powodu (zawrócony poprzedniego miejsca nie ma: dostaje nowe). Nowych (jeszcze bez ciała) wpuszcza
+   * tak, jak opisuje `arrive`.
    */
   private retarget(active: readonly StaffAssignment[], byId: ReadonlyMap<number, Person>, pallets: readonly PalletRef[]): void {
     const previous = new Map<number, StaffSpot>();
@@ -215,10 +232,10 @@ export class StaffCrew {
     this.placed = new Map();
     const arrivals: Person[] = [];
     // Ciało kasjera dostaje najmniejsze id spośród nowych (`active` rośnie po id), o ile nikt, kto zostaje, go jeszcze nie ma.
-    // Wychodzący kasjer go nie blokuje: noc w grze trwa kilka sekund widoku, a wyjście z zaplecza kilka sekund dłużej, więc
-    // rano poprzednia ekipa (z kasjerem) często jeszcze wychodzi i gdyby jej kasjer zajmował ciało, nikt by go nie dostał.
-    // Skoro nowy kasjer obejmuje ciało, wychodzący kasjer znika od razu (jedno krótkie „puf” w rzadkim zbiegu okoliczności),
-    // żeby ciało miała najwyżej jedna osoba. Zwolniony kasjer, po którego ciało nikt nie przychodzi, wychodzi z nim do końca.
+    // Kasjer, którego id wróciło do listy, zawrócił (`turnBack`) i zostaje, więc ciało trzyma dalej: rano wczorajsza ekipa z
+    // kasjerem często jeszcze wychodzi, a jej kasjer ma zostać kasjerem. Wychodzący kasjer, którego id nie wróciło, ciała nie
+    // blokuje: gdy ktoś nowy je obejmuje, znika od razu (jedno krótkie „puf”), żeby ciało miała najwyżej jedna osoba. Zwolniony
+    // kasjer, po którego ciało nikt nie przychodzi, wychodzi z nim do końca.
     // Środkowy dzień: nowo zatrudniony nie odbiera ciała kasjerowi, który zostaje, nawet gdy ma mniejsze id.
     let cashierTaken = this.list.some((p) => p.isCashier && !p.leaving);
     let lane: readonly Cell[] | undefined;   // kratki startowe przybyszów; liczone dopiero przy pierwszym z nich
