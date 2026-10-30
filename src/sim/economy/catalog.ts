@@ -11,7 +11,10 @@ export interface CatInfo {
   label: string;
   /** Średnia cena sztuki (zł). */
   price: number;
-  /** Marża franczyzobiorcy (udział w cenie). */
+  /**
+   * Marża franczyzobiorcy (udział w cenie), już po udziale Centrali: od SIM_VERSION 6 nie ma osobnej opłaty franczyzowej, a stawki
+   * są o 1/5 niższe niż marża sklepu z SIM 5 (ok. 15,3% obrotu zamiast 19,1%). Z premiami daje to przelew ok. 16,5–16,7% obrotu.
+   */
   margin: number;
   /** Udział w koszyku (sztuki). Suma = 1. */
   basket: number;
@@ -21,20 +24,20 @@ export interface CatInfo {
 }
 
 export const CAT_INFO: Record<Cat, CatInfo> = {
-  napoje:    { label: 'Napoje',    price: 5.2,  margin: 0.17, basket: 0.26, fridge: 0.6, dry: 0.15 },
-  nabial:    { label: 'Nabiał',    price: 4.6,  margin: 0.15, basket: 0.12, fridge: 0.4, dry: 0 },
-  slodycze:  { label: 'Słodycze',  price: 4.1,  margin: 0.22, basket: 0.15, fridge: 0,   dry: 0.2 },
-  przekaski: { label: 'Przekąski', price: 6.3,  margin: 0.21, basket: 0.15, fridge: 0,   dry: 0.2 },
-  pieczywo:  { label: 'Pieczywo',  price: 3.6,  margin: 0.2,  basket: 0.14, fridge: 0,   dry: 0.15 },
-  chemia:    { label: 'Chemia',    price: 9.5,  margin: 0.2,  basket: 0.05, fridge: 0,   dry: 0.1 },
-  alkohol:   { label: 'Alkohol',   price: 11.8, margin: 0.12, basket: 0.13, fridge: 0,   dry: 0.2 },
+  napoje:    { label: 'Napoje',    price: 5.2,  margin: 0.136, basket: 0.26, fridge: 0.6, dry: 0.15 },
+  nabial:    { label: 'Nabiał',    price: 4.6,  margin: 0.12,  basket: 0.12, fridge: 0.4, dry: 0 },
+  slodycze:  { label: 'Słodycze',  price: 4.1,  margin: 0.176, basket: 0.15, fridge: 0,   dry: 0.2 },
+  przekaski: { label: 'Przekąski', price: 6.3,  margin: 0.168, basket: 0.15, fridge: 0,   dry: 0.2 },
+  pieczywo:  { label: 'Pieczywo',  price: 3.6,  margin: 0.16,  basket: 0.14, fridge: 0,   dry: 0.15 },
+  chemia:    { label: 'Chemia',    price: 9.5,  margin: 0.16,  basket: 0.05, fridge: 0,   dry: 0.1 },
+  alkohol:   { label: 'Alkohol',   price: 11.8, margin: 0.096, basket: 0.13, fridge: 0,   dry: 0.2 },
 };
 
 /** Sztuk w koszyku przeciętnego klienta. */
 export const ITEMS_PER_CUSTOMER = 3.4;
 
 /** Hot-dog albo kawa „przy okazji”: szansa na klienta, cena i marża. Bez zapasu (strefa hot jest w każdym sklepie). */
-export const HOT = { chance: 0.18, price: 8.5, margin: 0.45 } as const;
+export const HOT = { chance: 0.18, price: 8.5, margin: 0.36 } as const;
 
 /**
  * Przeciętny klient w złotówkach (jedno miejsce, z którego liczą ekonomia, karty, KPI i makieta): koszyk z półek (sztuki
@@ -121,12 +124,12 @@ export const TAP_ITEMS = 8;
  */
 export const COMBO_WINDOW = 5;
 /**
- * Koszt jednej osoby na zmianie za dzień otwarcia (17 h, więc w praktyce dwa etaty na zmianach): ok. 29 zł za godzinę. Pełny koszt
- * pracodawcy przy płacy minimalnej z 2025 r. to ok. 37 zł za godzinę, ale w prawdziwym sklepie część godzin pokrywa sam
- * franczyzobiorca z rodziną. Do SIM_VERSION 5 było 340 zł (ok. 20 zł za godzinę), co przy realnym udziale franczyzobiorcy w obrocie
- * (`FRANCHISE_FEE_SHARE`) dawało biernemu graczowi ponad 20 tys. zł na rękę miesięcznie zamiast kilku.
+ * Koszt jednej osoby na zmianie za dzień otwarcia (17 h), naliczany co wieczór i płacony przy zamknięciu miesiąca z przelewu. Część
+ * godzin pokrywa sam franczyzobiorca z rodziną, więc to koszt godzin najętych, a nie pełny etat razy 17 h. SIM 5 miał 500 zł, bo płaca
+ * niosła w sobie ZUS, VAT i księgową; od SIM_VERSION 6 są osobnymi kosztami (`OWN_COSTS`, ok. 9–10 tys. zł miesięcznie, czyli ok. 165 zł
+ * na osobę na zmianie dziennie przy dwóch osobach).
  */
-export const WAGE_PER_DAY = 500;
+export const WAGE_PER_DAY = 340;
 export const HIRE_COST = 300;
 export const STAFF_MAX = 8;
 export const STAFF_START = 2;
@@ -135,19 +138,47 @@ export const STAFF_START = 2;
 
 export const MEDIA_PER_DAY = 140;
 /**
- * Opłata franczyzowa na koniec miesiąca: stała część plus udział w obrocie, jawny przelew przy zamknięciu miesiąca. Marża sklepu
- * to ok. 19% obrotu (`MARGIN_PER_CUSTOMER`), a franczyzobiorcy przy przeciętnym zaufaniu zostaje z niej ok. 16,5–16,7% obrotu
- * przed jego kosztami, jak w prawdziwych sieciach convenience (2025: ok. 16,7 zł na 100 zł obrotu, razem z wynagrodzeniem
- * motywacyjnym). Przy wysokim zaufaniu Centrala oddaje jeszcze premię od obrotu (trust.ts). Do SIM_VERSION 5 brała 2000 zł plus
- * 15,1–15,3% obrotu, a franczyzobiorcy zostawało ok. 4% (balans: tycoon/balance.test.ts).
+ * Koszty własne franczyzobiorcy płacone przy zamknięciu miesiąca z przelewu od Centrali (obok płac i mediów): ZUS i księgowa co miesiąc
+ * tyle samo, VAT jako udział przelewu. Proporcje z relacji franczyzobiorczyni z Opola (Bankier, 12.11.2024): przelew ok. 25 tys. zł,
+ * VAT 3,9–4,5 tys., ZUS 2–2,5 tys., księgowa ok. 1 tys. VAT to uproszczenie: gra pokazuje kwotę, nie mechanizm rozliczenia, który
+ * w relacjach jest sporny. Opłaty franczyzowej na koniec miesiąca nie ma (do SIM_VERSION 6 była: 1000 zł plus 3,4% obrotu), bo żadne
+ * źródło jej nie potwierdza: udział Centrali jest w stawce marży (`CAT_INFO`).
  */
-export const FRANCHISE_FEE_FIXED = 1000;
-export const FRANCHISE_FEE_SHARE = 0.034;
+export const OWN_COSTS = { zus: 2200, accounting: 1000, vatShare: 0.17 } as const;
+/**
+ * Raty u Centrali: ulepszenie, sprzęt albo remont od razu, a Centrala potrąca raty z kolejnych przelewów (jak sprzęt na start
+ * finansowany przez sieć). Plan zależy od ceny (`upTo`), opłata za finansowanie to udział ceny, więc zakup za gotówkę zawsze kosztuje
+ * mniej. Suma rat w miesiącu nie przekroczy `limitShare` przelewu bazowego razy mnożnik zaufania (`trust`, od najwyższego progu).
+ */
+export const INSTALLMENTS = {
+  plans: [
+    { upTo: 5_000, months: 3, fee: 0.04 },
+    { upTo: 25_000, months: 6, fee: 0.08 },
+    { upTo: Infinity, months: 12, fee: 0.15 },
+  ],
+  limitShare: 0.35,
+  trust: [
+    { from: 85, mult: 1.5 },
+    { from: 70, mult: 1.25 },
+    { from: 40, mult: 1 },
+    { from: 25, mult: 0.5 },
+  ],
+} as const;
+/**
+ * Remanent: ostatniego dnia co `everyMonths` miesięcy gry o `at` (przed otwarciem). Pierwszy wypada przy końcu gwarancji. Ubytki od
+ * ostatniego remanentu ponad limit Centrali (`WUT.threshold` obrotu z okresu) schodzą z przelewu tego samego wieczoru.
+ */
+export const REMANENT = { everyMonths: 3, at: 5 * 60 } as const;
+/**
+ * Przeterminowania z nadmiaru zapasu: co wieczór towar ponad `coverDays` dni sprzedaży (wartość zapasu w sklepie po cenach sklepu minus
+ * tyle dni przewidywanego obrotu) traci `rate` swojej wartości. Trafia do ubytków (przyczyna „przeterminowane”) i wychodzi przy remanencie.
+ */
+export const EXPIRY = { coverDays: 3, rate: 0.01 } as const;
 /**
  * Przychód gwarantowany nowego franczyzobiorcy (prawdziwe sieci: 25 tys. zł miesięcznie w latach 2023–2025, „pod szeregiem
- * warunków”): przez pierwsze `months` miesięcy gry Centrala przy zamknięciu miesiąca dopłaca do `income` przychodu franczyzobiorcy
- * (marża minus opłata plus premie Centrali), o ile zaufanie jest co najmniej `minTrust` i w miesiącu nie było mandatu. Trzy
- * miesiące to kwartał wdrożenia i zarazem cały sezon rankingowy: siatka chroni początek gry, a nie zastępuje decyzji.
+ * warunków”): przez pierwsze `months` miesięcy gry Centrala przy zamknięciu miesiąca dopłaca do przelewu, żeby przychód (marża plus
+ * premie Centrali, przed potrąceniami i kosztami własnymi) wyniósł `income`, o ile zaufanie jest co najmniej `minTrust` i w miesiącu
+ * nie było mandatu. Trzy miesiące to kwartał wdrożenia i zarazem cały sezon rankingowy; przy jego końcu wypada pierwszy remanent.
  */
 export const GUARANTEE = { income: 25_000, months: 3, minTrust: 40 } as const;
 /** Palet w dostawie bez opłaty logistycznej; każda kolejna kosztuje (na sztukę towaru tyle co dawne 6 palet po 60 zł). */
@@ -195,8 +226,8 @@ export const STRAZ = {
 export const CREDIT_LIMIT = 70_000;
 /**
  * Granica debetu (decyzja właściciela z 29.10.2026: „za duży debet to koniec gry”): gotówka poniżej niej kończy grę od razu, także
- * w środku miesiąca. Opłata franczyzowa schodzi na koniec miesiąca, więc wtedy gotówka ma dołek; bierny gracz bez pecha kończy go
- * w okolicy zera (balans: tycoon/balance.test.ts), a granica stoi na tyle daleko, żeby sam ten dołek gry nie kończył. Od
+ * w środku miesiąca. Przelew od Centrali z potrąceniami i kosztami własnymi przychodzi na koniec miesiąca, więc wtedy gotówka skacze; słaby
+ * miesiąc robi dziurę (balans: tycoon/balance.test.ts), a granica stoi na tyle daleko, żeby sam jeden słaby miesiąc gry nie kończył. Od
  * `DEBT_WARN_SHARE` granicy Centrala ostrzega, ile zostało do końca. −100 000 od SIM_VERSION 5 (decyzja właściciela z 30.10.2026:
  * „zwiększ możliwy debet do 100k”; w playteście dołek po opłacie za duży sklep sięgał ok. −100 tys.).
  */

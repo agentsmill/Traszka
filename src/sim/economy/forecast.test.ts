@@ -1,155 +1,114 @@
 import { describe, expect, it } from 'vitest';
 import { generateStore } from '@/sim/store/generateStore';
-import { DEBT_LIMIT, FRANCHISE_FEE_FIXED, FRANCHISE_FEE_SHARE } from './catalog';
-import { DEBT_WARN, createEconomy, franchiseFee, type EconomyState } from './economy';
-import { forecastMonth, spendCheck } from './forecast';
+import { DEBT_LIMIT, GUARANTEE, OPEN_TO, OWN_COSTS } from './catalog';
+import { applyCommand } from './commands';
+import { DEBT_WARN, awaitingDecision, createEconomy, stepMinute, type EconEvent, type EconomyState } from './economy';
+import { forecastMonth, spendCheck, type MonthForecast } from './forecast';
+import { buildStatement, emptySettleMonth, installmentsDue } from './franchisee';
 import { computeStoreInfo } from './storeInfo';
-import { turnoverBonusShare } from './tycoon/trust';
-import { WUT, wutCharge } from './tycoon/wut';
+import { visibleCards } from './tycoon/cards';
 
 const SEED = 'kiełbasa-42';
-const fresh = (): EconomyState => createEconomy(SEED, computeStoreInfo(generateStore(SEED)));
+const info = computeStoreInfo(generateStore(SEED));
+const fresh = (): EconomyState => createEconomy(SEED, info);
 
-describe('forecastMonth: co Centrala zabierze przy zamknięciu miesiąca', () => {
-  it('na początku miesiąca naliczona jest tylko stała część opłaty, a wolne środki to gotówka minus ona', () => {
-    const s = fresh();
-    s.cash = 10_000;
-    const f = forecastMonth(s);
-    expect(f.fee).toBe(FRANCHISE_FEE_FIXED);
-    expect(f.bonus).toBe(0);
-    expect(f.wut).toBe(0);
-    expect(f.due).toBe(FRANCHISE_FEE_FIXED);
-    expect(f.free).toBe(10_000 - FRANCHISE_FEE_FIXED);
-  });
+/** Bierna gra do minuty `until` (karty z odpowiedzią domyślną). */
+function playTo(s: EconomyState, until: number, out: EconEvent[] = []): EconomyState {
+  while (s.minute < until) {
+    if (awaitingDecision(s)) {
+      const c = visibleCards(s.tycoon.cards, s.minute)[0]!;
+      applyCommand(s, info, { type: 'answerCard', seq: c.seq, answer: c.defaultAnswer });
+      continue;
+    }
+    stepMinute(s, info, out);
+  }
+  return s;
+}
 
-  it('opłata rośnie z obrotem dokładnie tak, jak liczy ją closeMonth (franchiseFee)', () => {
-    const s = fresh();
-    s.month.revenue = 690_000;
-    const f = forecastMonth(s);
-    expect(f.fee).toBe(franchiseFee(690_000));
-    expect(f.fee).toBe(Math.round(FRANCHISE_FEE_FIXED + FRANCHISE_FEE_SHARE * 690_000));
-  });
-
-  it('premia od obrotu idzie z zaufania i obrotu jak w closeMonth i pomniejsza kwotę do oddania', () => {
-    const s = fresh();
-    s.month.revenue = 100_000;
-    s.tycoon.trust.value = 90;
-    const f = forecastMonth(s);
-    expect(f.bonus).toBe(Math.round(turnoverBonusShare(90) * 100_000));
-    expect(f.bonus).toBeGreaterThan(0);
-    expect(f.due).toBe(f.fee + f.wut - f.bonus);
-
-    s.tycoon.trust.value = 50;   // poniżej progu premii
-    expect(forecastMonth(s).bonus).toBe(0);
-  });
-
-  it('WUT to nadwyżka ubytków ponad próg Centrali (wutCharge), bez zerowania liczników miesiąca', () => {
-    const s = fresh();
-    s.month.revenue = 50_000;
-    s.tycoon.wut.month.termin = WUT.threshold * 50_000 + 700;   // 700 zł ponad próg
-    const f = forecastMonth(s);
-    expect(f.wut).toBeCloseTo(700, 6);
-    expect(f.wut).toBe(wutCharge(s.tycoon.wut, 50_000));
-    forecastMonth(s);
-    expect(s.tycoon.wut.month.termin).toBeCloseTo(WUT.threshold * 50_000 + 700, 6);   // closeWutMonth zerowałby je przy odczycie
-  });
-
-  it('ubytki pod progiem nic nie kosztują', () => {
-    const s = fresh();
-    s.month.revenue = 50_000;
-    s.tycoon.wut.month.termin = 100;
-    expect(forecastMonth(s).wut).toBe(0);
-  });
-
-  it('przypadek z produkcji: po zakupach gotówka pozwala wejść w debet, a prognoza to pokazuje przed zakupem', () => {
-    // obrót z playtestu właściciela (30.10.2026): przy SIM_VERSION 4 opłata za niego wynosiła ok. 104 tys. zł i kończyła grę;
-    // od SIM_VERSION 5 (realny udział franczyzobiorcy) to ok. 24 tys., ale wydana do zera gotówka i tak schodzi pod kreskę
-    const s = fresh();
-    s.month.revenue = 690_000;
-    s.tycoon.trust.value = 50;
-    s.cash = 5_000;   // wydano prawie wszystko, zanim przyszła opłata
-    const f = forecastMonth(s);
-    expect(f.due).toBe(franchiseFee(690_000));
-    expect(f.free).toBe(5_000 - f.due);
-    expect(f.free).toBeLessThan(0);
-  });
-
-  it('nie zmienia stanu', () => {
-    const s = fresh();
-    s.month.revenue = 12_345;
+describe('forecastMonth: prognoza wyciągu od Centrali', () => {
+  it('saldo to marża i premie z bieżącego miesiąca, raty to raty najbliższego przelewu; stan się nie zmienia', () => {
+    const s = playTo(fresh(), 5 * 1440 + 12 * 60);
+    applyCommand(s, info, { type: 'buyUpgrade', id: 'ulotki', raty: true });
     const before = JSON.stringify(s);
-    forecastMonth(s);
+    const f = forecastMonth(s, info);
     expect(JSON.stringify(s)).toBe(before);
+    expect(f.saldo).toBeCloseTo(s.franchisee.month.margin + s.franchisee.month.bonus, 6);
+    expect(f.saldo).toBeGreaterThan(0);
+    expect(f.installments).toBe(installmentsDue(s.franchisee));
+    expect(f.installments).toBeGreaterThan(0);
+    expect(f.net).toBe(f.statement.net);
+    expect(f.cashAfter).toBeCloseTo(s.cash + f.net, 6);
+  });
+
+  it('w ostatniej minucie przed zamknięciem równa się prawdziwemu wyciągowi (30 września, środa: bez premii KPI w dniu zamknięcia)', () => {
+    const s = playTo(fresh(), 29 * 1440 + OPEN_TO);
+    const f = forecastMonth(s, info);
+    const out: EconEvent[] = [];
+    playTo(s, 29 * 1440 + OPEN_TO + 1, out);
+    const st = out.find((e) => e.kind === 'month')!.report!.statement!;
+    expect(f.statement.transfer).toBeCloseTo(st.transfer, 6);
+    expect(f.statement.costs).toBe(st.costs);
+    expect(f.net).toBeCloseTo(st.net, 6);
+  });
+
+  it('na początku miesiąca reszta miesiąca idzie z przewidywanej marży: prognoza przelewu jest bliska prawdziwemu (±25%)', () => {
+    const s = fresh();
+    const f = forecastMonth(s, info);
+    const out: EconEvent[] = [];
+    playTo(s, 29 * 1440 + OPEN_TO + 1, out);
+    const st = out.find((e) => e.kind === 'month')!.report!.statement!;
+    expect(f.statement.transfer).toBeGreaterThan(0.75 * st.transfer);
+    expect(f.statement.transfer).toBeLessThan(1.25 * st.transfer);
+    expect(f.statement.zus).toBe(OWN_COSTS.zus);
+  });
+
+  it('gwarancja: dopłata do 25 tys. przy słabej prognozie, w pierwszych miesiącach, bez mandatu i przy zaufaniu od progu', () => {
+    const s = fresh();
+    s.tycoon.trust.value = GUARANTEE.minTrust;
+    s.month.margin = -1e6;   // przychód miesiąca daleko pod gwarancją
+    expect(forecastMonth(s, info).statement.guarantee).toBeGreaterThan(0);
+    s.month.fineCount = 1;
+    expect(forecastMonth(s, info).statement.guarantee).toBe(0);
+  });
+
+  it('remanent, który jeszcze się nie odbył, nie wchodzi; nadwyżka z remanentu, który był, wchodzi do potrąceń', () => {
+    const s = fresh();
+    s.tycoon.wut.month.termin = 1e6;   // ukryty licznik: prognoza go nie zdradza
+    expect(forecastMonth(s, info).statement.remanent).toBe(0);
+    s.franchisee.remanent.pending = 4321;
+    expect(forecastMonth(s, info).statement.remanent).toBe(4321);
   });
 });
 
 describe('spendCheck: ostrzeżenie przed wydatkiem (nigdy blokada)', () => {
-  const base = (cash: number, revenue = 0): ReturnType<typeof forecastMonth> => {
-    const s = fresh();
-    s.cash = cash;
-    s.month.revenue = revenue;
-    s.tycoon.trust.value = 50;
-    return forecastMonth(s);
+  /** Prognoza z gotówką po zamknięciu równą `cashAfter`. */
+  const forecast = (cashAfter: number): MonthForecast => {
+    const statement = buildStatement({
+      month: emptySettleMonth(), guarantee: 0, installments: 0, remanent: 0, spent: 0, fines: 0, other: 0, cashBefore: 0, partial: false,
+    });
+    return { saldo: 0, installments: 0, statement, net: statement.net, cashAfter };
   };
 
-  it('cena w granicach wolnych środków: bez ostrzeżenia', () => {
-    const f = base(10_000);   // wolne 8 000
-    const c = spendCheck(f, 3_000);
+  it('po zakupie zostaje nad zerem: bez ostrzeżenia', () => {
+    const c = spendCheck(forecast(10_000), 3_000);
     expect(c.level).toBe('ok');
-    expect(c.freeAfter).toBe(f.free - 3_000);
+    expect(c.cashAfter).toBe(7_000);
   });
 
-  it('cena równa wolnym środkom jeszcze mieści się', () => {
-    const f = base(10_000);
-    expect(spendCheck(f, f.free).level).toBe('ok');
+  it('pod zero, ale nad progiem ostrzeżenia: „ciasno”', () => {
+    expect(spendCheck(forecast(10_000), 11_000).level).toBe('tight');
   });
 
-  it('cena ponad wolne środki, ale prognoza nad progiem ostrzeżenia: „ciasno”', () => {
-    const f = base(10_000);   // wolne 10 000 minus stała część opłaty
-    const c = spendCheck(f, 10_000 - FRANCHISE_FEE_FIXED + 1_000);
-    expect(c.freeAfter).toBe(-1_000);
-    expect(c.freeAfter).toBeGreaterThan(DEBT_WARN);
-    expect(c.level).toBe('tight');
+  it('poniżej DEBT_WARN: „ostrzeżenie”, poniżej DEBT_LIMIT: „koniec gry”, dokładnie na granicy jeszcze ostrzeżenie', () => {
+    expect(spendCheck(forecast(0), -DEBT_WARN + 1).level).toBe('warn');
+    expect(spendCheck(forecast(0), -DEBT_LIMIT + 1).level).toBe('danger');
+    expect(spendCheck(forecast(0), -DEBT_LIMIT).level).toBe('warn');
   });
 
-  it('prognoza po zakupie poniżej DEBT_WARN: „ostrzeżenie”', () => {
-    const f = base(10_000);
-    const c = spendCheck(f, f.free - DEBT_WARN + 1);   // freeAfter = DEBT_WARN − 1
-    expect(c.freeAfter).toBe(DEBT_WARN - 1);
-    expect(c.level).toBe('warn');
-  });
-
-  it('prognoza po zakupie poniżej DEBT_LIMIT: „koniec gry”', () => {
-    const f = base(10_000);
-    const c = spendCheck(f, f.free - DEBT_LIMIT + 1);   // freeAfter = DEBT_LIMIT − 1
-    expect(c.freeAfter).toBe(DEBT_LIMIT - 1);
-    expect(c.level).toBe('danger');
-  });
-
-  it('dokładnie na progu DEBT_LIMIT jeszcze nie kończy gry (checkDebt używa „poniżej”)', () => {
-    const f = base(10_000);
-    const c = spendCheck(f, f.free - DEBT_LIMIT);
-    expect(c.freeAfter).toBe(DEBT_LIMIT);
-    expect(c.level).toBe('warn');
-  });
-
-  it('gdy wolne środki są już ujemne, każdy wydatek przekracza je, a poziom zależy od progów', () => {
-    // obrót tak duży, żeby opłata sama zjadła dwie granice debetu, bez względu na to, gdzie ją ustawiono
-    const f = base(1_000, Math.ceil((2 * Math.abs(DEBT_LIMIT)) / FRANCHISE_FEE_SHARE));
-    expect(f.free).toBeLessThan(DEBT_LIMIT);
-    expect(spendCheck(f, 1).level).toBe('danger');
-  });
-
-  it('wydatek zerowy albo ujemny (zwrot) nie ostrzega ponad to, co już jest', () => {
-    const f = base(10_000);
-    expect(spendCheck(f, 0).level).toBe('ok');
-    expect(spendCheck(f, -500).freeAfter).toBe(f.free + 500);
-  });
-
-  it('wszystko liczy z bieżących stałych, bez zaszytych liczb', () => {
-    const f = base(10_000);
-    const c = spendCheck(f, f.free - (DEBT_WARN - 1));
-    expect(c.level).toBe('warn');
+  it('wydatek zerowy albo zwrot nie jest „ciasny”, nawet przy prognozie pod zerem; progi to bieżące stałe', () => {
+    expect(spendCheck(forecast(-5_000), 0).level).toBe('ok');
+    expect(spendCheck(forecast(-5_000), -500).cashAfter).toBe(-4_500);
+    const c = spendCheck(forecast(0), 1);
     expect(c.warnAt).toBe(DEBT_WARN);
     expect(c.limitAt).toBe(DEBT_LIMIT);
   });

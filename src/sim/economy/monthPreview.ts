@@ -2,6 +2,7 @@ import { dayOf, isLastDayOfMonth } from './calendar';
 import { DEBT_LIMIT } from './catalog';
 import { applyCommand } from './commands';
 import { awaitingDecision, stepMinute, type EconEvent, type EconomyState } from './economy';
+import { buildStatement, type Statement } from './franchisee';
 import type { StoreInfo } from './storeInfo';
 import { visibleCards } from './tycoon/cards';
 import { trustTerminates } from './tycoon/trust';
@@ -19,35 +20,24 @@ import { trustTerminates } from './tycoon/trust';
  * Liczenie idzie porcjami (`step`), żeby interfejs mógł oddawać wątek między nimi: miesiąc to kilkadziesiąt tysięcy minut gry.
  */
 
-/** Sumy miesiąca z podglądu (kwoty w zł). Liczniki obejmują cały miesiąc, także dni, które już minęły. */
+/** Prognozowany wyciąg od Centrali z podglądu (kwoty w zł). Liczniki obejmują cały miesiąc, także dni, które już minęły. */
 export interface MonthPreview {
   /** Miesiąc, który zamyka podgląd (etykieta jak w raporcie miesiąca). */
   label: string;
   /** Gotówka w chwili uruchomienia podglądu. */
   cashNow: number;
-  /** Gotówka po zamknięciu miesiąca (po opłacie, WUT i premii). */
+  /** Gotówka po zamknięciu miesiąca (po przelewie, potrąceniach i kosztach własnych). */
   cashAfter: number;
   /** Najniższa gotówka po drodze (z przelewem na koniec miesiąca włącznie). */
   lowestCash: number;
   revenue: number;
   customers: number;
-  /** Marża z klientów (bez premii). */
-  margin: number;
-  /** Premie Centrali: od obrotu przy zamknięciu miesiąca i KPI tygodnia (bez dopłaty do gwarancji, ta jest w `guarantee`). */
-  bonus: number;
-  /** Dopłata Centrali do przychodu gwarantowanego (`GUARANTEE`, pierwsze miesiące gry), 0 bez dopłaty. */
-  guarantee: number;
-  /** Inne przychody i koszty z kart (ze znakiem: koszt zmniejsza). */
-  other: number;
-  wages: number;
-  media: number;
-  fines: number;
-  logistics: number;
-  /** Opłata franczyzowa za cały miesiąc. */
-  fee: number;
-  /** Ubytki (WUT) ponad limit Centrali. */
-  wut: number;
-  /** Wynik miesiąca jak w raporcie (przed inwestycjami: te liczy gracz sam). */
+  /**
+   * Wyciąg dokładnie taki, jaki przyjdzie przy zamknięciu (ten sam rdzeń co gra). Gdy gra skończy się przed zamknięciem (debet w środku
+   * miesiąca), to naliczenia do tej chwili bez rat, gwarancji i premii od obrotu (`endedEarly`).
+   */
+  statement: Statement;
+  /** Wynik miesiąca bez rat, jak w raporcie i rankingu. */
   profit: number;
   /** Czy gra kończy się w tym scenariuszu (przed zamknięciem miesiąca albo przy nim) i dlaczego. */
   gameOver: 'debt' | 'trust' | null;
@@ -115,20 +105,22 @@ export function startMonthPreview(s: EconomyState, info: StoreInfo): MonthPrevie
     finished = true;
     const month = events.find((e) => e.kind === 'month')?.report;
     const reason: MonthPreview['gameOver'] = !copy.gameOver ? null : copy.cash < DEBT_LIMIT ? 'debt' : trustTerminates(copy.tycoon.trust.value) ? 'trust' : null;
-    if (month) {
+    if (month?.statement) {
       const c = month.counters;
       result = {
-        label: month.label, cashNow, cashAfter: month.cash, lowestCash: lowest, revenue: c.revenue, customers: c.customers, margin: c.margin,
-        bonus: c.bonus - c.guarantee, guarantee: c.guarantee, other: c.other, wages: c.wages, media: c.media, fines: c.fines,
-        logistics: c.logistics, fee: c.fee, wut: c.wut, profit: month.profit, gameOver: reason, endedEarly: false,
+        label: month.label, cashNow, cashAfter: month.cash, lowestCash: lowest, revenue: c.revenue, customers: c.customers,
+        statement: month.statement, profit: month.profit, gameOver: reason, endedEarly: false,
       };
     } else if (copy.gameOver) {
-      // koniec gry w środku miesiąca (debet): sumy z liczników miesiąca do tej chwili
+      // koniec gry w środku miesiąca (debet): naliczenia miesiąca do tej chwili, bez pozycji zamknięcia
       const c = copy.month;
+      const statement = buildStatement({
+        month: copy.franchisee.month, guarantee: 0, installments: 0, remanent: copy.franchisee.remanent.pending, spent: c.investments,
+        fines: c.fines, other: c.other, cashBefore: copy.cash, partial: false,
+      });
       result = {
-        label: '', cashNow, cashAfter: copy.cash, lowestCash: lowest, revenue: c.revenue, customers: c.customers, margin: c.margin,
-        bonus: c.bonus - c.guarantee, guarantee: c.guarantee, other: c.other, wages: c.wages, media: c.media, fines: c.fines,
-        logistics: c.logistics, fee: c.fee, wut: c.wut, profit: c.margin + c.bonus + c.other - c.wages - c.media - c.fee - c.fines - c.logistics - c.wut, gameOver: reason, endedEarly: true,
+        label: '', cashNow, cashAfter: copy.cash, lowestCash: lowest, revenue: c.revenue, customers: c.customers, statement,
+        profit: statement.result, gameOver: reason, endedEarly: true,
       };
     }
   };

@@ -1,70 +1,93 @@
-import { DEBT_LIMIT } from './catalog';
-import { DEBT_WARN, franchiseFee } from './economy';
+import { isLastDayOfMonth, dayOf, minuteOfDay } from './calendar';
+import { DEBT_LIMIT, GUARANTEE, OPEN_FROM, OPEN_TO, WAGE_PER_DAY } from './catalog';
+import {
+  DEBT_WARN, estimatedDailyMargin, estimatedDailyRevenue, mediaPerDay, type EconomyState,
+} from './economy';
+import { buildStatement, installmentsDue, saldoOf, type Statement } from './franchisee';
+import type { StoreInfo } from './storeInfo';
 import { turnoverBonusShare } from './tycoon/trust';
-import { wutCharge, type WutState } from './tycoon/wut';
 
 /**
- * Prognoza końca miesiąca: ile Centrala zabierze przy zamknięciu (`closeMonth`) i ile gotówki zostanie wolnej, zanim to
- * zabierze. Czyste liczenie ze stanu, bez zapisu i bez zegara: nie wchodzi do symulacji, więc nie zmienia biegu gry ani
- * `SIM_VERSION`. Interfejs pokazuje ją przy gotówce i przy zakupach, żeby gracz widział rachunek, zanim wyda pieniądze.
+ * Prognoza wyciągu od Centrali na koniec miesiąca (spec SIM 6, §8): to, co już naliczone (saldo, płace, media, palety), plus reszta
+ * miesiąca z przewidywanej marży i obrotu dnia (`estimatedDailyMargin`, `estimatedDailyRevenue`), płac i mediów razy dni do zamknięcia,
+ * do tego premia od obrotu, dopłata z gwarancji, raty i koszty stałe. Szacunek bez symulacji (pasek liczy go co klatkę), czysta funkcja:
+ * nie wchodzi do symulacji, więc nie zmienia biegu gry ani `SIM_VERSION`. Dokładny wyciąg daje podgląd końca miesiąca (`monthPreview.ts`).
  *
- * Liczy to, co naliczyło się do tej chwili (obrót miesiąca do dziś), a nie przewidywany obrót do końca: dlatego kwota
- * „do oddania” rośnie z każdym klientem, a dochody i płace z reszty miesiąca są poza prognozą.
+ * Remanent, który jeszcze się nie odbył, nie wchodzi do prognozy: jego licznik jest ukryty (gracz poznaje go przy remanencie).
+ * Nadwyżka z remanentu, który już był, czeka na przelew i wchodzi.
  */
 
-/** Z czego liczy się prognoza (`EconomyState` spełnia ten kształt; testy podają go bez pełnego stanu). */
-export interface ForecastInput {
-  cash: number;
-  month: { revenue: number };
-  tycoon: { trust: { value: number }; wut: WutState };
-}
-
 export interface MonthForecast {
-  /** Opłata franczyzowa naliczona od obrotu do dziś (stała część plus udział w obrocie). */
-  fee: number;
-  /** Premia Centrali od obrotu za dotychczasowy obrót (zaufanie decyduje o jej wysokości). */
-  bonus: number;
-  /** Ubytki ponad limit Centrali (WUT), które zapłaci franczyzobiorca, gdyby miesiąc skończył się teraz. */
-  wut: number;
-  /** Ile netto zejdzie przy zamknięciu miesiąca: opłata plus WUT minus premia (może być ujemne, gdy premia przewyższa resztę). */
-  due: number;
-  /** Wolne środki: gotówka minus to, co netto zejdzie przy zamknięciu miesiąca. Poniżej zera to debet po rozliczeniu. */
-  free: number;
+  /** Saldo u Centrali teraz: marża i premie naliczone w miesiącu. */
+  saldo: number;
+  /** Raty do potrącenia w najbliższym przelewie. */
+  installments: number;
+  /** Prognozowany wyciąg na zamknięcie miesiąca. */
+  statement: Statement;
+  /** Prognoza „Zostaje Ci” (`statement.net`). */
+  net: number;
+  /** Gotówka po zamknięciu miesiąca: gotówka teraz plus „Zostaje Ci”. */
+  cashAfter: number;
 }
 
-/** Rachunek końca miesiąca z obrotu i ubytków do dziś. Nie zeruje liczników (`closeWutMonth` zerowałby WUT, tu jest `wutCharge`). */
-export function forecastMonth(s: ForecastInput): MonthForecast {
-  const revenue = s.month.revenue;
-  const fee = franchiseFee(revenue);
-  const bonus = Math.round(turnoverBonusShare(s.tycoon.trust.value) * revenue);
-  const wut = wutCharge(s.tycoon.wut, revenue);
-  const due = fee + wut - bonus;
-  return { fee, bonus, wut, due, free: s.cash - due };
+/** Ile jeszcze zamknięć dnia przed zamknięciem miesiąca (z dzisiejszym, jeśli jeszcze się nie odbyło) i ile dzisiejszego ruchu przed nami. */
+function remaining(minute: number): { closes: number; days: number } {
+  const day = dayOf(minute);
+  const mod = minuteOfDay(minute);
+  let last = day;
+  while (!isLastDayOfMonth(last)) last++;
+  const todayClose = mod <= OPEN_TO ? 1 : 0;
+  const todayOpen = Math.min(1, Math.max(0, (OPEN_TO - Math.max(mod, OPEN_FROM)) / (OPEN_TO - OPEN_FROM)));
+  return { closes: last - day + todayClose, days: last - day + todayOpen };
+}
+
+export function forecastMonth(s: EconomyState, info: StoreInfo): MonthForecast {
+  const f = s.franchisee;
+  const m = s.month;
+  const { closes, days } = remaining(s.minute);
+  const margin = f.month.margin + days * estimatedDailyMargin(s, info);
+  const revenue = m.revenue + days * estimatedDailyRevenue(s, info);
+  const turnoverBonus = Math.round(turnoverBonusShare(s.tycoon.trust.value) * revenue);
+  const bonus = f.month.bonus + turnoverBonus;
+  // gwarancja z liczników całego miesiąca (jak `guaranteeTopUp`), przy dzisiejszym zaufaniu i bez mandatu w miesiącu
+  const income = m.margin + m.bonus + (margin - f.month.margin) + turnoverBonus;
+  const guaranteed = s.history.length < GUARANTEE.months && s.tycoon.trust.value >= GUARANTEE.minTrust && m.fineCount === 0;
+  const guarantee = guaranteed ? Math.max(0, Math.round(GUARANTEE.income - income)) : 0;
+  const installments = installmentsDue(f);
+  const statement = buildStatement({
+    month: {
+      margin, bonus, pallets: f.month.pallets,
+      wages: f.month.wages + closes * s.staff * WAGE_PER_DAY, media: f.month.media + closes * mediaPerDay(info),
+    },
+    guarantee, installments, remanent: f.remanent.pending, spent: m.investments, fines: m.fines, other: m.other, cashBefore: s.cash,
+    partial: false,
+  });
+  return { saldo: saldoOf(f), installments, statement, net: statement.net, cashAfter: statement.cashAfter };
 }
 
 /**
- * Jak poważny jest wydatek na tle prognozy:
- * `ok` mieści się w wolnych środkach, `tight` je przekracza, ale koniec miesiąca zostaje nad progiem ostrzeżenia,
- * `warn` zjeżdża poniżej `DEBT_WARN`, `danger` poniżej `DEBT_LIMIT` (po rozliczeniu miesiąca gra by się skończyła).
+ * Jak poważny jest wydatek na tle prognozy gotówki po zamknięciu miesiąca:
+ * `ok` zostaje nad zerem, `tight` schodzi pod zero, ale nad progiem ostrzeżenia, `warn` poniżej `DEBT_WARN`, `danger` poniżej
+ * `DEBT_LIMIT` (przy zamknięciu miesiąca gra by się skończyła).
  */
 export type SpendLevel = 'ok' | 'tight' | 'warn' | 'danger';
 
 export interface SpendCheck {
   level: SpendLevel;
-  /** Wolne środki po wydatku (prognoza stanu po zamknięciu miesiąca). */
-  freeAfter: number;
+  /** Gotówka po zamknięciu miesiąca po tym wydatku (prognoza). */
+  cashAfter: number;
   /** Progi, z którymi porównano (bieżące stałe gry), żeby napis nie zgadywał ich po swojemu. */
   warnAt: number;
   limitAt: number;
 }
 
 /**
- * Ocena wydatku `price` (zł z gotówki) względem prognozy. Tylko opisuje: nigdy nie blokuje zakupu, decyzja zostaje przy graczu
- * (brak gotówki na sam zakup odrzuca polecenie w symulacji, to osobna sprawa). Granica `DEBT_LIMIT` jest „poniżej”, jak
- * w `checkDebt`: dokładnie na niej gra jeszcze trwa. Wydatek zerowy albo zwrot nie jest „ciasny”, nawet gdy wolne środki są ujemne.
+ * Ocena wydatku `amount` (zł z gotówki teraz albo pierwsza rata w tym przelewie) względem prognozy. Tylko opisuje: nigdy nie blokuje
+ * zakupu (brak gotówki albo limitu rat odrzuca polecenie w symulacji, to osobna sprawa). Granica `DEBT_LIMIT` jest „poniżej”, jak
+ * w `checkDebt`: dokładnie na niej gra jeszcze trwa. Wydatek zerowy albo zwrot nie jest „ciasny”, nawet gdy prognoza jest pod zerem.
  */
-export function spendCheck(f: MonthForecast, price: number): SpendCheck {
-  const freeAfter = f.free - price;
-  const level: SpendLevel = freeAfter < DEBT_LIMIT ? 'danger' : freeAfter < DEBT_WARN ? 'warn' : price > 0 && price > f.free ? 'tight' : 'ok';
-  return { level, freeAfter, warnAt: DEBT_WARN, limitAt: DEBT_LIMIT };
+export function spendCheck(f: MonthForecast, amount: number): SpendCheck {
+  const cashAfter = f.cashAfter - amount;
+  const level: SpendLevel = cashAfter < DEBT_LIMIT ? 'danger' : cashAfter < DEBT_WARN ? 'warn' : amount > 0 && cashAfter < 0 ? 'tight' : 'ok';
+  return { level, cashAfter, warnAt: DEBT_WARN, limitAt: DEBT_LIMIT };
 }

@@ -6,6 +6,7 @@ import {
   type MonthReport, type Pallet,
 } from './economy';
 import { xpToNext } from './progress';
+import { sanitizeFranchisee, sanitizeStatement } from './franchisee';
 import { sanitizeHall } from './tycoon/cleanliness';
 import { sanitizeReport } from './tycoon/report';
 import { sanitizeShift } from './tycoon/shift';
@@ -172,7 +173,10 @@ export function sanitizeEconomy(raw: unknown, defaults: EconomyState, info: Stor
       stores: whole(partner?.stores, defaults.partner.stores, 0, LIMITS.network),
     },
     tycoon: defaults.tycoon,   // zaślepka: skala KPI poniżej liczy się z reszty wczytanego stanu
+    franchisee: defaults.franchisee,   // zaślepka: blok franczyzobiorcy poniżej liczy się z wczytanej minuty i obrotu miesiąca
   };
+  // zapis sprzed SIM_VERSION 6 nie ma bloku: saldo i naliczenia od zera, okres remanentu od obrotu bieżącego miesiąca (franchisee.ts)
+  wynik.franchisee = sanitizeFranchisee(raw.franchisee, minute, wynik.month.revenue);
   // liczniki i sala są już po sanitize, a `trust` to surowe stare pole (sanitizeTrust je sprawdza)
   const rawTycoon = isRec(raw.tycoon) ? raw.tycoon : null;
   wynik.tycoon = sanitizeTycoon(raw.tycoon, {
@@ -247,7 +251,10 @@ function equipmentUnit(v: unknown): EquipmentUnit | null {
 }
 
 function historyRow(v: unknown): EconomyState['history'][number] | null {
-  return isRec(v) && typeof v.label === 'string' ? { label: v.label, profit: money(v.profit, 0), revenue: money(v.revenue, 0) } : null;
+  if (!isRec(v) || typeof v.label !== 'string') return null;
+  const row: EconomyState['history'][number] = { label: v.label, profit: money(v.profit, 0), revenue: money(v.revenue, 0) };
+  if (isNum(v.transfer)) row.transfer = money(v.transfer, 0);   // przelew od Centrali: od SIM_VERSION 6
+  return row;
 }
 
 /** Poziomy ulepszeń w kolejności zakupu (jak w stanie sprzed zapisu: ten sam zapis JSON), bez nieznanych i zerowych. */
@@ -290,6 +297,6 @@ function report(v: unknown): MonthReport | null {
   if (!isRec(v) || typeof v.label !== 'string' || typeof v.comment !== 'string' || !isRec(v.counters)) return null;
   return {
     label: v.label, counters: counters(v.counters), profit: money(v.profit, 0), cash: money(v.cash, 0), comment: v.comment,
-    detail: sanitizeReport(v.detail),
+    detail: sanitizeReport(v.detail), statement: sanitizeStatement(v.statement),
   };
 }

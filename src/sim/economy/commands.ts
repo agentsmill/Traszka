@@ -46,9 +46,10 @@ export type Command =
   | { type: 'fire' }
   | { type: 'setStaffProfile'; profile: StaffProfile }
   | { type: 'pinStaff'; task: StaffTask; count: number }
-  | { type: 'buyUpgrade'; id: UpgradeId }
-  | { type: 'buyEquipment'; id: EquipmentId; slotId?: string }
-  | { type: 'startRemont' }
+  // `raty`: na raty u Centrali (SIM_VERSION 6); bez pola za gotówkę, jak w dziennikach sprzed raty
+  | { type: 'buyUpgrade'; id: UpgradeId; raty?: boolean }
+  | { type: 'buyEquipment'; id: EquipmentId; slotId?: string; raty?: boolean }
+  | { type: 'startRemont'; raty?: boolean }
   | { type: 'campaign' }
   | { type: 'rushRemont' }
   | { type: 'answerCard'; seq: number; answer: number }
@@ -83,6 +84,8 @@ const isKeyOf = (catalog: object, x: unknown): boolean => typeof x === 'string' 
 
 type Fields = Record<string, unknown>;
 const noFields = (): boolean => true;
+/** Pole opcjonalne typu prawda/fałsz (np. `raty`): brak albo `boolean`. */
+const optBool = (x: unknown): boolean => x === undefined || typeof x === 'boolean';
 
 /**
  * Walidatory pól po typie polecenia. `satisfies Record<Command['type'], …>` robi z tej tabeli kontrolę w czasie kompilacji:
@@ -99,9 +102,9 @@ const VALID = {
   setStaffProfile: (c) => typeof c.profile === 'string' && STAFF_PROFILES.includes(c.profile as StaffProfile),
   // liczba osób całkowita i nieujemna; górną granicę (personel na zmianie) sprawdza `pinStaff`
   pinStaff: (c) => isKeyOf(TASK_LABEL, c.task) && isInt(c.count) && c.count >= 0,
-  buyUpgrade: (c) => isKeyOf(UPGRADE_BY_ID, c.id),
-  buyEquipment: (c) => isKeyOf(EQUIPMENT_BY_ID, c.id) && (c.slotId === undefined || typeof c.slotId === 'string'),
-  startRemont: noFields,
+  buyUpgrade: (c) => isKeyOf(UPGRADE_BY_ID, c.id) && optBool(c.raty),
+  buyEquipment: (c) => isKeyOf(EQUIPMENT_BY_ID, c.id) && (c.slotId === undefined || typeof c.slotId === 'string') && optBool(c.raty),
+  startRemont: (c) => optBool(c.raty),
   campaign: noFields,
   rushRemont: noFields,
   answerCard: (c) => isInt(c.seq) && isInt(c.answer),   // czy numer odpowiedzi mieści się w karcie, rozstrzyga `resolveCard`
@@ -158,9 +161,9 @@ function run(s: EconomyState, info: StoreInfo, c: Command, events: EconEvent[]):
     case 'fire': return fire(s);
     case 'setStaffProfile': return setStaffProfile(s.tycoon.staff, c.profile);
     case 'pinStaff': return pinStaff(s.tycoon.staff, c.task, c.count, s.staff);
-    case 'buyUpgrade': return buyUpgrade(s, c.id);
-    case 'buyEquipment': return buyEquipment(s, info, c.id, c.slotId);
-    case 'startRemont': return startRemont(s);
+    case 'buyUpgrade': return buyUpgrade(s, c.id, c.raty === true);
+    case 'buyEquipment': return buyEquipment(s, info, c.id, c.slotId, c.raty === true);
+    case 'startRemont': return startRemont(s, c.raty === true);
     case 'campaign': return campaign(s);
     case 'rushRemont': return rushRemont(s);
     case 'answerCard': return answerCard(s, c.seq, c.answer, events);

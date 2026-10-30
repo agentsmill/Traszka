@@ -1,14 +1,17 @@
 import { hashString } from '@/sim/rng';
 import {
   ASSISTANT_UNLOAD_MIN, CATS, CAT_INFO, CLUTTER, COMBO_WINDOW, GUARANTEE, CREDIT_LIMIT, DELIVERY_AT, DELIVERY_AT_AFTERNOON, DELIVERY_AT_NIGHT,
-  DEBT_LIMIT, DEBT_WARN_SHARE, FINE_BASE, FINE_PER_PALLET, FRANCHISE_FEE_FIXED, FRANCHISE_FEE_SHARE,
-  HIRE_COST, HOT, HOUR_CURVE, ITEMS_PER_CUSTOMER,
+  DEBT_LIMIT, DEBT_WARN_SHARE, EXPIRY, FINE_BASE, FINE_PER_PALLET, HIRE_COST, HOT, HOUR_CURVE, ITEMS_PER_CUSTOMER,
   LOT_TRAFFIC, MARGIN_PER_CUSTOMER, MEDIA_PER_DAY, MINUTES_PER_DAY, OPEN_FROM, OPEN_TO, ORDER_DEADLINE, PALLET_FEE, PALLET_ITEMS,
-  PALLETS_FREE, PATIENCE, RESTOCK_RATE, REVENUE_PER_CUSTOMER, SCO_ACCEPT, SCO_RATE, STAFF_MAX, STAFF_START, START_CASH, STRAZ,
+  PALLETS_FREE, PATIENCE, REMANENT, RESTOCK_RATE, REVENUE_PER_CUSTOMER, SCO_ACCEPT, SCO_RATE, STAFF_MAX, STAFF_START, START_CASH, STRAZ,
   TILL_RATE, TILL_TAP_QUEUE_MIN, TRAFFIC_BASE, TRAFFIC_PER_SHELF_ITEM, TRAFFIC_RANGE, UNLOAD_AT, UNLOAD_RATE, WAGE_PER_DAY, WAVES,
   type Cat,
 } from './catalog';
 import { dayOf, formatMonth, isLastDayOfMonth, isOpenAt, minuteOfDay } from './calendar';
+import {
+  buildStatement, createFranchisee, emptySettleMonth, installmentLimit, installmentsDue, payInstallments, planFor, remanentDayFrom,
+  type FranchiseeState, type RemanentProtocol, type Statement,
+} from './franchisee';
 import { rand01 } from './rand';
 import type { PalletLoc, StoreInfo } from './storeInfo';
 import {
@@ -40,7 +43,7 @@ import {
 import {
   addWaste, closeWasteMonth, hallObstacle, palletBags, removeWaste, settleWaste, wasteDemand, wasteSpots, wasteMinute,
 } from './tycoon/waste';
-import { closeWutMonth, wutFromSales, wutFromSco } from './tycoon/wut';
+import { WUT, addWut, closeWutMonth, wutFromSales, wutFromSco } from './tycoon/wut';
 
 // Ekonomia jednego sklepu (spec §6–§8) jako czysta symulacja z krokiem jednej minuty gry. Klienci są modelowani
 // zbiorczo (strumień przyjść, kolejka, przepustowość kas), a tłum w 3D to ich obraz, a nie źródło liczb.
@@ -67,17 +70,22 @@ export interface Counters {
   customers: number;
   lost: number;
   revenue: number;      // obrót (wartość sprzedanego towaru)
-  margin: number;       // przychód franczyzobiorcy z marży i strefy hot
+  margin: number;       // przychód franczyzobiorcy z marży i strefy hot (od SIM_VERSION 6 na saldo u Centrali)
   wages: number;
   media: number;
-  fee: number;          // opłata franczyzowa
+  zus: number;          // koszty własne płacone przy zamknięciu miesiąca (od SIM_VERSION 6; tylko miesiąc i suma gry)
+  vat: number;
+  accounting: number;
+  installments: number; // raty potrącone z przelewu (inwestycja: poza wynikiem miesiąca)
+  remanent: number;     // nadwyżka z remanentu potrącona z przelewu
+  fee: number;          // opłata franczyzowa (tylko do SIM_VERSION 5; od 6 zawsze 0)
   fines: number;
-  logistics: number;    // opłaty za palety ponad przydział (do SIM_VERSION 4 także za odesłane palety)
-  investments: number;  // ulepszenia, sprzęt, remont, rekrutacja
+  logistics: number;    // opłaty za palety ponad przydział (do SIM_VERSION 4 także za odesłane palety; od 6 potrącenie z przelewu)
+  investments: number;  // ulepszenia, sprzęt, remont, rekrutacja za gotówkę
   other: number;        // inne przychody (najem bankomatu, sieć sklepów, nagrody)
   bonus: number;        // premie Centrali (od obrotu miesiąca, KPI, złote palety i dopłata do gwarancji)
   guarantee: number;    // w tym dopłata do przychodu gwarantowanego (`GUARANTEE`); tylko miesiąc i suma gry
-  wut: number;          // opłata za WUT (ubytki) ponad próg
+  wut: number;          // opłata za WUT (ubytki) ponad próg co miesiąc (tylko do SIM_VERSION 5; od 6 ubytki rozlicza remanent)
   fineCount: number;    // liczba mandatów (kwoty są w `fines`)
   missingItems: number;
   palletsUnloaded: number;
@@ -101,6 +109,8 @@ export interface MonthReport {
    * robi interfejs. `null` w raportach ze starych zapisów, sprzed raportu tycoona.
    */
   detail: TycoonMonthReport | null;
+  /** Wyciąg od Centrali (SIM_VERSION 6): przelew, potrącenia, koszty własne, „Zostaje Ci”. `null` w raportach sprzed niego. */
+  statement: Statement | null;
 }
 
 export interface EconomyState {
@@ -132,7 +142,8 @@ export interface EconomyState {
   today: Counters;
   month: Counters;
   total: Counters;
-  history: { label: string; profit: number; revenue: number }[];
+  /** Raporty miesięczne: wynik (bez rat), obrót i przelew od Centrali (od SIM_VERSION 6; z niego limit rat). */
+  history: { label: string; profit: number; revenue: number; transfer?: number }[];
   /** Ostatni raport miesięczny: okno końca gry (wypowiedzenie umowy) wraca po przeładowaniu strony razem z nim. */
   lastReport: MonthReport | null;
   /** Cele odebrane (nagroda już wypłacona). Cele z zapisów sprzed SIM_VERSION 5 są tu wszystkie: wtedy nagroda wpadała sama. */
@@ -157,14 +168,19 @@ export interface EconomyState {
   partner: { points: number; networkIncome: number; stores: number };
   /** Mechaniki tycoona (ludzie, śmieci, czystość, siły, karty, KPI, WUT) i zaufanie Centrali (tycoon/state.ts). */
   tycoon: TycoonState;
+  /** Rozliczenie franczyzobiorcy z Centralą: saldo miesiąca, raty i remanent (franchisee.ts). Należy do osoby, nie do sklepu. */
+  franchisee: FranchiseeState;
 }
 
 export type EconEventKind = 'delivery' | 'order' | 'fine' | 'milestone' | 'day' | 'month' | 'remont' | 'info' | 'warning' | 'debt' | 'gameover'
-  | 'levelup' | 'golden' | 'trust-tier' | 'card' | 'card-result' | 'kpi-week';
-export interface EconEvent { kind: EconEventKind; text: string; report?: MonthReport; level?: number; unlocks?: string[] }
+  | 'levelup' | 'golden' | 'trust-tier' | 'card' | 'card-result' | 'kpi-week' | 'remanent';
+export interface EconEvent {
+  kind: EconEventKind; text: string; report?: MonthReport; level?: number; unlocks?: string[]; remanent?: RemanentProtocol;
+}
 
 export const emptyCounters = (): Counters => ({
-  customers: 0, lost: 0, revenue: 0, margin: 0, wages: 0, media: 0, fee: 0, fines: 0, logistics: 0, investments: 0, other: 0,
+  customers: 0, lost: 0, revenue: 0, margin: 0, wages: 0, media: 0, zus: 0, vat: 0, accounting: 0, installments: 0, remanent: 0,
+  fee: 0, fines: 0, logistics: 0, investments: 0, other: 0,
   bonus: 0, guarantee: 0, wut: 0, fineCount: 0, missingItems: 0, palletsUnloaded: 0, taps: 0, hotSold: 0, purchases: 0,
 });
 
@@ -329,6 +345,7 @@ export function createEconomy(seed: string, info: StoreInfo, partner: EconomySta
     bestDayProfit: 0,
     partner: { ...partner },
     tycoon: createTycoon({ day: 0, seedHash, trust: TRUST.start, metrics: NO_KPI_METRICS, scale: { dailyCustomers: 0, dailyMargin: 0 } }),
+    franchisee: createFranchisee(OPEN_FROM),
   };
   // Cel KPI pierwszego tygodnia zależy od skali sklepu i liczników (kpiScaleOf, kpiMetricsOf czytają gotowy stan), więc
   // właściwy tycoon powstaje po obiekcie bazowym; ten z literału jest tylko zaślepką z czystą salą.
@@ -379,6 +396,7 @@ export function stepMinute(s: EconomyState, info: StoreInfo, out: EconEvent[]): 
 
   for (const d of s.deliveries.filter((x) => x.at <= s.minute)) deliver(s, info, d.count, out);
   s.deliveries = s.deliveries.filter((x) => x.at > s.minute);
+  if (mod === REMANENT.at && dayOf(s.minute) >= s.franchisee.remanent.nextDay) remanent(s, out);
 
   let arrivals = 0;
   if (open) {
@@ -485,14 +503,16 @@ export function sell(s: EconomyState, fx: Effects, served: number, scoShare: num
   margin += hot * HOT.price * HOT.margin;
   margin *= fx.marginMult * cardModifiers(s.tycoon.cards, s.minute).margin;   // partner i efekt karty (rabat z glitcha, promocja)
   s.xp += served * XP.customer;
-  // ubytki towarowe: naturalne od obrotu i „zapomniane” skany na SCO (kamery zmniejszają); do progu płaci Centrala, nadwyżkę przy zamknięciu miesiąca franczyzobiorca
+  // ubytki towarowe: naturalne od obrotu i „zapomniane” skany na SCO (kamery zmniejszają); do progu płaci Centrala, nadwyżkę franczyzobiorca
+  // przy remanencie (limit liczy się od obrotu z okresu między remanentami)
   wutFromSales(s.tycoon.wut, revenue);
+  s.franchisee.remanent.revenue += revenue;
   wutFromSco(s.tycoon.wut, revenue * scoShare, 1 - 0.4 * level(s, 'kamery'));
 
   const missing = want > 0 ? 1 - got / want : 0;
   s.reputation += served * (0.0025 * (1 - missing) - 0.02 * missing);
   s.reputation += served * cleanlinessEffects(s.tycoon.hall.cleanliness).repPerCustomer;   // brudna sala: do −0,003 na klienta
-  s.cash += margin;
+  s.franchisee.month.margin += margin;   // marża idzie na saldo u Centrali, do gotówki przychodzi przelewem przy zamknięciu miesiąca
   s.ogonkiAcc += (served / 250) * fx.ogonkiMult;
   if (s.ogonkiAcc >= 1) { const n = Math.floor(s.ogonkiAcc); s.ogonki += n; s.ogonkiAcc -= n; }
   for (const k of [s.today, s.month, s.total]) {
@@ -850,7 +870,7 @@ function placeOrder(s: EconomyState, info: StoreInfo, fx: Effects, out: EconEven
     return;
   }
   const fee = Math.max(0, count - PALLETS_FREE) * PALLET_FEE;
-  if (fee > 0) charge(s, 'logistics', fee);
+  if (fee > 0) accrue(s, 'logistics', fee);   // Centrala potrąci przy przelewie
   if (fx.splitDelivery && count > 1) {
     s.deliveries.push({ at: tomorrow + fx.deliveryAt, count: Math.ceil(count / 2) });
     s.deliveries.push({ at: tomorrow + DELIVERY_AT_AFTERNOON, count: Math.floor(count / 2) });
@@ -887,42 +907,69 @@ function checkFine(s: EconomyState, fx: Effects, out: EconEvent[]): void {
 
 /**
  * Do których liczników wchodzi pozycja: `day` to dzień, miesiąc i suma gry; `month` tylko miesiąc i suma gry. Pozycje zamknięcia
- * miesiąca (opłata, premia od obrotu, WUT) są miesięczne i nie należą do wyniku żadnego dnia: `closeMonth` biegnie po zerowaniu
- * `today`, więc z zakresem `day` zniekształciłyby wynik, rekord i zarobek nieobecnego gracza pierwszego dnia nowego miesiąca.
+ * miesiąca (premia od obrotu, gwarancja, koszty własne, raty, remanent) są miesięczne i nie należą do wyniku żadnego dnia: `closeMonth`
+ * biegnie po zerowaniu `today`, więc z zakresem `day` zniekształciłyby wynik, rekord i zarobek nieobecnego gracza pierwszego dnia
+ * nowego miesiąca.
  */
 type Scope = 'day' | 'month';
 const ledgers = (s: EconomyState, scope: Scope): Counters[] => (scope === 'month' ? [s.month, s.total] : [s.today, s.month, s.total]);
 
-function charge(
-  s: EconomyState, field: 'wages' | 'media' | 'fee' | 'fines' | 'wut' | 'logistics' | 'investments' | 'other', amount: number,
-  scope: Scope = 'day',
-): void {
+/** Wydatek z gotówki od ręki: mandat, zakup za gotówkę, rekrutacja, koszt z karty. */
+function charge(s: EconomyState, field: 'fines' | 'investments' | 'other', amount: number, scope: Scope = 'day'): void {
   s.cash -= amount;
   // `other` jest ze znakiem (przychody dodatnie, w wyniku dnia i miesiąca dodawane), więc koszt z karty zmniejsza licznik
   const sign = field === 'other' ? -1 : 1;
   for (const k of ledgers(s, scope)) k[field] += sign * amount;
 }
 
+/**
+ * Koszt naliczony w miesiącu, ale płacony dopiero przy zamknięciu (SIM_VERSION 6): płace i media z przelewu przez franczyzobiorcę,
+ * opłaty za palety jako potrącenie Centrali. Gotówka się nie zmienia; liczniki dnia i miesiąca tak, więc wynik dnia jest jak dawniej.
+ */
+function accrue(s: EconomyState, field: 'wages' | 'media' | 'logistics', amount: number): void {
+  const m = s.franchisee.month;
+  if (field === 'logistics') m.pallets += amount;
+  else m[field] += amount;
+  for (const k of ledgers(s, 'day')) k[field] += amount;
+}
+
+/** Przychód do gotówki od ręki: najem bankomatu, sieć sklepów, nagrody, premia dzienna, zarobek offline, przychód z karty. */
 function income(s: EconomyState, amount: number): void {
   s.cash += amount;
   for (const k of [s.today, s.month, s.total]) k.other += amount;
 }
 
-/** Premia Centrali: jak `income`, ale na własnym liczniku, bo raport pokazuje ją osobno. */
+/** Premia Centrali: na saldo u Centrali (przyjdzie przelewem), na własnym liczniku, bo raport pokazuje ją osobno. */
 function bonus(s: EconomyState, amount: number, scope: Scope = 'day'): void {
-  s.cash += amount;
+  s.franchisee.month.bonus += amount;
   for (const k of ledgers(s, scope)) k.bonus += amount;
 }
 
 // --- Koniec dnia i miesiąca -------------------------------------------------------------------------------
 
+/** Media za dzień: większa sala to więcej lodówek i światła. */
+export const mediaPerDay = (info: StoreInfo): number => Math.round(MEDIA_PER_DAY * Math.max(0.6, info.salesCells / 260));
+
+/** Wartość towaru w sklepie po cenach sklepu (półki, zaplecze, palety; bez dostaw w drodze). */
+const stockValue = (s: EconomyState): number => stockItems(s) * avgPrice;
+
+/**
+ * Przeterminowania z nadmiaru zapasu (`EXPIRY`): towar ponad `coverDays` dni przewidywanej sprzedaży traci co wieczór `rate` wartości.
+ * Ubytek trafia do licznika remanentu (przyczyna „przeterminowane”), więc rachunek za za duże zamówienia przychodzi przy remanencie.
+ */
+function expireOverstock(s: EconomyState, info: StoreInfo): void {
+  const excess = stockValue(s) - EXPIRY.coverDays * estimatedDailyRevenue(s, info);
+  if (excess > 0) addWut(s.tycoon.wut, 'termin', EXPIRY.rate * excess);
+}
+
 function closeDay(s: EconomyState, info: StoreInfo, out: EconEvent[]): void {
   const day = dayOf(s.minute);
-  charge(s, 'wages', s.staff * WAGE_PER_DAY);
-  charge(s, 'media', Math.round(MEDIA_PER_DAY * Math.max(0.6, info.salesCells / 260)));
+  accrue(s, 'wages', s.staff * WAGE_PER_DAY);
+  accrue(s, 'media', mediaPerDay(info));
   const rent = 25 * activeEquipment(s, 'bankomat');
   if (rent > 0) income(s, rent);
   if (s.partner.networkIncome > 0) income(s, s.partner.networkIncome);
+  expireOverstock(s, info);
   // KPI tygodnia kończy się w niedzielę o zamknięciu dnia. Premia należy do wyniku tego dnia, więc księguje się przed jego rachunkiem;
   // zdarzenia (wynik tygodnia, ewentualny nowy próg zaufania) idą do gracza po komunikacie o dniu
   const weekly: EconEvent[] = [];
@@ -937,8 +984,9 @@ function closeDay(s: EconomyState, info: StoreInfo, out: EconEvent[]): void {
     s.xp += r.xp;
   }
   const t = s.today;
-  // bez `fee`, a premia od obrotu i WUT z zamknięcia miesiąca są poza `today` (zakres `month` w `closeMonth`): wynik dnia to dzień
-  const profit = t.margin + t.bonus + t.other - t.wages - t.media - t.fines - t.logistics - t.wut;
+  // wynik dnia memoriałowo (gotówka w dniu się nie zmienia: marża idzie na saldo, płace i media na przelew); pozycje zamknięcia miesiąca
+  // (premia od obrotu, koszty własne, remanent) są poza `today` (zakres `month` w `closeMonth`)
+  const profit = t.margin + t.bonus + t.other - t.wages - t.media - t.fines - t.logistics;
   s.lastDayProfit = profit;
   s.bestDayProfit = Math.max(s.bestDayProfit, profit);
   out.push({ kind: 'day', text: `Dzień zamknięty: ${Math.round(t.customers)} klientów, obrót ${fmt(t.revenue)} zł, wynik dnia ${profit >= 0 ? '+' : ''}${fmt(profit)} zł.` });
@@ -963,57 +1011,81 @@ function kpiWeekText(r: KpiWeekResult, trustApplied: number): string {
     : `KPI tygodnia nietrafione: ${title}. Wynik: ${fmt(r.value)}. Zaufanie Centrali ${trust}.`;
 }
 
-/** Liczniki miesiąca w kształcie raportu tycoona (`report.ts`): koszty jako kwoty dodatnie, `other` ze znakiem. */
-const figuresOf = (m: Counters): MonthFigures => ({
-  revenue: m.revenue, margin: m.margin, bonuses: m.bonus, guarantee: m.guarantee, other: m.other, wages: m.wages, media: m.media, fee: m.fee, fines: m.fines,
-  wut: m.wut, logistics: m.logistics, customers: m.customers, lost: m.lost,
+/**
+ * Pozycje raportu tycoona (`report.ts`) z wyciągu, a nie z liczników miesiąca: w miesiącu wejścia SIM_VERSION 6 liczniki obejmują też
+ * dni sprzed migracji, a przelew tylko czas od niej. Gotówka w miesiącu (inne, mandaty) i obrót idą z liczników. Koszty dodatnie.
+ */
+const figuresOf = (st: Statement, m: Counters): MonthFigures => ({
+  revenue: m.revenue, margin: st.margin, bonuses: st.bonus + st.guarantee, guarantee: st.guarantee, other: m.other, wages: st.wages,
+  media: st.media, zus: st.zus, vat: st.vat, accounting: st.accounting, fee: 0, fines: m.fines, wut: 0, logistics: st.pallets,
+  remanent: st.remanent, customers: m.customers, lost: m.lost,
 });
 
 /** Marża z jednego klienta w miesiącu (do wyceny klientów odstraszonych kolejką w raporcie); bez klientów średnia z katalogu. */
 const marginPerCustomer = (m: Counters): number => (m.customers > 0 ? m.margin / m.customers : MARGIN_PER_CUSTOMER);
 
-/** Opłata franczyzowa za miesiąc z obrotem `revenue`: stała część plus udział w obrocie (pobierana przy zamknięciu miesiąca). */
-export function franchiseFee(revenue: number): number {
-  return Math.round(FRANCHISE_FEE_FIXED + FRANCHISE_FEE_SHARE * revenue);
-}
-
 /**
- * Przychód gwarantowany (`GUARANTEE`): w pierwszych miesiącach gry Centrala dopłaca do 25 tys. zł przychodu franczyzobiorcy, czyli
- * marży minus opłata plus premie (bez płac i innych kosztów, jak w prawdziwej umowie). Warunki: zaufanie co najmniej `minTrust`
- * i miesiąc bez mandatu. Dopłata to premia Centrali (licznik `bonus`), a osobny licznik `guarantee` pokazuje ją w raporcie.
- * Liczy się przed zmianą zaufania z wyniku miesiąca, a o tym, który to miesiąc, decyduje liczba raportów w historii.
+ * Przychód gwarantowany (`GUARANTEE`): w pierwszych miesiącach gry Centrala dopłaca do przelewu tyle, żeby przychód franczyzobiorcy
+ * (marża plus premie Centrali, przed potrąceniami i kosztami własnymi, jak w prawdziwej umowie) wyniósł 25 tys. zł. Warunki: zaufanie
+ * co najmniej `minTrust` i miesiąc bez mandatu. Przychód liczy się z liczników całego miesiąca, a nie z salda: zapis przeniesiony
+ * z SIM 5 w połowie miesiąca ma marżę sprzed migracji już w gotówce i nie może dostać dopłaty do połowy miesiąca. Zwraca dopłatę
+ * (0 bez niej); liczy się przed zmianą zaufania z wyniku miesiąca, a o tym, który to miesiąc, decyduje liczba raportów w historii.
  */
-function guaranteeTopUp(s: EconomyState, out: EconEvent[]): void {
-  if (s.history.length >= GUARANTEE.months) return;
+function guaranteeTopUp(s: EconomyState, out: EconEvent[]): number {
+  if (s.history.length >= GUARANTEE.months) return 0;
   const m = s.month;
-  const income = m.margin - m.fee + m.bonus;
-  const gap = Math.round(GUARANTEE.income - income);
-  if (gap <= 0) return;
+  const gap = Math.round(GUARANTEE.income - (m.margin + m.bonus));
+  if (gap <= 0) return 0;
   if (s.tycoon.trust.value < GUARANTEE.minTrust || m.fineCount > 0) {
     const why = m.fineCount > 0 ? 'w miesiącu był mandat' : `zaufanie poniżej ${GUARANTEE.minTrust}`;
     out.push({ kind: 'info', text: `Przychód gwarantowany: Centrala nie dopłaci ${fmt(gap)} zł, bo ${why}. Regulamin, punkt 7.3.b, przypis drobnym drukiem.` });
-    return;
+    return 0;
   }
-  bonus(s, gap, 'month');
-  for (const k of ledgers(s, 'month')) k.guarantee += gap;
+  for (const k of ledgers(s, 'month')) { k.bonus += gap; k.guarantee += gap; }
   out.push({ kind: 'info', text: `Przychód gwarantowany: Centrala dopłaca ${fmt(gap)} zł do ${fmt(GUARANTEE.income)} zł. „Wierzymy w Ciebie. Do odwołania.”` });
+  return gap;
 }
 
+/** Czy miesiąc zaczął się przed wejściem SIM_VERSION 6 (zapis z migracji): saldo i naliczenia obejmują tylko część miesiąca. */
+const partialMonth = (s: EconomyState): boolean => {
+  const f = s.franchisee.month;
+  return s.month.margin - f.margin > 0.5 || s.month.wages - f.wages > 0.5;
+};
+
+/**
+ * Zamknięcie miesiąca, wyciąg od Centrali (spec SIM 6, §4): premia od obrotu na saldo, dopłata z gwarancji, przelew, potrącenia (raty,
+ * palety, remanent), koszty własne (płace, media, ZUS, VAT, księgowa) i „Zostaje Ci” do gotówki jednym ruchem. Wynik miesiąca do historii
+ * i rankingu jest bez rat (inwestycja, jak zakup za gotówkę). Kontrola debetu biegnie po minucie (`stepMinute`), więc bankructwo wypada
+ * w chwili przelewu.
+ */
 function closeMonth(s: EconomyState, day: number, out: EconEvent[]): void {
   const m = s.month;
   const t = s.tycoon;
-  const fee = franchiseFee(m.revenue);
-  charge(s, 'fee', fee, 'month');
+  const f = s.franchisee;
   bonus(s, Math.round(turnoverBonusShare(t.trust.value) * m.revenue), 'month');
-  // WUT: ubytki miesiąca (naturalne, z SCO i z kart) do progu pokrywa Centrala, nadwyżkę płaci franczyzobiorca; ubytki liczą się od zera
-  charge(s, 'wut', closeWutMonth(t.wut, m.revenue).charge, 'month');
-  guaranteeTopUp(s, out);
-  const profit = m.margin + m.bonus + m.other - m.wages - m.media - m.fee - m.fines - m.logistics - m.wut;
+  const guarantee = guaranteeTopUp(s, out);
+  const partial = partialMonth(s);
+  const installments = payInstallments(f);
+  const remanentCharge = f.remanent.pending;
+  f.remanent.pending = 0;
+  const st = buildStatement({
+    month: f.month, guarantee, installments, remanent: remanentCharge, spent: m.investments, fines: m.fines, other: m.other,
+    cashBefore: s.cash, partial,
+  });
+  s.cash += st.net;
+  for (const k of ledgers(s, 'month')) {
+    k.zus += st.zus;
+    k.vat += st.vat;
+    k.accounting += st.accounting;
+    k.installments += st.installments;
+    k.remanent += st.remanent;
+  }
+  const profit = st.result;
   changeTrust(s, 'wynik', profit > 0 ? TRUST.monthProfit : TRUST.monthLoss, out);
   // podsumowania modułów wchodzą do raportu raz każde i same zerują licznik miesiąca; zaufanie dopiero po zmianie z wyniku
   const detail = buildMonthReport({
     monthIndex: monthIndexOf(day),
-    figures: figuresOf(m),
+    figures: figuresOf(st, m),
     trust: closeTrustMonth(t.trust),
     cleanlinessAvg: closeHallMonth(t.hall),
     staff: closeStaffMonth(t.staff),
@@ -1026,16 +1098,53 @@ function closeMonth(s: EconomyState, day: number, out: EconEvent[]): void {
   }, s.seedHash);
   closeWasteMonth(t.waste);
   const label = formatMonth(day);
-  const report: MonthReport = { label, counters: { ...m }, profit, cash: s.cash, comment: reportCommentText(detail.commentId), detail };
-  s.history.push({ label, profit, revenue: m.revenue });
+  const report: MonthReport = { label, counters: { ...m }, profit, cash: s.cash, comment: reportCommentText(detail.commentId), detail, statement: st };
+  s.history.push({ label, profit, revenue: m.revenue, transfer: st.transfer });
   s.lastReport = report;
-  out.push({ kind: 'month', text: `Raport za ${label}: wynik ${profit >= 0 ? '+' : ''}${fmt(profit)} zł.`, report });
+  out.push({ kind: 'month', text: `Wyciąg od Centrali za ${label}: zostaje ${st.net >= 0 ? '+' : ''}${fmt(st.net)} zł.`, report });
   s.month = emptyCounters();
+  f.month = emptySettleMonth();
   // zaufanie na zerze w środku miesiąca to tylko ostrzeżenie; umowę wypowiada się przy zamknięciu miesiąca (debet: `checkDebt`)
   if (trustTerminates(t.trust.value)) {
     s.gameOver = true;
     out.push({ kind: 'gameover', text: 'Centrala wypowiada umowę franczyzową: zaufanie spadło do zera. Dziękujemy za współpracę.' });
   }
+}
+
+/** Komentarz Centrali pod protokołem remanentu (satyra; wybór z seeda i dnia). */
+const REMANENT_COMMENTS: readonly string[] = [
+  'Centrala dziękuje za rzetelne liczenie. Rzetelność Centrali nie podlega liczeniu.',
+  'Towar nie ginie, tylko zmienia właściciela. Na Ciebie.',
+  'Limit ubytków ustalono w trosce o Twoją motywację. Szczegóły w aneksie, którego jeszcze nie ma.',
+];
+
+/**
+ * Remanent (`REMANENT`, spec SIM 6 §7) o 5:00 w dniu z `franchisee.remanent.nextDay`: ubytki od ostatniego remanentu (licznik
+ * `tycoon.wut`, który od SIM_VERSION 6 zeruje tylko remanent) porównane z limitem Centrali (`WUT.threshold` obrotu z okresu). Nadwyżka
+ * czeka na najbliższy przelew (zamknięcie tego samego dnia, bo remanent wypada ostatniego dnia miesiąca); ubytki z reszty dnia idą już
+ * do następnego okresu. Protokół zostaje w stanie, a zdarzenie `remanent` otwiera okno.
+ */
+function remanent(s: EconomyState, out: EconEvent[]): void {
+  const r = s.franchisee.remanent;
+  const day = dayOf(s.minute);
+  const w = closeWutMonth(s.tycoon.wut, r.revenue);
+  const limit = WUT.threshold * Math.max(0, r.revenue);
+  const charge = Math.max(0, Math.round(w.total - limit));
+  const protocol: RemanentProtocol = { day, fromDay: r.fromDay, revenue: r.revenue, byReason: w.byReason, total: w.total, limit, charge, first: !r.known };
+  r.pending += charge;
+  r.revenue = 0;
+  r.fromDay = day;
+  r.known = true;
+  r.last = protocol;
+  r.nextDay = remanentDayFrom(day, true);
+  const comment = REMANENT_COMMENTS[Math.floor(rand01(s.seedHash, day, 41) * REMANENT_COMMENTS.length)]!;
+  out.push({
+    kind: 'remanent',
+    remanent: protocol,
+    text: charge > 0
+      ? `Remanent: ubytki ${fmt(w.total)} zł, limit Centrali ${fmt(limit)} zł. Nadwyżka ${fmt(charge)} zł zejdzie z dzisiejszego przelewu. ${comment}`
+      : `Remanent: ubytki ${fmt(w.total)} zł mieszczą się w limicie Centrali (${fmt(limit)} zł). ${comment}`,
+  });
 }
 
 const fmt = (n: number): string => Math.round(n).toLocaleString('pl-PL');
@@ -1244,17 +1353,17 @@ export function upgradeBlocker(s: EconomyState, def: UpgradeDef): string | null 
   return null;
 }
 
-export function buyUpgrade(s: EconomyState, id: UpgradeId): CommandResult {
+export function buyUpgrade(s: EconomyState, id: UpgradeId, onCredit = false): CommandResult {
   const def = UPGRADE_BY_ID[id];
   const blocker = upgradeBlocker(s, def);
   if (blocker) return { ok: false, text: blocker };
   const cost = upgradeCost(def, level(s, id));
-  if (s.cash < cost) return { ok: false, text: 'Za mało gotówki.' };
-  charge(s, 'investments', cost);
+  const name = def.names[Math.min(level(s, id) + 1, def.names.length) - 1]!;
+  const paid = pay(s, cost, name, onCredit, 'Za mało gotówki.');
+  if (!paid.ok) return paid;
   s.upgrades[id] = level(s, id) + 1;
   countPurchase(s);
-  const name = def.names[Math.min(level(s, id), def.names.length) - 1]!;
-  return { ok: true, text: `Kupione: ${name}` };
+  return { ok: true, text: `Kupione: ${name}${paid.text ?? ''}` };
 }
 
 /** Zajętość slotów: id slotu → sprzęt w nim. */
@@ -1283,12 +1392,41 @@ export function findSlot(s: EconomyState, info: StoreInfo, size: number): string
   return fits[0]?.id ?? null;
 }
 
+/** Suma rat w najbliższym przelewie i limit rat (`INSTALLMENTS`): ile jeszcze Centrala pozwoli rozłożyć na raty miesięcznie. */
+export function installmentRoom(s: EconomyState): { used: number; limit: number; free: number } {
+  const used = installmentsDue(s.franchisee);
+  const limit = installmentLimit(s.history, s.tycoon.trust.value);
+  return { used, limit, free: Math.max(0, limit - used) };
+}
+
+/**
+ * Zapłata za ulepszenie, sprzęt albo remont: za gotówkę (gotówka co najmniej cena, jak dotąd) albo na raty u Centrali (`onCredit`):
+ * plan z ceny (`planFor`), a rata mieści się w wolnym limicie (`installmentRoom`). Raty należą do franczyzobiorcy, rzecz do sklepu.
+ * Udana zapłata ratami zwraca w `text` dopisek do komunikatu.
+ */
+function pay(s: EconomyState, cost: number, label: string, onCredit: boolean, noCash: string): CommandResult {
+  if (!onCredit) {
+    if (s.cash < cost) return { ok: false, text: noCash };
+    charge(s, 'investments', cost);
+    return { ok: true };
+  }
+  const plan = planFor(cost);
+  const room = installmentRoom(s);
+  if (room.limit <= 0) return { ok: false, text: 'Centrala nie finansuje zakupów przy tak niskim zaufaniu.' };
+  if (plan.monthly > room.free) {
+    return { ok: false, text: `Rata ${fmt(plan.monthly)} zł przekracza wolny limit rat (${fmt(room.free)} z ${fmt(room.limit)} zł miesięcznie).` };
+  }
+  const f = s.franchisee;
+  f.installments.push({ id: f.nextInstallmentId++, label, price: cost, fee: plan.fee, total: plan.total, monthly: plan.monthly, paid: 0, months: plan.months });
+  return { ok: true, text: ` na raty: ${plan.months} × ${fmt(plan.monthly)} zł` };
+}
+
 function countPurchase(s: EconomyState): void {
   for (const k of [s.today, s.month, s.total]) k.purchases++;
   s.xp += XP.purchase;
 }
 
-export function buyEquipment(s: EconomyState, info: StoreInfo, id: EquipmentId, slotId?: string): CommandResult {
+export function buyEquipment(s: EconomyState, info: StoreInfo, id: EquipmentId, slotId?: string, onCredit = false): CommandResult {
   const def = EQUIPMENT_BY_ID[id];
   if (s.level < def.minLevel) return { ok: false, text: `Odblokujesz na ${def.minLevel}. poziomie.` };
   const slot = slotId ?? findSlot(s, info, def.size);
@@ -1296,11 +1434,11 @@ export function buyEquipment(s: EconomyState, info: StoreInfo, id: EquipmentId, 
     return { ok: false, text: def.size === 2 ? 'Brak wolnego slotu 2×2. Remont da więcej miejsca.' : 'Brak wolnego slotu. Remont da więcej miejsca.' };
   }
   const cost = equipmentCost(def, s.equipment.filter((e) => e.id === id).length);
-  if (s.cash < cost) return { ok: false, text: 'Za mało gotówki.' };
-  charge(s, 'investments', cost);
+  const paid = pay(s, cost, def.name, onCredit, 'Za mało gotówki.');
+  if (!paid.ok) return paid;
   s.equipment.push({ id, slot });
   countPurchase(s);
-  return { ok: true, text: `Kupione: ${def.name}` };
+  return { ok: true, text: `Kupione: ${def.name}${paid.text ?? ''}` };
 }
 
 export function nextRemont(s: EconomyState): (typeof REMONTS)[number] | null {
@@ -1308,17 +1446,17 @@ export function nextRemont(s: EconomyState): (typeof REMONTS)[number] | null {
 }
 
 /** Remont: zamyka sklep na kilka dni, a układ sklepu rośnie (nowy układ liczy warstwa gry, potem woła `relayout`). */
-export function startRemont(s: EconomyState): CommandResult {
+export function startRemont(s: EconomyState, onCredit = false): CommandResult {
   const r = nextRemont(s);
   if (!r) return { ok: false, text: 'Większego sklepu już nie będzie. To jest Flagowiec.' };
   if (isClosedForRemont(s)) return { ok: false, text: 'Remont już trwa.' };
   if (s.level < r.minLevel) return { ok: false, text: `Remont odblokujesz na ${r.minLevel}. poziomie.` };
-  if (s.cash < r.cost) return { ok: false, text: 'Za mało gotówki na remont.' };
-  charge(s, 'investments', r.cost);
+  const paid = pay(s, r.cost, r.name, onCredit, 'Za mało gotówki na remont.');
+  if (!paid.ok) return paid;
   s.remontLevel = r.level;
   s.remontUntil = s.minute + r.days * MINUTES_PER_DAY;
   s.queue = 0;
-  return { ok: true, text: `${r.name}: sklep zamknięty na ${r.days} ${r.days === 1 ? 'dzień' : 'dni'}.` };
+  return { ok: true, text: `${r.name}: sklep zamknięty na ${r.days} ${r.days === 1 ? 'dzień' : 'dni'}.${paid.text ?? ''}` };
 }
 
 /** Po zmianie układu (remont): palety i sprzęt przenoszą się na miejsca w nowym sklepie. */
@@ -1407,7 +1545,7 @@ export function answerCard(s: EconomyState, seq: number, answer: number, out: Ec
   if (side.bonus !== 0) bonus(s, side.bonus);
   if (side.fine !== 0) charge(s, 'fines', -side.fine);        // mandat z karty jest ujemny, licznik liczy kwotę dodatnią
   if (side.fine < 0) for (const k of [s.today, s.month, s.total]) k.fineCount++;
-  if (side.logistics !== 0) charge(s, 'logistics', -side.logistics);
+  if (side.logistics !== 0) accrue(s, 'logistics', -side.logistics);   // koszt logistyki z karty: potrącenie z przelewu
   s.reputation = Math.min(100, Math.max(0, s.reputation + side.reputation));
   s.ogonki = Math.max(0, s.ogonki + Math.round(side.ogonki));
   s.xp += side.xp;

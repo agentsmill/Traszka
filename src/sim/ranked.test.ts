@@ -65,12 +65,13 @@ describe('wynik sezonu', () => {
 });
 
 /**
- * Bieg, który kończy grę dokładnie przy zamknięciu 30 listopada: od 25 października (dzień 55, 9:00) 30 palet dziennie, a od 26 października
- * (dzień 56, 9:00) sześć osób więcej. Strojone pod `kiełbasa-42` przy SIM_VERSION 5 po urealnieniu ekonomii (zapas ok. 500 zł: każda zmiana
- * ekonomii może to przesunąć, a test powie to wprost).
+ * Bieg, który kończy grę dokładnie przy zamknięciu 30 listopada: od 16 października (dzień 45, 9:00) 30 palet dziennie, a od 17 października
+ * (dzień 46, 9:00) sześć osób więcej. Strojone pod `kiełbasa-42` przy SIM_VERSION 6 (trzy kieszenie): gotówka zmienia się tylko przy przelewie,
+ * więc dołek przychodzi przy zamknięciach, a 30 listopada dochodzi pierwszy remanent z przeterminowanym nadmiarem. Zapas ok. 14 tys. zł poniżej
+ * granicy debetu; każda zmiana ekonomii może to przesunąć, a test powie to wprost.
  */
-const ORDER_FROM = 55 * MINUTES_PER_DAY + 9 * 60;
-const HIRE_FROM = 56 * MINUTES_PER_DAY + 9 * 60;
+const ORDER_FROM = 45 * MINUTES_PER_DAY + 9 * 60;
+const HIRE_FROM = 46 * MINUTES_PER_DAY + 9 * 60;
 
 describe('seasonBankrupt: koniec gry przed ostatnim raportem', () => {
   const state = (gameOver: boolean, reports: number): Pick<EconomyState, 'gameOver' | 'history'> => ({ gameOver, ...history(...Array<number>(reports).fill(1000)) });
@@ -87,9 +88,9 @@ describe('seasonBankrupt: koniec gry przed ostatnim raportem', () => {
     expect(seasonBankrupt(state(true, RANKED_SEASON_MONTHS))).toBe(false);
   });
 
-  it('prawdziwa symulacja: sklep kiełbasa-42 z ośmioma osobami i 30 paletami dziennie od końca października kończy grę dopiero przy zamknięciu 30 listopada, z trzema raportami, a strata listopada jest w wyniku', () => {
-    // od SIM_VERSION 5 (granica debetu −100 000 zł) bierny sezon nie kończy się debetem: dopiero 30 palet dziennie i sześć etatów więcej
-    // (pensje, opłata logistyczna, przejścia zasypane paletami) dają dołek, który przekracza granicę przy zamknięciu 30 listopada
+  it('prawdziwa symulacja: sklep kiełbasa-42 z ośmioma osobami i 30 paletami dziennie od połowy października kończy grę dopiero przy zamknięciu 30 listopada, z trzema raportami, a strata listopada jest w wyniku', () => {
+    // bierny sezon nie kończy się debetem: dopiero 30 palet dziennie i sześć etatów więcej (pensje, palety ponad darmowe, przejścia zasypane
+    // paletami, a 30 listopada remanent z przeterminowanym nadmiarem) dają dołek, który przekracza granicę przy przelewie 30 listopada
     const log: LogEntry[] = [
       { minute: ORDER_FROM, seq: 0, cmd: { type: 'setOrder', auto: false, manual: 30 } },
       ...Array.from({ length: 6 }, (_, i): LogEntry => ({ minute: HIRE_FROM + i, seq: 1 + i, cmd: { type: 'hire' } })),

@@ -7,14 +7,16 @@ import { TRUST_REASONS, type TrustMonth, type TrustReason } from './trust';
 import { OPEN_MINUTES } from './time';
 
 /**
- * Raport miesięczny jako puls gry (spec §7.5): wynik po pozycjach (marża, premie, płace, opłata franczyzowa, mandaty,
- * WUT, logistyka; do tego media i inne, żeby wynik zgadzał się z rachunkiem gry), zmiana zaufania z przyczynami,
+ * Raport miesięczny jako puls gry (spec §7.5): wynik po pozycjach (marża, premie, płace, media, ZUS, VAT, księgowa, mandaty,
+ * palety, remanent i inne; wynik bez rat, jak w wyciągu od Centrali; raporty sprzed SIM_VERSION 6 mają opłatę i miesięczne ubytki), zmiana zaufania z przyczynami,
  * komentarz Centrali i jedna wskazówka, co poprawić. Raport w stanie gry to same liczby i identyfikatory: teksty
  * i formatowanie liczb robi interfejs (`reportCommentText`, `hintText`).
  */
 
-export type ReportLineKey = 'marza' | 'premie' | 'gwarancja' | 'inne' | 'place' | 'media' | 'oplata' | 'mandaty' | 'wut' | 'logistyka';
-export const REPORT_LINES: readonly ReportLineKey[] = ['marza', 'premie', 'gwarancja', 'inne', 'place', 'media', 'oplata', 'mandaty', 'wut', 'logistyka'];
+export type ReportLineKey = 'marza' | 'premie' | 'gwarancja' | 'inne' | 'place' | 'media' | 'zus' | 'vat' | 'ksiegowa' | 'oplata' | 'mandaty'
+  | 'wut' | 'logistyka' | 'remanent';
+export const REPORT_LINES: readonly ReportLineKey[] = ['marza', 'premie', 'gwarancja', 'inne', 'place', 'media', 'zus', 'vat', 'ksiegowa', 'oplata',
+  'mandaty', 'wut', 'logistyka', 'remanent'];
 export const REPORT_LINE_LABEL: Record<ReportLineKey, string> = {
   marza: 'Marża ze sprzedaży',
   premie: 'Premie Centrali',
@@ -22,10 +24,14 @@ export const REPORT_LINE_LABEL: Record<ReportLineKey, string> = {
   inne: 'Inne przychody i koszty',
   place: 'Płace',
   media: 'Media',
+  zus: 'ZUS',
+  vat: 'VAT',
+  ksiegowa: 'Księgowa',
   oplata: 'Opłata franczyzowa',
   mandaty: 'Mandaty i kary',
   wut: 'Ubytki ponad limit Centrali',
-  logistyka: 'Logistyka',
+  logistyka: 'Palety ponad darmowe',
+  remanent: 'Remanent: ubytki ponad limit',
 };
 
 /** Liczby miesiąca. Koszty jako kwoty dodatnie, `other` ze znakiem (inne przychody minus inne koszty). */
@@ -39,10 +45,17 @@ export interface MonthFigures {
   other: number;
   wages: number;
   media: number;
+  /** Koszty własne franczyzobiorcy (od SIM_VERSION 6; brak pola w raportach sprzed: 0). */
+  zus?: number;
+  vat?: number;
+  accounting?: number;
+  /** Opłata franczyzowa i miesięczne ubytki ponad limit: tylko raporty sprzed SIM_VERSION 6 (od niej 0). */
   fee: number;
   fines: number;
   wut: number;
   logistics: number;
+  /** Nadwyżka z remanentu potrącona w tym miesiącu (od SIM_VERSION 6). */
+  remanent?: number;
   customers: number;
   lost: number;
 }
@@ -103,7 +116,7 @@ export const COMMENTS: Record<CommentPool, readonly string[]> = {
   ],
   zero: [
     'Wyszło na zero. Centrala nazywa to „stabilnością” i podnosi KPI na przyszły miesiąc.',
-    'Ani zysk, ani strata. Centrala gratuluje równowagi jak w jodze. Opłata franczyzowa bez zmian.',
+    'Ani zysk, ani strata. Centrala gratuluje równowagi jak w jodze. Księgowa też chce swoje.',
     'Prawie na plusie. Centrala sugeruje, żeby „prawie” zamienić na „bardziej”.',
   ],
   plus: [
@@ -143,7 +156,7 @@ export function hintCandidates(r: ReportInput): ReportHint[] {
   const starved = r.staff.starved.rozladunek + r.staff.starved.wykladanie;
   const out: ReportHint[] = [
     { id: 'mandaty', value: f.fines, impact: f.fines },
-    { id: 'wut', value: f.wut, impact: f.wut },
+    { id: 'wut', value: f.wut + (f.remanent ?? 0), impact: f.wut + (f.remanent ?? 0) },
     { id: 'logistyka', value: f.logistics, impact: f.logistics },
     { id: 'kolejka', value: f.lost, impact: f.lost * r.marginPerCustomer },
     { id: 'czystosc', value: r.cleanlinessAvg, impact: Math.max(0, 70 - r.cleanlinessAvg) * 0.001 * f.margin },
@@ -171,6 +184,8 @@ export function pickHint(r: ReportInput): ReportHint {
 export function buildMonthReport(r: ReportInput, seedHash: number): TycoonMonthReport {
   const f = r.figures;
   // koszty jako 0 − x, a nie −x: −0 nie przeżywa JSON-a, a raport ma wracać z zapisu bez zmian
+  // pozycje zerowe z innej wersji symulacji (opłata i miesięczne ubytki sprzed SIM_VERSION 6, koszty własne i remanent od niej) się nie pokazują
+  const optional = (key: ReportLineKey, amount: number): TycoonMonthReport['lines'] => (amount !== 0 ? [{ key, amount: 0 - amount }] : []);
   const lines: TycoonMonthReport['lines'] = [
     { key: 'marza', amount: f.margin },
     { key: 'premie', amount: f.bonuses - (f.guarantee ?? 0) },
@@ -178,10 +193,14 @@ export function buildMonthReport(r: ReportInput, seedHash: number): TycoonMonthR
     { key: 'inne', amount: f.other },
     { key: 'place', amount: 0 - f.wages },
     { key: 'media', amount: 0 - f.media },
-    { key: 'oplata', amount: 0 - f.fee },
+    ...optional('zus', f.zus ?? 0),
+    ...optional('vat', f.vat ?? 0),
+    ...optional('ksiegowa', f.accounting ?? 0),
+    ...optional('oplata', f.fee),
     { key: 'mandaty', amount: 0 - f.fines },
-    { key: 'wut', amount: 0 - f.wut },
+    ...optional('wut', f.wut),
     { key: 'logistyka', amount: 0 - f.logistics },
+    ...optional('remanent', f.remanent ?? 0),
   ];
   const result = lines.reduce((n, l) => n + l.amount, 0);
   const pool = commentPool(result);
@@ -204,8 +223,8 @@ export function hintText(h: Pick<ReportHint, 'id' | 'value'>, fmt: (n: number) =
   const v = fmt(h.value);
   switch (h.id) {
     case 'mandaty': return `Mandaty kosztowały ${v} zł. Rano ustaw profil „Dostawa”, żeby palety nie stały na chodniku po godzinie tolerancji.`;
-    case 'wut': return `Ubytki ponad limit Centrali: ${v} zł. O 18:00 przeceniaj kanapki (FEFO), zanim trafią do kosza.`;
-    case 'logistyka': return `Opłaty logistyczne: ${v} zł. Asystent przesadza z zamówieniem; spróbuj zamawiać ręcznie.`;
+    case 'wut': return `Remanent: ubytki ponad limit Centrali ${v} zł. Zamawiaj tyle, ile schodzi, a o 18:00 przeceniaj kanapki (FEFO), zanim trafią do kosza.`;
+    case 'logistyka': return `Palety ponad darmowe: ${v} zł potrącone z przelewu. Asystent przesadza z zamówieniem; spróbuj zamawiać ręcznie.`;
     case 'kolejka': return `Kolejka odstraszyła ${v} klientów. W szczycie ustaw profil „Kolejka” albo postaw kasę samoobsługową.`;
     case 'czystosc': return `Średnia czystość sali: ${v}%. Ustaw profil „Porządek” albo przypnij kogoś do sprzątania, zanim przyjdzie audyt albo tajemniczy klient.`;
     case 'bezczynnosc': return `Ludzie stali bez zadania przez ${v} godz. Może jedna osoba mniej na zmianie?`;

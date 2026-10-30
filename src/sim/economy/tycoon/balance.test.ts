@@ -6,13 +6,14 @@ import { measureBots, type BotMeasure } from './economyEnv';
 /**
  * Balans na prawdziwej ekonomii (spec §7.5, kryterium właściciela z 29.10.2026): boty z `bots.ts` grają dwa miesiące
  * (wrzesień i październik, 61 dni) na kilku sklepach. Wynik to suma wyników miesięcy (`history[].profit`). Liczby gry stroi
- * się tak, żeby te asercje przechodziły: opłata franczyzowa, mandaty, złota paleta, nagroda za poziom i premia od obrotu.
+ * się tak, żeby te asercje przechodziły: stawki marży, płace i koszty własne, mandaty, złota paleta, nagroda za poziom i premia od obrotu.
  *
  * Od SIM_VERSION 5 ekonomia jest urealniona (decyzja właściciela z 30.10.2026): sklep na start ma ok. 260–350 klientów dziennie
- * (6–7,5 tys. zł obrotu), franczyzobiorcy zostaje przy przeciętnym zaufaniu ok. 16,5% obrotu (marża minus opłata Centrali plus premie),
- * a płace to 500 zł dziennie za osobę na zmianie. Cel właściciela: bierny gracz kilka tysięcy złotych na plus miesięcznie, mistrz
- * wyraźnie więcej. Na tych pięciu sklepach bierny ma za dwa miesiące od +2,5 do +24 tys. zł (mediana ok. +11 tys.), mistrz od 18 do
- * 38 tys. zł. Rozrzut między sklepami robi wielkość sali (media i ruch z półek) i reputacja: przy krótkiej kolejce rośnie, a z nią ruch.
+ * (6–7,5 tys. zł obrotu). Od SIM_VERSION 6 („trzy kieszenie”) marża i premie idą na saldo u Centrali, a przy zamknięciu miesiąca
+ * przychodzi przelew (ok. 16,5–16,7% obrotu przy przeciętnym zaufaniu), z którego franczyzobiorca płaci pensje (340 zł dziennie za osobę
+ * na zmianie), media, ZUS, VAT i księgową. Cel właściciela bez zmian: bierny gracz kilka tysięcy złotych na plus miesięcznie, mistrz
+ * wyraźnie więcej. Na tych pięciu sklepach bierny ma za dwa miesiące od +4 do +21 tys. zł (mediana ok. +11 tys.), mistrz od 17 do
+ * 32 tys. zł. Rozrzut między sklepami robi wielkość sali (media i ruch z półek) i reputacja: przy krótkiej kolejce rośnie, a z nią ruch.
  * Kart jest ok. 0,5 na dobę, a każda waży trzy razy więcej (`CARDS.stakes`).
  * Wcześniej (SIM_VERSION 4 i SIM 5 przed urealnieniem) Centrala zabierała ok. 15% obrotu, a bierny kończył dwa miesiące w okolicy zera.
  */
@@ -41,13 +42,14 @@ describe('balans na prawdziwej ekonomii (dwa miesiące, boty z bots.ts)', () => 
     expect(median, `mediana biernego: ${sorted.map(Math.round).join(', ')}`).toBeLessThanOrEqual(20_000);
   });
 
-  it('mistrz (decyzje i stukanie) zarabia 15–50 tys. zł na każdym sklepie i co najmniej 8 tys. zł więcej niż bierny', () => {
+  it('mistrz (decyzje i stukanie) zarabia 15–50 tys. zł na każdym sklepie i co najmniej 7 tys. zł więcej niż bierny', () => {
+    // od SIM_VERSION 6 premie KPI, które zbiera mistrz, przychodzą przelewem i płacą od niego VAT, więc przewaga jest o ok. 1/6 mniejsza niż w SIM 5 (8 tys.)
     SEEDS.forEach((seed, i) => {
       const master = run.totals.mistrz[i]!;
       const passive = run.totals.bierny[i]!;
       expect(master, `${seed}: mistrz ${Math.round(master)} zł`).toBeGreaterThanOrEqual(15_000);
       expect(master, `${seed}: mistrz ${Math.round(master)} zł`).toBeLessThanOrEqual(50_000);
-      expect(master - passive, `${seed}: mistrz ${Math.round(master)} zł, bierny ${Math.round(passive)} zł`).toBeGreaterThanOrEqual(8_000);
+      expect(master - passive, `${seed}: mistrz ${Math.round(master)} zł, bierny ${Math.round(passive)} zł`).toBeGreaterThanOrEqual(7_000);
     });
   });
 

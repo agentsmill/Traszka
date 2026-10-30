@@ -4,6 +4,7 @@ import { generateStore } from '@/sim/store/generateStore';
 import { CATS, MINUTES_PER_DAY, PALLET_ITEMS } from './catalog';
 import { dateOfDay } from './calendar';
 import { buyEquipment, buyUpgrade, createEconomy, stepMinute, type EconEvent, type EconomyState } from './economy';
+import { createFranchisee } from './franchisee';
 import { LIMITS, sanitizeEconomy } from './sanitize';
 import { xpToNext } from './progress';
 import { computeStoreInfo, type StoreInfo } from './storeInfo';
@@ -32,7 +33,10 @@ const fixture = (name: string): Record<string, unknown> =>
   JSON.parse(readFileSync(new URL(`../../game/fixtures/${name}`, import.meta.url), 'utf8')) as Record<string, unknown>;
 
 /** Liczniki z zapisu sprzed tycoona: trzy nowe pola (premie Centrali, WUT, mandaty) są zerowe. */
-const withNewCounters = (c: unknown): Record<string, unknown> => ({ ...(c as Record<string, unknown>), bonus: 0, guarantee: 0, wut: 0, fineCount: 0 });
+// liczniki sprzed nowych pól: premie, gwarancja i WUT (SIM 4–5) oraz koszty własne, raty i remanent (SIM_VERSION 6) dostają zera
+const withNewCounters = (c: unknown): Record<string, unknown> => ({
+  ...(c as Record<string, unknown>), bonus: 0, guarantee: 0, wut: 0, fineCount: 0, zus: 0, vat: 0, accounting: 0, installments: 0, remanent: 0,
+});
 
 describe('sanitizeEconomy: poprawny stan przechodzi bez zmian', () => {
   it('nowa gra', () => {
@@ -93,7 +97,9 @@ describe('sanitizeEconomy: poprawny stan przechodzi bez zmian', () => {
       // `bonus`, `wut` i `fineCount`. Pula ludzi: dawny `priority` zamienia się na profil w `tycoon.staff`, a `shift` (ostatnia
       // minuta) startuje pusty.
       const { trust, priority, giftSeq: _gs, tapBoostUntil: _tb, quests: _q, questSeq: _qs, cleanDays: _cd, ...rest } = raw;
-      const { tycoon, ...progress } = out;
+      const { tycoon, franchisee, ...progress } = out;
+      // blok franczyzobiorcy (SIM_VERSION 6) powstaje od zera: saldo puste, okres remanentu od obrotu bieżącego miesiąca
+      expect(franchisee).toEqual(createFranchisee(raw.minute as number, (raw.month as { revenue: number }).revenue));
       expect(progress).toEqual({
         ...rest, lastReport: null, shift: defaults(inf, seed).shift, milestonesReady: [],
         tapStreak: 0, lastTapAt: -1e9, lastWarnAt: -1e9,
@@ -210,7 +216,7 @@ describe('sanitizeEconomy: zlecenia zniknęły, raport miesięczny ma szczegół
 
   it('lastReport bez detail (zapis sprzed raportu tycoona) daje detail: null i zachowuje resztę', () => {
     const out = sanitizeEconomy({ ...json(defaults()), lastReport: OLD_REPORT }, defaults(), info)!;
-    expect(out.lastReport).toEqual({ ...OLD_REPORT, counters: { ...OLD_REPORT.counters, bonus: 0, wut: 0, fineCount: 0 }, detail: null });
+    expect(out.lastReport).toEqual({ ...OLD_REPORT, counters: withNewCounters(OLD_REPORT.counters), detail: null, statement: null });
   });
 
   it('lastReport z uszkodzonym detail (tekst, lista, brak pozycji) też daje detail: null', () => {
@@ -226,7 +232,9 @@ describe('sanitizeEconomy: zlecenia zniknęły, raport miesięczny ma szczegół
     expect(s.lastReport?.detail).not.toBeNull();
     const out = sanitizeEconomy(json(s), defaults(), info)!;
     expect(JSON.stringify(out.lastReport)).toBe(JSON.stringify(s.lastReport));
-    expect(out.lastReport!.detail!.lines.map((l) => l.key)).toHaveLength(9);
+    // marża, premie, inne, płace, media, ZUS, VAT, księgowa, mandaty, palety (bez gwarancji i remanentu, gdy ich nie było)
+    expect(out.lastReport!.detail!.lines.map((l) => l.key)).toHaveLength(10);
+    expect(JSON.stringify(out.lastReport!.statement)).toBe(JSON.stringify(s.lastReport!.statement));
   });
 });
 

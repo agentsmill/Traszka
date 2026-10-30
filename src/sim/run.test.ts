@@ -74,12 +74,15 @@ const bot: Policy = ({ state: s, roll, issue }) => {
   const upcoming = nextRemont(s);
   const saving = upcoming !== null && s.level >= upcoming.minLevel;
   if (s.minute % 60 === 0 && roll(5) < 0.6 && !saving) {
-    if (roll(6) < 0.7) issue({ type: 'buyUpgrade', id: UPGRADE_IDS[Math.floor(roll(7) * UPGRADE_IDS.length)] });
-    else issue({ type: 'buyEquipment', id: EQUIPMENT_IDS[Math.floor(roll(7) * EQUIPMENT_IDS.length)] });
+    // co drugi zakup na raty u Centrali (SIM_VERSION 6): pole `raty` też musi przejść przez dziennik i odtworzenie
+    const raty = roll(16) < 0.5;
+    if (roll(6) < 0.7) issue({ type: 'buyUpgrade', id: UPGRADE_IDS[Math.floor(roll(7) * UPGRADE_IDS.length)], raty });
+    else issue({ type: 'buyEquipment', id: EQUIPMENT_IDS[Math.floor(roll(7) * EQUIPMENT_IDS.length)], raty });
   }
   if (s.queue > 6 && s.staff < 4) issue({ type: 'hire' });   // bez limitu pensje zjadają całą gotówkę i do remontu nie dochodzi
   const next = nextRemont(s);
-  if (next && s.level >= next.minLevel && s.cash >= next.cost) issue({ type: 'startRemont' });
+  // remont za gotówkę, a gdy jej brakuje, na raty (od SIM_VERSION 6 gotówka rośnie tylko przy przelewie na koniec miesiąca)
+  if (next && s.level >= next.minLevel) issue(s.cash >= next.cost ? { type: 'startRemont' } : { type: 'startRemont', raty: true });
   if (isClosedForRemont(s) && roll(8) < 0.002) issue({ type: 'rushRemont' });
   if (roll(9) < 0.0005) issue({ type: 'campaign' });
   const onSidewalk = s.pallets.find((p) => p.loc === 'sidewalk');
@@ -230,7 +233,7 @@ describe('odtwarzanie biegu', () => {
       remonts.push(live.state.remontLevel);
     }
     // dowód ma dotyczyć całej gry, nie samych stuknięć: remonty (nowy układ w trakcie), wszystkie typy poleceń i śmieci
-    // (drugiego remontu bot losowych decyzji nie dociąga w 90 dni, odkąd opłata franczyzowa jest po balansie z 29.10.2026: dość jest pierwszego)
+    // (drugiego remontu bot losowych decyzji nie dociąga w 90 dni: dość jest pierwszego, od SIM_VERSION 6 często na raty)
     expect(remonts.filter((n) => n >= 1).length).toBeGreaterThanOrEqual(3);
     expect(COMMAND_TYPES.filter((t) => !seen.has(t))).toEqual([]);
     expect(seen.has('nuke')).toBe(true);

@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { generateStore } from '@/sim/store/generateStore';
-import { DEBT_LIMIT, FRANCHISE_FEE_SHARE } from './catalog';
+import { DEBT_LIMIT } from './catalog';
 import { advanceEconomy } from './clock';
 import { applyCommand } from './commands';
 import { awaitingDecision, createEconomy, stepMinute, type EconEvent, type EconomyState, type MonthReport } from './economy';
@@ -103,7 +103,7 @@ describe('podgląd końca miesiąca: cele czekające na „Odbierz” (SIM_VERSI
     expect(JSON.stringify(s)).toBe(before);
     // przebieg bez odbioru (karty domyślne): te same sumy miesiąca co do złotówki, także inne przychody z nagród za poziomy
     const real = realMonthEnd(s);
-    expect(preview.other).toBeCloseTo(real.counters.other, 6);
+    expect(preview.statement.other).toBeCloseTo(real.counters.other, 6);
     expect(preview.profit).toBeCloseTo(real.profit, 6);
     // podgląd wydaje tylko odpowiedzi na karty, nigdy odbioru celu
     const source = readFileSync(new URL('./monthPreview.ts', import.meta.url), 'utf8');
@@ -121,11 +121,9 @@ describe('podgląd końca miesiąca: wynik', () => {
       expect(preview.cashAfter, `dzień ${days}`).toBe(real.cash);
       expect(preview.profit, `dzień ${days}`).toBe(real.profit);
       expect(preview.revenue).toBe(real.counters.revenue);
-      expect(preview.fee).toBe(real.counters.fee);
-      expect(preview.wut).toBe(real.counters.wut);
-      expect(preview.bonus).toBe(real.counters.bonus);
-      expect(preview.wages).toBe(real.counters.wages);
       expect(preview.customers).toBe(real.counters.customers);
+      // prognozowany wyciąg to ten sam wyciąg co przy zamknięciu, pozycja w pozycję
+      expect(preview.statement).toEqual(real.statement);
       expect(preview.gameOver).toBeNull();
       expect(preview.endedEarly).toBe(false);
     }
@@ -139,12 +137,12 @@ describe('podgląd końca miesiąca: wynik', () => {
     expect(finish(s, 777)).toEqual(whole);
   });
 
-  it('opłata z podglądu to opłata od obrotu całego miesiąca, a prognoza „na dziś” jest od niej niższa (obrót jeszcze rośnie)', () => {
+  it('przelew z podglądu to przelew za cały miesiąc, więc jest większy niż saldo „na dziś” (marża jeszcze narasta)', () => {
     const s = midMonth(10);
-    const now = forecastMonth(s);
+    const now = forecastMonth(s, info);
     const end = finish(s, 1440)!;
     expect(end.cashNow).toBe(s.cash);
-    expect(end.fee).toBeGreaterThan(now.fee);
+    expect(end.statement.transfer).toBeGreaterThan(now.saldo);
     expect(end.revenue).toBeGreaterThan(s.month.revenue);
     expect(end.lowestCash).toBeLessThanOrEqual(Math.min(s.cash, end.cashAfter));
   });
@@ -161,10 +159,10 @@ describe('podgląd końca miesiąca: wynik', () => {
     expect(job.result()).not.toBeNull();
   });
 
-  it('wielki obrót przy pustej kasie: opłata kończy grę, podgląd mówi o debecie i podaje gotówkę po przelewie', () => {
+  it('potrącenie ponad granicę debetu przy pustej kasie: przelew kończy grę, podgląd mówi o debecie i podaje gotówkę po przelewie', () => {
     const s = midMonth(3);
     s.cash = 0;
-    s.month.revenue = Math.ceil((2 * Math.abs(DEBT_LIMIT)) / FRANCHISE_FEE_SHARE);   // opłata ponad dwie granice debetu
+    s.franchisee.remanent.pending = 2 * Math.abs(DEBT_LIMIT);   // nadwyżka z remanentu czeka na przelew: potrącenie ponad dwie granice debetu
     const r = finish(s, 1440)!;
     expect(r.gameOver).toBe('debt');
     expect(r.cashAfter).toBeLessThan(DEBT_LIMIT);

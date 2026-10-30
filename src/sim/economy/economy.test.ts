@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { generateStore } from '@/sim/store/generateStore';
 import {
-  CATS, CAT_INFO, DEBT_LIMIT, FRANCHISE_FEE_FIXED, GUARANTEE, FRANCHISE_FEE_SHARE, HOT, ITEMS_PER_CUSTOMER, MARGIN_PER_CUSTOMER, MINUTES_PER_DAY, OPEN_FROM, OPEN_TO, REVENUE_PER_CUSTOMER,
-  START_CASH, STRAZ, TILL_RATE, UNLOAD_AT, UNLOAD_RATE, WAGE_PER_DAY, WAVES,
+  CATS, CAT_INFO, DEBT_LIMIT, GUARANTEE, HOT, ITEMS_PER_CUSTOMER, MARGIN_PER_CUSTOMER, MINUTES_PER_DAY, OPEN_FROM, OPEN_TO, REVENUE_PER_CUSTOMER,
+  OWN_COSTS, REMANENT, START_CASH, STRAZ, TILL_RATE, UNLOAD_AT, UNLOAD_RATE, WAGE_PER_DAY, WAVES,
 } from './catalog';
 import { dateOfDay, dayOf, formatDate, isLastDayOfMonth, minuteOfDay } from './calendar';
 import { advanceEconomy } from './clock';
@@ -10,10 +10,11 @@ import { applyCommand } from './commands';
 import {
   DEBT_WARN, aislePallets, answerCard, arrivalRate, claimMilestone, deliverySpots, assistantSuggestion, awaitingDecision, buyEquipment, buyUpgrade, cardContext, changeTrust, checkDebt, createEconomy,
   crewPalletCap, debtWarningText, effects,
-  estimatedDailyMargin, expectedDailyCustomers, fire, franchiseFee, freeSpots, GOLDEN_PRIZE, isOpenForCustomers, kpiMetricsOf, kpiScaleOf, movePallet, orderedPallets, relayout,
+  estimatedDailyMargin, expectedDailyCustomers, fire, freeSpots, GOLDEN_PRIZE, isOpenForCustomers, kpiMetricsOf, kpiScaleOf, movePallet, orderedPallets, relayout,
   robotFleet, sell, slotFree, startRemont, stepMinute, tapPallet, tapTill, unlocksAt, upgradeBlocker, waveAt, workshopUnlocked,
   type CommandResult, type EconEvent, type EconomyState, type MonthReport,
 } from './economy';
+import { buildStatement } from './franchisee';
 import { rand01 } from './rand';
 import { computeStoreInfo, type StoreInfo } from './storeInfo';
 import { cardDef, visibleCards, type CardDelta, type CardInstance } from './tycoon/cards';
@@ -25,7 +26,7 @@ import { SUNDAY_TRAFFIC } from './tycoon/sunday';
 import { dateOfGameDay, isSunday, roundNice } from './tycoon/time';
 import { TRUST, trustTier, turnoverBonusShare } from './tycoon/trust';
 import { hallObstacle, palletBags } from './tycoon/waste';
-import { WUT } from './tycoon/wut';
+import { WUT, wutTotal } from './tycoon/wut';
 import { UPGRADE_BY_ID } from './upgrades';
 
 const SEED = 'kiełbasa-42';   // blok z 1 slotem SCO i 3 slotami 2×2
@@ -250,9 +251,12 @@ describe('ekonomia', () => {
     expect(tapTill(s, info).ok).toBe(false);   // pusta kolejka
     s.queue = 3;
     const cash = s.cash;
+    const saldo = s.franchisee.month.margin;
     expect(tapTill(s, info).ok).toBe(true);
     expect(s.queue).toBe(2);
-    expect(s.cash).toBeGreaterThan(cash);
+    // od SIM_VERSION 6 marża idzie na saldo u Centrali, a gotówka czeka na przelew przy zamknięciu miesiąca
+    expect(s.franchisee.month.margin).toBeGreaterThan(saldo);
+    expect(s.cash).toBe(cash);
   });
 
   it('ulepszenia: cena, poziom, wymagania; warsztat zamknięty na starcie', () => {
@@ -282,13 +286,17 @@ describe('ekonomia', () => {
     expect(slotFree(s, info, big.id)).toBe(0);
   });
 
-  it('koniec września: opłata franczyzowa i raport miesięczny', () => {
+  it('koniec września: wyciąg od Centrali i raport miesięczny, bez opłaty franczyzowej', () => {
     const s = createEconomy(SEED, info);
     const events = run(s, info, 30 * MINUTES_PER_DAY);
-    const report = events.find((e) => e.kind === 'month');
-    expect(report?.report?.label).toBe('wrzesień 2026');
-    expect(report?.report?.counters.fee).toBeGreaterThan(3500);
-    expect(s.history).toHaveLength(1);
+    const report = events.find((e) => e.kind === 'month')!.report!;
+    expect(report.label).toBe('wrzesień 2026');
+    expect(report.counters.fee).toBe(0);
+    expect(report.statement!.transfer).toBeGreaterThan(20_000);
+    expect(report.cash).toBe(report.statement!.cashAfter);
+    expect(s.history).toEqual([{ label: 'wrzesień 2026', profit: report.profit, revenue: report.counters.revenue, transfer: report.statement!.transfer }]);
+    // saldo i naliczenia zaczynają nowy miesiąc od zera
+    expect(s.franchisee.month).toEqual({ margin: expect.any(Number), bonus: 0, pallets: 0, wages: 0, media: 0 });
   });
 
   it('remont zamyka sklep na kilka dni, a po nim większy sklep przejmuje palety i sprzęt', () => {
@@ -544,21 +552,21 @@ describe('ostatni raport miesięczny w stanie', () => {
     expect(out.map((e) => e.kind)).toEqual(['debt', 'gameover']);
   });
 
-  it('opłata na koniec miesiąca: gotówka po niej między progiem a granicą to ostrzeżenie i gra trwa, poniżej granicy koniec z raportem', () => {
-    /** 30 września, 23:00: następna minuta zamyka dzień i miesiąc (opłata, premia, WUT). */
+  it('przelew na koniec miesiąca: gotówka po nim między progiem a granicą to ostrzeżenie i gra trwa, poniżej granicy koniec z raportem', () => {
+    /** 30 września, 23:00: następna minuta zamyka dzień i miesiąc (przelew, potrącenia, koszty własne). */
     const atClose = (): EconomyState => {
       const s = createEconomy(SEED, info);
       run(s, info, 29 * MINUTES_PER_DAY + 17 * 60);
-      s.month.revenue = 3_000_000;   // od SIM_VERSION 5 opłata to kilka procent obrotu: dopiero wielki obrót przebija próg ostrzeżenia
-      s.tycoon.trust.value = 30;     // bez premii od obrotu i bez dopłaty do gwarancji (ta wyrównałaby sztuczny obrót bez marży)
+      s.franchisee.remanent.pending = 120_000;   // nadwyżka z remanentu czeka na przelew: potrącenie większe niż próg ostrzeżenia
+      s.tycoon.trust.value = 30;                 // bez premii od obrotu i bez dopłaty do gwarancji
       return s;
     };
     const base = atClose();
     const probe = JSON.parse(JSON.stringify(base)) as EconomyState;
     probe.cash = 0;
     run(probe, info, 1);
-    const delta = probe.cash;   // o tyle zamknięcie zmienia gotówkę (deterministycznie)
-    expect(delta).toBeLessThan(DEBT_WARN);   // sama opłata jest większa niż próg ostrzeżenia: bez zarobku z miesiąca Centrala ostrzega
+    const delta = probe.cash;   // o tyle zamknięcie zmienia gotówkę (deterministycznie): „Zostaje Ci”
+    expect(delta).toBeLessThan(DEBT_WARN);
 
     const warned = atClose();
     warned.cash = DEBT_WARN - 1000 - delta;
@@ -590,13 +598,14 @@ describe('przychód gwarantowany (GUARANTEE)', () => {
     return s;
   };
 
-  it('słaby miesiąc: Centrala dopłaca do 25 tys. zł przychodu (marża minus opłata plus premie), osobna pozycja raportu i komunikat', () => {
+  it('słaby miesiąc: Centrala dopłaca do 25 tys. zł przychodu (marża plus premie), osobna pozycja raportu i wyciągu, komunikat', () => {
     const s = weakClose();
     const events = run(s, info, 1);
     const report = s.lastReport!;
     const c = report.counters;
     expect(c.guarantee).toBeGreaterThan(0);
-    expect(c.margin - c.fee + c.bonus).toBeCloseTo(GUARANTEE.income, 6);
+    expect(c.margin + c.bonus).toBeCloseTo(GUARANTEE.income, 6);
+    expect(report.statement!.guarantee).toBe(c.guarantee);
     expect(report.detail!.lines.map((l) => l.key)).toContain('gwarancja');
     expect(report.detail!.lines.find((l) => l.key === 'gwarancja')!.amount).toBe(c.guarantee);
     expect(report.detail!.lines.reduce((n, l) => n + l.amount, 0)).toBeCloseTo(report.profit, 6);
@@ -624,18 +633,32 @@ describe('przychód gwarantowany (GUARANTEE)', () => {
   });
 });
 
-describe('opłata franczyzowa', () => {
-  it('stała część plus udział w obrocie, w pełnych złotych', () => {
-    expect(franchiseFee(0)).toBe(FRANCHISE_FEE_FIXED);
-    expect(franchiseFee(200_000)).toBe(Math.round(FRANCHISE_FEE_FIXED + FRANCHISE_FEE_SHARE * 200_000));
-    expect(franchiseFee(123_456.78)).toBe(Math.round(FRANCHISE_FEE_FIXED + FRANCHISE_FEE_SHARE * 123_456.78));
+describe('wyciąg od Centrali (SIM_VERSION 6)', () => {
+  it('przelew, potrącenia, koszty własne i „Zostaje Ci” się sumują; wynik miesiąca jest bez rat', () => {
+    const st = buildStatement({
+      month: { margin: 30_000, bonus: 2_000, pallets: 450, wages: 20_400, media: 4_200 }, guarantee: 1_000, installments: 3_000,
+      remanent: 700, spent: 5_000, fines: 800, other: 250, cashBefore: 1_000, partial: false,
+    });
+    expect(st.transfer).toBe(33_000);
+    expect(st.vat).toBe(Math.round(OWN_COSTS.vatShare * 33_000));
+    expect(st.deductions).toBe(3_000 + 450 + 700);
+    expect(st.costs).toBe(20_400 + 4_200 + OWN_COSTS.zus + OWN_COSTS.accounting + st.vat);
+    expect(st.net).toBe(st.transfer - st.deductions - st.costs);
+    expect(st.result).toBe(st.net + 3_000 + 250 - 800);
+    expect(st.cashAfter).toBe(1_000 + st.net);
   });
 
-  it('zamknięcie miesiąca nalicza dokładnie tyle, ile pokazuje franchiseFee dla obrotu tego miesiąca', () => {
+  it('zamknięcie miesiąca zmienia gotówkę dokładnie o „Zostaje Ci”, a w ciągu miesiąca sprzedaż jej nie rusza', () => {
     const s = createEconomy(SEED, info);
-    const report = run(s, info, 30 * MINUTES_PER_DAY).find((e) => e.kind === 'month')!.report!;
-    expect(report.counters.revenue).toBeGreaterThan(0);
-    expect(report.counters.fee).toBe(franchiseFee(report.counters.revenue));
+    run(s, info, 29 * MINUTES_PER_DAY + 17 * 60);   // 30 września, 23:00
+    // w miesiącu gotówkę ruszają tylko inne przychody i koszty (nagrody za poziom, karty), mandaty i zakupy za gotówkę
+    expect(s.cash).toBeCloseTo(START_CASH + s.month.other - s.month.fines - s.month.investments, 6);
+    const before = s.cash;
+    const report = run(s, info, 1).find((e) => e.kind === 'month')!.report!;
+    expect(s.cash - before).toBeCloseTo(report.statement!.net, 6);
+    expect(report.profit).toBeCloseTo(report.statement!.result, 6);
+    expect(s.total.zus).toBe(OWN_COSTS.zus);
+    expect(s.total.vat).toBe(report.statement!.vat);
   });
 });
 
@@ -698,7 +721,7 @@ describe('nagrody i postęp', () => {
     for (const c of CATS) s.backroom[c] = 0;
     const p = s.pallets[0]!;
     p.golden = true;
-    const cash = s.cash;
+    const saldo = s.franchisee.month.bonus;
     let text: string | undefined;
     for (let i = 0; i < 200 && s.pallets.some((x) => x.id === p.id); i++) {
       s.tycoon.fatigue.energy = 100;   // siły nie są tu tematem: pula wystarcza na całą paletę
@@ -706,7 +729,7 @@ describe('nagrody i postęp', () => {
     }
     expect(s.pallets.some((x) => x.id === p.id)).toBe(false);
     expect(text).toMatch(/Złota paleta/);
-    expect(s.cash).toBeGreaterThanOrEqual(cash + GOLDEN_PRIZE.min);
+    expect(s.franchisee.month.bonus).toBeGreaterThanOrEqual(saldo + GOLDEN_PRIZE.min);   // premia Centrali na saldo, przyjdzie przelewem
   });
 
   it('punkty partnera z sieci sklepów podnoszą marżę, a sieć daje dochód co dzień', () => {
@@ -892,7 +915,7 @@ describe('zaufanie Centrali przez moduł tycoona', () => {
     expect(c.bonus - before).toBe(Math.round(turnoverBonusShare(90) * c.revenue));
     expect(c.bonus - before).toBeGreaterThan(0);
     const report = events.find((e) => e.kind === 'month')!.report!;
-    expect(report.profit).toBeCloseTo(c.margin + c.bonus + c.other - c.wages - c.media - c.fee - c.fines - c.logistics - c.wut, 6);
+    expect(report.profit).toBeCloseTo(c.margin + c.bonus + c.other - c.wages - c.media - c.zus - c.vat - c.accounting - c.fines - c.logistics - c.remanent, 6);
   });
 
   it('poniżej 70 premii od obrotu nie ma (dawne „≥ 70 to 1%” zastąpiły progi z tycoona)', () => {
@@ -981,31 +1004,46 @@ describe('WUT, KPI tygodnia zamiast zleceń i raport miesięczny', () => {
     });
   });
 
-  describe('WUT w zamknięciu miesiąca', () => {
-    it('WUT ponad próg to pozycja raportu: opłata w liczniku wut, wiersz „wut” w szczegółach, miesiąc WUT wyzerowany', () => {
+  describe('ubytki i remanent (SIM_VERSION 6)', () => {
+    /** 30 listopada (dzień 90) tuż przed remanentem o 5:00. */
+    const beforeRemanent = (s: EconomyState): void => {
+      run(s, info, 90 * MINUTES_PER_DAY + REMANENT.at - s.minute);
+    };
+
+    it('miesiąc nie rozlicza ubytków: licznik rośnie przez kolejne miesiące, w raporcie nie ma pozycji „wut”', () => {
       const s = createEconomy(SEED, info);
-      toMonthEnd(s);
-      const manual = 0.05 * s.month.revenue;               // 5% obrotu ręcznie: dużo ponad próg 1,2%
-      s.tycoon.wut.month.pomylki += manual;
-      const report = monthReport(run(s, info, 2 * 60));
-      const line = report.detail!.lines.find((l) => l.key === 'wut')!;
-      // naturalne ubytki to 0,9% obrotu, próg 1,2%: opłata to ręczny dopis minus 0,3% obrotu
-      expect(report.counters.wut).toBeGreaterThan(0);
-      expect(report.counters.wut).toBeCloseTo(manual - 0.003 * report.counters.revenue, 6);
-      expect(line.amount).toBe(0 - report.counters.wut);
-      expect(s.lastReport!.detail!.lines.map((l) => l.key)).toContain('wut');
-      // tożsamość raportu przy WUT > 0: wynik szczegółów = wynik raportu = suma pozycji = wynik w historii
-      const detail = report.detail!;
-      expect(detail.result).toBeCloseTo(report.profit, 6);
-      expect(detail.lines.reduce((n, l) => n + l.amount, 0)).toBeCloseTo(detail.result, 6);
-      expect(s.history[s.history.length - 1]!.profit).toBeCloseTo(report.profit, 6);
-      // po zamknięciu nowy miesiąc: licznik opłaty i ubytki od zera, a opłata została w sumie gry
-      expect(s.month.wut).toBe(0);
-      expect(s.tycoon.wut.month).toEqual({ termin: 0, kradziez: 0, pomylki: 0, karty: 0 });
-      expect(s.total.wut).toBe(report.counters.wut);
+      const report = monthReport(run(s, info, 30 * MINUTES_PER_DAY));
+      expect(report.counters.wut).toBe(0);
+      expect(report.detail!.lines.some((l) => l.key === 'wut')).toBe(false);
+      expect(wutTotal(s.tycoon.wut)).toBeGreaterThan(0.008 * report.counters.revenue);   // naturalne ubytki zostały w liczniku
     });
 
-    it('WUT z kart wchodzi do sumy miesiąca i do opłaty (przyczyna „karty”)', () => {
+    it('pierwszy remanent 30 listopada o 5:00: ubytki ponad limit z obrotu okresu idą do przelewu tego samego wieczoru, licznik od zera', () => {
+      const s = createEconomy(SEED, info);
+      expect(s.franchisee.remanent.nextDay).toBe(90);
+      beforeRemanent(s);
+      s.tycoon.wut.month.pomylki += 0.05 * s.franchisee.remanent.revenue;   // 5% obrotu okresu: dużo ponad limit 1,2%
+      const revenue = s.franchisee.remanent.revenue;
+      const total = wutTotal(s.tycoon.wut);
+      const ev = run(s, info, 1);
+      const e = ev.find((x) => x.kind === 'remanent')!;
+      const p = e.remanent!;
+      expect(p).toMatchObject({ day: 90, fromDay: 0, first: true });
+      expect(p.revenue).toBeCloseTo(revenue, 6);
+      expect(p.limit).toBeCloseTo(WUT.threshold * revenue, 6);
+      expect(p.charge).toBe(Math.round(total - p.limit));
+      expect(s.franchisee.remanent).toMatchObject({ pending: p.charge, known: true, revenue: 0, fromDay: 90 });
+      expect(s.franchisee.remanent.nextDay).toBeGreaterThan(90);
+      expect(s.tycoon.wut.month).toEqual({ termin: 0, kradziez: 0, pomylki: 0, karty: 0 });
+      // ubytki z reszty dnia idą do następnego okresu, a przelew o 23:00 potrąca nadwyżkę
+      const report = monthReport(run(s, info, (OPEN_TO - REMANENT.at)));
+      expect(report.statement!.remanent).toBe(p.charge);
+      expect(report.detail!.lines.find((l) => l.key === 'remanent')!.amount).toBe(0 - p.charge);
+      expect(s.franchisee.remanent.pending).toBe(0);
+      expect(wutTotal(s.tycoon.wut)).toBeGreaterThan(0);
+    });
+
+    it('ubytki z kart wchodzą do remanentu (przyczyna „karty”), a te w limicie nic nie kosztują', () => {
       const s = createEconomy(SEED, info);
       s.tycoon.cards.pending = [];
       const card: CardInstance = {
@@ -1015,28 +1053,23 @@ describe('WUT, KPI tygodnia zamiast zleceń i raport miesięczny', () => {
       s.tycoon.cards.pending.push(card);
       expect(answerCard(s, card.seq, 0, []).ok).toBe(true);
       expect(s.tycoon.wut.month.karty).toBe(5000);
-      toMonthEnd(s);
-      const report = monthReport(run(s, info, 2 * 60));
-      // 5000 zł z karty plus naturalne ubytki (0,9% obrotu) minus próg (1,2% obrotu)
-      expect(report.counters.wut).toBeCloseTo(5000 - 0.003 * report.counters.revenue, 6);
-      expect(s.tycoon.wut.month.karty).toBe(0);
-    });
-
-    it('ubytki mieszczące się w progu nie kosztują nic: bierny miesiąc ma opłatę 0, a pozycja „wut” w raporcie jest zerem', () => {
-      const s = createEconomy(SEED, info);
-      const report = monthReport(run(s, info, 30 * MINUTES_PER_DAY));
-      expect(report.counters.wut).toBe(0);
-      expect(report.detail!.lines.find((l) => l.key === 'wut')!.amount).toBe(0);
+      const quietRun = createEconomy(SEED, info);
+      beforeRemanent(s);
+      beforeRemanent(quietRun);
+      const withCard = run(s, info, 1).find((x) => x.kind === 'remanent')!.remanent!;
+      const without = run(quietRun, info, 1).find((x) => x.kind === 'remanent')!.remanent!;
+      expect(withCard.byReason.karty).toBeGreaterThanOrEqual(5000);
+      expect(without.charge).toBe(0);   // bierny sklep mieści się w limicie
     });
   });
 
   describe('raport miesięczny', () => {
-    it('wynik raportu = suma pozycji = wynik w historii (30 dni biernej gry), z dziewięcioma pozycjami (dopłata do gwarancji tylko, gdy jest)', () => {
+    it('wynik raportu = suma pozycji = wynik w historii (30 dni biernej gry), z dziesięcioma pozycjami (gwarancja i remanent tylko, gdy są)', () => {
       const s = createEconomy(SEED, info);
       const report = monthReport(run(s, info, 30 * MINUTES_PER_DAY));
       const detail = report.detail!;
       expect(report.counters.guarantee).toBe(0);
-      expect(detail.lines.map((l) => l.key)).toEqual(REPORT_LINES.filter((k) => k !== 'gwarancja'));
+      expect(detail.lines.map((l) => l.key)).toEqual(REPORT_LINES.filter((k) => !['gwarancja', 'oplata', 'wut', 'remanent'].includes(k)));
       expect(detail.lines.reduce((n, l) => n + l.amount, 0)).toBeCloseTo(detail.result, 6);
       expect(detail.result).toBeCloseTo(s.history[0]!.profit, 6);
       expect(detail.result).toBeCloseTo(report.profit, 6);
@@ -1048,7 +1081,9 @@ describe('WUT, KPI tygodnia zamiast zleceń i raport miesięczny', () => {
       expect(line('marza')).toBe(c.margin);
       expect(line('premie')).toBe(c.bonus);
       expect(line('place')).toBe(0 - c.wages);
-      expect(line('oplata')).toBe(0 - c.fee);
+      expect(line('zus')).toBe(0 - c.zus);
+      expect(line('vat')).toBe(0 - c.vat);
+      expect(line('ksiegowa')).toBe(0 - c.accounting);
       expect(line('logistyka')).toBe(0 - c.logistics);
     });
 
@@ -1067,7 +1102,7 @@ describe('WUT, KPI tygodnia zamiast zleceń i raport miesięczny', () => {
       s.tycoon.trust.value = 60;
       s.tycoon.trust.monthStart = 60;
       s.tycoon.trust.month = {};
-      s.month.margin += 1e6;                     // wynik dodatni: +5
+      s.franchisee.month.margin += 1e6;          // wynik dodatni (przelew z salda): +5
       const report = monthReport(run(s, info, 2 * 60));
       expect(report.detail!.trust).toEqual({ start: 60, end: 65, delta: 5, reasons: [['wynik', 5]] });
       // nowy miesiąc zaczyna się od zaufania po zmianie z wyniku
@@ -1095,34 +1130,32 @@ describe('WUT, KPI tygodnia zamiast zleceń i raport miesięczny', () => {
       expect(HINT_IDS).toContain(d.hint.id);
     });
 
-    it('pozycje zamknięcia miesiąca (opłata, premia od obrotu, WUT) są w miesiącu i sumie gry, ale nie w wyniku następnego dnia', () => {
+    it('pozycje zamknięcia miesiąca (premia od obrotu, ZUS, VAT, księgowa) są w miesiącu i sumie gry, ale nie w wyniku następnego dnia', () => {
       const s = createEconomy(SEED, info);
       toMonthEnd(s);
       s.tycoon.trust.value = 90;                                  // najwyższy próg premii od obrotu
       s.tycoon.trust.monthStart = 90;
-      s.tycoon.wut.month.pomylki += 0.05 * s.month.revenue;       // dużo ponad próg
       const totalBefore = { ...s.total };
       const report = monthReport(run(s, info, 61));               // 22:00–23:00: zamknięcie dnia i miesiąca
       const c = report.counters;
       const turnoverBonus = Math.round(turnoverBonusShare(90) * c.revenue);
-      expect(c.fee).toBeGreaterThan(0);
-      expect(c.wut).toBeGreaterThan(0);
+      expect(c.vat).toBeGreaterThan(0);
       expect(turnoverBonus).toBeGreaterThan(0);
       // suma gry i miesiąc je mają
-      expect(s.total.fee - totalBefore.fee).toBe(c.fee);
-      expect(s.total.wut - totalBefore.wut).toBeCloseTo(c.wut, 6);
+      expect(s.total.zus - totalBefore.zus).toBe(OWN_COSTS.zus);
+      expect(s.total.vat - totalBefore.vat).toBe(c.vat);
       expect(s.total.bonus - totalBefore.bonus).toBe(turnoverBonus);
       // a dzień, który zaczyna się po zamknięciu, nie
-      expect(s.today.fee).toBe(0);
-      expect(s.today.wut).toBe(0);
+      expect(s.today.zus).toBe(0);
+      expect(s.today.vat).toBe(0);
       expect(s.today.bonus).toBe(0);
       // wynik pierwszego dnia nowego miesiąca liczy tylko jego własne pozycje
       const t0 = { ...s.total };
       run(s, info, MINUTES_PER_DAY);                              // do zamknięcia 1 października o 23:00
       const t1 = s.total;
       const ownProfit = t1.margin - t0.margin + t1.bonus - t0.bonus + t1.other - t0.other - (t1.wages - t0.wages)
-        - (t1.media - t0.media) - (t1.fines - t0.fines) - (t1.logistics - t0.logistics) - (t1.wut - t0.wut);
-      expect(t1.fee).toBe(t0.fee);
+        - (t1.media - t0.media) - (t1.fines - t0.fines) - (t1.logistics - t0.logistics);
+      expect(t1.zus).toBe(t0.zus);
       expect(s.lastDayProfit).toBeCloseTo(ownProfit, 6);
       expect(s.bestDayProfit).toBeGreaterThanOrEqual(s.lastDayProfit);
     });
@@ -1790,13 +1823,14 @@ describe('karty dnia i okólniki', () => {
       expect(s.tycoon.cards.pending).toEqual([]);
     });
 
-    it('premia Centrali z karty idzie do licznika bonus i do gotówki', () => {
+    it('premia Centrali z karty idzie do licznika bonus i na saldo u Centrali (gotówka czeka na przelew)', () => {
       const s = quiet();
       const card = plant(s, 'okolnik-premia', [{ bonus: 500 }, {}]);
       const cash = s.cash;
       answer(s, card, 0);
       for (const k of [s.today, s.month, s.total]) expect(k.bonus).toBe(500);
-      expect(s.cash).toBe(cash + 500);
+      expect(s.franchisee.month.bonus).toBe(500);
+      expect(s.cash).toBe(cash);
     });
 
     it('inne przychody i koszty są ze znakiem: koszt z karty zmniejsza other, wpływ go zwiększa', () => {
@@ -1812,13 +1846,14 @@ describe('karty dnia i okólniki', () => {
       for (const k of [s.today, s.month, s.total]) expect(k.other).toBe(150);
     });
 
-    it('opłata logistyczna z karty idzie do logistics jako koszt', () => {
+    it('opłata logistyczna z karty idzie do logistics jako koszt i do potrąceń z przelewu', () => {
       const s = quiet();
       const card = plant(s, 'fefo', [{ logistics: -120 }]);
       const cash = s.cash;
       answer(s, card, 0);
       for (const k of [s.today, s.month, s.total]) expect(k.logistics).toBe(120);
-      expect(s.cash).toBe(cash - 120);
+      expect(s.franchisee.month.pallets).toBe(120);
+      expect(s.cash).toBe(cash);
     });
 
     it('reputacja przycięta do 0–100, Ogonki dopisane', () => {
