@@ -1,8 +1,9 @@
-import { DEBT_LIMIT, HIRE_COST, WAGE_PER_DAY } from '@/sim/economy/catalog';
+import { DEBT_LIMIT, HIRE_COST, REMANENT, WAGE_PER_DAY } from '@/sim/economy/catalog';
 import { DEBT_WARN } from '@/sim/economy/economy';
 import { TRUST } from '@/sim/economy/tycoon/trust';
-import { money, zl } from '../game/format';
+import { money, plural, zl } from '../game/format';
 import type { TourStep } from './steps';
+import type { TipDef } from './tips';
 
 /*
  * Wszystko, co samouczek mówi o pieniądzach, zaufaniu Centrali i ratach (spec samouczka, §7), w jednym miejscu: przy następnej
@@ -45,3 +46,24 @@ export const MONEY_NOTES = {
   ulepszenia: (): string => 'Płacisz gotówką albo na raty: Centrala potrąci je z kolejnych przelewów. Za gotówkę zawsze taniej.',
   kpi: (): string => 'premię na saldo i zaufanie Centrali',
 } as const;
+
+/** Dymki „pierwszy raz” o pieniądzach: pierwszy wyciąg od Centrali i pierwszy protokół remanentu (oba nad swoim oknem). */
+export const MONEY_TIPS: readonly TipDef[] = [
+  {
+    id: 'tip-wyciag',
+    inWindow: true,
+    // protokół remanentu leży nad raportem: dymek wyciągu czeka, aż gracz go zamknie
+    when: (ctx) => !!ctx.report?.statement && !ctx.remanentOpen && !ctx.s.gameOver,
+    targets: () => ['zostaje-ci', 'report'],
+    text: () => 'Wyciąg od Centrali. Przelew (marża, premie) minus potrącenia (raty, palety) minus Twoje koszty daje „Zostaje Ci”: '
+      + 'tyle właśnie wpadło do gotówki. Słowniczek: „?”.',
+  },
+  {
+    id: 'tip-remanent',
+    inWindow: true,
+    when: (ctx) => ctx.remanentOpen && !ctx.s.gameOver,
+    targets: () => ['remanent-verdict'],
+    text: () => `Remanent. Co ${REMANENT.everyMonths} ${plural(REMANENT.everyMonths, 'miesiąc', 'miesiące', 'miesięcy')} Centrala liczy ubytki: `
+      + 'przeterminowany towar, kradzieże, pomyłki. Ponad limit płacisz Ty, z dzisiejszego przelewu.',
+  },
+];
