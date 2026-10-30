@@ -22,7 +22,8 @@ import { EQUIPMENT_BY_ID, UPGRADE_BY_ID, equipmentCost, upgradeCost, type Equipm
 const SEEDS = (process.env.SEEDS ?? 'traszka-1,kopytka-541,makieta,lublin-9,seed-3').split(',');
 const MONTHS = Number(process.env.MONTHS ?? 24);
 
-type Strategy = 'bierny' | 'normalny' | 'mistrz' | 'mistrzZakupy' | 'raty' | 'nadmiar' | 'nadmiarLekki' | 'nadmiarMiesiac';
+type Strategy = 'bierny' | 'normalny' | 'mistrz' | 'mistrzZakupy' | 'raty' | 'nadmiar' | 'nadmiarLekki' | 'nadmiarMiesiac'
+  | 'ratyDzien1' | 'ratyDzien1Tanie' | 'mistrzRatyDzien1';
 const STRATEGIES = (process.env.STRATEGIES ?? 'bierny,normalny,mistrz,mistrzZakupy,raty,nadmiar,nadmiarLekki,nadmiarMiesiac').split(',') as Strategy[];
 
 /** Rzecz do kupienia teraz: polecenie (bez `raty`) i cena za gotówkę. */
@@ -96,13 +97,33 @@ const overOrder = (factor: number, untilDay = Infinity) => (r: EconomyRun): void
   applyCommand(s, r.info, { type: 'setOrder', auto: false, manual: Math.ceil(factor * perDay) });
 };
 
+/**
+ * Maksimum rat pierwszego dnia (pytanie koordynatora): 1 września o 6:00 gracz bierze na raty wszystko, na co pozwala limit przed pierwszym
+ * przelewem (35% gwarancji, 8750 zł miesięcznie) i progi poziomów (poziom 1). `desc`: od najdroższej rzeczy, która się zmieści, `asc`: od najtańszej.
+ * Potem już nic nie kupuje.
+ */
+const dayOneCredit = (order: 'asc' | 'desc', log: string[]) => (r: EconomyRun): void => {
+  const s = r.state;
+  if (s.minute !== 6 * 60 + 1) return;
+  for (let guard = 0; guard < 60; guard++) {
+    const list = order === 'desc' ? offers(r).reverse() : offers(r);
+    const room = installmentRoom(s).free;
+    const o = list.find((x) => planFor(x.price).monthly <= room);
+    if (!o) return;
+    const res = applyCommand(s, r.info, withCredit(o.cmd));
+    if (res.layoutChanged && res.info) r.info = res.info;
+    if (!res.result.ok) return;
+    log.push(`d0 ${o.label} ${o.price} zł (raty ${planFor(o.price).months} × ${planFor(o.price).monthly})`);
+  }
+};
+
 const BASE: Record<Strategy, BotName> = {
   bierny: 'bierny', normalny: 'bierny', mistrz: 'mistrz', mistrzZakupy: 'mistrz', raty: 'bierny', nadmiar: 'bierny', nadmiarLekki: 'bierny',
-  nadmiarMiesiac: 'bierny',
+  nadmiarMiesiac: 'bierny', ratyDzien1: 'bierny', ratyDzien1Tanie: 'bierny', mistrzRatyDzien1: 'mistrz',
 };
 
 export interface MonthRow {
-  month: number; label: string; revenue: number; transfer: number; deductions: number; installments: number; remanent: number;
+  month: number; label: string; revenue: number; transfer: number; deductions: number; installments: number; remanent: number; guarantee: number;
   costs: number; net: number; result: number; cash: number; share: number; level: number; remont: number;
 }
 export interface RunResult { strategy: Strategy; seed: string; months: MonthRow[]; bankruptMonth: number | null; purchases: string[]; finalCash: number }
@@ -115,7 +136,9 @@ function play(strategy: Strategy, seed: string): RunResult {
   const log: string[] = [];
   const extra = strategy === 'normalny' ? buyer('cash', log) : strategy === 'mistrzZakupy' ? buyer('mixed', log)
     : strategy === 'raty' ? buyer('credit', log) : strategy === 'nadmiar' ? overOrder(2) : strategy === 'nadmiarLekki' ? overOrder(1.4)
-    : strategy === 'nadmiarMiesiac' ? overOrder(1.5, 30) : null;
+    : strategy === 'nadmiarMiesiac' ? overOrder(1.5, 30)
+    : strategy === 'ratyDzien1' || strategy === 'mistrzRatyDzien1' ? dayOneCredit('desc', log)
+    : strategy === 'ratyDzien1Tanie' ? dayOneCredit('asc', log) : null;
   const bot = BOTS[BASE[strategy]];
   const end = MONTHS * 30.44 * MINUTES_PER_DAY;
   while (run.state.minute < end && reports.length < MONTHS) {
@@ -127,7 +150,7 @@ function play(strategy: Strategy, seed: string): RunResult {
     const st = r.statement!;
     return {
       month: i + 1, label: r.label, revenue: Math.round(r.counters.revenue), transfer: Math.round(st.transfer), deductions: Math.round(st.deductions),
-      installments: Math.round(st.installments), remanent: Math.round(st.remanent), costs: Math.round(st.costs), net: Math.round(st.net),
+      installments: Math.round(st.installments), remanent: Math.round(st.remanent), guarantee: Math.round(st.guarantee), costs: Math.round(st.costs), net: Math.round(st.net),
       result: Math.round(st.result), cash: Math.round(r.cash), share: r.counters.revenue > 0 ? st.transfer / r.counters.revenue : 0,
       level: 0, remont: 0,
     };
