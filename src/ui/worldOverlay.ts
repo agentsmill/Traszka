@@ -31,7 +31,7 @@ export function floatText(x: number, y: number, text: string, kind: 'money' | 'w
   }
   const el = document.createElement('div');
   el.className = `tt-floater ${kind}`;
-  el.textContent = text;
+  el.textContent = tr(text);   // „+8 szt. ×2” ze stuknięcia w scenie (game/actions.ts) w języku gracza
   el.style.left = `${x}px`;
   el.style.top = `${y}px`;
   floatLayer.appendChild(el);

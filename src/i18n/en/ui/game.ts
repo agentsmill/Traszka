@@ -199,6 +199,7 @@ export const GAME_UI: Dict = {
   'Zatrudnij': 'Hire',
   'Płace': 'Wages',
   '{0} zł / dzień': '{0} zł / day',
+  '{0} / dzień': '{0} / day',
   'Rekrutacja: {0} zł. Każda osoba na zmianie to {1} zł dziennie (dwa etaty na 17-godzinny dzień).':
     'Hiring: {0} zł. Each person on shift costs {1} zł a day (two full-time jobs to cover a 17-hour day).',
   'Profil pracy': 'Work profile',

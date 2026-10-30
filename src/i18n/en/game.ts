@@ -15,6 +15,8 @@ export function gameRules(sub: (pl: string) => string): Rule[] {
     { pl: 'Poziom {}', en: (n) => `Level ${n}` },
     { pl: 'Nagroda: +{} zł i +{} Ogonków.', en: (c, o) => `Reward: +${plNum(c!)} zł and +${plNum(o!)} Ogonki.` },
     { pl: '🔓 {}', en: (name) => `🔓 ${sub(name!)}` },
+    // progress.ts: ranga po 60. poziomie z gwiazdkami („Legendarna Paleta ★★ +1”), podtytuł banera poziomu
+    { pl: '{} {}{}', re: /^(.+?) (★+(?: \+\d+)?)$/, en: (name, stars) => `${sub(name!)} ${stars}` },
     {
       pl: 'Sieć: {} {} · {} Punktów Partnera',
       en: (n, _w, p) => `Network: ${plNum(n!)} ${enPlural(plValue(n!), 'shop', 'shops')} · ${plNum(p!)} Partner Points`,
@@ -22,6 +24,9 @@ export function gameRules(sub: (pl: string) => string): Rule[] {
     { pl: 'Dochód z sieci: {} zł dziennie', en: (x) => `Network income: ${plNum(x!)} zł a day` },
     { pl: 'Nie udało się zacząć biegu rankingowego „{}”.', en: (seed) => `Couldn’t start the ranked run “${seed}”.` },
     { pl: 'Nie udało się otworzyć sklepu „{}”. Zostajesz w poprzednim.', en: (seed) => `Couldn’t open the shop “${seed}”. You’re staying in the previous one.` },
+    // actions.ts: liczby nad stuknięciem w scenie (`floater`)
+    { pl: '+{} szt.{}', re: /^\+(\d+) szt\.((?: ×\d+)?)$/, en: (n, mult) => `+${n} items${mult ?? ''}` },
+    { pl: '+{} zł', re: /^\+(\d[\d\s\u00a0]*,\d{2}) zł$/, en: (x) => `+${x!.replace(',', '.').replace(/[\s\u00a0]/g, ',')} zł` },
     // openStore.ts
     { pl: 'Nie udało się otworzyć sklepu „{}”. Zaczynamy w nowym.', en: (seed) => `Couldn’t open the shop “${seed}”. Starting a new one.` },
     // ui/ranking/recoveryModel.ts
