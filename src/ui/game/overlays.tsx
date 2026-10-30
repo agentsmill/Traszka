@@ -1,7 +1,7 @@
 import { computed, signal, untracked, type ReadonlySignal } from '@preact/signals';
 import { useEffect, useState } from 'preact/hooks';
 import { DEBT_LIMIT } from '@/sim/economy/catalog';
-import { dateText, hintTextOf, t, tr } from '@/i18n';
+import { dateText, hintTextOf, numberLocale, t, tr } from '@/i18n';
 import {
   DEBT_WARN, debtWarningText, effects, slotFree, slotUsage, tapCombo, tillTapBlock, type EconomyState, type MonthReport,
 } from '@/sim/economy/economy';
@@ -21,6 +21,7 @@ import {
 } from '../state';
 import { int, people, percentOf, signedPts, signedZl, zl } from './format';
 import { Bar, PalletItem } from './panels';
+import { LanguageSwitch, setLangAndReload } from '../LanguageSwitch';
 import { buyButtons, buyNotes } from './spend';
 import { statementView } from './statement';
 import { ENERGY_TITLE, NO_ENERGY_TITLE, tapBlock, tillReason } from './tapBlock';
@@ -40,20 +41,20 @@ export function SelectionCard({ game }: { game: GameActions }) {
   if (sel.kind === 'pallet') {
     body = (
       <>
-        <h3>Paleta</h3>
+        <h3>{t`Paleta`}</h3>
         <PalletItem s={s} info={info} id={sel.id} game={game} compact />
-        <p class="tt-hint">Stukaj w paletę w sklepie, żeby rozładowywać.</p>
+        <p class="tt-hint">{t`Stukaj w paletę w sklepie, żeby rozładowywać.`}</p>
       </>
     );
   } else if (sel.kind === 'till') {
     const fx = effects(s, info);
     body = (
       <>
-        <h3>Kasa</h3>
-        <p>Kolejka: <b>{int(s.queue)}</b> · na kasie: {people(s.lastCashiers)} os. · SCO: {fx.sco}</p>
-        <button type="button" class="tt-btn tt-primary big" disabled={!!tillReason(s, info)} title={tillReason(s, info)}
-          onClick={() => game.dispatch({ type: 'tapTill' })}>Obsłuż klienta</button>
-        <p class="tt-hint">{tillTapBlock(s, info) ?? 'Kolejka przerasta kasjera: staniesz przy drugiej kasie.'} Stukanie pomaga tylko, gdy przy kasie nikogo nie ma albo kolejka rośnie.</p>
+        <h3>{t`Kasa`}</h3>
+        <p>{t`Kolejka: `}<b>{int(s.queue)}</b>{t` · na kasie: ${people(s.lastCashiers)} os. · SCO: ${fx.sco}`}</p>
+        <button type="button" class="tt-btn tt-primary big" disabled={!!tillReason(s, info)} title={tr(tillReason(s, info))}
+          onClick={() => game.dispatch({ type: 'tapTill' })}>{t`Obsłuż klienta`}</button>
+        <p class="tt-hint">{tr(tillTapBlock(s, info)) ?? t`Kolejka przerasta kasjera: staniesz przy drugiej kasie.`}{t` Stukanie pomaga tylko, gdy przy kasie nikogo nie ma albo kolejka rośnie.`}</p>
       </>
     );
   } else {
@@ -63,25 +64,25 @@ export function SelectionCard({ game }: { game: GameActions }) {
     const items = slotUsage(s).get(slot.id) ?? [];
     body = (
       <>
-        <h3>Slot {slot.capacity === 2 ? '2×2' : '2×1'}</h3>
-        <p>{items.length ? `Stoi tu: ${items.map((id) => EQUIPMENT_BY_ID[id].name).join(', ')}.` : 'Pusty slot.'} Wolne miejsce: {free}.</p>
+        <h3>{t`Slot ${slot.capacity === 2 ? '2×2' : '2×1'}`}</h3>
+        <p>{items.length ? t`Stoi tu: ${items.map((id) => tr(EQUIPMENT_BY_ID[id].name)).join(', ')}.` : t`Pusty slot.`}{t` Wolne miejsce: ${free}.`}</p>
         {free > 0
           ? EQUIPMENT.filter((e) => e.size <= free).map((e) => {
             const cost = equipmentCost(e, s.equipment.filter((x) => x.id === e.id).length);
             return (
               <div key={e.id} class="tt-item">
-                <div><b>{e.name}</b><div class="tt-muted">{e.effect}</div>{buyNotes(s, info, cost, false)}</div>
+                <div><b>{tr(e.name)}</b><div class="tt-muted">{tr(e.effect)}</div>{buyNotes(s, info, cost, false)}</div>
                 {buyButtons(s, info, cost, false, (raty) => game.dispatch(raty ? { type: 'buyEquipment', id: e.id, slotId: slot.id, raty: true } : { type: 'buyEquipment', id: e.id, slotId: slot.id }))}
               </div>
             );
           })
-          : <p class="tt-hint">Slot pełny. Więcej slotów da remont (Ulepszenia → Remont).</p>}
+          : <p class="tt-hint">{t`Slot pełny. Więcej slotów da remont (Ulepszenia → Remont).`}</p>}
       </>
     );
   }
   return (
-    <div class="tt-card" role="dialog" aria-label="Zaznaczony obiekt">
-      <button type="button" class="tt-iconbtn tt-card-close" aria-label="Zamknij" onClick={close}>✕</button>
+    <div class="tt-card" role="dialog" aria-label={t`Zaznaczony obiekt`}>
+      <button type="button" class="tt-iconbtn tt-card-close" aria-label={t`Zamknij`} onClick={close}>✕</button>
       {body}
     </div>
   );
@@ -104,22 +105,22 @@ export function ClickerBar({ game, onFloat }: { game: GameActions; onFloat: (x: 
   const energy = s.tycoon.fatigue.energy;
   const palletBlock = tapBlock(s, 'paleta');
   const tillBlock = tillReason(s, view.info);
-  const tillNote = tillTapBlock(s, view.info)?.replace(/\.$/, '');
+  const tillNote = tr(tillTapBlock(s, view.info))?.replace(/\.$/, '');
   const at = (e: MouseEvent): [number, number] => [e.clientX || window.innerWidth - 60, e.clientY || window.innerHeight - 140];
   return (
     <div class="tt-clicker">
-      <div class="tt-energy" title={ENERGY_TITLE}>
-        <span>Siły {int(energy)}/{FATIGUE.pool}</span>
+      <div class="tt-energy" title={tr(ENERGY_TITLE)}>
+        <span>{t`Siły ${int(energy)}/${FATIGUE.pool}`}</span>
         <Bar value={energy / FATIGUE.pool} warn={energy < LOW_ENERGY} />
       </div>
-      <button type="button" class="tt-fab" disabled={pallets === 0 || !!palletBlock} title={palletBlock} aria-label={`Rozładuj paletę (${pallets})`}
-        onClick={(e) => { const r = game.dispatch({ type: 'tapPallet' }); if (r.ok) onFloat(...at(e), `+${Math.round(r.value ?? 0)} szt.`, 'work'); }}>
+      <button type="button" class="tt-fab" disabled={pallets === 0 || !!palletBlock} title={tr(palletBlock)} aria-label={t`Rozładuj paletę (${pallets})`}
+        onClick={(e) => { const r = game.dispatch({ type: 'tapPallet' }); if (r.ok) onFloat(...at(e), t`+${Math.round(r.value ?? 0)} szt.`, 'work'); }}>
         <span aria-hidden="true">📦</span>{pallets > 0 && <span class="tt-badge">{pallets}</span>}
       </button>
       <div class="tt-fab-slot">
         {tillNote && <span class="tt-fab-note">{tillNote}</span>}
-        <button type="button" class="tt-fab" disabled={!!tillBlock} title={tillBlock} aria-label={`Obsłuż klienta (${q} w kolejce)`}
-          onClick={(e) => { const r = game.dispatch({ type: 'tapTill' }); if (r.ok) onFloat(...at(e), `+${(r.value ?? 0).toLocaleString('pl-PL', { maximumFractionDigits: 2 })} zł`, 'money'); }}>
+        <button type="button" class="tt-fab" disabled={!!tillBlock} title={tr(tillBlock)} aria-label={t`Obsłuż klienta (${q} w kolejce)`}
+          onClick={(e) => { const r = game.dispatch({ type: 'tapTill' }); if (r.ok) onFloat(...at(e), `+${(r.value ?? 0).toLocaleString(numberLocale(), { maximumFractionDigits: 2 })} zł`, 'money'); }}>
           <span aria-hidden="true">🧾</span>{q > 0 && <span class="tt-badge">{q}</span>}
         </button>
       </div>
@@ -131,8 +132,8 @@ export function RotateButtons({ controls }: { controls: Controls }) {
   if (tab.value) return null;
   return (
     <div class="tt-rotate">
-      <button type="button" class="tt-iconbtn" aria-label="Obróć w lewo (Q)" onClick={() => controls.rotate(-1)}>⟲</button>
-      <button type="button" class="tt-iconbtn" aria-label="Obróć w prawo (E)" onClick={() => controls.rotate(1)}>⟳</button>
+      <button type="button" class="tt-iconbtn" aria-label={t`Obróć w lewo (Q)`} onClick={() => controls.rotate(-1)}>⟲</button>
+      <button type="button" class="tt-iconbtn" aria-label={t`Obróć w prawo (E)`} onClick={() => controls.rotate(1)}>⟳</button>
     </div>
   );
 }
@@ -140,7 +141,7 @@ export function RotateButtons({ controls }: { controls: Controls }) {
 export function Toasts() {
   return (
     <div class="tt-toasts" aria-live="polite">
-      {toasts.value.map((t) => <div key={t.id} class={`tt-toast ${t.kind}`}>{t.text}</div>)}
+      {toasts.value.map((toast) => <div key={toast.id} class={`tt-toast ${toast.kind}`}>{tr(toast.text)}</div>)}
     </div>
   );
 }
@@ -335,9 +336,9 @@ export function StoryModal() {
   };
   return (
     <div class="tt-modal-wrap">
-      <div key={entry.id} class="tt-modal tt-story" role="dialog" aria-modal="true" aria-label={entry.title}>
-        <h2>{entry.title}</h2>
-        <p class="tt-story-text">{entry.text}</p>
+      <div key={entry.id} class="tt-modal tt-story" role="dialog" aria-modal="true" aria-label={tr(entry.title)}>
+        <h2>{tr(entry.title)}</h2>
+        <p class="tt-story-text">{tr(entry.text)}</p>
         <button type="button" class="tt-btn tt-primary big" onClick={ok}>OK</button>
       </div>
     </div>
@@ -409,8 +410,8 @@ export function FirstDayHints() {
   if (list.length === 0) return null;
   return (
     <div class="tt-hintbubble" role="status">
-      <span class="tt-hintbubble-text">{list[0]}</span>
-      <button type="button" class="tt-btn tt-hintbubble-next" onClick={nextHint}>{list.length > 1 ? 'Dalej' : 'OK'}</button>
+      <span class="tt-hintbubble-text">{tr(list[0]!)}</span>
+      <button type="button" class="tt-btn tt-hintbubble-next" onClick={nextHint}>{list.length > 1 ? t`Dalej` : 'OK'}</button>
     </div>
   );
 }
@@ -421,7 +422,7 @@ export const RESTART_CONFIRM = 'Zacząć od nowa w tym sklepie? Zapis zostanie u
 export const RANKED_NOTE = 'W biegu rankingowym nie zaczyna się od nowa: Centrala nie robi poprawek. Bieg możesz porzucić w ustawieniach.';
 
 /** Napis plakietki biegu rankingowego: „Ranking · dzień 3/91”. */
-export const rankedBadgeText = (run: Pick<RankedView, 'day' | 'days'>): string => `Ranking · dzień ${run.day}/${run.days}`;
+export const rankedBadgeText = (run: Pick<RankedView, 'day' | 'days'>): string => t`Ranking · dzień ${run.day}/${run.days}`;
 
 /**
  * Stałe plakietki na ekranie gry: bieg rankingowy („Ranking · dzień N/91”, jedna linia, bez przycisków) i sklep tymczasowy (zapis się nie
@@ -430,7 +431,7 @@ export const rankedBadgeText = (run: Pick<RankedView, 'day' | 'days'>): string =
 export function StoreBadge() {
   const run = ranked.value;
   const rankedBadge = run ? <div class="tt-ranked-badge" role="status">{rankedBadgeText(run)}</div> : null;
-  const temporary = ephemeral.value ? <div class="tt-ephemeral" role="status">{EPHEMERAL_BADGE}</div> : null;
+  const temporary = ephemeral.value ? <div class="tt-ephemeral" role="status">{tr(EPHEMERAL_BADGE)}</div> : null;
   if (rankedBadge && temporary) return <>{rankedBadge}{temporary}</>;
   return rankedBadge ?? temporary;
 }
@@ -445,12 +446,12 @@ export function StoreActions(
 ) {
   return (
     <div class="tt-store-actions">
-      <button type="button" class="tt-btn" onClick={onNewStore}>Nowy sklep</button>
+      <button type="button" class="tt-btn" onClick={onNewStore}>{t`Nowy sklep`}</button>
       {rankedRun
-        ? <p class="tt-hint">{RANKED_NOTE}</p>
+        ? <p class="tt-hint">{tr(RANKED_NOTE)}</p>
         : temporary
-        ? <p class="tt-hint">{EPHEMERAL_NOTE}</p>
-        : <button type="button" class="tt-btn" onClick={onRestart}>Zacznij od nowa</button>}
+        ? <p class="tt-hint">{tr(EPHEMERAL_NOTE)}</p>
+        : <button type="button" class="tt-btn" onClick={onRestart}>{t`Zacznij od nowa`}</button>}
     </div>
   );
 }
@@ -458,7 +459,7 @@ export function StoreActions(
 /** Przycisk „Jak grać” w ⚙: zamyka ustawienia i otwiera okno z instrukcją (gra stoi, dopóki gracz nie kliknie „Zaczynamy”). */
 export function HowToButton() {
   return (
-    <button type="button" class="tt-btn" onClick={() => { showSettings.value = false; openHowTo(); }}>Jak grać</button>
+    <button type="button" class="tt-btn" onClick={() => { showSettings.value = false; openHowTo(); }}>{t`Jak grać`}</button>
   );
 }
 
@@ -495,7 +496,7 @@ export const storedRun: ReadonlySignal<StoredRun | null> = computed(() => {
 
 /** Pytanie przed porzuceniem biegu rankingowego (dwa kroki w ⚙ zamiast `window.confirm`); `day` null, gdy dnia zapisanego biegu nie znamy. */
 export const abandonQuestion = (day: number | null): string =>
-  `Porzucić bieg rankingowy? ${day === null ? 'Zapisany bieg' : `Dzień ${day} z ${RANKED_DAYS}`} przepadnie.`;
+  t`Porzucić bieg rankingowy? ${day === null ? t`Zapisany bieg` : t`Dzień ${day} z ${RANKED_DAYS}`} przepadnie.`;
 
 export interface RankingSettingsProps {
   game: Pick<GameActions, 'leaveRanked' | 'resumeRanked' | 'abandonRanked' | 'openFinish'>;
@@ -524,17 +525,17 @@ export function RankingSettings({ game, stored, confirming, onConfirming, onRefr
   const hasRun = !!run || !!stored;
   return (
     <>
-      <h3>Ranking</h3>
+      <h3>{t`Ranking`}</h3>
       {panels && (
         <div class="tt-store-actions">
-          <button type="button" class="tt-btn" onClick={() => { close(); openRanking(); }}>Ranking</button>
-          <button type="button" class="tt-btn" onClick={() => { close(); openPanel('recovery'); }}>Kod odzyskiwania i zapis</button>
+          <button type="button" class="tt-btn" onClick={() => { close(); openRanking(); }}>{t`Ranking`}</button>
+          <button type="button" class="tt-btn" onClick={() => { close(); openPanel('recovery'); }}>{t`Kod odzyskiwania i zapis`}</button>
         </div>
       )}
       {waiting && (
         <div class="tt-store-actions">
           <button type="button" class="tt-btn tt-primary" onClick={() => { close(); game.openFinish(); }}>
-            {`Wyślij niewysłany bieg (wynik ${zl(waiting.score)})`}
+            {t`Wyślij niewysłany bieg (wynik ${zl(waiting.score)})`}
           </button>
         </div>
       )}
@@ -542,18 +543,18 @@ export function RankingSettings({ game, stored, confirming, onConfirming, onRefr
         <div class="tt-ranked-ask">
           <p class="tt-ranked-ask-text" role="alert">{abandonQuestion(day)}</p>
           <div class="tt-store-actions">
-            <button type="button" class="tt-btn" onClick={() => { onConfirming(false); game.abandonRanked(); close(); }}>Porzuć</button>
-            <button type="button" class="tt-btn tt-primary" onClick={() => onConfirming(false)}>Anuluj</button>
+            <button type="button" class="tt-btn" onClick={() => { onConfirming(false); game.abandonRanked(); close(); }}>{t`Porzuć`}</button>
+            <button type="button" class="tt-btn tt-primary" onClick={() => onConfirming(false)}>{t`Anuluj`}</button>
           </div>
         </div>
       )}
       {hasRun && !confirming && (
         <div class="tt-store-actions">
           {run
-            ? <button type="button" class="tt-btn tt-primary" onClick={() => { close(); game.leaveRanked(); }}>Wróć do zwykłej gry</button>
-            : <button type="button" class="tt-btn tt-primary" onClick={() => { if (game.resumeRanked()) close(); else onRefresh(); }}>Kontynuuj bieg rankingowy</button>}
-          <button type="button" class="tt-btn" onClick={() => onConfirming(true)}>Porzuć bieg</button>
-          <p class="tt-hint">{run ? 'Wyjście zapisuje bieg: wznowisz go stąd. Porzucenie kasuje zapis.' : 'W przeglądarce czeka zapisany bieg rankingowy. Porzucenie kasuje zapis.'}</p>
+            ? <button type="button" class="tt-btn tt-primary" onClick={() => { close(); game.leaveRanked(); }}>{t`Wróć do zwykłej gry`}</button>
+            : <button type="button" class="tt-btn tt-primary" onClick={() => { if (game.resumeRanked()) close(); else onRefresh(); }}>{t`Kontynuuj bieg rankingowy`}</button>}
+          <button type="button" class="tt-btn" onClick={() => onConfirming(true)}>{t`Porzuć bieg`}</button>
+          <p class="tt-hint">{run ? t`Wyjście zapisuje bieg: wznowisz go stąd. Porzucenie kasuje zapis.` : t`W przeglądarce czeka zapisany bieg rankingowy. Porzucenie kasuje zapis.`}</p>
         </div>
       )}
     </>
@@ -579,35 +580,38 @@ export function Settings({ controls, game, panels = true }: { controls: Controls
   const close = (): void => { showSettings.value = false; };
   return (
     <div class="tt-modal-wrap" onClick={(e) => { if (e.target === e.currentTarget) close(); }}>
-      <div class="tt-modal" role="dialog" aria-label="Ustawienia">
-        <button type="button" class="tt-iconbtn tt-card-close" aria-label="Zamknij" onClick={close}>✕</button>
-        <h2>Ustawienia</h2>
-        <h3>Sklep (seed)</h3>
-        <p class="tt-hint">Ten sam seed to ten sam sklep. Każdy seed ma własny zapis gry.</p>
+      <div class="tt-modal" role="dialog" aria-label={t`Ustawienia`}>
+        <button type="button" class="tt-iconbtn tt-card-close" aria-label={t`Zamknij`} onClick={close}>✕</button>
+        <h2>{t`Ustawienia`}</h2>
+        <h3>{t`Język`}</h3>
+        <LanguageSwitch onPick={setLangAndReload} />
+        <p class="tt-hint">{t`Zmiana języka przeładowuje grę (zapis zostaje), żeby zmienić też napisy w sklepie.`}</p>
+        <h3>{t`Sklep (seed)`}</h3>
+        <p class="tt-hint">{t`Ten sam seed to ten sam sklep. Każdy seed ma własny zapis gry.`}</p>
         <form class="tt-seed" onSubmit={(e) => { e.preventDefault(); controls.generate(draft); close(); }}>
-          <input class="tt-input" type="text" value={draft} aria-label="Seed sklepu" maxLength={64} spellcheck={false} autocomplete="off"
+          <input class="tt-input" type="text" value={draft} aria-label={t`Seed sklepu`} maxLength={64} spellcheck={false} autocomplete="off"
             onInput={(e) => setDraft(e.currentTarget.value)} />
-          <button type="submit" class="tt-btn tt-primary">Otwórz</button>
-          <button type="button" class="tt-btn" onClick={() => { controls.randomize(); close(); }}>Losuj</button>
+          <button type="submit" class="tt-btn tt-primary">{t`Otwórz`}</button>
+          <button type="button" class="tt-btn" onClick={() => { controls.randomize(); close(); }}>{t`Losuj`}</button>
         </form>
         <StoreActions ephemeral={ephemeral.value} ranked={!!ranked.value} onNewStore={() => { close(); game.newStore(); }}
-          onRestart={() => { if (confirm(RESTART_CONFIRM)) { game.restart(); close(); } }} />
+          onRestart={() => { if (confirm(tr(RESTART_CONFIRM))) { game.restart(); close(); } }} />
         <RankingSettings game={game} stored={storedRun.value} confirming={asking} onConfirming={setAsking} onRefresh={refreshStoredRun} close={close}
           panels={panels} />
-        <h3>Pomoc</h3>
+        <h3>{t`Pomoc`}</h3>
         <HowToButton />
-        <h3>Grafika</h3>
-        <div class="tt-seg wide" role="group" aria-label="Jakość grafiki">
+        <h3>{t`Grafika`}</h3>
+        <div class="tt-seg wide" role="group" aria-label={t`Jakość grafiki`}>
           {PRESETS.map((p) => (
-            <button key={p.value} type="button" class={`tt-btn${preset.value === p.value ? ' on' : ''}`} onClick={() => controls.setPreset(p.value)}>{p.label}</button>
+            <button key={p.value} type="button" class={`tt-btn${preset.value === p.value ? ' on' : ''}`} onClick={() => controls.setPreset(p.value)}>{tr(p.label)}</button>
           ))}
         </div>
-        <h3>Dźwięk i wibracje</h3>
-        <label class="tt-check-row"><input type="checkbox" checked={metaView.value.sound} onChange={(e) => game.setSound(e.currentTarget.checked)} /> Dźwięki</label>
-        <label class="tt-check-row"><input type="checkbox" checked={metaView.value.vibration} onChange={(e) => game.setVibration(e.currentTarget.checked)} /> Wibracje (telefon)</label>
-        <label class="tt-check-row"><input type="checkbox" checked={showPerf.value} onChange={(e) => { showPerf.value = e.currentTarget.checked; }} /> Licznik FPS (F3)</label>
-        <p class="tt-hint">Klawisze: Q/E obrót, +/− zoom, strzałki przesuwanie, spacja pauza, X widok z zewnątrz.</p>
-        <p class="tt-disclaimer2">{DISCLAIMER} Gra jest satyrą i nie ma związku z żadną prawdziwą siecią sklepów.</p>
+        <h3>{t`Dźwięk i wibracje`}</h3>
+        <label class="tt-check-row"><input type="checkbox" checked={metaView.value.sound} onChange={(e) => game.setSound(e.currentTarget.checked)} /> {t`Dźwięki`}</label>
+        <label class="tt-check-row"><input type="checkbox" checked={metaView.value.vibration} onChange={(e) => game.setVibration(e.currentTarget.checked)} /> {t`Wibracje (telefon)`}</label>
+        <label class="tt-check-row"><input type="checkbox" checked={showPerf.value} onChange={(e) => { showPerf.value = e.currentTarget.checked; }} /> {t`Licznik FPS (F3)`}</label>
+        <p class="tt-hint">{t`Klawisze: Q/E obrót, +/− zoom, strzałki przesuwanie, spacja pauza, X widok z zewnątrz.`}</p>
+        <p class="tt-disclaimer2">{tr(DISCLAIMER)}{t` Gra jest satyrą i nie ma związku z żadną prawdziwą siecią sklepów.`}</p>
       </div>
     </div>
   );
@@ -639,9 +643,9 @@ export function CelebrationBanner() {
   return (
     <div class="tt-celebrate" role="status" onClick={() => { celebration.value = null; }}>
       <div class="tt-celebrate-card">
-        <div class="tt-celebrate-title">{c.title}</div>
-        <div class="tt-celebrate-sub">{c.subtitle}</div>
-        {c.lines.map((l) => <div key={l} class="tt-celebrate-line">{l}</div>)}
+        <div class="tt-celebrate-title">{tr(c.title)}</div>
+        <div class="tt-celebrate-sub">{tr(c.subtitle)}</div>
+        {c.lines.map((l) => <div key={l} class="tt-celebrate-line">{tr(l)}</div>)}
       </div>
     </div>
   );
@@ -653,21 +657,21 @@ export function WelcomeModal({ game }: { game: GameActions }) {
   if (!w) return null;
   return (
     <div class="tt-modal-wrap">
-      <div class="tt-modal tt-center" role="dialog" aria-label="Witaj z powrotem">
-        <h2>Witaj z powrotem! 👋</h2>
+      <div class="tt-modal tt-center" role="dialog" aria-label={t`Witaj z powrotem`}>
+        <h2>{t`Witaj z powrotem! 👋`}</h2>
         {w.offline > 0 && (
-          <p>Przez {w.hours >= 1 ? `${Math.floor(w.hours)} h` : `${Math.max(1, Math.round(w.hours * 60))} min`} Twojej nieobecności kierownik zmiany zarobił
+          <p>{t`Przez ${w.hours >= 1 ? `${Math.floor(w.hours)} h` : `${Math.max(1, Math.round(w.hours * 60))} min`} Twojej nieobecności kierownik zmiany zarobił`}
             <span class="tt-big-reward">+{zl(w.offline)}</span></p>
         )}
         {w.daily && w.streak !== null && (
           <>
-            <p>Premia Centrali za {w.streak}. dzień z rzędu:</p>
+            <p>{t`Premia Centrali za ${w.streak}. dzień z rzędu:`}</p>
             <div class="tt-streak">{Array.from({ length: 7 }, (_, i) => <span key={i} class={i < Math.min(7, w.streak!) ? 'on' : ''}>{i + 1}</span>)}</div>
             <span class="tt-big-reward">{w.daily.cash > 0 && <>+{zl(w.daily.cash)} · </>}+{w.daily.ogonki} 🦎</span>
-            <p class="tt-hint">Wróć jutro: premia rośnie do 7. dnia.</p>
+            <p class="tt-hint">{t`Wróć jutro: premia rośnie do 7. dnia.`}</p>
           </>
         )}
-        <button type="button" class="tt-btn tt-primary big" onClick={() => game.claimWelcome()}>Odbierz!</button>
+        <button type="button" class="tt-btn tt-primary big" onClick={() => game.claimWelcome()}>{t`Odbierz!`}</button>
       </div>
     </div>
   );
@@ -682,14 +686,14 @@ export function PrestigeModal({ game }: { game: GameActions }) {
   const points = meta.points + prestigePoints(s);
   return (
     <div class="tt-modal-wrap">
-      <div class="tt-modal" role="dialog" aria-label="Otwórz kolejną Traszkę">
-        <h2>Otwórz kolejną Traszkę 🏪</h2>
-        <p>Ten sklep zostaje w Twojej sieci i od jutra zarabia na Ciebie <b>{zl(networkIncomeOf(s))} dziennie</b> w każdej kolejnej grze.</p>
-        <p>Dostajesz <b>+{prestigePoints(s)} Punktów Partnera</b> (razem {points}): każdy to trwale +4% marży i +3% klientów.</p>
-        <p>Nowy lokal startuje od zera: poziom 1, 2000 zł, nowe miasto z seeda. Tym razem pójdzie szybciej.</p>
-        <p class="tt-hint">Centrala z wyraźną niechęcią nadaje Ci status Partnera Strategicznego.</p>
-        <button type="button" class="tt-btn tt-primary big" onClick={() => { showPrestige.value = false; game.openNextStore(); }}>Otwieramy!</button>
-        <button type="button" class="tt-btn big" onClick={() => { showPrestige.value = false; }}>Jeszcze nie</button>
+      <div class="tt-modal" role="dialog" aria-label={t`Otwórz kolejną Traszkę`}>
+        <h2>{t`Otwórz kolejną Traszkę 🏪`}</h2>
+        <p>{t`Ten sklep zostaje w Twojej sieci i od jutra zarabia na Ciebie `}<b>{t`${zl(networkIncomeOf(s))} dziennie`}</b>{t` w każdej kolejnej grze.`}</p>
+        <p>{t`Dostajesz `}<b>{t`+${prestigePoints(s)} Punktów Partnera`}</b>{t` (razem ${points}): każdy to trwale +4% marży i +3% klientów.`}</p>
+        <p>{t`Nowy lokal startuje od zera: poziom 1, 2000 zł, nowe miasto z seeda. Tym razem pójdzie szybciej.`}</p>
+        <p class="tt-hint">{t`Centrala z wyraźną niechęcią nadaje Ci status Partnera Strategicznego.`}</p>
+        <button type="button" class="tt-btn tt-primary big" onClick={() => { showPrestige.value = false; game.openNextStore(); }}>{t`Otwieramy!`}</button>
+        <button type="button" class="tt-btn big" onClick={() => { showPrestige.value = false; }}>{t`Jeszcze nie`}</button>
       </div>
     </div>
   );
@@ -701,5 +705,5 @@ export function ComboChip() {
   if (!view) return null;
   const c = tapCombo(view.s);
   if (c.count < 3) return null;
-  return <div class={`tt-combo m${Math.min(5, c.mult)}`} key={c.mult}>COMBO ×{c.mult}<small>{c.count} stuknięć</small></div>;
+  return <div class={`tt-combo m${Math.min(5, c.mult)}`} key={c.mult}>COMBO ×{c.mult}<small>{t`${c.count} stuknięć`}</small></div>;
 }

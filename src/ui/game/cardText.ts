@@ -1,4 +1,5 @@
 import type { AnswerInstance, CardDelta } from '@/sim/economy/tycoon/cards';
+import { t } from '@/i18n';
 import { duration, plural } from './format';
 
 /*
@@ -33,12 +34,12 @@ function certainLines(d: CardDelta, fmt: Fmt): DeltaLine[] {
   if (has(d.bonus)) out.push({ text: zl(d.bonus, fmt), tone: toneOf(d.bonus) });
   if (has(d.fine)) out.push({ text: zl(d.fine, fmt), tone: toneOf(d.fine) });
   if (has(d.logistics)) out.push({ text: zl(d.logistics, fmt), tone: toneOf(d.logistics) });
-  if (has(d.trust)) out.push({ text: `zaufanie ${signed(d.trust, fmt)}`, tone: toneOf(d.trust) });
-  if (has(d.wut)) out.push({ text: `ubytki ${zl(d.wut, fmt)}`, tone: toneOf(-d.wut) });
-  if (has(d.staffMinutes)) out.push({ text: `czas ludzi ${d.staffMinutes < 0 ? MINUS : ''}${fmt(Math.abs(d.staffMinutes))} min`, tone: toneOf(-d.staffMinutes) });
-  if (has(d.energy)) out.push({ text: `siły ${signed(d.energy, fmt)}`, tone: toneOf(d.energy) });
-  if (has(d.reputation)) out.push({ text: `reputacja ${signed(d.reputation, fmt)}`, tone: toneOf(d.reputation) });
-  if (has(d.ogonki)) out.push({ text: `Ogonki ${signed(d.ogonki, fmt)}`, tone: toneOf(d.ogonki) });
+  if (has(d.trust)) out.push({ text: t`zaufanie ${signed(d.trust, fmt)}`, tone: toneOf(d.trust) });
+  if (has(d.wut)) out.push({ text: t`ubytki ${zl(d.wut, fmt)}`, tone: toneOf(-d.wut) });
+  if (has(d.staffMinutes)) out.push({ text: t`czas ludzi ${d.staffMinutes < 0 ? MINUS : ''}${fmt(Math.abs(d.staffMinutes))} min`, tone: toneOf(-d.staffMinutes) });
+  if (has(d.energy)) out.push({ text: t`siły ${signed(d.energy, fmt)}`, tone: toneOf(d.energy) });
+  if (has(d.reputation)) out.push({ text: t`reputacja ${signed(d.reputation, fmt)}`, tone: toneOf(d.reputation) });
+  if (has(d.ogonki)) out.push({ text: t`Ogonki ${signed(d.ogonki, fmt)}`, tone: toneOf(d.ogonki) });
   return out;
 }
 
@@ -52,17 +53,17 @@ function certainLines(d: CardDelta, fmt: Fmt): DeltaLine[] {
 export function deltaLines(a: AnswerInstance, fmt: Fmt): DeltaLine[] {
   const out = certainLines(a.delta, fmt);
   for (const m of a.mods) {
-    if (m.kind === 'closed') out.push({ text: `sklep zamknięty ${duration(m.minutes)}`, tone: 'cost' });
+    if (m.kind === 'closed') out.push({ text: t`sklep zamknięty ${duration(m.minutes)}`, tone: 'cost' });
     else if (m.kind === 'staff' && m.value !== 0) {
-      out.push({ text: `${signed(m.value, fmt)} ${plural(Math.abs(m.value), 'osoba', 'osoby', 'osób')} na zmianie`, tone: toneOf(m.value) });
+      out.push({ text: t`${signed(m.value, fmt)} ${plural(Math.abs(m.value), 'osoba', 'osoby', 'osób')} na zmianie`, tone: toneOf(m.value) });
     }
   }
   const estimate = a.mods.reduce((n, m) => n + (Number.isFinite(m.estimate) ? m.estimate : 0), 0);
-  if (Math.abs(estimate) >= 0.5) out.push({ text: `ok. ${zl(estimate, fmt)}`, tone: toneOf(estimate) });
+  if (Math.abs(estimate) >= 0.5) out.push({ text: t`ok. ${zl(estimate, fmt)}`, tone: toneOf(estimate) });
   if (a.risk && a.risk.chance > 0) {
     const percent = Math.max(1, Math.round(a.risk.chance * 100));   // szansa choćby niewielka nie może wyglądać jak „0%”
     const effects = certainLines(a.risk.delta, fmt).map((l) => l.text);
-    out.push({ text: effects.length > 0 ? `ryzyko ${percent}%: ${effects.join(', ')}` : `ryzyko ${percent}%`, tone: 'cost' });
+    out.push({ text: effects.length > 0 ? t`ryzyko ${percent}%: ${effects.join(', ')}` : t`ryzyko ${percent}%`, tone: 'cost' });
   }
   return out;
 }

@@ -1,4 +1,5 @@
 import { NOTICE_EVENT } from '@/render/renderer';
+import { t, tr } from '@/i18n';
 import { notice } from './state';
 
 /**
@@ -25,8 +26,8 @@ export function Notice() {
   if (text === null) return null;
   return (
     <div class="tt-notice" role="status">
-      <span class="tt-notice-text">{text}</span>
-      <button type="button" class="tt-notice-close" aria-label="Zamknij komunikat" onClick={() => { notice.value = null; }}>×</button>
+      <span class="tt-notice-text">{tr(text)}</span>
+      <button type="button" class="tt-notice-close" aria-label={t`Zamknij komunikat`} onClick={() => { notice.value = null; }}>×</button>
     </div>
   );
 }

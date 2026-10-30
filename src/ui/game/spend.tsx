@@ -5,6 +5,7 @@ import { planFor, type InstallmentPlan } from '@/sim/economy/franchisee';
 import type { StoreInfo } from '@/sim/economy/storeInfo';
 import type { AnswerInstance } from '@/sim/economy/tycoon/cards';
 import { spendWarningText } from './forecastText';
+import { t, tr } from '@/i18n';
 import { int, percentOf, zl } from './format';
 
 /*
@@ -55,17 +56,17 @@ export function SpendNote({ s, info, price, always = false, rata = false }: { s:
 // --- Zakup za gotówkę albo na raty ---------------------------------------------------------------------------------------
 
 /** Napis na przycisku rat: „na raty: 6 × 4 500 zł”. */
-export const ratyLabel = (plan: InstallmentPlan): string => `na raty: ${plan.months} × ${zl(plan.monthly)}`;
+export const ratyLabel = (plan: InstallmentPlan): string => t`na raty: ${plan.months} × ${zl(plan.monthly)}`;
 
 /**
  * Podpowiedź przycisku rat: ile rat, opłata za finansowanie i suma do spłaty oraz wolny limit rat. Przy limicie zerowym (zaufanie
  * poniżej progu) Centrala nie finansuje wcale. Liczby z `planFor` i `installmentRoom`, tak jak liczy je symulacja.
  */
 export function ratyTitle(plan: InstallmentPlan, room: { limit: number; free: number }): string {
-  if (room.limit <= 0) return 'Centrala nie finansuje zakupów przy tak niskim zaufaniu.';
-  const limit = `wolny limit rat ${int(room.free)} z ${zl(room.limit)} miesięcznie`;
-  return `Na raty: ${plan.months} × ${zl(plan.monthly)}. Opłata za finansowanie ${zl(plan.fee)} (${percentOf(plan.feeShare)}), razem do spłaty ${zl(plan.total)}. `
-    + `Pierwsza rata zejdzie z najbliższego przelewu. ${plan.monthly > room.free ? `Rata przekracza ${limit}.` : `Mieści się w limicie: ${limit}.`}`;
+  if (room.limit <= 0) return tr('Centrala nie finansuje zakupów przy tak niskim zaufaniu.');
+  const limit = t`wolny limit rat ${int(room.free)} z ${zl(room.limit)} miesięcznie`;
+  return t`Na raty: ${plan.months} × ${zl(plan.monthly)}. Opłata za finansowanie ${zl(plan.fee)} (${percentOf(plan.feeShare)}), razem do spłaty ${zl(plan.total)}. `
+    + t`Pierwsza rata zejdzie z najbliższego przelewu. ${plan.monthly > room.free ? t`Rata przekracza ${limit}.` : t`Mieści się w limicie: ${limit}.`}`;
 }
 
 /**

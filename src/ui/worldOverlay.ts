@@ -1,4 +1,5 @@
 import { Vector3, type Camera } from 'three';
+import { tr } from '@/i18n';
 
 /**
  * Elementy HTML przyklejone do punktów sceny: dymek kolejki nad kasą i „latające” liczby po stuknięciu. Poza Preactem,
@@ -60,7 +61,8 @@ export function createWorldOverlay(parent: HTMLElement): WorldOverlay {
     setTill(world, text, warn) {
       tillWorld = world;
       till.style.display = world ? '' : 'none';
-      if (till.textContent !== text) till.textContent = text;
+      const shown = tr(text);   // „ZAMKNIĘTE”, „REMONT” w języku gracza; liczba kolejki i emoji bez zmian
+      if (till.textContent !== shown) till.textContent = shown;
       till.classList.toggle('warn', warn);
     },
     floater: floatText,
@@ -84,7 +86,7 @@ export function createWorldOverlay(parent: HTMLElement): WorldOverlay {
       if (speech.length >= 2) return;   // najwyżej dwa dymki naraz: ma być gwar, nie ściana tekstu
       const el = document.createElement('div');
       el.className = 'tt-speech';
-      el.textContent = text;
+      el.textContent = tr(text);   // dymki klientów (`LINES` w ui/game/lines.ts) w języku gracza
       layer.appendChild(el);
       speech.push({ el, where, until: performance.now() + ms });
     },

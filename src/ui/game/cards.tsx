@@ -1,5 +1,6 @@
 import { cardDef, fillText, visibleCards, type CardInstance } from '@/sim/economy/tycoon/cards';
 import { econ, picked, remanent, report, story, type GameActions, type PickedAnswer } from '../state';
+import { t, tr } from '@/i18n';
 import { deltaLines } from './cardText';
 import { int, people } from './format';
 import { SpendNote, answerCashCost } from './spend';
@@ -39,7 +40,7 @@ export function CardDesk({ game }: { game: GameActions }) {
   const card = cards[0];
   if (!card) return null;
   const def = cardDef(card.id);
-  const title = def?.title ?? 'Decyzja';
+  const title = def ? tr(def.title) : t`Decyzja`;
   const chosen = selectedAnswer(card, picked.value);
   const confirm = (): void => {
     // powłoka mogła już zaksięgować odpowiedź, a okno jeszcze się nie odświeżyło: drugie stuknięcie nic nie wysyła
@@ -50,34 +51,34 @@ export function CardDesk({ game }: { game: GameActions }) {
   };
   return (
     <div class="tt-modal-wrap tt-deck-wrap">
-      <div class="tt-modal tt-deck" role="dialog" aria-modal="true" aria-label={`Karta dnia: ${title}`}>
+      <div class="tt-modal tt-deck" role="dialog" aria-modal="true" aria-label={t`Karta dnia: ${title}`}>
         <div class="tt-deck-head">
-          <span class="tt-deck-count">Karta 1 z {cards.length}</span>
-          {def?.kind === 'okolnik' && <span class="tt-deck-badge">{OKOLNIK_BADGE}</span>}
+          <span class="tt-deck-count">{t`Karta 1 z ${cards.length}`}</span>
+          {def?.kind === 'okolnik' && <span class="tt-deck-badge">{tr(OKOLNIK_BADGE)}</span>}
         </div>
         <h2>{title}</h2>
-        {def && <p class="tt-deck-text">{fillText(def.text, card.params, int)}</p>}
-        <div class="tt-answers" role="radiogroup" aria-label="Odpowiedzi">
+        {def && <p class="tt-deck-text">{fillText(tr(def.text), card.params, int)}</p>}
+        <div class="tt-answers" role="radiogroup" aria-label={t`Odpowiedzi`}>
           {card.answers.map((a, i) => {
             const lines = deltaLines(a, people);
             const on = i === chosen;
             return (
               <button key={i} type="button" role="radio" aria-checked={on} class={`tt-answer${on ? ' on' : ''}`}
                 onClick={() => { picked.value = { seq: card.seq, answer: i }; }}>
-                <span class="tt-answer-label">{def?.answers[i]?.label ?? `Odpowiedź ${i + 1}`}</span>
+                <span class="tt-answer-label">{tr(def?.answers[i]?.label) ?? t`Odpowiedź ${i + 1}`}</span>
                 <span class="tt-answer-fx">
                   {lines.length > 0
                     ? lines.map((l, k) => <span key={k} class={`tt-chip ${l.tone}`}>{l.text}</span>)   // klucz to numer: dwa wiersze mogą wyglądać tak samo
-                    : <span class="tt-chip none">bez skutków</span>}
-                  {i === card.defaultAnswer && <span class="tt-chip tag">domyślnie</span>}
+                    : <span class="tt-chip none">{t`bez skutków`}</span>}
+                  {i === card.defaultAnswer && <span class="tt-chip tag">{t`domyślnie`}</span>}
                 </span>
                 <SpendNote s={view.s} info={view.info} price={answerCashCost(a)} always />
               </button>
             );
           })}
         </div>
-        <p class="tt-hint">Gra czeka na Twoją decyzję.</p>
-        <button type="button" class="tt-btn tt-primary big" onClick={confirm}>Zatwierdź</button>
+        <p class="tt-hint">{t`Gra czeka na Twoją decyzję.`}</p>
+        <button type="button" class="tt-btn tt-primary big" onClick={confirm}>{t`Zatwierdź`}</button>
       </div>
     </div>
   );
