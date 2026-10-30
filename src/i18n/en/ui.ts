@@ -1,4 +1,5 @@
 import { CORE_PLURALS, CORE_UI } from './ui/core';
+import { HUD_PLURALS, HUD_UI } from './ui/hud';
 
 /*
  * Słownik tekstów interfejsu po angielsku. Kluczem jest polski tekst z kodu (jak `msgid` w gettext): szablon `t\`…\`` ma klucz
@@ -15,6 +16,6 @@ export type Dict = Record<string, Entry>;
 /** Odmiana po angielsku do `plural` (ui/game/format.ts): klucz to trzy polskie formy „one|few|many”, wartość [liczba pojedyncza, mnoga]. */
 export type Plurals = Record<string, readonly [string, string]>;
 
-export const EN_UI: Dict = { ...CORE_UI };
+export const EN_UI: Dict = { ...CORE_UI, ...HUD_UI };
 
-export const EN_PLURALS: Plurals = { ...CORE_PLURALS };
+export const EN_PLURALS: Plurals = { ...CORE_PLURALS, ...HUD_PLURALS };
