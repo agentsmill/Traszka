@@ -7,9 +7,11 @@ import type { OutfitFile } from '@/render/characters/modularPack';
 import { Gait } from '@/render/characters/gait';
 import { cellToWorld } from '@/render/coords';
 import { headingToYaw, turnTowards } from '@/render/crowdView';
+import { EDWARD_BLOB_RADIUS, createEdward, type EdwardRig } from '@/render/robots/edward';
 import type { Agent } from '@/sim/crowd/crowd';
 import type { StoreLayout } from '@/sim/store/types';
 import { StaffCrew, type CrewInput, type CrewMember } from './crew';
+import { isRobotId } from './types';
 import { STAFF_WALK_SPEED, type StaffWalker } from './walker';
 
 /**
@@ -18,11 +20,17 @@ import { STAFF_WALK_SPEED, type StaffWalker } from './walker';
  */
 const staffOutfit = (id: number): OutfitFile => (id % 2 === 0 ? 'men-casual-2' : 'women-casual');
 
-/** Jedno ciało pracownika wraz z tym, czego potrzeba do jego rysowania klatka po klatce. */
+/**
+ * Jedno ciało pracownika wraz z tym, czego potrzeba do jego rysowania klatka po klatce. Człowiek to postać z fabryki (`character`
+ * i jej chód), robot (eDward) to własna bryła (`robot`): numery robotów to `isRobotId`, a ciało ma dokładnie jedno z tych dwojga.
+ */
 interface Body {
   readonly id: number;
-  readonly character: CharacterInstance;
-  readonly gait: Gait;
+  /** Obiekt w scenie, który ustawia widok (pozycja i obrót); postać z fabryki albo bryła robota. */
+  readonly object: Object3D;
+  readonly character: CharacterInstance | null;
+  readonly gait: Gait | null;
+  readonly robot: EdwardRig | null;
   /** Miejsce w plamach cienia; `null`, gdy cała pojemność jest już zarezerwowana (postać stoi wtedy bez plamy). */
   readonly slot: BlobSlot | null;
   /** Promienie plamy (m): postać ma stałą tuszę, więc liczymy je raz, a nie co klatkę. */
@@ -105,7 +113,7 @@ export class StaffView {
   setCharacterShadows(on: boolean): void {
     if (on === this.castShadows) return;
     this.castShadows = on;
-    for (const body of this.bodies.values()) setCharacterShadowCasting(body.character.object, on);
+    for (const body of this.bodies.values()) this.setCasting(body, on);
   }
 
   /**
@@ -127,7 +135,7 @@ export class StaffView {
       const body = this.bodies.get(member.id) ?? this.spawn(member);
       if (!body) continue;
       body.seen = frame;
-      this.drive(body, member.walker, dt, animDt, serving);
+      this.drive(body, member, dt, animDt, serving);
     }
     this.releaseGone(frame);
     this.driveCashier(cashierMember);
@@ -159,13 +167,15 @@ export class StaffView {
   }
 
   /** Stawia, obraca i animuje jedno ciało, i przesuwa jego plamę. */
-  private drive(body: Body, walker: StaffWalker, dt: number, animDt: number, serving: Agent | null): void {
-    const o = body.character.object;
+  private drive(body: Body, member: CrewMember, dt: number, animDt: number, serving: Agent | null): void {
+    const { walker } = member;
+    const o = body.object;
     const at = cellToWorld(this.layout, walker.x - 0.5, walker.y - 0.5);   // walker w kratkach: środek kratki = indeks + 0.5
     o.position.set(at.x, 0, at.z);
     body.yaw = turnTowards(body.yaw, headingToYaw(this.headingOf(walker, serving)), dt);
     o.rotation.y = body.yaw;
-    body.gait.update(walker.moving, dt, animDt);
+    if (body.robot) body.robot.update(animDt, walker.moving, !walker.moving && walker.atGoal && !member.leaving && member.task !== 'wolny');
+    else body.gait!.update(walker.moving, dt, animDt);
     if (body.slot && (at.x !== body.blobX || at.z !== body.blobZ)) {
       body.slot.set(at.x, at.z, body.rx, body.rz);
       body.blobX = at.x;
@@ -203,6 +213,7 @@ export class StaffView {
   private spawn(member: CrewMember): Body | null {
     const { id, walker } = member;
     if (this.failed.has(id)) return null;
+    if (isRobotId(id)) return this.spawnRobot(member);
     let character: CharacterInstance | null = null;
     let slot: BlobSlot | null = null;
     try {
@@ -214,7 +225,7 @@ export class StaffView {
       this.parent.add(o);
       const [rx, rz] = characterBlobRadii(o);
       const body: Body = {
-        id, character, slot, rx, rz,
+        id, object: o, character, robot: null, slot, rx, rz,
         gait: new Gait(character, this.factory.walkSpeedMps, STAFF_WALK_SPEED),   // nowa postać zaczyna w `idle`
         yaw: o.rotation.y, blobX: NaN, blobZ: NaN, seen: 0,
       };
@@ -227,6 +238,39 @@ export class StaffView {
       console.error(`Nie udało się zbudować pracownika ${id}.`, error);
       return null;
     }
+  }
+
+  /** Ciało robota (eDward): własna bryła zamiast postaci z fabryki, więc nie potrzebuje fabryki ani mundurów; poza tym jak człowiek. */
+  private spawnRobot(member: CrewMember): Body | null {
+    const { id, walker } = member;
+    let robot: EdwardRig | null = null;
+    let slot: BlobSlot | null = null;
+    try {
+      robot = createEdward();
+      const o = robot.object;
+      o.rotation.y = headingToYaw(walker.heading);
+      robot.setCasting(this.castShadows);
+      slot = this.blobs?.reserve() ?? null;
+      this.parent.add(o);
+      const body: Body = {
+        id, object: o, character: null, gait: null, robot, slot, rx: EDWARD_BLOB_RADIUS, rz: EDWARD_BLOB_RADIUS,
+        yaw: o.rotation.y, blobX: NaN, blobZ: NaN, seen: 0,
+      };
+      this.bodies.set(id, body);
+      return body;
+    } catch (error) {
+      slot?.release();
+      robot?.dispose();
+      this.failed.add(id);
+      console.error(`Nie udało się zbudować robota ${id}.`, error);
+      return null;
+    }
+  }
+
+  /** Cień z mapy cieni dla jednego ciała: postać z fabryki przez swoje siatki, robot przez własne. */
+  private setCasting(body: Body, on: boolean): void {
+    if (body.robot) body.robot.setCasting(on);
+    else setCharacterShadowCasting(body.object, on);
   }
 
   /** Zwalnia ciała osób, których nie ma już w załodze (wyszły albo zostały zwolnione), i zapomina o nieudanych budowach tych osób. */
@@ -244,7 +288,8 @@ export class StaffView {
   }
 
   private release(body: Body): void {
-    releaseCharacter(body.character);
+    if (body.robot) body.robot.dispose();
+    else releaseCharacter(body.character!);
     body.slot?.release();
   }
 }

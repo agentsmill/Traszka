@@ -4,7 +4,7 @@ import { FRONT_WALL_Y, type StoreLayout } from '@/sim/store/types';
 import { buildStaffNav, type StaffNav } from './staffNav';
 import { pickStaffSpots } from './targets';
 import { TaskHold } from './taskHold';
-import { STAFF_VIEW_MAX, type PalletRef, type StaffAssignment, type StaffDuty, type StaffSpot } from './types';
+import { ROBOT_VIEW_MAX, STAFF_VIEW_MAX, isRobotId, type PalletRef, type StaffAssignment, type StaffDuty, type StaffSpot } from './types';
 import { STAFF_WALK_SPEED, StaffWalker } from './walker';
 
 // Załoga na ekranie: kto jest w sklepie, gdzie ma stanąć i jak tam dochodzi. Ekonomia mówi tylko, kto jest na zmianie i czego
@@ -27,6 +27,8 @@ export interface CrewInput {
   minute: number;
   /** Palety (przeszkody i cele rozładunku). */
   pallets: readonly PalletRef[];
+  /** Kratki zajęte na stałe przez maszyny z warsztatu (taśmociąg, prasa): przeszkody jak palety, ale bez celów. Bez nich pusto. */
+  obstacles?: readonly Cell[];
 }
 
 export interface CrewMember {
@@ -76,7 +78,10 @@ export function staffSpeedFactor(id: number): number {
 /** Gdzie i z jakim zadaniem osoba stanęła przy ostatnim liczeniu miejsc: podstawa dla `previous` w `pickStaffSpots`. */
 interface Placed { task: StaffDuty; spot: StaffSpot }
 
-/** Id musi być skończoną liczbą całkowitą ≥ 0, a przy powtórzeniu liczy się pierwsze wystąpienie; wynik rośnie po id i ma najwyżej `STAFF_VIEW_MAX` osób. */
+/**
+ * Id musi być skończoną liczbą całkowitą ≥ 0, a przy powtórzeniu liczy się pierwsze wystąpienie; wynik rośnie po id i ma najwyżej
+ * `STAFF_VIEW_MAX` ludzi oraz `ROBOT_VIEW_MAX` robotów (roboty mają numery od `ROBOT_ID_BASE`, więc są na końcu).
+ */
 function normalise(people: readonly StaffAssignment[]): StaffAssignment[] {
   const seen = new Set<number>();
   const out: StaffAssignment[] = [];
@@ -85,7 +90,8 @@ function normalise(people: readonly StaffAssignment[]): StaffAssignment[] {
     seen.add(id);
     out.push({ id, task });
   }
-  return out.sort((a, b) => a.id - b.id).slice(0, STAFF_VIEW_MAX);
+  out.sort((a, b) => a.id - b.id);
+  return [...out.filter((p) => !isRobotId(p.id)).slice(0, STAFF_VIEW_MAX), ...out.filter((p) => isRobotId(p.id)).slice(0, ROBOT_VIEW_MAX)];
 }
 
 /**
@@ -141,8 +147,8 @@ export class StaffCrew {
   }
 
   /**
-   * Ludzie w kolejności rosnącego id, razem z tymi, którzy jeszcze wychodzą. Nigdy więcej niż `STAFF_VIEW_MAX` (twardy limit:
-   * jedna postać to jeden SkinnedMesh): gdy nowi przychodzą, a brakuje miejsca, od razu znika wychodzący od najdawniej.
+   * Ludzie w kolejności rosnącego id, razem z tymi, którzy jeszcze wychodzą. Nigdy więcej niż `STAFF_VIEW_MAX` ludzi i `ROBOT_VIEW_MAX`
+   * robotów (twardy limit: jedna postać to jeden SkinnedMesh): gdy nowi przychodzą, a brakuje miejsca, od razu znika wychodzący od najdawniej.
    * Ta sama tablica, dopóki nikt nie przyjdzie ani nie zniknie.
    */
   get members(): readonly CrewMember[] {
@@ -158,7 +164,7 @@ export class StaffCrew {
   sync(input: CrewInput): void {
     const wanted = normalise(input.people);
     this.hold.update(input.minute, this.elapsed, wanted);
-    this.followPallets(input.pallets);
+    this.followPallets(input.pallets, input.obstacles ?? []);
 
     const byId = new Map(this.list.map((p) => [p.id, p]));
     const wantedIds = new Set(wanted.map((a) => a.id));
@@ -209,12 +215,17 @@ export class StaffCrew {
     return p.leaving && (p.walker.atGoal || this.elapsed - p.leaveSince >= LEAVE_TIMEOUT_S);
   }
 
-  /** Gdy zmienił się zbiór kratek palet: nowa siatka i ponowne planowanie dróg u wszystkich (stare ścieżki mogły przejść przez paletę). */
-  private followPallets(pallets: readonly PalletRef[]): void {
-    const cells = [...new Set(pallets.map((p) => cellKey(p.spot)))].sort((a, b) => a - b).join(',');
+  /**
+   * Gdy zmienił się zbiór kratek palet albo maszyn: nowa siatka i ponowne planowanie dróg u wszystkich (stare ścieżki mogły przejść
+   * przez paletę albo przez taśmociąg, który dopiero stanął).
+   */
+  private followPallets(pallets: readonly PalletRef[], obstacles: readonly Cell[]): void {
+    const palletKeys = [...new Set(pallets.map((p) => cellKey(p.spot)))].sort((a, b) => a - b).join(',');
+    const obstacleKeys = [...new Set(obstacles.map(cellKey))].sort((a, b) => a - b).join(',');
+    const cells = obstacleKeys ? `${palletKeys}|${obstacleKeys}` : palletKeys;
     if (cells === this.palletCells) return;
     this.palletCells = cells;
-    this.nav = buildStaffNav(this.layout, pallets.flatMap((p) => spotCells(p.spot)));
+    this.nav = buildStaffNav(this.layout, [...pallets.flatMap((p) => spotCells(p.spot)), ...obstacles]);
     for (const p of this.list) p.walker.repath();
   }
 
@@ -267,9 +278,11 @@ export class StaffCrew {
         person.walker.setGoal(spot.cell, spot.heading, this.nav);
       } else {
         lane ??= this.entryLane();
-        // Przybysze jednego sync startują kolejno k kratek od punktu w stronę wejścia (`active` rośnie po id).
-        arrivals.push(this.arrive(id, task, spot, !cashierTaken, lane[Math.min(arrivals.length, lane.length - 1)]!));
-        cashierTaken = true;
+        // Przybysze jednego sync startują kolejno k kratek od punktu w stronę wejścia (`active` rośnie po id). Robot (numery od
+        // `ROBOT_ID_BASE`, więc na końcu) nigdy nie bierze ciała kasjera, a ciało gracza zostaje dla pierwszego człowieka.
+        const robot = isRobotId(id);
+        arrivals.push(this.arrive(id, task, spot, !cashierTaken && !robot, lane[Math.min(arrivals.length, lane.length - 1)]!));
+        if (!robot) cashierTaken = true;
       }
     }
     if (arrivals.length > 0) {
@@ -281,19 +294,24 @@ export class StaffCrew {
   }
 
   /**
-   * Twardy limit ciał: dopóki jest ich więcej niż `STAFF_VIEW_MAX`, znika od razu wychodzący, który wychodzi najdawniej (remis:
-   * o wyższym id). Zostający mieszczą się w limicie (`normalise`), więc ktoś wychodzący zawsze się znajdzie.
+   * Twardy limit ciał, osobno dla ludzi (`STAFF_VIEW_MAX`) i robotów (`ROBOT_VIEW_MAX`): dopóki jakiejś grupy jest więcej, znika od
+   * razu wychodzący z tej grupy, który wychodzi najdawniej (remis: o wyższym id). Zostający mieszczą się w limicie (`normalise`),
+   * więc ktoś wychodzący zawsze się znajdzie.
    */
   private makeRoom(): void {
-    while (this.list.length > STAFF_VIEW_MAX) {
-      let drop: Person | undefined;
-      for (const p of this.list) {
-        if (!p.leaving) continue;
-        if (!drop || p.leaveSince < drop.leaveSince || (p.leaveSince === drop.leaveSince && p.id > drop.id)) drop = p;
+    for (const robots of [false, true]) {
+      const limit = robots ? ROBOT_VIEW_MAX : STAFF_VIEW_MAX;
+      const group = (): Person[] => this.list.filter((p) => isRobotId(p.id) === robots);
+      while (group().length > limit) {
+        let drop: Person | undefined;
+        for (const p of group()) {
+          if (!p.leaving) continue;
+          if (!drop || p.leaveSince < drop.leaveSince || (p.leaveSince === drop.leaveSince && p.id > drop.id)) drop = p;
+        }
+        if (!drop) break;   // niemożliwe, gdy zostający mieszczą się w limicie; zabezpiecza tylko przed pętlą bez końca
+        const gone = drop;
+        this.list = this.list.filter((p) => p !== gone);
       }
-      if (!drop) return;   // niemożliwe, gdy zostający mieszczą się w limicie; zabezpiecza tylko przed pętlą bez końca
-      const gone = drop;
-      this.list = this.list.filter((p) => p !== gone);
     }
   }
 

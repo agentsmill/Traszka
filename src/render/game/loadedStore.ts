@@ -6,6 +6,7 @@ import type { BlobShadows } from '@/render/characters/blobShadows';
 import type { CharacterFactory } from '@/render/characters/characterFactory';
 import { CashierView } from '@/render/cashierView';
 import { CrowdView } from '@/render/crowdView';
+import { RobotsView } from '@/render/robots/robotsView';
 import { StaffView } from '@/render/staff/staffView';
 import type { StreetView } from '@/render/street/buildStreet';
 import type { CashierLook } from '@/game/cashier';
@@ -25,6 +26,7 @@ export interface Loaded {
   goods: Goods;
   pallets: PalletsView | null;      // tylko w grze (bez benchmarku)
   equipment: EquipmentView | null;
+  robots: RobotsView | null;        // maszyny z warsztatu (taśmociąg, prasa, wykładacz); eDward chodzi w `staffView`
   till: Mesh | null;                // niewidoczna bryła nad kasą do stukania
   tillTop: Vector3 | null;          // punkt nad kasą dla dymka kolejki
   street: StreetView | null;        // dochodzi asynchronicznie (modele GLB)
@@ -71,7 +73,7 @@ export function attachCharacters(loaded: Loaded, src: CharacterSource): void {
 }
 
 /**
- * Buduje sklep w scenie: świat symulacji, bryłę z towarem, palety, sprzęt, kasę do stukania, widok tłumu, kasjera i załogi. Gdy któraś część
+ * Buduje sklep w scenie: świat symulacji, bryłę z towarem, palety, sprzęt, maszyny z warsztatu, kasę do stukania, widok tłumu, kasjera i załogi. Gdy któraś część
  * się wywróci, wszystko już zbudowane jest zdjęte ze sceny i zwolnione, zanim wyjątek pójdzie dalej: odzyskiwanie po błędzie
  * (poprzedni sklep w `setSeed`, sklep awaryjny przy starcie) zaczyna od czystej sceny, a nie od pół-zbudowanego sklepu,
  * którego nikt by już nie znalazł.
@@ -92,13 +94,14 @@ export function loadStore(src: StoreSource): Loaded {
   src.scene.add(view.root);
 
   // Od tej chwili sklep jest w scenie: pola wypełniamy po kolei, a przy wyjątku `unloadStore` zwalnia te, które już stoją.
-  const loaded: Loaded = { world, view, goods, pallets: null, equipment: null, till: null, tillTop: null, street: null, crowdView: null, cashierView: null, staffView: null };
+  const loaded: Loaded = { world, view, goods, pallets: null, equipment: null, robots: null, till: null, tillTop: null, street: null, crowdView: null, cashierView: null, staffView: null };
   try {
     if (info) {
       loaded.pallets = createPalletsView(layout, info);
       view.root.add(loaded.pallets.root);
       loaded.equipment = createEquipmentView(layout, info, view);
       view.root.add(loaded.equipment.root);
+      loaded.robots = new RobotsView(layout, info, view.root);
       const checkout = layout.fixtures.find((f) => f.kind === 'checkout');
       if (checkout) {
         const a = cellToWorld(layout, checkout.x, checkout.y);
@@ -144,6 +147,7 @@ export function unloadStore(loaded: Loaded): void {
   attempt(() => loaded.street?.dispose());
   attempt(() => loaded.pallets?.dispose());
   attempt(() => loaded.equipment?.dispose());
+  attempt(() => loaded.robots?.dispose());
   attempt(() => loaded.till?.geometry.dispose());
   attempt(() => (loaded.till?.material as Material | undefined)?.dispose());
   attempt(() => loaded.view.dispose());
