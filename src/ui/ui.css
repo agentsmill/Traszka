@@ -1337,9 +1337,12 @@
   color: #1a1a1a;
 }
 
+/* Podskok znacznika nad paletą: osobna właściwość `translate`, bo `transform` ustawia `place` w worldOverlay.ts (pozycja na ekranie).
+   Animacja `transform` nadpisywała tę pozycję i znaczniki stały w lewym górnym rogu, pod paskiem. Bez obrotu: obrót z `rotate`
+   kręciłby znacznikiem wokół rogu strony, nie wokół niego samego. */
 @keyframes tt-bob {
-  from { transform: translateY(-6px) rotate(-8deg); }
-  to { transform: translateY(6px) rotate(8deg); }
+  from { translate: 0 -6px; }
+  to { translate: 0 6px; }
 }
 
 .tt-combo {
@@ -1394,6 +1397,12 @@
   font-size: 22px;
   filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.5));
   animation: tt-bob 0.8s ease-in-out infinite alternate;
+}
+
+/* paleta w przejściu (zagracenie): większy znak i czerwona poświata, żeby było ją widać z daleka */
+.tt-marker.clutter {
+  font-size: 28px;
+  filter: drop-shadow(0 0 6px rgba(220, 50, 30, 0.9)) drop-shadow(0 2px 3px rgba(0, 0, 0, 0.5));
 }
 
 .tt-speech {
