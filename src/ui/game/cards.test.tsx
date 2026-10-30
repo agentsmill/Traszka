@@ -9,6 +9,7 @@ import { App } from '../App';
 import { econ, pushStory, report, story, type Controls, type GameActions } from '../state';
 import { CardDesk, picked, selectedAnswer } from './cards';
 import { deltaLines } from './cardText';
+import { SpendNote } from './spend';
 import { int, people } from './format';
 import { PrestigeModal, ReportModal, Settings, StoryModal, WelcomeModal } from './overlays';
 import { Sheet, TabBar } from './panels';
@@ -74,6 +75,28 @@ const toneOfChip = (chip: Vnode): string => String(chip.props.class).split(' ').
 
 beforeEach(() => { picked.value = null; });
 afterEach(() => { econ.value = null; report.value = null; picked.value = null; story.value = []; });
+
+describe('okno karty dnia: koszt odpowiedzi na tle rachunku Centrali', () => {
+  const noteOf = (button: Vnode): Vnode | undefined => walk(button).find((v) => v.type === SpendNote);
+
+  it('każda odpowiedź ma SpendNote z gotówką, którą zabierze od razu (zysk i brak kosztu to zero)', () => {
+    publish(fefo(1, 1000));
+    const prices = answerButtons(desk(fakeGame())).map((b) => noteOf(b)?.props.price);
+    expect(prices).toEqual([320, 490, 0]);
+    for (const b of answerButtons(desk(fakeGame()))) expect(noteOf(b)?.props.always).toBe(true);
+  });
+
+  it('gdy po odpowiedzi nie zostałoby wolnych środków, notka pokazuje kwotę po rozliczeniu miesiąca (odpowiedź nadal do wyboru)', () => {
+    const s = publish(fefo(1, 1000));
+    s.cash = 400;
+    s.month.revenue = 0;
+    const buttons = answerButtons(desk(fakeGame()));
+    const text = (b: Vnode): string => textOf(SpendNote(noteOf(b)!.props as unknown as { s: EconomyState; price: number; always?: boolean }) as unknown as Vnode);
+    expect(text(buttons[0]!)).toContain('po rozliczeniu miesiąca wyjdzie');
+    expect(text(buttons[2]!)).toBe('');   // „zostaw”: nic nie kosztuje
+    expect(buttons.every((b) => b.props['aria-checked'] !== undefined && !b.props.disabled)).toBe(true);
+  });
+});
 
 describe('okno karty dnia: kiedy się pokazuje', () => {
   it('bez gry albo bez widocznej karty nic nie widać', () => {

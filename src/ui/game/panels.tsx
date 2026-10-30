@@ -7,6 +7,7 @@ import {
   DEBT_WARN, LOC_LABEL, assistantSuggestion, debtWarningText, effects, expectedDailyCustomers, franchiseFee, freeSpots, isClosedForRemont, kpiMetricsOf, kpiScaleOf, level, nextRemont,
   plPallets, robotFleet, slotFree, slotUsage, upgradeBlocker, workshopUnlocked, type EconomyState,
 } from '@/sim/economy/economy';
+import { forecastMonth, spendCheck } from '@/sim/economy/forecast';
 import { MILESTONES } from '@/sim/economy/milestones';
 import { KPI, KPI_FLAVOR, kpiProgress, kpiTitle } from '@/sim/economy/tycoon/kpi';
 import { dayOfMinute, roundNice } from '@/sim/economy/tycoon/time';
@@ -21,8 +22,9 @@ import {
 } from '@/sim/economy/upgrades';
 import { nextRankAt, rankFor, xpToNext } from '@/sim/economy/progress';
 import { networkIncomeOf, prestigePoints, prestigeReady } from '@/game/meta';
-import { econ, metaView, ranked, selection, showPrestige, tab, type GameActions, type TabId } from '../state';
+import { econ, metaView, openMonthPreview, ranked, selection, showPrestige, tab, type GameActions, type TabId } from '../state';
 import { duration, int, pct, people, plural, signedZl, zl } from './format';
+import { SpendNote, spendRisk } from './spend';
 import { tapBlock } from './tapBlock';
 
 // --- Wspólne -----------------------------------------------------------------------------------------
@@ -268,10 +270,11 @@ export function PeoplePanel({ s, info, game }: { s: EconomyState; info: StoreInf
         <div class="tt-stepper">
           <button type="button" class="tt-btn" aria-label="Zwolnij" onClick={() => game.dispatch({ type: 'fire' })}>−</button>
           <b>{osoby(s.staff)}</b>
-          <button type="button" class="tt-btn" aria-label="Zatrudnij" disabled={s.staff >= STAFF_MAX} onClick={() => game.dispatch({ type: 'hire' })}>+</button>
+          <button type="button" class="tt-btn" aria-label="Zatrudnij" data-risk={s.staff >= STAFF_MAX ? undefined : spendRisk(s, HIRE_COST)} disabled={s.staff >= STAFF_MAX} onClick={() => game.dispatch({ type: 'hire' })}>+</button>
         </div>
         <Row label="Płace">{int(s.staff * WAGE_PER_DAY)} zł / dzień</Row>
         <p class="tt-hint">Rekrutacja: {HIRE_COST} zł. Każda osoba na zmianie to {WAGE_PER_DAY} zł dziennie (dwa etaty na 17-godzinny dzień).</p>
+        {s.staff < STAFF_MAX && <SpendNote s={s} price={HIRE_COST} />}
       </Section>
       <Section title="Profil pracy">
         <div class="tt-seg wide" role="group" aria-label="Profil pracy">
@@ -345,8 +348,9 @@ export function ShopPanel({ s, info, game }: { s: EconomyState; info: StoreInfo;
           return (
             <div key={e.id} class={`tt-item${locked ? ' locked' : ''}`}>
               <div><b>{locked ? '🔒 ' : ''}{e.name}</b>{owned > 0 ? <span class="tt-muted"> ×{owned}</span> : null}<div class="tt-muted">{e.effect}{e.size === 2 ? ' · zajmuje cały slot 2×2' : ''}</div>
-                {locked && <div class="tt-muted warn">Odblokujesz na {e.minLevel}. poziomie</div>}</div>
-              <button type="button" class="tt-btn tt-buy" disabled={locked || cost > s.cash} onClick={() => game.dispatch({ type: 'buyEquipment', id: e.id })}>{zl(cost)}</button>
+                {locked && <div class="tt-muted warn">Odblokujesz na {e.minLevel}. poziomie</div>}
+                {!locked && <SpendNote s={s} price={cost} />}</div>
+              <button type="button" class="tt-btn tt-buy" data-risk={locked ? undefined : spendRisk(s, cost)} disabled={locked || cost > s.cash} onClick={() => game.dispatch({ type: 'buyEquipment', id: e.id })}>{zl(cost)}</button>
             </div>
           );
         })}
@@ -380,10 +384,11 @@ export function ShopPanel({ s, info, game }: { s: EconomyState; info: StoreInfo;
                     <div class="tt-muted">{u.effect}</div>
                     <div class="tt-flavor">{u.flavor}</div>
                     {blocker && !maxed && <div class="tt-muted warn">{blocker}</div>}
+                    {!blocker && !maxed && <SpendNote s={s} price={cost} />}
                   </div>
                   {maxed
                     ? <span class="tt-check">✓</span>
-                    : <button type="button" class="tt-btn tt-buy" disabled={!!blocker || cost > s.cash} onClick={() => game.dispatch({ type: 'buyUpgrade', id: u.id })}>{zl(cost)}</button>}
+                    : <button type="button" class="tt-btn tt-buy" data-risk={blocker ? undefined : spendRisk(s, cost)} disabled={!!blocker || cost > s.cash} onClick={() => game.dispatch({ type: 'buyUpgrade', id: u.id })}>{zl(cost)}</button>}
                 </div>
               );
             })}
@@ -402,8 +407,9 @@ export function ShopPanel({ s, info, game }: { s: EconomyState; info: StoreInfo;
             ? (
               <div class="tt-item">
                 <div><b>{s.level < remont.minLevel ? '🔒 ' : ''}{remont.name}</b><div class="tt-muted">Większy lokal: więcej półek, slotów ({remont.slots} × 2×2) i miejsc na palety, więcej klientów. Sklep zamknięty {remont.days} {plural(remont.days, 'dzień', 'dni', 'dni')}.</div>
-                  {s.level < remont.minLevel && <div class="tt-muted warn">Odblokujesz na {remont.minLevel}. poziomie</div>}</div>
-                <button type="button" class="tt-btn tt-buy" disabled={s.level < remont.minLevel || remont.cost > s.cash} onClick={() => game.dispatch({ type: 'startRemont' })}>{zl(remont.cost)}</button>
+                  {s.level < remont.minLevel && <div class="tt-muted warn">Odblokujesz na {remont.minLevel}. poziomie</div>}
+                  {s.level >= remont.minLevel && <SpendNote s={s} price={remont.cost} />}</div>
+                <button type="button" class="tt-btn tt-buy" data-risk={s.level < remont.minLevel ? undefined : spendRisk(s, remont.cost)} disabled={s.level < remont.minLevel || remont.cost > s.cash} onClick={() => game.dispatch({ type: 'startRemont' })}>{zl(remont.cost)}</button>
               </div>
             )
             : <p class="tt-hint">To już Flagowiec. Większego sklepu nie będzie.</p>}
@@ -434,6 +440,7 @@ export function GoalsPanel({ s, info }: { s: EconomyState; info: StoreInfo; game
   const best = Math.max(1, ...s.history.map((h) => Math.abs(h.profit)));
   // w trakcie miesiąca `m.fee` jest zerem (opłata schodzi dopiero przy zamknięciu), więc pokazujemy, ile naliczy się od dzisiejszego obrotu
   const fee = franchiseFee(m.revenue);
+  const forecast = forecastMonth(s);   // rachunek końca miesiąca (ten sam co w pasku): opłata, premia, ubytki i wolne środki
   const nextRank = nextRankAt(s.level);
   const meta = metaView.value;
   return (
@@ -492,7 +499,13 @@ export function GoalsPanel({ s, info }: { s: EconomyState; info: StoreInfo; game
         <Row label="Opłata franczyzowa (naliczona do dziś)">−{zl(fee)}</Row>
         <Row label="Wynik po opłacie (do dziś)"><b>{signedZl(profit(m) - fee)}</b></Row>
         <Row label="Inwestycje">{zl(m.investments)}</Row>
+        {forecast.bonus > 0 && <Row label="Premia od obrotu (naliczona do dziś)">+{zl(forecast.bonus)}</Row>}
+        {forecast.wut > 0 && <Row label="Ubytki ponad limit (naliczone do dziś)">−{zl(forecast.wut)}</Row>}
+        <Row label="Do oddania Centrali przy zamknięciu"><b>{zl(forecast.due)}</b></Row>
+        <Row label="Wolne środki po rozliczeniu"><b class={`tt-free ${spendCheck(forecast, 0).level}`}>{signedZl(forecast.free)}</b></Row>
         <p class="tt-hint">Opłatę franczyzową, ubytki ponad limit Centrali i premię od obrotu Centrala rozlicza przy zamknięciu miesiąca. Zostaw gotówkę na opłaty.</p>
+        <p class="tt-hint">Kwota „do oddania” rośnie z obrotem. Wolne środki to gotówka minus ona, bez dochodów i płac z reszty miesiąca.</p>
+        <button type="button" class="tt-btn" onClick={openMonthPreview}>Koniec miesiąca: rachunek i podgląd</button>
         {/* ostrzeżenie wynika ze stanu (gotówka), więc wraca po przeładowaniu, a okno „OK” z chwili zejścia pod próg nie jest zapisywane */}
         {s.cash < DEBT_WARN && <p class="tt-hint warn">{debtWarningText(s.cash)}</p>}
       </Section>

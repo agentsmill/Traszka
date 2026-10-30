@@ -4,7 +4,7 @@
  */
 .tt-ui {
   --tabs-h: calc(60px + env(safe-area-inset-bottom, 0px));
-  --hud-h: 78px;
+  --hud-h: 112px;   /* trzy wiersze paska: gotówka, rachunek Centrali, zegar */
   position: fixed;
   top: 0;
   left: 0;
@@ -357,6 +357,108 @@
 
 .tt-clock b {
   font-weight: 800;
+}
+
+/*
+ * Rachunek końca miesiąca (trzeci wiersz paska): do oddania Centrali i wolne środki w jednej linii, także na 390 px. Przedrostek
+ * „Do oddania” znika dopiero poniżej 360 px; pełny opis jest w podpowiedzi i `aria-label`.
+ */
+.tt-due {
+  display: flex;
+  flex: 1;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  padding: 4px 10px;
+  border: 0;
+  border-radius: 10px;
+  background: rgba(255, 243, 223, 0.14);
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tt-due-part {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tt-due-label {
+  font-weight: 500;
+  opacity: 0.85;
+}
+
+.tt-due b {
+  font-weight: 800;
+}
+
+/* wolne środki poniżej zera: tak jak ujemna gotówka; poniżej progu ostrzeżenia i granicy gry cały znaczek na czerwono */
+.tt-due.neg .tt-due-free {
+  color: #ffb3a1;
+}
+
+.tt-due.warn,
+.tt-due.danger {
+  background: #c0392b;
+  color: #fff;
+}
+
+.tt-due.danger .tt-due-free {
+  text-decoration: underline;
+}
+
+@media (max-width: 400px) {
+  .tt-due { gap: 6px; padding: 4px 8px; font-size: 12.5px; }
+}
+
+@media (max-width: 359px) {
+  .tt-due-pre { display: none; }
+}
+
+/* ostrzeżenie przy zakupie: wiersz pod opisem i kolor przycisku (decyzja zostaje przy graczu, przycisk dalej działa) */
+.tt-spend {
+  display: block;
+  margin-top: 3px;
+  color: #8a5a00;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.tt-spend.warn {
+  color: #c2410c;
+}
+
+.tt-spend.danger {
+  color: #b91c1c;
+  font-weight: 700;
+}
+
+/* wolne środki w panelu Cele: kolor jak w pasku (poniżej progu ostrzeżenia i poniżej granicy gry) */
+.tt-free.warn {
+  color: #c2410c;
+}
+
+.tt-free.danger {
+  color: #b91c1c;
+}
+
+.tt-btn[data-risk='warn'],
+.tt-btn.tt-buy[data-risk='warn'] {
+  background: #c2410c !important;
+  color: #fff !important;
+}
+
+.tt-btn[data-risk='danger'],
+.tt-btn.tt-buy[data-risk='danger'] {
+  background: #b91c1c !important;
+  color: #fff !important;
 }
 
 .tt-iconbtn {
@@ -1971,6 +2073,37 @@
   bottom: -16px;
   padding-bottom: 24px;
   background: var(--tt-cream);
+}
+
+/* Rachunek końca miesiąca (okno z podglądem): sumy w wierszach, pasek postępu liczenia i czerwone ostrzeżenie o debecie. */
+.tt-preview .tt-section {
+  margin: 0 0 8px;
+}
+
+/* kwota w jednej linii (wąski telefon: „2003 zł” nie łamie się na „2003” i „zł”) */
+.tt-preview .tt-row > span:last-child {
+  flex: none;
+  white-space: nowrap;
+}
+
+.tt-preview-progress {
+  display: grid;
+  gap: 2px;
+  margin: 12px 0 4px;
+}
+
+.tt-preview-warn {
+  margin: 10px 0 4px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(194, 65, 12, 0.12);
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.tt-preview-warn.danger {
+  background: rgba(185, 28, 28, 0.14);
+  color: #b91c1c;
 }
 
 /* Tekst wpisu może mieć kilka wierszy (lista odblokowań w oknie poziomu): \n zostaje podziałem wiersza. */

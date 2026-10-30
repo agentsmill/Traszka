@@ -140,6 +140,16 @@ describe('treść okna „Jak grać”', () => {
     expect(speed).toBe(`Tempo zmieniasz u góry (${SPEEDS[1]!.label}–${SPEEDS[SPEEDS.length - 1]!.label}), a Spacja pauzuje.`);
   });
 
+  it('rozliczenie miesiąca: punkt i szczegół opisują pasek z rachunkiem Centrali i ostrzeżenia przy zakupach', () => {
+    const fee = howToPoints()[5]!;
+    expect(fee).toContain('pasek pod gotówką pokazuje, ile oddasz i ile zostaje');
+    const money = howToDetails().find((s) => s.title === 'Pieniądze i ubytki')!;
+    const settle = money.paragraphs.find((p) => p.includes('jednym przelewem'))!;
+    expect(settle).toContain('Opłata, ubytki i premia schodzą jednym przelewem na koniec miesiąca.');
+    expect(settle).toContain('Stuknij pasek: rachunek i podgląd końca miesiąca.');
+    expect(settle).toContain('Zakupy ostrzegają, nie blokują.');
+  });
+
   it('punkty nie obiecują nic o częstości mandatów ani o stukaniu w kasę (to opisze balans po zmianie mechaniki)', () => {
     expect(pointsText()).not.toMatch(/stuk|raz na|co \d/i);
     expect(howToPoints().slice(0, -1).join('\n')).not.toMatch(/\d/);   // bez cyfr (poza zakresem tempa w ostatnim punkcie)

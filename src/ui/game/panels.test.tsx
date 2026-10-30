@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DEBT_LIMIT, WAGE_PER_DAY } from '@/sim/economy/catalog';
 import { DEBT_WARN, createEconomy, debtWarningText, franchiseFee, kpiScaleOf, nextRemont, upgradeBlocker, type CommandResult, type EconomyState, type MonthReport } from '@/sim/economy/economy';
 import type { Command } from '@/sim/economy/commands';
+import { forecastMonth } from '@/sim/economy/forecast';
 import { KPI, KPI_FLAVOR, kpiTitle } from '@/sim/economy/tycoon/kpi';
 import { dayOfMinute, roundNice } from '@/sim/economy/tycoon/time';
 import { staffOnShift } from '@/sim/economy/tycoon/shift';
@@ -12,9 +13,9 @@ import { WEATHER_LABEL } from '@/sim/economy/tycoon/cleanliness';
 import { computeStoreInfo, type PalletLoc, type StoreInfo } from '@/sim/economy/storeInfo';
 import { EQUIPMENT, UPGRADES } from '@/sim/economy/upgrades';
 import { layoutFor } from '@/sim/store/layoutFor';
-import { metaView, ranked, speed, type GameActions } from '../state';
+import { metaView, monthPreview, ranked, speed, type GameActions } from '../state';
 import { Bar, GoalsPanel, PalletItem, PalletsPanel, PeoplePanel, ShopPanel, StorePanel } from './panels';
-import { plural, zl } from './format';
+import { plural, signedZl, zl } from './format';
 import { buttonAria, buttonLabelled, buttonsOf, click, labels, sectionTitled, textOf, walk, type Vnode } from './vnodeTree';
 
 /** Atrapa `GameActions`: panele tylko wysyłają polecenia, więc liczy się wyłącznie `dispatch`. */
@@ -287,7 +288,22 @@ describe('panele wysyłają polecenia przez game.dispatch, a nie wołają symula
     expect(value('Ten miesiąc', 'Ubytki ponad limit Centrali')).toBe('−150zł');
   });
 
-  describe('cele: opłata franczyzowa w trakcie miesiąca', () => {
+  describe('cele: przycisk „Koniec miesiąca” i rachunek Centrali', () => {
+  it('sekcja „Ten miesiąc” ma przycisk, który otwiera okno rachunku, i wiersze „Do oddania” oraz „Wolne środki”', () => {
+    const { s, info } = rich();
+    s.month.revenue = 90_000;
+    const section = sectionTitled(GoalsPanel({ s, info, game: fakeGame(), v: 1 }), 'Ten miesiąc');
+    const f = forecastMonth(s);
+    expect(textOf(section)).toContain(zl(f.due));
+    expect(textOf(section)).toContain(signedZl(f.free));
+    expect(monthPreview.value).toBeNull();
+    click(buttonLabelled(section, 'Koniec miesiąca: rachunek i podgląd'));
+    expect(monthPreview.value).toEqual({ phase: 'idle' });
+    monthPreview.value = null;
+  });
+});
+
+describe('cele: opłata franczyzowa w trakcie miesiąca', () => {
     /** Panel „Ten miesiąc” dla miesiąca z obrotem `revenue` i wynikiem przed opłatą 8150 zł (11 200 − 3 050). */
     const month = (revenue: number): { value: (label: string) => string; text: string } => {
       const { s, info } = rich();

@@ -96,7 +96,7 @@ export function howToPoints(): string[] {
     'Po dostawie przenieś palety spod sklepu na zaplecze (zakładka Palety, przycisk „Na zaplecze”), zanim wróci Straż Miejska.',
     `W zakładce Ludzie ustaw profil pracy, czyli co ludzie robią najpierw: ${profiles}.`,
     'Gdy kolejka rośnie, kup kasę samoobsługową albo drugą kasę (zakładka Ulepszenia): kasjerów jest tyle, ile stanowisk.',
-    'Na koniec miesiąca Centrala pobiera opłatę franczyzową: zostaw na nią gotówkę (zakładka Cele, sekcja „Ten miesiąc”).',
+    'Na koniec miesiąca Centrala pobiera opłatę: pasek pod gotówką pokazuje, ile oddasz i ile zostaje (zakładka Cele, sekcja „Ten miesiąc”).',
     `Tempo zmieniasz u góry (${slowest.label}–${fastest.label}), a Spacja pauzuje.`,
   ];
 }
@@ -115,6 +115,7 @@ export function howToDetails(): HowToSection[] {
       paragraphs: [
         `Zarabiasz marżę, nie obrót: od ${percent(margins.low.margin)} (${margins.low.label}) do ${percent(margins.high.margin)} (${margins.high.label}) ceny towaru, a hot-dogi i kawa dają ${percent(HOT.margin)}.`,
         `Opłata franczyzowa to ${zl(FRANCHISE_FEE_FIXED)} plus ${percent(FRANCHISE_FEE_SHARE)} obrotu.`,
+        'Opłata, ubytki i premia schodzą jednym przelewem na koniec miesiąca. Stuknij pasek: rachunek i podgląd końca miesiąca. Zakupy ostrzegają, nie blokują.',
         `Ubytki to przeterminowany towar, kradzieże, pomyłki i „zapomniane” skany na kasach samoobsługowych. Do ${percent(WUT.threshold)} obrotu miesiąca pokrywa je Centrala, ponad limit płacisz Ty (zakładka Sklep).`,
       ],
     },
