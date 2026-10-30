@@ -1,4 +1,5 @@
 import { NICK_MAX } from '@/game/nick';
+import { t, tr } from '@/i18n';
 import { zl } from '../game/format';
 import { closeFinish, finish, type GameActions } from '../state';
 import { NOTHING_TO_SEND_TEXT, type FinishModel } from './finishModel';
@@ -32,12 +33,12 @@ export function FinishWindow({ model, onClose }: FinishWindowProps) {
   if (model.confirming.value) {
     return (
       <div class="tt-modal-wrap">
-        <div class="tt-modal tt-finish" role="alertdialog" aria-modal="true" aria-label="Odrzucenie biegu">
-          <h2>{FINISH_TITLE}</h2>
-          <p role="alert">{DISCARD_QUESTION}</p>
+        <div class="tt-modal tt-finish" role="alertdialog" aria-modal="true" aria-label={t`Odrzucenie biegu`}>
+          <h2>{tr(FINISH_TITLE)}</h2>
+          <p role="alert">{tr(DISCARD_QUESTION)}</p>
           <div class="tt-finish-actions">
-            <button type="button" class="tt-btn tt-primary big" onClick={() => { model.discard(); onClose(); }}>Tak, odrzuć</button>
-            <button type="button" class="tt-btn" onClick={() => model.cancelDiscard()}>Wróć</button>
+            <button type="button" class="tt-btn tt-primary big" onClick={() => { model.discard(); onClose(); }}>{t`Tak, odrzuć`}</button>
+            <button type="button" class="tt-btn" onClick={() => model.cancelDiscard()}>{t`Wróć`}</button>
           </div>
         </div>
       </div>
@@ -46,21 +47,21 @@ export function FinishWindow({ model, onClose }: FinishWindowProps) {
 
   return (
     <div class="tt-modal-wrap">
-      <div class="tt-modal tt-finish" role="dialog" aria-modal="true" aria-label={FINISH_TITLE}>
-        <h2>{FINISH_TITLE}</h2>
-        {hasRun && <p class="tt-finish-score">Wynik sezonu: <b>{zl(score)}</b></p>}
-        {hasRun && seed !== null && <p class="tt-hint">Seed sezonu: {seed}</p>}
+      <div class="tt-modal tt-finish" role="dialog" aria-modal="true" aria-label={tr(FINISH_TITLE)}>
+        <h2>{tr(FINISH_TITLE)}</h2>
+        {hasRun && <p class="tt-finish-score">{t`Wynik sezonu: `}<b>{zl(score)}</b></p>}
+        {hasRun && seed !== null && <p class="tt-hint">{t`Seed sezonu: ${seed}`}</p>}
 
         <div class="tt-finish-status" id="tt-finish-status" aria-live="polite">
-          <p class={phase === 'accepted' ? 'tt-finish-ok' : 'tt-finish-msg'}>{model.message.value ?? NOTHING_TO_SEND_TEXT}</p>
+          <p class={phase === 'accepted' ? 'tt-finish-ok' : 'tt-finish-msg'}>{tr(model.message.value ?? NOTHING_TO_SEND_TEXT)}</p>
           {result && places && (
             <ul class="tt-finish-places">
-              {places.global !== null && <li>Miejsce w rankingu globalnym: {places.global}</li>}
-              {places.seed !== null && seed !== null && <li>Miejsce na seedzie „{seed}”: {places.seed}</li>}
-              {places.week !== null && <li>Miejsce w rankingu tygodnia: {places.week}</li>}
-              {places.global === null && places.seed === null && places.week === null && <li>Tym razem poza listami rankingu.</li>}
+              {places.global !== null && <li>{t`Miejsce w rankingu globalnym: ${places.global}`}</li>}
+              {places.seed !== null && seed !== null && <li>{t`Miejsce na seedzie „${seed}”: ${places.seed}`}</li>}
+              {places.week !== null && <li>{t`Miejsce w rankingu tygodnia: ${places.week}`}</li>}
+              {places.global === null && places.seed === null && places.week === null && <li>{t`Tym razem poza listami rankingu.`}</li>}
               <li class={result.improved ? 'tt-finish-record' : undefined}>
-                {result.improved ? 'Nowy rekord życiowy' : `Twój najlepszy wynik: ${zl(result.best)}`}
+                {result.improved ? t`Nowy rekord życiowy` : t`Twój najlepszy wynik: ${zl(result.best)}`}
               </li>
             </ul>
           )}
@@ -68,7 +69,7 @@ export function FinishWindow({ model, onClose }: FinishWindowProps) {
 
         {hasRun && phase !== 'accepted' && phase !== 'old-version' && (
           <form class="tt-finish-form" onSubmit={(e) => { e.preventDefault(); send(); }}>
-            <label for="tt-finish-nick">Nick w rankingu</label>
+            <label for="tt-finish-nick">{t`Nick w rankingu`}</label>
             <input
               id="tt-finish-nick" class="tt-input" type="text" value={model.nick.value} maxLength={NICK_MAX} disabled={sending}
               autocomplete="off" spellcheck={false} aria-describedby="tt-finish-status"
@@ -79,15 +80,15 @@ export function FinishWindow({ model, onClose }: FinishWindowProps) {
 
         <div class="tt-finish-actions">
           {hasRun && (phase === 'ready' || phase === 'sending' || phase === 'nick-taken') && (
-            <button type="button" class="tt-btn tt-primary big" disabled={sending} onClick={send}>Wyślij do rankingu</button>
+            <button type="button" class="tt-btn tt-primary big" disabled={sending} onClick={send}>{t`Wyślij do rankingu`}</button>
           )}
           {hasRun && (phase === 'later' || phase === 'rejected') && (
-            <button type="button" class="tt-btn tt-primary big" onClick={send}>Spróbuj jeszcze raz</button>
+            <button type="button" class="tt-btn tt-primary big" onClick={send}>{t`Spróbuj jeszcze raz`}</button>
           )}
           {hasRun && (phase === 'rejected' || phase === 'old-version') && (
-            <button type="button" class="tt-btn" onClick={() => model.askDiscard()}>Odrzuć bieg</button>
+            <button type="button" class="tt-btn" onClick={() => model.askDiscard()}>{t`Odrzuć bieg`}</button>
           )}
-          <button type="button" class={`tt-btn${hasRun && phase !== 'accepted' ? '' : ' tt-primary big'}`} onClick={onClose}>Zamknij</button>
+          <button type="button" class={`tt-btn${hasRun && phase !== 'accepted' ? '' : ' tt-primary big'}`} onClick={onClose}>{t`Zamknij`}</button>
         </div>
       </div>
     </div>

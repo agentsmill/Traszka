@@ -1,4 +1,5 @@
 import { render } from 'preact';
+import { isEn, t, tr } from '@/i18n';
 import { plural, signedZl, zl } from '../game/format';
 import type { RankingTab } from './client';
 import { NO_SEED, type RankingModel } from './rankingModel';
@@ -23,7 +24,8 @@ const GLOBAL_NOTE = 'Wszystkie seedy. Wynik to suma trzech raportów miesięczny
 /** „zostało 5 dni”, „został 1 dzień”, a w ostatniej dobie „ostatnie godziny”. */
 export function weekLeft(endsAt: number, now: number): string {
   const days = Math.floor((endsAt - now) / 86_400_000);
-  if (days < 1) return 'ostatnie godziny';
+  if (days < 1) return t`ostatnie godziny`;
+  if (isEn()) return `${days} ${days === 1 ? 'day' : 'days'} left`;
   return `${plural(days, 'został', 'zostały', 'zostało')} ${days} ${plural(days, 'dzień', 'dni', 'dni')}`;
 }
 
@@ -41,9 +43,9 @@ export interface RankingPanelProps {
 function subtitle(model: RankingModel, now: number): string {
   const v = model.view.value;
   switch (model.tab.value) {
-    case 'global': return GLOBAL_NOTE;
-    case 'seed': return v.seed ? `Seed sklepu: ${v.seed}` : NO_SEED;
-    case 'week': return v.week ? `Seed tygodnia: ${v.week.seed} · ${weekLeft(v.week.endsAt, now)}` : 'Seed tygodnia';
+    case 'global': return tr(GLOBAL_NOTE);
+    case 'seed': return v.seed ? t`Seed sklepu: ${v.seed}` : tr(NO_SEED);
+    case 'week': return v.week ? t`Seed tygodnia: ${v.week.seed} · ${weekLeft(v.week.endsAt, now)}` : t`Seed tygodnia`;
   }
 }
 
@@ -54,31 +56,31 @@ export function RankingPanel({ model, onClose, now = Date.now, unsent = null, on
   const mineShown = v.rows.some((r) => model.isMine(r));
   return (
     <div class="tt-modal-wrap" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div class="tt-modal tt-ranking" role="dialog" aria-label="Ranking">
-        <button type="button" class="tt-iconbtn tt-card-close" aria-label="Zamknij" onClick={onClose}>✕</button>
-        <h2>Ranking</h2>
+      <div class="tt-modal tt-ranking" role="dialog" aria-label={t`Ranking`}>
+        <button type="button" class="tt-iconbtn tt-card-close" aria-label={t`Zamknij`} onClick={onClose}>✕</button>
+        <h2>{t`Ranking`}</h2>
         {unsent && (
           <div class="tt-rank-unsent" role="status">
-            <p>Masz niewysłany bieg (wynik {zl(unsent.score)}).</p>
-            {onSendUnsent && <button type="button" class="tt-btn tt-primary" onClick={onSendUnsent}>Wyślij</button>}
+            <p>{t`Masz niewysłany bieg (wynik ${zl(unsent.score)}).`}</p>
+            {onSendUnsent && <button type="button" class="tt-btn tt-primary" onClick={onSendUnsent}>{t`Wyślij`}</button>}
           </div>
         )}
-        <div class="tt-seg tt-rank-tabs" role="tablist" aria-label="Rodzaj rankingu">
-          {TABS.map((t) => (
-            <button key={t} type="button" role="tab" aria-selected={tab === t} class={`tt-btn${tab === t ? ' on' : ''}`} onClick={() => { void model.select(t); }}>
-              {TAB_LABELS[t]}
+        <div class="tt-seg tt-rank-tabs" role="tablist" aria-label={t`Rodzaj rankingu`}>
+          {TABS.map((tabId) => (
+            <button key={tabId} type="button" role="tab" aria-selected={tab === tabId} class={`tt-btn${tab === tabId ? ' on' : ''}`} onClick={() => { void model.select(tabId); }}>
+              {tr(TAB_LABELS[tabId])}
             </button>
           ))}
         </div>
         <p class="tt-hint">{subtitle(model, now())}</p>
-        {v.status === 'loading' && <p class="tt-muted">{LOADING}</p>}
+        {v.status === 'loading' && <p class="tt-muted">{tr(LOADING)}</p>}
         {v.status === 'error' && (
           <div class="tt-rank-error">
-            <p class="tt-hint warn">{v.message}</p>
-            {v.message !== NO_SEED && <button type="button" class="tt-btn" onClick={() => { void model.refresh(); }}>Spróbuj jeszcze raz</button>}
+            <p class="tt-hint warn">{tr(v.message)}</p>
+            {v.message !== NO_SEED && <button type="button" class="tt-btn" onClick={() => { void model.refresh(); }}>{t`Spróbuj jeszcze raz`}</button>}
           </div>
         )}
-        {v.status === 'ready' && v.rows.length === 0 && <p class="tt-muted">{EMPTY_BOARD}</p>}
+        {v.status === 'ready' && v.rows.length === 0 && <p class="tt-muted">{tr(EMPTY_BOARD)}</p>}
         {v.status === 'ready' && v.rows.length > 0 && (
           <ol class="tt-rank-list">
             {v.rows.map((r) => {
@@ -86,8 +88,8 @@ export function RankingPanel({ model, onClose, now = Date.now, unsent = null, on
               return (
                 <li key={`${r.rank}:${r.nick}`} class={`tt-rank-row${me ? ' me' : ''}`} aria-current={me ? 'true' : undefined}>
                   <span class="tt-rank-pos">{r.rank}.</span>
-                  <span class="tt-rank-nick">{r.nick}{me ? ' (Ty)' : ''}</span>
-                  {tab === 'global' && <span class="tt-rank-seed">{r.seed ?? 'seed nieznany'}</span>}
+                  <span class="tt-rank-nick">{r.nick}{me ? t` (Ty)` : ''}</span>
+                  {tab === 'global' && <span class="tt-rank-seed">{r.seed ?? t`seed nieznany`}</span>}
                   <span class="tt-rank-score">{signedZl(r.score)}</span>
                 </li>
               );
@@ -95,9 +97,9 @@ export function RankingPanel({ model, onClose, now = Date.now, unsent = null, on
           </ol>
         )}
         {v.status === 'ready' && mine && !mineShown && (
-          <p class="tt-rank-mine">Twoje miejsce: {mine.rank}. ({signedZl(mine.score)})</p>
+          <p class="tt-rank-mine">{t`Twoje miejsce: ${mine.rank}. (${signedZl(mine.score)})`}</p>
         )}
-        {!model.hasPlayer() && <p class="tt-hint">{NO_PLAYER}</p>}
+        {!model.hasPlayer() && <p class="tt-hint">{tr(NO_PLAYER)}</p>}
       </div>
     </div>
   );
