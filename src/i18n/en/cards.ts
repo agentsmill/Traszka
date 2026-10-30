@@ -109,7 +109,7 @@ export const EN_CARDS: Record<string, EnCard> = {
     text: 'The national team plays tonight. The estate is preparing as if lives depended on the result. At most, the beer and crisps supply does.',
     answers: [
       { label: 'An extra pallet of beer and crisps', result: 'The fans bought everything before kick-off. After the match they came back for the rest, but there was no rest left.' },
-      { label: 'A poster: “Fans, it’s cold in here!”', result: 'The poster works. The beer was cold, the fans came, the goal didn’t.' },
+      { label: 'A poster: “Fans! Cold beer this way!”', result: 'The poster works. The beer was cold, the fans came, the goal didn’t.' },
       { label: 'It’s only football', result: 'The match happened. The result was the usual. The fans bought their beer at Szop 24h.' },
     ],
   },
