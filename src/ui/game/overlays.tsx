@@ -107,7 +107,7 @@ export function ClickerBar({ game, onFloat }: { game: GameActions; onFloat: (x: 
   const tillNote = tillTapBlock(s, view.info)?.replace(/\.$/, '');
   const at = (e: MouseEvent): [number, number] => [e.clientX || window.innerWidth - 60, e.clientY || window.innerHeight - 140];
   return (
-    <div class="tt-clicker">
+    <div class="tt-clicker" data-tut="clicker">
       <div class="tt-energy" title={ENERGY_TITLE}>
         <span>Siły {int(energy)}/{FATIGUE.pool}</span>
         <Bar value={energy / FATIGUE.pool} warn={energy < LOW_ENERGY} />
@@ -286,7 +286,7 @@ export function ReportModal({ game }: { game: GameActions }) {
   return (
     <div class="tt-modal-wrap">
       <div class="tt-modal" role="dialog" aria-modal="true" aria-label={title}>
-        <h2>{title}</h2>
+        <h2 data-tut="report">{title}</h2>
         {reason && <p class="tt-end-reason" role="note"><b>{reason}</b></p>}
         {bankrupt && ranked.value && <p class="tt-end-reason" role="note">{RANKED_BANKRUPT_TEXT}</p>}
         {r ? <ReportBody r={r} closing={over ? TERMINATION : undefined} /> : centralaQuote(TERMINATION)}
@@ -380,7 +380,7 @@ export function RemanentModal() {
         <div class="tt-row total"><span>Ubytki razem</span><span>{zl(p.total)}</span></div>
         <div class="tt-row"><span>Limit Centrali</span><span>{zl(p.limit)}</span></div>
         {p.first && <p class="tt-hint" role="note">Limit poznajesz dopiero teraz: {percentOf(WUT.threshold)} obrotu.</p>}
-        <p class={`tt-remanent-verdict${p.charge > 0 ? ' over' : ''}`}>
+        <p class={`tt-remanent-verdict${p.charge > 0 ? ' over' : ''}`} data-tut="remanent-verdict">
           {p.charge > 0 ? `Nadwyżka ${zl(p.charge)} zejdzie z dzisiejszego przelewu.` : 'Ubytki mieszczą się w limicie.'}
         </p>
         {centralaQuote(view.text)}

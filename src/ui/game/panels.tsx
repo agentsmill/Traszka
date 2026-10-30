@@ -42,8 +42,9 @@ function Row({ label, children }: { label: ComponentChildren; children: Componen
   return <div class="tt-row"><span>{label}</span><span>{children}</span></div>;
 }
 
-function Section({ title, children }: { title: string; children: ComponentChildren }) {
-  return <section class="tt-section"><h3>{title}</h3>{children}</section>;
+/** Sekcja panelu; `tut`: wartość `data-tut`, gdy sekcję wskazuje samouczek (`ui/tutorial/steps.ts`). */
+function Section({ title, tut, children }: { title: string; tut?: string; children: ComponentChildren }) {
+  return <section class="tt-section" data-tut={tut}><h3>{title}</h3>{children}</section>;
 }
 
 const TABS: { id: TabId; icon: string; label: string }[] = [
@@ -66,9 +67,9 @@ export function TabBar() {
     badge.ulepszenia = affordable || undefined;
   }
   return (
-    <nav class="tt-tabs" aria-label="Zakładki">
+    <nav class="tt-tabs" data-tut="tabs" aria-label="Zakładki">
       {TABS.map((t) => (
-        <button key={t.id} type="button" class={`tt-tab${tab.value === t.id ? ' on' : ''}`} aria-pressed={tab.value === t.id}
+        <button key={t.id} type="button" class={`tt-tab${tab.value === t.id ? ' on' : ''}`} data-tut={`tab-${t.id}`} aria-pressed={tab.value === t.id}
           onClick={() => { tab.value = tab.value === t.id ? null : t.id; selection.value = null; }}>
           <span class="tt-tab-icon" aria-hidden="true">{t.icon}</span>
           <span class="tt-tab-label">{t.label}</span>
@@ -86,7 +87,7 @@ export function Sheet({ game }: { game: GameActions }) {
   if (!view || !open) return null;
   const title = TABS.find((t) => t.id === open)!.label;
   return (
-    <aside class="tt-sheet" aria-label={title}>
+    <aside class="tt-sheet" data-tut="sheet" aria-label={title}>
       <div class="tt-sheet-head">
         <h2>{title}</h2>
         <button type="button" class="tt-iconbtn" aria-label="Zamknij" onClick={() => { tab.value = null; }}>✕</button>
@@ -197,9 +198,9 @@ export function PalletsPanel({ s, info, game }: { s: EconomyState; info: StoreIn
   return (
     <>
       <Section title="Zamówienie na jutro">
-        <div class="tt-seg wide" role="group" aria-label="Kto zamawia">
-          <button type="button" class={`tt-btn${s.order.auto ? ' on' : ''}`} onClick={() => game.dispatch({ type: 'setOrder', auto: true })}>Asystent Traszki</button>
-          <button type="button" class={`tt-btn${!s.order.auto ? ' on' : ''}`} onClick={() => game.dispatch({ type: 'setOrder', auto: false, manual: s.order.manual })}>Ręcznie</button>
+        <div class="tt-seg wide" data-tut="order" role="group" aria-label="Kto zamawia">
+          <button type="button" class={`tt-btn${s.order.auto ? ' on' : ''}`} data-tut="order-auto" onClick={() => game.dispatch({ type: 'setOrder', auto: true })}>Asystent Traszki</button>
+          <button type="button" class={`tt-btn${!s.order.auto ? ' on' : ''}`} data-tut="order-manual" onClick={() => game.dispatch({ type: 'setOrder', auto: false, manual: s.order.manual })}>Ręcznie</button>
         </div>
         {s.order.auto
           ? <p class="tt-hint">Asystent zamówi <b>{suggestion} {plPallets(suggestion)}</b>. {level(s, 'asystent') === 0 ? 'Zwykle trochę przesadza („klienci to kochają”).' : 'Po szkoleniu już mniej przesadza.'}</p>
@@ -213,7 +214,7 @@ export function PalletsPanel({ s, info, game }: { s: EconomyState; info: StoreIn
           )}
         <p class="tt-hint">Zamówienie zamyka się o {formatClock(ORDER_DEADLINE)}{mod < ORDER_DEADLINE ? ' (dziś)' : ' (jutro)'}. Dostawa rano{fx.splitDelivery ? ' i o 15:00' : ''}. W drodze: {pending} {plPallets(pending)}.</p>
       </Section>
-      <Section title={`Palety (${s.pallets.length})`}>
+      <Section title={`Palety (${s.pallets.length})`} tut="pallets">
         <Row label="Wolne miejsca">pod sklepem {freeSpots(s, info, 'sidewalk')} · zaplecze {freeSpots(s, info, 'backroom')} · sala {freeSpots(s, info, 'floor')}{aisle > 0 ? ` · w przejściach ${aisle} ${plPallets(aisle)} ⚠️` : ''}</Row>
         <Row label="Rozładunek teraz">~{int(workPerHour)} szt./h ({people(s.shift.human.rozladunek)} os.{robots.tasmociag > 0 || robots.edward > 0 ? ' + automatyka' : ''})</Row>
         {s.pallets.length === 0 && <p class="tt-hint">Brak palet. Cisza przed dostawą.</p>}
@@ -233,7 +234,7 @@ export function PalletItem({ s, info, id, game, compact = false }: { s: EconomyS
   const block = tapBlock(s, 'paleta');
   const warn = p.loc === 'sidewalk' || p.loc === 'aisle';
   return (
-    <div class={`tt-pallet${warn ? ' risk' : ''}`}>
+    <div class={`tt-pallet${warn ? ' risk' : ''}`} data-tut={p.loc === 'aisle' ? 'pallet-aisle' : undefined}>
       <div class="tt-row">
         <span><b>{LOC_LABEL[p.loc]}</b>{warn ? ' ⚠️' : ''}</span>
         <span class="tt-muted">{int(p.total)} szt. · {duration(age)}</span>
@@ -270,7 +271,7 @@ export function PeoplePanel({ s, info, game }: { s: EconomyState; info: StoreInf
   return (
     <>
       <Section title="Zmiana">
-        <div class="tt-stepper">
+        <div class="tt-stepper" data-tut="hire">
           <button type="button" class="tt-btn" aria-label="Zwolnij" onClick={() => game.dispatch({ type: 'fire' })}>−</button>
           <b>{osoby(s.staff)}</b>
           <button type="button" class="tt-btn" aria-label="Zatrudnij" data-risk={s.staff >= STAFF_MAX ? undefined : spendRisk(s, info, HIRE_COST)} disabled={s.staff >= STAFF_MAX} onClick={() => game.dispatch({ type: 'hire' })}>+</button>
@@ -485,7 +486,7 @@ export function GoalsPanel({ s, info, game }: { s: EconomyState; info: StoreInfo
           <div key={g.id} class="tt-goal ready">
             <div class="tt-row">
               <span><span class="tt-goal-tag">🎁 Do odebrania</span> <b>{g.label}</b></span>
-              <button type="button" class="tt-btn tt-primary" aria-label={`Odbierz: ${g.label}`} onClick={() => game.dispatch({ type: 'claimMilestone', id: g.id })}>Odbierz</button>
+              <button type="button" class="tt-btn tt-primary" data-tut="claim-btn" aria-label={`Odbierz: ${g.label}`} onClick={() => game.dispatch({ type: 'claimMilestone', id: g.id })}>Odbierz</button>
             </div>
             <div class="tt-muted">Nagroda: +{g.reward} 🦎 i XP</div>
           </div>

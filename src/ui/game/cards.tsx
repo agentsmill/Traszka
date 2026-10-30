@@ -50,7 +50,7 @@ export function CardDesk({ game }: { game: GameActions }) {
   };
   return (
     <div class="tt-modal-wrap tt-deck-wrap">
-      <div class="tt-modal tt-deck" role="dialog" aria-modal="true" aria-label={`Karta dnia: ${title}`}>
+      <div class="tt-modal tt-deck" data-tut="card" role="dialog" aria-modal="true" aria-label={`Karta dnia: ${title}`}>
         <div class="tt-deck-head">
           <span class="tt-deck-count">Karta 1 z {cards.length}</span>
           {def?.kind === 'okolnik' && <span class="tt-deck-badge">{OKOLNIK_BADGE}</span>}
