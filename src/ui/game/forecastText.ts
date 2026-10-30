@@ -1,5 +1,5 @@
 import type { MonthForecast, SpendCheck } from '@/sim/economy/forecast';
-import { signedZl, zl } from './format';
+import { money, signedZl, zl } from './format';
 
 /*
  * Napisy prognozy końca miesiąca: pasek (HUD) i ostrzeżenia przy zakupach. Czyste funkcje, bez interfejsu, więc testuje się je
@@ -7,27 +7,36 @@ import { signedZl, zl } from './format';
  */
 
 /**
- * Jedno zdanie o skutku wydatku dla końca miesiąca albo `null`, gdy zakup mieści się w wolnych środkach. Kwota to prognoza po
- * rozliczeniu miesiąca (gotówka po zakupie minus to, co Centrala zabierze od obrotu do dziś), więc gracz widzi wynik, a nie regułę.
+ * Jedno zdanie o skutku wydatku dla gotówki po zamknięciu miesiąca albo `null`, gdy zakup nie zepchnie jej pod zero. Kwota to
+ * prognoza „po zamknięciu miesiąca zostanie Ci” (gotówka plus „Zostaje Ci” minus zakup), więc gracz widzi wynik, a nie regułę.
+ * `rata`: wydatek to pierwsza rata zakupu na raty (schodzi z najbliższego przelewu), a nie cena za gotówkę.
  */
-export function spendWarningText(c: SpendCheck): string | null {
-  const after = signedZl(c.freeAfter);
+export function spendWarningText(c: SpendCheck, rata = false): string | null {
+  const lead = rata ? 'Po zamknięciu miesiąca, z pierwszą ratą, zostanie Ci' : 'Po zamknięciu miesiąca zostanie Ci';
+  const after = signedZl(c.cashAfter);
   switch (c.level) {
     case 'ok': return null;
-    case 'tight': return `Ponad wolne środki: przy dotychczasowym obrocie po rozliczeniu miesiąca wyjdzie ${after}.`;
-    case 'warn': return `Po rozliczeniu miesiąca wyjdzie ${after}, poniżej progu ostrzeżenia (${signedZl(c.warnAt)}).`;
-    case 'danger': return `Po rozliczeniu miesiąca wyjdzie ${after}, poniżej granicy debetu (${signedZl(c.limitAt)}): Centrala wypowie umowę.`;
+    case 'tight': return `${lead} ${after}: gotówka zejdzie pod zero.`;
+    case 'warn': return `${lead} ${after}, poniżej progu ostrzeżenia (${signedZl(c.warnAt)}).`;
+    case 'danger': return `${lead} ${after}, poniżej granicy debetu (${signedZl(c.limitAt)}): Centrala wypowie umowę.`;
   }
 }
 
-/** Opis rachunku z paska (podpowiedź i `aria-label`): z czego składa się kwota do oddania i co z niej wynika dla gotówki. */
-export function dueTitle(f: MonthForecast, cash: number, check: SpendCheck): string {
-  const parts = [`opłata franczyzowa ${zl(f.fee)}`];
-  if (f.wut > 0) parts.push(`ubytki ponad limit ${zl(f.wut)}`);
-  if (f.bonus > 0) parts.push(`minus premia od obrotu ${zl(f.bonus)}`);
+/** Czytnik ekranu na pasku: trzy liczby w jednym zdaniu (długie etykiety zniknęły z wąskiego ekranu, ten opis zostaje). */
+export function forecastLabel(f: MonthForecast): string {
+  return `Saldo u Centrali ${zl(f.saldo)}, raty w tym miesiącu ${zl(f.installments)}, po zamknięciu zostanie ${signedZl(f.net)}`;
+}
+
+/**
+ * Podpowiedź paska (`title`): z czego składa się każda liczba i że dokładny wyciąg jest po stuknięciu. `check` to ocena zerowego
+ * wydatku (`spendCheck(f, 0)`): z niej wynika, czy dopisać bliskość granicy debetu.
+ */
+export function forecastTitle(f: MonthForecast, cash: number, check: SpendCheck): string {
   const debt = check.level === 'danger'
     ? ` Poniżej granicy debetu (${signedZl(check.limitAt)}) Centrala wypowie umowę.`
     : check.level === 'warn' ? ` Blisko granicy debetu (${signedZl(check.limitAt)}).` : '';
-  return `Centrala rozlicza się raz, przy zamknięciu miesiąca: ${parts.join(', ')}. Do oddania ${zl(f.due)}, liczone od obrotu do dziś, więc rośnie z każdym klientem. `
-    + `Wolne środki to gotówka ${zl(cash)} minus ta kwota: ${zl(f.free)}.${debt} Stuknij po rachunek i podgląd końca miesiąca.`;
+  return `Saldo u Centrali to marża i premie naliczone w tym miesiącu (${zl(f.saldo)}): przyjdą przelewem przy zamknięciu miesiąca, a gotówka rusza się dopiero wtedy. `
+    + `Z przelewu Centrala potrąca raty (${zl(f.installments)}) i palety ponad darmowe, a Ty płacisz pensje, media, ZUS, VAT i księgową. `
+    + `Po zamknięciu miesiąca zostanie Ci ${signedZl(f.net)}, czyli gotówka ${money(f.cashAfter)} (teraz ${money(cash)}).${debt} `
+    + 'To szybki szacunek z dotychczasowego obrotu. Dokładny wyciąg: stuknij.';
 }

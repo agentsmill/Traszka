@@ -1,22 +1,24 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { DEBT_LIMIT, WAGE_PER_DAY } from '@/sim/economy/catalog';
-import { DEBT_WARN, LOC_LABEL, createEconomy, debtWarningText, franchiseFee, freeSpots, kpiScaleOf, nextRemont, upgradeBlocker, type CommandResult, type EconomyState, type MonthReport } from '@/sim/economy/economy';
+import { DEBT_LIMIT, REMANENT, WAGE_PER_DAY } from '@/sim/economy/catalog';
+import { DEBT_WARN, LOC_LABEL, createEconomy, debtWarningText, freeSpots, kpiScaleOf, nextRemont, upgradeBlocker, type CommandResult, type EconomyState, type MonthReport } from '@/sim/economy/economy';
 import type { Command } from '@/sim/economy/commands';
 import { forecastMonth } from '@/sim/economy/forecast';
+import { dueOf, planFor, type Installment } from '@/sim/economy/franchisee';
+import { formatClock, formatDate } from '@/sim/economy/calendar';
 import { KPI, KPI_FLAVOR, kpiTitle } from '@/sim/economy/tycoon/kpi';
 import { dayOfMinute, roundNice } from '@/sim/economy/tycoon/time';
 import { MILESTONES } from '@/sim/economy/milestones';
 import { staffOnShift } from '@/sim/economy/tycoon/shift';
 import { PROFILE_HINT, PROFILE_LABEL, STAFF_PROFILES, STAFF_TASKS, TASK_LABEL, type StaffTask } from '@/sim/economy/tycoon/staff';
 import { trustTier } from '@/sim/economy/tycoon/trust';
-import { WUT, wutTotal } from '@/sim/economy/tycoon/wut';
+import { WUT } from '@/sim/economy/tycoon/wut';
 import { WEATHER_LABEL } from '@/sim/economy/tycoon/cleanliness';
 import { computeStoreInfo, type PalletLoc, type StoreInfo } from '@/sim/economy/storeInfo';
 import { EQUIPMENT, UPGRADES } from '@/sim/economy/upgrades';
 import { layoutFor } from '@/sim/store/layoutFor';
 import { econ, metaView, monthPreview, ranked, speed, tab, type GameActions } from '../state';
 import { Bar, GoalsPanel, PalletItem, PalletsPanel, PeoplePanel, ShopPanel, StorePanel, TabBar } from './panels';
-import { plural, signedZl, zl } from './format';
+import { minusZl, money, percentOf, plural, signedZl, zl } from './format';
 import { buttonAria, buttonLabelled, buttonsOf, click, labels, sectionTitled, textOf, walk, type Vnode } from './vnodeTree';
 
 /** Atrapa `GameActions`: panele tylko wysyłają polecenia, więc liczy się wyłącznie `dispatch`. */
@@ -427,64 +429,108 @@ describe('panele wysyłają polecenia przez game.dispatch, a nie wołają symula
     });
   });
 
-  it('cele: premie Centrali wchodzą do marży i do wyniku miesiąca (osobny licznik bonus)', () => {
+  it('cele: w „Dziś” marża i premie to przychód dnia (idą na saldo u Centrali), koszty bez płac nie mają ubytków', () => {
     const { s, info } = rich();
-    Object.assign(s.today, { margin: 1000, other: 200, bonus: 300 });
-    Object.assign(s.month, { revenue: 90_000, margin: 10_000, other: 500, bonus: 700, wages: 2000, media: 600, fines: 100, logistics: 200, wut: 150 });
+    Object.assign(s.today, { margin: 1000, other: 200, bonus: 300, fines: 40, logistics: 60, wut: 999 });
     const tree = GoalsPanel({ s, info, game: fakeGame(), v: 1 });
     const value = (section: string, label: string): string => {
       const row = walk(sectionTitled(tree, section)).find((v) => v.props.label === label);
       return textOf(row!).replace(/[\s\u00a0\u202f]/g, '');
     };
     expect(value('Dziś', 'Marża i premie (Twój przychód)')).toBe('1500zł');
-    expect(value('Ten miesiąc', 'Marża i premie')).toBe('11200zł');
-    expect(value('Ten miesiąc', 'Ubytki ponad limit Centrali')).toBe('−150zł');
+    expect(value('Dziś', 'Koszty (bez płac)')).toBe('100zł');   // mandaty i palety; liczniki ubytków z dawnych zapisów nie wchodzą
   });
 
-  describe('cele: przycisk „Koniec miesiąca” i rachunek Centrali', () => {
-  it('sekcja „Ten miesiąc” ma przycisk, który otwiera okno rachunku, i wiersze „Do oddania” oraz „Wolne środki”', () => {
-    const { s, info } = rich();
-    s.month.revenue = 90_000;
-    const section = sectionTitled(GoalsPanel({ s, info, game: fakeGame(), v: 1 }), 'Ten miesiąc');
-    const f = forecastMonth(s);
-    expect(textOf(section)).toContain(zl(f.due));
-    expect(textOf(section)).toContain(signedZl(f.free));
-    expect(monthPreview.value).toBeNull();
-    click(buttonLabelled(section, 'Koniec miesiąca: rachunek i podgląd'));
-    expect(monthPreview.value).toEqual({ phase: 'idle' });
-    monthPreview.value = null;
-  });
-});
-
-describe('cele: opłata franczyzowa w trakcie miesiąca', () => {
-    /** Panel „Ten miesiąc” dla miesiąca z obrotem `revenue` i wynikiem przed opłatą 8150 zł (11 200 − 3 050). */
-    const month = (revenue: number): { value: (label: string) => string; text: string } => {
+  describe('cele: sekcja „Ten miesiąc” po trzech kieszeniach', () => {
+    const plain = (x: string): string => x.replace(/[\s\u00a0\u202f]/g, '');
+    const inst = (over: Partial<Installment> = {}): Installment => ({ id: 1, label: 'Szkolenie „Uśmiech to procedura”', price: 1200, fee: 48, total: 1248, monthly: 416, paid: 0, months: 3, ...over });
+    /** Panel „Ten miesiąc” dla miesiąca z naliczeniami: saldo 11 200 (marża 10 500 + premie 700), płace 2 000, media 600, palety 150. */
+    const month = (setup: (s: EconomyState, info: StoreInfo) => void = () => {}): { s: EconomyState; info: StoreInfo; section: Vnode; value: (label: string) => string; text: string } => {
       const { s, info } = rich();
-      Object.assign(s.month, { revenue, margin: 10_000, other: 500, bonus: 700, wages: 2000, media: 600, fines: 100, logistics: 200, wut: 150 });
+      Object.assign(s.month, { revenue: 90_000, margin: 10_500, bonus: 700, fines: 100, investments: 3_500 });
+      Object.assign(s.franchisee.month, { margin: 10_500, bonus: 700, wages: 2_000, media: 600, pallets: 150 });
+      setup(s, info);
       const section = sectionTitled(GoalsPanel({ s, info, game: fakeGame(), v: 1 }), 'Ten miesiąc');
-      const value = (label: string): string => textOf(walk(section).find((v) => v.props.label === label)!).replace(/[\s\u00a0\u202f]/g, '');
-      return { value, text: textOf(section) };
+      const value = (label: string): string => plain(textOf(walk(section).find((v) => v.props.label === label)!));
+      return { s, info, section, value, text: textOf(section) };
     };
 
-    it('wiersz opłaty pokazuje franchiseFee od obrotu do dziś, a wynik jest już po opłacie', () => {
-      const { value } = month(90_000);
-      const fee = franchiseFee(90_000);
-      expect(value('Opłata franczyzowa (naliczona do dziś)')).toBe(`−${fee}zł`);
-      expect(value('Wynik po opłacie (do dziś)')).toBe(`${8150 - fee >= 0 ? '+' : '−'}${Math.abs(8150 - fee)}zł`);
+    it('wiersze: saldo u Centrali, naliczone płace i media, palety do potrącenia, raty, mandaty i zakupy za gotówkę', () => {
+      const { value, s } = month();
+      expect(value('Obrót')).toBe(plain(zl(90_000)));
+      expect(value('Saldo u Centrali')).toBe(plain(zl(11_200)));
+      expect(value('Płace (naliczone)')).toBe(plain(minusZl(2_000)));
+      expect(value('Media (naliczone)')).toBe(plain(minusZl(600)));
+      expect(value('Palety do potrącenia')).toBe(plain(minusZl(150)));
+      expect(value('Raty w tym miesiącu')).toBe(plain(zl(0)));
+      expect(value('Mandaty (z gotówki)')).toBe(plain(minusZl(100)));
+      expect(value('Zakupy za gotówkę')).toBe(plain(minusZl(3_500)));
+      expect(s.cash).toBe(1e7);
     });
 
-    it('opłata rośnie z obrotem, a przy zerowym obrocie to sama część stała', () => {
-      expect(month(0).value('Opłata franczyzowa (naliczona do dziś)')).toBe(`−${franchiseFee(0)}zł`);
-      expect(month(300_000).value('Opłata franczyzowa (naliczona do dziś)')).toBe(`−${franchiseFee(300_000)}zł`);
-      expect(franchiseFee(300_000)).toBeGreaterThan(franchiseFee(90_000));
+    it('nie ma opłaty franczyzowej, miesięcznych ubytków ani dawnych wierszy „do oddania” i „wolne środki”', () => {
+      const { text } = month();
+      expect(text).not.toMatch(/Opłata franczyzowa|Ubytki ponad limit|Do oddania|Wolne środki|Wynik po opłacie|Logistyka/);
+    });
+
+    it('prognoza: „Zostanie Ci po zamknięciu” i gotówka po zamknięciu są z forecastMonth, kolor gotówki z progów debetu', () => {
+      const { s, info, value, section } = month();
+      const f = forecastMonth(s, info);
+      expect(value('Zostanie Ci po zamknięciu')).toBe(plain(signedZl(f.net)));
+      expect(value('Gotówka po zamknięciu')).toBe(plain(money(f.cashAfter)));
+      const cash = walk(section).find((v) => String(v.props.class ?? '').startsWith('tt-free'))!;
+      expect(String(cash.props.class)).toBe('tt-free ok');
+    });
+
+    it('prognoza ujemna: „Zostanie Ci” ze znakiem „−”, a gotówka pod progiem ostrzeżenia ma kolor ostrzeżenia', () => {
+      // gotówka 0, a prognoza „Zostaje Ci” tuż pod progiem ostrzeżenia (palety potrącają złotówka w złotówkę)
+      const { value, section } = month((s, info) => { s.cash = 0; s.franchisee.month.pallets += forecastMonth(s, info).net - (DEBT_WARN - 5_000); });
+      expect(value('Zostanie Ci po zamknięciu').startsWith('−')).toBe(true);
+      expect(value('Gotówka po zamknięciu')).toBe(plain(money(DEBT_WARN - 5_000)));
+      const cash = walk(section).find((v) => String(v.props.class ?? '').startsWith('tt-free'))!;
+      expect(String(cash.props.class)).toBe('tt-free warn');
+    });
+
+    it('aktywne raty: nazwa, rata i ile zostało (razem minus spłacone); wiersz „Raty w tym miesiącu” to suma rat', () => {
+      const a = inst();
+      const b = inst({ id: 2, label: 'Remont: dokupienie lokalu obok', total: 27_000, monthly: 4_500, paid: 9_000, months: 6 });
+      const { section, value } = month((s) => { s.franchisee.installments = [a, b]; });
+      expect(value('Raty w tym miesiącu')).toBe(plain(minusZl(dueOf(a) + dueOf(b))));
+      const rows = walk(section).filter((v) => v.props.class === 'tt-inst').map((v) => plain(textOf(v)));
+      expect(rows).toEqual([
+        plain(`${a.label}rata ${zl(416)} · zostało ${zl(1_248)}`),
+        plain(`${b.label}rata ${zl(4_500)} · zostało ${zl(18_000)}`),
+      ]);
+    });
+
+    it('ostatnia rata jest mniejsza o zaokrąglenia: pokazuje to, co naprawdę zejdzie', () => {
+      const last = inst({ total: 1_000, monthly: 334, paid: 668 });
+      const { section, value } = month((s) => { s.franchisee.installments = [last]; });
+      expect(dueOf(last)).toBe(332);
+      expect(value('Raty w tym miesiącu')).toBe(plain(minusZl(332)));
+      expect(plain(textOf(walk(section).find((v) => v.props.class === 'tt-inst')!))).toContain(plain(`rata ${zl(332)} · zostało ${zl(332)}`));
+    });
+
+    it('bez rat nie ma listy rat', () => {
+      const { section } = month();
+      expect(walk(section).filter((v) => v.props.class === 'tt-inst')).toHaveLength(0);
+    });
+
+    it('przycisk otwiera okno wyciągu z podglądem, a podpowiedzi mówią o salu, przelewie i szybkim szacunku', () => {
+      const { section, text } = month();
+      expect(monthPreview.value).toBeNull();
+      click(buttonLabelled(section, 'Koniec miesiąca: wyciąg i podgląd'));
+      expect(monthPreview.value).toEqual({ phase: 'idle' });
+      monthPreview.value = null;
+      expect(text).toContain('Marża i premie wpadają na saldo, a gotówka rusza się przy zamknięciu miesiąca');
+      expect(text).toContain('pensje, media, ZUS, VAT i księgową');
+      expect(text).toContain('To szybki szacunek');
     });
 
     describe('ostrzeżenie o debecie (gotówka poniżej połowy granicy, za którą gra się kończy)', () => {
-      const plain = (text: string): string => text.replace(/[\s\u00a0\u202f]/g, ' ');
       const monthWith = (cash: number): { text: string; warn: Vnode[] } => {
-        const { s, info } = rich();
-        s.cash = cash;
-        const section = sectionTitled(GoalsPanel({ s, info, game: fakeGame(), v: 1 }), 'Ten miesiąc');
+        const { s, section } = month((st) => { st.cash = cash; });
+        expect(s.cash).toBe(cash);
         return { text: plain(textOf(section)), warn: walk(section).filter((v) => v.type === 'p' && String(v.props.class).includes('warn')) };
       };
 
@@ -493,23 +539,17 @@ describe('cele: opłata franczyzowa w trakcie miesiąca', () => {
         const { text, warn } = monthWith(cash);
         expect(warn).toHaveLength(1);
         expect(plain(textOf(warn[0]))).toBe(plain(debtWarningText(cash)));
-        expect(text).toContain(`zostało ${plain((cash - DEBT_LIMIT).toLocaleString('pl-PL'))} zł`);
+        expect(text).toContain(`zostało${plain((cash - DEBT_LIMIT).toLocaleString('pl-PL'))}zł`);
         expect(warn[0].props.class).toBe('tt-hint warn');
       });
 
       it('gotówka równa progowi, powyżej niego albo dodatnia: bez ostrzeżenia', () => {
         for (const cash of [DEBT_WARN, DEBT_WARN + 1, 0, 250_000]) {
           const { text, warn } = monthWith(cash);
-          expect(text, `gotówka ${cash}`).not.toContain('granicy debetu');
+          expect(text, `gotówka ${cash}`).not.toContain('granicydebetu');
           expect(warn, `gotówka ${cash}`).toHaveLength(0);
         }
       });
-    });
-
-    it('stary napis „przed opłatą” zniknął, a podpowiedź każe zostawić gotówkę na opłatę', () => {
-      const { text } = month(90_000);
-      expect(text).not.toContain('przed opłatą');
-      expect(text).toContain('Opłatę franczyzową, ubytki ponad limit Centrali i premię od obrotu Centrala rozlicza przy zamknięciu miesiąca. Zostaw gotówkę na opłaty.');
     });
   });
 });
@@ -692,7 +732,13 @@ describe('panel Ludzie: kto co robi, przypięcia i podsumowanie dnia', () => {
   });
 });
 
-describe('panel Sklep: zaufanie Centrali, ubytki w miesiącu i czystość sali', () => {
+describe('panel Sklep: zaufanie Centrali, remanent i czystość sali', () => {
+  const plain = (x: string): string => x.replace(/[\s\u00a0\u202f]/g, ' ');
+  const row = (section: Vnode, label: string): string | undefined => {
+    const r = walk(section).find((v) => v.props.label === label);
+    return r ? plain(textOf(r)) : undefined;
+  };
+
   it('zaufanie pokazuje próg (nazwę) i jego opis', () => {
     const { s, info } = rich();
     s.tycoon.trust.value = 45;
@@ -706,46 +752,55 @@ describe('panel Sklep: zaufanie Centrali, ubytki w miesiącu i czystość sali',
     expect(textOf(sectionTitled(StorePanel({ s, info, v: 1 }), 'Opinia'))).toContain(trustTier(92).flavor);
   });
 
-  it('Ubytki w tym miesiącu: suma ubytków wobec limitu Centrali (limit × obrót miesiąca), pasek ostrzega po przekroczeniu', () => {
+  it('Remanent przed pierwszym: limit ubytków pozostaje tajemnicą Centrali, a data następnego remanentu jest podana', () => {
+    const { s, info } = rich();
+    expect(s.franchisee.remanent.known).toBe(false);
+    const section = sectionTitled(StorePanel({ s, info, v: 1 }), 'Remanent');
+    expect(row(section, 'Limit ubytków')).toBe('Centrala poda przy remanencie');
+    expect(row(section, 'Ostatni remanent')).toBeUndefined();
+    expect(row(section, 'Następny remanent')).toBe(formatDate(s.franchisee.remanent.nextDay));
+    expect(textOf(section)).not.toContain('%');   // ani limit, ani nic o procentach przed pierwszym protokołem
+  });
+
+  it('licznik ubytków jest ukryty: nawet duże ubytki w stanie nie pokazują się w panelu (ani kwota, ani pasek, ani sekcja z dawnym tytułem)', () => {
     const { s, info } = rich();
     s.month.revenue = 50_000;
-    s.tycoon.wut.month.kradziez = 200;
-    s.tycoon.wut.month.termin = 100;
-    const limit = WUT.threshold * 50_000;   // 600 zł
+    Object.assign(s.tycoon.wut.month, { kradziez: 7_321, termin: 4_567, pomylki: 2_345, karty: 1_111 });
     const tree = StorePanel({ s, info, v: 1 });
-    const section = sectionTitled(tree, 'Ubytki w tym miesiącu');
-    const plain = (x: string): string => x.replace(/[\s\u00a0\u202f]/g, '');
-    expect(plain(textOf(section))).toContain(plain(`${zl(wutTotal(s.tycoon.wut))} z ${zl(limit)}`));
-    const bar = walk(section).find((v) => v.type === Bar)!;
-    expect(bar.props.value).toBeCloseTo(300 / 600);
-    expect(bar.props.warn).toBe(false);
-    s.tycoon.wut.month.pomylki = 500;   // 800 > 600
-    const over = sectionTitled(StorePanel({ s, info, v: 1 }), 'Ubytki w tym miesiącu');
-    expect(walk(over).find((v) => v.type === Bar)!.props.warn).toBe(true);
-    expect(plain(textOf(over))).toContain(plain(zl(200)));   // nadwyżka do zapłaty
+    expect(walk(tree).filter((v) => v.props?.title === 'Ubytki w tym miesiącu')).toHaveLength(0);
+    const text = plain(textOf(tree));
+    for (const n of [7_321, 4_567, 2_345, 1_111, 15_344]) expect(text, `${n}`).not.toContain(plain(zl(n)));
+    expect(textOf(tree)).not.toMatch(/ponad limit Centrali na dziś|obrót jeszcze rośnie/);
+    // jedyny pasek w sekcji Remanent: brak (paski mają półki, zaplecze, opinia, czystość, kolejka)
+    expect(walk(sectionTitled(tree, 'Remanent')).filter((v) => v.type === Bar)).toHaveLength(0);
   });
 
-  it('nadwyżka ubytków ponad limit to stan „na dziś”: obrót jeszcze rośnie, więc to nie opłata ostateczna', () => {
+  it('Remanent po pierwszym: limit jako procent obrotu (WUT.threshold) i ostatni remanent z datą i nadwyżką', () => {
     const { s, info } = rich();
-    s.month.revenue = 50_000;
-    s.tycoon.wut.month.pomylki = 800;   // 800 > 600
-    const hint = textOf(sectionTitled(StorePanel({ s, info, v: 1 }), 'Ubytki w tym miesiącu'));
-    expect(hint).toContain('na dziś');
-    expect(hint).toContain('obrót jeszcze rośnie');
-    expect(hint).not.toContain('Tyle zapłacisz');   // dawne brzmienie obiecywało kwotę, która do końca miesiąca się zmienia
+    const r = s.franchisee.remanent;
+    r.known = true;
+    r.nextDay = 180;
+    r.last = { day: 89, fromDay: 0, revenue: 1_200_000, byReason: { termin: 6_000, kradziez: 4_000, pomylki: 2_500, karty: 0 }, total: 12_500, limit: 14_400, charge: 2_300, first: true };
+    const section = sectionTitled(StorePanel({ s, info, v: 1 }), 'Remanent');
+    expect(row(section, 'Limit ubytków')).toBe(`${percentOf(WUT.threshold)} obrotu od ostatniego remanentu`);
+    expect(row(section, 'Limit ubytków')).toContain('1,2%');
+    expect(row(section, 'Ostatni remanent')).toBe(plain(`${formatDate(89)}, nadwyżka ${zl(2_300)}`));
+    expect(row(section, 'Następny remanent')).toBe(formatDate(180));
   });
 
-  it('ubytki na początku miesiąca (obrót 0, limit 0) nie dają NaN ani dzielenia przez zero', () => {
+  it('ostatni remanent bez nadwyżki mówi, że ubytki mieściły się w limicie', () => {
     const { s, info } = rich();
-    s.month.revenue = 0;
-    let section = sectionTitled(StorePanel({ s, info, v: 1 }), 'Ubytki w tym miesiącu');
-    expect(walk(section).find((v) => v.type === Bar)!.props.value).toBe(0);
-    expect(textOf(section)).not.toMatch(/NaN|Infinity/);
-    s.tycoon.wut.month.termin = 10;   // ubytek bez obrotu: już ponad limitem
-    section = sectionTitled(StorePanel({ s, info, v: 1 }), 'Ubytki w tym miesiącu');
-    expect(walk(section).find((v) => v.type === Bar)!.props.value).toBe(1);
-    expect(walk(section).find((v) => v.type === Bar)!.props.warn).toBe(true);
-    expect(textOf(section)).not.toMatch(/NaN|Infinity/);
+    const r = s.franchisee.remanent;
+    r.known = true;
+    r.last = { day: 89, fromDay: 0, revenue: 1_200_000, byReason: { termin: 1, kradziez: 1, pomylki: 1, karty: 0 }, total: 3, limit: 14_400, charge: 0, first: true };
+    expect(row(sectionTitled(StorePanel({ s, info, v: 1 }), 'Remanent'), 'Ostatni remanent')).toBe(plain(`${formatDate(89)}, w limicie`));
+  });
+
+  it('podpowiedź podaje porę i częstość remanentu ze stałych', () => {
+    const { s, info } = rich();
+    const hint = textOf(sectionTitled(StorePanel({ s, info, v: 1 }), 'Remanent'));
+    expect(hint).toContain(`o ${formatClock(REMANENT.at)} ostatniego dnia co ${REMANENT.everyMonths} miesiące`);
+    expect(hint).toContain('Nadwyżkę ponad limit Centrali potrąca z przelewu tego samego dnia');
   });
 
   it('Czystość sali: zaokrąglony procent i pogoda', () => {

@@ -3,6 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEBT_LIMIT } from '@/sim/economy/catalog';
 import type { Command } from '@/sim/economy/commands';
 import { DEBT_WARN, createEconomy, debtWarningText, emptyCounters, type CommandResult, type EconomyState, type MonthReport } from '@/sim/economy/economy';
+import { formatDate } from '@/sim/economy/calendar';
+import { buildStatement, type RemanentProtocol, type Statement } from '@/sim/economy/franchisee';
+import { WUT, WUT_LABEL, WUT_REASONS } from '@/sim/economy/tycoon/wut';
 import { EQUIPMENT } from '@/sim/economy/upgrades';
 import { computeStoreInfo, type StoreInfo } from '@/sim/economy/storeInfo';
 import { layoutFor } from '@/sim/store/layoutFor';
@@ -14,15 +17,17 @@ import { MemoryStorage } from '@/game/memoryStorage';
 import { RANKED_BANKRUPT_TEXT, RANKED_KEYS, createRankedSession, saveFinished, saveRanked, clearFinished, type FinishedRun } from '@/game/rankedRun';
 import { newRunLog } from '@/game/session';
 import {
-  econ, ephemeral, hints, panel, pushStory, ranked, report, selection, showHints, showSettings, speed, start, story, tab, unsent, welcome, type GameActions,
+  econ, ephemeral, hints, isWindowOpen, panel, pushStory, ranked, remanent, report, selection, showHints, showSettings, speed, start, story, tab, unsent, welcome,
+  type Controls, type GameActions,
 } from '../state';
+import { App } from '../App';
 import { ClaimChip, RankingButton, TrustChip } from './Hud';
-import { int, zl } from './format';
+import { int, minusZl, money, percentOf, signedZl, zl } from './format';
 import { Bar, PalletItem } from './panels';
 import { ENERGY_TITLE } from './tapBlock';
 import {
   ClickerBar, ComboChip, EPHEMERAL_BADGE, EPHEMERAL_NOTE, FIRST_DAY_HINTS, FirstDayHints, RANKED_NOTE, RESTART_CONFIRM, RankingSettings, ReportBody,
-  ReportModal, STORY_GRACE_MS, SelectionCard, StoreActions, StoreBadge, StoryModal, WelcomeModal, abandonQuestion, refreshStoredRun, storedRun,
+  RemanentModal, ReportModal, STORY_GRACE_MS, SelectionCard, StoreActions, StoreBadge, StoryModal, WelcomeModal, abandonQuestion, refreshStoredRun, storedRun,
   storedRunNow, terminationReason,
 } from './overlays';
 import { buttonLabelled, buttonsOf, click, labels, textOf, walk, type Vnode } from './vnodeTree';
@@ -35,6 +40,7 @@ const resetSignals = (): void => {
   selection.value = null;
   tab.value = null;
   report.value = null;
+  remanent.value = null;
   welcome.value = null;
   start.value = null;
   showSettings.value = false;
@@ -340,7 +346,7 @@ describe('raport miesięczny: pozycje sumują się do wyniku', () => {
   );
   const report = (bonus: number, wut = 0): MonthReport => {
     const counters = { ...emptyCounters(), margin: 10_000, other: 500, bonus, wages: 2000, media: 600, fee: 4500, fines: 100, wut, logistics: 200 };
-    return { label: 'wrzesień 2026', counters, profit: 10_000 + bonus + 500 - 2000 - 600 - 4500 - 100 - wut - 200, cash: 5000, comment: 'x', detail: null };
+    return { label: 'wrzesień 2026', counters, profit: 10_000 + bonus + 500 - 2000 - 600 - 4500 - 100 - wut - 200, cash: 5000, comment: 'x', detail: null, statement: null };
   };
   const LINES = ['Marża i inne przychody', 'Premie Centrali', 'Płace', 'Media', 'Opłata franczyzowa', 'Mandaty', 'Ubytki ponad limit Centrali', 'Logistyka'];
 
@@ -534,7 +540,7 @@ function detailed(over: Partial<TycoonMonthReport> = {}): TycoonMonthReport {
 }
 function monthReport(detail: TycoonMonthReport | null, over: Partial<MonthReport> = {}): MonthReport {
   const counters = { ...emptyCounters(), customers: 3200, lost: 40, revenue: 51_000, investments: 1500 };
-  return { label: 'wrzesień 2026', counters, profit: detail?.result ?? 0, cash: 12_345, comment: detail ? reportCommentText(detail.commentId) : 'Stary komentarz.', detail, ...over };
+  return { label: 'wrzesień 2026', counters, profit: detail?.result ?? 0, cash: 12_345, comment: detail ? reportCommentText(detail.commentId) : 'Stary komentarz.', detail, statement: null, ...over };
 }
 /** Element drzewa o danej klasie. */
 const byClass = (tree: Vnode, cls: string): Vnode => {
@@ -562,7 +568,7 @@ describe('raport miesięczny z danymi tycoona (detail)', () => {
     expect(rows.slice(0, 9)).toEqual([
       ['Marża ze sprzedaży', '10 000 zł'], ['Premie Centrali', '300 zł'], ['Inne przychody i koszty', '500 zł'],
       ['Płace', `−${z(2000)}`], ['Media', '−600 zł'], ['Opłata franczyzowa', `−${z(4500)}`],
-      ['Mandaty i kary', '−100 zł'], ['Ubytki ponad limit Centrali', '−450 zł'], ['Logistyka', '−200 zł'],
+      ['Mandaty i kary', '−100 zł'], ['Ubytki ponad limit Centrali', '−450 zł'], ['Palety ponad darmowe', '−200 zł'],
     ]);
   });
 
@@ -612,7 +618,7 @@ describe('raport miesięczny z danymi tycoona (detail)', () => {
     const d = detailed({ hint: { id: 'wut', value: 45_000, impact: 45_000 } });
     const hint = byClass(tree(d), 'tt-report-hint');
     expect(textOf(hint)).toContain(hintText(d.hint, int));
-    expect(plain(textOf(hint))).toContain('Ubytki ponad limit Centrali: 45 000 zł');
+    expect(plain(textOf(hint))).toContain('Remanent: ubytki ponad limit Centrali 45 000 zł');
   });
 
   it('KPI w miesiącu: „X trafione, Y nietrafione”; bez rozliczonego tygodnia osobne zdanie', () => {
@@ -665,6 +671,154 @@ describe('raport miesięczny z danymi tycoona (detail)', () => {
       'Wynik miesiąca', 'Inwestycje', 'Gotówka na koniec']);
     expect(textOf(byClass(old, 'tt-quote'))).toContain('Stary komentarz.');
     expect(walk(old).some((v) => String(v.props.class ?? '').startsWith('tt-report-'))).toBe(false);
+  });
+});
+
+// --- Wyciąg od Centrali w raporcie miesiąca (SIM_VERSION 6) --------------------------------------------------------
+
+/** Wyciąg z arytmetyki symulacji (`buildStatement`): przelew 31 500, potrącenia 1 980, koszty 33 065, więc „Zostaje Ci” jest na minusie. */
+function statementOf(over: Partial<Parameters<typeof buildStatement>[0]> = {}): Statement {
+  return buildStatement({
+    month: { margin: 30_000, bonus: 1_500, pallets: 480, wages: 20_400, media: 4_110 },
+    guarantee: 0, installments: 1_500, remanent: 0, spent: 3_500, fines: 100, other: 450, cashBefore: 10_000, partial: false, ...over,
+  });
+}
+/** Wiersze `.tt-row` poddrzewa: [napis, wartość bez twardych spacji]. */
+const rowsOf = (tree: Vnode): [string, string][] => walk(tree).filter((v) => String(v.props.class ?? '').startsWith('tt-row'))
+  .map((v) => [textOf((v.props.children as Vnode[])[0]), plain(textOf((v.props.children as Vnode[])[1]))] as [string, string]);
+
+describe('raport miesięczny z wyciągiem od Centrali (statement)', () => {
+  const tree = (st = statementOf(), d: TycoonMonthReport | null = detailed(), over: Partial<MonthReport> = {}): Vnode =>
+    ReportBody({ r: monthReport(d, { statement: st, ...over }) }) as Vnode;
+  const statement = (t: Vnode): Vnode => byClass(t, 'tt-statement');
+
+  it('na górze „Wyciąg od Centrali” w trzech sekcjach: Przelew od Centrali, Potrącenia, Twoje koszty', () => {
+    const t = tree();
+    const sec = statement(t);
+    expect(walk(sec).filter((v) => v.type === 'h3').map((v) => textOf(v))).toEqual(['Przelew od Centrali', 'Potrącenia', 'Twoje koszty']);
+    expect(sec.props['aria-label']).toBe('Wyciąg od Centrali');
+    expect(walk(t).findIndex((v) => v === sec)).toBeLessThan(walk(t).findIndex((v) => String(v.props.class ?? '') === 'tt-report-trust'));
+  });
+
+  it('pozycje i sumy sekcji zgadzają się ze wyciągiem: przelew, potrącenia (z „−”), koszty (z „−”)', () => {
+    const st = statementOf();
+    const rows = rowsOf(statement(tree(st))).slice(0, 12);
+    expect(rows).toEqual([
+      ['Marża', z(30_000)], ['Premie', z(1_500)], ['Razem', z(st.transfer)],
+      ['Raty', `−${z(1_500)}`], ['Palety ponad darmowe', `−${z(480)}`], ['Razem', `−${z(st.deductions)}`],
+      ['Pensje', `−${z(20_400)}`], ['ZUS', `−${z(st.zus)}`], ['VAT', `−${z(st.vat)}`], ['Księgowa', `−${z(st.accounting)}`], ['Media', `−${z(4_110)}`],
+      ['Razem', `−${z(st.costs)}`],
+    ]);
+    expect(st.transfer).toBe(31_500);
+    expect(st.deductions).toBe(1_980);
+    expect(st.net).toBe(st.transfer - st.deductions - st.costs);
+  });
+
+  it('dopłata z gwarancji i remanent pokazują się tylko wtedy, gdy są dodatnie', () => {
+    const none = rowsOf(statement(tree())).map(([l]) => l);
+    expect(none).not.toContain('Dopłata z gwarancji');
+    expect(none).not.toContain('Remanent');
+    const st = statementOf({ guarantee: 2_500, remanent: 1_800 });
+    const rows = rowsOf(statement(tree(st)));
+    expect(rows.slice(0, 4)).toEqual([['Marża', z(30_000)], ['Premie', z(1_500)], ['Dopłata z gwarancji', z(2_500)], ['Razem', z(st.transfer)]]);
+    expect(rows.filter(([l]) => l === 'Remanent')).toEqual([['Remanent', `−${z(1_800)}`]]);
+    expect(rows.indexOf(rows.find(([l]) => l === 'Remanent')!)).toBeGreaterThan(rows.findIndex(([l]) => l === 'Palety ponad darmowe'));   // w potrąceniach, po paletach
+    expect(st.deductions).toBe(1_500 + 480 + 1_800);
+  });
+
+  it('pod sekcjami duże „Zostaje Ci” ze znakiem (plus na zielono, minus na czerwono), gotówka po zamknięciu i wynik bez rat do rankingu', () => {
+    const loss = statementOf();
+    const net = byClass(statement(tree(loss)), 'tt-st-net');
+    expect(plain(textOf(net))).toBe(`Zostaje Ci${plain(signedZl(loss.net))}`);
+    expect(String(net.props.class)).toContain('neg');
+    expect(loss.net).toBeLessThan(0);
+    const gain = statementOf({ month: { margin: 50_000, bonus: 2_000, pallets: 0, wages: 20_400, media: 4_110 }, installments: 0 });
+    expect(gain.net).toBeGreaterThan(0);
+    expect(String(byClass(statement(tree(gain)), 'tt-st-net').props.class)).toContain('pos');
+    expect(plain(textOf(byClass(statement(tree(gain)), 'tt-st-net')))).toContain(plain(`+${zl(gain.net)}`));
+    const rows = rowsOf(statement(tree(loss)));
+    expect(rows).toContainEqual(['Gotówka po zamknięciu', plain(money(loss.cashAfter))]);
+    expect(rows).toContainEqual(['Wynik miesiąca bez rat (do rankingu)', plain(signedZl(loss.result))]);
+    expect(loss.cashAfter).toBe(10_000 + loss.net);
+    expect(loss.result).toBe(loss.net + 1_500 + 450 - 100);   // bez rat, z innymi przychodami i bez mandatów
+  });
+
+  it('„Gotówka po zamknięciu” ma kolor z progów debetu (tt-free)', () => {
+    const net = statementOf().net;
+    const tone = (cashAfter: number): string => String(byClass(statement(tree(statementOf({ cashBefore: cashAfter - net }))), 'tt-free').props.class);
+    expect(tone(100_000)).toBe('tt-free ok');
+    expect(tone(DEBT_WARN)).toBe('tt-free ok');          // równo na progu: jeszcze bez ostrzeżenia
+    expect(tone(DEBT_WARN - 1)).toBe('tt-free warn');
+    expect(tone(DEBT_LIMIT)).toBe('tt-free warn');       // granica jest ostra: dopiero poniżej gra się kończy
+    expect(tone(DEBT_LIMIT - 1)).toBe('tt-free danger');
+  });
+
+  it('zwijana lista „Gotówka w miesiącu”: zakupy za gotówkę, mandaty, inne ze znakiem; zwinięta domyślnie', () => {
+    const details = walk(statement(tree())).find((v) => v.type === 'details')!;
+    expect(details.props.open).toBeUndefined();
+    expect(textOf(walk(details).find((v) => v.type === 'summary'))).toBe('Gotówka w miesiącu');
+    expect(rowsOf(details)).toEqual([['Zakupy za gotówkę', `−${z(3_500)}`], ['Mandaty', `−${z(100)}`], ['Inne przychody i koszty', `+${z(450)}`]]);
+    const other = walk(statement(tree(statementOf({ other: -700 })))).find((v) => v.type === 'details')!;
+    expect(rowsOf(other).at(-1)).toEqual(['Inne przychody i koszty', `−${z(700)}`]);
+  });
+
+  it('zero w potrąceniu to „0 zł”, nie „−0 zł”', () => {
+    const rows = rowsOf(statement(tree(statementOf({ installments: 0 }))));
+    expect(rows).toContainEqual(['Raty', z(0)]);
+    expect(plain(textOf(tree(statementOf({ installments: 0, remanent: 0 }))))).not.toContain('−0');
+  });
+
+  it('pierwszy miesiąc po wejściu nowych zasad (partial): notka o rozliczeniu od chwili aktualizacji', () => {
+    expect(textOf(tree())).not.toContain('Rozliczenie od wejścia nowych zasad');
+    const note = textOf(tree(statementOf({ partial: true })));
+    expect(note).toContain('Rozliczenie od wejścia nowych zasad: przelew i koszty liczone od chwili aktualizacji gry');
+  });
+
+  it('reszta raportu tycoona zostaje pod wyciągiem: obrót i klienci, zaufanie, komentarz, wskazówka, KPI; dawnego nagłówka i listy pozycji nie ma', () => {
+    const t = tree();
+    const order = ['tt-statement', 'tt-st-meta', 'tt-report-trust', 'tt-quote', 'tt-report-hint', 'tt-report-kpi'];
+    const nodes = walk(t);
+    const hasClass = (v: Vnode, c: string): boolean => String(v.props.class ?? '').split(' ').includes(c);
+    const at = order.map((c) => nodes.findIndex((v) => hasClass(v, c)));
+    expect(at.every((i) => i >= 0)).toBe(true);
+    expect([...at].sort((a, b) => a - b)).toEqual(at);
+    expect(nodes.some((v) => hasClass(v, 'tt-report-head'))).toBe(false);
+    expect(nodes.some((v) => hasClass(v, 'tt-report-lines'))).toBe(false);
+    expect(plain(textOf(byClass(t, 'tt-st-meta')))).toBe(`Obrót ${z(51_000)} · klienci ${plain(int(3200))} (utraceni: 40)`);
+    expect(textOf(byClass(t, 'tt-report-trust'))).toContain('Zaufanie Centrali: 62 → 58');
+    expect(textOf(byClass(t, 'tt-quote'))).toContain(reportCommentText('plus-0'));
+    expect(textOf(byClass(t, 'tt-report-kpi'))).toBe('KPI tygodnia w miesiącu: 3 trafione, 1 nietrafione');
+  });
+
+  it('gotówka po zamknięciu pod progiem ostrzeżenia: ostrzeżenie o granicy debetu pod wyciągiem', () => {
+    const cash = DEBT_WARN - 500;
+    const text = plain(textOf(tree(statementOf(), detailed(), { cash })));
+    expect(text).toContain(plain(debtWarningText(cash)));
+    expect(plain(textOf(tree()))).not.toContain('granicy debetu');
+  });
+
+  it('raport z wyciągiem, ale bez danych tycoona: wyciąg, obrót i komentarz', () => {
+    const t = tree(statementOf(), null);
+    expect(walk(t).some((v) => v.props.class === 'tt-statement')).toBe(true);
+    expect(textOf(byClass(t, 'tt-quote'))).toContain('Stary komentarz.');
+    expect(walk(t).some((v) => String(v.props.class ?? '').startsWith('tt-report-'))).toBe(false);
+  });
+
+  it('raport ze starego zapisu (statement: null) nie ma wyciągu i zostaje dawnym widokiem', () => {
+    expect(walk(tree(undefined, detailed(), { statement: null })).some((v) => v.props.class === 'tt-statement')).toBe(false);
+    const oldest = ReportBody({ r: monthReport(null, { statement: null }) }) as Vnode;
+    expect(walk(oldest).some((v) => v.props.class === 'tt-statement')).toBe(false);
+    expect(textOf(oldest)).toContain('Opłata franczyzowa');
+    expect(textOf(oldest)).toContain('Wynik miesiąca');
+  });
+
+  it('okno raportu: tytuł „Wyciąg od Centrali: {miesiąc}”, a stary raport zostaje „Raport: {miesiąc}”', () => {
+    report.value = monthReport(detailed(), { statement: statementOf() });
+    expect(textOf(ReportModal({ game: fakeGame() }) as Vnode)).toContain('Wyciąg od Centrali: wrzesień 2026');
+    expect(walk(ReportModal({ game: fakeGame() }) as Vnode).find((v) => v.props.role === 'dialog')!.props['aria-label']).toBe('Wyciąg od Centrali: wrzesień 2026');
+    report.value = monthReport(detailed());
+    expect(textOf(ReportModal({ game: fakeGame() }) as Vnode)).toContain('Raport: wrzesień 2026');
+    expect(textOf(ReportModal({ game: fakeGame() }) as Vnode)).not.toContain('Wyciąg od Centrali: wrzesień');
   });
 });
 
@@ -1034,6 +1188,134 @@ describe('okno ważnego zdarzenia (StoryModal): gra czeka na „OK”', () => {
     s.gameOver = true;
     publishState(s, info);
     expect(StoryModal()).toBeNull();
+  });
+});
+
+describe('okno remanentu (RemanentModal): protokół i „OK”', () => {
+  // „OK” przez pierwsze STORY_GRACE_MS po pojawieniu się okna nic nie robi (czas rzeczywisty), więc testy sterują zegarem
+  beforeEach(() => { vi.useFakeTimers(); });
+  const waitGrace = (): void => { vi.advanceTimersByTime(STORY_GRACE_MS); };
+
+  /** Protokół pierwszego remanentu: 90 dni, obrót 1,2 mln zł, ubytki 13 000 zł przy limicie 14 400 zł (mieszczą się). */
+  const protocol = (over: Partial<RemanentProtocol> = {}): RemanentProtocol => ({
+    day: 89, fromDay: 0, revenue: 1_200_000, byReason: { termin: 6_000, kradziez: 4_000, pomylki: 2_500, karty: 500 }, total: 13_000, limit: 14_400, charge: 0,
+    first: true, ...over,
+  });
+  const QUOTE = 'Towar nie ginie, tylko zmienia właściciela. Na Ciebie.';
+  const open = (over: Partial<RemanentProtocol> = {}, text = `Remanent: ubytki 13 000 zł, limit Centrali 14 400 zł. ${QUOTE}`): Vnode => {
+    remanent.value = { protocol: protocol(over), text };
+    return RemanentModal() as Vnode;
+  };
+
+  it('bez protokołu nic nie widać i gra się nie zatrzymuje', () => {
+    expect(RemanentModal()).toBeNull();
+    expect(isWindowOpen()).toBe(false);
+  });
+
+  it('otwarte okno zatrzymuje grę (isWindowOpen) i jest oknem dialogowym „Protokół remanentu” z jednym przyciskiem „OK”', () => {
+    const tree = open();
+    expect(isWindowOpen()).toBe(true);
+    const dialog = walk(tree).find((v) => v.props.role === 'dialog')!;
+    expect(dialog.props['aria-label']).toBe('Protokół remanentu');
+    expect(dialog.props['aria-modal']).toBe('true');
+    expect(textOf(walk(tree).find((v) => v.type === 'h2'))).toBe('Protokół remanentu');
+    expect(labels(tree)).toEqual(['OK']);
+  });
+
+  it('treść: okres od–do, obrót, ubytki według przyczyn i razem, limit Centrali', () => {
+    const tree = open();
+    const text = plain(textOf(tree));
+    expect(text).toContain(`Okres: ${formatDate(0)} – ${formatDate(89)}`);
+    expect(rowsOf(tree)).toEqual([
+      ['Obrót w okresie', z(1_200_000)],
+      ...WUT_REASONS.map((r) => [WUT_LABEL[r], z(protocol().byReason[r])] as [string, string]),
+      ['Ubytki razem', z(13_000)],
+      ['Limit Centrali', z(14_400)],
+    ]);
+    expect(WUT_REASONS.map((r) => WUT_LABEL[r])).toEqual(['Przeterminowane', 'Kradzieże i „zapomniane” skany', 'Pomyłki i stłuczki', 'Decyzje dnia']);
+  });
+
+  it('pierwszy remanent: „Limit poznajesz dopiero teraz: X% obrotu” z WUT.threshold; kolejne protokoły tego nie mówią', () => {
+    expect(textOf(open())).toContain(`Limit poznajesz dopiero teraz: ${percentOf(WUT.threshold)} obrotu.`);
+    expect(textOf(open())).toContain('1,2% obrotu');
+    expect(walk(open()).find((v) => v.props.role === 'note')).toBeDefined();
+    expect(textOf(open({ first: false }))).not.toContain('poznajesz');
+  });
+
+  it('nadwyżka ponad limit „zejdzie z dzisiejszego przelewu”, a ubytki w limicie „mieszczą się w limicie”', () => {
+    const over = open({ total: 16_000, charge: 1_600 });
+    expect(plain(textOf(byClass(over, 'tt-remanent-verdict')))).toBe(`Nadwyżka ${z(1_600)} zejdzie z dzisiejszego przelewu.`);
+    expect(String(byClass(over, 'tt-remanent-verdict').props.class)).toContain('over');
+    const within = open({ charge: 0 });
+    expect(textOf(byClass(within, 'tt-remanent-verdict'))).toBe('Ubytki mieszczą się w limicie.');
+    expect(String(byClass(within, 'tt-remanent-verdict').props.class)).not.toContain('over');
+  });
+
+  it('tekst zdarzenia jest cytatem Centrali (.tt-quote)', () => {
+    const quote = byClass(open(), 'tt-quote');
+    expect(textOf(quote)).toContain(QUOTE);
+    expect(textOf(quote)).toContain('Centrala');
+  });
+
+  it('„OK” zamyka okno (sygnał), ale dopiero po karencji: stuknięcie w chwili pojawienia się nic nie robi', () => {
+    const tree = open();
+    click(buttonsOf(tree)[0]!);
+    expect(remanent.value).not.toBeNull();   // zbyt wcześnie: gracz mógł właśnie stukać w kliker
+    vi.advanceTimersByTime(STORY_GRACE_MS - 1);
+    click(buttonsOf(tree)[0]!);
+    expect(remanent.value).not.toBeNull();
+    vi.advanceTimersByTime(1);
+    click(buttonsOf(tree)[0]!);
+    expect(remanent.value).toBeNull();
+    expect(RemanentModal()).toBeNull();
+    expect(isWindowOpen()).toBe(false);
+  });
+
+  it('karencja liczy się od pojawienia się okna na ekranie; nowy protokół dostaje własną', () => {
+    open();
+    vi.advanceTimersByTime(60_000);
+    const later = open({ day: 179, fromDay: 89, first: false });   // nowy obiekt = nowy protokół
+    click(buttonsOf(later)[0]!);
+    expect(remanent.value).not.toBeNull();
+    waitGrace();
+    click(buttonsOf(later)[0]!);
+    expect(remanent.value).toBeNull();
+  });
+
+  it('spóźnione stuknięcie w stary protokół nie zamyka nowego', () => {
+    const first = open();
+    waitGrace();
+    open({ day: 179, fromDay: 89, first: false });
+    RemanentModal();
+    waitGrace();
+    click(buttonsOf(first)[0]!);   // przycisk starego okna
+    expect(remanent.value?.protocol.day).toBe(179);
+  });
+
+  it('ma pierwszeństwo przed wpisami „OK” (StoryModal) i kartą decyzji: czekają, aż protokół zniknie', () => {
+    pushStory('Zaufanie Centrali', 'Tekst.');
+    expect(StoryModal()).not.toBeNull();
+    open();
+    expect(StoryModal()).toBeNull();
+    waitGrace();
+    click(buttonsOf(RemanentModal() as Vnode)[0]!);
+    expect(remanent.value).toBeNull();
+    expect(StoryModal()).not.toBeNull();
+  });
+
+  it('po końcu gry nie rysuje się (okno końca współpracy ma pierwszeństwo)', () => {
+    open();
+    const { s, info } = base();
+    s.gameOver = true;
+    publishState(s, info);
+    expect(RemanentModal()).toBeNull();
+  });
+
+  it('jest zamontowane w aplikacji zaraz za raportem miesiąca (bez tego otwarte okno trzymałoby grę bez widocznego przycisku)', () => {
+    const controls = { setSpeed: vi.fn(), rotate: vi.fn(), setTimeOfDay: vi.fn(), setPreset: vi.fn(), generate: vi.fn(), randomize: vi.fn() } satisfies Controls;
+    const types: unknown[] = walk(App({ controls, game: fakeGame() })).map((v) => v.type);
+    expect(types).toContain(RemanentModal);
+    expect(types.indexOf(RemanentModal)).toBe(types.indexOf(ReportModal) + 1);
   });
 });
 

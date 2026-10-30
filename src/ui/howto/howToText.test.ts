@@ -2,8 +2,8 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
-  ASSISTANT_UNLOAD_MIN, CATS, CAT_INFO, DEBT_LIMIT, DELIVERY_AT, FRANCHISE_FEE_FIXED, FRANCHISE_FEE_SHARE, HOT, MINUTES_PER_DAY, MINUTES_PER_SECOND_CLOSED,
-  MINUTES_PER_SECOND_OPEN, OPEN_FROM, OPEN_TO, ORDER_DEADLINE, PALLETS_FREE, PALLET_FEE, PALLET_ITEMS, STAFF_MAX, STRAZ, TAP_ITEMS,
+  ASSISTANT_UNLOAD_MIN, CATS, CAT_INFO, DEBT_LIMIT, DELIVERY_AT, GUARANTEE, HOT, INSTALLMENTS, MINUTES_PER_DAY, MINUTES_PER_SECOND_CLOSED,
+  MINUTES_PER_SECOND_OPEN, OPEN_FROM, OPEN_TO, ORDER_DEADLINE, OWN_COSTS, PALLETS_FREE, PALLET_FEE, PALLET_ITEMS, REMANENT, STAFF_MAX, STRAZ, TAP_ITEMS,
   TILL_TAP_QUEUE_MIN,
 } from '@/sim/economy/catalog';
 import { nextRankAt, rankFor } from '@/sim/economy/progress';
@@ -12,8 +12,7 @@ import { KPI } from '@/sim/economy/tycoon/kpi';
 import { PROFILE_LABEL, PROFILE_ORDER, STAFF_PROFILES } from '@/sim/economy/tycoon/staff';
 import { SUNDAY_TRAFFIC } from '@/sim/economy/tycoon/sunday';
 import { TRUST, turnoverBonusShare } from '@/sim/economy/tycoon/trust';
-import { WUT } from '@/sim/economy/tycoon/wut';
-import { plural } from '../game/format';
+import { plural, zl } from '../game/format';
 import { SPEEDS } from '../game/Hud';
 import { ENERGY_TITLE } from '../game/tapBlock';
 import { stringLiterals } from '../game/sourceLiterals';
@@ -110,14 +109,15 @@ describe('treść okna „Jak grać”', () => {
   });
 
   it('szczegóły to zwinięte sekcje w ustalonej kolejności, każda z treścią', () => {
-    expect(howToDetails().map((s) => s.title)).toEqual(['Pieniądze i ubytki', 'Palety i dostawy', 'Twoje ręce', 'Ludzie', 'Zaufanie Centrali', 'Czas i cele']);
+    expect(howToDetails().map((s) => s.title)).toEqual(['Pieniądze i remanent', 'Palety i dostawy', 'Twoje ręce', 'Ludzie', 'Zaufanie Centrali', 'Czas i cele']);
     for (const s of howToDetails()) expect(s.paragraphs.length, s.title).toBeGreaterThan(0);
   });
 
-  it('punkty i szczegóły razem mają najwyżej ok. 450 słów (z nagłówkami)', () => {
+  it('punkty i szczegóły razem mają najwyżej ok. 490 słów (z nagłówkami)', () => {
+    // 450 do SIM_VERSION 5; model z trzema kieszeniami (saldo, wyciąg, koszty własne, raty, remanent, gwarancja) potrzebuje ok. 35 słów więcej
     const n = words(text());
     expect(n).toBeGreaterThanOrEqual(200);
-    expect(n).toBeLessThanOrEqual(450);
+    expect(n).toBeLessThanOrEqual(490);
   });
 
   it('żadnych śladów po szablonie, wykrzykników ani sklejonych spacji; każdy punkt i akapit kończy się kropką', () => {
@@ -129,7 +129,7 @@ describe('treść okna „Jak grać”', () => {
     for (const p of [...howToPoints(), ...howToDetails().flatMap((s) => s.paragraphs)]) expect(p, p).toMatch(/\.$/);
   });
 
-  it('punkty: cel, karta, palety, ludzie, kolejka, opłata i tempo, z nazwami jak w interfejsie', () => {
+  it('punkty: cel, karta, palety, ludzie, kolejka, saldo i tempo, z nazwami jak w interfejsie', () => {
     const [goal, card, pallets, people, queue, fee, speed] = howToPoints();
     expect(goal).toBe(`Cel: dojść do rangi „${rankFor(50)}” i nie stracić umowy. Centrala wypowie ją przy zerowym zaufaniu.`);
     expect(card).toContain('karta decyzji');
@@ -140,14 +140,12 @@ describe('treść okna „Jak grać”', () => {
     expect(speed).toBe(`Tempo zmieniasz u góry (${SPEEDS[1]!.label}–${SPEEDS[SPEEDS.length - 1]!.label}), a Spacja pauzuje.`);
   });
 
-  it('rozliczenie miesiąca: punkt i szczegół opisują pasek z rachunkiem Centrali i ostrzeżenia przy zakupach', () => {
+  it('rozliczenie miesiąca: punkt i szczegół opisują saldo, pasek i wyciąg; opłaty franczyzowej nie ma', () => {
     const fee = howToPoints()[5]!;
-    expect(fee).toContain('pasek pod gotówką pokazuje, ile oddasz i ile zostaje');
-    const money = howToDetails().find((s) => s.title === 'Pieniądze i ubytki')!;
-    const settle = money.paragraphs.find((p) => p.includes('jednym przelewem'))!;
-    expect(settle).toContain('Opłata, ubytki i premia schodzą jednym przelewem na koniec miesiąca.');
-    expect(settle).toContain('Stuknij pasek: rachunek i podgląd końca miesiąca.');
-    expect(settle).toContain('Zakupy ostrzegają, nie blokują.');
+    expect(fee).toBe('Marża idzie na saldo, gotówka rusza się przy zamknięciu miesiąca; pasek pokazuje, co zostanie (zakładka Cele, sekcja „Ten miesiąc”).');
+    const money = howToDetails().find((s) => s.title === 'Pieniądze i remanent')!;
+    expect(money.paragraphs).toContain('Marża i premie idą na saldo u Centrali, a przy zamknięciu miesiąca przelew minus raty, palety i koszty daje „Zostaje Ci”.');
+    expect(text()).not.toMatch(/opłat\w* franczyz|Opłata, ubytki/);   // opłata franczyzowa zniknęła w SIM 6
   });
 
   it('punkty nie obiecują nic o częstości mandatów ani o stukaniu w kasę (to opisze balans po zmianie mechaniki)', () => {
@@ -163,14 +161,24 @@ describe('treść okna „Jak grać”', () => {
     for (const p of STAFF_PROFILES) expect(pointsText()).toContain(`„${PROFILE_LABEL[p]}”`);
   });
 
-  it('każda liczba w szczegółach to stała gry: pieniądze i ubytki', () => {
+  it('każda liczba w szczegółach to stała gry: pieniądze, koszty własne, raty, remanent i gwarancja', () => {
     const t = detailsText();
-    expect(t).toContain(`od ${Math.round(CAT_INFO.alkohol.margin * 100)}% (alkohol) do ${Math.round(CAT_INFO.slodycze.margin * 100)}% (słodycze) ceny towaru`);
-    expect(t).toContain(`hot-dogi i kawa dają ${Math.round(HOT.margin * 100)}%`);
-    expect(HOT.margin).toBeGreaterThan(marginRange().high.margin);   // „dają więcej niż reszta” jest prawdą
-    expect(t).toContain(`Opłata franczyzowa to ${FRANCHISE_FEE_FIXED} zł plus ${percent(FRANCHISE_FEE_SHARE)} obrotu.`);
-    expect(t).toContain(`Do ${pl(WUT.threshold * 100)}% obrotu miesiąca pokrywa je Centrala, ponad limit płacisz Ty`);
-    expect(t).toContain('Ubytki to przeterminowany towar, kradzieże, pomyłki i „zapomniane” skany');
+    const { low, high } = marginRange();
+    expect(t).toContain(`od ${pl(Math.round(low.margin * 1000) / 10)}% (alkohol) do ${pl(Math.round(high.margin * 1000) / 10)}% (słodycze) ceny towaru`);
+    expect(t).toContain(`hot-dogi i kawa dają ${pl(Math.round(HOT.margin * 1000) / 10)}%`);
+    expect(HOT.margin).toBeGreaterThan(high.margin);   // „dają więcej niż reszta” jest prawdą
+    // koszty własne
+    expect(t).toContain(`ZUS (${zl(OWN_COSTS.zus)}), księgowa (${zl(OWN_COSTS.accounting)}) i VAT (${pl(OWN_COSTS.vatShare * 100)}% przelewu)`);
+    // raty: plany i limit z INSTALLMENTS
+    expect(INSTALLMENTS.plans.map((p) => p.months)).toEqual([3, 6, 12]);
+    expect(INSTALLMENTS.plans.map((p) => p.fee)).toEqual([0.04, 0.08, 0.15]);
+    expect(t).toContain('Raty na ulepszenia, sprzęt i remont: 3, 6 albo 12 miesięcy, opłata 4%, 8% albo 15%, razem do 35% przelewu miesięcznie.');
+    expect(t).toContain(`do ${pl(INSTALLMENTS.limitShare * 100)}% przelewu miesięcznie`);
+    // remanent: co ile miesięcy, limitu nie zdradzamy
+    expect(t).toContain(`Co ${REMANENT.everyMonths} miesiące remanent liczy ubytki (zakładka Sklep); limit Centrali poznasz przy pierwszym, a nadwyżkę potrąci z przelewu.`);
+    expect(t).not.toMatch(/\d[,\d]*\s?% obrotu/);   // liczba limitu ubytków (procent obrotu) jest tajemnicą do pierwszego remanentu
+    // gwarancja
+    expect(t).toContain(`Przez pierwsze ${GUARANTEE.months} miesiące Centrala dopłaca do ${zl(GUARANTEE.income)} (zaufanie od ${GUARANTEE.minTrust}, bez mandatu).`);
   });
 
   it('każda liczba w szczegółach to stała gry: palety, ludzie, czas', () => {
@@ -225,7 +233,12 @@ describe('treść okna „Jak grać”', () => {
       expect(text()).toContain('miesiąc na minusie (−9)');
     });
     patched(HOT, { margin: 0.5 }, () => expect(text()).toContain('hot-dogi i kawa dają 50%'));
-    patched(WUT, { threshold: 0.02 }, () => expect(text()).toContain('Do 2% obrotu miesiąca'));
+    patched(OWN_COSTS, { zus: 3300, vatShare: 0.2 }, () => {
+      expect(text()).toContain(`ZUS (${zl(3300)})`);
+      expect(text()).toContain('VAT (20% przelewu)');
+    });
+    patched(GUARANTEE, { income: 30_000, minTrust: 50 }, () => expect(text()).toContain(`dopłaca do ${zl(30_000)} (zaufanie od 50, bez mandatu)`));
+    patched(REMANENT, { everyMonths: 4 }, () => expect(text()).toContain('Co 4 miesiące remanent'));
     patched(KPI, { trustMiss: -5 }, () => expect(text()).toContain('odbiera zaufanie (−5)'));
     expect(text()).toBe(before);   // po podmianach wszystko wróciło
   });

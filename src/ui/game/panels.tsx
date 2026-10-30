@@ -1,13 +1,14 @@
 import type { ComponentChildren } from 'preact';
 import {
-  CATS, CAT_INFO, HIRE_COST, HOUR_CURVE, ORDER_DEADLINE, RESTOCK_RATE, SCO_RATE, STAFF_MAX, TILL_RATE, UNLOAD_RATE, WAGE_PER_DAY,
+  CATS, CAT_INFO, HIRE_COST, HOUR_CURVE, ORDER_DEADLINE, REMANENT, RESTOCK_RATE, SCO_RATE, STAFF_MAX, TILL_RATE, UNLOAD_RATE, WAGE_PER_DAY,
 } from '@/sim/economy/catalog';
-import { formatClock, minuteOfDay } from '@/sim/economy/calendar';
+import { formatClock, formatDate, minuteOfDay } from '@/sim/economy/calendar';
 import {
-  DEBT_WARN, LOC_LABEL, aislePallets, assistantSuggestion, debtWarningText, effects, expectedDailyCustomers, franchiseFee, freeSpots, isClosedForRemont, kpiMetricsOf, kpiScaleOf, level, nextRemont,
+  DEBT_WARN, LOC_LABEL, aislePallets, assistantSuggestion, debtWarningText, effects, expectedDailyCustomers, freeSpots, isClosedForRemont, kpiMetricsOf, kpiScaleOf, level, nextRemont,
   plPallets, robotFleet, slotFree, slotUsage, upgradeBlocker, workshopUnlocked, type EconomyState,
 } from '@/sim/economy/economy';
 import { forecastMonth, spendCheck } from '@/sim/economy/forecast';
+import { dueOf } from '@/sim/economy/franchisee';
 import { MILESTONES } from '@/sim/economy/milestones';
 import { KPI, KPI_FLAVOR, kpiProgress, kpiTitle } from '@/sim/economy/tycoon/kpi';
 import { dayOfMinute, roundNice } from '@/sim/economy/tycoon/time';
@@ -15,7 +16,7 @@ import { WEATHER_LABEL } from '@/sim/economy/tycoon/cleanliness';
 import { staffOnShift } from '@/sim/economy/tycoon/shift';
 import { PROFILE_HINT, PROFILE_LABEL, STAFF_PROFILES, STAFF_TASKS, TASK_LABEL } from '@/sim/economy/tycoon/staff';
 import { trustTier } from '@/sim/economy/tycoon/trust';
-import { WUT, wutCharge, wutTotal } from '@/sim/economy/tycoon/wut';
+import { WUT } from '@/sim/economy/tycoon/wut';
 import type { PalletLoc, StoreInfo } from '@/sim/economy/storeInfo';
 import {
   EQUIPMENT, GROUP_LABEL, UPGRADES, WORKSHOP_LEVEL, equipmentCost, upgradeCost, type UpgradeGroup,
@@ -23,8 +24,8 @@ import {
 import { nextRankAt, rankFor, xpToNext } from '@/sim/economy/progress';
 import { networkIncomeOf, prestigePoints, prestigeReady } from '@/game/meta';
 import { econ, metaView, openMonthPreview, ranked, selection, showPrestige, tab, type GameActions, type TabId } from '../state';
-import { duration, int, pct, people, plural, signedZl, zl } from './format';
-import { SpendNote, spendRisk } from './spend';
+import { duration, int, money, minusZl, pct, people, percentOf, plural, signedZl, zl } from './format';
+import { SpendNote, buyButtons, buyNotes, spendRisk } from './spend';
 import { tapBlock } from './tapBlock';
 
 // --- Wspólne -----------------------------------------------------------------------------------------
@@ -123,9 +124,7 @@ export function StorePanel({ s, info }: { s: EconomyState; info: StoreInfo; v: n
   const usage = slotUsage(s);
   const trust = s.tycoon.trust.value;
   const tier = trustTier(trust);
-  const wut = wutTotal(s.tycoon.wut);
-  const wutLimit = WUT.threshold * Math.max(0, s.month.revenue);
-  const wutOver = wutCharge(s.tycoon.wut, s.month.revenue);
+  const rem = s.franchisee.remanent;
   const hall = s.tycoon.hall;
   const dirty = hall.cleanliness < 50;
   return (
@@ -156,12 +155,11 @@ export function StorePanel({ s, info }: { s: EconomyState; info: StoreInfo; v: n
         <p class="tt-hint tt-flavor">{tier.flavor}</p>
         <p class="tt-hint">Reputacja rośnie, gdy klienci znajdują towar i nie czekają. Spada przez puste półki, kolejki i mandaty.</p>
       </Section>
-      <Section title="Ubytki w tym miesiącu">
-        <Row label="Ubytki (limit Centrali)">{zl(wut)} z {zl(wutLimit)}</Row>
-        <Bar value={wutLimit > 0 ? wut / wutLimit : wut > 0 ? 1 : 0} warn={wut > wutLimit} />
-        {wutOver > 0
-          ? <p class="tt-hint warn">Ubytki ponad limit Centrali na dziś: {zl(wutOver)}. Rozliczenie dopiero przy zamknięciu miesiąca, a obrót jeszcze rośnie, więc kwota może się zmienić.</p>
-          : <p class="tt-hint">Ubytki to przeterminowany towar, kradzieże, pomyłki i skutki decyzji dnia. Centrala pokrywa je do {(WUT.threshold * 100).toLocaleString('pl-PL')}% obrotu miesiąca, resztę płacisz Ty.</p>}
+      <Section title="Remanent">
+        <Row label="Limit ubytków">{rem.known ? `${percentOf(WUT.threshold)} obrotu od ostatniego remanentu` : 'Centrala poda przy remanencie'}</Row>
+        {rem.last && <Row label="Ostatni remanent">{formatDate(rem.last.day)}, {rem.last.charge > 0 ? `nadwyżka ${zl(rem.last.charge)}` : 'w limicie'}</Row>}
+        <Row label="Następny remanent">{formatDate(rem.nextDay)}</Row>
+        <p class="tt-hint">Ubytki (przeterminowany towar, kradzieże, pomyłki i skutki decyzji dnia) liczy się dopiero przy remanencie: o {formatClock(REMANENT.at)} ostatniego dnia co {REMANENT.everyMonths} {plural(REMANENT.everyMonths, 'miesiąc', 'miesiące', 'miesięcy')}. Nadwyżkę ponad limit Centrali potrąca z przelewu tego samego dnia.</p>
       </Section>
       <Section title="Czystość sali">
         <Row label="Czystość">{Math.round(hall.cleanliness)}%</Row>
@@ -275,11 +273,11 @@ export function PeoplePanel({ s, info, game }: { s: EconomyState; info: StoreInf
         <div class="tt-stepper">
           <button type="button" class="tt-btn" aria-label="Zwolnij" onClick={() => game.dispatch({ type: 'fire' })}>−</button>
           <b>{osoby(s.staff)}</b>
-          <button type="button" class="tt-btn" aria-label="Zatrudnij" data-risk={s.staff >= STAFF_MAX ? undefined : spendRisk(s, HIRE_COST)} disabled={s.staff >= STAFF_MAX} onClick={() => game.dispatch({ type: 'hire' })}>+</button>
+          <button type="button" class="tt-btn" aria-label="Zatrudnij" data-risk={s.staff >= STAFF_MAX ? undefined : spendRisk(s, info, HIRE_COST)} disabled={s.staff >= STAFF_MAX} onClick={() => game.dispatch({ type: 'hire' })}>+</button>
         </div>
         <Row label="Płace">{int(s.staff * WAGE_PER_DAY)} zł / dzień</Row>
         <p class="tt-hint">Rekrutacja: {HIRE_COST} zł. Każda osoba na zmianie to {WAGE_PER_DAY} zł dziennie (dwa etaty na 17-godzinny dzień).</p>
-        {s.staff < STAFF_MAX && <SpendNote s={s} price={HIRE_COST} />}
+        {s.staff < STAFF_MAX && <SpendNote s={s} info={info} price={HIRE_COST} />}
       </Section>
       <Section title="Profil pracy">
         <div class="tt-seg wide" role="group" aria-label="Profil pracy">
@@ -354,8 +352,8 @@ export function ShopPanel({ s, info, game }: { s: EconomyState; info: StoreInfo;
             <div key={e.id} class={`tt-item${locked ? ' locked' : ''}`}>
               <div><b>{locked ? '🔒 ' : ''}{e.name}</b>{owned > 0 ? <span class="tt-muted"> ×{owned}</span> : null}<div class="tt-muted">{e.effect}{e.size === 2 ? ' · zajmuje cały slot 2×2' : ''}</div>
                 {locked && <div class="tt-muted warn">Odblokujesz na {e.minLevel}. poziomie</div>}
-                {!locked && <SpendNote s={s} price={cost} />}</div>
-              <button type="button" class="tt-btn tt-buy" data-risk={locked ? undefined : spendRisk(s, cost)} disabled={locked || cost > s.cash} onClick={() => game.dispatch({ type: 'buyEquipment', id: e.id })}>{zl(cost)}</button>
+                {buyNotes(s, info, cost, locked)}</div>
+              {buyButtons(s, info, cost, locked, (raty) => game.dispatch(raty ? { type: 'buyEquipment', id: e.id, raty: true } : { type: 'buyEquipment', id: e.id }))}
             </div>
           );
         })}
@@ -389,11 +387,11 @@ export function ShopPanel({ s, info, game }: { s: EconomyState; info: StoreInfo;
                     <div class="tt-muted">{u.effect}</div>
                     <div class="tt-flavor">{u.flavor}</div>
                     {blocker && !maxed && <div class="tt-muted warn">{blocker}</div>}
-                    {!blocker && !maxed && <SpendNote s={s} price={cost} />}
+                    {!maxed && buyNotes(s, info, cost, !!blocker)}
                   </div>
                   {maxed
                     ? <span class="tt-check">✓</span>
-                    : <button type="button" class="tt-btn tt-buy" data-risk={blocker ? undefined : spendRisk(s, cost)} disabled={!!blocker || cost > s.cash} onClick={() => game.dispatch({ type: 'buyUpgrade', id: u.id })}>{zl(cost)}</button>}
+                    : buyButtons(s, info, cost, !!blocker, (raty) => game.dispatch(raty ? { type: 'buyUpgrade', id: u.id, raty: true } : { type: 'buyUpgrade', id: u.id }))}
                 </div>
               );
             })}
@@ -413,8 +411,8 @@ export function ShopPanel({ s, info, game }: { s: EconomyState; info: StoreInfo;
               <div class="tt-item">
                 <div><b>{s.level < remont.minLevel ? '🔒 ' : ''}{remont.name}</b><div class="tt-muted">Większy lokal: więcej półek, slotów ({remont.slots} × 2×2) i miejsc na palety, więcej klientów. Sklep zamknięty {remont.days} {plural(remont.days, 'dzień', 'dni', 'dni')}.</div>
                   {s.level < remont.minLevel && <div class="tt-muted warn">Odblokujesz na {remont.minLevel}. poziomie</div>}
-                  {s.level >= remont.minLevel && <SpendNote s={s} price={remont.cost} />}</div>
-                <button type="button" class="tt-btn tt-buy" data-risk={s.level < remont.minLevel ? undefined : spendRisk(s, remont.cost)} disabled={s.level < remont.minLevel || remont.cost > s.cash} onClick={() => game.dispatch({ type: 'startRemont' })}>{zl(remont.cost)}</button>
+                  {buyNotes(s, info, remont.cost, s.level < remont.minLevel)}</div>
+                {buyButtons(s, info, remont.cost, s.level < remont.minLevel, (raty) => game.dispatch(raty ? { type: 'startRemont', raty: true } : { type: 'startRemont' }))}
               </div>
             )
             : <p class="tt-hint">To już Flagowiec. Większego sklepu nie będzie.</p>}
@@ -434,7 +432,6 @@ export function ShopPanel({ s, info, game }: { s: EconomyState; info: StoreInfo;
 export function GoalsPanel({ s, info, game }: { s: EconomyState; info: StoreInfo; game: GameActions; v: number }) {
   const t = s.today;
   const m = s.month;
-  const profit = (k: typeof t): number => k.margin + k.bonus + k.other - k.wages - k.media - k.fee - k.fines - k.logistics - k.wut;
   const kpi = s.tycoon.kpi;
   const kpiDone = kpiProgress(kpi, kpiMetricsOf(s));
   const daysLeft = Math.max(0, kpi.toDay - dayOfMinute(s.minute));
@@ -445,9 +442,8 @@ export function GoalsPanel({ s, info, game }: { s: EconomyState; info: StoreInfo
   const ready = MILESTONES.filter((x) => s.milestonesReady.includes(x.id) && !s.milestones.includes(x.id));
   const goals = MILESTONES.filter((x) => !s.milestones.includes(x.id) && !s.milestonesReady.includes(x.id)).slice(0, 3);
   const best = Math.max(1, ...s.history.map((h) => Math.abs(h.profit)));
-  // w trakcie miesiąca `m.fee` jest zerem (opłata schodzi dopiero przy zamknięciu), więc pokazujemy, ile naliczy się od dzisiejszego obrotu
-  const fee = franchiseFee(m.revenue);
-  const forecast = forecastMonth(s);   // rachunek końca miesiąca (ten sam co w pasku): opłata, premia, ubytki i wolne środki
+  const forecast = forecastMonth(s, info);   // prognoza wyciągu na koniec miesiąca (ta sama co w pasku): saldo, raty, „Zostaje Ci”
+  const settle = s.franchisee;
   const nextRank = nextRankAt(s.level);
   const meta = metaView.value;
   return (
@@ -501,27 +497,29 @@ export function GoalsPanel({ s, info, game }: { s: EconomyState; info: StoreInfo
         <Row label="Klienci">{int(t.customers)} (utraceni: {int(t.lost)})</Row>
         <Row label="Obrót">{zl(t.revenue)}</Row>
         <Row label="Marża i premie (Twój przychód)">{zl(t.margin + t.bonus + t.other)}</Row>
-        <Row label="Koszty (bez płac)">{zl(t.fines + t.logistics + t.wut)}</Row>
-        <p class="tt-hint">Płace i media rozliczają się przy zamknięciu, o 23:00.</p>
+        <Row label="Koszty (bez płac)">{zl(t.fines + t.logistics)}</Row>
+        <p class="tt-hint">Marża i premie idą na saldo u Centrali. Płace i media naliczają się co dzień, a płacisz je przy zamknięciu miesiąca.</p>
       </Section>
       <Section title="Ten miesiąc">
         <Row label="Obrót">{zl(m.revenue)}</Row>
-        <Row label="Marża i premie">{zl(m.margin + m.bonus + m.other)}</Row>
-        <Row label="Płace">−{zl(m.wages)}</Row>
-        <Row label="Media">−{zl(m.media)}</Row>
-        <Row label="Mandaty">−{zl(m.fines)}</Row>
-        <Row label="Logistyka">−{zl(m.logistics)}</Row>
-        <Row label="Ubytki ponad limit Centrali">−{zl(m.wut)}</Row>
-        <Row label="Opłata franczyzowa (naliczona do dziś)">−{zl(fee)}</Row>
-        <Row label="Wynik po opłacie (do dziś)"><b>{signedZl(profit(m) - fee)}</b></Row>
-        <Row label="Inwestycje">{zl(m.investments)}</Row>
-        {forecast.bonus > 0 && <Row label="Premia od obrotu (naliczona do dziś)">+{zl(forecast.bonus)}</Row>}
-        {forecast.wut > 0 && <Row label="Ubytki ponad limit (naliczone do dziś)">−{zl(forecast.wut)}</Row>}
-        <Row label="Do oddania Centrali przy zamknięciu"><b>{zl(forecast.due)}</b></Row>
-        <Row label="Wolne środki po rozliczeniu"><b class={`tt-free ${spendCheck(forecast, 0).level}`}>{signedZl(forecast.free)}</b></Row>
-        <p class="tt-hint">Opłatę franczyzową, ubytki ponad limit Centrali i premię od obrotu Centrala rozlicza przy zamknięciu miesiąca. Zostaw gotówkę na opłaty.</p>
-        <p class="tt-hint">Kwota „do oddania” rośnie z obrotem. Wolne środki to gotówka minus ona, bez dochodów i płac z reszty miesiąca.</p>
-        <button type="button" class="tt-btn" onClick={openMonthPreview}>Koniec miesiąca: rachunek i podgląd</button>
+        <Row label="Saldo u Centrali">{zl(forecast.saldo)}</Row>
+        <Row label="Płace (naliczone)">{minusZl(settle.month.wages)}</Row>
+        <Row label="Media (naliczone)">{minusZl(settle.month.media)}</Row>
+        <Row label="Palety do potrącenia">{minusZl(settle.month.pallets)}</Row>
+        <Row label="Raty w tym miesiącu">{minusZl(forecast.installments)}</Row>
+        {settle.installments.map((r) => (
+          <div key={r.id} class="tt-inst">
+            <span>{r.label}</span>
+            <span class="tt-muted">rata {zl(dueOf(r))} · zostało {zl(r.total - r.paid)}</span>
+          </div>
+        ))}
+        <Row label="Mandaty (z gotówki)">{minusZl(m.fines)}</Row>
+        <Row label="Zakupy za gotówkę">{minusZl(m.investments)}</Row>
+        <Row label="Zostanie Ci po zamknięciu"><b>{signedZl(forecast.net)}</b></Row>
+        <Row label="Gotówka po zamknięciu"><b class={`tt-free ${spendCheck(forecast, 0).level}`}>{money(forecast.cashAfter)}</b></Row>
+        <p class="tt-hint">Marża i premie wpadają na saldo, a gotówka rusza się przy zamknięciu miesiąca: Centrala robi przelew, potrąca raty i palety, a Ty płacisz pensje, media, ZUS, VAT i księgową.</p>
+        <p class="tt-hint">To szybki szacunek: resztę miesiąca liczy z dotychczasowego obrotu. Dokładny wyciąg daje podgląd.</p>
+        <button type="button" class="tt-btn" onClick={openMonthPreview}>Koniec miesiąca: wyciąg i podgląd</button>
         {/* ostrzeżenie wynika ze stanu (gotówka), więc wraca po przeładowaniu, a okno „OK” z chwili zejścia pod próg nie jest zapisywane */}
         {s.cash < DEBT_WARN && <p class="tt-hint warn">{debtWarningText(s.cash)}</p>}
       </Section>

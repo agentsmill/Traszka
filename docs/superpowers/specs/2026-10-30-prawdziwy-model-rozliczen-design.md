@@ -162,8 +162,8 @@ raty i czekającą nadwyżkę z remanentu. Przyszły rogalik wrzuci tę kwotę d
   - nadwyżka do potrącenia z przelewu dnia X;
   - satyryczny komentarz.
 
-  Ostatni protokół zostaje w stanie, więc okno wraca po przeładowaniu strony, dopóki gracz go nie zamknie. Panel pokazuje go później
-  jako „Ostatni remanent”.
+  Okno otwiera zdarzenie remanentu (jak raport miesiąca). Ostatni protokół zostaje w stanie, więc panel sklepu pokazuje go później jako
+  „Ostatni remanent”, także po przeładowaniu strony. Zamknięcie okna nie jest poleceniem gry, bo nie może trafić do dziennika rankingu.
 - **Rozbieżności systemowych nie ma.** To zarzut z zawiadomienia do prokuratury, nie ustalenie.
 - Comiesięczna pozycja „Ubytki ponad limit Centrali” znika z wyciągu i z raportu. Wskazówka raportu o ubytkach odzywa się tylko
   w miesiącu remanentu (kwota nadwyżki).
@@ -201,6 +201,9 @@ Raporty ze starych zapisów nie mają wyciągu i pokazują dawne pozycje.
 
 **Podgląd końca miesiąca** (`monthPreview.ts`, symulacja na kopii stanu). Wynikiem jest prognozowany wyciąg, który zgadza się z prawdziwym
 zamknięciem co do złotówki (test na kilku dniach i seedach, jak dziś).
+
+Podgląd uruchomiony w miesiącu remanentu, przed nim, pokazuje też nadwyżkę z remanentu. To cena dokładności: pasek jej nie zdradza
+(ukryty licznik), a podgląd to symulacja „co będzie, jeśli nic nie zrobię”, więc musi równać się zamknięciu.
 
 **Okna zakupu** (ulepszenia, sprzęt, remont): przy cenie dwa przyciski, „za gotówkę X zł” i „na raty Y zł × N mies.”.
 - **Przycisk rat:**
@@ -262,6 +265,10 @@ jest za gotówkę, jak dziś, więc stare dzienniki dalej się parsują.
 - **Ranking:** wynik sezonu to dalej suma wyników trzech miesięcy (§4: bez rat). W sezonie rankingowym 30 listopada wypada pierwszy
   remanent, więc zamawianie ponad potrzebę obniża wynik sezonu.
 - **Sędzia:** czas odtwarzania dla długich dzienników mierzę w analizie.
+- **Wniosek z wdrożenia.** Gotówka zmienia się prawie wyłącznie przy przelewach, a granica to −100 tys. zł. Przez to bankructwo przed
+  ostatnim zamknięciem sezonu jest w praktyce nieosiągalne. Najgłębszy dołek po dwóch miesiącach, jaki dało się zbudować, to ok.
+  −90 tys. zł (raport, §„Sezon rankingowy”). Reguła `season-bankrupt` zostaje. Test sędziego sprawdza ją na bundlu z podstawionym
+  końcem gry po październiku.
 
 ## 11. Kalibracja i analiza
 

@@ -1,6 +1,7 @@
 import { computed, signal, untracked, type ReadonlySignal } from '@preact/signals';
 import { useEffect, useState } from 'preact/hooks';
 import { DEBT_LIMIT } from '@/sim/economy/catalog';
+import { formatDate } from '@/sim/economy/calendar';
 import {
   DEBT_WARN, debtWarningText, effects, slotFree, slotUsage, tapCombo, tillTapBlock, type EconomyState, type MonthReport,
 } from '@/sim/economy/economy';
@@ -8,6 +9,7 @@ import { visibleCards } from '@/sim/economy/tycoon/cards';
 import { FATIGUE } from '@/sim/economy/tycoon/fatigue';
 import { REPORT_LINE_LABEL, hintText, reportCommentText } from '@/sim/economy/tycoon/report';
 import { TRUST_REASON_LABEL, trustTerminates } from '@/sim/economy/tycoon/trust';
+import { WUT, WUT_LABEL, WUT_REASONS } from '@/sim/economy/tycoon/wut';
 import { EQUIPMENT, EQUIPMENT_BY_ID, equipmentCost } from '@/sim/economy/upgrades';
 import type { QualityPresetId } from '@/render/quality';
 import { networkIncomeOf, prestigePoints } from '@/game/meta';
@@ -15,11 +17,12 @@ import { seasonBankrupt } from '@/sim/ranked';
 import { RANKED_BANKRUPT_TEXT, RANKED_DAYS, loadRanked, rankedDayOf, storedRankedBlock } from '@/game/rankedRun';
 import {
   celebration, dismissStory, ephemeral, econ, hints, howTo, metaView, nextHint, openHowTo, openPanel, openRanking, preset, ranked, report, selection,
-  seed, showPerf, showPrestige, showSettings, story, tab, toasts, unsent, welcome, type Controls, type GameActions, type RankedView,
+  seed, showPerf, showPrestige, showSettings, story, tab, toasts, unsent, welcome, closeRemanent, remanent, type Controls, type GameActions, type RankedView, type RemanentView,
 } from '../state';
-import { int, people, signedPts, signedZl, zl } from './format';
+import { int, people, percentOf, signedPts, signedZl, zl } from './format';
 import { Bar, PalletItem } from './panels';
-import { SpendNote, spendRisk } from './spend';
+import { buyButtons, buyNotes } from './spend';
+import { statementView } from './statement';
 import { ENERGY_TITLE, NO_ENERGY_TITLE, tapBlock, tillReason } from './tapBlock';
 
 export const DISCLAIMER = 'Wszystkie firmy, postacie i zdarzenia są fikcyjne.';
@@ -67,8 +70,8 @@ export function SelectionCard({ game }: { game: GameActions }) {
             const cost = equipmentCost(e, s.equipment.filter((x) => x.id === e.id).length);
             return (
               <div key={e.id} class="tt-item">
-                <div><b>{e.name}</b><div class="tt-muted">{e.effect}</div><SpendNote s={s} price={cost} /></div>
-                <button type="button" class="tt-btn tt-buy" data-risk={spendRisk(s, cost)} disabled={cost > s.cash} onClick={() => game.dispatch({ type: 'buyEquipment', id: e.id, slotId: slot.id })}>{zl(cost)}</button>
+                <div><b>{e.name}</b><div class="tt-muted">{e.effect}</div>{buyNotes(s, info, cost, false)}</div>
+                {buyButtons(s, info, cost, false, (raty) => game.dispatch(raty ? { type: 'buyEquipment', id: e.id, slotId: slot.id, raty: true } : { type: 'buyEquipment', id: e.id, slotId: slot.id }))}
               </div>
             );
           })
@@ -155,15 +158,28 @@ const lineAmount = (amount: number): string => {
 const centralaQuote = (text: string) => <p class="tt-quote">„{text}”<br /><span class="tt-muted">— Centrala</span></p>;
 
 /**
- * Treść raportu miesięcznego. Z danymi tycoona (`detail`): wynik dużą liczbą, pozycje z `REPORT_LINE_LABEL` (koszty ze znakiem
- * minus), zaufanie Centrali z przyczynami, komentarz, jedna wskazówka i KPI miesiąca. Raport ze starego zapisu (`detail` równe
- * null) zostaje dawnym widokiem: marża i inne przychody, premie Centrali (osobny licznik) i koszty (z ubytkami ponad limit Centrali) sumują się
- * do wyniku miesiąca. `closing` zastępuje komentarz Centrali (wypowiedzenie umowy przy końcu gry).
+ * Treść raportu miesięcznego. Z wyciągiem (`statement`, od SIM_VERSION 6): na górze wyciąg od Centrali (`statementView`: przelew,
+ * potrącenia, Twoje koszty, „Zostaje Ci”), pod nim obrót i klienci, a dalej reszta raportu tycoona (zaufanie, komentarz, wskazówka, KPI).
+ * Bez wyciągu, z danymi tycoona (`detail`): wynik dużą liczbą i pozycje z `REPORT_LINE_LABEL` (koszty ze znakiem minus). Raport ze starego
+ * zapisu (`detail` równe null, bez wyciągu) zostaje dawnym widokiem: marża i inne przychody, premie Centrali (osobny licznik) i koszty
+ * (z opłatą i ubytkami ponad limit Centrali) sumują się do wyniku miesiąca. `closing` zastępuje komentarz Centrali (wypowiedzenie umowy
+ * przy końcu gry).
  */
 export function ReportBody({ r, closing }: { r: MonthReport; closing?: string }) {
   const c = r.counters;
   const d = r.detail;
+  const st = r.statement;
   if (!d) {
+    if (st) {
+      return (
+        <>
+          {statementView(st)}
+          <p class="tt-muted tt-st-meta">Obrót {zl(c.revenue)} · klienci {int(c.customers)} (utraceni: {int(c.lost)})</p>
+          {r.cash < DEBT_WARN && <p class="tt-hint warn">{debtWarningText(r.cash)}</p>}
+          {centralaQuote(closing ?? r.comment)}
+        </>
+      );
+    }
     return (
       <>
         <div class="tt-row"><span>Klienci</span><span>{int(c.customers)} (utraceni: {int(c.lost)})</span></div>
@@ -190,18 +206,30 @@ export function ReportBody({ r, closing }: { r: MonthReport; closing?: string })
   const kpiWeeks = d.kpi.hit + d.kpi.miss;
   return (
     <>
-      <div class="tt-report-head">
-        <span class="tt-muted">Wynik miesiąca</span>
-        <b class={`tt-report-result ${result < 0 ? 'neg' : 'pos'}`}>{signedZl(result)}</b>
-        <span class="tt-muted">Obrót {zl(d.revenue)} · klienci {int(c.customers)} (utraceni: {int(c.lost)})</span>
-        <span class="tt-muted">Gotówka na koniec: {zl(r.cash)} · inwestycje: {zl(c.investments)}</span>
-      </div>
-      {r.cash < DEBT_WARN && <p class="tt-hint warn">{debtWarningText(r.cash)}</p>}
-      <div class="tt-report-lines">
-        {d.lines.map((l) => (
-          <div key={l.key} class="tt-row"><span>{REPORT_LINE_LABEL[l.key]}</span><span class={Math.round(l.amount) < 0 ? 'tt-neg' : undefined}>{lineAmount(l.amount)}</span></div>
-        ))}
-      </div>
+      {st
+        ? (
+          <>
+            {statementView(st)}
+            <p class="tt-muted tt-st-meta">Obrót {zl(d.revenue)} · klienci {int(c.customers)} (utraceni: {int(c.lost)})</p>
+            {r.cash < DEBT_WARN && <p class="tt-hint warn">{debtWarningText(r.cash)}</p>}
+          </>
+        )
+        : (
+          <>
+            <div class="tt-report-head">
+              <span class="tt-muted">Wynik miesiąca</span>
+              <b class={`tt-report-result ${result < 0 ? 'neg' : 'pos'}`}>{signedZl(result)}</b>
+              <span class="tt-muted">Obrót {zl(d.revenue)} · klienci {int(c.customers)} (utraceni: {int(c.lost)})</span>
+              <span class="tt-muted">Gotówka na koniec: {zl(r.cash)} · inwestycje: {zl(c.investments)}</span>
+            </div>
+            {r.cash < DEBT_WARN && <p class="tt-hint warn">{debtWarningText(r.cash)}</p>}
+            <div class="tt-report-lines">
+              {d.lines.map((l) => (
+                <div key={l.key} class="tt-row"><span>{REPORT_LINE_LABEL[l.key]}</span><span class={Math.round(l.amount) < 0 ? 'tt-neg' : undefined}>{lineAmount(l.amount)}</span></div>
+              ))}
+            </div>
+          </>
+        )}
       <div class="tt-report-trust">
         <div class="tt-row"><b>Zaufanie Centrali: {int(t.start)} → {int(t.end)}</b><span class={t.delta < 0 ? 'tt-neg' : undefined}>{signedPts(t.delta)} pkt</span></div>
         {t.reasons.slice(0, REPORT_TRUST_REASONS).map(([reason, v]) => (
@@ -239,7 +267,7 @@ export function terminationReason(s: EconomyState): string | null {
 }
 
 /**
- * Raport miesięczny (pauzuje grę). Raport za listopad kończy sezon rankingowy: jego „Dalej” otwiera okno z wynikiem sezonu (`openFinish`),
+ * Raport miesięczny, od SIM_VERSION 6 „Wyciąg od Centrali” (pauzuje grę). Raport za listopad kończy sezon rankingowy: jego „Dalej” otwiera okno z wynikiem sezonu (`openFinish`),
  * żeby okno nie zasłoniło raportu. Przy wypowiedzeniu umowy: koniec gry i nowy start (w biegu rankingowym wyjście do zwykłej gry; taki bieg
  * nie trafia do rankingu ani do szuflady niewysłanych, o czym mówi akapit pod powodem). Wyjątek: wypowiedzenie przy ostatnim zamknięciu
  * (trzy raporty, `seasonBankrupt` fałsz) kończy sezon doigrany, więc bieg ma wynik i „Dalej: wynik sezonu” otwiera okno z nim. Okno końca gry wynika ze stanu
@@ -251,7 +279,7 @@ export function ReportModal({ game }: { game: GameActions }) {
   const over = !!view?.s.gameOver;
   const r = report.value ?? (over ? view?.s.lastReport ?? null : null);
   if (!r && !over) return null;
-  const title = over ? 'Koniec współpracy' : `Raport: ${r!.label}`;
+  const title = over ? 'Koniec współpracy' : r!.statement ? `Wyciąg od Centrali: ${r!.label}` : `Raport: ${r!.label}`;
   const reason = over && view ? terminationReason(view.s) : null;
   const bankrupt = over && !!view && seasonBankrupt(view.s);   // koniec gry przed ostatnim raportem: poza rankingiem
   const seasonEnd = ranked.value?.phase === 'over' && !bankrupt;   // sezon doigrany (też z debetem z ostatniego zamknięcia): za raportem czeka okno z wynikiem
@@ -288,14 +316,14 @@ let storyShown = { id: 0, at: 0 };
 
 /**
  * Ważne zdarzenie, które czeka na „OK” (nowy próg zaufania, koniec remontu, poziom z odblokowaniami): pokazuje pierwszy wpis
- * kolejki `story`, a dopóki kolejka nie jest pusta, gra stoi (`isModalOpen`). Raport miesiąca i koniec gry mają pierwszeństwo
- * (własne okna), wpis czeka za nimi. Tekst może mieć kilka wierszy (lista odblokowań). Każdy wpis to osobne okno (`key`), a „OK”
+ * kolejki `story`, a dopóki kolejka nie jest pusta, gra stoi (`isModalOpen`). Raport miesiąca, protokół remanentu i koniec gry mają
+ * pierwszeństwo (własne okna), wpis czeka za nimi. Tekst może mieć kilka wierszy (lista odblokowań). Każdy wpis to osobne okno (`key`), a „OK”
  * w pierwszych `STORY_GRACE_MS` po jego pojawieniu się (także po zamknięciu raportu, który go zasłaniał) nic nie robi: drugie
  * stuknięcie w „Dalej” albo „OK” nie może od razu odrzucić wpisu, którego nikt nie zdążył zobaczyć.
  */
 export function StoryModal() {
   const entry = story.value[0];
-  if (!entry || report.value || econ.value?.s.gameOver) {
+  if (!entry || report.value || remanent.value || econ.value?.s.gameOver) {
     storyShown = { id: 0, at: 0 };   // ukryte okno pokaże się potem od nowa, z własnym czasem karencji
     return null;
   }
@@ -310,6 +338,52 @@ export function StoryModal() {
       <div key={entry.id} class="tt-modal tt-story" role="dialog" aria-modal="true" aria-label={entry.title}>
         <h2>{entry.title}</h2>
         <p class="tt-story-text">{entry.text}</p>
+        <button type="button" class="tt-btn tt-primary big" onClick={ok}>OK</button>
+      </div>
+    </div>
+  );
+}
+
+/** Który protokół remanentu jest na ekranie i od kiedy (czas rzeczywisty, jak `storyShown`): „OK” w karencji nic nie robi. `null` to „żaden”. */
+let remanentShown: { view: RemanentView | null; at: number } = { view: null, at: 0 };
+
+/**
+ * Protokół remanentu (spec SIM 6, §7): okno wstaje o 5:00 ostatniego dnia co trzeciego miesiąca i trzyma grę, aż gracz kliknie „OK”.
+ * Okres, obrót, ubytki według przyczyn i razem, limit Centrali (przy pierwszym remanencie gracz poznaje go dopiero tu), nadwyżka
+ * do potrącenia z dzisiejszego przelewu i komentarz Centrali z zdarzenia (`text`). Ma pierwszeństwo przed wpisami „OK” (`StoryModal`)
+ * i kartą decyzji; po końcu gry nie rysuje się. „OK” w pierwszych `STORY_GRACE_MS` po pojawieniu się okna nic nie robi: stuknięcie
+ * w kliker w chwili remanentu nie może zamknąć protokołu, zanim ktokolwiek go zobaczył.
+ */
+export function RemanentModal() {
+  const view = remanent.value;
+  if (!view || econ.value?.s.gameOver) {
+    remanentShown = { view: null, at: 0 };   // ukryte okno pokaże się potem od nowa, z własnym czasem karencji
+    return null;
+  }
+  const p = view.protocol;
+  if (remanentShown.view !== view) remanentShown = { view, at: Date.now() };
+  const ok = (): void => {
+    if (remanent.value !== view) return;   // spóźnione stuknięcie w okno poprzedniego protokołu
+    if (Date.now() - remanentShown.at < STORY_GRACE_MS) return;
+    closeRemanent();
+  };
+  return (
+    <div class="tt-modal-wrap">
+      <div class="tt-modal tt-remanent" role="dialog" aria-modal="true" aria-label="Protokół remanentu">
+        <h2>Protokół remanentu</h2>
+        <p class="tt-muted">Okres: {formatDate(p.fromDay)} – {formatDate(p.day)}</p>
+        <div class="tt-row"><span>Obrót w okresie</span><span>{zl(p.revenue)}</span></div>
+        <h3>Ubytki</h3>
+        {WUT_REASONS.map((reason) => (
+          <div key={reason} class="tt-row"><span>{WUT_LABEL[reason]}</span><span>{zl(p.byReason[reason])}</span></div>
+        ))}
+        <div class="tt-row total"><span>Ubytki razem</span><span>{zl(p.total)}</span></div>
+        <div class="tt-row"><span>Limit Centrali</span><span>{zl(p.limit)}</span></div>
+        {p.first && <p class="tt-hint" role="note">Limit poznajesz dopiero teraz: {percentOf(WUT.threshold)} obrotu.</p>}
+        <p class={`tt-remanent-verdict${p.charge > 0 ? ' over' : ''}`}>
+          {p.charge > 0 ? `Nadwyżka ${zl(p.charge)} zejdzie z dzisiejszego przelewu.` : 'Ubytki mieszczą się w limicie.'}
+        </p>
+        {centralaQuote(view.text)}
         <button type="button" class="tt-btn tt-primary big" onClick={ok}>OK</button>
       </div>
     </div>
@@ -541,12 +615,12 @@ export function Settings({ controls, game, panels = true }: { controls: Controls
 
 /**
  * Czy jest otwarte okno, które baner nagrody (warstwa wyżej niż okna) zasłoniłby razem z jego przyciskami: raport miesiąca albo
- * koniec gry, ważne zdarzenie czekające na „OK”, karta decyzji na biurku, powitanie i „Jak grać”. Ten sam poziom z odblokowaniami ma
+ * koniec gry, protokół remanentu, ważne zdarzenie czekające na „OK”, karta decyzji na biurku, powitanie i „Jak grać”. Ten sam poziom z odblokowaniami ma
  * zresztą własne okno „Poziom N”, więc baner nie jest tam potrzebny.
  */
 export function windowBlocksBanner(): boolean {
   const view = econ.value;
-  return !!report.value || story.value.length > 0 || !!welcome.value || howTo.value || !!view?.s.gameOver
+  return !!report.value || story.value.length > 0 || !!remanent.value || !!welcome.value || howTo.value || !!view?.s.gameOver
     || (!!view && visibleCards(view.s.tycoon.cards, view.s.minute).length > 0);
 }
 

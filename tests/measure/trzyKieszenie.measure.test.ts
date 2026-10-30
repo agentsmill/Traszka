@@ -22,8 +22,8 @@ import { EQUIPMENT_BY_ID, UPGRADE_BY_ID, equipmentCost, upgradeCost, type Equipm
 const SEEDS = (process.env.SEEDS ?? 'traszka-1,kopytka-541,makieta,lublin-9,seed-3').split(',');
 const MONTHS = Number(process.env.MONTHS ?? 24);
 
-type Strategy = 'bierny' | 'normalny' | 'mistrz' | 'mistrzZakupy' | 'raty' | 'nadmiar' | 'nadmiarLekki';
-const STRATEGIES = (process.env.STRATEGIES ?? 'bierny,normalny,mistrz,mistrzZakupy,raty,nadmiar,nadmiarLekki').split(',') as Strategy[];
+type Strategy = 'bierny' | 'normalny' | 'mistrz' | 'mistrzZakupy' | 'raty' | 'nadmiar' | 'nadmiarLekki' | 'nadmiarMiesiac';
+const STRATEGIES = (process.env.STRATEGIES ?? 'bierny,normalny,mistrz,mistrzZakupy,raty,nadmiar,nadmiarLekki,nadmiarMiesiac').split(',') as Strategy[];
 
 /** Rzecz do kupienia teraz: polecenie (bez `raty`) i cena za gotówkę. */
 interface Offer { cmd: Command; price: number; label: string }
@@ -85,15 +85,20 @@ function buyer(mode: 'cash' | 'credit' | 'mixed', log: string[]) {
  * Nadmierne zamawianie: o 10:00 ręcznie dwa razy tyle palet, ile sklep sprzedaje dziennie (z przewidywanych klientów), bez względu na
  * zapas. Nie „dwa razy asystent”: asystent przy pełnym sklepie proponuje zero, więc taka strategia sama by się wyrównywała.
  */
-const overOrder = (factor: number) => (r: EconomyRun): void => {
+const overOrder = (factor: number, untilDay = Infinity) => (r: EconomyRun): void => {
   const s = r.state;
   if (minuteOfDay(s.minute) !== 10 * 60) return;
+  if (s.minute >= untilDay * MINUTES_PER_DAY) {   // gracz zauważył zagracenie: wraca do asystenta
+    if (!s.order.auto) applyCommand(s, r.info, { type: 'setOrder', auto: true });
+    return;
+  }
   const perDay = (expectedDailyCustomers(s, r.info) * ITEMS_PER_CUSTOMER) / PALLET_ITEMS;
   applyCommand(s, r.info, { type: 'setOrder', auto: false, manual: Math.ceil(factor * perDay) });
 };
 
 const BASE: Record<Strategy, BotName> = {
   bierny: 'bierny', normalny: 'bierny', mistrz: 'mistrz', mistrzZakupy: 'mistrz', raty: 'bierny', nadmiar: 'bierny', nadmiarLekki: 'bierny',
+  nadmiarMiesiac: 'bierny',
 };
 
 export interface MonthRow {
@@ -109,7 +114,8 @@ function play(strategy: Strategy, seed: string): RunResult {
   const env = economyEnv(run, (e: EconEvent) => { if (e.kind === 'month' && e.report) reports.push(e.report); });
   const log: string[] = [];
   const extra = strategy === 'normalny' ? buyer('cash', log) : strategy === 'mistrzZakupy' ? buyer('mixed', log)
-    : strategy === 'raty' ? buyer('credit', log) : strategy === 'nadmiar' ? overOrder(2) : strategy === 'nadmiarLekki' ? overOrder(1.4) : null;
+    : strategy === 'raty' ? buyer('credit', log) : strategy === 'nadmiar' ? overOrder(2) : strategy === 'nadmiarLekki' ? overOrder(1.4)
+    : strategy === 'nadmiarMiesiac' ? overOrder(1.5, 30) : null;
   const bot = BOTS[BASE[strategy]];
   const end = MONTHS * 30.44 * MINUTES_PER_DAY;
   while (run.state.minute < end && reports.length < MONTHS) {

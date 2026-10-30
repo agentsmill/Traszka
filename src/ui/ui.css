@@ -4,7 +4,7 @@
  */
 .tt-ui {
   --tabs-h: calc(60px + env(safe-area-inset-bottom, 0px));
-  --hud-h: 112px;   /* trzy wiersze paska: gotówka, rachunek Centrali, zegar */
+  --hud-h: 112px;   /* trzy wiersze paska: gotówka, trzy kieszenie (saldo, raty, prognoza), zegar */
   position: fixed;
   top: 0;
   left: 0;
@@ -369,8 +369,10 @@
 }
 
 /*
- * Rachunek końca miesiąca (trzeci wiersz paska): do oddania Centrali i wolne środki w jednej linii, także na 390 px. Przedrostek
- * „Do oddania” znika dopiero poniżej 360 px; pełny opis jest w podpowiedzi i `aria-label`.
+ * Trzy kieszenie (drugi wiersz paska): saldo u Centrali, raty i prognoza „Po zamknięciu zostanie” w jednej linii, także na 390 px.
+ * Na wąskim ekranie etykiety są krótkie („Saldo”, „Raty”, „Zostanie”: `tt-due-pre` znika, a `tt-due-word` dostaje wielką literę),
+ * od 640 px pełne. Liczby nie kurczą się nigdy: gdy zabraknie miejsca, skraca się (wielokropek) tylko etykieta. Pełny opis jest
+ * w podpowiedzi i `aria-label`. Klasy `tt-due*` zostały z dawnego rachunku „Do oddania Centrali”.
  */
 .tt-due {
   display: flex;
@@ -393,21 +395,35 @@
 }
 
 .tt-due-part {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .tt-due-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-weight: 500;
   opacity: 0.85;
 }
 
 .tt-due b {
+  flex: none;
   font-weight: 800;
 }
 
-/* wolne środki poniżej zera: tak jak ujemna gotówka; poniżej progu ostrzeżenia i granicy gry cały znaczek na czerwono */
+.tt-due-word {
+  display: inline-block;
+}
+
+@media (max-width: 639px) {
+  .tt-due-pre { display: none; }
+  .tt-due-word { text-transform: capitalize; }
+}
+
+/* prognoza poniżej zera: tak jak ujemna gotówka; poniżej progu ostrzeżenia i granicy gry cały znaczek na czerwono */
 .tt-due.neg .tt-due-free {
   color: #ffb3a1;
 }
@@ -424,10 +440,11 @@
 
 @media (max-width: 400px) {
   .tt-due { gap: 6px; padding: 4px 8px; font-size: 12.5px; }
+  .tt-due-part { gap: 3px; }
 }
 
 @media (max-width: 359px) {
-  .tt-due-pre { display: none; }
+  .tt-due { gap: 4px; padding: 4px 6px; font-size: 11.5px; }
 }
 
 /* ostrzeżenie przy zakupie: wiersz pod opisem i kolor przycisku (decyzja zostaje przy graczu, przycisk dalej działa) */
@@ -449,7 +466,7 @@
   font-weight: 700;
 }
 
-/* wolne środki w panelu Cele: kolor jak w pasku (poniżej progu ostrzeżenia i poniżej granicy gry) */
+/* gotówka po zamknięciu w panelu Cele i w wyciągu: kolor jak w pasku (poniżej progu ostrzeżenia i poniżej granicy gry) */
 .tt-free.warn {
   color: #c2410c;
 }
@@ -828,6 +845,43 @@
   min-width: 96px;
   background: var(--tt-green) !important;
   color: #fff !important;
+  font-variant-numeric: tabular-nums;
+}
+
+/* zakup za gotówkę i na raty: dwa przyciski jeden pod drugim, równej szerokości (opis po lewej zwęża się, nie przyciski) */
+.tt-buys {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 4px;
+  width: 128px;
+}
+
+.tt-buys .tt-btn.tt-buy {
+  min-width: 0;
+}
+
+.tt-buys .tt-btn.tt-rata {
+  min-height: 0;
+  padding: 5px 8px;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+
+/* raty w panelu Cele: lista aktywnych rat pod wierszem „Raty w tym miesiącu” */
+.tt-inst {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 1px 0 1px 10px;
+  font-size: 12.5px;
+}
+
+.tt-inst > span:last-child {
+  flex: none;
+  text-align: right;
   font-variant-numeric: tabular-nums;
 }
 
@@ -2117,7 +2171,97 @@
   background: var(--tt-cream);
 }
 
-/* Rachunek końca miesiąca (okno z podglądem): sumy w wierszach, pasek postępu liczenia i czerwone ostrzeżenie o debecie. */
+/* Wyciąg od Centrali (raport miesiąca i podgląd): sekcje jak w rachunku, pod nimi duże „Zostaje Ci” */
+.tt-statement h3 {
+  margin: 12px 0 4px;
+}
+
+.tt-statement h3:first-child {
+  margin-top: 4px;
+}
+
+.tt-statement .tt-row > span:last-child {
+  flex: none;
+  white-space: nowrap;
+}
+
+.tt-st-net {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 12px 0 4px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(29, 107, 58, 0.1);
+  font-weight: 800;
+}
+
+.tt-st-net > span {
+  font-size: 15px;
+}
+
+.tt-st-net > b {
+  font-size: 28px;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.tt-st-net.pos > b {
+  color: var(--tt-green-dark);
+}
+
+.tt-st-net.neg {
+  background: rgba(179, 38, 30, 0.1);
+}
+
+.tt-st-net.neg > b {
+  color: #b3261e;
+}
+
+/* wynik do rankingu: mniejszy i przygaszony, żeby nie konkurował z „Zostaje Ci” */
+.tt-st-result {
+  color: #6b766f;
+  font-size: 12.5px;
+}
+
+.tt-st-cash {
+  margin-top: 6px;
+}
+
+.tt-st-cash summary {
+  cursor: pointer;
+  color: var(--tt-green-dark);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.tt-st-meta {
+  margin: 8px 0 0;
+  text-align: center;
+}
+
+/* Protokół remanentu: wiersze jak w wyciągu, wynik (nadwyżka albo „w limicie”) pod nimi */
+.tt-remanent .tt-row > span:last-child {
+  flex: none;
+  white-space: nowrap;
+}
+
+.tt-remanent-verdict {
+  margin: 10px 0 0;
+  font-weight: 700;
+}
+
+.tt-remanent-verdict.over {
+  color: #b3261e;
+}
+
+.tt-remanent .tt-btn.big {
+  margin-top: 12px;
+}
+
+/* Okno wyciągu na koniec miesiąca (z podglądem): sumy w wierszach, pasek postępu liczenia i czerwone ostrzeżenie o debecie. */
 .tt-preview .tt-section {
   margin: 0 0 8px;
 }

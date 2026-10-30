@@ -2,12 +2,12 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import type { Speed } from '@/game/loop';
 import { dayOf, formatClock, formatDate } from '@/sim/economy/calendar';
 import { DEBT_WARN, debtWarningText, isClosedForRemont } from '@/sim/economy/economy';
-import { forecastMonth, spendCheck, type MonthForecast, type SpendLevel } from '@/sim/economy/forecast';
+import { forecastMonth, spendCheck, type MonthForecast } from '@/sim/economy/forecast';
 import { rankFor, xpToNext } from '@/sim/economy/progress';
 import { trustTier } from '@/sim/economy/tycoon/trust';
 import { econ, openHowTo, openMonthPreview, openRanking, showSettings, speed, tab, type Controls } from '../state';
-import { dueTitle } from './forecastText';
-import { int, plural, zl } from './format';
+import { forecastLabel, forecastTitle } from './forecastText';
+import { int, plural, signedZl, zl } from './format';
 
 /** Przyciski prędkości w pasku (pierwszy to pauza); „Jak grać” podaje z nich zakres tempa. */
 export const SPEEDS: { value: Speed; label: string; title: string }[] = [
@@ -85,26 +85,32 @@ export function RankingButton() {
 }
 
 /**
- * Rachunek końca miesiąca przy gotówce: ile oddasz Centrali przy zamknięciu miesiąca (rośnie z każdym klientem) i ile gotówki
- * zostanie wolnej po rozliczeniu. Stuknięcie otwiera okno rachunku z podglądem końca miesiąca (`MonthPreviewModal`). Kolor wolnych środków mówi o debecie: poniżej
- * zera ostrzegawczy, poniżej progu ostrzeżenia (`DEBT_WARN`) czerwony, poniżej granicy gry (`DEBT_LIMIT`) czerwony z wykrzyknikiem.
+ * Trzy kieszenie pod gotówką (drugi wiersz paska): saldo u Centrali (marża i premie naliczone w miesiącu, rośnie z każdym klientem),
+ * raty do potrącenia w najbliższym przelewie i prognoza „Po zamknięciu zostanie” (szybki szacunek „Zostaje Ci”). Stuknięcie otwiera
+ * okno z prognozowanym wyciągiem i podglądem końca miesiąca (`MonthPreviewModal`). Na wąskim ekranie etykiety są krótkie („Saldo”,
+ * „Raty”, „Zostanie”), na szerokim pełne (`tt-due-pre` pojawia się od 640 px). Kolor prognozy mówi o debecie gotówki po zamknięciu:
+ * poniżej zera ostrzegawczy, poniżej progu ostrzeżenia (`DEBT_WARN`) czerwony, poniżej granicy gry (`DEBT_LIMIT`) czerwony z wykrzyknikiem.
+ * Zwykła funkcja bez haków (testy wołają ją bez renderu); klasy `tt-due*` zostały z dawnego rachunku „Do oddania Centrali”.
  */
-export function DueChip({ f, cash }: { f: MonthForecast; cash: number }) {
-  const level: SpendLevel = spendCheck(f, 0).level;
-  const tone = level === 'danger' || level === 'warn' ? level : f.free < 0 ? 'neg' : '';
-  const title = dueTitle(f, cash, spendCheck(f, 0));
+export function ForecastChip({ f, cash }: { f: MonthForecast; cash: number }) {
+  const check = spendCheck(f, 0);
+  const level = check.level;
+  const tone = level === 'danger' || level === 'warn' ? level : f.cashAfter < 0 ? 'neg' : '';
   return (
-    <button type="button" class={`tt-due${tone ? ` ${tone}` : ''}`} title={title}
-      aria-label={`Do oddania Centrali ${zl(f.due)}, wolne środki ${zl(f.free)}`} onClick={openMonthPreview}>
-      <span class="tt-due-part"><span class="tt-due-label"><span class="tt-due-pre">Do oddania </span>Centrali</span> <b>{zl(f.due)}</b></span>
-      <span class="tt-due-part"><span class="tt-due-label">Wolne</span> <b class="tt-due-free">{level === 'danger' ? '⚠ ' : ''}{zl(f.free)}</b></span>
+    <button type="button" class={`tt-due${tone ? ` ${tone}` : ''}`} title={forecastTitle(f, cash, check)} aria-label={forecastLabel(f)} onClick={openMonthPreview}>
+      <span class="tt-due-part"><span class="tt-due-label">Saldo<span class="tt-due-pre"> u Centrali</span></span> <b>{zl(f.saldo)}</b></span>
+      <span class="tt-due-part"><span class="tt-due-label">Raty</span> <b>{zl(f.installments)}</b></span>
+      <span class="tt-due-part">
+        <span class="tt-due-label"><span class="tt-due-pre">Po zamknięciu </span><span class="tt-due-word">zostanie</span></span>
+        {' '}<b class="tt-due-free">{level === 'danger' ? '⚠ ' : ''}{signedZl(f.net)}</b>
+      </span>
     </button>
   );
 }
 
 /**
- * Górny pasek: poziom z pierścieniem XP, gotówka, reputacja, Ogonki, zaufanie Centrali, data i godzina, prędkość czasu, ranking
- * i ustawienia. `ranking`: czy gra ma panele rankingu (bez nich przycisku „🏆” nie ma, bo nie miałby czego otworzyć).
+ * Górny pasek: poziom z pierścieniem XP, gotówka, reputacja, Ogonki, zaufanie Centrali, trzy kieszenie (saldo, raty, prognoza), data
+ * i godzina, prędkość czasu, ranking i ustawienia. `ranking`: czy gra ma panele rankingu (bez nich przycisku „🏆” nie ma, bo nie miałby czego otworzyć).
  */
 export function Hud({ controls, ranking = false }: { controls: Controls; ranking?: boolean }) {
   const view = econ.value;
@@ -133,7 +139,7 @@ export function Hud({ controls, ranking = false }: { controls: Controls; ranking
         </span>
       </div>
       <div class="tt-hud-row tt-hud-due">
-        <DueChip f={forecastMonth(s)} cash={s.cash} />
+        <ForecastChip f={forecastMonth(s, view.info)} cash={s.cash} />
       </div>
       <div class="tt-hud-row">
         <span class="tt-clock">

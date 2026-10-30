@@ -1,15 +1,16 @@
 import type { ComponentChild } from 'preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { DEBT_LIMIT, FRANCHISE_FEE_SHARE } from '@/sim/economy/catalog';
+import { DEBT_LIMIT } from '@/sim/economy/catalog';
 import { DEBT_WARN, createEconomy, type EconomyState } from '@/sim/economy/economy';
 import { forecastMonth } from '@/sim/economy/forecast';
+import { buildStatement } from '@/sim/economy/franchisee';
 import type { MonthPreview } from '@/sim/economy/monthPreview';
 import { computeStoreInfo, type StoreInfo } from '@/sim/economy/storeInfo';
 import { layoutFor } from '@/sim/store/layoutFor';
 import { closeMonthPreview, econ, isWindowOpen, monthPreview, openMonthPreview } from '../state';
 import { MonthPreviewModal, PREVIEW_ASSUMPTION, previewWarning } from './monthPreview';
 import { BUDGET_MS, CHUNK_MINUTES, runMonthPreview, type RunDeps } from './monthPreviewRun';
-import { signedZl, zl } from './format';
+import { minusZl, money, signedZl, zl } from './format';
 import { buttonLabelled, buttonsOf, click, textOf, walk, type Vnode } from './vnodeTree';
 
 function world(): { s: EconomyState; info: StoreInfo } {
@@ -76,15 +77,21 @@ describe('okno rachunku: widok', () => {
     return s;
   };
 
-  it('na dziś: opłata, do oddania, gotówka i wolne środki z prognozy; przycisk „Koniec miesiąca” i założenie powiedziane wprost', () => {
+  it('na dziś: saldo, raty, „Zostaje Ci” i gotówka z prognozy; przycisk „Koniec miesiąca” i założenie powiedziane wprost', () => {
     const s = open();
-    const f = forecastMonth(s);
+    s.franchisee.month.margin = 8_000;
+    s.franchisee.installments.push({ id: 1, label: 'Wózek', price: 1500, fee: 60, total: 1560, monthly: 520, paid: 0, months: 3 });
+    const f = forecastMonth(s, econ.value!.info);
     const tree = MonthPreviewModal() as Vnode;
     const text = textOf(shown());
-    expect(text).toContain('Rachunek końca miesiąca');
-    expect(text).toContain(zl(f.fee));
-    expect(text).toContain(`Do oddania Centrali${zl(f.due)}`);
-    expect(text).toContain(`Wolne środki po rozliczeniu${signedZl(f.free)}`);
+    expect(text).toContain('Wyciąg na koniec miesiąca');
+    expect(text).toContain(`Saldo u Centrali${zl(f.saldo)}`);
+    expect(f.saldo).toBe(8_000);
+    expect(text).toContain(`Raty w tym przelewie${minusZl(f.installments)}`);
+    expect(text).toContain(`Zostaje Ci po zamknięciu (prognoza)${signedZl(f.net)}`);
+    expect(text).toContain(`Gotówka teraz${money(s.cash)}`);
+    expect(text).toContain(`Gotówka po zamknięciu${money(f.cashAfter)}`);
+    expect(text).not.toMatch(/Opłata franczyzowa|Do oddania|Wolne środki/);
     expect(text).toContain(PREVIEW_ASSUMPTION);
     expect(PREVIEW_ASSUMPTION).toContain('nic nie robisz');
     expect(PREVIEW_ASSUMPTION).toContain('odpowiedź domyślną');
@@ -105,11 +112,30 @@ describe('okno rachunku: widok', () => {
     expect(monthPreview.value?.phase).toBe('done');
     const done = textOf(shown());
     expect(done).toContain('Jeśli nic nie zrobisz');
-    for (const label of ['Obrót', 'Klienci', 'Marża', 'Płace', 'Media', 'Opłata franczyzowa', 'Wynik miesiąca', 'Gotówka teraz', 'Gotówka po zamknięciu']) {
+    for (const label of ['Obrót', 'Klienci', 'Przelew od Centrali', 'Marża', 'Potrącenia', 'Twoje koszty', 'Pensje', 'ZUS', 'VAT', 'Księgowa', 'Media', 'Zostaje Ci',
+      'Wynik miesiąca bez rat (do rankingu)', 'Gotówka teraz', 'Gotówka po zamknięciu']) {
       expect(done, label).toContain(label);
     }
+    expect(done).not.toMatch(/Opłata franczyzowa|Ubytki ponad limit/);   // opłaty i miesięcznych ubytków już nie ma
     expect(JSON.stringify(s)).toBe(before);
     expect(econ.value).toBe(view);   // sygnał gry ten sam obiekt: podgląd go nie podmienił
+  });
+
+  it('wynik to prognozowany wyciąg tym samym widokiem co raport: sumy sekcji i „Zostaje Ci” zgadzają się z `MonthPreview.statement`', () => {
+    vi.useFakeTimers();
+    open();
+    click(buttonLabelled(MonthPreviewModal() as Vnode, 'Koniec miesiąca: policz podgląd'));
+    vi.runAllTimers();
+    const view = monthPreview.value;
+    expect(view?.phase).toBe('done');
+    const st = (view as Extract<NonNullable<typeof view>, { phase: 'done' }>).result.statement;
+    const text = textOf(shown());
+    expect(text).toContain(`Razem${zl(st.transfer)}`);
+    expect(text).toContain(`Razem${minusZl(st.deductions)}`);
+    expect(text).toContain(`Razem${minusZl(st.costs)}`);
+    expect(text).toContain(`Zostaje Ci${signedZl(st.net)}`);
+    expect(text).toContain(`Gotówka po zamknięciu${money(st.cashAfter)}`);
+    expect(st.net).toBeCloseTo(st.transfer - st.deductions - st.costs, 6);
   });
 
   it('pokazuje tylko sumy: żadnych kart, fal klientów ani złotych palet w oknie wyniku', () => {
@@ -194,9 +220,11 @@ describe('runMonthPreview: porcje i porzucanie', () => {
 });
 
 describe('previewWarning: czerwone ostrzeżenie z progów gry', () => {
+  const statement = buildStatement({
+    month: { margin: 0, bonus: 0, pallets: 0, wages: 0, media: 0 }, guarantee: 0, installments: 0, remanent: 0, spent: 0, fines: 0, other: 0, cashBefore: 5_000, partial: false,
+  });
   const base: MonthPreview = {
-    label: 'wrzesień', cashNow: 5_000, cashAfter: 5_000, lowestCash: 5_000, revenue: 0, customers: 0, margin: 0, bonus: 0, guarantee: 0, other: 0, wages: 0, media: 0, fines: 0,
-    logistics: 0, fee: 0, wut: 0, profit: 0, gameOver: null, endedEarly: false,
+    label: 'wrzesień', cashNow: 5_000, cashAfter: 5_000, lowestCash: 5_000, revenue: 0, customers: 0, statement, profit: 0, gameOver: null, endedEarly: false,
   };
 
   it('bezpieczna gotówka: bez ostrzeżenia', () => {
@@ -230,7 +258,7 @@ describe('previewWarning: czerwone ostrzeżenie z progów gry', () => {
     vi.useFakeTimers();
     const { s, info } = world();
     s.cash = 0;
-    s.month.revenue = Math.ceil((2 * Math.abs(DEBT_LIMIT)) / FRANCHISE_FEE_SHARE);   // opłata ponad dwie granice debetu
+    s.franchisee.month.pallets = 2 * Math.abs(DEBT_LIMIT) + 50_000;   // potrącenia z przelewu głęboko ponad granicę debetu
     econ.value = { s, info, v: 1 };
     openMonthPreview();
     click(buttonLabelled(MonthPreviewModal() as Vnode, 'Koniec miesiąca: policz podgląd'));
@@ -238,7 +266,18 @@ describe('previewWarning: czerwone ostrzeżenie z progów gry', () => {
     const alert = walk(shown()).find((v) => v.props.role === 'alert')!;
     expect(textOf(alert)).toContain('Centrala wypowie umowę');
     expect(String(alert.props.class)).toContain('danger');
-    const free = walk(shown()).find((v) => String(v.props.class ?? '').startsWith('tt-free'))!;
-    expect(String(free.props.class)).toBe('tt-free danger');
+    const free = walk(shown()).filter((v) => String(v.props.class ?? '').startsWith('tt-free'));
+    expect(free.length).toBeGreaterThan(0);
+    expect(free.map((v) => String(v.props.class))).toContain('tt-free danger');   // gotówka po zamknięciu w wyciągu
+  });
+
+  it('gra kończy się przed zamknięciem (debet w środku miesiąca): podgląd mówi, że to naliczenia do tej chwili', () => {
+    const { s, info } = world();
+    const early = { ...base, endedEarly: true, gameOver: 'debt' as const, cashAfter: DEBT_LIMIT - 1, lowestCash: DEBT_LIMIT - 1, label: '' };
+    monthPreview.value = { phase: 'done', result: early, ms: 1 };
+    econ.value = { s, info, v: 1 };
+    const text = textOf(shown());
+    expect(text).toContain('To naliczenia do chwili końca gry');
+    expect(text).toContain('Jeśli nic nie zrobisz');
   });
 });

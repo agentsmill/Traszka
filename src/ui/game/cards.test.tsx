@@ -6,7 +6,7 @@ import { cardDef, fillText, type AnswerInstance, type CardInstance } from '@/sim
 import { computeStoreInfo, type StoreInfo } from '@/sim/economy/storeInfo';
 import { layoutFor } from '@/sim/store/layoutFor';
 import { App } from '../App';
-import { econ, pushStory, report, story, type Controls, type GameActions } from '../state';
+import { econ, pushStory, remanent, report, story, type Controls, type GameActions } from '../state';
 import { CardDesk, picked, selectedAnswer } from './cards';
 import { deltaLines } from './cardText';
 import { SpendNote } from './spend';
@@ -74,25 +74,28 @@ const chipsOf = (button: Vnode): Vnode[] => walk(button).filter((v) => String(v.
 const toneOfChip = (chip: Vnode): string => String(chip.props.class).split(' ').filter((c) => c !== 'tt-chip').join(' ');
 
 beforeEach(() => { picked.value = null; });
-afterEach(() => { econ.value = null; report.value = null; picked.value = null; story.value = []; });
+afterEach(() => { econ.value = null; report.value = null; remanent.value = null; picked.value = null; story.value = []; });
 
-describe('okno karty dnia: koszt odpowiedzi na tle rachunku Centrali', () => {
+describe('okno karty dnia: koszt odpowiedzi na tle gotówki po zamknięciu miesiąca', () => {
   const noteOf = (button: Vnode): Vnode | undefined => walk(button).find((v) => v.type === SpendNote);
 
   it('każda odpowiedź ma SpendNote z gotówką, którą zabierze od razu (zysk i brak kosztu to zero)', () => {
     publish(fefo(1, 1000));
     const prices = answerButtons(desk(fakeGame())).map((b) => noteOf(b)?.props.price);
     expect(prices).toEqual([320, 490, 0]);
-    for (const b of answerButtons(desk(fakeGame()))) expect(noteOf(b)?.props.always).toBe(true);
+    for (const b of answerButtons(desk(fakeGame()))) {
+      expect(noteOf(b)?.props.always).toBe(true);
+      expect(noteOf(b)?.props.info).toBe(econ.value!.info);   // prognoza liczy się z opisem sklepu
+    }
   });
 
-  it('gdy po odpowiedzi nie zostałoby wolnych środków, notka pokazuje kwotę po rozliczeniu miesiąca (odpowiedź nadal do wyboru)', () => {
+  it('gdy po odpowiedzi gotówka po zamknięciu zeszłaby pod zero, notka pokazuje, ile zostanie po zamknięciu miesiąca (odpowiedź nadal do wyboru)', () => {
     const s = publish(fefo(1, 1000));
     s.cash = 400;
-    s.month.revenue = 0;
+    s.franchisee.month.pallets = 20_000;   // potrącenie z przelewu spycha prognozę „Zostaje Ci” mocno pod zero
     const buttons = answerButtons(desk(fakeGame()));
-    const text = (b: Vnode): string => textOf(SpendNote(noteOf(b)!.props as unknown as { s: EconomyState; price: number; always?: boolean }) as unknown as Vnode);
-    expect(text(buttons[0]!)).toContain('po rozliczeniu miesiąca wyjdzie');
+    const text = (b: Vnode): string => textOf(SpendNote(noteOf(b)!.props as unknown as Parameters<typeof SpendNote>[0]) as unknown as Vnode);
+    expect(text(buttons[0]!)).toContain('Po zamknięciu miesiąca zostanie Ci');
     expect(text(buttons[2]!)).toBe('');   // „zostaw”: nic nie kosztuje
     expect(buttons.every((b) => b.props['aria-checked'] !== undefined && !b.props.disabled)).toBe(true);
   });
@@ -120,6 +123,14 @@ describe('okno karty dnia: kiedy się pokazuje', () => {
     report.value = { label: 'wrzesień' } as unknown as MonthReport;
     expect(CardDesk({ game: fakeGame() })).toBeNull();
     report.value = null;
+    expect(CardDesk({ game: fakeGame() })).not.toBeNull();
+  });
+
+  it('protokół remanentu ma pierwszeństwo: dopóki jest otwarty, karta czeka', () => {
+    publish(fefo(1, 1000));
+    remanent.value = { protocol: { day: 89, fromDay: 0, revenue: 0, byReason: { termin: 0, kradziez: 0, pomylki: 0, karty: 0 }, total: 0, limit: 0, charge: 0, first: true }, text: 'Remanent.' };
+    expect(CardDesk({ game: fakeGame() })).toBeNull();
+    remanent.value = null;
     expect(CardDesk({ game: fakeGame() })).not.toBeNull();
   });
 

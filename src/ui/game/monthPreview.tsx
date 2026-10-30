@@ -4,21 +4,20 @@ import { DEBT_WARN, debtWarningText } from '@/sim/economy/economy';
 import { forecastMonth } from '@/sim/economy/forecast';
 import type { MonthPreview } from '@/sim/economy/monthPreview';
 import { closeMonthPreview, econ, monthPreview } from '../state';
-import { int, pct, signedZl, zl } from './format';
+import { int, minusZl, money, pct, signedZl, zl } from './format';
 import { runMonthPreview } from './monthPreviewRun';
+import { cashTone as cashToneOf, statementView, type CashTone } from './statement';
 
 /*
- * Okno „Rachunek końca miesiąca”. Góra: rachunek na dziś (to, co Centrala zabrałaby, gdyby miesiąc skończył się teraz). Przycisk
- * „Koniec miesiąca” liczy podgląd na kopii sklepu: sumy za cały miesiąc i gotówka po zamknięciu, przy założeniu „nic nie robię”.
+ * Okno „Wyciąg na koniec miesiąca”. Góra: prognoza na dziś (saldo u Centrali, raty, „Zostaje Ci” i gotówka po zamknięciu: szybki
+ * szacunek z `forecastMonth`, ten sam co w pasku). Przycisk „Koniec miesiąca” liczy podgląd na kopii sklepu: prognozowany wyciąg
+ * od Centrali za cały miesiąc (ten sam widok co w raporcie, `statementView`) i gotówka po zamknięciu, przy założeniu „nic nie robię”.
  * Pokazuje tylko sumy: bez kart, fal klientów i złotych palet z przyszłości.
  */
 
 /** Założenie podglądu, powiedziane graczowi wprost. */
 export const PREVIEW_ASSUMPTION =
   'Podgląd liczy kopia sklepu, prawdziwa gra się nie zmienia. Zakładam, że do końca miesiąca nic nie robisz: nie stukasz, nie kupujesz, a karty decyzji dostają odpowiedź domyślną.';
-
-/** Kwota z „−” (U+2212) przed ujemną, jak reszta okna (`signedZl`); `zl` dałby tu łącznik. */
-const money = (n: number): string => (n < 0 ? `−${zl(-n)}` : zl(n));
 
 function Row({ label, children, strong = false }: { label: ComponentChildren; children: ComponentChildren; strong?: boolean }) {
   return <div class={`tt-row${strong ? ' total' : ''}`}><span>{label}</span><span>{children}</span></div>;
@@ -40,49 +39,40 @@ export function previewWarning(r: MonthPreview): { level: 'warn' | 'danger'; tex
 
 function PreviewResult({ r }: { r: MonthPreview }) {
   const warning = previewWarning(r);
+  const st = r.statement;
   return (
     <section class="tt-section tt-preview-result" aria-label="Wynik podglądu">
       <h3>Jeśli nic nie zrobisz{r.label ? `: ${r.label}` : ''}</h3>
       <Row label="Obrót">{zl(r.revenue)}</Row>
       <Row label="Klienci">{int(r.customers)}</Row>
-      <Row label="Marża">{zl(r.margin)}</Row>
-      {r.bonus > 0 && <Row label="Premie Centrali">+{zl(r.bonus)}</Row>}
-      {r.guarantee > 0 && <Row label="Dopłata do przychodu gwarantowanego">+{zl(r.guarantee)}</Row>}
-      {r.guarantee > 0 && <p class="tt-hint">Centrala dopłaca do {zl(GUARANTEE.income)} przychodu w pierwszych {GUARANTEE.months} miesiącach, o ile nie będzie mandatu i zaufanie nie spadnie poniżej {GUARANTEE.minTrust}. „Wierzymy w Ciebie. Do odwołania.”</p>}
-      {r.other !== 0 && <Row label="Inne przychody i koszty">{signedZl(r.other)}</Row>}
-      <Row label="Płace">−{zl(r.wages)}</Row>
-      <Row label="Media">−{zl(r.media)}</Row>
-      {r.fines > 0 && <Row label="Mandaty">−{zl(r.fines)}</Row>}
-      {r.logistics > 0 && <Row label="Logistyka">−{zl(r.logistics)}</Row>}
-      {r.wut > 0 && <Row label="Ubytki ponad limit Centrali">−{zl(r.wut)}</Row>}
-      <Row label="Opłata franczyzowa">−{zl(r.fee)}</Row>
-      <Row label="Wynik miesiąca" strong>{signedZl(r.profit)}</Row>
+      {st.guarantee > 0 && <p class="tt-hint">Centrala dopłaca do {zl(GUARANTEE.income)} przychodu w pierwszych {GUARANTEE.months} miesiącach, o ile nie będzie mandatu i zaufanie nie spadnie poniżej {GUARANTEE.minTrust}. „Wierzymy w Ciebie. Do odwołania.”</p>}
+      {r.endedEarly && <p class="tt-hint">To naliczenia do chwili końca gry: bez rat, dopłaty z gwarancji i premii od obrotu.</p>}
+      {statementView(st, warning ? warning.level : 'ok')}
       <Row label="Gotówka teraz">{money(r.cashNow)}</Row>
-      <Row label="Gotówka po zamknięciu" strong><span class={`tt-free ${warning ? warning.level : 'ok'}`}>{money(r.cashAfter)}</span></Row>
       {warning && <p class={`tt-hint warn tt-preview-warn ${warning.level}`} role="alert">{warning.text}</p>}
     </section>
   );
 }
 
-/** Okno rachunku i podglądu; zamknięte nic nie rysuje. Gra stoi, dopóki jest otwarte (`isWindowOpen`). */
+/** Okno wyciągu i podglądu; zamknięte nic nie rysuje. Gra stoi, dopóki jest otwarte (`isWindowOpen`). */
 export function MonthPreviewModal() {
   const view = monthPreview.value;
   const game = econ.value;
   if (!view || !game) return null;
-  const f = forecastMonth(game.s);
+  const f = forecastMonth(game.s, game.info);
+  const tone: CashTone = cashToneOf(f.cashAfter);
   return (
     <div class="tt-modal-wrap">
-      <div class="tt-modal tt-preview" role="dialog" aria-modal="true" aria-label="Rachunek końca miesiąca">
-        <h2>Rachunek końca miesiąca</h2>
-        <section class="tt-section" aria-label="Rachunek na dziś">
+      <div class="tt-modal tt-preview" role="dialog" aria-modal="true" aria-label="Wyciąg na koniec miesiąca">
+        <h2>Wyciąg na koniec miesiąca</h2>
+        <section class="tt-section" aria-label="Prognoza na dziś">
           <h3>Na dziś</h3>
-          <Row label="Opłata franczyzowa (do dziś)">{zl(f.fee)}</Row>
-          {f.wut > 0 && <Row label="Ubytki ponad limit">{zl(f.wut)}</Row>}
-          {f.bonus > 0 && <Row label="Premia od obrotu">−{zl(f.bonus)}</Row>}
-          <Row label="Do oddania Centrali" strong>{zl(f.due)}</Row>
-          <Row label="Gotówka">{money(game.s.cash)}</Row>
-          <Row label="Wolne środki po rozliczeniu" strong>{signedZl(f.free)}</Row>
-          <p class="tt-hint">Centrala rozlicza się raz, przy zamknięciu miesiąca. Kwota rośnie z każdym klientem.</p>
+          <Row label="Saldo u Centrali">{zl(f.saldo)}</Row>
+          <Row label="Raty w tym przelewie">{minusZl(f.installments)}</Row>
+          <Row label="Zostaje Ci po zamknięciu (prognoza)" strong>{signedZl(f.net)}</Row>
+          <Row label="Gotówka teraz">{money(game.s.cash)}</Row>
+          <Row label="Gotówka po zamknięciu" strong><span class={`tt-free ${tone}`}>{money(f.cashAfter)}</span></Row>
+          <p class="tt-hint">Saldo to marża i premie z tego miesiąca. Centrala przeleje je przy zamknięciu, potrąci raty i palety, a Ty zapłacisz pensje, media, ZUS, VAT i księgową. Prognoza liczy resztę miesiąca z dotychczasowego obrotu.</p>
         </section>
         {view.phase === 'idle' && (
           <>

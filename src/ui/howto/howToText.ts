@@ -1,13 +1,12 @@
 import {
-  ASSISTANT_UNLOAD_MIN, CATS, CAT_INFO, DEBT_LIMIT, DELIVERY_AT, FRANCHISE_FEE_FIXED, FRANCHISE_FEE_SHARE, HOT, MINUTES_PER_DAY, MINUTES_PER_SECOND_CLOSED,
-  MINUTES_PER_SECOND_OPEN, OPEN_FROM, OPEN_TO, ORDER_DEADLINE, PALLETS_FREE, PALLET_FEE, STAFF_MAX, STRAZ, TILL_TAP_QUEUE_MIN, type Cat,
+  ASSISTANT_UNLOAD_MIN, CATS, CAT_INFO, DEBT_LIMIT, DELIVERY_AT, GUARANTEE, HOT, INSTALLMENTS, MINUTES_PER_DAY, MINUTES_PER_SECOND_CLOSED,
+  MINUTES_PER_SECOND_OPEN, OPEN_FROM, OPEN_TO, ORDER_DEADLINE, OWN_COSTS, PALLETS_FREE, PALLET_FEE, REMANENT, STAFF_MAX, STRAZ, TILL_TAP_QUEUE_MIN, type Cat,
 } from '@/sim/economy/catalog';
 import { nextRankAt, rankFor } from '@/sim/economy/progress';
 import { KPI } from '@/sim/economy/tycoon/kpi';
 import { PROFILE_LABEL, PROFILE_ORDER, STAFF_PROFILES, type StaffTask } from '@/sim/economy/tycoon/staff';
 import { SUNDAY_TRAFFIC } from '@/sim/economy/tycoon/sunday';
 import { TRUST, turnoverBonusShare } from '@/sim/economy/tycoon/trust';
-import { WUT } from '@/sim/economy/tycoon/wut';
 import { plural, signedPts, signedZl, zl } from '../game/format';
 import { SPEEDS } from '../game/Hud';
 import { ENERGY_TITLE } from '../game/tapBlock';
@@ -71,6 +70,8 @@ export function marginRange(): { low: { label: string; margin: number }; high: {
   return { low: pick(sorted[0]!), high: pick(sorted[sorted.length - 1]!) };
 }
 
+/** „3, 6 albo 12”: elementy po przecinku, ostatni po „albo”. */
+const list = (items: string[]): string => (items.length < 2 ? items.join('') : `${items.slice(0, -1).join(', ')} albo ${items[items.length - 1]}`);
 const persons = (n: number): string => `${num(n)} ${plural(n, 'osobę', 'osoby', 'osób')}`;
 /** Godziny po polsku: „2 godziny”, „6 godzin”, a ułamek „7,5 godziny”. */
 export const hours = (n: number): string => `${num(n)} ${Number.isInteger(n) ? plural(n, 'godzinę', 'godziny', 'godzin') : 'godziny'}`;
@@ -96,7 +97,7 @@ export function howToPoints(): string[] {
     'Po dostawie przenieś palety spod sklepu na zaplecze (zakładka Palety, przycisk „Na zaplecze”), zanim wróci Straż Miejska.',
     `W zakładce Ludzie ustaw profil pracy, czyli co ludzie robią najpierw: ${profiles}.`,
     'Gdy kolejka rośnie, kup kasę samoobsługową albo drugą kasę (zakładka Ulepszenia): kasjerów jest tyle, ile stanowisk.',
-    'Na koniec miesiąca Centrala pobiera opłatę: pasek pod gotówką pokazuje, ile oddasz i ile zostaje (zakładka Cele, sekcja „Ten miesiąc”).',
+    'Marża idzie na saldo, gotówka rusza się przy zamknięciu miesiąca; pasek pokazuje, co zostanie (zakładka Cele, sekcja „Ten miesiąc”).',
     `Tempo zmieniasz u góry (${slowest.label}–${fastest.label}), a Spacja pauzuje.`,
   ];
 }
@@ -109,14 +110,19 @@ export function howToDetails(): HowToSection[] {
   const bonus = steps.length === 0 ? [] : [`${steps.map((x, i) => (i === 0
     ? `Od ${x.from} punktów Centrala oddaje premię od obrotu: ${percent(x.share)}` : `od ${x.from} punktów ${percent(x.share)}`)).join(', ')}.`];
 
+  const plans = INSTALLMENTS.plans;
+  const months = (n: number): string => `${n} ${plural(n, 'miesiąc', 'miesiące', 'miesięcy')}`;
+
   return [
     {
-      title: 'Pieniądze i ubytki',
+      title: 'Pieniądze i remanent',
       paragraphs: [
         `Zarabiasz marżę, nie obrót: od ${percent(margins.low.margin)} (${margins.low.label}) do ${percent(margins.high.margin)} (${margins.high.label}) ceny towaru, a hot-dogi i kawa dają ${percent(HOT.margin)}.`,
-        `Opłata franczyzowa to ${zl(FRANCHISE_FEE_FIXED)} plus ${percent(FRANCHISE_FEE_SHARE)} obrotu.`,
-        'Opłata, ubytki i premia schodzą jednym przelewem na koniec miesiąca. Stuknij pasek: rachunek i podgląd końca miesiąca. Zakupy ostrzegają, nie blokują.',
-        `Ubytki to przeterminowany towar, kradzieże, pomyłki i „zapomniane” skany na kasach samoobsługowych. Do ${percent(WUT.threshold)} obrotu miesiąca pokrywa je Centrala, ponad limit płacisz Ty (zakładka Sklep).`,
+        'Marża i premie idą na saldo u Centrali, a przy zamknięciu miesiąca przelew minus raty, palety i koszty daje „Zostaje Ci”.',
+        `Koszty to pensje, media, ZUS (${zl(OWN_COSTS.zus)}), księgowa (${zl(OWN_COSTS.accounting)}) i VAT (${percent(OWN_COSTS.vatShare)} przelewu).`,
+        `Raty na ulepszenia, sprzęt i remont: ${list(plans.map((p) => String(p.months)))} miesięcy, opłata ${list(plans.map((p) => percent(p.fee)))}, razem do ${percent(INSTALLMENTS.limitShare)} przelewu miesięcznie.`,
+        `Co ${months(REMANENT.everyMonths)} remanent liczy ubytki (zakładka Sklep); limit Centrali poznasz przy pierwszym, a nadwyżkę potrąci z przelewu.`,
+        `Przez pierwsze ${months(GUARANTEE.months)} Centrala dopłaca do ${zl(GUARANTEE.income)} (zaufanie od ${GUARANTEE.minTrust}, bez mandatu).`,
       ],
     },
     {

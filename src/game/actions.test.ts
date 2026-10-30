@@ -574,6 +574,7 @@ describe('powłoka gry (createShell)', () => {
     vi.useFakeTimers({ now: new Date(2026, 9, 28, 12, 0, 0) });
     ui.welcome.value = null;
     ui.report.value = null;
+    ui.remanent.value = null;
     ui.celebration.value = null;
     ui.start.value = null;
     ui.selection.value = null;
@@ -608,6 +609,21 @@ describe('powłoka gry (createShell)', () => {
     it('meta z nowszej wersji gry: komunikat o odświeżeniu strony', () => {
       const h = harness({ meta: { ...loadMeta(), readOnly: true } });
       expect(h.notices).toEqual([NEWER_SAVE_NOTICE]);
+    });
+  });
+
+  describe('protokół remanentu (SIM_VERSION 6)', () => {
+    it('zdarzenie remanentu otwiera własne okno z protokołem i tekstem Centrali, bez toastu', () => {
+      const h = harness();
+      open(h);
+      const protocol = {
+        day: 90, fromDay: 0, revenue: 700_000, byReason: { termin: 3000, kradziez: 2000, pomylki: 1400, karty: 0 }, total: 6400, limit: 8400,
+        charge: 0, first: true,
+      };
+      const toasts = ui.toasts.value.length;
+      h.shell.handleEvents([{ kind: 'remanent', remanent: protocol, text: 'Remanent: ubytki mieszczą się w limicie.' }]);
+      expect(ui.remanent.value).toEqual({ protocol, text: 'Remanent: ubytki mieszczą się w limicie.' });
+      expect(ui.toasts.value.length).toBe(toasts);
     });
   });
 

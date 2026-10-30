@@ -2,27 +2,30 @@ import { describe, expect, it } from 'vitest';
 import { DEBT_LIMIT } from '@/sim/economy/catalog';
 import { DEBT_WARN } from '@/sim/economy/economy';
 import { spendCheck, type MonthForecast } from '@/sim/economy/forecast';
-import { dueTitle, spendWarningText } from './forecastText';
-import { signedZl, zl } from './format';
+import type { Statement } from '@/sim/economy/franchisee';
+import { forecastLabel, forecastTitle, spendWarningText } from './forecastText';
+import { money, signedZl, zl } from './format';
 
-/** Prognoza z wolnymi środkami `free` (reszta pól nie ma tu znaczenia). */
-const forecast = (free: number, parts: Partial<MonthForecast> = {}): MonthForecast => ({ fee: 2000, bonus: 0, wut: 0, due: 2000, free, ...parts });
+/** Prognoza z gotówką po zamknięciu `cashAfter` (reszta pól nie ma tu znaczenia dla ostrzeżeń). */
+const forecast = (cashAfter: number, parts: Partial<MonthForecast> = {}): MonthForecast => ({
+  saldo: 12_000, installments: 0, statement: {} as Statement, net: 8_000, cashAfter, ...parts,
+});
 
 describe('spendWarningText: napis ostrzeżenia przy wydatku', () => {
-  it('zakup mieszczący się w wolnych środkach nie ma ostrzeżenia', () => {
+  it('zakup, po którym gotówka po zamknięciu zostaje nad zerem, nie ma ostrzeżenia', () => {
     expect(spendWarningText(spendCheck(forecast(8_000), 3_000))).toBeNull();
   });
 
-  it('ponad wolne środki: mówi, ile wyjdzie po rozliczeniu miesiąca', () => {
-    const c = spendCheck(forecast(8_000), 9_000);
+  it('gotówka po zamknięciu pod zerem: mówi, ile zostanie Ci po zamknięciu miesiąca', () => {
+    const c = spendCheck(forecast(8_000), 11_200);
     expect(c.level).toBe('tight');
-    expect(spendWarningText(c)).toBe(`Ponad wolne środki: przy dotychczasowym obrocie po rozliczeniu miesiąca wyjdzie ${signedZl(-1_000)}.`);
+    expect(spendWarningText(c)).toBe(`Po zamknięciu miesiąca zostanie Ci ${signedZl(-3_200)}: gotówka zejdzie pod zero.`);
   });
 
   it('poniżej progu ostrzeżenia: podaje próg ze stałej', () => {
-    const c = spendCheck(forecast(0), -DEBT_WARN + 1);   // freeAfter = DEBT_WARN − 1
+    const c = spendCheck(forecast(0), -DEBT_WARN + 1);   // cashAfter = DEBT_WARN − 1
     expect(c.level).toBe('warn');
-    expect(spendWarningText(c)).toBe(`Po rozliczeniu miesiąca wyjdzie ${signedZl(DEBT_WARN - 1)}, poniżej progu ostrzeżenia (${signedZl(DEBT_WARN)}).`);
+    expect(spendWarningText(c)).toBe(`Po zamknięciu miesiąca zostanie Ci ${signedZl(DEBT_WARN - 1)}, poniżej progu ostrzeżenia (${signedZl(DEBT_WARN)}).`);
   });
 
   it('poniżej granicy debetu: mówi o wypowiedzeniu umowy i podaje granicę ze stałej', () => {
@@ -33,35 +36,50 @@ describe('spendWarningText: napis ostrzeżenia przy wydatku', () => {
     expect(text).toContain('Centrala wypowie umowę');
     expect(text).toContain(signedZl(DEBT_LIMIT - 1));
   });
+
+  it('wariant dla rat: kwota liczy się z pierwszą ratą i tak to brzmi', () => {
+    const c = spendCheck(forecast(1_000), 4_200);
+    expect(spendWarningText(c, true)).toBe(`Po zamknięciu miesiąca, z pierwszą ratą, zostanie Ci ${signedZl(-3_200)}: gotówka zejdzie pod zero.`);
+    expect(spendWarningText(c)).not.toContain('z pierwszą ratą');
+    const danger = spendCheck(forecast(0), -DEBT_LIMIT + 1);
+    expect(spendWarningText(danger, true)).toContain('z pierwszą ratą');
+    expect(spendWarningText(danger, true)).toContain('Centrala wypowie umowę');
+    expect(spendWarningText(spendCheck(forecast(8_000), 1_000), true)).toBeNull();
+  });
 });
 
-describe('dueTitle: opis rachunku z paska', () => {
-  it('na początku miesiąca: sama opłata, bez ubytków i premii', () => {
-    const f = forecast(8_000);
-    const t = dueTitle(f, 10_000, spendCheck(f, 0));
-    expect(t).toContain(`opłata franczyzowa ${zl(2000)}`);
-    expect(t).not.toContain('ubytki');
-    expect(t).not.toContain('premia');
-    expect(t).toContain(`Do oddania ${zl(2000)}`);
-    expect(t).toContain(`gotówka ${zl(10_000)} minus ta kwota: ${zl(8_000)}`);
-    expect(t).toContain('rośnie z każdym klientem');
+describe('forecastLabel i forecastTitle: opis paska z trzema kieszeniami', () => {
+  it('aria-label podaje saldo, raty i prognozę „zostanie” w jednym zdaniu', () => {
+    const f = forecast(10_000, { saldo: 12_345, installments: 4_500, net: 8_250 });
+    expect(forecastLabel(f)).toBe(`Saldo u Centrali ${zl(12_345)}, raty w tym miesiącu ${zl(4_500)}, po zamknięciu zostanie ${signedZl(8_250)}`);
+    expect(forecastLabel(forecast(0, { net: -6_500 }))).toContain(`po zamknięciu zostanie ${signedZl(-6_500)}`);
   });
 
-  it('z ubytkami i premią wymienia obie pozycje', () => {
-    const f = forecast(1_000, { fee: 50_000, wut: 700, bonus: 2_000, due: 48_700 });
-    const t = dueTitle(f, 49_700, spendCheck(f, 0));
-    expect(t).toContain(`ubytki ponad limit ${zl(700)}`);
-    expect(t).toContain(`minus premia od obrotu ${zl(2_000)}`);
+  it('podpowiedź mówi, z czego składa się każda liczba, i odsyła po dokładny wyciąg', () => {
+    const f = forecast(20_000, { saldo: 12_345, installments: 4_500, net: 8_250 });
+    const t = forecastTitle(f, 11_750, spendCheck(f, 0));
+    expect(t).toContain(`Saldo u Centrali to marża i premie naliczone w tym miesiącu (${zl(12_345)})`);
+    expect(t).toContain(`raty (${zl(4_500)})`);
+    expect(t).toContain('pensje, media, ZUS, VAT i księgową');
+    expect(t).toContain(`zostanie Ci ${signedZl(8_250)}, czyli gotówka ${zl(20_000)} (teraz ${zl(11_750)})`);
+    expect(t).toContain('Dokładny wyciąg: stuknij.');
+    expect(t).not.toMatch(/opłat|Do oddania|Wolne środki/);
+  });
+
+  it('ujemna gotówka po zamknięciu ma „−”, a nie łącznik', () => {
+    const f = forecast(-4_000, { net: -9_000 });
+    expect(forecastTitle(f, 5_000, spendCheck(f, 0))).toContain(`czyli gotówka ${money(-4_000)} (teraz ${zl(5_000)})`);
+    expect(money(-4_000)).toBe(`−${zl(4_000)}`);
   });
 
   it('pod granicą debetu dopisuje wypowiedzenie, nad nią (pod progiem ostrzeżenia) tylko bliskość granicy', () => {
     const danger = forecast(DEBT_LIMIT - 1);
-    expect(dueTitle(danger, 0, spendCheck(danger, 0))).toContain('Centrala wypowie umowę');
+    expect(forecastTitle(danger, 0, spendCheck(danger, 0))).toContain('Centrala wypowie umowę');
     const warn = forecast(DEBT_WARN - 1);
-    const t = dueTitle(warn, 0, spendCheck(warn, 0));
+    const t = forecastTitle(warn, 0, spendCheck(warn, 0));
     expect(t).toContain('Blisko granicy debetu');
     expect(t).not.toContain('wypowie');
     const ok = forecast(0);
-    expect(dueTitle(ok, 0, spendCheck(ok, 0))).not.toMatch(/debetu/);
+    expect(forecastTitle(ok, 0, spendCheck(ok, 0))).not.toMatch(/debetu/);
   });
 });

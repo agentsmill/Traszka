@@ -342,10 +342,10 @@ function sfxOf(e: EconEvent): Sfx | undefined {
  * który kiedyś dostanie poziom `story`, też trafi do okna, pod ogólnym tytułem. Karta (`decision`) tu nie wchodzi: zatrzymuje
  * ją symulacja (`cardsBlocking`), a okno karty jest osobne (`CardDesk`).
  */
-const STORY_TITLE: Partial<Record<EconEventKind, string>> = { 'trust-tier': 'Zaufanie Centrali', remont: 'Remont zakończony', debt: 'Centrala czeka na opłatę' };
+const STORY_TITLE: Partial<Record<EconEventKind, string>> = { 'trust-tier': 'Zaufanie Centrali', remont: 'Remont zakończony', debt: 'Blisko granicy debetu' };
 const STORY_FALLBACK_TITLE = 'Ważne zdarzenie';
-/** Mają własne okno, więc nie idą do wspólnego: raport miesiąca (`ui.report`) i koniec gry (okno końca współpracy w `ReportModal`, z `gameOver`). */
-const OWN_WINDOW: ReadonlySet<EconEventKind> = new Set<EconEventKind>(['month', 'gameover']);
+/** Mają własne okno, więc nie idą do wspólnego: raport miesiąca (`ui.report`), protokół remanentu (`ui.remanent`) i koniec gry (okno końca współpracy w `ReportModal`, z `gameOver`). */
+const OWN_WINDOW: ReadonlySet<EconEventKind> = new Set<EconEventKind>(['month', 'remanent', 'gameover']);
 
 // --- Bieg rankingowy w powłoce -----------------------------------------------------------------------------------------
 
@@ -475,6 +475,11 @@ export function createShell(deps: ShellDeps): GameShell {
     for (const e of events) {
       if (e.kind === 'day') { persist(); continue; }
       if (e.kind === 'month' && e.report) ui.report.value = e.report;
+      if (e.kind === 'remanent' && e.remanent) {
+        ui.remanent.value = { protocol: e.remanent, text: e.text };   // protokół w osobnym oknie, które trzyma grę do „OK”
+        fx.play('pop');
+        continue;
+      }
       if (e.kind === 'levelup' && e.level) {
         const lines = [e.text.replace(/^Poziom \d+! /, ''), ...(e.unlocks ?? []).map((u) => `🔓 ${u}`)];
         ui.celebration.value = { title: `POZIOM ${e.level}`, subtitle: rankFor(e.level), lines };
@@ -624,13 +629,14 @@ export function createShell(deps: ShellDeps): GameShell {
   }
 
   /**
-   * Stan interfejsu przypisany do jednego sklepu, który nie może przejść do następnego: seed w interfejsie, wpisy czekające na „OK”
-   * i zaznaczona odpowiedź na kartę (numery kart zaczynają się w każdej grze od 1). `closePanels`: także otwarta zakładka i raport
+   * Stan interfejsu przypisany do jednego sklepu, który nie może przejść do następnego: seed w interfejsie, wpisy czekające na „OK”,
+   * protokół remanentu i zaznaczona odpowiedź na kartę (numery kart zaczynają się w każdej grze od 1). `closePanels`: także otwarta zakładka i raport
    * miesiąca; robi to wejście w bieg rankingowy i powrót z niego, a zwykłe przejście między sklepami nie (tak jak zawsze).
    */
   function resetShopUi(seed: string, closePanels: boolean): void {
     ui.seed.value = seed;
     ui.story.value = [];
+    ui.remanent.value = null;
     ui.picked.value = null;
     if (!closePanels) return;
     ui.tab.value = null;

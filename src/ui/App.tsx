@@ -5,7 +5,7 @@ import { CardDesk } from './game/cards';
 import { Hud } from './game/Hud';
 import { MonthPreviewModal } from './game/monthPreview';
 import {
-  CelebrationBanner, ClickerBar, ComboChip, FirstDayHints, PrestigeModal, ReportModal, RotateButtons, SelectionCard, Settings,
+  CelebrationBanner, ClickerBar, ComboChip, FirstDayHints, PrestigeModal, RemanentModal, ReportModal, RotateButtons, SelectionCard, Settings,
   StoreBadge, StoryModal, Toasts, WelcomeModal,
 } from './game/overlays';
 import { Sheet, TabBar } from './game/panels';
@@ -33,7 +33,7 @@ const brandVars = {
  * Cała nakładka. Bez `controls` (renderer nie wstał, benchmark albo gra jeszcze nie ruszyła) zostaje komunikat, wyniki benchmarku
  * i ekran startowy „Twój kasjer”, który otwiera się przy pierwszym wejściu, zanim powstanie gra. W grze: górny pasek, zakładki
  * z arkuszami, karta zaznaczenia, przyciski klikera, podpowiedzi pierwszego dnia, komunikaty i okna. Kolejność okien to ich
- * warstwy: karta decyzji leży nad panelami, a pod raportem miesiąca, „Jak grać”, powitaniem i ustawieniami. Panele rankingu i kodu
+ * warstwy: karta decyzji leży nad panelami, a pod raportem miesiąca, protokołem remanentu, „Jak grać”, powitaniem i ustawieniami. Panele rankingu i kodu
  * odzyskiwania (`PanelHost`, otwierane z HUD-u i ⚙) leżą nad kartą decyzji i wpisami „OK”, pod ustawieniami i oknem końca sezonu.
  * Okno końca sezonu rankingowego leży nad wszystkimi: karta decyzji na minutę końca sezonu trzyma grę i nie może go zasłonić.
  * `services`: modele paneli rankingu (null w benchmarku i bez powłoki gry: przyciski „🏆” i paneli wtedy nie ma).
@@ -63,6 +63,7 @@ export function App(
           <CardDesk game={game} />
           <StoryModal />
           <ReportModal game={game} />
+          <RemanentModal />
           <HowTo />
           <MonthPreviewModal />
           <WelcomeModal game={game} />

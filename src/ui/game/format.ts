@@ -7,6 +7,15 @@ export const zl2 = (n: number): string =>
 
 export const signedZl = (n: number): string => `${n >= 0 ? '+' : '−'}${zl(Math.abs(n))}`;
 
+/** Stan pieniędzy (gotówka, saldo): ujemny z „−” (U+2212), dodatni bez „+”. `zl` dałoby tu łącznik, a `signedZl` plus. */
+export const money = (n: number): string => (Math.round(n) < 0 ? `−${zl(-n)}` : zl(Math.abs(n)));
+
+/** Kwota odejmowana na wyciągu: „−1 200 zł”; zero zostaje „0 zł” (bez „−0”). */
+export const minusZl = (n: number): string => (Math.round(n) > 0 ? `−${zl(n)}` : zl(0));
+
+/** Udział jako procent z co najwyżej jednym miejscem po przecinku: 0,012 daje „1,2%”, 0,04 daje „4%”. */
+export const percentOf = (share: number): string => `${(Math.round(share * 1000) / 10).toLocaleString('pl-PL')}%`;
+
 export const int = (n: number): string => Math.round(n).toLocaleString('pl-PL');
 
 /** Osoby albo osobominuty z jednym miejscem po przecinku, bez zbędnego „,0”: „1”, „0,4”, „1,7”. */

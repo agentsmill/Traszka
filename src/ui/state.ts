@@ -8,6 +8,7 @@ import type { BenchProgress } from '@/bench/bench';
 import type { PerfSnapshot } from './perfMeter';
 import type { Command } from '@/sim/economy/commands';
 import { awaitingDecision, type CommandResult, type EconEventKind, type EconomyState, type MonthReport } from '@/sim/economy/economy';
+import type { RemanentProtocol } from '@/sim/economy/franchisee';
 import type { MonthPreview } from '@/sim/economy/monthPreview';
 import type { StoreInfo } from '@/sim/economy/storeInfo';
 import { readMs } from '@/sim/economy/tycoon/notices';
@@ -60,12 +61,23 @@ export const toasts: Signal<Toast[]> = signal<Toast[]>([]);
 export const report: Signal<MonthReport | null> = signal<MonthReport | null>(null);
 export const showSettings: Signal<boolean> = signal(false);
 /**
+ * Protokół remanentu (`RemanentModal` w `ui/game/overlays.tsx`): ostatni remanent czeka na „OK” gracza, a dopóki jest otwarty, gra stoi
+ * (`isWindowOpen`). `text` to zdanie Centrali ze zdarzenia `remanent`. Ma pierwszeństwo przed wpisami `story`. Ustawia go
+ * `handleEvents` (game/actions.ts), zamyka `closeRemanent`. Nie jest częścią zapisu: ostatni protokół zostaje w stanie gry
+ * (`franchisee.remanent.last`), a panel Sklep pokazuje go jako „Ostatni remanent”.
+ */
+export interface RemanentView { protocol: RemanentProtocol; text: string }
+export const remanent: Signal<RemanentView | null> = signal<RemanentView | null>(null);
+export function closeRemanent(): void {
+  remanent.value = null;
+}
+/**
  * Okno „Jak grać” (`ui/howto/HowTo.tsx`): otwiera się po ekranie startowym i z ⚙, a dopóki jest otwarte, gra stoi (`isModalOpen`),
  * a podpowiedzi pierwszego dnia czekają. Otwiera i zamyka je `openHowTo` / `closeHowTo`. Nie jest częścią zapisu.
  */
 export const howTo: Signal<boolean> = signal(false);
 /**
- * Okno „Rachunek końca miesiąca” (`ui/game/monthPreview.tsx`): rachunek na dziś i podgląd, co będzie na koniec miesiąca, jeśli gracz nic nie
+ * Okno wyciągu na koniec miesiąca (`ui/game/monthPreview.tsx`): prognoza na dziś i podgląd wyciągu od Centrali za cały miesiąc, jeśli gracz nic nie
  * zrobi. Podgląd liczy się na kopii stanu (`monthPreviewRun.ts`), więc ten sygnał to jedyne, co się zmienia, a dopóki okno jest otwarte,
  * gra stoi (`isWindowOpen`). `null`: okno zamknięte. Faza: `idle` (czeka na przycisk), `running` (porcje liczą kopię; `run` odróżnia
  * to liczenie od porzuconego), `done` (sumy), `none` (nie było czego policzyć). Nie jest częścią zapisu.
@@ -76,7 +88,7 @@ export type MonthPreviewView =
   | { phase: 'done'; result: MonthPreview; ms: number }
   | { phase: 'none' };
 export const monthPreview: Signal<MonthPreviewView | null> = signal<MonthPreviewView | null>(null);
-/** Otwiera okno rachunku (podgląd czeka na przycisk). */
+/** Otwiera okno wyciągu (podgląd czeka na przycisk). */
 export function openMonthPreview(): void {
   monthPreview.value = { phase: 'idle' };
 }
@@ -315,12 +327,12 @@ export interface GameActions {
 }
 
 /**
- * Czy otwarte jest okno, które zatrzymuje grę i ma swój sygnał: raport miesiąca, ważne zdarzenie czekające na „OK”, ekran startowy,
- * powitanie, prestiż, „Jak grać”, rachunek końca miesiąca (`monthPreview`), okno końca sezonu (`finish`) albo panel rankingu i kodu odzyskiwania (`panel`). Czyta to `isModalOpen` (game/frame.ts: pętla klatek) i `hintsHeld`.
+ * Czy otwarte jest okno, które zatrzymuje grę i ma swój sygnał: raport miesiąca, protokół remanentu, ważne zdarzenie czekające na „OK”, ekran startowy,
+ * powitanie, prestiż, „Jak grać”, wyciąg na koniec miesiąca (`monthPreview`), okno końca sezonu (`finish`) albo panel rankingu i kodu odzyskiwania (`panel`). Czyta to `isModalOpen` (game/frame.ts: pętla klatek) i `hintsHeld`.
  * Karta decyzji i koniec gry nie mają sygnału okna: wynikają ze stanu gry.
  */
 export const isWindowOpen = (): boolean =>
-  !!report.value || story.value.length > 0 || !!start.value || !!welcome.value || showPrestige.value || howTo.value || !!monthPreview.value || !!finish.value || !!panel.value;
+  !!report.value || !!remanent.value || story.value.length > 0 || !!start.value || !!welcome.value || showPrestige.value || howTo.value || !!monthPreview.value || !!finish.value || !!panel.value;
 
 /**
  * Czy dymki pierwszego dnia mają czekać: pod każdym oknem, które zatrzymuje grę (`isWindowOpen`), pod kartą decyzji, która ją trzyma

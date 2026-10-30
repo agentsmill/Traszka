@@ -1,5 +1,5 @@
 import { cardDef, fillText, visibleCards, type CardInstance } from '@/sim/economy/tycoon/cards';
-import { econ, picked, report, story, type GameActions, type PickedAnswer } from '../state';
+import { econ, picked, remanent, report, story, type GameActions, type PickedAnswer } from '../state';
 import { deltaLines } from './cardText';
 import { int, people } from './format';
 import { SpendNote, answerCashCost } from './spend';
@@ -29,12 +29,12 @@ export const OKOLNIK_BADGE = 'Okólnik Centrali';
  * karty, `cardsBlocking`), aż gracz wybierze. Nie ma krzyżyka ani zamykania tłem: karta czeka na odpowiedź. Pokazuje
  * najstarszą widoczną kartę, po odpowiedzi wchodzi następna. Odpowiedź domyślna jest zaznaczona z góry, więc gracz, który
  * nie czyta, naciska samo „Zatwierdź”. Raport miesiąca (i koniec gry) oraz ważne zdarzenie czekające na „OK” (`StoryModal`) mają
- * pierwszeństwo: karta czeka za nimi (gra i tak stoi, a dwa okna naraz zasłaniałyby się nawzajem).
+ * pierwszeństwo, tak jak protokół remanentu: karta czeka za nimi (gra i tak stoi, a dwa okna naraz zasłaniałyby się nawzajem).
  * Wynik odpowiedzi to toast ze zdarzenia `card-result` (`handleEvents`), tu go nie dublujemy.
  */
 export function CardDesk({ game }: { game: GameActions }) {
   const view = econ.value;
-  if (!view || report.value || story.value.length > 0 || view.s.gameOver) return null;
+  if (!view || report.value || remanent.value || story.value.length > 0 || view.s.gameOver) return null;
   const cards = visibleCards(view.s.tycoon.cards, view.s.minute);
   const card = cards[0];
   if (!card) return null;
@@ -71,7 +71,7 @@ export function CardDesk({ game }: { game: GameActions }) {
                     : <span class="tt-chip none">bez skutków</span>}
                   {i === card.defaultAnswer && <span class="tt-chip tag">domyślnie</span>}
                 </span>
-                <SpendNote s={view.s} price={answerCashCost(a)} always />
+                <SpendNote s={view.s} info={view.info} price={answerCashCost(a)} always />
               </button>
             );
           })}

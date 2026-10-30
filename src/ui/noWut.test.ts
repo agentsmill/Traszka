@@ -31,7 +31,7 @@ describe('skrót WUT nie trafia do gracza', () => {
     const labels = Object.values(REPORT_LINE_LABEL);
     expect(REPORT_LINE_LABEL.wut).toBe('Ubytki ponad limit Centrali');
     const hints = HINT_IDS.map((id) => hintText({ id, value: 45_000 }));
-    expect(hintText({ id: 'wut', value: 450 })).toContain('Ubytki ponad limit Centrali: 450 zł');
+    expect(hintText({ id: 'wut', value: 450 })).toContain('Remanent: ubytki ponad limit Centrali 450 zł');
     const answer = (delta: AnswerInstance['delta']): AnswerInstance => ({ delta, mods: [], risk: null });
     const chips = deltaLines(answer({ wut: 120 }), String).map((l) => l.text);
     expect(chips).toEqual(['ubytki +120 zł']);
