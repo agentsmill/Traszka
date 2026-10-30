@@ -1,0 +1,1539 @@
+{
+ "schema": 2,
+ "gameVersion": "test",
+ "generatorVersion": 1,
+ "seed": "kiełbasa-42",
+ "layout": {
+  "generatorVersion": 1,
+  "seed": "kiełbasa-42",
+  "lot": {
+   "kind": "blok",
+   "interiorWidth": 20,
+   "salesDepth": 14,
+   "backroomDepth": 4,
+   "corner": false
+  },
+  "width": 22,
+  "depth": 25,
+  "midWallY": 19,
+  "cells": [
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "outside",
+   "wall",
+   "window",
+   "window",
+   "window",
+   "window",
+   "window",
+   "window",
+   "window",
+   "window",
+   "window",
+   "window",
+   "window",
+   "window",
+   "window",
+   "entrance",
+   "entrance",
+   "window",
+   "window",
+   "window",
+   "window",
+   "window",
+   "wall",
+   "wall",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "fixture",
+   "fixture",
+   "floor",
+   "floor",
+   "fixture",
+   "fixture",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "wall",
+   "wall",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "fixture",
+   "fixture",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "fixture",
+   "floor",
+   "fixture",
+   "wall",
+   "wall",
+   "fixture",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "fixture",
+   "floor",
+   "fixture",
+   "wall",
+   "wall",
+   "fixture",
+   "floor",
+   "floor",
+   "fixture",
+   "fixture",
+   "fixture",
+   "floor",
+   "floor",
+   "fixture",
+   "fixture",
+   "fixture",
+   "fixture",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "fixture",
+   "floor",
+   "fixture",
+   "wall",
+   "wall",
+   "fixture",
+   "floor",
+   "floor",
+   "fixture",
+   "fixture",
+   "fixture",
+   "floor",
+   "floor",
+   "fixture",
+   "fixture",
+   "fixture",
+   "fixture",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "fixture",
+   "floor",
+   "fixture",
+   "wall",
+   "wall",
+   "fixture",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "fixture",
+   "floor",
+   "fixture",
+   "wall",
+   "wall",
+   "fixture",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "fixture",
+   "floor",
+   "fixture",
+   "wall",
+   "wall",
+   "fixture",
+   "floor",
+   "floor",
+   "fixture",
+   "fixture",
+   "fixture",
+   "floor",
+   "floor",
+   "floor",
+   "fixture",
+   "fixture",
+   "fixture",
+   "fixture",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "fixture",
+   "floor",
+   "fixture",
+   "wall",
+   "wall",
+   "fixture",
+   "floor",
+   "floor",
+   "fixture",
+   "fixture",
+   "fixture",
+   "floor",
+   "floor",
+   "floor",
+   "fixture",
+   "fixture",
+   "fixture",
+   "fixture",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "wall",
+   "wall",
+   "fixture",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "fixture",
+   "fixture",
+   "wall",
+   "wall",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "fixture",
+   "fixture",
+   "wall",
+   "wall",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "wall",
+   "wall",
+   "fixture",
+   "fixture",
+   "fixture",
+   "fixture",
+   "fixture",
+   "fixture",
+   "fixture",
+   "fixture",
+   "fixture",
+   "fixture",
+   "fixture",
+   "fixture",
+   "fixture",
+   "fixture",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "wall",
+   "wall",
+   "fixture",
+   "fixture",
+   "fixture",
+   "fixture",
+   "fixture",
+   "fixture",
+   "fixture",
+   "fixture",
+   "fixture",
+   "fixture",
+   "fixture",
+   "fixture",
+   "fixture",
+   "fixture",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "wall",
+   "wall",
+   "wall",
+   "wall",
+   "wall",
+   "wall",
+   "wall",
+   "wall",
+   "wall",
+   "wall",
+   "wall",
+   "wall",
+   "wall",
+   "wall",
+   "wall",
+   "wall",
+   "wall",
+   "fixture",
+   "fixture",
+   "wall",
+   "wall",
+   "wall",
+   "wall",
+   "wall",
+   "backroom",
+   "backroom",
+   "backroom",
+   "backroom",
+   "backroom",
+   "backroom",
+   "backroom",
+   "backroom",
+   "backroom",
+   "backroom",
+   "backroom",
+   "backroom",
+   "backroom",
+   "backroom",
+   "backroom",
+   "backroom",
+   "backroom",
+   "backroom",
+   "backroom",
+   "backroom",
+   "wall",
+   "wall",
+   "backroom",
+   "backroom",
+   "backroom",
+   "backroom",
+   "backroom",
+   "backroom",
+   "backroom",
+   "backroom",
+   "backroom",
+   "backroom",
+   "backroom",
+   "backroom",
+   "backroom",
+   "backroom",
+   "backroom",
+   "backroom",
+   "backroom",
+   "backroom",
+   "backroom",
+   "backroom",
+   "wall",
+   "wall",
+   "backroom",
+   "backroom",
+   "backroom",
+   "backroom",
+   "backroom",
+   "backroom",
+   "backroom",
+   "backroom",
+   "backroom",
+   "backroom",
+   "backroom",
+   "backroom",
+   "backroom",
+   "backroom",
+   "backroom",
+   "backroom",
+   "backroom",
+   "backroom",
+   "backroom",
+   "backroom",
+   "wall",
+   "wall",
+   "backroom",
+   "backroom",
+   "backroom",
+   "backroom",
+   "backroom",
+   "backroom",
+   "backroom",
+   "backroom",
+   "backroom",
+   "backroom",
+   "backroom",
+   "backroom",
+   "backroom",
+   "backroom",
+   "backroom",
+   "backroom",
+   "backroom",
+   "backroom",
+   "backroom",
+   "backroom",
+   "wall",
+   "wall",
+   "wall",
+   "wall",
+   "wall",
+   "wall",
+   "wall",
+   "wall",
+   "wall",
+   "wall",
+   "wall",
+   "wall",
+   "wall",
+   "wall",
+   "wall",
+   "wall",
+   "wall",
+   "wall",
+   "wall",
+   "wall",
+   "wall",
+   "wall",
+   "wall"
+  ],
+  "fixtures": [
+   {
+    "id": "backroomDoor-1",
+    "kind": "backroomDoor",
+    "x": 16,
+    "y": 19,
+    "w": 2,
+    "d": 1,
+    "facing": "N"
+   },
+   {
+    "id": "checkout-1",
+    "kind": "checkout",
+    "x": 18,
+    "y": 6,
+    "w": 1,
+    "d": 4,
+    "facing": "W"
+   },
+   {
+    "id": "tobaccoShelf-1",
+    "kind": "tobaccoShelf",
+    "x": 20,
+    "y": 6,
+    "w": 1,
+    "d": 7,
+    "facing": "W"
+   },
+   {
+    "id": "hotFood-1",
+    "kind": "hotFood",
+    "x": 18,
+    "y": 11,
+    "w": 1,
+    "d": 2,
+    "facing": "W"
+   },
+   {
+    "id": "coffee-1",
+    "kind": "coffee",
+    "x": 18,
+    "y": 10,
+    "w": 1,
+    "d": 1,
+    "facing": "W"
+   },
+   {
+    "id": "fridge-1",
+    "kind": "fridge",
+    "x": 1,
+    "y": 17,
+    "w": 2,
+    "d": 2,
+    "facing": "N"
+   },
+   {
+    "id": "fridge-2",
+    "kind": "fridge",
+    "x": 3,
+    "y": 17,
+    "w": 2,
+    "d": 2,
+    "facing": "N"
+   },
+   {
+    "id": "fridge-3",
+    "kind": "fridge",
+    "x": 5,
+    "y": 17,
+    "w": 2,
+    "d": 2,
+    "facing": "N"
+   },
+   {
+    "id": "fridge-4",
+    "kind": "fridge",
+    "x": 7,
+    "y": 17,
+    "w": 2,
+    "d": 2,
+    "facing": "N"
+   },
+   {
+    "id": "fridge-5",
+    "kind": "fridge",
+    "x": 9,
+    "y": 17,
+    "w": 2,
+    "d": 2,
+    "facing": "N"
+   },
+   {
+    "id": "fridge-6",
+    "kind": "fridge",
+    "x": 11,
+    "y": 17,
+    "w": 2,
+    "d": 2,
+    "facing": "N"
+   },
+   {
+    "id": "gondola-1",
+    "kind": "gondola",
+    "x": 9,
+    "y": 8,
+    "w": 4,
+    "d": 2,
+    "facing": "N"
+   },
+   {
+    "id": "gondola-2",
+    "kind": "gondola",
+    "x": 4,
+    "y": 8,
+    "w": 3,
+    "d": 2,
+    "facing": "S"
+   },
+   {
+    "id": "gondola-3",
+    "kind": "gondola",
+    "x": 10,
+    "y": 12,
+    "w": 4,
+    "d": 2,
+    "facing": "S"
+   },
+   {
+    "id": "gondola-4",
+    "kind": "gondola",
+    "x": 4,
+    "y": 12,
+    "w": 3,
+    "d": 2,
+    "facing": "N"
+   },
+   {
+    "id": "wallShelf-1",
+    "kind": "wallShelf",
+    "x": 1,
+    "y": 7,
+    "w": 1,
+    "d": 8,
+    "facing": "E"
+   },
+   {
+    "id": "selfCheckoutSlot-1",
+    "kind": "selfCheckoutSlot",
+    "x": 11,
+    "y": 5,
+    "w": 2,
+    "d": 1,
+    "facing": "S"
+   },
+   {
+    "id": "equipmentSlot-1",
+    "kind": "equipmentSlot",
+    "x": 13,
+    "y": 17,
+    "w": 2,
+    "d": 2,
+    "facing": "E"
+   },
+   {
+    "id": "equipmentSlot-2",
+    "kind": "equipmentSlot",
+    "x": 19,
+    "y": 14,
+    "w": 2,
+    "d": 2,
+    "facing": "S"
+   },
+   {
+    "id": "equipmentSlot-3",
+    "kind": "equipmentSlot",
+    "x": 7,
+    "y": 5,
+    "w": 2,
+    "d": 2,
+    "facing": "W"
+   }
+  ],
+  "entrance": [
+   {
+    "x": 14,
+    "y": 4
+   },
+   {
+    "x": 15,
+    "y": 4
+   }
+  ],
+  "checkoutQueue": [
+   {
+    "x": 17,
+    "y": 8
+   },
+   {
+    "x": 17,
+    "y": 9
+   },
+   {
+    "x": 17,
+    "y": 10
+   },
+   {
+    "x": 17,
+    "y": 11
+   },
+   {
+    "x": 17,
+    "y": 12
+   },
+   {
+    "x": 17,
+    "y": 13
+   }
+  ],
+  "palletZoneOutside": [
+   {
+    "x": 1,
+    "y": 1
+   },
+   {
+    "x": 2,
+    "y": 1
+   },
+   {
+    "x": 3,
+    "y": 1
+   },
+   {
+    "x": 4,
+    "y": 1
+   },
+   {
+    "x": 5,
+    "y": 1
+   },
+   {
+    "x": 6,
+    "y": 1
+   },
+   {
+    "x": 7,
+    "y": 1
+   },
+   {
+    "x": 8,
+    "y": 1
+   },
+   {
+    "x": 9,
+    "y": 1
+   },
+   {
+    "x": 10,
+    "y": 1
+   },
+   {
+    "x": 11,
+    "y": 1
+   },
+   {
+    "x": 12,
+    "y": 1
+   },
+   {
+    "x": 17,
+    "y": 1
+   },
+   {
+    "x": 18,
+    "y": 1
+   },
+   {
+    "x": 19,
+    "y": 1
+   },
+   {
+    "x": 20,
+    "y": 1
+   },
+   {
+    "x": 1,
+    "y": 2
+   },
+   {
+    "x": 2,
+    "y": 2
+   },
+   {
+    "x": 3,
+    "y": 2
+   },
+   {
+    "x": 4,
+    "y": 2
+   },
+   {
+    "x": 5,
+    "y": 2
+   },
+   {
+    "x": 6,
+    "y": 2
+   },
+   {
+    "x": 7,
+    "y": 2
+   },
+   {
+    "x": 8,
+    "y": 2
+   },
+   {
+    "x": 9,
+    "y": 2
+   },
+   {
+    "x": 10,
+    "y": 2
+   },
+   {
+    "x": 11,
+    "y": 2
+   },
+   {
+    "x": 12,
+    "y": 2
+   },
+   {
+    "x": 17,
+    "y": 2
+   },
+   {
+    "x": 18,
+    "y": 2
+   },
+   {
+    "x": 19,
+    "y": 2
+   },
+   {
+    "x": 20,
+    "y": 2
+   }
+  ],
+  "spawnPoints": [
+   {
+    "x": 0,
+    "y": 1
+   },
+   {
+    "x": 21,
+    "y": 1
+   }
+  ]
+ },
+ "econ": {
+  "version": 1,
+  "seed": "kiełbasa-42",
+  "seedHash": 648962987,
+  "minute": 65640,
+  "cash": 25509.692084001672,
+  "ogonki": 146,
+  "ogonkiAcc": 0.9352848590145534,
+  "reputation": 90.65331339205207,
+  "shelf": {
+   "napoje": 708.3812,
+   "nabial": 335.7144,
+   "slodycze": 273.643,
+   "przekaski": 273.643,
+   "pieczywo": 204.6668,
+   "chemia": 136.881,
+   "alkohol": 273.6906
+  },
+  "backroom": {
+   "napoje": 141.48901935387883,
+   "nabial": 64.68193030585019,
+   "slodycze": 91.18642370244177,
+   "przekaski": 91.18642370244177,
+   "pieczywo": 85.81559714300893,
+   "chemia": 27.163146982189463,
+   "alkohol": 76.44237180721727
+  },
+  "pallets": [],
+  "nextPalletId": 133,
+  "order": {
+   "auto": true,
+   "manual": 3
+  },
+  "deliveries": [
+   {
+    "at": 66660,
+    "count": 4
+   }
+  ],
+  "staff": 2,
+  "queue": 0.30000000000000004,
+  "arrivalAcc": 0.14589824360951487,
+  "upgrades": {
+   "ulotki": 1
+  },
+  "equipment": [],
+  "remontLevel": 0,
+  "remontUntil": null,
+  "boostUntil": 0,
+  "lastFineAt": -1000000000,
+  "lastWarnAt": 2345,
+  "today": {
+   "customers": 201.69999999999962,
+   "lost": 0,
+   "revenue": 4407.5080600000065,
+   "margin": 842.6658905999928,
+   "wages": 0,
+   "media": 0,
+   "fee": 0,
+   "fines": 0,
+   "logistics": 0,
+   "investments": 0,
+   "other": 0,
+   "bonus": 0,
+   "guarantee": 0,
+   "wut": 0,
+   "fineCount": 0,
+   "missingItems": 0,
+   "palletsUnloaded": 3,
+   "taps": 0,
+   "hotSold": 36.30599999999999,
+   "purchases": 0
+  },
+  "month": {
+   "customers": 6942.3517787656365,
+   "lost": 29.74822123379133,
+   "revenue": 151702.8825992644,
+   "margin": 29003.88222366064,
+   "wages": 15000,
+   "media": 2280,
+   "fee": 0,
+   "fines": 0,
+   "logistics": 0,
+   "investments": 0,
+   "other": -200,
+   "bonus": 3480,
+   "guarantee": 0,
+   "wut": 0,
+   "fineCount": 0,
+   "missingItems": 0,
+   "palletsUnloaded": 51,
+   "taps": 0,
+   "hotSold": 1249.6233201777588,
+   "purchases": 0
+  },
+  "total": {
+   "customers": 18483.82121475823,
+   "lost": 39.17878524641632,
+   "revenue": 403904.7644203093,
+   "margin": 76958.08643857409,
+   "wages": 45000,
+   "media": 6840,
+   "fee": 9575,
+   "fines": 320,
+   "logistics": 0,
+   "investments": 800,
+   "other": 2960,
+   "bonus": 3960,
+   "guarantee": 0,
+   "wut": 833.3943545359834,
+   "fineCount": 1,
+   "missingItems": 0,
+   "palletsUnloaded": 132,
+   "taps": 0,
+   "hotSold": 3327.08781865763,
+   "purchases": 1
+  },
+  "history": [
+   {
+    "label": "wrzesień 2026",
+    "profit": 6305.809860356199,
+    "revenue": 252201.8818213486
+   }
+  ],
+  "lastReport": {
+   "label": "wrzesień 2026",
+   "counters": {
+    "customers": 11541.469435988396,
+    "lost": 9.430564012624977,
+    "revenue": 252201.8818213486,
+    "margin": 47954.20421489218,
+    "wages": 30000,
+    "media": 4560,
+    "fee": 9575,
+    "fines": 320,
+    "logistics": 0,
+    "investments": 800,
+    "other": 3160,
+    "bonus": 480,
+    "guarantee": 0,
+    "wut": 833.3943545359834,
+    "fineCount": 1,
+    "missingItems": 0,
+    "palletsUnloaded": 81,
+    "taps": 0,
+    "hotSold": 2077.4644984776924,
+    "purchases": 1
+   },
+   "profit": 6305.809860356199,
+   "cash": 10505.80986034112,
+   "comment": "Jest dodatnio! Centrala gratuluje i podnosi KPI na przyszły miesiąc.",
+   "detail": {
+    "monthIndex": 0,
+    "lines": [
+     {
+      "key": "marza",
+      "amount": 47954.20421489218
+     },
+     {
+      "key": "premie",
+      "amount": 480
+     },
+     {
+      "key": "inne",
+      "amount": 3160
+     },
+     {
+      "key": "place",
+      "amount": -30000
+     },
+     {
+      "key": "media",
+      "amount": -4560
+     },
+     {
+      "key": "oplata",
+      "amount": -9575
+     },
+     {
+      "key": "mandaty",
+      "amount": -320
+     },
+     {
+      "key": "wut",
+      "amount": -833.3943545359834
+     },
+     {
+      "key": "logistyka",
+      "amount": 0
+     }
+    ],
+    "result": 6305.809860356199,
+    "revenue": 252201.8818213486,
+    "trust": {
+     "start": 65,
+     "end": 61,
+     "delta": -4,
+     "reasons": [
+      [
+       "wynik",
+       5
+      ],
+      [
+       "kpi",
+       -3
+      ],
+      [
+       "karty",
+       -3
+      ],
+      [
+       "okolnik",
+       -3
+      ]
+     ]
+    },
+    "cleanlinessAvg": 97.81903865046988,
+    "kpi": {
+     "hit": 1,
+     "miss": 3
+    },
+    "commentId": "plus-0",
+    "hint": {
+     "id": "bezczynnosc",
+     "value": 509.8203371426103,
+     "impact": 7619.715798312043
+    }
+   }
+  },
+  "milestones": [],
+  "milestonesReady": [
+   "pallet1",
+   "cust500",
+   "upgrade1",
+   "earned10k",
+   "cust5k",
+   "month1"
+  ],
+  "gameOver": false,
+  "lastCashiers": 1,
+  "lastWorkers": 0,
+  "shift": {
+   "staff": 2,
+   "human": {
+    "kasa": 1,
+    "rozladunek": 0,
+    "wykladanie": 0,
+    "sprzatanie": 0
+   },
+   "people": [
+    "kasa",
+    "wolny"
+   ]
+  },
+  "level": 12,
+  "xp": 3454.9675791790323,
+  "tapStreak": 0,
+  "lastTapAt": -1000000000,
+  "lastDayProfit": -826.1597180000299,
+  "bestDayProfit": 2478.174005668268,
+  "partner": {
+   "points": 0,
+   "networkIncome": 0,
+   "stores": 0
+  },
+  "tycoon": {
+   "version": 1,
+   "staff": {
+    "profile": "kolejka",
+    "order": [
+     "kasa",
+     "wykladanie",
+     "rozladunek",
+     "sprzatanie"
+    ],
+    "pinned": {
+     "kasa": 0,
+     "rozladunek": 0,
+     "wykladanie": 0,
+     "sprzatanie": 0
+    },
+    "chores": 0,
+    "day": {
+     "worked": {
+      "kasa": 288.14285714285677,
+      "rozladunek": 320.00000000000017,
+      "wykladanie": 43.101754350148674,
+      "sprzatanie": 47.624999999998714
+     },
+     "robot": {
+      "kasa": 0,
+      "rozladunek": 0,
+      "wykladanie": 0,
+      "sprzatanie": 0
+     },
+     "waiting": {
+      "kasa": 0,
+      "rozladunek": 792.9037588908972,
+      "wykladanie": 0,
+      "sprzatanie": 420.3303257787192
+     },
+     "starved": {
+      "kasa": 0,
+      "rozladunek": 0,
+      "wykladanie": 0,
+      "sprzatanie": 262
+     },
+     "idle": 261.1303885069953,
+     "chores": 0,
+     "scoFreed": 0
+    },
+    "month": {
+     "worked": {
+      "kasa": 9917.645398237255,
+      "rozladunek": 5439.713572115018,
+      "wykladanie": 1195.0373080760114,
+      "sprzatanie": 1342.2874999999776
+     },
+     "robot": {
+      "kasa": 0,
+      "rozladunek": 0,
+      "wykladanie": 0,
+      "sprzatanie": 0
+     },
+     "waiting": {
+      "kasa": 0,
+      "rozladunek": 15054.660579576208,
+      "wykladanie": 2.757285714285758,
+      "sprzatanie": 7402.097107988042
+     },
+     "starved": {
+      "kasa": 0,
+      "rozladunek": 16,
+      "wykladanie": 11,
+      "sprzatanie": 4496
+     },
+     "idle": 13610.316221571726,
+     "chores": 55,
+     "scoFreed": 0
+    }
+   },
+   "waste": {
+    "backroom": 0,
+    "hall": 0,
+    "month": {
+     "produced": 76.5,
+     "removed": 76.50000000000009,
+     "hallBagMinutes": 0
+    }
+   },
+   "hall": {
+    "cleanliness": 99.9,
+    "weather": "sucho",
+    "monthSum": 1535342.2969956351,
+    "monthMinutes": 15780,
+    "totalSum": 4528604.879700168,
+    "totalMinutes": 46380
+   },
+   "fatigue": {
+    "energy": 100,
+    "carried": 0,
+    "spentToday": 0,
+    "tapsToday": 0,
+    "refusedToday": 0,
+    "exhaustedDays": 0,
+    "refusedMonth": 0
+   },
+   "cards": {
+    "pending": [],
+    "active": [],
+    "drawnDay": 45,
+    "lastSeen": {
+     "cenowki": 16,
+     "chory": 1,
+     "fefo": 41,
+     "okolnik-ankieta": 32,
+     "ekspres": 7,
+     "okolnik-premia": 26,
+     "okolnik-witryna": 38,
+     "okolnik-refundacja": 43,
+     "wiralowy": 45,
+     "glitch": 44,
+     "okolnik-usmiech": 22,
+     "audyt": 34,
+     "wiek": 39
+    },
+    "nextCircularDay": 47,
+    "seq": 26,
+    "log": [
+     {
+      "seq": 1,
+      "id": "cenowki",
+      "day": 0,
+      "answer": 2,
+      "riskHit": true
+     },
+     {
+      "seq": 2,
+      "id": "chory",
+      "day": 1,
+      "answer": 2,
+      "riskHit": false
+     },
+     {
+      "seq": 3,
+      "id": "fefo",
+      "day": 3,
+      "answer": 2,
+      "riskHit": true
+     },
+     {
+      "seq": 4,
+      "id": "okolnik-ankieta",
+      "day": 4,
+      "answer": 2,
+      "riskHit": false
+     },
+     {
+      "seq": 5,
+      "id": "fefo",
+      "day": 5,
+      "answer": 2,
+      "riskHit": false
+     },
+     {
+      "seq": 6,
+      "id": "ekspres",
+      "day": 7,
+      "answer": 2,
+      "riskHit": false
+     },
+     {
+      "seq": 7,
+      "id": "okolnik-premia",
+      "day": 9,
+      "answer": 1,
+      "riskHit": false
+     },
+     {
+      "seq": 8,
+      "id": "okolnik-witryna",
+      "day": 13,
+      "answer": 1,
+      "riskHit": false
+     },
+     {
+      "seq": 9,
+      "id": "fefo",
+      "day": 14,
+      "answer": 2,
+      "riskHit": true
+     },
+     {
+      "seq": 10,
+      "id": "cenowki",
+      "day": 16,
+      "answer": 2,
+      "riskHit": false
+     },
+     {
+      "seq": 11,
+      "id": "fefo",
+      "day": 17,
+      "answer": 2,
+      "riskHit": false
+     },
+     {
+      "seq": 12,
+      "id": "okolnik-refundacja",
+      "day": 18,
+      "answer": 1,
+      "riskHit": false
+     },
+     {
+      "seq": 13,
+      "id": "wiralowy",
+      "day": 19,
+      "answer": 1,
+      "riskHit": false
+     },
+     {
+      "seq": 14,
+      "id": "glitch",
+      "day": 20,
+      "answer": 2,
+      "riskHit": false
+     },
+     {
+      "seq": 15,
+      "id": "okolnik-usmiech",
+      "day": 22,
+      "answer": 2,
+      "riskHit": false
+     },
+     {
+      "seq": 16,
+      "id": "okolnik-premia",
+      "day": 26,
+      "answer": 1,
+      "riskHit": false
+     },
+     {
+      "seq": 17,
+      "id": "fefo",
+      "day": 27,
+      "answer": 2,
+      "riskHit": true
+     },
+     {
+      "seq": 18,
+      "id": "okolnik-ankieta",
+      "day": 32,
+      "answer": 2,
+      "riskHit": false
+     },
+     {
+      "seq": 19,
+      "id": "audyt",
+      "day": 34,
+      "answer": 2,
+      "riskHit": false
+     },
+     {
+      "seq": 20,
+      "id": "okolnik-witryna",
+      "day": 38,
+      "answer": 1,
+      "riskHit": false
+     },
+     {
+      "seq": 21,
+      "id": "wiek",
+      "day": 39,
+      "answer": 2,
+      "riskHit": false
+     },
+     {
+      "seq": 22,
+      "id": "fefo",
+      "day": 41,
+      "answer": 2,
+      "riskHit": true
+     },
+     {
+      "seq": 23,
+      "id": "okolnik-refundacja",
+      "day": 43,
+      "answer": 1,
+      "riskHit": false
+     },
+     {
+      "seq": 24,
+      "id": "glitch",
+      "day": 44,
+      "answer": 2,
+      "riskHit": false
+     },
+     {
+      "seq": 25,
+      "id": "wiralowy",
+      "day": 45,
+      "answer": 1,
+      "riskHit": false
+     }
+    ],
+    "month": {
+     "answered": 8,
+     "defaults": 8,
+     "riskHits": 1
+    }
+   },
+   "trust": {
+    "value": 70,
+    "monthStart": 61,
+    "month": {
+     "kpi": 6,
+     "audyt": 6,
+     "karty": -3
+    }
+   },
+   "kpi": {
+    "seq": 7,
+    "kind": "bezMandatu",
+    "target": 0,
+    "start": {
+     "customers": 16494.121214757306,
+     "hotSold": 2968.941818657051,
+     "lost": 39.17878524641632,
+     "fines": 1,
+     "cleanSum": 4086579.8990590503,
+     "cleanMinutes": 41820
+    },
+    "fromDay": 41,
+    "toDay": 47,
+    "month": {
+     "hit": 2,
+     "miss": 0
+    }
+   },
+   "wut": {
+    "month": {
+     "termin": 606.811530396989,
+     "kradziez": 455.1086477977206,
+     "pomylki": 303.4057651984945,
+     "karty": 420
+    }
+   }
+  }
+ }
+}
