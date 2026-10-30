@@ -1,9 +1,11 @@
-/** Formatowanie liczb w interfejsie gry (polski zapis: spacja tysięcy, przecinek). */
+import { enPluralOf, numberLocale } from '@/i18n';
 
-export const zl = (n: number): string => `${Math.round(n).toLocaleString('pl-PL')} zł`;
+/** Formatowanie liczb w interfejsie gry: zapis bieżącego języka (po polsku spacja tysięcy i przecinek, po angielsku odwrotnie). */
+
+export const zl = (n: number): string => `${Math.round(n).toLocaleString(numberLocale())} zł`;
 
 export const zl2 = (n: number): string =>
-  `${n.toLocaleString('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} zł`;
+  `${n.toLocaleString(numberLocale(), { minimumFractionDigits: 2, maximumFractionDigits: 2 })} zł`;
 
 export const signedZl = (n: number): string => `${n >= 0 ? '+' : '−'}${zl(Math.abs(n))}`;
 
@@ -14,18 +16,18 @@ export const money = (n: number): string => (Math.round(n) < 0 ? `−${zl(-n)}` 
 export const minusZl = (n: number): string => (Math.round(n) > 0 ? `−${zl(n)}` : zl(0));
 
 /** Udział jako procent z co najwyżej jednym miejscem po przecinku: 0,012 daje „1,2%”, 0,04 daje „4%”. */
-export const percentOf = (share: number): string => `${(Math.round(share * 1000) / 10).toLocaleString('pl-PL')}%`;
+export const percentOf = (share: number): string => `${(Math.round(share * 1000) / 10).toLocaleString(numberLocale())}%`;
 
-export const int = (n: number): string => Math.round(n).toLocaleString('pl-PL');
+export const int = (n: number): string => Math.round(n).toLocaleString(numberLocale());
 
 /** Osoby albo osobominuty z jednym miejscem po przecinku, bez zbędnego „,0”: „1”, „0,4”, „1,7”. */
-export const people = (n: number): string => (Math.round(n * 10) / 10).toLocaleString('pl-PL');
+export const people = (n: number): string => (Math.round(n * 10) / 10).toLocaleString(numberLocale());
 
 /** Zmiana punktów (zaufanie) ze znakiem: „+3”, „−2,5”. Jedno miejsce po przecinku, tylko gdy liczba nie jest całkowita; zero bez znaku. */
 export function signedPts(n: number): string {
   const r = Math.round(n * 10) / 10;
   if (r === 0) return '0';
-  return `${r > 0 ? '+' : '−'}${Math.abs(r).toLocaleString('pl-PL', { maximumFractionDigits: 1 })}`;
+  return `${r > 0 ? '+' : '−'}${Math.abs(r).toLocaleString(numberLocale(), { maximumFractionDigits: 1 })}`;
 }
 
 export const pct = (x: number): string => `${Math.round(Math.max(0, Math.min(1, x)) * 100)}%`;
@@ -38,8 +40,10 @@ export function duration(minutes: number): string {
   return m % 60 === 0 ? `${h} h` : `${h} h ${m % 60} min`;
 }
 
-/** Odmiana: 1 osoba, 2 osoby, 5 osób. */
+/** Odmiana: 1 osoba, 2 osoby, 5 osób (po angielsku forma z `EN_PLURALS`: 1 person, 2 people). */
 export function plural(n: number, one: string, few: string, many: string): string {
+  const en = enPluralOf(n, one, few, many);
+  if (en !== null) return en;
   const n10 = n % 10;
   const n100 = n % 100;
   if (n === 1) return one;

@@ -29,6 +29,7 @@ import { weekSeedOf } from '@/ui/start/weekSeed';
 import { createWorldOverlay } from '@/ui/worldOverlay';
 import { FrameMeter } from '@/ui/perfMeter';
 import * as ui from '@/ui/state';
+import { initLang } from '@/i18n';
 
 /**
  * Moduł benchmarku (`?bench=1`). Ładowany dynamicznie tylko dla tego trybu: zwykła gra nie pobiera maszyny stanów pomiaru.
@@ -268,6 +269,8 @@ async function startScreen(seed: string): Promise<StartEntry | null> {
 }
 
 const params = new URLSearchParams(location.search);
+// język przed pierwszym rysowaniem nakładki: zapamiętany wybór gracza albo język przeglądarki (pl* → polski, reszta → angielski)
+initLang();
 const canvas = document.getElementById('scene') as HTMLCanvasElement;
 const uiRoot = document.getElementById('ui') as HTMLElement;
 
