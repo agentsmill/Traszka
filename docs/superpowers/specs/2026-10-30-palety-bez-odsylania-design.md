@@ -48,8 +48,11 @@ Wniosek: odesłane palety to objaw nadmiaru towaru, a nie braku rąk. Bez odsył
   - Kwadrat to `spot mod n`, piętro to `floor(spot / n)` (helper `palletPlace` w `storeInfo.ts`).
   - Wszystkie miejsca w kodzie, które czytały `info.spots[loc][spot]` (widok, cele załogi, przeszkody tłumu, `fitsStore`), idą przez ten helper.
 - Górną granicę liczby palet daje limit kredytu kupieckiego (§3): przy `CREDIT_LIMIT` 70 tys. to ok. 24 palety towaru (po zmianie z §6), a po trzecim remoncie ok. 60. `LIMITS.pallets` w `sanitize.ts`: 64 → 256.
-- Gracz może przenieść paletę z przejścia na wolne zwykłe miejsce (`movePallet`). Do przejścia przenieść jej nie można, bo tam stawia tylko kierowca.
-- Rozładunek bierze palety z przejść najpierw (`PALLET_ORDER`: przejście, chodnik, sala, zaplecze). Tempo jak w sali (`UNLOAD_AT.aisle = 1`).
+- Gracz może przenieść paletę z przejścia na wolne zwykłe miejsce (`movePallet`). Do przejścia przenieść jej nie można: tam stawia kierowca i załoga (niżej).
+- **Załoga wciąga w przejścia paletę spod sklepu, której towaru nie ma gdzie wyłożyć** (pełne półki i zaplecze), gdy stoi tam co najmniej 2 godziny (`CLUTTER.pullInMin`, sprawdzane o pełnej godzinie, gdy załoga jest w sklepie).
+  - *Decyzja sesji po pomiarze:* bez tego nadmiar kończył się bankructwem z mandatów, nie zagraceniem. Pięć takich palet stało na chodniku dwa tygodnie, a Straż Miejska pisała mandaty co obchód: ok. 5,6 tys. zł dziennie i −2 reputacji za każdy. Mały sklep (`seed-3`) zbankrutował 26. dnia, choć gracz wrócił do asystenta 13. dnia.
+  - Z wciąganiem nadmiar widać w sali, jak chciał właściciel, a mandat zostaje karą za palety, które czekają na ręce.
+- Rozładunek zaczyna od chodnika (mandat), potem przejścia, sala i zaplecze (`PALLET_ORDER`). Tempo w przejściu jak w sali (`UNLOAD_AT.aisle = 1`).
 - Remont (`relayout`): paleta z przejścia najpierw szuka zwykłego miejsca w nowym układzie. Żadna paleta już nie przepada.
 
 ## 5. Skutek zagracenia w symulacji (deterministyczny)
@@ -60,9 +63,14 @@ Zagracenie `Z` to liczba palet w sali i w przejściach. Wszystkie wzory są czys
 |---|---|---|
 | Klienci rezygnują przy wejściu | ruch × `max(0,5; 1 − 0,08·(Z + worki w sali))` (dotąd liczyły się tylko palety w sali) | przy 6 paletach ruch spada o połowę, ale nie niżej |
 | Klienci wolniej przechodzą i szybciej się zniechęcają | cierpliwość − `min(3, Z)` | najwyżej −3, tyle co trzy palety w sali dotąd |
-| Reputacja spada proporcjonalnie | co minutę otwarcia −0,0006 × `min(8, palety w przejściach)` | najwyżej −4,9 punktu dziennie; jedna paleta to −0,6 dziennie, a obsługa klientów daje ok. +1,4 dziennie |
+| Reputacja spada proporcjonalnie | co minutę otwarcia −0,0006 × `min(8, palety w przejściach)`, ale nie poniżej 25 (`CLUTTER.repFloor`) | najwyżej −4,9 punktu dziennie; jedna paleta to −0,6 dziennie, a obsługa klientów daje ok. +1,4 dziennie |
 
-**Wyjście z zagracenia.** Rozładunek nie zwalnia od zagracenia. Ruch nie spada poniżej połowy, więc sklep dalej sprzedaje, a towar schodzi. Asystent w trybie auto przy pełnym zapasie zamawia 0. Gracz, który przełączy zamówienie na auto, wychodzi z zagracenia sam (test bilansu §10).
+**Wyjście z zagracenia.**
+
+- Rozładunek nie zwalnia od zagracenia. Ruch nie spada poniżej połowy, więc sklep dalej sprzedaje, a towar schodzi.
+- Zagracenie nie zbija reputacji poniżej 25. Przy 0 sklep miałby 0,6 ruchu razy 0,5 od zagracenia i towar schodziłby tygodniami.
+- Asystent w trybie auto przy pełnym zapasie zamawia 0. Gracz, który przełączy zamówienie na auto, wychodzi z zagracenia sam (test `tycoon/overflow.test.ts`).
+- Dodatkowo nadmiar ogranicza kredyt kupiecki: towar w sklepie i w drodze (licząc palety) nie może być wart więcej niż 70 tys. zł, czyli ok. 24 palety razem z półkami i zapleczem. Dlatego w średnim sklepie na start (`traszka-1`, 12 zwykłych miejsc) nadmiar w ogóle nie trafia w przejścia, a w małym (`kopytka-541`, `seed-3`) w przejściach staje 10–19 palet.
 
 ## 6. „Palety są za często”: większa paleta i asystent pilnuje miejsc
 
@@ -121,6 +129,22 @@ Liczby są w raporcie. Bez przestrajania, zgodnie z poleceniem.
   - `stukacz`, `decydent` i `mistrz` odbierają od razu.
 
 ## 9. Mniej kart: 0,5 na dobę łącznie
+
+*Decyzja sesji po pomiarze:* każda karta waży trzy razy więcej (`CARDS.stakes` = 3).
+
+- **Na co działa mnożnik:**
+  - pieniądze z odpowiedzi (bez mandatów);
+  - zaufanie i reputacja;
+  - efekty ruchu i marży w procentach.
+- **Na co nie działa:**
+  - mandat `MINOR_SALE_FINE` (zgodnie z poleceniem, żeby nie przestrajać go bez zgłoszenia);
+  - czas ludzi, siły i Ogonki;
+  - zamknięcie sklepu i liczba osób na zmianie, bo tekst karty mówi „na godzinę” albo „jedna osoba”.
+- **Powód:**
+  - bez mnożnika bierny gracz kończył dwa miesiące z medianą +5,2 tys. zł zamiast ok. 0, bo rzadziej zatwierdzał kosztowne domyślne odpowiedzi;
+  - przewaga dobrych decyzji spadła o połowę, a „stukanie dokłada najwyżej 20%” się nie trzymało.
+- **Dlaczego mnożnik obejmuje ruch i marżę:** bez nich zmieniłby wybór w kartach, w których jedna odpowiedź kosztuje złotówki, a druga zmienia ruch. Przykład to glitch kasy, w którym mały rabat lepiej przeczekać.
+- **Opłata Centrali:** `FRANCHISE_FEE_SHARE` 0,151 → 0,153. Wyniki są w raporcie.
 
 | Parametr | Było | Jest |
 |---|---|---|
