@@ -63,12 +63,12 @@ export class RobotsView {
     const { conveyor, press, restocker } = this.placement;
 
     // taśmociąg rośnie z poziomem o kratkę (najkrótszy ma 3, ale nie więcej niż miejsca)
-    this.conveyor = this.stand(this.conveyor, fleet.tasmociag, conveyor, (level) => {
+    this.conveyor = this.stand(this.conveyor, fleet.tasmociag, !!conveyor, (level) => {
       const cells = conveyor!.slice(0, Math.max(2, Math.min(conveyor!.length, 2 + level)));
       return { cells, rig: createConveyor(this.layout, cells, level) };
     });
-    this.press = this.stand(this.press, fleet.prasa, press, () => ({ cells: press!, rig: createPress(this.layout, press!) }));
-    this.restocker = this.stand(this.restocker, fleet.wykladacz, restocker ? [restocker] : null, (level) => ({
+    this.press = this.stand(this.press, fleet.prasa, !!press, () => ({ cells: press!, rig: createPress(this.layout, press!) }));
+    this.restocker = this.stand(this.restocker, fleet.wykladacz, !!restocker, (level) => ({
       cells: [], rig: createRestocker(this.layout, restocker!, level),
     }));
 
@@ -97,14 +97,14 @@ export class RobotsView {
   }
 
   /**
-   * Utrzymuje jedną maszynę zgodnie z poziomem ulepszenia: brak poziomu (albo brak miejsca w tym układzie) to brak maszyny, nowy
-   * poziom to nowa maszyna. `site` to miejsce z rozmieszczenia (`null`, gdy go nie ma).
+   * Utrzymuje jedną maszynę zgodnie z poziomem ulepszenia: brak poziomu (albo brak miejsca w tym układzie, `placed` fałsz) to brak
+   * maszyny, nowy poziom to nowa maszyna.
    */
-  private stand<T>(
-    current: Standing | null, level: number, site: readonly T[] | null,
+  private stand(
+    current: Standing | null, level: number, placed: boolean,
     build: (level: MachineLevel) => { cells: readonly Cell[]; rig: MachineRig },
   ): Standing | null {
-    if (level <= 0 || !site) {
+    if (level <= 0 || !placed) {
       current?.rig.dispose();
       return null;
     }
