@@ -18,6 +18,7 @@ import { CELL_SIZE_M } from '@/sim/grid';
 import { createRng, subSeed } from '@/sim/rng';
 import type { Facing, Fixture } from '@/sim/store/types';
 import { BEVEL, PALETTE, material } from '@/render/style';
+import { tr } from '@/i18n';
 
 /**
  * Wspólne klocki budowniczych mebli i powłoki sklepu: zaokrąglone bryły z fazą wg docs/style-guide.md §1,
@@ -202,7 +203,8 @@ export function wrapLines(ctx: CanvasRenderingContext2D, text: string, maxWidth:
 
 /** Tabliczka: kremowe tło, pomarańczowa obwódka, ciemnozielony napis (linie po `\n`). Nadstawki, wyceny, szyldziki. */
 export function plateTexture(text: string): Texture {
-  return cachedTexture(`plate|${text}`, () => canvasTexture(256, 64, (ctx, w, h) => {
+  const shown = tr(text);   // napis w języku gracza (src/i18n/en/render.ts); zmiana języka przeładowuje stronę, więc cache po napisie wystarcza
+  return cachedTexture(`plate|${shown}`, () => canvasTexture(256, 64, (ctx, w, h) => {
     ctx.fillStyle = BRAND.cream;
     ctx.fillRect(0, 0, w, h);
     ctx.strokeStyle = BRAND.orange;
@@ -211,7 +213,7 @@ export function plateTexture(text: string): Texture {
     ctx.fillStyle = BRAND.greenDark;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    const lines = text.split('\n');
+    const lines = shown.split('\n');
     const px = lines.length > 1 ? 24 : 34;
     ctx.font = font(px);
     // zmniejsz czcionkę, jeśli najdłuższa linia się nie mieści
@@ -279,7 +281,7 @@ export function priceRail(parent: Object3D, length: number, x: number, y: number
 
 /** Kremowa tabliczka z napisem (kategoria, cena) zwrócona w +z lub −z. */
 export function plateSign(parent: Object3D, text: string, size: [number, number], at: Vec3, dir: 1 | -1 = 1): void {
-  plane(parent, size, at, texturedMaterial(`plate|${text}`, plateTexture(text), { roughness: 0.45 }), { rot: [0, dir === 1 ? 0 : Math.PI, 0] });
+  plane(parent, size, at, texturedMaterial(`plate|${tr(text)}`, plateTexture(text), { roughness: 0.45 }), { rot: [0, dir === 1 ? 0 : Math.PI, 0] });
 }
 
 // --- Układ kanoniczny mebla --------------------------------------------------------------------------

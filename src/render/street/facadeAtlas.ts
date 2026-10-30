@@ -1,4 +1,5 @@
 import type { Texture } from 'three';
+import { tr } from '@/i18n';
 import { PALETTE } from '@/render/style';
 import { cachedTexture, canvasTexture, font } from '@/render/store/parts';
 import { drawNewt } from '@/render/store/signTexture';
@@ -131,10 +132,10 @@ function drawMural(ctx: Ctx, w: number, h: number): void {
   rect(ctx, brand.green, 18, 18, w - 36, h - 36);
   rect(ctx, brand.greenDark, 18, h - 132, w - 36, 114);
   drawNewt(ctx, w / 2, 120, 330, brand.orange, brand.cream, brand.greenDark);
-  fitText(ctx, 'CENTRALA', w / 2, 262, 92, w - 80, brand.cream);
-  fitText(ctx, 'MYŚLI ZA CIEBIE', w / 2, 340, 56, w - 80, brand.orange);
-  fitText(ctx, 'Ty tylko uzupełnij tabelkę.', w / 2, h - 92, 30, w - 80, brand.cream);
-  fitText(ctx, 'TRASZKA · ZAWSZE BLISKO', w / 2, h - 46, 26, w - 80, brand.orange);
+  fitText(ctx, tr('CENTRALA'), w / 2, 262, 92, w - 80, brand.cream);
+  fitText(ctx, tr('MYŚLI ZA CIEBIE'), w / 2, 340, 56, w - 80, brand.orange);
+  fitText(ctx, tr('Ty tylko uzupełnij tabelkę.'), w / 2, h - 92, 30, w - 80, brand.cream);
+  fitText(ctx, tr('TRASZKA · ZAWSZE BLISKO'), w / 2, h - 46, 26, w - 80, brand.orange);
   // zacieki i spłowienie starego muralu
   for (let x = 40; x < w - 40; x += 57) rect(ctx, PALETTE.wall[4], x, 18, 3, 26 + ((x * 7) % 40), 0.12);
 }
@@ -170,8 +171,8 @@ function drawMuralSzop(ctx: Ctx, w: number, h: number): void {
   ctx.ellipse(cx, cy + 40, 16, 11, 0, 0, Math.PI * 2);
   ctx.fill();
   fitText(ctx, 'SZOP 24h', w / 2, 270, 96, w - 80, brand.cream);
-  fitText(ctx, 'OTWARTE, GDY TRASZKA ŚPI', w / 2, 340, 38, w - 70, PALETTE.productCategory.przekaski[0]);
-  fitText(ctx, '* Traszka nie śpi. Sprawdzaliśmy.', w / 2, h - 52, 26, w - 80, brand.cream);
+  fitText(ctx, tr('OTWARTE, GDY TRASZKA ŚPI'), w / 2, 340, 38, w - 70, PALETTE.productCategory.przekaski[0]);
+  fitText(ctx, tr('* Traszka nie śpi. Sprawdzaliśmy.'), w / 2, h - 52, 26, w - 80, brand.cream);
 }
 
 /** Podłoga w przekroju sąsiada: deski w jodełkę (kremowe, kolor daje wierzchołek). */

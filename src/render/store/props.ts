@@ -5,6 +5,7 @@ import {
   wrapLines, type Vec3,
 } from './parts';
 import { drawNewt } from './signTexture';
+import { tr } from '@/i18n';
 
 /**
  * Rekwizyty, które niosą humor i życie sceny (zadanie 16): plakaty Centrali, mata „Witamy w Traszce”, tabliczka
@@ -48,13 +49,13 @@ function posterTexture(p: Poster): Texture {
     ctx.fillText('TRASZKA', 168, 40);
     ctx.fillStyle = INK;
     ctx.font = font(40, '900');
-    const lines = wrapLines(ctx, p.title, w - 36);
+    const lines = wrapLines(ctx, tr(p.title), w - 36);
     lines.forEach((l, i) => ctx.fillText(l, w / 2, 160 + (i - (lines.length - 1) / 2) * 46));
     ctx.fillStyle = BRAND.orange;
     ctx.fillRect(0, h - 58, w, 58);
     ctx.fillStyle = BRAND.cream;
     ctx.font = font(22);
-    ctx.fillText(p.footer, w / 2, h - 29);
+    ctx.fillText(tr(p.footer), w / 2, h - 29);
     ctx.strokeStyle = BRAND.greenDark;
     ctx.lineWidth = 8;
     ctx.strokeRect(4, 4, w - 8, h - 8);
@@ -81,14 +82,14 @@ function matTexture(): Texture {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.font = font(78, '900');
-    ctx.fillText('WITAMY', w / 2 + 52, 82);
+    ctx.fillText(tr('WITAMY'), w / 2 + 52, 82);
     ctx.font = font(50, '900');
-    ctx.fillText('W TRASZCE', w / 2 + 52, 146);
+    ctx.fillText(tr('W TRASZCE'), w / 2 + 52, 146);
     ctx.fillStyle = BRAND.orange;
     ctx.font = font(30);
-    ctx.fillText('Centrala widzi, że wchodzisz', w / 2, 236);
+    ctx.fillText(tr('Centrala widzi, że wchodzisz'), w / 2, 236);
     ctx.font = font(24);
-    ctx.fillText('(i liczy to jako wizytę)', w / 2, 272);
+    ctx.fillText(tr('(i liczy to jako wizytę)'), w / 2, 272);
   }));
 }
 
@@ -115,11 +116,11 @@ function staffOnlyTexture(): Texture {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.font = font(30, '900');
-    ctx.fillText('TYLKO DLA', w / 2, 34);
-    ctx.fillText('PERSONELU', w / 2, 66);
+    ctx.fillText(tr('TYLKO DLA'), w / 2, 34);
+    ctx.fillText(tr('PERSONELU'), w / 2, 66);
     ctx.fillStyle = BRAND.orange;
     ctx.font = font(17);
-    ctx.fillText('i dla kontroli z Centrali', w / 2, 100);
+    ctx.fillText(tr('i dla kontroli z Centrali'), w / 2, 100);
   }));
 }
 
@@ -173,7 +174,7 @@ export function sloganTexture(order: readonly number[], lengthM: number, heightM
     const parts: string[] = [];
     let width = 0;
     for (const i of order) {
-      const text = SLOGANS[i % SLOGANS.length]!;
+      const text = tr(SLOGANS[i % SLOGANS.length]!);
       const tw = ctx.measureText(text).width;
       const add = (parts.length ? icon + 2 * gap : 0) + tw;
       if (width + add > w - 2 * gap) continue;   // za długie na resztę pasa: może zmieści się krótsze
@@ -279,10 +280,10 @@ function newspaperTexture(): Texture {
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.font = font(20, '900');
-      ctx.fillText(p.mast, x + pw / 2, 22);
+      ctx.fillText(tr(p.mast), x + pw / 2, 22);
       ctx.fillStyle = INK;
       ctx.font = font(19, '900');
-      wrapLines(ctx, p.head, pw - 18).forEach((l, k) => ctx.fillText(l, x + pw / 2, 62 + k * 22));
+      wrapLines(ctx, tr(p.head), pw - 18).forEach((l, k) => ctx.fillText(l, x + pw / 2, 62 + k * 22));
       ctx.fillStyle = PALETTE.street.sidewalk[3];
       for (let r = 0; r < 4; r++) ctx.fillRect(x + 14, 128 + r * 12, pw - 28, 5);
     });
@@ -323,8 +324,9 @@ function boardTexture(lines: readonly string[]): Texture {
     drawNewt(ctx, w / 2, 40, 76, BRAND.orange, BRAND.cream, PALETTE.fixture.fridgeFrame);
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    const step = Math.min(44, 176 / lines.length);
-    lines.forEach((l, i) => {
+    const shown = tr(lines.join('|')).split('|');   // wiersze potykacza w języku gracza (klucz: wiersze sklejone `|`)
+    const step = Math.min(44, 176 / shown.length);
+    shown.forEach((l, i) => {
       ctx.fillStyle = i % 2 ? BRAND.orange : BRAND.cream;
       ctx.font = font(Math.min(38, Math.floor((w - 30) / Math.max(4, l.length) * 1.7)), '900');
       ctx.fillText(l, w / 2, 90 + i * step);

@@ -3,6 +3,7 @@ import { createRng, subSeed, type Rng } from '@/sim/rng';
 import type { Cell } from '@/sim/grid';
 import { FRONT_WALL_Y, type CellType, type StoreLayout } from '@/sim/store/types';
 import { cellToWorld } from '@/render/coords';
+import { tr } from '@/i18n';
 import { PALETTE } from '@/render/style';
 import {
   BRAND, FIX, M, box, cachedTexture, canvasTexture, cyl, font, glassMat, glow, gloss, makeTextured, matte, painted,
@@ -135,10 +136,10 @@ function foilTexture(): Texture {
     ctx.fillRect(0, 270, w, 84);
     ctx.fillStyle = BRAND.cream;
     ctx.font = font(46, '900');
-    ctx.fillText('3 W CENIE 3!', w / 2, 312);
+    ctx.fillText(tr('3 W CENIE 3!'), w / 2, 312);
     ctx.fillStyle = BRAND.greenDark;
     ctx.font = font(34, '900');
-    ctx.fillText('PROMOCJA', w / 2, 386);
+    ctx.fillText(tr('PROMOCJA'), w / 2, 386);
   }, true));
 }
 

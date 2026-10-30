@@ -20,7 +20,7 @@ export const EN_RENDER: Record<string, string> = {
   // mata i tabliczka zaplecza
   'WITAMY': 'WELCOME',
   'W TRASZCE': 'TO TRASZKA',
-  'Centrala widzi, że wchodzisz': 'Head Office can see you coming in',
+  'Centrala widzi, że wchodzisz': 'Head Office sees you come in',
   '(i liczy to jako wizytę)': '(and counts it as a visit)',
   'TYLKO DLA': 'STAFF',
   'PERSONELU': 'ONLY',
@@ -39,7 +39,7 @@ export const EN_RENDER: Record<string, string> = {
   'CENTRALA: REKORDOWY KWARTAŁ': 'HEAD OFFICE: RECORD QUARTER',
   'KURIER': 'COURIER',
   'OGONKI DROŻSZE O 0,01': 'OGONKI UP BY 0.01',
-  'PLOTKA DNIA': 'GOSSIP OF THE DAY',
+  'PLOTKA DNIA': 'DAILY GOSSIP',
   'NAUKOWCY: PONIEDZIAŁEK ISTNIEJE': 'SCIENTISTS: MONDAY IS REAL',
   // potykacz (wiersze sklejone `|`)
   'HOT-DOG|DNIA:|TEN SAM|CO WCZORAJ': 'HOT DOG|OF THE DAY:|SAME AS|YESTERDAY',
@@ -47,7 +47,7 @@ export const EN_RENDER: Record<string, string> = {
   'KAWA|+ DROŻDŻÓWKA|= SENS|ŻYCIA': 'COFFEE|+ A BUN|= THE MEANING|OF LIFE',
   'DZIŚ|PROMOCJA:|3 W CENIE 3': 'TODAY|OFFER:|PAY 3,|GET 3',
   // gwiazda promocji w witrynie (shell.ts)
-  '3 W CENIE 3!': 'PAY 3, GET 3!',
+  '3 W CENIE 3!': 'PAY 3 GET 3!',
   'PROMOCJA': 'SPECIAL OFFER',
   // fasady sąsiednich budynków (facadeAtlas.ts)
   'CENTRALA': 'HEAD OFFICE',
