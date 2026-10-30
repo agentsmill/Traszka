@@ -12,6 +12,7 @@ import { HowToButton, Settings } from '../game/overlays';
 import { buttonAria, buttonLabelled, click, labels, sectionTitled, textOf, walk } from '../game/vnodeTree';
 import { econ, howTo, showSettings, type Controls, type GameActions } from '../state';
 import { HowTo } from './HowTo';
+import { glossary } from './glossary';
 import { howToDetails, howToPoints } from './howToText';
 
 // Ustawienia i pasek (`Hud`) mają haki (`useState`, `useRef`, `useEffect`). Poza renderem Preacta ich nie ma jak wołać, więc atrapa
@@ -64,7 +65,7 @@ describe('okno „Jak grać”', () => {
     const lists = walk(tree).filter((v) => v.type === 'ul');
     expect(lists).toHaveLength(1);
     expect(walk(lists[0]!).filter((v) => v.type === 'li').map((v) => textOf(v))).toEqual(points);
-    const blocks = walk(tree).filter((v) => v.type === 'details');
+    const blocks = walk(tree).filter((v) => v.type === 'details' && v.props.class !== 'tt-glossary');
     expect(blocks).toHaveLength(details.length);
     blocks.forEach((block, i) => {
       expect(block.props.open, details[i]!.title).toBeUndefined();   // zwinięte: okno mieści się na ekranie bez przewijania
@@ -78,10 +79,22 @@ describe('okno „Jak grać”', () => {
     expect(order[0]!.type).toBe('ul');
   });
 
-  it('jeden przycisk „Zaczynamy” (tt-btn tt-primary) zamyka okno, a gra rusza', () => {
+  it('na końcu zwinięty „Słowniczek” z hasłami SIM 6 jako lista definicji', () => {
     howTo.value = true;
     const tree = HowTo()!;
-    expect(labels(tree)).toEqual(['Zaczynamy']);
+    const block = walk(tree).find((v) => v.type === 'details' && v.props.class === 'tt-glossary')!;
+    expect(block.props.open).toBeUndefined();
+    expect(textOf(walk(block).find((v) => v.type === 'summary'))).toBe('Słowniczek');
+    expect(walk(block).filter((v) => v.type === 'dt').map((v) => textOf(v))).toEqual(glossary().map((e) => e.term));
+    expect(walk(block).filter((v) => v.type === 'dd').map((v) => textOf(v))).toEqual(glossary().map((e) => e.text));
+    const all = walk(tree).filter((v) => v.type === 'details');
+    expect(all.at(-1)).toBe(block);   // słowniczek pod szczegółami
+  });
+
+  it('przyciski „Samouczek” i „Zaczynamy” (tt-btn tt-primary); „Zaczynamy” zamyka okno, a gra rusza', () => {
+    howTo.value = true;
+    const tree = HowTo()!;
+    expect(labels(tree)).toEqual(['Samouczek', 'Zaczynamy']);
     const button = buttonLabelled(tree, 'Zaczynamy');
     expect(String(button.props.class)).toContain('tt-btn');
     expect(String(button.props.class)).toContain('tt-primary');
@@ -120,7 +133,7 @@ describe('„?” w pasku gry (HUD)', () => {
     click(buttonAria(hud(), 'Jak grać'));
     expect(howTo.value).toBe(true);
     expect(isModalOpen()).toBe(true);
-    expect(labels(HowTo())).toEqual(['Zaczynamy']);
+    expect(labels(HowTo())).toEqual(['Samouczek', 'Zaczynamy']);
   });
 
   it('nie rusza ustawień: ⚙ dalej otwiera tylko ustawienia', () => {
@@ -146,7 +159,7 @@ describe('⚙: przycisk „Jak grać”', () => {
     click(buttonLabelled((inSettings[0]!.type as typeof HowToButton)(), 'Jak grać'));
     expect(howTo.value).toBe(true);
     expect(Settings({ controls, game })).toBeNull();
-    expect(labels(HowTo())).toEqual(['Zaczynamy']);
+    expect(labels(HowTo())).toEqual(['Samouczek', 'Zaczynamy']);
   });
 });
 

@@ -54,7 +54,7 @@ function makeShell(initial: Meta = meta(), withSession = true): GameShell {
   };
   const shell = createShell({
     meta: initial, benchMode: false, scene, effects, randomSeed: () => 'losowy', writeSeedToUrl: () => undefined, clearSeedFromUrl: () => undefined,
-    characterFactory: () => Promise.resolve({} as CharacterFactory), firstDayHints: [],
+    characterFactory: () => Promise.resolve({} as CharacterFactory),
   });
   if (withSession) shell.session = createSession(SEED, true);
   return shell;

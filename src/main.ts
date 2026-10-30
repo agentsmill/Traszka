@@ -20,7 +20,6 @@ import { confetti } from '@/ui/fx';
 import type { EconEvent } from '@/sim/economy/economy';
 import { renderUi } from '@/ui/App';
 import { listenForNotices, postNotice } from '@/ui/Notice';
-import { FIRST_DAY_HINTS } from '@/ui/game/overlays';
 import { createRankingClient } from '@/ui/ranking/client';
 import { bindFinishOpen, createFinishModel } from '@/ui/ranking/finishModel';
 import { applyStagedImport } from '@/ui/ranking/saveTransfer';
@@ -29,6 +28,7 @@ import { weekSeedOf } from '@/ui/start/weekSeed';
 import { createWorldOverlay } from '@/ui/worldOverlay';
 import { FrameMeter } from '@/ui/perfMeter';
 import * as ui from '@/ui/state';
+import { tourActive } from '@/ui/tutorial/tour';
 
 /**
  * Moduł benchmarku (`?bench=1`). Ładowany dynamicznie tylko dla tego trybu: zwykła gra nie pobiera maszyny stanów pomiaru.
@@ -111,7 +111,7 @@ function startGame(
   // Sesja powstaje dopiero przy otwieraniu pierwszego sklepu (`shell.open` niżej): dopiero wtedy wiadomo, czy zapis dało się użyć
   // i czy świat z niego stanął. Benchmark nie ma sesji.
   const shell = createShell({
-    meta, benchMode, scene, writeSeedToUrl, clearSeedFromUrl, randomSeed, characterFactory, firstDayHints: FIRST_DAY_HINTS,
+    meta, benchMode, scene, writeSeedToUrl, clearSeedFromUrl, randomSeed, characterFactory,
     weekSeed: weekSeedOf(rankingClient),
     effects: {
       play, buzz, setSound, setVibration, notice: postNotice,
@@ -161,7 +161,7 @@ function startGame(
     const opened = openAtBoot(shell, request, !!params.get('seed'), undefined, {
       replace: entry?.replace === true,
       onStarted: () => {
-        ui.openHowTo();   // pierwsze wejście przez ekran startowy: instrukcja, a gra czeka na „Zaczynamy” (zwykły sklep robi to w `GameShell.open`)
+        // start rankingowy z ekranu startowego niczego nie otwiera: samouczek działa w zwykłym sklepie, a „?” w pasku czeka (decyzja właściciela)
         if (entry?.choice.notice) ui.pushToast(entry.choice.notice, 'info');   // np. „sąsiedni lokal”
       },
     });
@@ -171,7 +171,7 @@ function startGame(
     bindControls(ctx, {
       setPreset: (id) => controls.setPreset(id),
       onTap: (x, y) => { if (shell.session && scene.loaded) shell.tap(scene.pick(x, y), x, y); },
-      blocked: () => !!ui.start.value,
+      blocked: () => !!ui.start.value || tourActive(),   // w czasie przelotu samouczka skróty gry milkną (Esc to „Pomiń”)
       extra: {
         x: () => scene.toggleExterior(),
         ' ': () => controls.setSpeed(ui.speed.value === 0 ? 1 : 0),

@@ -1,4 +1,4 @@
-import { computed, signal, type Signal } from '@preact/signals';
+import { signal, type Signal } from '@preact/signals';
 import type { Speed } from '@/game/loop';
 import type { StartChoice, StartForm } from '@/game/start';
 import type { CharacterFactory } from '@/render/characters/characterFactory';
@@ -7,12 +7,13 @@ import type { TimeOfDay } from '@/render/lighting';
 import type { BenchProgress } from '@/bench/bench';
 import type { PerfSnapshot } from './perfMeter';
 import type { Command } from '@/sim/economy/commands';
-import { awaitingDecision, type CommandResult, type EconEventKind, type EconomyState, type MonthReport } from '@/sim/economy/economy';
+import type { CommandResult, EconEventKind, EconomyState, MonthReport } from '@/sim/economy/economy';
 import type { RemanentProtocol } from '@/sim/economy/franchisee';
 import type { MonthPreview } from '@/sim/economy/monthPreview';
 import type { StoreInfo } from '@/sim/economy/storeInfo';
 import { readMs } from '@/sim/economy/tycoon/notices';
 import type { RankingTab } from './ranking/client';
+import { loadTutorial } from './tutorial/memory';
 
 /*
  * Stan widoczny w interfejsie. Zmienia go i przycisk, i klawisz, a czyta interfejs. Sterowanie światem to obiekt `Controls`
@@ -72,10 +73,20 @@ export function closeRemanent(): void {
   remanent.value = null;
 }
 /**
- * Okno „Jak grać” (`ui/howto/HowTo.tsx`): otwiera się po ekranie startowym i z ⚙, a dopóki jest otwarte, gra stoi (`isModalOpen`),
- * a podpowiedzi pierwszego dnia czekają. Otwiera i zamyka je `openHowTo` / `closeHowTo`. Nie jest częścią zapisu.
+ * Okno „Jak grać” (`ui/howto/HowTo.tsx`): otwiera się z „?” w pasku i z ⚙, a dopóki jest otwarte, gra stoi (`isModalOpen`). Otwiera
+ * i zamyka je `openHowTo` / `closeHowTo`. Nie jest częścią zapisu.
  */
 export const howTo: Signal<boolean> = signal(false);
+/**
+ * Okno wyboru samouczka „Pierwszy dzień w Traszce” (`ui/tutorial/Tutorial.tsx`): „Samouczek (ok. 3 min)” albo „Pomiń, znam grę”.
+ * Wstaje przy zupełnie nowym zwykłym sklepie, gdy gracz jeszcze nigdy na nie nie odpowiedział (`offerTutorial`), a dopóki jest
+ * otwarte, gra stoi (`isWindowOpen`). Nie jest częścią zapisu: odpowiedź trzyma pamięć samouczka (`ui/tutorial/memory.ts`).
+ */
+export const tutorialOffer: Signal<boolean> = signal(false);
+/** Pokazuje okno wyboru samouczka, o ile gracz jeszcze na nie nie odpowiedział (pamięć `traszka:tutorial`). */
+export function offerTutorial(): void {
+  if (loadTutorial().tour === null) tutorialOffer.value = true;
+}
 /**
  * Okno wyciągu na koniec miesiąca (`ui/game/monthPreview.tsx`): prognoza na dziś i podgląd wyciągu od Centrali za cały miesiąc, jeśli gracz nic nie
  * zrobi. Podgląd liczy się na kopii stanu (`monthPreviewRun.ts`), więc ten sygnał to jedyne, co się zmienia, a dopóki okno jest otwarte,
@@ -100,8 +111,8 @@ export function closeMonthPreview(): void {
 export const ephemeral: Signal<boolean> = signal(false);
 
 /**
- * Ekran startowy „Twój kasjer”: otwarty z danymi, z którymi się pokazuje, albo null. Zastępuje dawne okno „Witaj w Traszce”;
- * jego wskazówki przeszły do podpowiedzi pierwszego dnia (`hints`).
+ * Ekran startowy „Twój kasjer”: otwarty z danymi, z którymi się pokazuje, albo null. Zastępuje dawne okno „Witaj w Traszce”; po nim
+ * nowy gracz dostaje propozycję samouczka (`tutorialOffer`).
  */
 export interface StartRequest {
   /** `first`: wejście na stronę (gry jeszcze nie ma); `new`: „Nowy sklep” z ⚙ (gra stoi pod ekranem i czeka). */
@@ -132,34 +143,13 @@ export interface StartRequest {
 }
 export const start: Signal<StartRequest | null> = signal<StartRequest | null>(null);
 
-/** Ile (ms) widać jedną podpowiedź pierwszego dnia, zanim wejdzie następna. */
-export const HINT_MS = 9000;
-/** Podpowiedzi pierwszego dnia (krótkie dymki): pierwsza jest widoczna, kolejne wchodzą po kolei. */
-export const hints: Signal<string[]> = signal<string[]>([]);
-let hintTimer: ReturnType<typeof setTimeout> | undefined;
-function armHint(): void {
-  clearTimeout(hintTimer);
-  // pod oknem, które zatrzymuje grę (w tym „Jak grać” i kartą decyzji), dymki czekają: gracz czyta okno, a ich czas liczy się
-  // dopiero od jego zamknięcia (`hintsHeld` uzbraja zegar od nowa, gdy okno znika)
-  hintTimer = hints.value.length > 0 && !hintsHeld.value ? setTimeout(nextHint, HINT_MS) : undefined;
-}
-/** Otwiera „Jak grać”; zegar podpowiedzi pierwszego dnia staje (`hintsHeld`). */
+/** Otwiera „Jak grać”. */
 export function openHowTo(): void {
   howTo.value = true;
 }
-/** „Zaczynamy”: zamyka „Jak grać”, a obecna podpowiedź dostaje pełny czas od nowa (`hintsHeld`). */
+/** „Zaczynamy”: zamyka „Jak grać”. */
 export function closeHowTo(): void {
   howTo.value = false;
-}
-/** Pokazuje podpowiedzi po kolei (lista zastępuje poprzednią; pusta czyści). */
-export function showHints(list: readonly string[]): void {
-  hints.value = [...list];
-  armHint();
-}
-/** Następna podpowiedź („Dalej”); czas kolejnej liczy się od nowa. */
-export function nextHint(): void {
-  hints.value = hints.value.slice(1);
-  armHint();
 }
 
 let toastId = 0;
@@ -328,19 +318,11 @@ export interface GameActions {
 
 /**
  * Czy otwarte jest okno, które zatrzymuje grę i ma swój sygnał: raport miesiąca, protokół remanentu, ważne zdarzenie czekające na „OK”, ekran startowy,
- * powitanie, prestiż, „Jak grać”, wyciąg na koniec miesiąca (`monthPreview`), okno końca sezonu (`finish`) albo panel rankingu i kodu odzyskiwania (`panel`). Czyta to `isModalOpen` (game/frame.ts: pętla klatek) i `hintsHeld`.
+ * powitanie, prestiż, „Jak grać”, okno wyboru samouczka (`tutorialOffer`), wyciąg na koniec miesiąca (`monthPreview`), okno końca sezonu (`finish`) albo panel
+ * rankingu i kodu odzyskiwania (`panel`). Czyta to `isModalOpen` (game/frame.ts: pętla klatek) i samouczek (przelot i dymki „pierwszy raz” czekają pod oknem).
  * Karta decyzji i koniec gry nie mają sygnału okna: wynikają ze stanu gry.
  */
 export const isWindowOpen = (): boolean =>
-  !!report.value || !!remanent.value || story.value.length > 0 || !!start.value || !!welcome.value || showPrestige.value || howTo.value || !!monthPreview.value || !!finish.value || !!panel.value;
+  !!report.value || !!remanent.value || story.value.length > 0 || !!start.value || !!welcome.value || showPrestige.value || howTo.value || tutorialOffer.value
+  || !!monthPreview.value || !!finish.value || !!panel.value;
 
-/**
- * Czy dymki pierwszego dnia mają czekać: pod każdym oknem, które zatrzymuje grę (`isWindowOpen`), pod kartą decyzji, która ją trzyma
- * (zawsze jest jedna w dniu 0), i po końcu gry. Wartość logiczna zmienia się tylko przy otwarciu i zamknięciu okna, więc zegar
- * dymków uzbraja się od nowa dokładnie wtedy, a nie przy każdej publikacji stanu.
- */
-const hintsHeld = computed(() => {
-  const s = econ.value?.s;
-  return isWindowOpen() || (!!s && (s.gameOver || awaitingDecision(s)));
-});
-hintsHeld.subscribe(armHint);

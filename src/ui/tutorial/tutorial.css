@@ -1,0 +1,201 @@
+/*
+ * Samouczek (spec samouczka, §4.4 i §11): przygaszenie z pierścieniem, blokady kliknięć, dymek ze strzałką i okno wyboru. Warstwy
+ * leżą w `.tt-ui`: przelot nad oknami gry (12) i ekranem startowym (20), pod banerem nagrody (30); dymki „pierwszy raz” tuż pod nim.
+ */
+
+.tt-tut-layer,
+.tt-tip-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 25;
+  pointer-events: none;
+}
+
+.tt-tip-layer {
+  z-index: 24;
+}
+
+.tt-tut-dim {
+  position: absolute;
+  inset: 0;
+  background: rgba(8, 16, 12, 0.6);
+}
+
+/* Pierścień: jego cień przygasza resztę ekranu, a obwódka pulsuje. Kliknięć nie łapie (robią to blokady). */
+.tt-tut-ring,
+.tt-tip-ring {
+  position: absolute;
+  box-sizing: border-box;
+  border-radius: 12px;
+  outline: 3px solid var(--tt-orange);
+  pointer-events: none;
+  animation: tt-tut-pulse 1.4s ease-in-out infinite;
+}
+
+.tt-tut-ring {
+  box-shadow: 0 0 0 9999px rgba(8, 16, 12, 0.6);
+}
+
+@keyframes tt-tut-pulse {
+  0%, 100% { outline-offset: 0; }
+  50% { outline-offset: 4px; }
+}
+
+.tt-tut-block {
+  position: absolute;
+  pointer-events: auto;
+}
+
+/* --- Dymek ----------------------------------------------------------------------------------------- */
+
+.tt-tut-bubble {
+  position: absolute;
+  box-sizing: border-box;
+  width: min(340px, calc(100vw - 24px));
+  padding: 12px 14px 10px;
+  border-radius: 14px;
+  background: var(--tt-cream);
+  color: #22302a;
+  font: 500 13px/1.4 system-ui, -apple-system, 'Segoe UI', sans-serif;
+  box-shadow: 0 8px 26px rgba(0, 0, 0, 0.35);
+  pointer-events: auto;
+  user-select: text;
+  outline: none;
+}
+
+@media (min-width: 900px) {
+  .tt-tut-bubble {
+    width: 360px;
+  }
+}
+
+/* Strzałka: obrócony kwadrat na krawędzi od strony celu, przesunięty o `--arrow` (liczy `placeBubble`). */
+.tt-tut-bubble::before {
+  content: '';
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  background: var(--tt-cream);
+  transform: rotate(45deg);
+}
+
+.tt-tut-bubble.side-below::before { top: -7px; left: calc(var(--arrow, 50%) - 7px); }
+.tt-tut-bubble.side-above::before { bottom: -7px; left: calc(var(--arrow, 50%) - 7px); }
+.tt-tut-bubble.side-right::before { left: -7px; top: calc(var(--arrow, 50%) - 7px); }
+.tt-tut-bubble.side-left::before { right: -7px; top: calc(var(--arrow, 50%) - 7px); }
+.tt-tut-bubble.side-center::before { display: none; }
+
+.tt-tut-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+
+.tt-tut-title {
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--tt-green-dark);
+}
+
+.tt-tut-count {
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-weight: 700;
+  color: rgba(34, 48, 42, 0.6);
+}
+
+.tt-tut-text {
+  margin: 0;
+}
+
+.tt-tut-task {
+  margin: 8px 0 0;
+  font-weight: 700;
+  color: var(--tt-green-dark);
+}
+
+.tt-tut-task.done {
+  color: var(--tt-green);
+}
+
+.tt-tut-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.tt-tut-bubble .tt-btn {
+  min-height: 36px;
+  padding: 8px 14px;
+  border-radius: 10px;
+  background: rgba(29, 107, 58, 0.12);
+  color: var(--tt-green-dark);
+}
+
+.tt-tut-bubble .tt-btn.tt-primary {
+  background: var(--tt-green);
+  color: #fff;
+}
+
+.tt-tut-bubble .tt-tut-skip {
+  margin-right: auto;
+  background: none;
+  color: rgba(34, 48, 42, 0.7);
+}
+
+.tt-tut-bubble .tt-btn:focus-visible {
+  outline: 3px solid var(--tt-orange);
+  outline-offset: 2px;
+}
+
+/* Tryb zwarty: gdy pełny dymek nie mieści się obok celu, krótsze odstępy i mniejsze litery. */
+.tt-tut-bubble.compact {
+  padding: 8px 10px 8px;
+  font-size: 12px;
+  line-height: 1.3;
+}
+
+.tt-tut-bubble.compact .tt-tut-title {
+  font-size: 13px;
+}
+
+.tt-tut-bubble.compact .tt-tut-foot {
+  margin-top: 6px;
+}
+
+.tt-tut-bubble.compact .tt-btn {
+  min-height: 30px;
+  padding: 5px 10px;
+}
+
+.tt-tip-bubble {
+  padding: 10px 12px 8px;
+}
+
+/* --- Okno wyboru ------------------------------------------------------------------------------------ */
+
+.tt-tut-offer-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 12px 0 4px;
+}
+
+/* Dymek nad kartą decyzji: na telefonie karta stoi przy dolnej krawędzi i bywa wysoka, więc na czas dymka jest niższa (przewija się
+   w środku), a nad nią zostaje miejsce na dymek. */
+@media (max-width: 560px) {
+  html[data-tut-tip='card'] .tt-deck {
+    max-height: 60vh;
+    max-height: 60dvh;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tt-tut-ring,
+  .tt-tip-ring {
+    animation: none;
+  }
+}

@@ -5,7 +5,7 @@ import { CardDesk } from './game/cards';
 import { Hud } from './game/Hud';
 import { MonthPreviewModal } from './game/monthPreview';
 import {
-  CelebrationBanner, ClickerBar, ComboChip, FirstDayHints, PrestigeModal, RemanentModal, ReportModal, RotateButtons, SelectionCard, Settings,
+  CelebrationBanner, ClickerBar, ComboChip, PrestigeModal, RemanentModal, ReportModal, RotateButtons, SelectionCard, Settings,
   StoreBadge, StoryModal, Toasts, WelcomeModal,
 } from './game/overlays';
 import { Sheet, TabBar } from './game/panels';
@@ -17,6 +17,7 @@ import { FinishHost } from './ranking/FinishWindow';
 import { PanelHost } from './ranking/PanelHost';
 import type { RankingServices } from './ranking/services';
 import { StartHost } from './start/StartScreen';
+import { TutorialHost } from './tutorial/Tutorial';
 import { floatText } from './worldOverlay';
 import type { Controls, GameActions } from './state';
 import './ui.css';
@@ -32,7 +33,7 @@ const brandVars = {
 /**
  * Cała nakładka. Bez `controls` (renderer nie wstał, benchmark albo gra jeszcze nie ruszyła) zostaje komunikat, wyniki benchmarku
  * i ekran startowy „Twój kasjer”, który otwiera się przy pierwszym wejściu, zanim powstanie gra. W grze: górny pasek, zakładki
- * z arkuszami, karta zaznaczenia, przyciski klikera, podpowiedzi pierwszego dnia, komunikaty i okna. Kolejność okien to ich
+ * z arkuszami, karta zaznaczenia, przyciski klikera, komunikaty, okna i samouczek. Kolejność okien to ich
  * warstwy: karta decyzji leży nad panelami, a pod raportem miesiąca, protokołem remanentu, „Jak grać”, powitaniem i ustawieniami. Panele rankingu i kodu
  * odzyskiwania (`PanelHost`, otwierane z HUD-u i ⚙) leżą nad kartą decyzji i wpisami „OK”, pod ustawieniami i oknem końca sezonu.
  * Okno końca sezonu rankingowego leży nad wszystkimi: karta decyzji na minutę końca sezonu trzyma grę i nie może go zasłonić.
@@ -53,7 +54,6 @@ export function App(
           <div class="tt-topstack">
             <SelectionCard game={game} />
             <Toasts />
-            <FirstDayHints />
           </div>
           <ClickerBar game={game} onFloat={floatText} />
           <ComboChip />
@@ -72,6 +72,7 @@ export function App(
           <PanelHost game={game} services={services} />
           <Settings controls={controls} game={game} panels={!!services} />
           <FinishHost game={game} model={finishModel} />
+          <TutorialHost controls={controls} />
         </>
       )}
       {controls && <PerfOverlay />}
