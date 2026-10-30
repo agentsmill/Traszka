@@ -11,7 +11,9 @@ import { FRONT_WALL_Y, type Fixture, type StoreLayout } from '@/sim/store/types'
 import { accessCells } from '@/sim/store/validate';
 import { buildStaffNav, type StaffNav } from './staffNav';
 import { pickStaffSpots } from './targets';
-import { STAFF_VIEW_MAX, type PalletRef, type StaffAssignment, type StaffDuty, type StaffSpot } from './types';
+import { EDWARD_ID, STAFF_VIEW_MAX, type PalletRef, type StaffAssignment, type StaffDuty, type StaffSpot } from './types';
+import { placeRobots } from '@/render/robots/robotPlacement';
+import { layoutFor } from '@/sim/store/layoutFor';
 
 // Siedem układów: dwa bloki, dwie kamienice (jedna narożna) i trzy pawilony (seed-6 ma kasę po prawej stronie).
 const SEEDS = ['alfa', 'kamienica-3', 'beta-12', 'seed-2', 'seed-0', 'seed-5', 'seed-6'];
@@ -912,6 +914,47 @@ describe('pickStaffSpots: palety w przejściach (loc „aisle”) są salą, roz
       }
       const mix = crewOf(['kasa', 'rozladunek', 'wykladanie', 'sprzatanie', 'wolny', 'rozladunek']);
       expectSane(layout, nav, mix, pickStaffSpots(layout, nav, stacked, mix));
+    });
+  });
+});
+
+describe('pickStaffSpots: eDward i maszyny z warsztatu przy nadmiarze palet w przejściach (SIM 5 razem z robotami)', () => {
+  // eDward (numer EDWARD_ID) dostaje cel jak każda osoba załogi; maszyny stoją na zapleczu i są przeszkodami (`CrewInput.obstacles`).
+  // Przejścia leżą w sali, więc z maszynami się nie zderzają, a stosy w przejściach to kilka palet na tym samym kwadracie.
+  describe.each(['traszka-1', 'kopytka-541', 'seed-3', 'makieta'])('%s', (seed) => {
+    it.each([2, 3])('remont %i: maszyny poza miejscami palet, eDward i załoga obok palet w przejściach, nikt nie stoi w przeszkodzie', (level) => {
+      const layout = layoutFor(seed, level);
+      const { spots } = computeStoreInfo(layout);
+      const robots = placeRobots(layout, { spots });
+      const machines = [...(robots.conveyor ?? []), ...(robots.press ?? [])];
+      const palletCells = new Set(Object.values(spots).flat().flatMap(spotCells).map(cellKey));
+      for (const c of machines) expect(palletCells.has(cellKey(c)), `maszyna na ${c.x},${c.y}`).toBe(false);
+
+      // przejścia pełne, na pierwszym kwadracie stos z trzech palet, do tego chodnik i zaplecze
+      const aisle: PalletRef[] = spots.aisle.flatMap((spot, i): PalletRef[] =>
+        (i === 0 ? [0, 1, 2] : [0]).map((k) => ({ loc: 'aisle', spot, since: 200 + 10 * i + k })));
+      const list: PalletRef[] = [
+        { loc: 'sidewalk', spot: spots.sidewalk[0]!, since: 300 }, ...aisle, { loc: 'backroom', spot: spots.backroom[0]!, since: 100 },
+      ];
+      const nav = buildStaffNav(layout, [...list.flatMap((p) => spotCells(p.spot)), ...machines]);
+      const crew: StaffAssignment[] = [
+        { id: 0, task: 'kasa' }, { id: 1, task: 'rozladunek' }, { id: 2, task: 'rozladunek' }, { id: 3, task: 'wykladanie' },
+        { id: 4, task: 'sprzatanie' }, { id: EDWARD_ID, task: 'rozladunek' },
+      ];
+      const picked = pickStaffSpots(layout, nav, list, crew);
+      expectSane(layout, nav, crew, picked);
+      const blocked = new Set([...palletCells].filter((k) => list.some((p) => spotCells(p.spot).some((c) => cellKey(c) === k))));
+      for (const c of machines) blocked.add(cellKey(c));
+      for (const [id, { cell }] of picked) expect(blocked.has(cellKey(cell)), `id ${id} stoi w przeszkodzie ${cell.x},${cell.y}`).toBe(false);
+      // przy paletach: najpierw chodnik, potem przejścia (eDward ma najwyższy numer, więc idzie ostatni z rozładunku). Gęsto
+      // zastawione przejścia potrafią nie mieć wolnego boku, do którego da się dojść: wtedy eDward stoi na kratce zapasowej (utyka)
+      expect(besidePallet(picked.get(1)!.cell, spots.sidewalk[0]!)).toBe(true);
+      const edward = picked.get(EDWARD_ID)!.cell;
+      const others = new Set([...picked].filter(([id]) => id !== EDWARD_ID).map(([, s]) => cellKey(s.cell)));
+      const spawn = layout.spawnPoints[0]!;
+      const freeSide = list.filter((p) => p.loc !== 'backroom').some((p) => sideCells(p.spot).some((c) =>
+        !others.has(cellKey(c)) && findPath(nav.width, nav.depth, nav.blocked, spawn, c) !== null));
+      if (freeSide) expect(list.some((p) => p.loc !== 'backroom' && besidePallet(edward, p.spot)), `eDward obok palety: ${edward.x},${edward.y}`).toBe(true);
     });
   });
 });

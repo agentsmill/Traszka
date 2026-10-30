@@ -184,7 +184,7 @@ function sideCells(s: PalletSpot): Cell[] {
   ];
 }
 
-/** Rozładunek: osoba nr `k` obsługuje paletę `k % liczba palet`, od strony wejścia (zaplecze: od strony drzwi). */
+/** Rozładunek: osoba nr `k` obsługuje paletę `k % liczba palet` (bez wolnego boku: następną), od strony wejścia (zaplecze: od strony drzwi). */
 function unloadPlan(ctx: Ctx, order: readonly PalletRef[], k: number): Plan {
   const faceEntrance = (c: Cell): number => headingTo(c, ctx.entrance);
   const pallet = order.length > 0 ? order[k % order.length]! : null;
@@ -194,9 +194,17 @@ function unloadPlan(ctx: Ctx, order: readonly PalletRef[], k: number): Plan {
   }
   const centre: Point = { x: pallet.spot.x + 1, y: pallet.spot.y + 1 };
   const face = (c: Cell): number => headingTo(c, centre);
-  const from = pallet.loc === 'backroom' && ctx.door ? centreOfRect(ctx.door) : ctx.entrance;
-  const sides = sideCells(pallet.spot);
-  return { spots: (from ? nearestFirst(sides, from) : sides.sort(byRowThenColumn)).map((cell) => ({ cell, heading: face(cell) })), face };
+  // Boki palety `k`, a za nimi boki następnych w kolejności rozładunku: paleta w stosie (ten sam kwadrat w przejściu) albo w ciasno
+  // zastawionym przejściu nie ma wolnego boku, a wtedy osoba staje przy następnej palecie, nie na kratce zapasowej na środku sali.
+  const spots: StaffSpot[] = [];
+  for (let i = 0; i < order.length; i++) {
+    const p = order[(k + i) % order.length]!;
+    const middle: Point = { x: p.spot.x + 1, y: p.spot.y + 1 };
+    const from = p.loc === 'backroom' && ctx.door ? centreOfRect(ctx.door) : ctx.entrance;
+    const sides = sideCells(p.spot);
+    for (const cell of from ? nearestFirst(sides, from) : sides.sort(byRowThenColumn)) spots.push({ cell, heading: headingTo(cell, middle) });
+  }
+  return { spots, face };
 }
 
 /** Plan bez własnych kratek: od razu lista zapasowa (sala od środka), twarzą do wejścia. */

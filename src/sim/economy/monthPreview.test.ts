@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { generateStore } from '@/sim/store/generateStore';
 import { DEBT_LIMIT } from './catalog';
@@ -89,6 +90,24 @@ describe('podgląd końca miesiąca: nic nie rusza w prawdziwej grze', () => {
     finish(s, 1440);
     expect(JSON.stringify(s.tycoon.cards)).toBe(cardsBefore);
     expect(s.lastReport).toBe(null);
+  });
+});
+
+describe('podgląd końca miesiąca: cele czekające na „Odbierz” (SIM_VERSION 5)', () => {
+  it('nieodebrane cele się w podglądzie nie odbierają: wynik jak w przebiegu bez odbioru, prawdziwy stan bez zmian', () => {
+    const s = midMonth(6);
+    s.milestones = s.milestones.filter((id) => id !== 'pallet1' && id !== 'cust500');
+    s.milestonesReady = ['pallet1', 'cust500'];
+    const before = JSON.stringify(s);
+    const preview = finish(s, 1440)!;
+    expect(JSON.stringify(s)).toBe(before);
+    // przebieg bez odbioru (karty domyślne): te same sumy miesiąca co do złotówki, także inne przychody z nagród za poziomy
+    const real = realMonthEnd(s);
+    expect(preview.other).toBeCloseTo(real.counters.other, 6);
+    expect(preview.profit).toBeCloseTo(real.profit, 6);
+    // podgląd wydaje tylko odpowiedzi na karty, nigdy odbioru celu
+    const source = readFileSync(new URL('./monthPreview.ts', import.meta.url), 'utf8');
+    expect(source).not.toMatch(/claimMilestone/);
   });
 });
 
