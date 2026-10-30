@@ -60,6 +60,8 @@ Wniosek: odesłane palety były objawem nadmiaru towaru. Teraz ten nadmiar stoi 
 
 ## 4. Nadmiar palet w liczbach (`tycoon/overflow.test.ts`)
 
+*Liczby w tej sekcji są sprzed urealnienia ekonomii. Aktualne są w §12.*
+
 Sklep `kopytka-541` (6 miejsc pod sklepem, 3 w sali), bot `decydent`. Od dnia 3 do 12 zamawia ręcznie 12 palet dziennie, od dnia 13 wraca do asystenta. Punkt odniesienia to ten sam bot z samym asystentem.
 
 | | Bez nadmiaru | Z nadmiarem |
@@ -79,6 +81,8 @@ Sklep `kopytka-541` (6 miejsc pod sklepem, 3 w sali), bot `decydent`. Od dnia 3 
 **Pomiar przed wciąganiem palet** pokazał pułapkę. Pięć palet spod sklepu bez miejsca na towar stało dwa tygodnie. Straż pisała mandaty po ok. 5,6 tys. zł dziennie, każdy za −2 reputacji. `seed-3` zbankrutował w dniu 26, choć gracz wrócił do asystenta w dniu 13. Wciąganie palet w przejścia i próg reputacji 25 to poprawki z tego pomiaru (spec §4 i §5).
 
 ## 5. Bilans: gracz bierny i aktywny (`tycoon/balance.test.ts`, 61 dni)
+
+*Liczby w tej sekcji są sprzed urealnienia ekonomii. Aktualne są w §12.*
 
 | Seed | bierny (zł) | mistrz (zł) | klienci/dzień (bierny / mistrz) | karty/dobę |
 |---|---|---|---|---|
@@ -108,6 +112,8 @@ Sklep `kopytka-541` (6 miejsc pod sklepem, 3 w sali), bot `decydent`. Od dnia 3 
 
 ## 6. Karty: XP i zaufanie przed zmianą i po niej
 
+*Liczby w tej sekcji są sprzed urealnienia ekonomii. Aktualne są w §12.*
+
 Średnio na sklep, 5 seedów testu bilansu, wrzesień / październik:
 
 | | SIM 4 | SIM 5 |
@@ -131,6 +137,8 @@ Sklep `kopytka-541` (6 miejsc pod sklepem, 3 w sali), bot `decydent`. Od dnia 3 
 **Do wiedzy właściciela:** kwoty na kartach są teraz trzy razy większe (np. glitch kasy z rabatem 20%). Gracz rzadziej klika, ale każda decyzja więcej waży.
 
 ## 7. Debet −100 tys. i mandat za energetyk (`tycoon/debt.test.ts`)
+
+*Liczby w tej sekcji są sprzed urealnienia ekonomii. Aktualne są w §12.*
 
 Mandat za sprzedaż nieletniemu (`MINOR_SALE_FINE = {min: 4000, dailyMargins: 2}`) wynosi w tych sklepach ok. 4,3–4,8 tys. zł. Bierny gracz, wymuszone mandaty rozłożone na 2 miesiące:
 
@@ -201,3 +209,146 @@ Po scaleniu trzeba ponownie uruchomić `npm run build:judge`, `npm test`, `npm r
 3. **Mandat za energetyk** przestał być groźny przy −100 tys. (§7).
 4. **Bierny na `makieta`** kończy dwa miesiące na +10,6 tys. zł (§5).
 5. **Załoga sama wciąga stojące palety w przejścia.** To decyzja tej sesji, która ratuje przed bankructwem z mandatów. Gdyby właściciel wolał, żeby gracz wnosił palety ręcznie, trzeba dopuścić `movePallet` do przejść i nauczyć tego boty.
+
+## 12. Urealnienie ekonomii (decyzja właściciela z 30.10.2026: „Tak, urealnij”)
+
+Źródło liczb to publiczne dane dużej sieci convenience za 2025 r.
+
+- Marża franczyzobiorcy wynosi ok. 446 tys. zł rocznie, czyli ok. 16,5–16,7% obrotu przed jego kosztami.
+- Obrót sklepu to 2,4–2,7 mln zł rocznie.
+- Przychód gwarantowany nowego franczyzobiorcy to 25 tys. zł miesięcznie.
+- Wkład na start wynosi ok. 5000 zł.
+
+W samej grze nazwy sieci nie ma. Decyzje są w specyfikacji, §11.
+
+### 12.1 Tabela: prawdziwy sklep, SIM 4, SIM 5
+
+Średnio na 5 sklepach testu bilansu (`traszka-1`, `kopytka-541`, `makieta`, `lublin-9`, `seed-3`), z dwóch pierwszych miesięcy gry (bot `bierny` albo `mistrz`). Udział franczyzobiorcy to marża minus opłata Centrali plus premie, podzielone przez obrót.
+
+| | Prawdziwy sklep (2025) | SIM 4 | SIM 5 przed urealnieniem | **SIM 5** |
+|---|---|---|---|---|
+| Obrót dziennie, bierny | 6,6–7,4 tys. zł | 11,5 tys. zł | 11,9 tys. zł | **7,8 tys. zł** (start ok. 6,4 tys.) |
+| Obrót dziennie, mistrz | | 12,0 tys. zł | 12,1 tys. zł | **8,7 tys. zł** |
+| Udział franczyzobiorcy, bierny | ok. 16,5–16,7% | 4,6% | 4,6% | **16,5%** |
+| Udział franczyzobiorcy, mistrz | trochę więcej przy dobrej współpracy | 7,2% | 7,7% | **18,1%** |
+| Wynik miesiąca po kosztach, bierny | „kilka do kilkunastu tys. zł” na rękę | −0,5 tys. zł | +1,2 tys. zł | **+5,9 tys. zł** (od +1,2 do +12 tys.) |
+| Wynik miesiąca po kosztach, mistrz | | +12,5 tys. zł | +13,9 tys. zł | **+14,6 tys. zł** (od +9 do +19 tys.) |
+| Wózek paletowy (dzień zakupu) | | 1–5 | 1–6 | **0** (start 5000 zł) |
+| Rampa (poziom 6, 9 tys. zł) | | 20–29 | 17–27 | **17–40** |
+| Remont 1 (poziom 8, 25 tys. zł) | | 104–178, `traszka-1` nigdy w roku | 108–157, `traszka-1` nigdy | **57–131** |
+| Remont 2 (poziom 14, 80 tys. zł) | | nigdy w roku | nigdy w roku | **174–269** |
+| eDward (poziom 25, remont 2, 220 tys. zł) | | nigdy w roku | nigdy w roku | nigdy w roku (poziom 25 w dniach 175–216) |
+
+**Jak liczone są dni do ulepszeń.**
+- Kupujący to bot `mistrz`, który kupuje po kolei: wózek, regały, ulotki, szkolenie, rampa, ulotki, trzecia osoba, remont 1, taśmociąg, druga dostawa, remont 2, taśmociąg ×2, wykładacz ×2, eDward.
+- Kupuje, gdy wolne środki po zakupie (gotówka minus to, co netto zabierze Centrala przy zamknięciu miesiąca) wynoszą co najmniej 2000 zł.
+- Horyzont pomiaru to rok gry.
+
+**Tempo progresji jest szybsze niż w SIM 4**, więc ceny ulepszeń (z eDwardem za 220 tys.) zostały bez zmian. eDward nadal jest celem na drugi rok gry.
+
+### 12.2 Co się zmieniło
+
+| Stała | Było | Jest | Dlaczego |
+|---|---|---|---|
+| Ruch: `TRAFFIC_BASE` / `PER_SHELF_ITEM` / `RANGE` | 23 / 1/180 / [12, 60] | 13 / 1/320 / [7, 34] | sklep na start ok. 260–350 klientów (6–7,5 tys. zł); przy krótkiej kolejce reputacja rośnie i z nią ruch (średnio 7,8 tys. zł w dwóch miesiącach) |
+| Opłata Centrali | 2000 zł + 15,3% | 1000 zł + 3,4% | przy przeciętnym zaufaniu zostaje ok. 16,5% obrotu |
+| Premia od obrotu | 2% (zaufanie od 70), 3% (od 85) | 0,5% / 1% | przy wysokim zaufaniu ok. 17–18% |
+| `START_CASH` | 2000 zł | 5000 zł | wkład na start |
+| `WAGE_PER_DAY` | 340 zł | **500 zł** | 340 zł na 17 h to ok. 20 zł za godzinę, a pełny koszt pracodawcy przy płacy minimalnej 2025 to ok. 37 zł za godzinę. 500 zł (ok. 29 zł za godzinę) uwzględnia godziny, które w prawdziwym sklepie pokrywa sam franczyzobiorca. Z dawną płacą bierny miał +20–30 tys. zł miesięcznie zamiast kilku. |
+| `LEVEL_CASH` | 400 + 200 zł za poziom | 100 + 50 zł | dawna nagroda dawała ok. 9 tys. zł miesięcznie, tyle co wcześniej wyrównywało biernemu opłatę |
+| `XP.customer` | 1 | 1,3 | klientów jest ok. 40% mniej, a poziomy przychodzą w podobnym tempie (6 w dniach 5–8, 14 w dniach 45–59) |
+| `GUARANTEE` (nowe) | | 25 tys. zł, 3 miesiące, zaufanie co najmniej 40, bez mandatu | §12.3 |
+
+**Bez zmian:**
+- media (140 zł × wielkość sali, czyli 3–7,5 tys. zł miesięcznie, rozsądnie wobec prądu dla lodówek);
+- premie KPI, złota paleta i kwoty na kartach (liczą się od marży dnia sklepu, więc maleją z ruchem same, ok. 35%);
+- kredyt kupiecki 70 tys. zł (liczy się od wartości towaru, a nie od obrotu);
+- debet −100 tys. zł;
+- paleta 480 sztuk, karty ×3, wciąganie palet po 2 h i test biernego.
+
+**Mandat za energetyk** (`MINOR_SALE_FINE`): przy realnym ruchu zawsze obowiązuje minimum 4000 zł. To ok. 3 dni przychodu franczyzobiorcy, a w SIM 4 ok. 8 dni. Bierny gracz z wymuszonymi mandatami:
+
+| Mandatów w 2 miesiące | Skutek |
+|---|---|
+| 3 | gotówka nie schodzi poniżej ok. 0 |
+| 18 | ostrzeżenie o debecie |
+| ok. 30 | koniec gry |
+
+Nie przestrajałem go.
+
+### 12.3 Przychód gwarantowany
+
+- **Zasada.** Przy zamknięciu każdego z pierwszych 3 miesięcy gry Centrala dopłaca do 25 tys. zł przychodu franczyzobiorcy, czyli marży minus opłaty plus premii. Warunki: zaufanie co najmniej 40 i miesiąc bez mandatu.
+- **Dlaczego trzy miesiące:** to kwartał wdrożenia i zarazem cały sezon rankingowy, więc siatka chroni początek gry, a nie zastępuje decyzji.
+- **Gdzie widać dopłatę:**
+  - raport miesiąca ma pozycję „Dopłata do przychodu gwarantowanego” (licznik `guarantee`, księgowana jako premia Centrali);
+  - podgląd końca miesiąca ma wiersz z warunkami i tekstem „Wierzymy w Ciebie. Do odwołania.”;
+  - komunikat przy zamknięciu miesiąca. Gdy warunek nie jest spełniony, gra mówi, ile Centrala nie dopłaci i dlaczego („Regulamin, punkt 7.3.b, przypis drobnym drukiem”).
+- **Kiedy działa:** w przeciętnym sklepie przychód franczyzobiorcy wynosi 34–45 tys. zł, więc dopłata włącza się tylko w słabym miesiącu, np. przy zamkniętym sklepie albo w bardzo małym lokalu. Tak samo jest w rzeczywistości: gwarancja 25 tys. przy średniej 37 tys.
+- **Testy:** `economy.test.ts`, opis „przychód gwarantowany”.
+- **Podgląd** (`monthPreview`) pokazuje dopłatę jak raport, a nieodebranych celów sam nie odbiera (test z poprzedniego kroku).
+
+### 12.4 Tłum na ekranie przed zmianą i po niej
+
+Pomiar w prawdziwej scenie: headless Chrome, `vite preview`, drugi dzień gry, 16:45–18:00, sklepy `traszka-1` i `kopytka-541`, co sekundę przez 40 s.
+
+| | Przed (SIM 5 przed urealnieniem) | Po |
+|---|---|---|
+| Postacie w sklepie, szczyt | 9 i 9 | **8 i 10** |
+| Postacie w sklepie, średnio | 6,9 i 7,5 | **6,7 i 7,6** |
+| Kolejka z ekonomii, szczyt | 7,1 i 5,9 | **1,5 i 0,9** |
+
+Tłum na ekranie zostaje prawie taki sam, bo ogranicza go preset grafiki i lustro tłumu. Wyraźnie krótsza jest kolejka: dwie osoby na zmianie przy ok. 300 klientach dziennie nadążają.
+
+- **Tłum docelowy w szczycie** (`crowdRateFor`: klientów na godzinę × 0,35): było 15,2, teraz 8,6.
+- **Najdłuższa kolejka dnia w symulacji:**
+
+  | Gracz | Było | Jest |
+  |---|---|---|
+  | bierny | 6,8 | 2,6 |
+  | mistrz | 7,1 | 4,3 |
+
+Fale zostają. Ruch rośnie z reputacją, ulotkami, kampaniami, remontami i siecią sklepów bez górnego limitu poza `TRAFFIC_RANGE`.
+
+### 12.5 Sprawdzenia
+
+| Sprawdzenie | Wynik |
+|---|---|
+| `npm test` | 152 pliki, 4536 testów zielonych (2 pominięte) |
+| `tsc` | 0 błędów |
+| `npm run build` | przechodzi, bundle sędziego przebudowany |
+| `npm run check:vercel-build` | **PASS** (25 sprawdzeń) |
+| `GOLDEN[5]` | `fc9c4c59…232f` |
+
+**Smoke'i headless** (`vite preview`, `?debug=1`):
+
+- **Palety: przechodzi.**
+  - Nadmiar to 13 palet w przejściach.
+  - Komunikatu o zabraniu palet nie ma, przycisku „Odeślij” też nie.
+  - Zapis z SIM 4 wczytuje się z paletami i odebranymi celami.
+  - Konsola jest czysta, a zapytań poza localhost nie ma.
+- **Roboty: PASS**, 18 sprawdzeń.
+- **Opłata: pada w kroku 2 przez zamierzoną zmianę.**
+  - Krok ustawia 60 tys. zł gotówki i 330 tys. zł obrotu, zakładając dawną opłatę 15,3%, czyli ok. 52 tys. do oddania.
+  - Przy opłacie z SIM 5 do oddania jest 12,2 tys. zł, wolne 47,8 tys., więc żaden zakup nie przekracza wolnych środków, notka `.tt-spend` się nie pojawia i skrypt czeka na nią do limitu czasu.
+  - Ich skryptu nie zmieniałem. Kopia z obrotem 1,5 mln zł (52 tys. do oddania, czyli założenie pierwotnego skryptu) przechodzi **26/26**: ostrzeżenia przy zakupach działają i nie blokują zakupu.
+  - Do poprawienia w skrypcie sesji opłaty: obrót w kroku 2 trzeba liczyć z `FRANCHISE_FEE_SHARE` albo podnieść do ok. 1,5 mln zł.
+
+### 12.6 Testy, które zmieniły się przez urealnienie
+
+| Test | Zmiana |
+|---|---|
+| `tycoon/balance.test.ts` | Bierny na każdym sklepie na plus (do 30 tys. zł za dwa miesiące), mediana 5–20 tys. Mistrz 15–50 tys. i co najmniej 8 tys. więcej niż bierny. Stukanie najwyżej 20% (wychodzi ok. 1%). Decyzje wygrywają ze stukaniem. |
+| `tycoon/debt.test.ts` | 3, 18 i 34 mandaty zamiast 3, 15 i 26. |
+| Scenariusze debetu przy zamknięciu 30 listopada (`ranked.test.ts`, `rankedRun.test.ts`, `api.test.ts`) | `kiełbasa-42`: 30 palet dziennie od 25.10 i 6 etatów więcej od 26.10. Zapas wynosi ok. 500 zł, więc każda zmiana ekonomii może go przesunąć, a test powie to wprost. |
+| `judgeBundle.test.ts` | Remont 1 w 55. dniu: wcześniej sklepu nie stać. |
+| `simGolden.test.ts`, `rankedSeason.test.ts` | Zakupy w `PLAN` rozłożone na wrzesień i październik, krótki profil „porządek”, kampania w 25. dniu, piec w 55. Nowe `CARD_ANSWERS` z generatora. |
+| `scripts/ranking-smoke.mjs` | `SMOKE_LOG`: ulotki i dodatkowy etat od 2. do 25. dnia. Same ulotki opłacały się na każdym sklepie, a test potrzebuje obu wyników: wychodzi 17 lepszych i 7 gorszych na 24. |
+| Testy interfejsu (`spend.test.tsx`, `monthPreview.test.tsx`, `forecast.test.ts`, `scene.test.ts`, `howToText.test.ts`) | Liczby ze stałych zamiast wpisanych na sztywno, większy obrót tam, gdzie test potrzebuje dużej opłaty. |
+
+### 12.7 Do decyzji właściciela
+
+1. **Płace 500 zł zamiast 340 zł.** To jedyna zmiana kosztu, bez której cel „bierny kilka tysięcy na plus” się nie mieści. Przy realnym udziale w obrocie i starych płacach bierny miał +20–30 tys. zł miesięcznie.
+2. **Gwarancja 25 tys. zł działa rzadko.** Przeciętny sklep i tak przekracza 25 tys. przychodu, tak jak w rzeczywistości. Jeśli ma być odczuwalna częściej, trzeba ją podnieść albo liczyć od wyniku po płacach, ale wtedy przestaje odpowiadać prawdziwej umowie.
+3. **Krótsza kolejka.** Postaci na ekranie jest tyle samo, ale kolejka w szczycie spadła z 6–7 do 1–2 osób. Jeśli właściciel chce tłoku przy kasie, można zmniejszyć tempo kasy albo ruszyć fale; to zmiana symulacji, więc przed poniedziałkiem.
+4. **Pierwszy miesiąc małego sklepu wychodzi w okolicy zera** (np. `kopytka-541`: −1 tys. we wrześniu, +3,4 tys. w październiku). Start jest powolny: gotówka rośnie o kilkaset złotych dziennie, a nie o 1,6 tys. jak w SIM 4.

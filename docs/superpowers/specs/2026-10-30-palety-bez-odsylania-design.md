@@ -176,3 +176,44 @@ Test bilansu sprawdza tempo 0,4–0,6 karty na dobę, czyli kartę co ok. 5,5–
   - wczytanie zapisu SIM 4;
   - czysta konsola;
   - zrzuty ekranu.
+
+## 11. Urealnienie ekonomii (decyzja właściciela z 30.10.2026: „Tak, urealnij”)
+
+Źródło liczb: publiczne dane dużej polskiej sieci convenience za 2025 r. z prasy. W samej grze nazwy sieci nie ma.
+
+| Rzeczywistość (2025) | Wartość |
+|---|---|
+| Marża franczyzobiorcy, ze sprzedaży i wynagrodzenia motywacyjnego, przed jego kosztami | ok. 446 tys. zł rocznie (ok. 37 tys. zł miesięcznie), ok. 16,5–16,7% obrotu |
+| Obrót sklepu | ok. 2,4–2,7 mln zł rocznie, czyli 6,6–7,4 tys. zł dziennie |
+| Przychód gwarantowany nowego franczyzobiorcy | 25 tys. zł miesięcznie |
+| Wkład na start | ok. 5000 zł |
+
+| Stała | Było (SIM 5 przed urealnieniem) | Jest | Uzasadnienie |
+|---|---|---|---|
+| `TRAFFIC_BASE`, `TRAFFIC_PER_SHELF_ITEM`, `TRAFFIC_RANGE` | 23, 1/180, [12, 60] | 13, 1/320, [7, 34] | sklep na start ok. 260–350 klientów, czyli 6–7,5 tys. zł dziennie; średnio w dwóch miesiącach ok. 7,8 tys. (reputacja rośnie, gdy kolejka jest krótka) |
+| `FRANCHISE_FEE_FIXED` / `FRANCHISE_FEE_SHARE` | 2000 zł / 15,3% | 1000 zł / 3,4% | przy przeciętnym zaufaniu franczyzobiorcy zostaje ok. 16,5% obrotu |
+| `turnoverBonusShare` | 2% od 70, 3% od 85 | 0,5% od 70, 1% od 85 | przy wysokim zaufaniu ok. 17–18% obrotu |
+| `START_CASH` | 2000 zł | 5000 zł | wkład na start |
+| `WAGE_PER_DAY` | 340 zł | 500 zł | 340 zł na 17 h to ok. 20 zł za godzinę, a pełny koszt pracodawcy przy płacy minimalnej 2025 to ok. 37 zł za godzinę. Przyjmujemy ok. 29 zł, bo część godzin w prawdziwym sklepie pokrywa sam franczyzobiorca. Bez tego bierny gracz miał +20–30 tys. zł miesięcznie. |
+| `LEVEL_CASH` | 400 + 200 zł za poziom | 100 + 50 zł za poziom | stara nagroda dawała ok. 9 tys. zł miesięcznie |
+| `XP.customer` | 1 | 1,3 | klientów jest ok. 40% mniej, a poziomy mają przychodzić podobnie szybko |
+| `GUARANTEE` | brak | 25 tys. zł, 3 miesiące, zaufanie co najmniej 40, miesiąc bez mandatu | patrz niżej |
+
+**Przychód gwarantowany.**
+- *Na czym polega:* przy zamknięciu miesiąca, w pierwszych 3 miesiącach gry, Centrala dopłaca do 25 tys. zł przychodu franczyzobiorcy. Przychód to marża minus opłata plus premie Centrali.
+- *Warunki:* zaufanie co najmniej 40 i żadnego mandatu w miesiącu.
+- *Dlaczego 3 miesiące:* to kwartał wdrożenia i cały sezon rankingowy.
+- *Gdzie widać:*
+  - dopłata to premia Centrali, a w raporcie ma osobną pozycję „Dopłata do przychodu gwarantowanego” (licznik `guarantee`);
+  - podgląd końca miesiąca pokazuje ją osobnym wierszem;
+  - komunikat: „Wierzymy w Ciebie. Do odwołania.”;
+  - gdy warunek nie jest spełniony, gra mówi, że dopłaty nie będzie, z „punktem 7.3.b”.
+- *Kiedy działa:* w przeciętnym sklepie przychód franczyzobiorcy to ok. 34–45 tys. zł, więc dopłata włącza się tylko w słabym miesiącu, np. przy remoncie albo w małym sklepie, jak w rzeczywistości.
+
+**Bez zmian:**
+- media;
+- ceny ulepszeń (z eDwardem): tempo progresji wyszło szybsze niż w SIM 4, liczby są w raporcie;
+- premie KPI, złota paleta i karty (liczą się od marży dnia sklepu, więc maleją z ruchem same);
+- mandat za energetyk (minimum 4000 zł);
+- kredyt kupiecki;
+- debet −100 tys. zł.
