@@ -24,7 +24,8 @@ export function levelReward(level: number): { cash: number; ogonki: number } {
 /** XP za czynności (poza KPI tygodnia i kartami decyzji, które mają własną nagrodę). */
 export const XP = {
   customer: 1,
-  pallet: 12,
+  /** Za rozładowaną paletę: 18 od SIM_VERSION 5 (paleta półtora raza większa, `PALLET_ITEMS`), na sztukę tyle co dawne 12. */
+  pallet: 18,
   purchase: 20,
   golden: 40,
   milestonePerOgonek: 5,

@@ -120,17 +120,17 @@ describe('losowanie kart dnia', () => {
     return { cs, byDay };
   }
 
-  it('dzień przynosi 0–2 karty, średnio ok. jednej, deterministycznie z seeda', () => {
+  it('dzień przynosi 0 albo 1 kartę, średnio ok. pół (z okólnikami), deterministycznie z seeda', () => {
     const a = season(SEED, 200);
     const b = season(SEED, 200);
     expect(JSON.stringify(a.byDay)).toBe(JSON.stringify(b.byDay));
     const counts = a.byDay.map((x) => x.length);
     expect(Math.min(...counts)).toBe(0);
-    expect(Math.max(...counts)).toBe(2);
+    expect(Math.max(...counts)).toBe(1);
     expect(counts[0]).toBeGreaterThanOrEqual(1);   // pierwszy dzień gry zawsze z kartą
     const mean = counts.reduce((n, x) => n + x, 0) / counts.length;
-    expect(mean).toBeGreaterThan(0.95);
-    expect(mean).toBeLessThan(1.35);
+    expect(mean).toBeGreaterThan(0.4);
+    expect(mean).toBeLessThan(0.65);
     expect(JSON.stringify(season(SEED + 1, 200).byDay)).not.toBe(JSON.stringify(a.byDay));
   });
 
@@ -140,14 +140,14 @@ describe('losowanie kart dnia', () => {
     expect(drawDayCards(cs, ctx(0), SEED)).toEqual([]);
   });
 
-  it('okólnik Centrali przychodzi raz na 2–4 dni', () => {
+  it('okólnik Centrali przychodzi raz na 4–6 dni', () => {
     const { byDay } = season(SEED, 240);
     const days = byDay.flatMap((cards, d) => (cards.some((c) => cardDef(c.id)!.kind === 'okolnik') ? [d] : []));
     const gaps = days.slice(1).map((d, i) => d - days[i]);
-    expect(Math.min(...gaps)).toBeGreaterThanOrEqual(2);
-    expect(days.length).toBeGreaterThan(240 / 4.5);
-    expect(days.length).toBeLessThanOrEqual(240 / 2);
-    expect(gaps.filter((g) => g > 4).length).toBeLessThan(gaps.length / 10);
+    expect(Math.min(...gaps)).toBeGreaterThanOrEqual(4);
+    expect(days.length).toBeGreaterThan(240 / 6.5);
+    expect(days.length).toBeLessThanOrEqual(240 / 4);
+    expect(gaps.filter((g) => g > 6).length).toBeLessThan(gaps.length / 10);
   });
 
   it('karta nie wraca przed końcem przerwy i nie wypada, gdy jej warunek nie jest spełniony', () => {
@@ -309,8 +309,9 @@ describe('rozstrzyganie', () => {
     resolveCard(cs, promo.seq, 0, t, SEED);
     resolveCard(cs, glitch.seq, 0, t, SEED);
     const now = cardModifiers(cs, t + 10);
-    expect(now.traffic).toBeCloseTo(1.08);
-    expect(now.margin).toBeCloseTo(0.9);
+    // ruch i marża z kart idą razy waga decyzji (`CARDS.stakes`)
+    expect(now.traffic).toBeCloseTo(1 + 0.08 * CARDS.stakes);
+    expect(now.margin).toBeCloseTo(1 - 0.1 * CARDS.stakes);
     expect(now.closed).toBe(true);
     expect(cardModifiers(cs, t + 61).closed).toBe(false);
     pruneCardMods(cs, t + MINUTES_PER_DAY);
@@ -324,7 +325,7 @@ describe('rozstrzyganie', () => {
     cs.pending.push(card);
     resolveCard(cs, card.seq, 0, card.showAt, SEED);
     expect(cardModifiers(cs, card.showAt + 30).traffic).toBe(1);
-    expect(cardModifiers(cs, 10 * MINUTES_PER_DAY + 18 * 60).traffic).toBeCloseTo(1.35);
+    expect(cardModifiers(cs, 10 * MINUTES_PER_DAY + 18 * 60).traffic).toBeCloseTo(1 + 0.35 * CARDS.stakes);
   });
 });
 
@@ -353,8 +354,8 @@ describe('ocena odpowiedzi', () => {
   it('szacunek efektów na czas liczy tylko godziny otwarcia', () => {
     const card = make('promocja');
     const [traffic, margin] = card.answers[0].mods;
-    expect(traffic.estimate).toBeCloseTo(0.08 * 2000, -1);
-    expect(margin.estimate).toBeCloseTo(-0.1 * 2000, -1);
+    expect(traffic.estimate).toBeCloseTo(0.08 * CARDS.stakes * 2000, -1);
+    expect(margin.estimate).toBeCloseTo(-0.1 * CARDS.stakes * 2000, -1);
     expect(make('glitch').answers[0].mods[0].estimate).toBeCloseTo(-2000 * 60 / 1020, -1);
   });
 
@@ -386,7 +387,7 @@ describe('zapis', () => {
     const raw = { ...JSON.parse(JSON.stringify(cs)), drawnDay: 999_999, nextCircularDay: 999_999, lastSeen: { fefo: 999_999 } };
     const s = sanitizeCards(raw, 10);
     expect(s.drawnDay).toBe(10);
-    expect(s.nextCircularDay).toBeLessThanOrEqual(15);
+    expect(s.nextCircularDay).toBeLessThanOrEqual(10 + CARDS.circularGapMin + CARDS.circularGapSpan);
     expect(s.lastSeen.fefo).toBe(10);
     expect(s.pending.map((c) => c.seq)).toEqual([card.seq, card.seq + 2]);
     expect(s.pending[1].showAt).toBeLessThan(11 * MINUTES_PER_DAY);

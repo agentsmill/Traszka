@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DEBT_LIMIT, WAGE_PER_DAY } from '@/sim/economy/catalog';
-import { DEBT_WARN, createEconomy, debtWarningText, franchiseFee, kpiScaleOf, nextRemont, upgradeBlocker, type CommandResult, type EconomyState, type MonthReport } from '@/sim/economy/economy';
+import { DEBT_WARN, LOC_LABEL, createEconomy, debtWarningText, franchiseFee, freeSpots, kpiScaleOf, nextRemont, upgradeBlocker, type CommandResult, type EconomyState, type MonthReport } from '@/sim/economy/economy';
 import type { Command } from '@/sim/economy/commands';
 import { KPI, KPI_FLAVOR, kpiTitle } from '@/sim/economy/tycoon/kpi';
 import { dayOfMinute, roundNice } from '@/sim/economy/tycoon/time';
+import { MILESTONES } from '@/sim/economy/milestones';
 import { staffOnShift } from '@/sim/economy/tycoon/shift';
 import { PROFILE_HINT, PROFILE_LABEL, STAFF_PROFILES, STAFF_TASKS, TASK_LABEL, type StaffTask } from '@/sim/economy/tycoon/staff';
 import { trustTier } from '@/sim/economy/tycoon/trust';
@@ -12,8 +13,8 @@ import { WEATHER_LABEL } from '@/sim/economy/tycoon/cleanliness';
 import { computeStoreInfo, type PalletLoc, type StoreInfo } from '@/sim/economy/storeInfo';
 import { EQUIPMENT, UPGRADES } from '@/sim/economy/upgrades';
 import { layoutFor } from '@/sim/store/layoutFor';
-import { metaView, ranked, speed, type GameActions } from '../state';
-import { Bar, GoalsPanel, PalletItem, PalletsPanel, PeoplePanel, ShopPanel, StorePanel } from './panels';
+import { econ, metaView, ranked, speed, tab, type GameActions } from '../state';
+import { Bar, GoalsPanel, PalletItem, PalletsPanel, PeoplePanel, ShopPanel, StorePanel, TabBar } from './panels';
 import { plural, zl } from './format';
 import { buttonAria, buttonLabelled, buttonsOf, click, labels, sectionTitled, textOf, walk, type Vnode } from './vnodeTree';
 
@@ -38,13 +39,15 @@ function rich(): { s: EconomyState; info: StoreInfo } {
 }
 
 afterEach(() => {
+  econ.value = null;
+  tab.value = null;
   metaView.value = { points: 0, stores: 0, networkIncome: 0, network: [], sound: true, vibration: true };
   speed.value = 1;
   ranked.value = null;
 });
 
 describe('panele wysyłają polecenia przez game.dispatch, a nie wołają symulacji', () => {
-  it('paleta: „Rozładuj” wysyła tapPallet z id, przesunięcia movePallet z miejscem, „Odeślij” returnPallet', () => {
+  it('paleta: „Rozładuj” wysyła tapPallet z id, a przesunięcia movePallet z miejscem; „Odeślij” nie ma (palet nikt nie odsyła)', () => {
     const { s, info } = rich();
     const p = s.pallets[0]!;
     const game = fakeGame();
@@ -58,10 +61,100 @@ describe('panele wysyłają polecenia przez game.dispatch, a nie wołają symula
       click(buttonLabelled(tree, label));
       expect(game.dispatch).toHaveBeenLastCalledWith({ type: 'movePallet', palletId: p.id, loc });
     }
-    click(buttonLabelled(tree, 'Odeślij'));
-    expect(game.dispatch).toHaveBeenLastCalledWith({ type: 'returnPallet', palletId: p.id });
-    expect(game.dispatch).toHaveBeenCalledTimes(4);
-    expect(labels(PalletItem({ s, info, id: p.id, game, compact: true }))).not.toContain('Odeślij');   // karta zaznaczenia nie odsyła
+    expect(game.dispatch).toHaveBeenCalledTimes(3);
+    for (const compact of [false, true]) {
+      const buttons = labels(PalletItem({ s, info, id: p.id, game, compact }));
+      expect(buttons, `compact ${compact}`).not.toContain('Odeślij');
+      expect(buttons.join('|'), `compact ${compact}`).not.toMatch(/odeśl/i);
+    }
+    expect(game.dispatch.mock.calls.some(([cmd]) => cmd.type === 'returnPallet')).toBe(false);
+  });
+
+  describe('paleta w przejściu (nadmiar, który postawił kierowca)', () => {
+    /** Paleta nr 0 postawiona w przejściu; reszta palet zostaje tam, gdzie była. */
+    function inAisle(): { s: EconomyState; info: StoreInfo; id: number } {
+      const { s, info } = rich();
+      const p = s.pallets[0]!;
+      Object.assign(p, { loc: 'aisle', spot: 0 });
+      return { s, info, id: p.id };
+    }
+
+    it('przenosiny nigdy nie mają przejść za cel, ale paletę z przejścia da się przenieść na każde zwykłe miejsce', () => {
+      const { s, info, id } = inAisle();
+      const game = fakeGame();
+      const target = { 'Na zaplecze': 'backroom', 'Do sali': 'floor', 'Pod sklep': 'sidewalk' } as const;
+      for (const loc of ['sidewalk', 'backroom', 'floor', 'aisle'] as const) {
+        s.pallets.find((x) => x.id === id)!.loc = loc;
+        const moves = labels(PalletItem({ s, info, id, game })).filter((b) => b !== 'Rozładuj');
+        expect(moves.sort(), loc).toEqual(Object.keys(target).filter((label) => target[label as keyof typeof target] !== loc).sort());   // wszystkie zwykłe miejsca poza obecnym
+        expect(moves.join('|'), loc).not.toMatch(/przej/i);
+      }
+      s.pallets.find((x) => x.id === id)!.loc = 'aisle';
+      const tree = PalletItem({ s, info, id, game });
+      for (const [label, loc] of [['Na zaplecze', 'backroom'], ['Do sali', 'floor'], ['Pod sklep', 'sidewalk']] as const) {
+        const button = buttonLabelled(tree, label);
+        expect(button.props.disabled, label).toBe(freeSpots(s, info, loc) === 0);
+        if (freeSpots(s, info, loc) > 0) {
+          click(button);
+          expect(game.dispatch).toHaveBeenLastCalledWith({ type: 'movePallet', palletId: id, loc });
+        }
+      }
+      expect(game.dispatch.mock.calls.every(([cmd]) => cmd.type === 'movePallet' && cmd.loc !== 'aisle')).toBe(true);
+    });
+
+    it('ma wyróżnienie ostrzegawcze z ⚠️ jak paleta pod sklepem, a zwykła paleta w sali go nie ma', () => {
+      const { s, info, id } = inAisle();
+      const game = fakeGame();
+      const classes = (tree: Vnode): string[] => String(tree.props.class).split(' ');
+      const aisle = PalletItem({ s, info, id, game }) as Vnode;
+      expect(classes(aisle)).toContain('risk');
+      expect(textOf(aisle)).toContain(`${LOC_LABEL.aisle} ⚠️`);
+      expect(textOf(aisle)).toContain('potykają');   // krótkie wyjaśnienie, czemu to źle
+      const compact = PalletItem({ s, info, id, game, compact: true }) as Vnode;
+      expect(classes(compact)).toContain('risk');
+      expect(textOf(compact)).toContain('⚠️');
+      expect(textOf(compact)).not.toContain('potykają');   // karta zaznaczenia jest krótka
+
+      s.pallets.find((x) => x.id === id)!.loc = 'sidewalk';
+      expect(classes(PalletItem({ s, info, id, game }) as Vnode)).toContain('risk');
+      s.pallets.find((x) => x.id === id)!.loc = 'floor';
+      const hall = PalletItem({ s, info, id, game }) as Vnode;
+      expect(classes(hall)).not.toContain('risk');
+      expect(textOf(hall)).not.toContain('⚠️');
+    });
+
+    it('sekcja „Palety”: przy wolnych miejscach liczba palet w przejściach (tylko gdy są), a podpowiedź mówi o potykaniu', () => {
+      const { s, info } = inAisle();
+      const game = fakeGame();
+      const spots = (): string => textOf(walk(PalletsPanel({ s, info, game, v: 1 })).find((v) => v.props.label === 'Wolne miejsca')!);
+      expect(spots()).toContain('w przejściach 1 paleta');
+      for (let i = 1; i <= 4; i++) s.pallets.push({ ...s.pallets[0]!, id: 900 + i, spot: i });
+      expect(spots()).toContain('w przejściach 5 palet');
+      for (const p of s.pallets) if (p.loc === 'aisle') p.loc = 'floor';
+      expect(spots()).not.toContain('przejściach');
+      const hint = textOf(sectionTitled(PalletsPanel({ s, info, game, v: 1 }), `Palety (${s.pallets.length})`));
+      expect(hint).toContain('Nadmiar staje w przejściach, a klienci się o niego potykają');
+      expect(hint).not.toMatch(/odeśl/i);
+    });
+  });
+
+  it('znaczniki zakładek: Palety liczą palety pod sklepem i w przejściach, Cele kamienie milowe do odebrania', () => {
+    const { s, info } = rich();
+    s.pallets.length = 0;
+    const pallet = (id: number, loc: PalletLoc): EconomyState['pallets'][number] => ({
+      id, loc, spot: 0, items: { ...rich().s.pallets[0]!.items }, total: 10, initial: 10, since: s.minute,
+    });
+    s.pallets.push(pallet(1, 'sidewalk'), pallet(2, 'aisle'), pallet(3, 'aisle'), pallet(4, 'floor'), pallet(5, 'backroom'));
+    s.milestonesReady = ['pallet1', 'cust500'];
+    econ.value = { s, info, v: 1 };
+    const badges = (): Record<string, string> => Object.fromEntries(
+      walk(TabBar()).filter((v) => v.props.class === 'tt-tab').map((tab) => [textOf(walk(tab).find((v) => v.props.class === 'tt-tab-label')!), textOf(walk(tab).find((v) => v.props.class === 'tt-badge') ?? '')]),
+    );
+    expect(badges()).toMatchObject({ Palety: '3', Cele: '2' });
+    s.pallets.length = 0;
+    s.milestonesReady = [];
+    expect(badges().Palety).toBe('');
+    expect(badges().Cele).toBe('');
   });
 
   it('„Rozładuj” ma tę samą blokadę co przycisk klikera: brak sił, pauza i karta czekająca na odpowiedź', () => {
@@ -86,12 +179,15 @@ describe('panele wysyłają polecenia przez game.dispatch, a nie wołają symula
     expect(unload().props.title).toBe('Najpierw odpowiedz na kartę decyzji');
   });
 
-  it('blokada „Rozładuj” nie rusza przycisków przenoszenia i odsyłania (to nie są stuknięcia)', () => {
+  it('blokada „Rozładuj” nie rusza przycisków przenoszenia (to nie są stuknięcia)', () => {
     const { s, info } = rich();
     s.tycoon.fatigue.energy = 0;
-    const tree = PalletItem({ s, info, id: s.pallets[0]!.id, game: fakeGame() });
+    const p = s.pallets[0]!;
+    const tree = PalletItem({ s, info, id: p.id, game: fakeGame() });
     expect(buttonLabelled(tree, 'Rozładuj').props.disabled).toBe(true);
-    expect(buttonLabelled(tree, 'Odeślij').props.disabled).toBeUndefined();
+    for (const [label, loc] of [['Na zaplecze', 'backroom'], ['Do sali', 'floor'], ['Pod sklep', 'sidewalk']] as const) {
+      if (loc !== p.loc) expect(buttonLabelled(tree, label).props.disabled, label).toBe(freeSpots(s, info, loc) === 0);
+    }
   });
 
   it('zamówienie: asystent, ręcznie (z bieżącą liczbą) i krok − / + wysyłają setOrder', () => {
@@ -271,6 +367,63 @@ describe('panele wysyłają polecenia przez game.dispatch, a nie wołają symula
     const titles = walk(GoalsPanel({ s, info, game: fakeGame(), v: 1 })).filter((v) => typeof v.props.title === 'string').map((v) => v.props.title);
     expect(titles.indexOf('KPI tygodnia')).toBe(0);
     expect(titles.indexOf('Kamienie milowe')).toBeGreaterThan(titles.indexOf('KPI tygodnia'));
+  });
+
+  describe('cele: kamienie milowe do odebrania (przycisk „Odbierz”)', () => {
+    const ids = (list: readonly { id: string }[]): string[] => list.map((m) => m.id);
+    const goalRows = (tree: Vnode): Vnode[] => walk(sectionTitled(tree, 'Kamienie milowe')).filter((v) => String(v.props.class).split(' ').includes('tt-goal'));
+
+    it('spełnione cele są na górze z oznaczeniem „Do odebrania” i przyciskiem „Odbierz”, który wysyła claimMilestone z id', () => {
+      const { s, info } = rich();
+      s.milestonesReady = ['cust500', 'pallet1'];
+      const game = fakeGame();
+      const tree = GoalsPanel({ s, info, game, v: 1 }) as Vnode;
+      const rows = goalRows(tree);
+      expect(rows.slice(0, 2).map((r) => String(r.props.class).split(' ').includes('ready'))).toEqual([true, true]);
+      expect(rows.slice(2).some((r) => String(r.props.class).split(' ').includes('ready'))).toBe(false);
+      // kolejność listy celów (nie kolejność spełnienia), żeby panel nie skakał
+      expect(rows.slice(0, 2).map((r) => textOf(r))).toEqual([
+        expect.stringContaining(MILESTONES.find((m) => m.id === 'pallet1')!.label), expect.stringContaining(MILESTONES.find((m) => m.id === 'cust500')!.label),
+      ]);
+      for (const r of rows.slice(0, 2)) expect(textOf(r)).toContain('🎁 Do odebrania');
+      expect(rows.slice(2).map((r) => textOf(r)).join('|')).not.toContain('Do odebrania');
+
+      const claims = buttonsOf(tree).filter((b) => textOf(b) === 'Odbierz');
+      expect(claims).toHaveLength(2);
+      for (const id of ['pallet1', 'cust500']) {
+        const label = MILESTONES.find((m) => m.id === id)!.label;
+        click(buttonAria(tree, `Odbierz: ${label}`));
+        expect(game.dispatch).toHaveBeenLastCalledWith({ type: 'claimMilestone', id });
+      }
+      expect(game.dispatch).toHaveBeenCalledTimes(2);
+    });
+
+    it('lista następnych celów pomija i odebrane, i gotowe, a licznik „Zdobyte” liczy tylko odebrane', () => {
+      const { s, info } = rich();
+      s.milestones = ['pallet1'];
+      s.milestonesReady = ['upgrade1', 'sco1'];
+      const tree = GoalsPanel({ s, info, game: fakeGame(), v: 1 }) as Vnode;
+      const rows = goalRows(tree);
+      const upcoming = rows.filter((r) => !String(r.props.class).split(' ').includes('ready'));
+      const expected = ids(MILESTONES).filter((id) => !s.milestones.includes(id) && !s.milestonesReady.includes(id)).slice(0, 3);
+      expect(expected).toEqual(['cust500', 'staff3', 'earned10k']);
+      expect(upcoming.map((r) => r.key)).toEqual(expected);
+      expect(rows).toHaveLength(2 + 3);
+      for (const id of ['pallet1', 'upgrade1', 'sco1']) {
+        const label = MILESTONES.find((m) => m.id === id)!.label;
+        expect(upcoming.map((r) => textOf(r)).join('|'), id).not.toContain(label);
+      }
+      expect(textOf(sectionTitled(tree, 'Kamienie milowe'))).toContain(`Zdobyte: 1 / ${MILESTONES.length}`);
+    });
+
+    it('bez celów do odebrania nie ma przycisku „Odbierz” ani oznaczenia, a trzy najbliższe cele są jak dotąd', () => {
+      const { s, info } = rich();
+      s.milestones = ['pallet1'];
+      const tree = GoalsPanel({ s, info, game: fakeGame(), v: 1 }) as Vnode;
+      expect(labels(tree)).not.toContain('Odbierz');
+      expect(textOf(tree)).not.toContain('Do odebrania');
+      expect(goalRows(tree).map((r) => r.key)).toEqual(['upgrade1', 'cust500', 'sco1']);
+    });
   });
 
   it('cele: premie Centrali wchodzą do marży i do wyniku miesiąca (osobny licznik bonus)', () => {

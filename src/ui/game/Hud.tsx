@@ -5,7 +5,7 @@ import { DEBT_WARN, debtWarningText, isClosedForRemont } from '@/sim/economy/eco
 import { rankFor, xpToNext } from '@/sim/economy/progress';
 import { trustTier } from '@/sim/economy/tycoon/trust';
 import { econ, openHowTo, openRanking, showSettings, speed, tab, type Controls } from '../state';
-import { int, zl } from './format';
+import { int, plural, zl } from './format';
 
 /** Przyciski prędkości w pasku (pierwszy to pauza); „Jak grać” podaje z nich zakres tempa. */
 export const SPEEDS: { value: Speed; label: string; title: string }[] = [
@@ -61,6 +61,20 @@ export function TrustChip({ value }: { value: number }) {
 }
 
 /**
+ * Plakietka „🎁 N” w pasku: tyle celów (kamieni milowych) czeka na „Odbierz”. Pulsuje jak inne gorące znaczki, a kliknięcie otwiera
+ * zakładkę Cele (tam jest przycisk odbioru). Bez celów do odebrania jej nie ma.
+ */
+export function ClaimChip({ count }: { count: number }) {
+  if (count <= 0) return null;
+  const label = `${count} ${plural(count, 'cel czeka', 'cele czekają', 'celów czeka')} na odbiór nagrody`;
+  return (
+    <button type="button" class="tt-stat tt-claim hot" title={`${label}: zakładka Cele`} aria-label={label} onClick={() => { tab.value = 'cele'; }}>
+      🎁 {count}
+    </button>
+  );
+}
+
+/**
  * „🏆” obok ⚙: otwiera panel rankingu (w biegu rankingowym od zakładki „Ten seed”, w zwykłej grze od globalnego). Gra stoi, dopóki panel
  * jest otwarty.
  */
@@ -102,6 +116,7 @@ export function Hud({ controls, ranking = false }: { controls: Controls; ranking
         <span class="tt-clock">
           {formatDate(dayOf(s.minute))} · <b>{formatClock(s.minute)}</b>{closed ? ' · remont' : ''}
         </span>
+        <ClaimChip count={s.milestonesReady.length} />
         <div class="tt-seg" role="group" aria-label="Prędkość czasu">
           {SPEEDS.map((o) => (
             <button key={o.value} type="button" class={`tt-btn${o.value === speed.value ? ' on' : ''}`} aria-pressed={o.value === speed.value}

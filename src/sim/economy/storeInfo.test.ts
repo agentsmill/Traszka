@@ -144,3 +144,41 @@ describe('miejsca na palety na chodniku', () => {
     expect(most).toBeLessThan(FINE_PALLET_POW.length);
   }, 60_000);
 });
+
+describe('miejsca w przejściach (nadmiar palet)', () => {
+  /** Czy z punktu wejścia klienta da się dojść do każdej kratki `targets`, gdy zajęte są kratki `blocked`. */
+  const reachable = (layout: StoreLayout, blocked: Set<number>, targets: readonly Cell[]): boolean => {
+    const key = (c: Cell): number => c.y * layout.width + c.x;
+    const start = layout.spawnPoints[0]!;
+    const seen = new Set<number>([key(start)]);
+    const stack = [start];
+    while (stack.length > 0) {
+      const { x, y } = stack.pop()!;
+      for (const n of [{ x: x + 1, y }, { x: x - 1, y }, { x, y: y + 1 }, { x, y: y - 1 }]) {
+        if (!isWalkable(layout, n.x, n.y) || n.y <= 0 || blocked.has(key(n)) || seen.has(key(n))) continue;
+        seen.add(key(n));
+        stack.push(n);
+      }
+    }
+    return targets.every((c) => seen.has(key(c)));
+  };
+
+  it('są w sali, nie nachodzą na siebie ani na miejsca w sali, a zajęte wszystkie zostawiają drogę z wejścia do kolejki i kasy: 200 seedów × 4 poziomy remontu', () => {
+    for (let i = 0; i < 200; i++) {
+      for (const level of [0, 1, 2, 3]) {
+        const layout = layoutFor(`przejscia-${i}`, level);
+        const { spots } = computeStoreInfo(layout);
+        expect(spots.aisle.length, `przejscia-${i}, remont ${level}`).toBeGreaterThan(0);
+        const key = (c: Cell): number => c.y * layout.width + c.x;
+        const cells = [...spots.aisle, ...spots.floor].flatMap(squareCells).map(key);
+        expect(new Set(cells).size).toBe(cells.length);
+        for (const s of spots.aisle) for (const c of squareCells(s)) {
+          expect(layout.cells[key(c)]).toBe('floor');
+          expect(c.y).toBeGreaterThan(FRONT_WALL_Y);
+        }
+        const tills = layout.fixtures.filter((f) => f.kind === 'checkout').flatMap((f) => accessCells(layout, f)).filter((c) => isWalkable(layout, c.x, c.y));
+        expect(reachable(layout, new Set(cells), [...layout.checkoutQueue, ...tills]), `przejscia-${i}, remont ${level}`).toBe(true);
+      }
+    }
+  }, 60_000);
+});

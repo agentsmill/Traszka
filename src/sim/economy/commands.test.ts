@@ -5,7 +5,7 @@ import { HIRE_COST } from './catalog';
 import { applyCommand, COMMAND_TYPES, isCommand, type Command } from './commands';
 import {
   answerCard, awaitingDecision, buyEquipment, buyUpgrade, campaign, commitTap, createEconomy, fire, freeSpots, hire, movePallet,
-  processLevels, relayout, returnPallet, rushRemont, setOrder, startRemont, tapPallet, tapTill,
+  claimMilestone, processLevels, relayout, rushRemont, setOrder, startRemont, tapPallet, tapTill,
   type CommandResult, type EconomyState,
 } from './economy';
 import { computeStoreInfo, type StoreInfo } from './storeInfo';
@@ -50,9 +50,10 @@ const CASES: Record<Command['type'], () => Prepared> = {
     return { s, info, cmd: { type: 'movePallet', palletId: p.id, loc }, legacy: (b, i) => movePallet(b, i, p.id, loc) };
   },
   returnPallet: () => {
+    // od SIM_VERSION 5 tylko odmowa (dzienniki z SIM 4): stan zostaje, jak bez polecenia
     const { s, info } = base();
     const id = s.pallets[0]!.id;
-    return { s, info, cmd: { type: 'returnPallet', palletId: id }, legacy: (b) => returnPallet(b, id) };
+    return { s, info, cmd: { type: 'returnPallet', palletId: id }, legacy: () => ({ ok: false, text: 'Centrala nie przyjmuje zwrotów: każda paleta zostaje w sklepie.' }) };
   },
   setOrder: () => {
     const { s, info } = base();
@@ -107,6 +108,11 @@ const CASES: Record<Command['type'], () => Prepared> = {
     card.showAt = s.minute;
     return { s, info, cmd: { type: 'answerCard', seq: card.seq, answer: card.defaultAnswer }, legacy: (b) => answerCard(b, card.seq, card.defaultAnswer, []) };
   },
+  claimMilestone: () => {
+    const { s, info } = base();
+    s.milestonesReady = ['pallet1'];
+    return { s, info, cmd: { type: 'claimMilestone', id: 'pallet1' }, legacy: (b) => claimMilestone(b, 'pallet1') };
+  },
   rushRemont: () => {
     // remont w toku: sklep już ma układ po remoncie, tak jak po `startRemont` i przebudowie w sesji
     const { s } = base();
@@ -143,7 +149,7 @@ describe('każdy typ polecenia daje ten sam stan co dzisiejsza ścieżka main.ts
     const legacyResult = b.legacy(b.s, b.info);
     legacyAfter(b.s, layoutLevel);
 
-    expect(legacyResult.ok, 'przygotowanie ma doprowadzić do powodzenia').toBe(true);
+    expect(legacyResult.ok, 'przygotowanie ma doprowadzić do powodzenia').toBe(type !== 'returnPallet');
     expect(out.result).toEqual(legacyResult);
     expect(snapshot(a.s)).toBe(snapshot(b.s));
   });
@@ -476,7 +482,9 @@ describe('isCommand', () => {
       { type: 'movePallet', palletId: 1, loc: 'sidewalk' },
       { type: 'movePallet', palletId: 1, loc: 'backroom' },
       { type: 'movePallet', palletId: 1, loc: 'floor' },
+      { type: 'movePallet', palletId: 1, loc: 'aisle' },   // poprawny kształt; odmawia dopiero `movePallet`
       { type: 'returnPallet', palletId: 2 },
+      { type: 'claimMilestone', id: 'pallet1' },
       { type: 'setOrder', auto: true },
       { type: 'setOrder', auto: false, manual: 12.4 },
       { type: 'hire' },
@@ -509,6 +517,7 @@ describe('isCommand', () => {
       { type: 'tapPallet', palletId: Infinity }, { type: 'claimQuest', questId: 1 }, { type: 'claimQuest' },   // zlecenia zniknęły
       { type: 'movePallet', palletId: 1 }, { type: 'movePallet', loc: 'floor' },
       { type: 'movePallet', palletId: 1, loc: 'constructor' }, { type: 'returnPallet' }, { type: 'returnPallet', palletId: NaN },
+      { type: 'claimMilestone' }, { type: 'claimMilestone', id: 1 }, { type: 'claimMilestone', id: 'nie-ma' }, { type: 'claimMilestone', id: 'toString' },
       { type: 'setOrder' }, { type: 'setOrder', auto: 1 }, { type: 'setOrder', auto: true, manual: '4' },
       { type: 'setOrder', auto: true, manual: Infinity }, { type: 'setOrder', auto: true, manual: null },
       { type: 'setPriority' }, { type: 'setPriority', priority: 'rowno' },   // dawny priorytet pracy: polecenie znikło

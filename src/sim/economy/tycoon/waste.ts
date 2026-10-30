@@ -19,9 +19,10 @@ export interface WasteState {
 }
 
 export const WASTE = {
-  bagsPerPallet: 1,
-  /** Paleta, w której napoje to co najmniej `foilDrinksShare` sztuk, jest owinięta folią zgrzewek: dwa worki. */
-  bagsFoilDrinks: 2,
+  /** Worki z palety: od SIM_VERSION 5 paleta jest półtora raza większa (`PALLET_ITEMS` 480), więc i worków półtora raza więcej. */
+  bagsPerPallet: 1.5,
+  /** Paleta, w której napoje to co najmniej `foilDrinksShare` sztuk, jest owinięta folią zgrzewek: trzy worki. */
+  bagsFoilDrinks: 3,
   foilDrinksShare: 0.4,
   /** Tyle worków zajmuje jedno miejsce na paletę (kwadrat 2×2 kratki). */
   bagsPerSpot: 4,

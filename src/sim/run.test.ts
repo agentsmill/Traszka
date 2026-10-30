@@ -84,7 +84,9 @@ const bot: Policy = ({ state: s, roll, issue }) => {
   if (roll(9) < 0.0005) issue({ type: 'campaign' });
   const onSidewalk = s.pallets.find((p) => p.loc === 'sidewalk');
   if (onSidewalk && roll(10) < 0.3) issue({ type: 'movePallet', palletId: onSidewalk.id, loc: 'backroom' });
-  if (s.pallets.length > 0 && roll(11) < 0.0003) issue({ type: 'returnPallet', palletId: s.pallets[Math.floor(roll(12) * s.pallets.length)]!.id });
+  if (s.pallets.length > 0 && roll(11) < 0.0003) issue({ type: 'returnPallet', palletId: s.pallets[Math.floor(roll(12) * s.pallets.length)]!.id });   // od SIM 5 zawsze odmowa
+  for (const id of s.milestonesReady) if (roll(40) < 0.05) issue({ type: 'claimMilestone', id });
+  if (roll(41) < 0.0005) issue({ type: 'claimMilestone', id: 'edward' });   // zwykle niespełniony: odmowa też trafia do dziennika
   if (roll(13) < 0.001) issue({ type: 'setOrder', auto: roll(14) < 0.8, manual: Math.floor(roll(15) * 10) });
   if (roll(16) < 0.001) issue({ type: 'setStaffProfile', profile: STAFF_PROFILES[Math.floor(roll(17) * STAFF_PROFILES.length)] });
   // przypięcie: 0 zdejmuje przydział, a więcej niż ludzi na zmianie gra odrzuca (dziennik pamięta i to)
@@ -277,7 +279,7 @@ describe('odtwarzanie biegu', () => {
       stepMinute(state, info, events);
     }
     expect(state.minute).toBe(until);
-    expect(defaults).toBeGreaterThanOrEqual(3);                    // co najmniej po karcie z każdej doby
+    expect(defaults).toBeGreaterThanOrEqual(1);                    // pierwszy dzień gry zawsze ma kartę (potem ok. pół na dobę)
     expect(log.length).toBeGreaterThan(100);
     expect(log.some((e) => e.cmd.type === 'answerCard')).toBe(false);
 

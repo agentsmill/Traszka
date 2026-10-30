@@ -99,11 +99,11 @@ describe('advanceEconomy: karta decyzji zatrzymuje zegar', () => {
     expect(awaitingDecision(s)).toBe(true);
   });
 
-  it('trzy doby z odpowiedziami domyślnymi: gra przechodzi dalej, a karta przychodzi każdego dnia', () => {
+  it('sześć dób z odpowiedziami domyślnymi: gra przechodzi dalej, pierwszy dzień ma kartę, a potem karty przychodzą co kilka dni', () => {
     const s = createEconomy(SEED, info);
     const clock: EconClock = { acc: 0 };
     const out: EconEvent[] = [];
-    const end = 3 * MINUTES_PER_DAY;
+    const end = 6 * MINUTES_PER_DAY;
     const days = new Set<number>();
     for (let i = 0; i < 200_000 && s.minute < end; i++) {
       for (const c of visibleCards(s.tycoon.cards, s.minute)) {
@@ -113,7 +113,9 @@ describe('advanceEconomy: karta decyzji zatrzymuje zegar', () => {
       advanceEconomy(s, info, clock, 0.8, out);
     }
     expect(s.minute).toBeGreaterThanOrEqual(end);
-    expect([...days].sort()).toEqual([0, 1, 2]);
+    expect(days.has(0)).toBe(true);
+    expect(days.size).toBeGreaterThanOrEqual(2);
+    expect(days.size).toBeLessThan(6);   // ok. pół karty na dobę, nie codziennie
   });
 });
 

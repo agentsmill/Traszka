@@ -439,6 +439,7 @@ export function applySandboxCommand(s: SandboxState, cmd: BotCommand): boolean {
       return true;
     }
     case 'pallet.move': return false;   // palety w makiecie stoją tam, gdzie je zostawiła dostawa
+    case 'milestone.claim': return false;   // makieta nie ma celów
   }
 }
 
@@ -468,6 +469,7 @@ export function sandboxView(s: SandboxState): BotView {
     cards: visibleCards(t.cards, s.minute),
     wutSlack: wutSlack(t.wut, s.month.revenue, projected),
     trust: t.trust.value,
+    milestonesReady: [],
   };
 }
 

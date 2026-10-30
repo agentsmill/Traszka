@@ -1,10 +1,10 @@
 import { hashString } from '@/sim/rng';
 import {
-  ASSISTANT_UNLOAD_MIN, CATS, CAT_INFO, COMBO_WINDOW, CREDIT_LIMIT, DELIVERY_AT, DELIVERY_AT_AFTERNOON, DELIVERY_AT_NIGHT,
+  ASSISTANT_UNLOAD_MIN, CATS, CAT_INFO, CLUTTER, COMBO_WINDOW, CREDIT_LIMIT, DELIVERY_AT, DELIVERY_AT_AFTERNOON, DELIVERY_AT_NIGHT,
   DEBT_LIMIT, DEBT_WARN_SHARE, FINE_BASE, FINE_PER_PALLET, FRANCHISE_FEE_FIXED, FRANCHISE_FEE_SHARE,
   HIRE_COST, HOT, HOUR_CURVE, ITEMS_PER_CUSTOMER,
   LOT_TRAFFIC, MARGIN_PER_CUSTOMER, MEDIA_PER_DAY, MINUTES_PER_DAY, OPEN_FROM, OPEN_TO, ORDER_DEADLINE, PALLET_FEE, PALLET_ITEMS,
-  PALLETS_FREE, PATIENCE, RESTOCK_RATE, RETURN_FEE, REVENUE_PER_CUSTOMER, SCO_ACCEPT, SCO_RATE, STAFF_MAX, STAFF_START, START_CASH, STRAZ,
+  PALLETS_FREE, PATIENCE, RESTOCK_RATE, REVENUE_PER_CUSTOMER, SCO_ACCEPT, SCO_RATE, STAFF_MAX, STAFF_START, START_CASH, STRAZ,
   TILL_RATE, TILL_TAP_QUEUE_MIN, TRAFFIC_BASE, TRAFFIC_PER_SHELF_ITEM, TRAFFIC_RANGE, UNLOAD_AT, UNLOAD_RATE, WAGE_PER_DAY, WAVES,
   type Cat,
 } from './catalog';
@@ -72,7 +72,7 @@ export interface Counters {
   media: number;
   fee: number;          // opłata franczyzowa
   fines: number;
-  logistics: number;    // opłaty za palety ponad przydział i odesłane palety
+  logistics: number;    // opłaty za palety ponad przydział (do SIM_VERSION 4 także za odesłane palety)
   investments: number;  // ulepszenia, sprzęt, remont, rekrutacja
   other: number;        // inne przychody (najem bankomatu, sieć sklepów, nagrody)
   bonus: number;        // premie Centrali (od obrotu miesiąca)
@@ -134,7 +134,10 @@ export interface EconomyState {
   history: { label: string; profit: number; revenue: number }[];
   /** Ostatni raport miesięczny: okno końca gry (wypowiedzenie umowy) wraca po przeładowaniu strony razem z nim. */
   lastReport: MonthReport | null;
+  /** Cele odebrane (nagroda już wypłacona). Cele z zapisów sprzed SIM_VERSION 5 są tu wszystkie: wtedy nagroda wpadała sama. */
   milestones: string[];
+  /** Cele spełnione, które czekają na „Odbierz” (`claimMilestone`); nie przepadają. Kolejność spełnienia. */
+  milestonesReady: string[];
   gameOver: boolean;
   /** Ostatni przydział ludzi w osobominutach (do interfejsu): na kasie, przy paletach, półkach i sprzątaniu. Z `shift.human`. */
   lastCashiers: number;
@@ -202,8 +205,12 @@ export function activeEquipment(s: EconomyState, id: EquipmentId): number {
   return s.equipment.filter((e) => e.id === id && e.slot !== null).length;
 }
 
+/** Palety w sali i w przejściach: przeszkody dla klientów (`CLUTTER`). */
+export const hallPallets = (s: EconomyState): number => s.pallets.filter((p) => p.loc === 'floor' || p.loc === 'aisle').length;
+/** Palety w przejściach: nadmiar, dla którego zabrakło zwykłych miejsc. */
+export const aislePallets = (s: EconomyState): number => s.pallets.filter((p) => p.loc === 'aisle').length;
+
 export function effects(s: EconomyState, info: StoreInfo): Effects {
-  const floorPallets = s.pallets.filter((p) => p.loc === 'floor').length;
   const regaly = level(s, 'regaly');
   const humanoid = level(s, 'humanoid') > 0;
   return {
@@ -212,7 +219,7 @@ export function effects(s: EconomyState, info: StoreInfo): Effects {
     sco: activeEquipment(s, 'sco'),
     scoSpeed: 1 + 0.15 * level(s, 'scoSoft'),
     scoAccept: Math.min(0.95, SCO_ACCEPT + 0.08 * level(s, 'scoSoft')),
-    patience: PATIENCE + 2 * level(s, 'klima') - floorPallets,
+    patience: PATIENCE + 2 * level(s, 'klima') - Math.min(CLUTTER.patienceMax, hallPallets(s)),
     unloadMult: 1 + 0.4 * level(s, 'wozek'),
     backroomCap: Math.round(info.backroomCap * (1 + 0.5 * regaly)),
     backroomSpots: Math.min(info.spots.backroom.length, 2 + regaly + s.remontLevel),
@@ -290,7 +297,7 @@ export function createEconomy(seed: string, info: StoreInfo, partner: EconomySta
     backroom: perCat((c) => Math.round(backroomStart * CAT_INFO[c].basket)),
     pallets: [],
     nextPalletId: 1,
-    order: { auto: true, manual: 4 },
+    order: { auto: true, manual: 3 },
     deliveries: [],
     staff: STAFF_START,
     queue: 0,
@@ -308,6 +315,7 @@ export function createEconomy(seed: string, info: StoreInfo, partner: EconomySta
     history: [],
     lastReport: null,
     milestones: [],
+    milestonesReady: [],
     gameOver: false,
     lastCashiers: 1,
     lastWorkers: 1,
@@ -372,10 +380,16 @@ export function stepMinute(s: EconomyState, info: StoreInfo, out: EconEvent[]): 
   s.deliveries = s.deliveries.filter((x) => x.at > s.minute);
 
   let arrivals = 0;
-  if (open) arrivals = arrive(s, info, fx);
-  else s.queue = 0;
+  if (open) {
+    arrivals = arrive(s, info, fx);
+    // klienci potykają się o palety w przejściach: reputacja spada z każdą minutą, ale nie niżej niż `CLUTTER.repFloor`
+    if (s.reputation > CLUTTER.repFloor) {
+      s.reputation = Math.max(CLUTTER.repFloor, s.reputation - CLUTTER.repPerMinute * Math.min(CLUTTER.repPalletsMax, aislePallets(s)));
+    }
+  } else s.queue = 0;
   // ludzie pracują w godzinach otwarcia, także w czasie remontu (wtedy nikt nie stoi na kasie); automatyka całą dobę
   runStaff(s, info, fx, open, out);
+  if (isOpenAt(mod) && mod % 60 === 0) pullInStuck(s, info, fx, out);
   // brud z przyjść i worków w sali, licznik worków, średnia czystości z minut otwarcia
   soilHall(s.tycoon.hall, arrivals, s.tycoon.waste.hall);
   wasteMinute(s.tycoon.waste);
@@ -394,16 +408,16 @@ export function stepMinute(s: EconomyState, info: StoreInfo, out: EconEvent[]): 
 
 /**
  * Oczekiwani klienci w tej minucie (lambda przed losowaniem): krzywa godzin, reputacja, marketing i remont, paczka „szał
- * zakupów”, przeszkody w sali (palety i worki śmieci), niedziela, kiedy duże sklepy stoją zamknięte (tycoon/sunday.ts), oraz
+ * zakupów”, przeszkody w sali (palety w sali i w przejściach oraz worki śmieci, `CLUTTER`), niedziela, kiedy duże sklepy stoją zamknięte (tycoon/sunday.ts), oraz
  * ruch z efektów kart (np. +30% przez dwie godziny).
  * Jedyne miejsce, gdzie liczy się ten wzór: korzysta z niego `stepMinute`, a testy i karty pytają o to samo.
  */
 export function arrivalRate(s: EconomyState, info: StoreInfo, fx: Effects = effects(s, info)): number {
   const hour = Math.floor(minuteOfDay(s.minute) / 60);
-  const floorPallets = s.pallets.filter((p) => p.loc === 'floor').length;
   const boost = s.minute < s.boostUntil ? 1.3 : 1;
+  const clutter = Math.max(CLUTTER.trafficFloor, 1 - CLUTTER.trafficPerPallet * (hallPallets(s) + hallObstacle(s.tycoon.waste)));
   return (baseTraffic(info) * (HOUR_CURVE[hour] ?? 0) / 60) * reputationFactor(s.reputation)
-    * fx.traffic * boost * Math.max(0.5, 1 - 0.08 * (floorPallets + hallObstacle(s.tycoon.waste))) * dayTrafficMult(dayOf(s.minute))
+    * fx.traffic * boost * clutter * dayTrafficMult(dayOf(s.minute))
     * cardModifiers(s.tycoon.cards, s.minute).traffic;
 }
 
@@ -492,7 +506,8 @@ export function sell(s: EconomyState, fx: Effects, served: number, scoShare: num
 
 // --- Praca: palety i półki --------------------------------------------------------------------------------
 
-const PALLET_ORDER: Record<PalletLoc, number> = { sidewalk: 0, floor: 1, backroom: 2 };
+/** Kolejność rozładunku: chodnik (mandat), przejścia (klienci się potykają), sala (korek), na końcu zaplecze. */
+const PALLET_ORDER: Record<PalletLoc, number> = { sidewalk: 0, aisle: 1, floor: 2, backroom: 3 };
 
 /**
  * Automatyka z warsztatu dla puli ludzi (tycoon/staff.ts): poziomy taśmociągu i wykładacza, prasa do kartonów (nie zastępuje
@@ -560,7 +575,7 @@ function runStaff(s: EconomyState, info: StoreInfo, fx: Effects, open: boolean, 
     s.reputation = Math.min(100, Math.max(0, s.reputation));
   }
 
-  // rozładunek: najpierw chodnik (mandat), potem sala (korek), na końcu zaplecze; przy palecie najwyżej dwie osoby
+  // rozładunek w kolejności `PALLET_ORDER`; przy palecie najwyżej dwie osoby
   let minutes = alloc.total.rozladunek;
   for (const p of [...s.pallets].sort((a, b) => PALLET_ORDER[a.loc] - PALLET_ORDER[b.loc] || a.since - b.since)) {
     if (minutes <= 1e-9) break;
@@ -594,6 +609,26 @@ function restock(s: EconomyState, info: StoreInfo, fill: number, budget: number)
     s.backroom[c] -= n;
   }
   return total * k;
+}
+
+/**
+ * Palety spod sklepu, których towaru nie ma gdzie wyłożyć (pełne półki i zaplecze), stoją `CLUTTER.pullInMin` minut: załoga wciąga je
+ * w przejścia sali. Straż Miejska pisałaby za nie mandat co obchód, a zejść z chodnika i tak nie mają dokąd, póki sklep nie sprzeda
+ * towaru. Sprawdzane o pełnej godzinie, gdy załoga jest w sklepie.
+ */
+function pullInStuck(s: EconomyState, info: StoreInfo, fx: Effects, out: EconEvent[]): void {
+  let moved = 0;
+  for (const p of s.pallets) {
+    if (p.loc !== 'sidewalk' || s.minute - p.since < CLUTTER.pullInMin || palletRoom(s, info, fx, p) >= MIN_ROOM) continue;
+    const spot = freeSpot(s, info, 'aisle');
+    p.loc = 'aisle';
+    p.spot = spot;
+    p.since = s.minute;
+    moved++;
+  }
+  if (moved > 0) {
+    out.push({ kind: 'warning', text: `Półki i zaplecze pełne: załoga wciągnęła spod sklepu w przejścia ${moved} ${plPallets(moved)}. Klienci się potykają. Zamów mniej.` });
+  }
 }
 
 /** Zdejmuje z palety do `maxItems` sztuk: na zaplecze, a gdy pełne, prosto na półki. Zwraca liczbę sztuk. */
@@ -651,8 +686,12 @@ function removeEmptyPallets(s: EconomyState): void {
 
 // --- Dostawy, zamówienia, mandaty -----------------------------------------------------------------------
 
-/** Miejsca w lokalizacji; na zapleczu zajmują je też worki ze śmieciami (cztery worki to jedno miejsce). */
+/**
+ * Miejsca w lokalizacji; na zapleczu zajmują je też worki ze śmieciami (cztery worki to jedno miejsce). W przejściach bez końca:
+ * kolejne palety stają piętro wyżej (`palletPlace`), więc żadnej palety nie trzeba odsyłać.
+ */
 function spotLimit(s: EconomyState, info: StoreInfo, loc: PalletLoc): number {
+  if (loc === 'aisle') return Infinity;
   return loc === 'backroom' ? effects(s, info).backroomSpots : info.spots[loc].length;
 }
 
@@ -663,6 +702,7 @@ function freeSpot(s: EconomyState, info: StoreInfo, loc: PalletLoc): number {
   const bagSpots = loc === 'backroom' ? wasteSpots(s.tycoon.waste) : 0;
   if (bagSpots > 0 && there.length >= limit - bagSpots) return -1;
   const used = new Set(there.map((p) => p.spot));
+  // pętla kończy się też bez granicy (przejścia): wolny numer jest najpóźniej o jeden za liczbą stojących palet
   for (let i = 0; i < limit; i++) if (!used.has(i)) return i;
   return -1;
 }
@@ -689,15 +729,20 @@ function palletMix(s: EconomyState, info: StoreInfo): Record<Cat, number> {
   return perCat((c) => (PALLET_ITEMS * deficit[c]) / total);
 }
 
+/** Gdzie kierowca stawia palety, po kolei: z rampą najpierw zaplecze. Gdy te miejsca się skończą, reszta idzie w przejścia. */
+const deliveryLocs = (fx: Effects): PalletLoc[] => (fx.rampa ? ['backroom', 'sidewalk', 'floor'] : ['sidewalk', 'floor']);
+
+/**
+ * Dostawa: każda paleta zostaje w sklepie (decyzja właściciela z 30.10.2026: „te palety muszą się rozkładać całe w sklepie”).
+ * Najpierw zwykłe miejsca (`deliveryLocs`), a nadmiar w przejściach sali, gdzie klienci się o niego potykają (`CLUTTER`).
+ */
 function deliver(s: EconomyState, info: StoreInfo, count: number, out: EconEvent[]): void {
   if (count <= 0) return;
   const fx = effects(s, info);
-  const order: PalletLoc[] = fx.rampa ? ['backroom', 'sidewalk', 'floor'] : ['sidewalk', 'floor'];
-  let returned = 0;
-  const placed: Record<PalletLoc, number> = { sidewalk: 0, backroom: 0, floor: 0 };
+  const order = deliveryLocs(fx);
+  const placed: Record<PalletLoc, number> = { sidewalk: 0, backroom: 0, floor: 0, aisle: 0 };
   for (let i = 0; i < count; i++) {
-    const loc = order.find((l) => freeSpot(s, info, l) >= 0);
-    if (!loc) { returned++; continue; }
+    const loc = order.find((l) => freeSpot(s, info, l) >= 0) ?? 'aisle';
     const items = palletMix(s, info);
     const id = s.nextPalletId++;
     const golden = s.total.customers > 0 && rand01(s.seedHash, id, 3) < GOLDEN_CHANCE;
@@ -707,20 +752,18 @@ function deliver(s: EconomyState, info: StoreInfo, count: number, out: EconEvent
     placed[loc]++;
   }
   settleWaste(s.tycoon.waste, wasteRoom(s, fx));   // palety na zapleczu (rampa) mogły zająć miejsca worków
-  const where = (['sidewalk', 'backroom', 'floor'] as const).filter((l) => placed[l] > 0)
+  const where = (['sidewalk', 'backroom', 'floor', 'aisle'] as const).filter((l) => placed[l] > 0)
     .map((l) => `${placed[l]} ${LOC_LABEL[l].toLowerCase()}`).join(', ');
-  if (count - returned > 0) out.push({ kind: 'delivery', text: `Dostawa: ${count - returned} ${plPallets(count - returned)} (${where}).` });
+  out.push({ kind: 'delivery', text: `Dostawa: ${count} ${plPallets(count)} (${where}).` });
   if (s.pallets.some((p) => p.golden && p.since === s.minute)) out.push({ kind: 'golden', text: '✨ W dostawie jest ZŁOTA PALETA! Rozładuj ją po premię.' });
-  if (returned > 0) {
-    const fee = returned * RETURN_FEE;
-    charge(s, 'logistics', fee);
-    changeTrust(s, 'palety', TRUST.driverReturned, out);
-    out.push({ kind: 'warning', text: `Kierowca nie miał gdzie postawić ${returned} ${plPallets(returned)} i ${returned > 1 ? 'je zabrał' : 'ją zabrał'}. Opłata ${fee} zł.` });
+  if (placed.aisle > 0) {
+    const n = placed.aisle;
+    out.push({ kind: 'warning', text: `Zabrakło miejsca, ${n} ${plPallets(n)} w przejściach! Klienci się potykają i odchodzą, a reputacja spada, dopóki ich nie rozładujesz. Zamów mniej.` });
   }
 }
 
-/** Szansa, że paleta z dostawy jest złota (przy 6 paletach dziennie wychodzi średnio jedna złota co ok. 7 dni). */
-export const GOLDEN_CHANCE = 0.025;
+/** Szansa, że paleta z dostawy jest złota (przy 4 paletach dziennie wychodzi średnio jedna złota co ok. 7 dni). */
+export const GOLDEN_CHANCE = 0.0375;
 /**
  * Premia za rozładowanie złotej palety: ćwierć marży typowego dnia, nie mniej niż 800 zł. Stała dolna granica trzyma premię
  * w podobnej wysokości w małym i dużym sklepie (przy udziale w marży premie rosłyby z kwadratem wielkości: więcej palet razy
@@ -728,7 +771,7 @@ export const GOLDEN_CHANCE = 0.025;
  */
 export const GOLDEN_PRIZE = { min: 800, share: 0.25 } as const;
 
-export const LOC_LABEL: Record<PalletLoc, string> = { sidewalk: 'Pod sklepem', backroom: 'Na zapleczu', floor: 'W sali' };
+export const LOC_LABEL: Record<PalletLoc, string> = { sidewalk: 'Pod sklepem', backroom: 'Na zapleczu', floor: 'W sali', aisle: 'W przejściach' };
 
 export function plPallets(n: number): string {
   const n10 = n % 10;
@@ -757,8 +800,18 @@ export function crewPalletCap(s: EconomyState, info: StoreInfo): number {
 }
 
 /**
+ * Ile palet kierowca postawi na zwykłych miejscach (`deliveryLocs`): chodnik i sala w całości, zaplecze (z rampą) bez miejsc,
+ * które zajmują worki. Asystent nie zamawia więcej, więc sam nigdy nie zagraca przejść (nadmiar to zawsze zamówienie ręczne).
+ */
+export function deliverySpots(s: EconomyState, info: StoreInfo): number {
+  return deliveryLocs(effects(s, info)).reduce((n, l) => n + (l === 'backroom' ? freeSpots(s, info, l) + s.pallets.filter((p) => p.loc === l).length : spotLimit(s, info, l)), 0);
+}
+
+/**
  * Podpowiedź „Asystenta Traszki”: tyle palet, żeby jutro rano półki i pół zaplecza były pełne, zawyżona o `overorder`, ale nie
- * więcej, niż zmiana rozładuje przed obchodem Straży (`crewPalletCap`; decyzja właściciela z 29.10.2026: „przychodzi za dużo”).
+ * więcej, niż zmiana rozładuje przed obchodem Straży (`crewPalletCap`; decyzja właściciela z 29.10.2026: „przychodzi za dużo”)
+ * i niż zmieści się na zwykłych miejscach (`deliverySpots`; od SIM_VERSION 5: dawniej przy pustych półkach, np. po remoncie,
+ * asystent zamawiał 17 palet do sklepu z 15 miejscami, a kierowca zabierał resztę).
  */
 export function assistantSuggestion(s: EconomyState, info: StoreInfo): number {
   const fx = effects(s, info);
@@ -767,7 +820,7 @@ export function assistantSuggestion(s: EconomyState, info: StoreInfo): number {
   // od 11:00 do porannej dostawy sprzedaje się ok. 70% dziennego ruchu
   const consumption = 0.7 * expectedDailyCustomers(s, info) * ITEMS_PER_CUSTOMER;
   const need = Math.max(0, target - (stockItems(s) + inTransit - consumption));
-  return Math.min(Math.ceil((need / PALLET_ITEMS) * fx.overorder), crewPalletCap(s, info));
+  return Math.min(Math.ceil((need / PALLET_ITEMS) * fx.overorder), crewPalletCap(s, info), deliverySpots(s, info));
 }
 
 export function orderedPallets(s: EconomyState, info: StoreInfo): number {
@@ -784,7 +837,9 @@ function placeOrder(s: EconomyState, info: StoreInfo, fx: Effects, out: EconEven
     return;
   }
   let count = orderedPallets(s, info);
-  const room = Math.floor((creditLimit(s) - stockItems(s) * avgPrice) / (PALLET_ITEMS * avgPrice));
+  // towar w drodze też jest na kredyt: bez niego popołudniowa tura (`dostawy2`) przepychała zapas ponad limit
+  const inTransit = s.deliveries.reduce((n, d) => n + d.count, 0) * PALLET_ITEMS;
+  const room = Math.floor((creditLimit(s) - (stockItems(s) + inTransit) * avgPrice) / (PALLET_ITEMS * avgPrice));
   if (count > room) {
     count = Math.max(0, room);
     out.push({ kind: 'warning', text: `Limit kredytu kupieckiego! Centrala przycięła zamówienie do ${count} ${plPallets(count)}.` });
@@ -985,14 +1040,30 @@ export function checkDebt(s: EconomyState, before: number, out: EconEvent[]): vo
 
 // --- Kamienie milowe ------------------------------------------------------------------------------------
 
+/**
+ * Spełnione cele czekają na odbiór (decyzja właściciela z 30.10.2026: „Powinniśmy klikać odbierz”): trafiają do
+ * `milestonesReady`, a nagrodę wypłaca dopiero `claimMilestone`. Cel raz gotowy zostaje gotowy, także gdy warunek przestał
+ * być spełniony (np. zwolniona trzecia osoba).
+ */
 function checkMilestones(s: EconomyState, info: StoreInfo, out: EconEvent[]): void {
   for (const m of MILESTONES) {
-    if (s.milestones.includes(m.id) || !m.done(s, info)) continue;
-    s.milestones.push(m.id);
-    s.ogonki += m.reward;
-    s.xp += m.reward * XP.milestonePerOgonek;
-    out.push({ kind: 'milestone', text: `🏆 ${m.label} (+${m.reward} Ogonków)` });
+    if (s.milestones.includes(m.id) || s.milestonesReady.includes(m.id) || !m.done(s, info)) continue;
+    s.milestonesReady.push(m.id);
+    out.push({ kind: 'milestone', text: `🏆 Cel osiągnięty: ${m.label}. Odbierz +${m.reward} Ogonków w zakładce Cele.` });
   }
+}
+
+/** Gracz odbiera nagrodę za spełniony cel: Ogonki i XP. Poziom z tego XP liczy `applyCommand`. */
+export function claimMilestone(s: EconomyState, id: string): CommandResult {
+  const m = MILESTONES.find((x) => x.id === id);
+  if (!m) return { ok: false, text: 'Nie ma takiego celu.' };
+  if (s.milestones.includes(id)) return { ok: false, text: 'Ten cel jest już odebrany.' };
+  if (!s.milestonesReady.includes(id)) return { ok: false, text: 'Ten cel jeszcze nie jest spełniony.' };
+  s.milestonesReady = s.milestonesReady.filter((x) => x !== id);
+  s.milestones.push(id);
+  s.ogonki += m.reward;
+  s.xp += m.reward * XP.milestonePerOgonek;
+  return { ok: true, text: `🏆 ${m.label}: +${m.reward} Ogonków` };
 }
 
 // --- Polecenia gracza -------------------------------------------------------------------------------------
@@ -1101,6 +1172,7 @@ export function movePallet(s: EconomyState, info: StoreInfo, id: number, loc: Pa
   const p = s.pallets.find((x) => x.id === id);
   if (!p) return { ok: false, text: 'Nie ma takiej palety.' };
   if (p.loc === loc) return { ok: false, text: 'Paleta już tam stoi.' };
+  if (loc === 'aisle') return { ok: false, text: 'W przejściach stawia tylko kierowca, kiedy brakuje miejsc.' };
   const spot = freeSpot(s, info, loc);
   if (spot < 0) return { ok: false, text: `${LOC_LABEL[loc]}: brak miejsca.` };
   p.loc = loc;
@@ -1108,15 +1180,6 @@ export function movePallet(s: EconomyState, info: StoreInfo, id: number, loc: Pa
   p.since = s.minute;
   settleWaste(s.tycoon.waste, wasteRoom(s, effects(s, info)));
   return { ok: true };
-}
-
-export function returnPallet(s: EconomyState, id: number, out?: EconEvent[]): CommandResult {
-  const p = s.pallets.find((x) => x.id === id);
-  if (!p) return { ok: false, text: 'Nie ma takiej palety.' };
-  s.pallets = s.pallets.filter((x) => x !== p);
-  charge(s, 'logistics', RETURN_FEE);
-  changeTrust(s, 'palety', TRUST.returnedPallet, out);
-  return { ok: true, text: `Paleta odesłana do hurtowni. Opłata ${RETURN_FEE} zł, Centrala marszczy brwi.` };
 }
 
 export function setOrder(s: EconomyState, auto: boolean, manual?: number): void {
@@ -1239,8 +1302,9 @@ export function relayout(s: EconomyState, info: StoreInfo): void {
   const pallets = s.pallets;
   s.pallets = [];
   for (const p of pallets) {
-    const loc = ([p.loc, 'backroom', 'sidewalk', 'floor'] as PalletLoc[]).find((l) => freeSpot(s, info, l) >= 0);
-    if (!loc) continue;   // nie zmieściła się: przepada (rzadkie, nowy sklep jest większy)
+    // paleta z przejścia najpierw szuka zwykłego miejsca; przejścia mieszczą resztę, więc żadna nie przepada
+    const prefer: PalletLoc[] = p.loc === 'aisle' ? ['backroom', 'sidewalk', 'floor'] : [p.loc, 'backroom', 'sidewalk', 'floor'];
+    const loc = prefer.find((l) => freeSpot(s, info, l) >= 0) ?? 'aisle';
     s.pallets.push({ ...p, loc, spot: freeSpot(s, info, loc) });
   }
   const units = [...s.equipment].sort((a, b) => EQUIPMENT_BY_ID[b.id].size - EQUIPMENT_BY_ID[a.id].size);

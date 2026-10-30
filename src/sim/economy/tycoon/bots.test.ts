@@ -15,7 +15,7 @@ const SEEDS = ['makieta', 'kiełbasa-42', 'traszka-1'];
 const BASE_VIEW: BotView = {
   minute: 600, mod: 600, open: true, queue: 0, patience: 6, sidewalkPallets: 0, pallets: 0, palletList: [], freeSpots: { backroom: 0, floor: 0 },
   cleanliness: 90, hallBags: 0, backroomBags: 0, energy: 100, spentToday: 0, tapCost: { kasa: 2, paleta: 2.5 }, profile: 'kolejka', cards: [],
-  wutSlack: 0, trust: 60,
+  wutSlack: 0, trust: 60, milestonesReady: [],
 };
 
 function play(name: BotName, cfg: Partial<SandboxConfig> = {}, minutes = TWO_MONTHS): SandboxState {
@@ -76,8 +76,8 @@ describe('makieta sklepu', () => {
     expect(s.tycoon.waste.month.produced).toBeGreaterThan(20);
     expect(s.tycoon.waste.month.removed).toBeGreaterThan(15);
     expect(s.tycoon.hall.monthMinutes).toBeGreaterThan(9 * 1000);
-    // karta zatrzymuje grę: bierny gracz zatwierdza odpowiedź zaznaczoną z góry (0–2 karty dziennie, średnio ok. jednej)
-    expect(s.outcomes.length).toBeGreaterThanOrEqual(7);
+    // karta zatrzymuje grę: bierny gracz zatwierdza odpowiedź zaznaczoną z góry (0–1 karta dziennie, średnio ok. pół)
+    expect(s.outcomes.length).toBeGreaterThanOrEqual(2);
     expect(s.outcomes.every((o) => o.isDefault)).toBe(true);
     expect(s.tycoon.staff.profile).toBe('kolejka');
     const { state } = run('bierny', 'makieta');
@@ -235,8 +235,11 @@ describe('boty i balans na poziomie modułów (spec §7.5)', () => {
     expect(m.filter((c) => c > 0).length).toBeLessThanOrEqual(4);
   });
 
-  it('wskazówka raportu pokazuje to, co naprawdę bolało (mandaty u biernego gracza)', () => {
-    expect(run('bierny', 'kiełbasa-42').state.reports.map((r) => r.hint.id)).toContain('mandaty');
+  it('wskazówka raportu pokazuje to, co naprawdę bolało (u biernego gracza kolejka albo mandaty, nigdy „brawo”)', () => {
+    // od SIM_VERSION 5 kart jest o połowę mniej, więc dni z „chorym” pracownikiem (palety bez rąk, mandaty) są rzadsze: w makiecie
+    // biernego najbardziej boli kolejka, a mandaty wygrywają tylko w części sklepów
+    const hints = SEEDS.flatMap((seed) => run('bierny', seed).state.reports.map((r) => r.hint.id));
+    expect(hints.every((h) => h === 'kolejka' || h === 'mandaty'), hints.join(', ')).toBe(true);
   });
 
   it('profil ludzi bota: kolejka, gdy klienci zaczynają odchodzić; palety z chodnika, gdy jest spokojnie', () => {

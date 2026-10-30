@@ -15,8 +15,8 @@ import type { PalletRef, StaffAssignment, StaffDuty, StaffSpot } from './types';
 // kratkę ze swojego planu, która jest osiągalna z chodnika i jeszcze wolna. Gdy plan się wyczerpie, osoba trafia na ogólną
 // listę zapasową (sala od środka), a gdy i ona jest pusta, na wejście.
 
-/** Kolejność rozładunku jak w `doWork` (economy.ts): najpierw chodnik (mandat), potem sala (korek), na końcu zaplecze. */
-const PALLET_ORDER: Record<PalletLoc, number> = { sidewalk: 0, floor: 1, backroom: 2 };
+/** Kolejność rozładunku jak `PALLET_ORDER` w economy.ts: chodnik (mandat), przejścia, sala (korek), na końcu zaplecze. */
+const PALLET_ORDER: Record<PalletLoc, number> = { sidewalk: 0, aisle: 1, floor: 2, backroom: 3 };
 /** Kierunki osi siatki (rad, 0 = +x), z których sprzątająca wybiera swój. */
 const AXIS_HEADINGS: readonly number[] = [0, Math.PI / 2, Math.PI, -Math.PI / 2];
 /** Meble, do których personel wykłada towar. */
@@ -168,7 +168,7 @@ function cashierPlan(ctx: Ctx, cashier: CashierSpot | null, strip: readonly Cell
   return { spots: lane.map((cell) => ({ cell, heading: face(cell) })), face };
 }
 
-/** Palety w kolejności rozładunku jak w `doWork`: chodnik, sala, zaplecze; potem `since`; remis zostaje w kolejności `pallets`. */
+/** Palety w kolejności rozładunku jak w `doWork`: przejścia, chodnik, sala, zaplecze; potem `since`; remis zostaje w kolejności `pallets`. */
 function unloadOrder(pallets: readonly PalletRef[]): PalletRef[] {
   return pallets
     .map((p, index) => ({ p, index }))

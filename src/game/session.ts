@@ -1,7 +1,7 @@
 import { CATS } from '@/sim/economy/catalog';
 import { createEconomy, effects, relayout, type EconomyState } from '@/sim/economy/economy';
 import { sanitizeEconomy } from '@/sim/economy/sanitize';
-import { computeStoreInfo, type StoreInfo } from '@/sim/economy/storeInfo';
+import { computeStoreInfo, palletPlace, type StoreInfo } from '@/sim/economy/storeInfo';
 import { REMONTS } from '@/sim/economy/upgrades';
 import type { EconClock } from '@/sim/economy/clock';
 import { isRec, whole } from '@/sim/guards';
@@ -245,7 +245,7 @@ export type Opened = { ok: true; session: GameSession } | { ok: false; reason: '
  */
 function fitsStore(econ: EconomyState, info: StoreInfo): boolean {
   const eps = 1e-6;
-  return econ.pallets.every((p) => info.spots[p.loc][p.spot] !== undefined)
+  return econ.pallets.every((p) => palletPlace(info, p.loc, p.spot) !== null)
     && econ.equipment.every((e) => e.slot === null || info.slots.some((slot) => slot.id === e.slot))
     && CATS.every((c) => econ.shelf[c] <= info.shelfCap[c] + eps)
     && CATS.reduce((n, c) => n + econ.backroom[c], 0) <= effects(econ, info).backroomCap + eps;

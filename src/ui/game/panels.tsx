@@ -1,10 +1,10 @@
 import type { ComponentChildren } from 'preact';
 import {
-  CATS, CAT_INFO, HIRE_COST, HOUR_CURVE, ORDER_DEADLINE, RESTOCK_RATE, RETURN_FEE, SCO_RATE, STAFF_MAX, TILL_RATE, UNLOAD_RATE, WAGE_PER_DAY,
+  CATS, CAT_INFO, HIRE_COST, HOUR_CURVE, ORDER_DEADLINE, RESTOCK_RATE, SCO_RATE, STAFF_MAX, TILL_RATE, UNLOAD_RATE, WAGE_PER_DAY,
 } from '@/sim/economy/catalog';
 import { formatClock, minuteOfDay } from '@/sim/economy/calendar';
 import {
-  DEBT_WARN, LOC_LABEL, assistantSuggestion, debtWarningText, effects, expectedDailyCustomers, franchiseFee, freeSpots, isClosedForRemont, kpiMetricsOf, kpiScaleOf, level, nextRemont,
+  DEBT_WARN, LOC_LABEL, aislePallets, assistantSuggestion, debtWarningText, effects, expectedDailyCustomers, franchiseFee, freeSpots, isClosedForRemont, kpiMetricsOf, kpiScaleOf, level, nextRemont,
   plPallets, robotFleet, slotFree, slotUsage, upgradeBlocker, workshopUnlocked, type EconomyState,
 } from '@/sim/economy/economy';
 import { MILESTONES } from '@/sim/economy/milestones';
@@ -56,7 +56,9 @@ export function TabBar() {
   const view = econ.value;
   const badge: Partial<Record<TabId, number>> = {};
   if (view) {
-    badge.palety = view.s.pallets.filter((p) => p.loc === 'sidewalk').length || undefined;
+    // pod sklepem grozi mandat, w przejściach zagracenie: obie lokalizacje to palety, którymi trzeba się zająć
+    badge.palety = view.s.pallets.filter((p) => p.loc === 'sidewalk' || p.loc === 'aisle').length || undefined;
+    badge.cele = view.s.milestonesReady.length || undefined;
     const affordable = UPGRADES.filter((u) => !upgradeBlocker(view.s, u) && upgradeCost(u, level(view.s, u.id)) <= view.s.cash).length;
     badge.ulepszenia = affordable || undefined;
   }
@@ -188,6 +190,7 @@ export function PalletsPanel({ s, info, game }: { s: EconomyState; info: StoreIn
   const suggestion = assistantSuggestion(s, info);
   const mod = minuteOfDay(s.minute);
   const pending = s.deliveries.reduce((n, d) => n + d.count, 0);
+  const aisle = aislePallets(s);
   const fx = effects(s, info);
   const robots = robotFleet(s);
   const workPerHour = s.shift.human.rozladunek * UNLOAD_RATE * fx.unloadMult * 60;
@@ -211,11 +214,11 @@ export function PalletsPanel({ s, info, game }: { s: EconomyState; info: StoreIn
         <p class="tt-hint">Zamówienie zamyka się o {formatClock(ORDER_DEADLINE)}{mod < ORDER_DEADLINE ? ' (dziś)' : ' (jutro)'}. Dostawa rano{fx.splitDelivery ? ' i o 15:00' : ''}. W drodze: {pending} {plPallets(pending)}.</p>
       </Section>
       <Section title={`Palety (${s.pallets.length})`}>
-        <Row label="Wolne miejsca">pod sklepem {freeSpots(s, info, 'sidewalk')} · zaplecze {freeSpots(s, info, 'backroom')} · sala {freeSpots(s, info, 'floor')}</Row>
+        <Row label="Wolne miejsca">pod sklepem {freeSpots(s, info, 'sidewalk')} · zaplecze {freeSpots(s, info, 'backroom')} · sala {freeSpots(s, info, 'floor')}{aisle > 0 ? ` · w przejściach ${aisle} ${plPallets(aisle)} ⚠️` : ''}</Row>
         <Row label="Rozładunek teraz">~{int(workPerHour)} szt./h ({people(s.shift.human.rozladunek)} os.{robots.tasmociag > 0 || robots.edward > 0 ? ' + automatyka' : ''})</Row>
         {s.pallets.length === 0 && <p class="tt-hint">Brak palet. Cisza przed dostawą.</p>}
         {s.pallets.map((p) => <PalletItem key={p.id} s={s} info={info} id={p.id} game={game} />)}
-        <p class="tt-hint">Pod sklepem: ryzyko mandatu Straży Miejskiej. W sali: korek i mniej klientów. Zaplecze: bezpiecznie, ale miejsc jest mało.</p>
+        <p class="tt-hint">Pod sklepem: ryzyko mandatu Straży Miejskiej. W sali: korek i mniej klientów. Zaplecze: bezpiecznie, ale miejsc jest mało. Nadmiar staje w przejściach, a klienci się o niego potykają: rozładuj go, zanim spadnie reputacja.</p>
       </Section>
     </>
   );
@@ -225,12 +228,14 @@ export function PalletItem({ s, info, id, game, compact = false }: { s: EconomyS
   const p = s.pallets.find((x) => x.id === id);
   if (!p) return <p class="tt-hint">Paleta rozładowana. 💪</p>;
   const age = s.minute - p.since;
+  // do przejść stawia tylko kierowca, gdy zabraknie miejsc, więc nie ma ich wśród celów przenosin; z przejścia paletę da się zabrać na zwykłe miejsce
   const moves = (['backroom', 'floor', 'sidewalk'] as PalletLoc[]).filter((l) => l !== p.loc);
   const block = tapBlock(s, 'paleta');
+  const warn = p.loc === 'sidewalk' || p.loc === 'aisle';
   return (
-    <div class={`tt-pallet${p.loc === 'sidewalk' ? ' risk' : ''}`}>
+    <div class={`tt-pallet${warn ? ' risk' : ''}`}>
       <div class="tt-row">
-        <span><b>{LOC_LABEL[p.loc]}</b>{p.loc === 'sidewalk' ? ' ⚠️' : ''}</span>
+        <span><b>{LOC_LABEL[p.loc]}</b>{warn ? ' ⚠️' : ''}</span>
         <span class="tt-muted">{int(p.total)} szt. · {duration(age)}</span>
       </div>
       <Bar value={p.total / p.initial} />
@@ -241,8 +246,8 @@ export function PalletItem({ s, info, id, game, compact = false }: { s: EconomyS
             {l === 'backroom' ? 'Na zaplecze' : l === 'floor' ? 'Do sali' : 'Pod sklep'}
           </button>
         ))}
-        {!compact && <button type="button" class="tt-btn" title={`Odesłanie kosztuje ${RETURN_FEE} zł i zaufanie Centrali`} onClick={() => game.dispatch({ type: 'returnPallet', palletId: p.id })}>Odeślij</button>}
       </div>
+      {p.loc === 'aisle' && !compact && <p class="tt-hint">Stoi w przejściu: klienci się o nią potykają, a reputacja spada. Rozładuj ją albo przenieś na wolne miejsce.</p>}
     </div>
   );
 }
@@ -420,7 +425,7 @@ export function ShopPanel({ s, info, game }: { s: EconomyState; info: StoreInfo;
 
 // --- Cele i wyniki -------------------------------------------------------------------------------------
 
-export function GoalsPanel({ s, info }: { s: EconomyState; info: StoreInfo; game: GameActions; v: number }) {
+export function GoalsPanel({ s, info, game }: { s: EconomyState; info: StoreInfo; game: GameActions; v: number }) {
   const t = s.today;
   const m = s.month;
   const profit = (k: typeof t): number => k.margin + k.bonus + k.other - k.wages - k.media - k.fee - k.fines - k.logistics - k.wut;
@@ -430,7 +435,9 @@ export function GoalsPanel({ s, info }: { s: EconomyState; info: StoreInfo; game
   // premia i XP liczy sim przy zamknięciu tygodnia (closeKpiWeek); tu ta sama zasada na bieżącej skali sklepu, stąd „ok.”
   const kpiBonus = roundNice(KPI.bonusShare * Math.max(0, kpiScaleOf(s, info).dailyMargin));
   const kpiXp = KPI.xpBase + KPI.xpPerLevel * Math.max(1, s.level);
-  const goals = MILESTONES.filter((x) => !s.milestones.includes(x.id)).slice(0, 3);
+  // spełnione czekają na „Odbierz” (nagroda wpada dopiero po kliknięciu), reszta to trzy najbliższe jeszcze niespełnione
+  const ready = MILESTONES.filter((x) => s.milestonesReady.includes(x.id) && !s.milestones.includes(x.id));
+  const goals = MILESTONES.filter((x) => !s.milestones.includes(x.id) && !s.milestonesReady.includes(x.id)).slice(0, 3);
   const best = Math.max(1, ...s.history.map((h) => Math.abs(h.profit)));
   // w trakcie miesiąca `m.fee` jest zerem (opłata schodzi dopiero przy zamknięciu), więc pokazujemy, ile naliczy się od dzisiejszego obrotu
   const fee = franchiseFee(m.revenue);
@@ -471,6 +478,15 @@ export function GoalsPanel({ s, info }: { s: EconomyState; info: StoreInfo; game
           : <p class="tt-hint">Po drugim remoncie albo na 20. poziomie otworzysz kolejną Traszkę. Ten sklep dołączy do sieci i będzie zarabiał na każdą następną.</p>}
       </Section>
       <Section title="Kamienie milowe">
+        {ready.map((g) => (
+          <div key={g.id} class="tt-goal ready">
+            <div class="tt-row">
+              <span><span class="tt-goal-tag">🎁 Do odebrania</span> <b>{g.label}</b></span>
+              <button type="button" class="tt-btn tt-primary" aria-label={`Odbierz: ${g.label}`} onClick={() => game.dispatch({ type: 'claimMilestone', id: g.id })}>Odbierz</button>
+            </div>
+            <div class="tt-muted">Nagroda: +{g.reward} 🦎 i XP</div>
+          </div>
+        ))}
         {goals.map((g) => <div key={g.id} class="tt-goal"><b>{g.label}</b> <span class="tt-muted">+{g.reward} 🦎</span><div class="tt-muted">{g.hint}</div></div>)}
         <p class="tt-hint">Zdobyte: {s.milestones.length} / {MILESTONES.length}</p>
       </Section>

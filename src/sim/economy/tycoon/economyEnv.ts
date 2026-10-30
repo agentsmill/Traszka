@@ -54,6 +54,7 @@ export function economyView(s: EconomyState, info: StoreInfo): BotView {
     cards: visibleCards(t.cards, s.minute),
     wutSlack: wutSlack(t.wut, s.month.revenue, projected),
     trust: t.trust.value,
+    milestonesReady: [...s.milestonesReady],
   };
 }
 
@@ -65,6 +66,7 @@ function toCommand(cmd: BotCommand): Command {
     case 'tap.till': return { type: 'tapTill' };
     case 'tap.pallet': return { type: 'tapPallet' };
     case 'pallet.move': return { type: 'movePallet', palletId: cmd.palletId, loc: cmd.loc };
+    case 'milestone.claim': return { type: 'claimMilestone', id: cmd.id };
   }
 }
 

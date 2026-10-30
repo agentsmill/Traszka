@@ -302,17 +302,73 @@ describe('kroki po poleceniu', () => {
     });
   });
 
-  it('returnPallet: toast z tekstem, zaznaczenie czyszczone po poleceniu, także nieudanym', () => {
+  it('returnPallet (polecenie historyczne): zawsze odmowa z toastem błędu, paleta zostaje w sklepie, zaznaczenie czyszczone', () => {
     const s = fresh();
-    const ok = recorder();
-    expect(dispatchCommand(s, { type: 'returnPallet', palletId: 1 }, ok.fx).ok).toBe(true);
-    expect(ok.names()).toEqual(['toast', 'handleEvents', 'clearSelection', 'refresh']);
-    expect(ok.calls[0]![2]).toBe('ok');
+    const pallets = s.econ.pallets.length;
+    expect(pallets).toBeGreaterThan(0);
+    for (const palletId of [s.econ.pallets[0]!.id, 999]) {   // paleta, która stoi, i taka, której nie ma: odmowa jest ta sama
+      const rec = recorder();
+      const r = dispatchCommand(s, { type: 'returnPallet', palletId }, rec.fx);
+      expect(r.ok).toBe(false);
+      expect(rec.names()).toEqual(['toast', 'play', 'handleEvents', 'clearSelection', 'refresh']);
+      expect(rec.calls[0]).toEqual(['toast', (r as { text: string }).text, 'error']);
+      expect(rec.calls[1]).toEqual(['play', 'error']);
+      expect(s.econ.pallets).toHaveLength(pallets);
+    }
+    expect(log(s).map((e) => e.cmd.type)).toEqual(['returnPallet', 'returnPallet']);   // odmowa też trafia do dziennika
+  });
 
-    const failed = recorder();
-    expect(dispatchCommand(s, { type: 'returnPallet', palletId: 1 }, failed.fx).ok).toBe(false);   // palety już nie ma
-    expect(failed.names()).toEqual(['toast', 'play', 'handleEvents', 'clearSelection', 'refresh']);
-    expect(failed.calls[0]![2]).toBe('error');
+  describe('odbiór celu (claimMilestone)', () => {
+    it('cel do odebrania: toast z nagrodą, dźwięk coins, konfetti i zapis; Ogonki i XP wpadają dopiero tu', () => {
+      const s = fresh();
+      s.econ.milestonesReady.push('pallet1');
+      const ogonki = s.econ.ogonki;
+      const xp = s.econ.xp;
+      const rec = recorder();
+      const r = dispatchCommand(s, { type: 'claimMilestone', id: 'pallet1' }, rec.fx);
+      expect(r.ok).toBe(true);
+      expect(rec.names()).toEqual(['toast', 'play', 'confetti', 'handleEvents', 'persist', 'refresh']);
+      expect(rec.calls[0]).toEqual(['toast', (r as { text: string }).text, 'ok']);
+      expect(rec.calls[1]).toEqual(['play', 'coins']);
+      expect(s.econ.ogonki).toBeGreaterThan(ogonki);
+      expect(s.econ.xp).toBeGreaterThan(xp);
+      expect(s.econ.milestones).toContain('pallet1');
+      expect(s.econ.milestonesReady).not.toContain('pallet1');
+    });
+
+    it('cel, który nie czeka na odbiór (nie spełniony albo już odebrany): odmowa z toastem błędu, nagrody nie ma', () => {
+      const s = fresh();
+      s.econ.milestones.push('upgrade1');
+      for (const id of ['pallet1', 'upgrade1', 'nie-ma-takiego']) {
+        const rec = recorder();
+        const ogonki = s.econ.ogonki;
+        const r = dispatchCommand(s, { type: 'claimMilestone', id }, rec.fx);
+        expect(r.ok, id).toBe(false);
+        expect(rec.names(), id).toEqual(['toast', 'play', 'handleEvents', 'refresh']);
+        expect(rec.calls[0]![2]).toBe('error');
+        expect(s.econ.ogonki).toBe(ogonki);
+      }
+    });
+
+    it('odbiór wchodzi do dziennika, a replayRun odtwarza go do tego samego stanu', () => {
+      const s = fresh();
+      const { fx } = recorder();
+      const upgrade = UPGRADES[0]!;
+      expect(dispatchCommand(s, { type: 'buyUpgrade', id: upgrade.id }, fx).ok).toBe(true);   // cel „Pierwsze ulepszenie”
+      for (let i = 0; i < 2 * MINUTES_PER_DAY && !s.econ.milestonesReady.includes('upgrade1'); i++) {
+        if (awaitingDecision(s.econ)) {
+          for (const card of visibleCards(s.econ.tycoon.cards, s.econ.minute)) dispatchCommand(s, { type: 'answerCard', seq: card.seq, answer: card.defaultAnswer }, fx);
+        }
+        stepMinute(s.econ, s.info, []);
+      }
+      expect(s.econ.milestonesReady).toContain('upgrade1');   // spełniony cel czeka, nagrody jeszcze nie ma
+      expect(s.econ.milestones).not.toContain('upgrade1');
+      expect(dispatchCommand(s, { type: 'claimMilestone', id: 'upgrade1' }, fx).ok).toBe(true);
+      expect(s.econ.milestones).toContain('upgrade1');
+      expect(log(s).at(-1)!.cmd).toEqual({ type: 'claimMilestone', id: 'upgrade1' });
+      const replayed = replayRun(s.run!.record, s.econ.minute);
+      expect(JSON.stringify(replayed)).toBe(JSON.stringify(s.econ));
+    });
   });
 
   it('polecenie z błędnym typem: odmowa i komunikat o błędzie, bez wyjątku', () => {
@@ -422,6 +478,7 @@ describe('tabela AFTER', () => {
       campaign: { okToast: true },
       rushRemont: { okToast: true },
       answerCard: { okToast: false, sfx: 'pop', persist: true },
+      claimMilestone: { okToast: true, sfx: 'coins', persist: true, confetti: { fx: 0.5, fy: 0.4, count: 18 } },
     });
   });
 });

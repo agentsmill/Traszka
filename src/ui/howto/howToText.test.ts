@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
   ASSISTANT_UNLOAD_MIN, CATS, CAT_INFO, DEBT_LIMIT, DELIVERY_AT, FRANCHISE_FEE_FIXED, FRANCHISE_FEE_SHARE, HOT, MINUTES_PER_DAY, MINUTES_PER_SECOND_CLOSED,
-  MINUTES_PER_SECOND_OPEN, OPEN_FROM, OPEN_TO, ORDER_DEADLINE, PALLETS_FREE, PALLET_FEE, PALLET_ITEMS, RETURN_FEE, STAFF_MAX, STRAZ, TAP_ITEMS,
+  MINUTES_PER_SECOND_OPEN, OPEN_FROM, OPEN_TO, ORDER_DEADLINE, PALLETS_FREE, PALLET_FEE, PALLET_ITEMS, STAFF_MAX, STRAZ, TAP_ITEMS,
   TILL_TAP_QUEUE_MIN,
 } from '@/sim/economy/catalog';
 import { nextRankAt, rankFor } from '@/sim/economy/progress';
@@ -168,7 +168,8 @@ describe('treść okna „Jak grać”', () => {
     expect(t).toContain(`Zamówienie na jutro zamyka się o ${ORDER_DEADLINE / 60}:00, dostawa przyjeżdża zwykle o ${DELIVERY_AT / 60}:00`);
     expect(t).toContain('Domyślnie zamawia Asystent Traszki, ręcznie ustawisz je w zakładce Palety');
     expect(t).toContain(`Palety ponad ${PALLETS_FREE} w zamówieniu kosztują po ${PALLET_FEE} zł`);
-    expect(t).toContain(`liczy ${RETURN_FEE} zł`);
+    expect(t).toContain('Palet nikt nie odsyła: gdy zabraknie miejsca, nadmiar stoi w przejściach sali, klienci się o niego potykają i odchodzą, a reputacja spada, dopóki palet nie rozładujesz');
+    expect(t).not.toMatch(/odesł|zabiera paletę|zabrane/);   // odsyłania palet już nie ma (decyzja z 30.10.2026)
     expect(t).toContain(`Najwięcej zatrudnisz ${STAFF_MAX} ${plural(STAFF_MAX, 'osobę', 'osoby', 'osób')}`);
     expect(t).toContain(`Doba trwa ok. 3 min 20 s przy ${SPEEDS[1]!.label}, a sklep działa od ${OPEN_FROM / 60}:00 do ${OPEN_TO / 60}:00`);
     expect(t).toContain(`W niedzielę ruch rośnie ×${pl(SUNDAY_TRAFFIC)}`);
@@ -187,10 +188,10 @@ describe('treść okna „Jak grać”', () => {
     expect(ENERGY_TITLE).toMatch(/^Siły to Twoja energia na stukanie: /);
     expect(ENERGY_TITLE).toContain(`stuknięcie w paletę to ${TAP_ITEMS} sztuk`);
     expect(ENERGY_TITLE).toContain(`noc oddaje ${FATIGUE.nightRecovery}`);
-    // „cała pula to mniej więcej jedna paleta”: pełne siły w stuknięciach w paletę dają tyle sztuk co jedna paleta (±15%)
-    expect(ENERGY_TITLE).toContain('cała pula to mniej więcej jedna paleta');
+    // „cała pula to mniej więcej dwie trzecie palety”: pełne siły w stuknięciach w paletę dają 320 sztuk, a paleta ma od SIM 5 480 (±15%)
+    expect(ENERGY_TITLE).toContain('cała pula to mniej więcej dwie trzecie palety');
     const poolItems = FATIGUE.pool / FATIGUE.tapCost.paleta * TAP_ITEMS;
-    expect(Math.abs(poolItems / PALLET_ITEMS - 1)).toBeLessThanOrEqual(0.15);
+    expect(Math.abs(poolItems / PALLET_ITEMS - 2 / 3)).toBeLessThanOrEqual(0.15);
     expect(words(ENERGY_TITLE)).toBeLessThanOrEqual(32);   // jedno zdanie
   });
 
@@ -198,7 +199,7 @@ describe('treść okna „Jak grać”', () => {
     const t = detailsText();
     expect(t).toContain(`Zaufanie startuje od ${TRUST.start} punktów`);
     expect(t).toContain(`trafione KPI (+${KPI.trustHit}) i miesiąc na plusie (+${TRUST.monthProfit})`);
-    expect(t).toContain(`mandat (−${-TRUST.fine}), miesiąc na minusie (−${-TRUST.monthLoss}) i palety odesłane (−${-TRUST.returnedPallet}) lub zabrane (−${-TRUST.driverReturned})`);
+    expect(t).toContain(`mandat (−${-TRUST.fine}) i miesiąc na minusie (−${-TRUST.monthLoss}).`);
     expect([turnoverBonusShare(69), turnoverBonusShare(70), turnoverBonusShare(84), turnoverBonusShare(85)]).toEqual([0, 0.02, 0.02, 0.03]);
     expect(t).toContain('Od 70 punktów Centrala oddaje premię od obrotu: 2%, od 85 punktów 3%.');
     expect(t).toContain(`Umowę stracisz przy zerze na koniec miesiąca albo od razu, gdy gotówka spadnie poniżej −${pl(-DEBT_LIMIT)} zł`);
@@ -207,10 +208,10 @@ describe('treść okna „Jak grać”', () => {
 
   it('zmiana stałej zmienia tekst (liczby nie są wpisane w treść)', () => {
     const before = text();
-    patched(TRUST, { start: 45, fine: -2, driverReturned: -7 }, () => {
+    patched(TRUST, { start: 45, fine: -2, monthLoss: -9 }, () => {
       expect(text()).toContain('Zaufanie startuje od 45 punktów');
       expect(text()).toContain('mandat (−2)');
-      expect(text()).toContain('zabrane (−7)');
+      expect(text()).toContain('miesiąc na minusie (−9)');
     });
     patched(HOT, { margin: 0.5 }, () => expect(text()).toContain('hot-dogi i kawa dają 50%'));
     patched(WUT, { threshold: 0.02 }, () => expect(text()).toContain('Do 2% obrotu miesiąca'));

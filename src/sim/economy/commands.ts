@@ -1,11 +1,12 @@
 import { layoutFor } from '@/sim/store/layoutFor';
 import type { StoreLayout } from '@/sim/store/types';
 import {
-  answerCard, awaitingDecision, buyEquipment, buyUpgrade, campaign, checkDebt, commitTap, comboMult, fire, hire, movePallet,
-  nextTapStreak, processLevels, relayout, returnPallet, rushRemont, setOrder, startRemont, tapPallet, tapTill,
+  answerCard, awaitingDecision, buyEquipment, buyUpgrade, campaign, checkDebt, claimMilestone, commitTap, comboMult, fire, hire,
+  movePallet, nextTapStreak, processLevels, relayout, rushRemont, setOrder, startRemont, tapPallet, tapTill,
   type CommandResult, type EconEvent, type EconomyState,
 } from './economy';
 import { computeStoreInfo, type PalletLoc, type StoreInfo } from './storeInfo';
+import { MILESTONES } from './milestones';
 import { STAFF_PROFILES, TASK_LABEL, pinStaff, setStaffProfile, type StaffProfile, type StaffTask } from './tycoon/staff';
 import { EQUIPMENT_BY_ID, UPGRADE_BY_ID, type EquipmentId, type UpgradeId } from './upgrades';
 
@@ -34,6 +35,11 @@ export type Command =
   | { type: 'tapPallet'; palletId?: number }
   | { type: 'tapTill' }
   | { type: 'movePallet'; palletId: number; loc: PalletLoc }
+  /**
+   * Dawne odesłanie palety (do SIM_VERSION 4). Od SIM_VERSION 5 palet nikt nie odsyła, a interfejs tego polecenia nie wysyła;
+   * typ zostaje tylko po to, żeby zapisane dzienniki biegów z SIM 4 dalej przechodziły `isCommand` (`readRun` odrzuciłby cały
+   * zapis przez jeden nieznany wpis). Zawsze odmawia i nie rusza stanu.
+   */
   | { type: 'returnPallet'; palletId: number }
   | { type: 'setOrder'; auto: boolean; manual?: number }
   | { type: 'hire' }
@@ -45,7 +51,8 @@ export type Command =
   | { type: 'startRemont' }
   | { type: 'campaign' }
   | { type: 'rushRemont' }
-  | { type: 'answerCard'; seq: number; answer: number };
+  | { type: 'answerCard'; seq: number; answer: number }
+  | { type: 'claimMilestone'; id: string };
 
 /** Wartość pola polecenia: tylko to, co kopia płytka (`{ ...cmd }`) naprawdę kopiuje. */
 type FieldValue = string | number | boolean | undefined;
@@ -63,10 +70,11 @@ export type FlatCommands = MustBeNever<NestedFields<Command>>;
 /** Wszystkie typy poleceń (do testów pokrycia i do walidacji). */
 export const COMMAND_TYPES: readonly Command['type'][] = [
   'tapPallet', 'tapTill', 'movePallet', 'returnPallet', 'setOrder', 'hire', 'fire', 'setStaffProfile', 'pinStaff',
-  'buyUpgrade', 'buyEquipment', 'startRemont', 'campaign', 'rushRemont', 'answerCard',
+  'buyUpgrade', 'buyEquipment', 'startRemont', 'campaign', 'rushRemont', 'answerCard', 'claimMilestone',
 ];
 
-const LOCS: readonly PalletLoc[] = ['sidewalk', 'backroom', 'floor'];
+/** Dokąd gracz może przenieść paletę. Przejścia (`aisle`) to też poprawne miejsce, ale tam stawia tylko kierowca: odmawia `movePallet`. */
+const LOCS: readonly PalletLoc[] = ['sidewalk', 'backroom', 'floor', 'aisle'];
 
 const isInt = (x: unknown): x is number => typeof x === 'number' && Number.isInteger(x);
 const isFiniteNumber = (x: unknown): x is number => typeof x === 'number' && Number.isFinite(x);
@@ -97,6 +105,7 @@ const VALID = {
   campaign: noFields,
   rushRemont: noFields,
   answerCard: (c) => isInt(c.seq) && isInt(c.answer),   // czy numer odpowiedzi mieści się w karcie, rozstrzyga `resolveCard`
+  claimMilestone: (c) => typeof c.id === 'string' && MILESTONES.some((m) => m.id === c.id),
 } satisfies Record<Command['type'], (c: Fields) => boolean>;
 
 /**
@@ -132,6 +141,9 @@ function tap(s: EconomyState, attempt: (combo: number) => CommandResult): Comman
   return r;
 }
 
+/** Odmowa dawnego `returnPallet`: od SIM_VERSION 5 każda paleta zostaje w sklepie. */
+const RETURN_GONE = 'Centrala nie przyjmuje zwrotów: każda paleta zostaje w sklepie.';
+
 /** Stuknięcia czekają na kartę: ręce franczyzobiorcy zajmuje papier na biurku (gra i tak stoi do odpowiedzi). */
 const CARD_FIRST = 'Najpierw karta na biurku.';
 
@@ -140,7 +152,7 @@ function run(s: EconomyState, info: StoreInfo, c: Command, events: EconEvent[]):
     case 'tapPallet': return awaitingDecision(s) ? { ok: false, text: CARD_FIRST } : tap(s, (combo) => tapPallet(s, info, c.palletId, combo, events));
     case 'tapTill': return awaitingDecision(s) ? { ok: false, text: CARD_FIRST } : tap(s, (combo) => tapTill(s, info, combo));
     case 'movePallet': return movePallet(s, info, c.palletId, c.loc);
-    case 'returnPallet': return returnPallet(s, c.palletId, events);
+    case 'returnPallet': return { ok: false, text: RETURN_GONE };
     case 'setOrder': setOrder(s, c.auto, c.manual); return { ok: true };
     case 'hire': return hire(s);
     case 'fire': return fire(s);
@@ -152,6 +164,7 @@ function run(s: EconomyState, info: StoreInfo, c: Command, events: EconEvent[]):
     case 'campaign': return campaign(s);
     case 'rushRemont': return rushRemont(s);
     case 'answerCard': return answerCard(s, c.seq, c.answer, events);
+    case 'claimMilestone': return claimMilestone(s, c.id);
     default: {
       // wyczerpanie sprawdza kompilator: nowy typ w `Command` bez gałęzi wyżej nie przejdzie `tsc`
       const unreachable: never = c;

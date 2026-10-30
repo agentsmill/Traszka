@@ -4,10 +4,11 @@ import { cellToWorld } from '@/render/coords';
 import { PALETTE, material } from '@/render/style';
 import { roundedBoxGeometry } from '@/render/store/parts';
 import type { Pallet } from '@/sim/economy/economy';
-import type { StoreInfo } from '@/sim/economy/storeInfo';
+import { palletPlace, type StoreInfo } from '@/sim/economy/storeInfo';
 import type { StoreLayout } from '@/sim/store/types';
 
-const MAX = 48;
+/** Najwięcej palet w widoku naraz: w przejściach miejsc jest bez końca (piętra stosu), ale `LIMITS.pallets` w zapisie to 256. */
+const MAX = 256;
 const LAYERS = 3;
 const LAYER_H = 0.36;
 const BASE_H = 0.14;
@@ -46,12 +47,15 @@ function layerGeometry(): BufferGeometry {
   return merged;
 }
 
+/** Paleta ze swoim środkiem podstawy, piętrem stosu i kwadratem (`x,y` lewego-przedniego rogu), na którym stoi. */
+interface Placed { p: Pallet; c: Vector3; level: number; square: string }
+
 export interface PalletsView {
   root: Group;
   sync(pallets: readonly Pallet[], selected: number | null): void;
   /** Id palety trafionej promieniem (instancja → paleta) albo null. */
   palletAt(object: unknown, instanceId: number | undefined): number | null;
-  /** Środek palety w świecie (do etykiet i efektów). */
+  /** Środek podstawy palety w świecie (do etykiet i efektów); `y` to wysokość jej podstawy, więc paleta na piętrze stosu jest wyżej. */
   worldPosition(id: number): Vector3 | null;
   dispose(): void;
 }
@@ -84,12 +88,22 @@ export function createPalletsView(layout: StoreLayout, info: StoreInfo): Pallets
   const q = new Quaternion();
   const one = new Vector3(1, 1, 1);
 
-  const center = (p: Pallet): Vector3 | null => {
-    const spot = info.spots[p.loc][p.spot];
-    if (!spot) return null;
-    const a = cellToWorld(layout, spot.x, spot.y);
-    const b = cellToWorld(layout, spot.x + 1, spot.y + 1);
-    return new Vector3((a.x + b.x) / 2, 0, (a.z + b.z) / 2);
+  /** Kwadrat i piętro palety (`palletPlace`); null, gdy układ nie ma dla niej miejsca. */
+  const place = (p: Pallet): Omit<Placed, 'p'> | null => {
+    const at = palletPlace(info, p.loc, p.spot);
+    if (!at) return null;
+    const a = cellToWorld(layout, at.spot.x, at.spot.y);
+    const b = cellToWorld(layout, at.spot.x + 1, at.spot.y + 1);
+    return { c: new Vector3((a.x + b.x) / 2, 0, (a.z + b.z) / 2), level: at.level, square: `${at.spot.x},${at.spot.y}` };
+  };
+  /** Ile jest kartonów na palecie (0–`LAYERS`, ułamek dla ostatniej warstwy), po czym liczy się jej wysokość. */
+  const fillOf = (p: Pallet): number => (p.initial > 0 ? Math.max(0, Math.min(1, p.total / p.initial)) : 0) * LAYERS;
+  /** Wysokość palety z kartonami: warstwy mają skalę `max(0,15; część)`, jak przy rysowaniu. */
+  const heightOf = (p: Pallet): number => {
+    const full = fillOf(p);
+    let h = BASE_H;
+    for (let k = 0; k < LAYERS && k < full; k++) h += LAYER_H * Math.max(0.15, Math.min(1, full - k));
+    return h;
   };
 
   return {
@@ -99,25 +113,39 @@ export function createPalletsView(layout: StoreLayout, info: StoreInfo): Pallets
       let nl = 0;
       centers.clear();
       ring.visible = false;
+      const placed: Placed[] = [];
       for (const p of pallets) {
-        if (nb >= MAX) break;
-        const c = center(p);
-        if (!c) continue;
+        if (placed.length >= MAX) break;
+        const at = place(p);
+        if (at) placed.push({ p, ...at });
+      }
+      // Piętra stosu w przejściach: paleta stoi na tych, które są pod nią na tym samym kwadracie, więc podstawa leży na sumie ich
+      // wysokości (przy pełnych paletach to `level * FULL_H`). Rozładowana albo zmniejszona paleta niżej nie zostawia dziury.
+      const stacks = new Map<string, Placed[]>();
+      for (const e of placed) {
+        const stack = stacks.get(e.square);
+        if (stack) stack.push(e); else stacks.set(e.square, [e]);
+      }
+      for (const stack of stacks.values()) {
+        stack.sort((x, y) => x.level - y.level || x.p.id - y.p.id);
+        let y = 0;
+        for (const e of stack) { e.c.y = y; y += heightOf(e.p); }
+      }
+      for (const { p, c } of placed) {
         centers.set(p.id, c);
         q.setFromAxisAngle(new Vector3(0, 1, 0), (p.id % 3) * 0.05 - 0.05);
         m.compose(c, q, one);
         bases.setMatrixAt(nb, m);
         baseOwner[nb++] = p.id;
-        const fill = p.initial > 0 ? Math.max(0, Math.min(1, p.total / p.initial)) : 0;
-        const full = fill * LAYERS;
+        const full = fillOf(p);
         for (let k = 0; k < LAYERS && k < full; k++) {
           const h = Math.min(1, full - k);
-          m.compose(new Vector3(c.x, BASE_H + k * LAYER_H, c.z), q, new Vector3(1, Math.max(0.15, h), 1));
+          m.compose(new Vector3(c.x, c.y + BASE_H + k * LAYER_H, c.z), q, new Vector3(1, Math.max(0.15, h), 1));
           layers.setMatrixAt(nl, m);
           layers.setColorAt(nl, p.golden ? GOLD[k % 2]! : CARDBOARD[(p.id + k) % CARDBOARD.length]!);
           layerOwner[nl++] = p.id;
         }
-        if (p.id === selected) { ring.visible = true; ring.position.set(c.x, 0.02, c.z); }
+        if (p.id === selected) { ring.visible = true; ring.position.set(c.x, c.y + 0.02, c.z); }
       }
       bases.count = nb;
       layers.count = nl;

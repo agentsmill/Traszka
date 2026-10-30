@@ -1,6 +1,6 @@
 import { computed, signal, untracked, type ReadonlySignal } from '@preact/signals';
 import { useEffect, useState } from 'preact/hooks';
-import { DEBT_LIMIT, RETURN_FEE } from '@/sim/economy/catalog';
+import { DEBT_LIMIT } from '@/sim/economy/catalog';
 import {
   DEBT_WARN, debtWarningText, effects, slotFree, slotUsage, tapCombo, tillTapBlock, type EconomyState, type MonthReport,
 } from '@/sim/economy/economy';
@@ -38,7 +38,7 @@ export function SelectionCard({ game }: { game: GameActions }) {
       <>
         <h3>Paleta</h3>
         <PalletItem s={s} info={info} id={sel.id} game={game} compact />
-        <p class="tt-hint">Stukaj w paletę w sklepie, żeby rozładowywać. Odesłanie ({RETURN_FEE} zł): zakładka Palety.</p>
+        <p class="tt-hint">Stukaj w paletę w sklepie, żeby rozładowywać.</p>
       </>
     );
   } else if (sel.kind === 'till') {

@@ -16,9 +16,9 @@ import { newRunLog } from '@/game/session';
 import {
   econ, ephemeral, hints, panel, pushStory, ranked, report, selection, showHints, showSettings, speed, start, story, tab, unsent, welcome, type GameActions,
 } from '../state';
-import { RankingButton, TrustChip } from './Hud';
+import { ClaimChip, RankingButton, TrustChip } from './Hud';
 import { int, zl } from './format';
-import { Bar } from './panels';
+import { Bar, PalletItem } from './panels';
 import { ENERGY_TITLE } from './tapBlock';
 import {
   ClickerBar, ComboChip, EPHEMERAL_BADGE, EPHEMERAL_NOTE, FIRST_DAY_HINTS, FirstDayHints, RANKED_NOTE, RESTART_CONFIRM, RankingSettings, ReportBody,
@@ -250,6 +250,19 @@ describe('przyciski nakładek wysyłają polecenia', () => {
     expect(onFloat).not.toHaveBeenCalled();
   });
 
+  it('karta palety: PalletItem w trybie karty i podpowiedź bez opłaty za odesłanie (palet nikt nie odsyła)', () => {
+    const { s, info } = base();
+    publishState(s, info);
+    const id = s.pallets[0]!.id;
+    selection.value = { kind: 'pallet', id };
+    const card = SelectionCard({ game: fakeGame() });
+    const item = walk(card).find((v) => v.type === PalletItem)!;
+    expect(item.props).toMatchObject({ id, compact: true });   // przyciski palety (z „Rozładuj” i przenosinami, bez „Odeślij”) sprawdza panels.test
+    expect(labels(card).join('|')).not.toMatch(/odeśl/i);
+    expect(textOf(card)).toContain('Stukaj w paletę w sklepie, żeby rozładowywać.');
+    expect(textOf(card)).not.toMatch(/odesł|\d\s*zł/);   // dawna podpowiedź podawała opłatę za odesłanie w złotych
+  });
+
   it('karta kasy: „Obsłuż klienta” wysyła tapTill', () => {
     const { s, info } = base();
     publishState(s, info);
@@ -472,6 +485,24 @@ describe('znaczek zaufania Centrali w pasku u góry', () => {
 
   it('wartość jest zaokrąglona do całości', () => {
     expect(textOf(TrustChip({ value: 61.6 }))).toContain('62');
+  });
+});
+
+describe('plakietka celów do odebrania w pasku u góry', () => {
+  it('bez celów do odebrania jej nie ma', () => {
+    expect(ClaimChip({ count: 0 })).toBeNull();
+  });
+
+  it('pokazuje liczbę celów, ma opis z odmianą i otwiera zakładkę Cele', () => {
+    const chip = ClaimChip({ count: 2 }) as Vnode;
+    expect(textOf(chip)).toBe('🎁 2');
+    expect(String(chip.props.class).split(' ')).toEqual(expect.arrayContaining(['tt-stat', 'hot']));   // wygląd jak inne znaczki w pasku
+    expect(chip.props['aria-label']).toBe('2 cele czekają na odbiór nagrody');
+    expect(ClaimChip({ count: 1 })).toMatchObject({ props: { 'aria-label': '1 cel czeka na odbiór nagrody' } });
+    expect(ClaimChip({ count: 5 })).toMatchObject({ props: { 'aria-label': '5 celów czeka na odbiór nagrody' } });
+    expect(tab.value).toBeNull();
+    click(chip);
+    expect(tab.value).toBe('cele');
   });
 });
 

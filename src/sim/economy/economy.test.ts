@@ -8,10 +8,10 @@ import { dateOfDay, dayOf, formatDate, isLastDayOfMonth, minuteOfDay } from './c
 import { advanceEconomy } from './clock';
 import { applyCommand } from './commands';
 import {
-  DEBT_WARN, answerCard, arrivalRate, assistantSuggestion, awaitingDecision, buyEquipment, buyUpgrade, cardContext, changeTrust, checkDebt, createEconomy,
+  DEBT_WARN, aislePallets, answerCard, arrivalRate, claimMilestone, deliverySpots, assistantSuggestion, awaitingDecision, buyEquipment, buyUpgrade, cardContext, changeTrust, checkDebt, createEconomy,
   crewPalletCap, debtWarningText, effects,
   estimatedDailyMargin, expectedDailyCustomers, fire, franchiseFee, freeSpots, GOLDEN_PRIZE, isOpenForCustomers, kpiMetricsOf, kpiScaleOf, movePallet, orderedPallets, relayout,
-  returnPallet, robotFleet, sell, slotFree, startRemont, stepMinute, tapPallet, tapTill, unlocksAt, upgradeBlocker, waveAt, workshopUnlocked,
+  robotFleet, sell, slotFree, startRemont, stepMinute, tapPallet, tapTill, unlocksAt, upgradeBlocker, waveAt, workshopUnlocked,
   type CommandResult, type EconEvent, type EconomyState, type MonthReport,
 } from './economy';
 import { rand01 } from './rand';
@@ -179,14 +179,65 @@ describe('ekonomia', () => {
     expect(orderedPallets(s, info)).toBe(30);   // ręczne zamówienie gracza nie ma limitu asystenta (za duże → mandaty)
   });
 
-  it('przesadne zamówienie bez rąk do pracy: palety się kumulują, a nadmiar kierowca zabiera za opłatą', () => {
+  it('przesadne zamówienie bez rąk do pracy: każda paleta zostaje w sklepie, nadmiar stoi w przejściach', () => {
     const s = createEconomy(SEED, info);
     s.staff = 0;
     s.order = { auto: false, manual: 12 };
     const events = run(s, info, 4 * MINUTES_PER_DAY);
-    expect(s.pallets.length).toBeGreaterThanOrEqual(8);
-    expect(events.some((e) => e.kind === 'warning' && e.text.includes('zabrał'))).toBe(true);
-    expect(s.total.logistics).toBeGreaterThan(0);
+    const delivered = events.filter((e) => e.kind === 'delivery').reduce((n, e) => n + Number(e.text.match(/Dostawa: (\d+)/)![1]), 0);
+    expect(delivered).toBeGreaterThan(info.spots.sidewalk.length + info.spots.floor.length);
+    // nikt nie rozładowuje, nikt nie odsyła: w sklepie są dwie palety ze startu i wszystkie z dostaw
+    expect(s.pallets.length).toBe(2 + delivered);
+    expect(aislePallets(s)).toBe(s.pallets.length - info.spots.sidewalk.length - info.spots.floor.length);
+    expect(events.some((e) => e.kind === 'warning' && e.text.includes('w przejściach'))).toBe(true);
+    expect(events.some((e) => e.text.includes('zabrał'))).toBe(false);
+    expect(s.tycoon.trust.month.palety).toBeUndefined();
+    // przejścia mają numery miejsc bez dziur: kolejne palety stają na kolejnych kwadratach, potem piętro wyżej
+    expect(s.pallets.filter((p) => p.loc === 'aisle').map((p) => p.spot).sort((a, b) => a - b)).toEqual([...Array(aislePallets(s)).keys()]);
+  });
+
+  it('zagracenie: palety w przejściach zabierają ruch (nie niżej niż połowa), cierpliwość (najwyżej −3) i reputację', () => {
+    const s = createEconomy(SEED, info);
+    s.minute = 10 * 60;
+    for (const c of CATS) s.backroom[c] = 0;
+    const clean = arrivalRate(s, info);
+    const patience = effects(s, info).patience;
+    s.order = { auto: false, manual: 0 };
+    s.deliveries = [{ at: s.minute, count: 20 }];
+    stepMinute(s, info, []);
+    expect(aislePallets(s)).toBeGreaterThan(5);
+    s.minute = 10 * 60 + 1;
+    // reputacja zdążyła się ruszyć o ułamki punktu (sprzedaż jednej minuty), więc porównanie z dokładnością do promila
+    expect(arrivalRate(s, info) / clean).toBeCloseTo(0.5, 2);
+    expect(effects(s, info).patience).toBe(patience - 3);
+    const rep = s.reputation;
+    const before = s.queue;
+    void before;
+    s.queue = 0;
+    stepMinute(s, info, []);
+    // jedna minuta otwarcia: −0,0006 za paletę w przejściu, najwyżej za 8 (sprzedaż w tej minucie dokłada swoje grosze)
+    expect(s.reputation).toBeLessThan(rep - 0.0006 * 8 + 0.002);
+  });
+
+  it('asystent nie zamawia więcej palet, niż zmieści się na zwykłych miejscach', () => {
+    const s = createEconomy(SEED, info);
+    s.staff = 8;
+    s.upgrades.wozek = 3;
+    for (const c of CATS) { s.shelf[c] = 0; s.backroom[c] = 0; }
+    s.pallets = [];
+    expect(crewPalletCap(s, info)).toBeGreaterThan(deliverySpots(s, info));
+    expect(assistantSuggestion(s, info)).toBe(deliverySpots(s, info));
+    expect(deliverySpots(s, info)).toBe(info.spots.sidewalk.length + info.spots.floor.length);
+  });
+
+  it('kredyt kupiecki liczy też palety w drodze', () => {
+    const s = createEconomy(SEED, info);
+    s.order = { auto: false, manual: 30 };
+    s.deliveries = [{ at: s.minute + 10 * MINUTES_PER_DAY, count: 60 }];
+    s.minute = 11 * 60 - 1;
+    const events = run(s, info, 2);
+    expect(events.some((e) => e.text.includes('Limit kredytu kupieckiego'))).toBe(true);
+    expect(s.deliveries.reduce((n, d) => n + d.count, 0)).toBe(60);
   });
 
   it('stuknięcie w paletę rozładowuje kawałek, stuknięcie w kasę obsługuje klienta', () => {
@@ -300,7 +351,7 @@ describe('rozładunek z automatyką warsztatu', () => {
     s.order = { auto: false, manual: 6 };
     run(s, pavilion, 40 * MINUTES_PER_DAY);
     const created = s.nextPalletId - 1;
-    expect(created).toBeGreaterThan(100);
+    expect(created).toBeGreaterThan(80);   // ok. 2,5 palety po 480 szt. dziennie (od SIM_VERSION 5)
     expect(s.total.palletsUnloaded).toBe(created - s.pallets.length);
   });
 });
@@ -504,7 +555,7 @@ describe('ostatni raport miesięczny w stanie', () => {
     probe.cash = 0;
     run(probe, info, 1);
     const delta = probe.cash;   // o tyle zamknięcie zmienia gotówkę (deterministycznie)
-    expect(delta).toBeLessThan(DEBT_LIMIT);   // sama opłata jest większa niż granica: bez zarobku z miesiąca byłby koniec
+    expect(delta).toBeLessThan(DEBT_WARN);   // sama opłata jest większa niż próg ostrzeżenia: bez zarobku z miesiąca Centrala ostrzega
 
     const warned = atClose();
     warned.cash = DEBT_WARN - 1000 - delta;
@@ -677,20 +728,35 @@ describe('zaufanie Centrali przez moduł tycoona', () => {
     expect(s.total.fines).toBeGreaterThan(0);
   });
 
-  it('kierowca, który zabrał palety, obniża zaufanie z przyczyną palety', () => {
+  it('dawne returnPallet z dziennika odmawia i nie rusza stanu: palety zostają, opłaty i zaufanie bez zmian', () => {
     const s = createEconomy(SEED, info);
-    s.staff = 0;
-    s.order = { auto: false, manual: 12 };
-    const events = run(s, info, 4 * MINUTES_PER_DAY);
-    expect(events.some((e) => e.kind === 'warning' && e.text.includes('zabrał'))).toBe(true);
-    expect(s.tycoon.trust.month.palety).toBeLessThan(0);
+    const before = JSON.stringify(s);
+    const out = applyCommand(s, info, { type: 'returnPallet', palletId: s.pallets[0]!.id });
+    expect(out.result.ok).toBe(false);
+    expect(JSON.stringify(s)).toBe(before);
   });
 
-  it('odesłana paleta: -4 z przyczyną palety', () => {
+  it('cel spełniony czeka na „Odbierz”: nagroda (Ogonki i XP) dopiero po claimMilestone, raz', () => {
     const s = createEconomy(SEED, info);
-    expect(returnPallet(s, s.pallets[0]!.id).ok).toBe(true);
-    expect(s.tycoon.trust.month).toEqual({ palety: TRUST.returnedPallet });
-    expect(s.tycoon.trust.value).toBe(TRUST.start + TRUST.returnedPallet);
+    s.total.palletsUnloaded = 1;
+    s.minute = 7 * 60;   // pełna godzina: wtedy gra sprawdza cele
+    const events = run(s, info, 1);
+    expect(s.milestonesReady).toEqual(['pallet1']);
+    expect(s.milestones).toEqual([]);
+    expect(events.some((e) => e.kind === 'milestone' && e.text.includes('Odbierz'))).toBe(true);
+    const ogonki = s.ogonki;
+    const xp = s.xp;
+    expect(claimMilestone(s, 'pallet1')).toMatchObject({ ok: true });
+    expect(s.ogonki).toBe(ogonki + 5);
+    expect(s.xp).toBe(xp + 5 * 5);
+    expect(s.milestones).toEqual(['pallet1']);
+    expect(s.milestonesReady).toEqual([]);
+    expect(claimMilestone(s, 'pallet1').ok).toBe(false);
+    expect(claimMilestone(s, 'cust5k').ok).toBe(false);   // niespełniony
+    expect(claimMilestone(s, 'nie-ma').ok).toBe(false);
+    // odebrany cel nie wraca do „gotowych”
+    run(s, info, 60);
+    expect(s.milestonesReady).not.toContain('pallet1');
   });
 
   it('zmiana progu zaufania daje zdarzenie trust-tier, drobna zmiana w tym samym progu niczego nie dopisuje', () => {
@@ -1236,22 +1302,22 @@ describe('śmieci z palet, czystość sali, pogoda, niedziela i prasa', () => {
     }
   };
 
-  it('dostawa: paleta niesie worki liczone z jej składu, a zwykła ma jeden', () => {
+  it('dostawa: paleta niesie worki liczone z jej składu, a zwykła ma półtora', () => {
     const s = createEconomy(SEED, info);
     expect(s.pallets.length).toBeGreaterThan(0);
     for (const p of s.pallets) expect(p.bags).toBe(palletBags(p.items));
-    expect(s.pallets[0]!.bags).toBe(1);
+    expect(s.pallets[0]!.bags).toBe(1.5);
 
     const t = quiet(1, 6 * 60);
     drinksSoldOut(t);
     t.deliveries = [{ at: t.minute, count: 1 }];
     stepMinute(t, info, []);
     expect(t.pallets).toHaveLength(1);
-    expect(palletBags(t.pallets[0]!.items)).toBe(2);   // zgrzewki w folii: ponad 40% to napoje
-    expect(t.pallets[0]!.bags).toBe(2);
+    expect(palletBags(t.pallets[0]!.items)).toBe(3);   // zgrzewki w folii: ponad 40% to napoje
+    expect(t.pallets[0]!.bags).toBe(3);
   });
 
-  it('rozładowana paleta zostawia worki: ponad 40% napojów to dwa, zwykła jeden', () => {
+  it('rozładowana paleta zostawia worki: ponad 40% napojów to trzy, zwykła półtora', () => {
     const bagsAfterDelivery = (soldOut: boolean): number => {
       const s = quiet(1, 6 * 60);
       s.staff = 0;                   // nikt nie wynosi worków
@@ -1263,8 +1329,8 @@ describe('śmieci z palet, czystość sali, pogoda, niedziela i prasa', () => {
       expect(s.tycoon.waste.hall).toBe(0);
       return s.tycoon.waste.backroom;
     };
-    expect(bagsAfterDelivery(true)).toBe(2);
-    expect(bagsAfterDelivery(false)).toBe(1);
+    expect(bagsAfterDelivery(true)).toBe(3);
+    expect(bagsAfterDelivery(false)).toBe(1.5);
   });
 
   it('paleta ze starego zapisu (bez pola bags) zostawia jeden worek', () => {

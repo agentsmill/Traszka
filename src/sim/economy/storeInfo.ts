@@ -6,7 +6,11 @@ import { CAPACITY, CATS, CAT_INFO, type Cat } from './catalog';
 
 /** Miejsce na paletę: kwadrat 2×2 kratki, `x`/`y` to jego lewy-przedni róg. */
 export interface PalletSpot { x: number; y: number }
-export type PalletLoc = 'sidewalk' | 'backroom' | 'floor';
+/**
+ * Gdzie stoi paleta. `aisle` to przejścia w sali: tam kierowca stawia nadmiar, gdy zwykłe miejsca się skończą (palet nikt
+ * nie odsyła, decyzja właściciela z 30.10.2026). Miejsc w przejściach jest bez końca: po ostatnim kwadracie palety stają piętrem wyżej.
+ */
+export type PalletLoc = 'sidewalk' | 'backroom' | 'floor' | 'aisle';
 
 export interface SlotInfo {
   id: string;
@@ -50,6 +54,8 @@ export function computeStoreInfo(layout: StoreLayout): StoreInfo {
   const slots: SlotInfo[] = layout.fixtures
     .filter((f) => f.kind === 'selfCheckoutSlot' || f.kind === 'equipmentSlot')
     .map((f) => ({ id: f.id, capacity: f.kind === 'equipmentSlot' ? 2 : 1, fixture: f }));
+  const sidewalk = sidewalkSpots(layout);
+  const floor = floorSpots(layout);
 
   return {
     lotKind: layout.lot.kind,
@@ -57,7 +63,7 @@ export function computeStoreInfo(layout: StoreLayout): StoreInfo {
     shelfCapTotal: CATS.reduce((n, c) => n + shelfCap[c], 0),
     backroomCap: backroomCells * CAPACITY.backroom,
     slots,
-    spots: { sidewalk: sidewalkSpots(layout), backroom: backroomSpots(layout), floor: floorSpots(layout) },
+    spots: { sidewalk, backroom: backroomSpots(layout), floor, aisle: aisleSpots(layout, floor, sidewalk) },
     salesCells: layout.cells.filter((t) => t === 'floor' || t === 'fixture').length,
   };
 }
@@ -171,6 +177,92 @@ function floorSpots(layout: StoreLayout): PalletSpot[] {
     if (out.length >= FLOOR_SPOTS_MAX) break;
   }
   return out;
+}
+
+/**
+ * Przejścia w sali: kwadraty 2×2 na wolnej podłodze, gęsto, od środka sali na zewnątrz. Tu kierowca stawia palety, dla których
+ * zabrakło zwykłych miejsc, więc mogą odciąć klientom regały (decyzja właściciela z 30.10.2026: „ludzie się będą potykać, nie
+ * będą się mogli przesuwać”). Wolne zostają kolejka, pas personelu, dostęp do kasy, slotów i drzwi zaplecza, wejście i zwykłe
+ * miejsca w sali, a z wejścia zawsze da się dojść do kolejki: sklep dalej sprzedaje, więc z zagracenia da się wyjść.
+ * Pusta lista (sala bez wolnej podłogi) zdarza się tylko w zepsutym układzie: wtedy przejścia to miejsca na chodniku (`palletPlace`).
+ */
+function aisleSpots(layout: StoreLayout, floor: readonly PalletSpot[], sidewalk: readonly PalletSpot[]): PalletSpot[] {
+  const { width } = layout;
+  const key = (c: Cell): number => c.y * width + c.x;
+  const reserved = new Set<number>();
+  for (const c of layout.checkoutQueue) reserved.add(key(c));
+  for (const c of staffStripCells(layout)) reserved.add(key(c));
+  for (const c of [...layout.entrance, ...layout.spawnPoints]) {
+    for (let dy = -1; dy <= 2; dy++) for (let dx = -1; dx <= 1; dx++) reserved.add(key({ x: c.x + dx, y: c.y + dy }));
+  }
+  for (const f of layout.fixtures) {
+    if (f.kind === 'gondola' || f.kind === 'wallShelf' || f.kind === 'fridge') continue;
+    for (const c of accessCells(layout, f)) reserved.add(key(c));
+  }
+  for (const s of floor) for (const c of squareCells(s)) reserved.add(key(c));
+
+  // kolejka i kasa: cel, do którego z wejścia musi zostać droga
+  const tills = layout.fixtures.filter((f) => f.kind === 'checkout').flatMap((f) => accessCells(layout, f));
+  const targets: Cell[] = [...layout.checkoutQueue, ...tills].filter((c) => isWalkable(layout, c.x, c.y));
+  const start = layout.spawnPoints[0];
+  const reachable = (blocked: Set<number>): boolean => {
+    if (!start || targets.length === 0) return true;
+    const seen = new Set<number>([key(start)]);
+    const stack = [start];
+    while (stack.length > 0) {
+      const { x, y } = stack.pop()!;
+      for (const n of [{ x: x + 1, y }, { x: x - 1, y }, { x, y: y + 1 }, { x, y: y - 1 }]) {
+        if (!isWalkable(layout, n.x, n.y) || n.y <= 0 || blocked.has(key(n)) || seen.has(key(n))) continue;
+        seen.add(key(n));
+        stack.push(n);
+      }
+    }
+    return targets.every((c) => seen.has(key(c)));
+  };
+
+  const candidates: PalletSpot[] = [];
+  for (let y = FRONT_WALL_Y + 1; y < layout.midWallY - 1; y++) {
+    for (let x = 1; x < width - 2; x++) {
+      const s = { x, y };
+      if (squareCells(s).every((c) => layout.cells[key(c)] === 'floor' && !reserved.has(key(c)))) candidates.push(s);
+    }
+  }
+  // od środka sali, dokładnie jak w `floorSpots` (podwojone współrzędne, remis według kolejności skanowania)
+  const centre2X = width;
+  const centre2Y = FRONT_WALL_Y + layout.midWallY;
+  const byCentre = candidates
+    .map((spot, index) => {
+      const dx = 2 * spot.x - centre2X;
+      const dy = 2 * spot.y - centre2Y;
+      return { spot, index, dist2: dx * dx + dy * dy };
+    })
+    .sort((a, b) => a.dist2 - b.dist2 || a.index - b.index);
+
+  // przeszkody z palet w sali też liczą się do drogi do kasy
+  const blocked = new Set<number>(floor.flatMap((s) => squareCells(s).map(key)));
+  const out: PalletSpot[] = [];
+  for (const { spot } of byCentre) {
+    const cells = squareCells(spot);
+    if (cells.some((c) => blocked.has(key(c)))) continue;
+    const next = new Set(blocked);
+    for (const c of cells) next.add(key(c));
+    if (!reachable(next)) continue;
+    for (const c of cells) blocked.add(key(c));
+    out.push(spot);
+  }
+  return out.length > 0 ? out : [...sidewalk];
+}
+
+/**
+ * Gdzie w układzie stoi paleta o miejscu `spot` w lokalizacji `loc`: kwadrat i piętro stosu. W przejściach miejsc jest bez końca:
+ * numer miejsca ponad liczbę kwadratów stawia paletę na tym samym kwadracie piętro wyżej (`spot mod n`, `floor(spot / n)`).
+ * Zwykłe lokalizacje mają tylko piętro 0; numer spoza listy to null (zapis z innego układu, `fitsStore` przestawi palety).
+ */
+export function palletPlace(info: StoreInfo, loc: PalletLoc, spot: number): { spot: PalletSpot; level: number } | null {
+  const list = info.spots[loc];
+  if (!Number.isInteger(spot) || spot < 0 || list.length === 0) return null;
+  if (loc !== 'aisle') return spot < list.length ? { spot: list[spot]!, level: 0 } : null;
+  return { spot: list[spot % list.length]!, level: Math.floor(spot / list.length) };
 }
 
 /** Czy kratka leży w obrysie miejsca na paletę. */

@@ -116,7 +116,7 @@ describe('sędzia biegu (verifyRun)', () => {
     expect(res.ok).toBe(true);
     expect(res.ok && Number.isInteger(res.score)).toBe(true);
     expect(res).toEqual({ ok: true, score: seasonScore(replayRun(run, RANKED_SEASON_END_MINUTE)) });
-  });
+  }, 30_000);   // dwa odtworzenia całego sezonu: przy pełnym zestawie testów równolegle dłużej niż domyślne 5 s
 
   it('describeError: nazwa i treść w jednej linii (najwyżej 200 znaków); nie-błąd dostaje ogólną nazwę', () => {
     expect(describeError(new RangeError('zły  zakres\n\tdrugi wiersz'))).toEqual(['RangeError', 'zły zakres drugi wiersz']);

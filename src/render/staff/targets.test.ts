@@ -879,3 +879,39 @@ describe.each(SETUPS)('pickStaffSpots z `previous`: $seed', ({ layout, nav, pall
     for (const id of [0, 7]) expect(second.get(id), `id ${id}`).toEqual(first.get(id));
   });
 });
+
+describe('pickStaffSpots: palety w przejściach (loc „aisle”) są salą, rozładowywaną zaraz po chodniku', () => {
+  describe.each(SEEDS)('%s', (seed) => {
+    const layout = generateStore(seed);
+    const { spots } = computeStoreInfo(layout);
+    const navOf = (list: readonly PalletRef[]): StaffNav => buildStaffNav(layout, list.flatMap((p) => spotCells(p.spot)));
+
+    it('paleta w przejściu idzie po chodniku (mandat), a przed salą, choć stoi krócej; rozładunek staje obok jej kwadratu i patrzy na niego', () => {
+      expect(spots.aisle.length).toBeGreaterThanOrEqual(3);
+      const aisle: PalletRef = { loc: 'aisle', spot: spots.aisle[0]!, since: 900 };
+      const sidewalk: PalletRef = { loc: 'sidewalk', spot: spots.sidewalk[0]!, since: 950 };
+      const floor: PalletRef = { loc: 'floor', spot: spots.floor[0]!, since: 100 };
+      const list = [floor, aisle, sidewalk];
+      const nav = navOf(list);
+      const crew = crewOf(repeat('rozladunek', 3));
+      const picked = pickStaffSpots(layout, nav, list, crew);
+      expectSane(layout, nav, crew, picked);
+      expect(besidePallet(picked.get(0)!.cell, sidewalk.spot)).toBe(true);
+      expect(besidePallet(picked.get(1)!.cell, aisle.spot)).toBe(true);
+      expect(besidePallet(picked.get(2)!.cell, floor.spot)).toBe(true);
+      expect(angleBetween(picked.get(1)!.heading, headingFrom(picked.get(1)!.cell, palletCentre(aisle.spot)))).toBeLessThan(Math.PI / 2);
+    });
+
+    it('pełne przejścia z kilkoma piętrami stosu na kwadracie: każdy ma osiągalne, różne miejsce', () => {
+      const stacked = spots.aisle.flatMap((spot, i): PalletRef[] => [0, 1, 2].map((level) => ({ loc: 'aisle', spot, since: 100 + level * 10 + i })));
+      const nav = navOf(stacked);
+      for (const n of [1, 3, STAFF_VIEW_MAX]) {
+        const crew = crewOf(repeat('rozladunek', n));
+        const picked = pickStaffSpots(layout, nav, stacked, crew);
+        expectSane(layout, nav, crew, picked);
+      }
+      const mix = crewOf(['kasa', 'rozladunek', 'wykladanie', 'sprzatanie', 'wolny', 'rozladunek']);
+      expectSane(layout, nav, mix, pickStaffSpots(layout, nav, stacked, mix));
+    });
+  });
+});

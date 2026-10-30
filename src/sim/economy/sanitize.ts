@@ -36,8 +36,11 @@ export const LIMITS = {
   money: 1e60,
   /** Palet w jednej dostawie: zamówienie ręczne ma najwyżej 30, a limit kredytu po trzecim remoncie (CREDIT_LIMIT × 2,5) mieści 91 palet. */
   orderPallets: 100,
-  /** Palet naraz w sklepie: miejsc jest najwyżej 28 (do 17 na chodniku, 3 w sali, 8 na zapleczu). */
-  pallets: 64,
+  /**
+   * Palet naraz w sklepie: zwykłych miejsc jest najwyżej 28 (do 17 na chodniku, 3 w sali, 8 na zapleczu), a nadmiar stoi w
+   * przejściach bez granicy miejsc. Liczbę palet ogranicza kredyt kupiecki (po trzecim remoncie ok. 60 palet towaru razem z półkami).
+   */
+  pallets: 256,
   /** Sprzęt w slotach: największy sklep ma 8 slotów o łącznej pojemności 15. */
   equipment: 64,
   /** Dostawy w drodze: zamówienie raz dziennie, najwyżej w dwóch turach, więc w drodze są najwyżej trzy. */
@@ -53,7 +56,7 @@ export const LIMITS = {
   stockPerCat: 100_000,
   /** Sztuk na palecie: PALLET_ITEMS i sztuka zapasu na zaokrąglenia (suma składu palety wychodzi z ułamków). */
   palletItems: PALLET_ITEMS + 1,
-  /** Worków z jednej palety: gra liczy 1 albo 2 (`palletBags`), reszta to zapas na przyszłe rodzaje palet. */
+  /** Worków z jednej palety: gra liczy 1,5 albo 3 (`palletBags`; zapisy sprzed SIM_VERSION 5 mają 1 albo 2), reszta to zapas. */
   palletBags: 8,
   /**
    * Kolejka przy kasie: ruch rośnie z Punktami Partnera, więc w 4000 dniach gry kolejka sięgała 538 osób przy 5,3 tys. punktów
@@ -99,7 +102,7 @@ const LONGEST_REMONT = Math.max(...REMONTS.map((r) => r.days)) * MINUTES_PER_DAY
 export function sanitizeEconomy(raw: unknown, defaults: EconomyState, info: StoreInfo): EconomyState | null {
   if (!isRec(raw) || raw.version !== 1 || raw.seed !== defaults.seed) return null;
 
-  const wantsList = ['pallets', 'deliveries', 'equipment', 'history', 'milestones'];
+  const wantsList = ['pallets', 'deliveries', 'equipment', 'history', 'milestones', 'milestonesReady'];
   const wantsRecord = ['shelf', 'backroom', 'upgrades', 'order', 'today', 'month', 'total', 'partner'];
   if (wantsList.some((k) => raw[k] !== undefined && !Array.isArray(raw[k]))) return null;
   if (wantsRecord.some((k) => raw[k] !== undefined && !isRec(raw[k]))) return null;
@@ -112,6 +115,8 @@ export function sanitizeEconomy(raw: unknown, defaults: EconomyState, info: Stor
   const seedHash = whole(raw.seedHash, defaults.seedHash, 0, 0xffff_ffff);
   const staff = whole(raw.staff, defaults.staff, 1, STAFF_MAX);
   const total = counters(raw.total);
+  const milestones = (raw.milestones as unknown[] | undefined)?.filter((m): m is string => typeof m === 'string').slice(0, LIMITS.milestones)
+    ?? defaults.milestones;
 
   const wynik: EconomyState = {
     version: 1,
@@ -143,8 +148,11 @@ export function sanitizeEconomy(raw: unknown, defaults: EconomyState, info: Stor
     total,
     history: (raw.history as unknown[] | undefined)?.map(historyRow).filter(notNull).slice(-LIMITS.history) ?? defaults.history,
     lastReport: report(raw.lastReport),
-    milestones: (raw.milestones as unknown[] | undefined)?.filter((m): m is string => typeof m === 'string').slice(0, LIMITS.milestones)
-      ?? defaults.milestones,
+    milestones,
+    // zapis sprzed SIM_VERSION 5 nie ma pola: wszystkie jego cele są już odebrane, a nowe spełnione złapie najbliższa pełna godzina
+    milestonesReady: [...new Set(
+      (raw.milestonesReady as unknown[] | undefined)?.filter((m): m is string => typeof m === 'string' && !milestones.includes(m)) ?? defaults.milestonesReady,
+    )].slice(0, LIMITS.milestones),
     gameOver: typeof raw.gameOver === 'boolean' ? raw.gameOver : defaults.gameOver,
     // osobominuty z ostatniego przydziału (ułamki), nie liczba osób: `whole` zaokrągliłoby je i zapis nie wracałby co do bajta
     lastCashiers: num(raw.lastCashiers, defaults.lastCashiers, 0, STAFF_MAX),
@@ -206,7 +214,7 @@ function stock(v: unknown, fallback: Record<Cat, number>, max: number): Record<C
 
 function pallet(v: unknown, minute: number): Pallet | null {
   if (!isRec(v) || !isRec(v.items) || !isNum(v.id) || !isNum(v.spot)) return null;
-  if (v.loc !== 'sidewalk' && v.loc !== 'floor' && v.loc !== 'backroom') return null;
+  if (v.loc !== 'sidewalk' && v.loc !== 'floor' && v.loc !== 'backroom' && v.loc !== 'aisle') return null;
   const items = stock(v.items, {} as Record<Cat, number>, LIMITS.palletItems);
   let total = CATS.reduce((n, c) => n + items[c], 0);
   if (total > LIMITS.palletItems) {   // na palecie mieści się jedna paleta: nadmiar skalujemy, skład zostaje
@@ -224,7 +232,7 @@ function pallet(v: unknown, minute: number): Pallet | null {
   };
   if (typeof v.golden === 'boolean') out.golden = v.golden;
   // paleta z zapisu sprzed worków nie ma pola: rozładunek bierze wtedy jeden worek, a zapis wraca co do bajta
-  if (isNum(v.bags)) out.bags = whole(v.bags, 1, 1, LIMITS.palletBags);
+  if (isNum(v.bags)) out.bags = num(v.bags, 1, 1, LIMITS.palletBags);
   return out;
 }
 

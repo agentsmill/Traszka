@@ -5,7 +5,7 @@ import { createEconomy, stepMinute, type EconEvent, type EconomyState } from './
 import { computeStoreInfo } from './economy/storeInfo';
 import { GENERATOR_VERSION, generateStore } from './store/generateStore';
 import { RANKED_SEASON_END_MINUTE, RANKED_SEASON_MONTHS, seasonBankrupt, seasonScore } from './ranked';
-import { replayRun, type RunRecord } from './run';
+import { replayRun, type LogEntry, type RunRecord } from './run';
 import { SIM_VERSION } from './simVersion';
 
 const history = (...profits: number[]): Pick<EconomyState, 'history'> => ({
@@ -64,6 +64,9 @@ describe('wynik sezonu', () => {
   });
 });
 
+/** Minuta, od której bieg zatrudnia sześć osób i zamawia 30 palet dziennie: 18 października (dzień 48), 9:00. Strojone pod `kiełbasa-42` przy SIM_VERSION 5. */
+const SPREE_FROM = 48 * MINUTES_PER_DAY + 9 * 60;
+
 describe('seasonBankrupt: koniec gry przed ostatnim raportem', () => {
   const state = (gameOver: boolean, reports: number): Pick<EconomyState, 'gameOver' | 'history'> => ({ gameOver, ...history(...Array<number>(reports).fill(1000)) });
 
@@ -79,11 +82,18 @@ describe('seasonBankrupt: koniec gry przed ostatnim raportem', () => {
     expect(seasonBankrupt(state(true, RANKED_SEASON_MONTHS))).toBe(false);
   });
 
-  it('prawdziwa symulacja: bierny sezon sklepu kiełbasa-42 kończy grę dopiero przy zamknięciu 30 listopada, z trzema raportami, a strata listopada jest w wyniku', () => {
-    const passive: RunRecord = { seed: 'kiełbasa-42', gameVersion: 'test', generatorVersion: GENERATOR_VERSION, simVersion: SIM_VERSION, mode: 'ranked', log: [] };
-    const s = replayRun(passive, RANKED_SEASON_END_MINUTE);
+  it('prawdziwa symulacja: sklep kiełbasa-42 z ośmioma osobami i 30 paletami dziennie od 18 października kończy grę dopiero przy zamknięciu 30 listopada, z trzema raportami, a strata listopada jest w wyniku', () => {
+    // od SIM_VERSION 5 (granica debetu −100 000 zł) bierny sezon nie kończy się debetem: dopiero sześć etatów więcej i 30 palet dziennie
+    // od 18 października (pensje, opłata logistyczna, przejścia zasypane paletami) dają dołek, który przekracza granicę przy zamknięciu 30 listopada
+    const log: LogEntry[] = [
+      ...Array.from({ length: 6 }, (_, i): LogEntry => ({ minute: SPREE_FROM + i, seq: i, cmd: { type: 'hire' } })),
+      { minute: SPREE_FROM + 10, seq: 6, cmd: { type: 'setOrder', auto: false, manual: 30 } },
+    ];
+    const run: RunRecord = { seed: 'kiełbasa-42', gameVersion: 'test', generatorVersion: GENERATOR_VERSION, simVersion: SIM_VERSION, mode: 'ranked', log };
+    const s = replayRun(run, RANKED_SEASON_END_MINUTE);
     // gdyby przestrojenie ekonomii zmieniło ten sklep, test musi to powiedzieć wprost, a nie przejść po cichu
     expect(s.gameOver, 'ostatnie zamknięcie spycha ten sklep poniżej granicy debetu').toBe(true);
+    expect(s.minute, 'koniec gry przy samym zamknięciu sezonu').toBe(RANKED_SEASON_END_MINUTE);
     expect(s.history, 'raport listopada powstał razem z końcem gry').toHaveLength(RANKED_SEASON_MONTHS);
     expect(s.history[2]!.profit, 'listopad kończy się stratą').toBeLessThan(0);
     expect(seasonBankrupt(s)).toBe(false);

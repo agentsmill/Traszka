@@ -1206,6 +1206,31 @@ describe('StaffCrew: palety', () => {
     expect(repathSpy).not.toHaveBeenCalled();
   });
 
+  it.each(SCENES)('$seed: palety w przejściach (także piętra stosu) rozładowuje się przed salą, ludzie docierają na miejsca i stoją', (sc) => {
+    const { spots } = computeStoreInfo(sc.layout);
+    expect(spots.aisle.length).toBeGreaterThanOrEqual(2);
+    // dwa piętra stosu na pierwszym kwadracie i jedna paleta na drugim, a obok paleta w sali, która stoi dłużej
+    const list: PalletRef[] = [
+      { loc: 'floor', spot: spots.floor[0]!, since: 1 },
+      { loc: 'aisle', spot: spots.aisle[0]!, since: 500 }, { loc: 'aisle', spot: spots.aisle[0]!, since: 510 }, { loc: 'aisle', spot: spots.aisle[1]!, since: 520 },
+    ];
+    const who = assign([0, 'rozladunek'], [1, 'rozladunek'], [2, 'kasa'], [3, 'wykladanie']);
+    const crew = new StaffCrew(sc.layout);
+    crew.sync(input(who, list));
+    const expected = pickStaffSpots(sc.layout, navFor(sc.layout, list), list, who);
+    for (const m of crew.members) expect(m.walker.goal, `id ${m.id}`).toEqual(expected.get(m.id)!.cell);
+    const near = (id: number, spot: { x: number; y: number }): boolean => {
+      const c = member(crew, id).walker.goal!;
+      return c.x >= spot.x - 1 && c.x <= spot.x + 2 && c.y >= spot.y - 1 && c.y <= spot.y + 2;
+    };
+    expect(near(0, spots.aisle[0]!)).toBe(true);   // najpierw przejścia, mimo że paleta w sali stoi najdłużej
+    expect(near(1, spots.aisle[0]!)).toBe(true);
+    crew.sync(input(who, list));                   // ta sama lista (np. ten sam stan po stuknięciu): nic nie zmienia celów
+    expect(member(crew, 0).walker.goal).toEqual(expected.get(0)!.cell);
+    advance(crew, 5);
+    for (const m of crew.members) expect(Number.isFinite(m.walker.x) && Number.isFinite(m.walker.y), `id ${m.id}`).toBe(true);
+  });
+
   it('kolejność palet w wejściu nie zmienia zbioru kratek, więc siatka zostaje', () => {
     const crew = crewWith(3);
     crew.sync(input(people(3), [...pallets].reverse()));

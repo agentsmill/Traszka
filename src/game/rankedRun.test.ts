@@ -632,7 +632,9 @@ describe('finishRun', () => {
 
   it('bieg, który po odtworzeniu kończy się grą (bankructwo przed końcem sezonu): null, bo sędzia odrzuciłby go jako season-bankrupt', () => {
     const s = createRankedSession(SEED);
-    expect(dispatch(s, { type: 'setOrder', auto: false, manual: 30 })).toBe(true);   // zamówienia bez końca: gotówka schodzi poniżej granicy debetu
+    // osiem osób na zmianie i zamówienia bez końca od pierwszego dnia: gotówka schodzi poniżej granicy debetu przed końcem sezonu
+    for (let i = 0; i < 6; i++) expect(dispatch(s, { type: 'hire' })).toBe(true);
+    expect(dispatch(s, { type: 'setOrder', auto: false, manual: 30 })).toBe(true);
     s.econ.minute = END - 1;   // „na skróty”: stan żywej gry nie ma tu znaczenia, finishRun liczy z dziennika
     const record = { ...s.run!.record, log: log(s).map((e) => ({ ...e })) };
     const state = replayRun(record, END);
@@ -647,10 +649,19 @@ describe('finishRun', () => {
   }, SEASON_TIMEOUT);
 
   it('bieg, który kończy grę dopiero przy ostatnim zamknięciu (trzy raporty, debet z listopada), jest do wysłania: wynik zawiera listopadową stratę', () => {
-    const seed = 'kiełbasa-42';   // bierny sezon tego sklepu schodzi poniżej granicy debetu przy zamknięciu 30 listopada (test w src/sim/ranked.test.ts)
+    // ten sklep z sześcioma etatami więcej i 30 paletami dziennie od 18 października schodzi poniżej granicy debetu dopiero przy
+    // zamknięciu 30 listopada (test w src/sim/ranked.test.ts); „na skróty”: polecenia w swoich minutach, potem koniec sezonu
+    const seed = 'kiełbasa-42';
     const s = createRankedSession(seed);
+    const from = 48 * MINUTES_PER_DAY + 9 * 60;
+    for (let i = 0; i < 6; i++) {
+      s.econ.minute = from + i;
+      expect(dispatch(s, { type: 'hire' })).toBe(true);
+    }
+    s.econ.minute = from + 10;
+    expect(dispatch(s, { type: 'setOrder', auto: false, manual: 30 })).toBe(true);
     s.econ.minute = END - 1;
-    const replayed = replayRun({ ...s.run!.record, log: [] }, END);
+    const replayed = replayRun({ ...s.run!.record, log: log(s).map((e) => ({ ...e })) }, END);
     expect(replayed.gameOver, 'debet z ostatniego zamknięcia kończy grę').toBe(true);
     expect(replayed.history).toHaveLength(3);
     const f = finishRun(s, 1);

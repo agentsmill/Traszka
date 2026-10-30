@@ -5,10 +5,10 @@ import {
 } from './waste';
 
 describe('śmieci z rozładunku', () => {
-  it('paleta zostawia jeden worek, a paleta napojów w folii dwa', () => {
-    expect(palletBags({ napoje: 80, nabial: 40, slodycze: 50, przekaski: 50, pieczywo: 45, chemia: 15, alkohol: 40 })).toBe(1);
-    expect(palletBags({ napoje: 200, nabial: 40, slodycze: 80 })).toBe(2);
-    expect(palletBags({})).toBe(1);
+  it('paleta zostawia półtora worka, a paleta napojów w folii trzy (od SIM_VERSION 5 paleta jest półtora raza większa)', () => {
+    expect(palletBags({ napoje: 120, nabial: 60, slodycze: 75, przekaski: 75, pieczywo: 68, chemia: 22, alkohol: 60 })).toBe(1.5);
+    expect(palletBags({ napoje: 300, nabial: 60, slodycze: 120 })).toBe(3);
+    expect(palletBags({})).toBe(1.5);
   });
 
   it('worki zajmują miejsca na zapleczu (te same co palety), a nadmiar ląduje w sali', () => {

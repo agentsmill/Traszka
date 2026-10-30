@@ -100,12 +100,24 @@ export interface CardsState {
 }
 
 export const CARDS = {
-  /** Szanse na 0 i 1 kartę dnia (reszta to 2). Pierwszy dzień gry i dzień okólnika mają co najmniej jedną. */
-  none: 0.15,
-  one: 0.6,
-  /** Okólnik co 2–4 dni. */
-  circularGapMin: 2,
+  /**
+   * Szanse na 0 i 1 kartę dnia (reszta to 2). Pierwszy dzień gry i dzień okólnika mają co najmniej jedną. Razem z okólnikami
+   * wychodzi ok. 0,5 karty na dobę (decyzja właściciela z 30.10.2026: „zmniejszmy ilość eventów do 0,5 na dobę”; do SIM_VERSION 4
+   * było 0,15 i 0,6, czyli ok. 1,1 karty dnia plus okólnik co 2–4 dni).
+   */
+  none: 0.6,
+  one: 0.4,
+  /** Okólnik co 4–6 dni. */
+  circularGapMin: 4,
   circularGapSpan: 3,
+  /**
+   * Waga jednej decyzji: kwoty, zaufanie i reputacja z odpowiedzi (także z ryzyka) razy tyle. Kart jest od SIM_VERSION 5 o ponad
+   * połowę mniej (ok. 0,5 zamiast 1,15 na dobę), więc każda waży trzy razy więcej: miesiąc daje dobrej decyzji co najmniej tyle
+   * przewagi nad bierną co dawniej, a bierny gracz dalej płaci za zatwierdzanie domyślnych (balans: balance.test.ts). Mnożnik
+   * dotyczy pieniędzy, zaufania i reputacji (`STAKE_KEYS`) oraz efektów ruchu i marży (`STAKE_MODS`); czas ludzi, siły, Ogonki,
+   * mandaty, zamknięcie sklepu i osoby na zmianie zostają bez niego.
+   */
+  stakes: 3,
   logMax: 40,
   /** Najwięcej kart naraz na biurku (karty dnia czekające na swoją godzinę i okólnik); straż przed zepsutym zapisem. */
   maxPending: 8,
@@ -140,6 +152,26 @@ export function createCards(day: number): CardsState {
 
 const DEF_BY_ID = new Map<string, CardDef>([...DECK, ...CIRCULARS].map((d) => [d.id, d]));
 export const cardDef = (id: string): CardDef | undefined => DEF_BY_ID.get(id);
+
+/**
+ * Pola odpowiedzi, które mnoży `CARDS.stakes`: pieniądze, zaufanie i reputacja. Bez mandatów (`fine`): mandat za sprzedaż
+ * nieletniemu (`MINOR_SALE_FINE`, deck.ts) jest strojony na granicę debetu i zostaje taki, jaki był.
+ */
+const STAKE_KEYS: readonly (keyof CardDelta)[] = ['cash', 'bonus', 'logistics', 'wut', 'trust', 'reputation'];
+
+/**
+ * Efekty na czas, które też mnoży `CARDS.stakes`: ruch i marża w procentach. Bez nich waga decyzji przechyliłaby wybór tam, gdzie
+ * jedna odpowiedź kosztuje złotówki, a druga zmienia ruch (np. glitch kasy: rabat albo zamknięcie). Zamknięcie sklepu i osoby na
+ * zmianie zostają, jakie są: karta mówi „na godzinę” albo „jedna osoba”.
+ */
+const STAKE_MODS: readonly ModKind[] = ['traffic', 'margin'];
+
+/** Odpowiedź z wagą decyzji (`CARDS.stakes`), przed zaokrągleniem. */
+function staked(d: CardDelta): CardDelta {
+  const out: CardDelta = { ...d };
+  for (const k of STAKE_KEYS) if (out[k] !== undefined) out[k] = out[k]! * CARDS.stakes;
+  return out;
+}
 
 /** Kwoty na kartach: zaokrąglone do okrągłych liczb, inne pola do jednego miejsca po przecinku. */
 function roundDelta(d: CardDelta): CardDelta {
@@ -184,13 +216,14 @@ function instantiate(def: CardDef, c: CardContext, seq: number, seedHash: number
   const showAt = Math.max(c.now, dayStart + def.at);
   const params = def.params ? def.params(c, rand01(seedHash, seq, CH.cardParam)) : {};
   const answers = def.answers.map((a): AnswerInstance => ({
-    delta: roundDelta(a.delta ? a.delta(c, params) : {}),
+    delta: roundDelta(staked(a.delta ? a.delta(c, params) : {})),
     mods: (a.mods ? a.mods(c, params) : []).map((m): CardMod => {
       const from = m.from ?? null;
       const start = from === null ? showAt : dayStart + from;
-      return { kind: m.kind, value: m.value, minutes: m.minutes, from, estimate: modEstimate(m.kind, m.value, start, m.minutes, c) };
+      const value = STAKE_MODS.includes(m.kind) ? m.value * CARDS.stakes : m.value;
+      return { kind: m.kind, value, minutes: m.minutes, from, estimate: modEstimate(m.kind, value, start, m.minutes, c) };
     }),
-    risk: a.risk ? { chance: clamp(a.risk.chance(c, params), 0, 1), delta: roundDelta(a.risk.delta(c, params)) } : null,
+    risk: a.risk ? { chance: clamp(a.risk.chance(c, params), 0, 1), delta: roundDelta(staked(a.risk.delta(c, params))) } : null,
   }));
   return { seq, id: def.id, day: c.day, showAt, params, answers, defaultAnswer: Math.min(def.defaultAnswer, answers.length - 1) };
 }

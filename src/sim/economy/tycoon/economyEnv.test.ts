@@ -248,7 +248,7 @@ describe('boty przechodzą dwa miesiące prawdziwej gry', () => {
       expect(table.totals[name]).toHaveLength(seeds.length);
       expect(nonFinite(table.totals[name])).toEqual([]);
       expect(table.gameOver[name]).toEqual([false, false, false]);   // miesiąc nie kończy umowy żadnego bota
-      expect(table.cards[name].every((n) => n >= 15 && n <= 45), name).toBe(true);
+      expect(table.cards[name].every((n) => n >= 8 && n <= 25), name).toBe(true);   // ok. 0,5 karty na dobę
     }
     const play = playBot('mistrz', SEED, month).state;
     expect(play.history).toHaveLength(1);

@@ -73,14 +73,20 @@ const LOG: LogEntry[] = withTaps([
   { minute: at(3, 7), cmd: { type: 'setOrder', auto: true } },
   { minute: at(40, 12), cmd: { type: 'campaign' } },
 ], 28);
-/**
- * Stuknięcia przez cały sezon i remont 1 w 45. dniu (po stuknięciach sklepu stać na 25 tys. zł). Układ sklepu zmienia się w trakcie
- * odtwarzania, ale po remoncie gotówka schodzi poniżej granicy debetu w drugim miesiącu: bieg kończy się bankructwem po dwóch raportach
- * z dodatnim wynikiem (`direct` > 0), czyli taki, jaki gracz mógłby zamrozić i wysłać, gdyby sędzia liczył raporty, które powstały.
- */
+/** Stuknięcia przez cały sezon i remont 1 w 45. dniu (po stuknięciach sklepu stać na 25 tys. zł): układ sklepu zmienia się w trakcie odtwarzania. */
 const LOG_REMONT: LogEntry[] = withTaps([
   { minute: at(45, 7), cmd: { type: 'startRemont' } },
   { minute: at(45, 7, 5), cmd: { type: 'rushRemont' } },
+], 90);
+/**
+ * Stuknięcia przez cały sezon, a od 10 października (dzień 40) osiem osób na zmianie i 30 palet dziennie: pensje, opłata logistyczna
+ * i przejścia zasypane paletami sprowadzają gotówkę poniżej granicy debetu (od SIM_VERSION 5 −100 tys. zł) 29 listopada, przed ostatnim
+ * raportem. Wrześniowy raport jest na plusie, czyli taki bieg gracz mógłby wysłać z tym, co zdążył zarobić, gdyby sędzia liczył
+ * raporty, które powstały. Strojone pod `SEED` przy SIM_VERSION 5 (do SIM_VERSION 4 wystarczał tu sam remont).
+ */
+const LOG_BANKRUPT: LogEntry[] = withTaps([
+  ...Array.from({ length: 6 }, (_, i) => ({ minute: at(40, 9, i), cmd: { type: 'hire' } as const })),
+  { minute: at(40, 9, 10), cmd: { type: 'setOrder', auto: false, manual: 30 } },
 ], 90);
 /** Wynik policzony bezpośrednio z src/sim, tym samym kodem co w bundlu (drugi sposób do porównania). */
 const direct = (run: RunRecord): number => seasonScore(replayRun(run, RANKED_SEASON_END_MINUTE));
@@ -209,13 +215,13 @@ describe('sędzia na zbudowanym bundlu daje ten sam wynik co symulacja z src', (
     expect(JSON.stringify(mod.replayRun(run, RANKED_SEASON_END_MINUTE))).toBe(JSON.stringify(state));
   }, 60_000);
 
-  it('bieg, który bankrutuje przed końcem sezonu, choć ma raporty z dodatnim wynikiem: season-bankrupt, a nie wynik z raportów', async () => {
-    const run: RunRecord = { ...RUN, log: LOG_REMONT };
+  it('bieg, który bankrutuje przed końcem sezonu, choć ma raport z dodatnim wynikiem: season-bankrupt, a nie wynik z raportów', async () => {
+    const run: RunRecord = { ...RUN, log: LOG_BANKRUPT };
     const state = replayRun(run, RANKED_SEASON_END_MINUTE);
     expect(state.gameOver, 'dziennik naprawdę kończy grę').toBe(true);
     expect(state.minute).toBeLessThan(RANKED_SEASON_END_MINUTE);
     expect(state.history.length, 'raporty, które powstały przed bankructwem').toBeGreaterThan(0);
-    expect(seasonScore(state), 'wynik, który dałoby liczenie z raportów').toBeGreaterThan(0);
+    expect(state.history[0]!.profit, 'wrzesień na plusie').toBeGreaterThan(0);
     expect(await makeBundleVerifier(load)(run)).toEqual({ ok: false, reason: 'season-bankrupt' });
   }, 60_000);
 

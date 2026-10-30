@@ -50,8 +50,12 @@ export const REVENUE_PER_CUSTOMER = SHELF_REVENUE_PER_CUSTOMER + HOT_REVENUE_PER
 /** Pojemność mebli (sztuk na kratkę obrysu) i zaplecza (sztuk na kratkę podłogi zaplecza). */
 export const CAPACITY = { gondola: 36, wallShelf: 45, fridge: 35, backroom: 18 } as const;
 
-/** Sztuk na palecie. */
-export const PALLET_ITEMS = 320;
+/**
+ * Sztuk na palecie. 480 od SIM_VERSION 5 (dawniej 320): ten sam towar przychodzi na mniejszej liczbie palet, ok. 3,5–4,5 dziennie
+ * zamiast 5–7 (decyzja właściciela z 30.10.2026: „Palety są za często”). Stałe liczone na paletę (opłata, mandat, złota paleta,
+ * XP, worki) są przeskalowane razem z nią, więc na sztukę towaru kosztują i dają tyle samo co wcześniej.
+ */
+export const PALLET_ITEMS = 480;
 
 // --- Czas ------------------------------------------------------------------------------------------
 
@@ -105,7 +109,7 @@ export const SCO_ACCEPT = 0.65;
 export const UNLOAD_RATE = 6;
 export const RESTOCK_RATE = 20;
 /** Rozładunek wg miejsca palety: z chodnika trzeba nosić przez salę. */
-export const UNLOAD_AT = { sidewalk: 0.75, floor: 1, backroom: 1.15 } as const;
+export const UNLOAD_AT = { sidewalk: 0.75, floor: 1, aisle: 1, backroom: 1.15 } as const;
 /** Sztuk na jedno stuknięcie gracza w paletę (franczyzobiorca pomaga). */
 export const TAP_ITEMS = 8;
 /**
@@ -126,24 +130,36 @@ export const MEDIA_PER_DAY = 140;
  * Opłata franczyzowa na koniec miesiąca: stała część plus udział w obrocie. Centrala bierze swoje (satyra ze specu), a udział
  * rośnie z wielkością sklepu, więc wyrównuje seedy: dwuosobowa zmiana bez decyzji kończy dwa miesiące w okolicy zera, i to
  * w budce, i w flagowcu (balans: tycoon/balance.test.ts). Zaufana Centrali część wraca jako premia od obrotu (trust.ts).
+ * Udział 0,153 od SIM_VERSION 5 (dawniej 0,151): rzadsze karty mniej obciążały biernego gracza.
  */
 export const FRANCHISE_FEE_FIXED = 2000;
-export const FRANCHISE_FEE_SHARE = 0.151;
-/** Palet w dostawie bez opłaty logistycznej; każda kolejna kosztuje. */
-export const PALLETS_FREE = 6;
-export const PALLET_FEE = 60;
-export const RETURN_FEE = 150;
+export const FRANCHISE_FEE_SHARE = 0.153;
+/** Palet w dostawie bez opłaty logistycznej; każda kolejna kosztuje (na sztukę towaru tyle co dawne 6 palet po 60 zł). */
+export const PALLETS_FREE = 4;
+export const PALLET_FEE = 90;
 export const FINE_BASE = 800;
-export const FINE_PER_PALLET = 100;
+export const FINE_PER_PALLET = 150;
+/**
+ * Zagracenie sali (decyzja właściciela z 30.10.2026: palet nikt nie odsyła, nadmiar „zasrywa” sklep). Liczą się palety w sali
+ * i w przejściach: ruch spada o `trafficPerPallet` za każdą (razem z workami w sali, nie niżej niż `trafficFloor`), cierpliwość
+ * w kolejce o jedną osobę za paletę, najwyżej o `patienceMax`, a palety w przejściach co minutę otwarcia obniżają reputację
+ * o `repPerMinute`, liczone najwyżej do `repPalletsMax` palet i nie niżej niż do `repFloor`. Dolne granice zostawiają sklepowi połowę
+ * ruchu i reputację, przy której klienci dalej przychodzą: towar schodzi z półek, więc palety da się rozładować i z zagracenia wyjść.
+ * Paletę spod sklepu, której towaru nie ma gdzie wyłożyć, załoga po `pullInMin` minutach wciąga w przejścia (zamiast czekać na
+ * mandaty Straży Miejskiej, które przy takiej palecie szłyby codziennie aż do bankructwa).
+ */
+export const CLUTTER = {
+  trafficPerPallet: 0.08, trafficFloor: 0.5, patienceMax: 3, repPerMinute: 0.0006, repPalletsMax: 8, repFloor: 25, pullInMin: 120,
+} as const;
 /**
  * Asystent Traszki nie zamawia więcej palet, niż zmiana rozładuje w tyle minut po dostawie (`crewPalletCap`): przy dwóch osobach
- * to 6 palet, mniej więcej tyle, ile sprzeda sklep na start przy 450–550 klientach dziennie.
+ * to 4 palety, mniej więcej tyle, ile sprzeda sklep na start przy 450–550 klientach dziennie.
  */
 export const ASSISTANT_UNLOAD_MIN = 450;
 /**
  * Straż Miejska (decyzja właściciela z 29.10.2026: mandat to rzadkość i skutek zaniedbania, a nie codzienność). Patrol zagląda
  * od `from` do `to`; palety spod sklepu obchodzą go dopiero, gdy najstarsza stoi `graceMin`: mniej więcej tyle dwuosobowa zmiana
- * rozładowuje pełną dostawę asystenta (6 palet, kasjer dorzuca ręce między falami klientów), więc mandat dostaje sklep, w którym
+ * rozładowuje pełną dostawę asystenta (4 palety, kasjer dorzuca ręce między falami klientów), więc mandat dostaje sklep, w którym
  * palet nikt nie rusza (np. dzień z chorym pracownikiem, kiedy jedyna osoba stoi przy kasie).
  * Pierwszy obchód dnia z takimi paletami to upomnienie bez kary; mandat dopiero przy kolejnym obchodzie tego samego dnia, co
  * najmniej `warnGapMin` po upomnieniu, i nie częściej niż co `fineGapMin`. Szansa obchodu na minutę: `patrol` razy
@@ -156,19 +172,19 @@ export const STRAZ = {
   warnGapMin: 60,
   fineGapMin: 180,
   patrol: 0.002,
-  perPallet: 0.25,
+  perPallet: 0.375,
   perHour: 0.2,
 } as const;
-/** Kredyt kupiecki: wartość towaru w sklepie (półki, zaplecze, palety) ponad limit wstrzymuje zamówienie. */
+/** Kredyt kupiecki: wartość towaru w sklepie i w drodze (półki, zaplecze, palety, dostawy) ponad limit wstrzymuje zamówienie. */
 export const CREDIT_LIMIT = 70_000;
-/** Gotówka poniżej tego przy zamknięciu miesiąca to miesiąc bez opłacenia Centrali; drugi taki z rzędu kończy umowę (spec §10). */
 /**
  * Granica debetu (decyzja właściciela z 29.10.2026: „za duży debet to koniec gry”): gotówka poniżej niej kończy grę od razu, także
  * w środku miesiąca. Opłata franczyzowa schodzi na koniec miesiąca, więc wtedy gotówka ma dołek; bierny gracz bez pecha kończy go
  * w okolicy zera (balans: tycoon/balance.test.ts), a granica stoi na tyle daleko, żeby sam ten dołek gry nie kończył. Od
- * `DEBT_WARN_SHARE` granicy Centrala ostrzega, ile zostało do końca.
+ * `DEBT_WARN_SHARE` granicy Centrala ostrzega, ile zostało do końca. −100 000 od SIM_VERSION 5 (decyzja właściciela z 30.10.2026:
+ * „zwiększ możliwy debet do 100k”; w playteście dołek po opłacie za duży sklep sięgał ok. −100 tys.).
  */
-export const DEBT_LIMIT = -10_000;
+export const DEBT_LIMIT = -100_000;
 export const DEBT_WARN_SHARE = 0.5;
 export const START_CASH = 2000;
 

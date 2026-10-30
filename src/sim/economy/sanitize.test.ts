@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { generateStore } from '@/sim/store/generateStore';
-import { CATS, MINUTES_PER_DAY } from './catalog';
+import { CATS, MINUTES_PER_DAY, PALLET_ITEMS } from './catalog';
 import { dateOfDay } from './calendar';
 import { buyEquipment, buyUpgrade, createEconomy, stepMinute, type EconEvent, type EconomyState } from './economy';
 import { LIMITS, sanitizeEconomy } from './sanitize';
@@ -95,7 +95,7 @@ describe('sanitizeEconomy: poprawny stan przechodzi bez zmian', () => {
       const { trust, priority, giftSeq: _gs, tapBoostUntil: _tb, quests: _q, questSeq: _qs, cleanDays: _cd, ...rest } = raw;
       const { tycoon, ...progress } = out;
       expect(progress).toEqual({
-        ...rest, lastReport: null, shift: defaults(inf, seed).shift,
+        ...rest, lastReport: null, shift: defaults(inf, seed).shift, milestonesReady: [],
         tapStreak: 0, lastTapAt: -1e9, lastWarnAt: -1e9,
         today: withNewCounters(raw.today), month: withNewCounters(raw.month), total: withNewCounters(raw.total),
       });
@@ -453,7 +453,7 @@ describe('sanitizeEconomy: napraw to, co da się naprawić', () => {
     expect(out.nextPalletId).toBe(41);
   });
 
-  it('worki na palecie: liczba całkowita od 1 wraca z zapisu, a śmieć usuwa pole (rozładunek weźmie wtedy jeden worek)', () => {
+  it('worki na palecie: liczba od 1 wraca z zapisu (od SIM_VERSION 5 także ułamek, 1,5), a śmieć usuwa pole (rozładunek weźmie wtedy jeden worek)', () => {
     const s = defaults();
     const p = json(s.pallets[0]) as Record<string, unknown>;
     const bagsOf = (bags: unknown): unknown => {
@@ -462,7 +462,8 @@ describe('sanitizeEconomy: napraw to, co da się naprawić', () => {
     };
     expect(bagsOf(2)).toBe(2);
     expect(bagsOf(1)).toBe(1);
-    expect(bagsOf(2.4)).toBe(2);       // całkowite
+    expect(bagsOf(1.5)).toBe(1.5);     // zwykła paleta od SIM_VERSION 5
+    expect(bagsOf(2.4)).toBe(2.4);
     expect(bagsOf(0)).toBe(1);         // od 1
     expect(bagsOf(-3)).toBe(1);
     expect(bagsOf(1e308)).toBeLessThanOrEqual(8);   // mała górna granica, nie nieskończoność
@@ -484,7 +485,7 @@ describe('sanitizeEconomy: napraw to, co da się naprawić', () => {
 
   it('tryb gry po zepsuciu enuma wraca do domyślnego', () => {
     const out = sanitizeEconomy({ ...json(defaults()), order: { auto: 'tak', manual: null } }, defaults(), info)!;
-    expect(out.order).toEqual({ auto: true, manual: 4 });
+    expect(out.order).toEqual({ auto: true, manual: 3 });
   });
 
   it('profil puli ludzi po zepsuciu wraca do domyślnego, a zmiana z ostatniej minuty do pustej', () => {
@@ -573,7 +574,7 @@ describe('sanitizeEconomy: skończone, ale absurdalne liczby (zapis ręcznie zmi
       milestones: big('pallet1'),
     }, s);
     expect(out.deliveries.length).toBeLessThanOrEqual(8);
-    expect(out.pallets.length).toBeLessThanOrEqual(64);
+    expect(out.pallets.length).toBeLessThanOrEqual(256);
     expect(out.equipment.length).toBeLessThanOrEqual(64);
     expect(out.history.length).toBeLessThanOrEqual(12_000);
     expect(out.milestones.length).toBeLessThanOrEqual(200);
@@ -626,11 +627,11 @@ describe('sanitizeEconomy: skończone, ale absurdalne liczby (zapis ręcznie zmi
     const out = load({ pallets: [{ ...p, id: 1e308, spot: 1e308, items, total: 1e308, initial: 1e308, since: -1e308 }] }, s);
     const [pallet] = out.pallets;
     const sum = CATS.reduce((n, c) => n + pallet!.items[c], 0);
-    expect(sum).toBeLessThanOrEqual(321);
+    expect(sum).toBeLessThanOrEqual(PALLET_ITEMS + 1);
     expect(Number.isFinite(sum) && Number.isFinite(pallet!.total)).toBe(true);
-    expect(pallet!.initial).toBeLessThanOrEqual(321);
+    expect(pallet!.initial).toBeLessThanOrEqual(PALLET_ITEMS + 1);
     expect(pallet!.id).toBeLessThanOrEqual(2 ** 30);
-    expect(pallet!.spot).toBeLessThanOrEqual(64);
+    expect(pallet!.spot).toBeLessThanOrEqual(256);
     expect(pallet!.since).toBeGreaterThanOrEqual(0);
     expect(out.nextPalletId).toBeGreaterThan(pallet!.id);
     plays(out);

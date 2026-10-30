@@ -124,10 +124,14 @@ describe('api/** na Vercelu (atrapa Upstash przez fetch)', () => {
   // prawdziwa droga przez `api/runs.ts`; bez bundla na dysku ten przypadek pokrywa tests/judgeBundle.test.ts (buduje własny).
   it.runIf(bundleOnDisk)(
     'ze zbudowanym bundlem sędziego: bieg, który bankrutuje przed końcem sezonu, dostaje 422 season-bankrupt, a nick i ranking zostają puste', async () => {
-      // zamówienia ręczne na maksa od pierwszego dnia: gotówka schodzi poniżej granicy debetu, zanim sklep zdąży zarobić
+      // osiem osób na zmianie i zamówienia ręczne na maksa od pierwszego dnia: gotówka schodzi poniżej granicy debetu (od SIM_VERSION 5
+      // −100 tys. zł), zanim sklep zdąży zarobić
       const bankrupt: RunRecord = {
         seed: run.seed, gameVersion: run.gameVersion, generatorVersion: GENERATOR_VERSION, simVersion: SIM_VERSION, mode: 'ranked',
-        log: [{ minute: 360, seq: 0, cmd: { type: 'setOrder', auto: false, manual: 30 } }],
+        log: [
+          ...Array.from({ length: 6 }, (_, i) => ({ minute: 360, seq: i, cmd: { type: 'hire' } as const })),
+          { minute: 360, seq: 6, cmd: { type: 'setOrder', auto: false, manual: 30 } },
+        ],
       };
       const state = replayRun(bankrupt, RANKED_SEASON_END_MINUTE);
       expect(state.gameOver, 'dziennik naprawdę kończy grę').toBe(true);
@@ -154,7 +158,16 @@ describe('api/** na Vercelu (atrapa Upstash przez fetch)', () => {
   // a jej wynik zawiera listopadową stratę (debet z ostatniego zamknięcia jest już w raporcie).
   it.runIf(bundleOnDisk)(
     'ze zbudowanym bundlem sędziego: bieg z debetem dopiero przy zamknięciu listopada (trzy raporty) jest przyjęty, a wynik zawiera listopadową stratę', async () => {
-      const lateDebt: RunRecord = { seed: 'kiełbasa-42', gameVersion: run.gameVersion, generatorVersion: GENERATOR_VERSION, simVersion: SIM_VERSION, mode: 'ranked', log: [] };
+      // od SIM_VERSION 5 (granica debetu −100 tys. zł) bierny sezon tego sklepu przeżywa: osiem osób i 30 palet dziennie od 18 października
+      // sprowadzają go poniżej granicy dopiero przy zamknięciu 30 listopada (ten sam bieg w src/sim/ranked.test.ts)
+      const from = 48 * 1440 + 9 * 60;
+      const lateDebt: RunRecord = {
+        seed: 'kiełbasa-42', gameVersion: run.gameVersion, generatorVersion: GENERATOR_VERSION, simVersion: SIM_VERSION, mode: 'ranked',
+        log: [
+          ...Array.from({ length: 6 }, (_, i) => ({ minute: from + i, seq: i, cmd: { type: 'hire' } as const })),
+          { minute: from + 10, seq: 6, cmd: { type: 'setOrder', auto: false, manual: 30 } },
+        ],
+      };
       const state = replayRun(lateDebt, RANKED_SEASON_END_MINUTE);
       expect(state.gameOver, 'ostatnie zamknięcie kończy grę (jeśli ekonomia się zmieniła, dobierz inny sklep)').toBe(true);
       expect(state.history).toHaveLength(RANKED_SEASON_MONTHS);

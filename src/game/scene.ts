@@ -15,14 +15,13 @@ import { CrowdMirror } from './crowdMirror';
 import { bindControls } from './controls';
 import { advanceClock, clockAlpha } from './loop';
 import type { GameSession } from './session';
-import { palletRefsOf } from './palletRefs';
+import { crowdObstaclesOf, palletMarkersOf, palletRefsOf } from './palletRefs';
 import { SIM_STEP, crowdHeadcount, feedCrowdMirror, payLook, setCrowdExtras, setCrowdRate, stepCrowd, type CrowdOptions } from '@/sim/crowd/crowd';
 import { CATS, HOUR_CURVE } from '@/sim/economy/catalog';
 import { minuteOfDay } from '@/sim/economy/calendar';
 import { effects, expectedDailyCustomers, isClosedForRemont, isOpenForCustomers, slotUsage } from '@/sim/economy/economy';
 import { slotUnits } from '@/sim/economy/slots';
 import { staffOnShift } from '@/sim/economy/tycoon/shift';
-import { spotCells } from '@/sim/economy/storeInfo';
 import { generateStore } from '@/sim/store/generateStore';
 import { CELL_SIZE_M } from '@/sim/grid';
 import { LINES, missingLine, pick } from '@/ui/game/lines';
@@ -257,11 +256,8 @@ export function createSceneHost(deps: SceneDeps): SceneHost {
     loaded.equipment?.sync(slotUsage(s));
     for (const c of CATS) loaded.goods.setFill(c, info.shelfCap[c] > 0 ? s.shelf[c] / info.shelfCap[c] : 0);
 
-    // tłum: przeszkody z palet (chodnik, sala) i miejsca płacenia przy kasach samoobsługowych
-    const obstacles = s.pallets.filter((p) => p.loc !== 'backroom').flatMap((p) => {
-      const spot = info.spots[p.loc][p.spot];
-      return spot ? spotCells(spot) : [];
-    });
+    // tłum: przeszkody z palet (chodnik, sala, przejścia) i miejsca płacenia przy kasach samoobsługowych
+    const obstacles = crowdObstaclesOf(s, info);
     const usage = slotUsage(s);
     const pay = info.slots.flatMap((slot) => slotUnits(layout, slot, usage.get(slot.id) ?? []))
       .filter((u) => u.equipment === 'sco' && u.access)
@@ -293,15 +289,8 @@ export function createSceneHost(deps: SceneDeps): SceneHost {
       const want = timeOfDayAt(s.minute);
       if (want !== tod) setTimeOfDay(want);
     }
-    // znaczniki nad paletami: złota (premia) i stojąca pod sklepem ponad godzinę (ryzyko mandatu)
-    const marks = [];
-    for (const p of s.pallets) {
-      const at = loaded.pallets?.worldPosition(p.id);
-      if (!at) continue;
-      at.y = 1.45;
-      if (p.golden) marks.push({ key: `g${p.id}`, world: at, text: '✨', kind: 'golden' as const });
-      else if (p.loc === 'sidewalk' && s.minute - p.since >= 60) marks.push({ key: `r${p.id}`, world: at, text: '⚠️', kind: 'risk' as const });
-    }
+    // znaczniki nad paletami: złota (premia), pod sklepem ponad godzinę (mandat) i w przejściach (zagracenie)
+    const marks = palletMarkersOf(s, info, (id) => loaded?.pallets?.worldPosition(id) ?? null);
     overlay?.setMarkers(marks);
     const open = isOpenForCustomers(s);
     const closed = isClosedForRemont(s) ? 'REMONT' : !open ? 'ZAMKNIĘTE' : null;

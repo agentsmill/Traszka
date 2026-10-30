@@ -54,6 +54,8 @@ const PLAN = [
  */
 const LOCKED_UPGRADES = ['drugaKasa', 'nocne', 'rampa', 'traszkapka', 'scoSoft', 'kamery', 'wykladacz', 'dostawy2', 'humanoid'];
 const EQUIPMENT = ['sco', 'bankomat', 'piec', 'paczkownik'];
+/** Cele z `src/sim/economy/milestones.ts` (odbiór przechodzi `isCommand`; czy cel czeka na odbiór, rozstrzyga ekonomia). */
+const MILESTONE_IDS = ['pallet1', 'upgrade1', 'cust500', 'staff3', 'earned10k', 'cust5k'];
 
 /**
  * Każdy typ polecenia osobno: `i` to numer wpisu w scenariuszu. Pola dobrane tak, żeby polecenie przechodziło `isCommand` (nie było
@@ -78,11 +80,12 @@ export const COMMANDS = {
   campaign: () => ({ type: 'campaign' }),
   rushRemont: () => ({ type: 'rushRemont' }),
   answerCard: (i) => ({ type: 'answerCard', seq: 1 + (i % 120), answer: i % 3 }),
+  claimMilestone: (i) => ({ type: 'claimMilestone', id: MILESTONE_IDS[i % MILESTONE_IDS.length] }),
 };
 const COMMAND_NAMES = Object.keys(COMMANDS);
 /**
  * Polecenia do wypełniacza w mieszance i do scenariusza „jedna minuta”: bez tych, które w `SEED` kończą grę przy tysiącach powtórek
- * (zatrudnienie bez końca, remont, odsyłanie palet co dostawę).
+ * (zatrudnienie bez końca, remont; odsyłanie palet od SIM_VERSION 5 zawsze odmawia, ale zostaje poza wypełniaczem jak dotąd).
  */
 const SAFE_NAMES = COMMAND_NAMES.filter((n) => !['hire', 'startRemont', 'returnPallet'].includes(n));
 /** Dni na końcu sezonu, w które idzie scenariusz „tylko hire”: zatrudnienie do `STAFF_MAX` kosztuje kilka tysięcy, ale nie zdąży zrujnować sklepu. */

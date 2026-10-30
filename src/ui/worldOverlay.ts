@@ -4,12 +4,12 @@ import { Vector3, type Camera } from 'three';
  * Elementy HTML przyklejone do punktów sceny: dymek kolejki nad kasą i „latające” liczby po stuknięciu. Poza Preactem,
  * bo pozycja zmienia się co klatkę.
  */
-export interface WorldMarker { key: string; world: Vector3; text: string; kind: 'golden' | 'risk' }
+export interface WorldMarker { key: string; world: Vector3; text: string; kind: 'golden' | 'risk' | 'clutter' }
 
 export interface WorldOverlay {
   /** Dymek nad kasą: tekst i stan (`warn` gdy kolejka odstrasza klientów). `null` chowa. */
   setTill(world: Vector3 | null, text: string, warn: boolean): void;
-  /** Znaczniki nad paletami (złota, ryzyko mandatu). Lista zastępuje poprzednią. */
+  /** Znaczniki nad paletami (złota, ryzyko mandatu, zagracenie przejść). Lista zastępuje poprzednią. */
   setMarkers(markers: WorldMarker[]): void;
   /** Dymek z wypowiedzią klienta nad punktem zwracanym przez `where` (np. pozycja agenta); znika po `ms`. */
   say(where: () => Vector3 | null, text: string, ms?: number): void;

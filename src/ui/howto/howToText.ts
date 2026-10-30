@@ -1,6 +1,6 @@
 import {
   ASSISTANT_UNLOAD_MIN, CATS, CAT_INFO, DEBT_LIMIT, DELIVERY_AT, FRANCHISE_FEE_FIXED, FRANCHISE_FEE_SHARE, HOT, MINUTES_PER_DAY, MINUTES_PER_SECOND_CLOSED,
-  MINUTES_PER_SECOND_OPEN, OPEN_FROM, OPEN_TO, ORDER_DEADLINE, PALLETS_FREE, PALLET_FEE, RETURN_FEE, STAFF_MAX, STRAZ, TILL_TAP_QUEUE_MIN, type Cat,
+  MINUTES_PER_SECOND_OPEN, OPEN_FROM, OPEN_TO, ORDER_DEADLINE, PALLETS_FREE, PALLET_FEE, STAFF_MAX, STRAZ, TILL_TAP_QUEUE_MIN, type Cat,
 } from '@/sim/economy/catalog';
 import { nextRankAt, rankFor } from '@/sim/economy/progress';
 import { KPI } from '@/sim/economy/tycoon/kpi';
@@ -124,7 +124,7 @@ export function howToDetails(): HowToSection[] {
         `Zamówienie na jutro zamyka się o ${hourOf(ORDER_DEADLINE)}, dostawa przyjeżdża zwykle o ${hourOf(DELIVERY_AT)}. Domyślnie zamawia Asystent Traszki, ręcznie ustawisz je w zakładce Palety.`,
         `Asystent zamawia najwyżej tyle palet, ile ludzie poza kasą rozładują w ${hours(ASSISTANT_UNLOAD_MIN / 60)}: więcej ludzi, więcej towaru.`,
         `Straż Miejska zagląda od ${hourOf(STRAZ.from)}, gdy palety stoją pod sklepem ponad ${hours(STRAZ.graceMin / 60)}: najpierw upomina, potem daje mandat.`,
-        `Palety ponad ${PALLETS_FREE} w zamówieniu kosztują po ${zl(PALLET_FEE)}, a gdy brakuje miejsca, kierowca zabiera paletę i liczy ${zl(RETURN_FEE)}.`,
+        `Palety ponad ${PALLETS_FREE} w zamówieniu kosztują po ${zl(PALLET_FEE)}. Palet nikt nie odsyła: gdy zabraknie miejsca, nadmiar stoi w przejściach sali, klienci się o niego potykają i odchodzą, a reputacja spada, dopóki palet nie rozładujesz.`,
         'Paleta „Do sali” przeszkadza klientom. Worki po rozładunku trzeba wynieść, inaczej zajmą zaplecze.',
       ],
     },
@@ -144,7 +144,7 @@ export function howToDetails(): HowToSection[] {
     {
       title: 'Zaufanie Centrali',
       paragraphs: [
-        `Zaufanie startuje od ${num(TRUST.start)} punktów, rośnie za trafione KPI (${signedPts(KPI.trustHit)}) i miesiąc na plusie (${signedPts(TRUST.monthProfit)}), a spada za mandat (${signedPts(TRUST.fine)}), miesiąc na minusie (${signedPts(TRUST.monthLoss)}) i palety odesłane (${signedPts(TRUST.returnedPallet)}) lub zabrane (${signedPts(TRUST.driverReturned)}).`,
+        `Zaufanie startuje od ${num(TRUST.start)} punktów, rośnie za trafione KPI (${signedPts(KPI.trustHit)}) i miesiąc na plusie (${signedPts(TRUST.monthProfit)}), a spada za mandat (${signedPts(TRUST.fine)}) i miesiąc na minusie (${signedPts(TRUST.monthLoss)}).`,
         ...bonus,
         `Umowę stracisz przy zerze na koniec miesiąca albo od razu, gdy gotówka spadnie poniżej ${signedZl(DEBT_LIMIT)}.`,
       ],
@@ -153,7 +153,7 @@ export function howToDetails(): HowToSection[] {
       title: 'Czas i cele',
       paragraphs: [
         `Doba trwa ok. ${dayLengthText()} przy ${slowest.label}, a sklep działa od ${hourOf(OPEN_FROM)} do ${hourOf(OPEN_TO)}. W niedzielę ruch rośnie ×${num(SUNDAY_TRAFFIC)}.`,
-        `W zakładce Cele czeka cel do niedzieli: trafiony daje premię, zaufanie i XP, a nietrafiony odbiera zaufanie (${signedPts(KPI.trustMiss)}).`,
+        `W zakładce Cele czeka cel do niedzieli: trafiony daje premię, zaufanie i XP, a nietrafiony odbiera zaufanie (${signedPts(KPI.trustMiss)}). Spełnione kamienie milowe odbierzesz przyciskiem „Odbierz”: dopiero wtedy wpadają Ogonki i XP.`,
       ],
     },
   ];

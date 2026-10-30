@@ -68,6 +68,7 @@ export const AFTER: Record<Command['type'], AfterStep> = {
   tapPallet: { okToast: false, sfx: 'tap', buzz: 8 },
   tapTill: { okToast: false, sfx: 'cash', buzz: 8 },
   movePallet: { okToast: true },
+  // polecenie historyczne: od SIM 5 sim zawsze odmawia, a interfejs go nie wysyła; wpis zostaje, bo tabela ma klucz dla każdego typu
   returnPallet: { okToast: true, clearSelection: 'after' },
   setOrder: { okToast: false },
   setStaffProfile: { okToast: false },
@@ -81,6 +82,7 @@ export const AFTER: Record<Command['type'], AfterStep> = {
   rushRemont: { okToast: true },
   // wynik odpowiedzi przychodzi zdarzeniem `card-result` (toast z handleEvents), więc sam wynik polecenia nie ma tekstu
   answerCard: { okToast: false, sfx: 'pop', persist: true },
+  claimMilestone: { okToast: true, sfx: 'coins', persist: true, confetti: { fx: 0.5, fy: 0.4, count: 18 } },
 };
 
 /** Typ spoza tabeli (polecenie obejściem typów): bez kroków po poleceniu, a odmowę z komunikatem da `applyCommand`. */

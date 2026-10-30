@@ -6,9 +6,11 @@ import {
   buyEquipment, buyUpgrade, effects, emptyCounters, kpiMetricsOf, kpiScaleOf, stepMinute, tapPallet, type CommandResult,
   type Counters, type EconEvent, type EconomyState,
 } from '@/sim/economy/economy';
+import { applyCommand } from '@/sim/economy/commands';
+import { visibleCards } from '@/sim/economy/tycoon/cards';
 import { newKpiWeek } from '@/sim/economy/tycoon/kpi';
 import { LIMITS } from '@/sim/economy/sanitize';
-import { computeStoreInfo } from '@/sim/economy/storeInfo';
+import { computeStoreInfo, palletPlace } from '@/sim/economy/storeInfo';
 import { REMONTS } from '@/sim/economy/upgrades';
 import { SIM_VERSION } from '@/sim/simVersion';
 import { GENERATOR_VERSION, generateStore } from '@/sim/store/generateStore';
@@ -88,7 +90,8 @@ const legacyTrust = (e: EconomyState): number => (e as unknown as { trust: numbe
  * (przeszło do `tycoon.trust`), bez starego `priority` (przeszedł do profilu w `tycoon.staff`), z pustą zmianą (`shift`: zapis
  * nie pamięta ostatniej minuty), z zerowymi licznikami `bonus`, `wut` i `fineCount` (także w raporcie, który dostaje `detail: null`), z polami combo,
  * których zapisy sprzed L1 jeszcze nie mają, i bez pól paczki od Centrali (`giftSeq`, `tapBoostUntil`), które przepadają.
- * Migracja: brak serii (`tapStreak` 0) i ostatnie stuknięcie dawno temu (`lastTapAt` -1e9, jak `lastFineAt`).
+ * Migracja: brak serii (`tapStreak` 0) i ostatnie stuknięcie dawno temu (`lastTapAt` -1e9, jak `lastFineAt`), pusta lista celów do odebrania
+ * (`milestonesReady`).
  */
 const asLoaded = (e: EconomyState): Omit<EconomyState, 'tycoon'> => {
   const { trust: _, priority: __, giftSeq: ___, tapBoostUntil: ____, ...rest } = withoutTycoon(withoutQuests(e)) as
@@ -104,6 +107,7 @@ const asLoaded = (e: EconomyState): Omit<EconomyState, 'tycoon'> => {
     tapStreak: 0,
     lastTapAt: -1e9,
     lastWarnAt: -1e9,   // zapis sprzed upomnień Straży: żadnego upomnienia
+    milestonesReady: [],   // zapis sprzed SIM 5: cele z `milestones` są już odebrane, nic nie czeka na „Odbierz”
   };
 };
 
@@ -282,7 +286,7 @@ describe('migracja zapisu v1 (sam stan ekonomii, bez układu)', () => {
       expect(s.layout).toEqual(layoutFor(seed, remont));
       expect(s.layoutLevel).toBe(remont);
       // palety i sprzęt wskazują na istniejące miejsca i sloty w układzie
-      for (const p of s.econ.pallets) expect(s.info.spots[p.loc][p.spot], `${p.loc}#${p.spot}`).toBeDefined();
+      for (const p of s.econ.pallets) expect(palletPlace(s.info, p.loc, p.spot), `${p.loc}#${p.spot}`).not.toBeNull();
       for (const e of s.econ.equipment) expect(s.info.slots.some((x) => x.id === e.slot), String(e.slot)).toBe(true);
       expect(s.econ.pallets.length).toBeGreaterThan(0);
 
@@ -386,7 +390,7 @@ describe('zapisy v2 z produkcji', () => {
         expect(storage.getItem(key(seed))).toBe(text(file));
         expect(storage.getItem(`${key(seed)}:broken`)).toBeNull();
         // palety i sprzęt stoją w miejscach, które istnieją w zapisanym układzie
-        for (const p of s.econ.pallets) expect(s.info.spots[p.loc][p.spot], `${p.loc}#${p.spot}`).toBeDefined();
+        for (const p of s.econ.pallets) expect(palletPlace(s.info, p.loc, p.spot), `${p.loc}#${p.spot}`).not.toBeNull();
         for (const e of s.econ.equipment) expect(s.info.slots.some((slot) => slot.id === e.slot), String(e.slot)).toBe(true);
       });
 
@@ -473,6 +477,47 @@ describe('zapisy z produkcji a stan tycoona', () => {
       expectPlayable(s);
     });
   }
+});
+
+describe('zapis z SIM_VERSION 4 (palety po 320 sztuk, cele odebrane same, zamówienie ręczne)', () => {
+  // zapis zrobiony kodem z commita 2446bb0 (SIM_VERSION 4): bot `decydent` w sklepie `kopytka-541`, od 4. dnia ręcznie 12 palet
+  // dziennie, zapisany 7. dnia o 8:00: dziesięć palet pod sklepem, w sali i na zapleczu, trzy cele odebrane, zamówienie ręczne
+  const FILE = 'save-sim4-palety.json';
+  const SEED_SIM4 = 'kopytka-541';
+
+  it('wczytuje się bez zmian w paletach, celach i zamówieniu, a gra idzie dalej z nowymi zasadami', () => {
+    const was = (JSON.parse(text(FILE)) as SaveEnvelope).econ;
+    storage.setItem(key(SEED_SIM4), text(FILE));
+    const s = createSession(SEED_SIM4);
+    expect(s.fromSave).toBe(true);
+    expect(s.loadNotice).toBeNull();
+    expect(errorLog).not.toHaveBeenCalled();
+    // palety stoją na swoich miejscach, z tym samym towarem (stara paleta ma 320 sztuk na starcie)
+    expect(s.econ.pallets).toEqual(was.pallets);
+    expect(was.pallets.some((p) => p.loc === 'floor') && was.pallets.some((p) => p.loc === 'sidewalk')).toBe(true);
+    expect(Math.max(...was.pallets.map((p) => p.initial))).toBe(320);
+    // cele z SIM 4 są odebrane i tak zostają; do odebrania nic nie czeka
+    expect(s.econ.milestones).toEqual(was.milestones);
+    expect(s.econ.milestones.length).toBeGreaterThan(0);
+    expect(s.econ.milestonesReady).toEqual([]);
+    expect(s.econ.order).toEqual(was.order);
+    for (const field of ['cash', 'level', 'xp', 'upgrades', 'reputation', 'staff'] as const) expect(s.econ[field], field).toEqual(was[field]);
+    // dwa dni dalej: nowe dostawy po 480 sztuk, nic nie znika, nadmiar w przejściach zamiast kierowcy, który zabiera
+    const events: EconEvent[] = [];
+    const before = s.econ.pallets.length + s.econ.total.palletsUnloaded;
+    let delivered = 0;
+    for (let i = 0; i < 2 * MINUTES_PER_DAY; i++) {
+      const out: EconEvent[] = [];
+      for (const card of visibleCards(s.econ.tycoon.cards, s.econ.minute)) applyCommand(s.econ, s.info, { type: 'answerCard', seq: card.seq, answer: card.defaultAnswer });
+      stepMinute(s.econ, s.info, out);
+      for (const e of out) if (e.kind === 'delivery') delivered += Number(/Dostawa: (\d+)/.exec(e.text)![1]);
+      events.push(...out);
+    }
+    expect(delivered).toBeGreaterThan(0);
+    expect(s.econ.pallets.length + s.econ.total.palletsUnloaded).toBe(before + delivered);
+    expect(events.some((e) => e.text.includes('zabrał'))).toBe(false);
+    expectPlayable(s);
+  });
 });
 
 describe('uszkodzone zapisy', () => {
@@ -1016,7 +1061,7 @@ describe('withLayoutFromSeed (druga próba po nieudanej budowie świata w scenie
     played.econ.equipment.push({ id: 'bankomat', slot: 'slot-którego-nie-ma' });
     const again = withLayoutFromSeed(played);
     expect(again.econ.pallets.length).toBeGreaterThan(0);
-    for (const p of again.econ.pallets) expect(again.info.spots[p.loc][p.spot], `${p.loc}#${p.spot}`).toBeDefined();
+    for (const p of again.econ.pallets) expect(palletPlace(again.info, p.loc, p.spot), `${p.loc}#${p.spot}`).not.toBeNull();
     for (const e of again.econ.equipment) expect(e.slot === null || again.info.slots.some((x) => x.id === e.slot), String(e.slot)).toBe(true);
     expectPlayable(again);
   });
@@ -1098,11 +1143,40 @@ describe('stan z zapisu pasuje do układu sklepu (palety, sprzęt i zapasy po r�
     const s = createSession(BLOK);
     expect(s.loadNotice).toBeNull();
     expect(s.econ.cash).toBe(played.econ.cash);
-    for (const p of s.econ.pallets) expect(s.info.spots[p.loc][p.spot], `${p.loc}#${p.spot}`).toBeDefined();
+    for (const p of s.econ.pallets) expect(palletPlace(s.info, p.loc, p.spot), `${p.loc}#${p.spot}`).not.toBeNull();
     for (const e of s.econ.equipment) expect(e.slot === null || s.info.slots.some((x) => x.id === e.slot), String(e.slot)).toBe(true);
     expect(s.econ.shelf.napoje).toBeLessThanOrEqual(s.info.shelfCap.napoje);
     expect(CATS.reduce((n, c) => n + s.econ.backroom[c], 0)).toBeLessThanOrEqual(effectsBackroomCap(s));
     expectPlayable(s);
+  });
+
+  it('paleta w przejściu pasuje do układu przy dowolnym numerze miejsca (piętra stosu), a numer poza zwykłą listą nie pasuje', () => {
+    for (const seed of [BLOK, PAWILON]) {
+      const played = playedSession(seed);
+      const aisle = played.info.spots.aisle.length;
+      expect(aisle, seed).toBeGreaterThan(0);
+      const stacked = { loc: 'aisle' as const, spot: aisle * 3 + 1 };   // trzecie piętro stosu na drugim kwadracie
+      expect(palletPlace(played.info, stacked.loc, stacked.spot)).toEqual({ spot: played.info.spots.aisle[1], level: 3 });
+      const blob = JSON.parse(storage.getItem(key(seed))!) as { econ: EconomyState };
+      // paleta z towarem, która stoi w zapisie (po kilku dniach gry mogły zostać same rozładowane, więc dokładamy własną)
+      const items = Object.fromEntries(CATS.map((c) => [c, 0])) as Record<(typeof CATS)[number], number>;
+      items.napoje = 100;
+      const pallet = { id: 9_001, loc: 'sidewalk' as const, spot: 0, items, total: 100, initial: 100, since: blob.econ.minute };
+      blob.econ.pallets = [{ ...pallet, ...stacked }];
+      storage.setItem(key(seed), JSON.stringify(blob));
+      const s = createSession(seed);
+      expect(s.loadNotice, seed).toBeNull();
+      expect(s.econ.pallets, seed).toHaveLength(1);
+      expect(s.econ.pallets[0], seed).toMatchObject(stacked);   // zapis jest w porządku, `relayout` niczego nie przestawia
+
+      // zwykłe miejsce poza listą (zapis z innego układu) nadal jest do naprawy
+      blob.econ.pallets = [{ ...pallet, loc: 'floor', spot: 400 }];
+      storage.setItem(key(seed), JSON.stringify(blob));
+      const fixed = createSession(seed);
+      expect(fixed.econ.pallets, seed).toHaveLength(1);
+      for (const p of fixed.econ.pallets) expect(palletPlace(fixed.info, p.loc, p.spot), `${seed} ${p.loc}#${p.spot}`).not.toBeNull();
+      expect(fixed.econ.pallets[0], seed).not.toMatchObject({ loc: 'floor', spot: 400 });
+    }
   });
 
   it('prawdziwy zapis jest w porządku sam z siebie: wczytanie niczego nie przestawia (zapis i wczytanie dają ten sam stan)', () => {

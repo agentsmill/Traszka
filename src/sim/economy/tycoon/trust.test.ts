@@ -25,7 +25,7 @@ describe('zaufanie Centrali', () => {
     addTrust(t, 'mandaty', TRUST.fine);
     addTrust(t, 'mandaty', TRUST.fine);
     addTrust(t, 'kpi', TRUST.kpiHit);
-    addTrust(t, 'palety', TRUST.returnedPallet);
+    addTrust(t, 'palety', -4);   // przyczyna z SIM 4 (odesłane palety): stare raporty ją mają
     const m = closeTrustMonth(t);
     expect(m).toEqual({ start: 65, end: 62, delta: -3, reasons: [['palety', -4], ['kpi', 3], ['mandaty', -2]] });
     expect(t.monthStart).toBe(62);

@@ -3,7 +3,7 @@ import { clamp } from './time';
 
 /**
  * Zaufanie Centrali (spec §7.5, §6.4, §7.3): miernik 0–100 widoczny od pierwszego dnia. Rośnie z KPI tygodnia, audytów,
- * odpowiedzi na okólniki i dobrego wyniku miesiąca; spada z mandatów, odesłanych palet, nietrafionych KPI i straty.
+ * odpowiedzi na okólniki i dobrego wyniku miesiąca; spada z mandatów, nietrafionych KPI i straty (do SIM_VERSION 4 także z odesłanych palet).
  * Od niego zależy przydział produktów wiralowych, premia od obrotu i to, jak często Centrala przysyła audyt.
  * Zaufanie na zerze przy zamknięciu miesiąca to wypowiedzenie umowy (spec §10).
  */
@@ -16,6 +16,7 @@ export const TRUST_REASON_LABEL: Record<TrustReason, string> = {
   okolnik: 'Okólniki Centrali',
   audyt: 'Audyty i tajemniczy klient',
   mandaty: 'Mandaty',
+  // przyczyna z SIM_VERSION 4 i starszych (odesłane palety): nowa gra jej nie nalicza, ale stare raporty miesięczne ją mają
   palety: 'Odesłane palety',
   wynik: 'Wynik miesiąca',
   inne: 'Inne',
@@ -29,8 +30,6 @@ export const TRUST_REASON_LABEL: Record<TrustReason, string> = {
 export const TRUST = {
   start: 65,
   fine: -1,
-  returnedPallet: -4,
-  driverReturned: -3,
   kpiHit: 3,
   kpiMiss: -2,
   auditPass: 4,

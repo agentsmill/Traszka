@@ -12,8 +12,8 @@ import type { StaffProfile } from './staff';
 export type BotName = 'bierny' | 'stukacz' | 'decydent' | 'mistrz';
 export const BOT_NAMES: readonly BotName[] = ['bierny', 'stukacz', 'decydent', 'mistrz'];
 
-/** Gdzie stoi paleta (te same trzy miejsca, co w ekonomii). */
-export type BotPalletLoc = 'sidewalk' | 'backroom' | 'floor';
+/** Gdzie stoi paleta (te same miejsca, co w ekonomii; w przejściach nadmiar, którego nie było gdzie postawić). */
+export type BotPalletLoc = 'sidewalk' | 'backroom' | 'floor' | 'aisle';
 
 export interface BotView {
   minute: number;
@@ -41,6 +41,8 @@ export interface BotView {
   /** Luz pod progiem WUT do końca miesiąca (zł). */
   wutSlack: number;
   trust: number;
+  /** Cele spełnione, które czekają na „Odbierz”. */
+  milestonesReady: string[];
 }
 
 export type BotCommand =
@@ -48,7 +50,8 @@ export type BotCommand =
   | { type: 'staff.profile'; profile: StaffProfile }
   | { type: 'tap.till'; combo: number }
   | { type: 'tap.pallet'; combo: number }
-  | { type: 'pallet.move'; palletId: number; loc: 'backroom' | 'floor' };
+  | { type: 'pallet.move'; palletId: number; loc: 'backroom' | 'floor' }
+  | { type: 'milestone.claim'; id: string };
 
 export interface Bot { name: BotName; label: string; act(v: BotView): BotCommand[] }
 
@@ -115,6 +118,9 @@ function palletMoves(v: BotView): BotCommand[] {
   return out;
 }
 
+/** Każdy gracz poza biernym odbiera spełnione cele od razu (nagroda czeka na „Odbierz”). */
+const claimAll = (v: BotView): BotCommand[] => v.milestonesReady.map((id): BotCommand => ({ type: 'milestone.claim', id }));
+
 /** Siły, które rozsądny gracz zostawia na wieczorne karty (sejf, szkolenie z okólnika). */
 const EVENING_RESERVE = 20;
 
@@ -136,17 +142,17 @@ function smartTap(v: BotView): BotCommand[] {
 
 export const BOTS: Record<BotName, Bot> = {
   bierny: { name: 'bierny', label: 'Bierny gracz', act: answerDefault },
-  stukacz: { name: 'stukacz', label: 'Stukanie bez decyzji', act: (v) => [...answerDefault(v), ...greedyTap(v)] },
+  stukacz: { name: 'stukacz', label: 'Stukanie bez decyzji', act: (v) => [...answerDefault(v), ...claimAll(v), ...greedyTap(v)] },
   decydent: {
     name: 'decydent',
     label: 'Decyzje bez stukania',
     // nie stuka, więc siły ma tylko na karty („stanę za niego sam”)
-    act: (v) => [...answerBest(v, valuationFor(v, 0)), ...profileCmd(v), ...palletMoves(v)],
+    act: (v) => [...answerBest(v, valuationFor(v, 0)), ...claimAll(v), ...profileCmd(v), ...palletMoves(v)],
   },
   mistrz: {
     name: 'mistrz',
     label: 'Decyzje i stukanie',
-    act: (v) => [...answerBest(v, valuationFor(v, BOT_VALUATION.energy)), ...profileCmd(v), ...palletMoves(v), ...smartTap(v)],
+    act: (v) => [...answerBest(v, valuationFor(v, BOT_VALUATION.energy)), ...claimAll(v), ...profileCmd(v), ...palletMoves(v), ...smartTap(v)],
   },
 };
 
