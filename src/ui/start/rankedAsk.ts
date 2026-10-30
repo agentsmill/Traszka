@@ -1,4 +1,5 @@
 import { RANKED_DAYS, loadRanked, pendingFinished, rankedDayOf } from '@/game/rankedRun';
+import { t } from '@/i18n';
 import { zl } from '../game/format';
 import { ranked, unsent, type RankedStartRequest } from '../state';
 
@@ -17,12 +18,12 @@ export interface RankedAskFacts {
   days: number;
 }
 
-const TAIL = 'Zacząć nowy i porzucić tamten?';
+const tail = (): string => t`Zacząć nowy i porzucić tamten?`;
 
 /** „Masz niewysłany bieg (wynik … zł).” albo „Masz rozpoczęty bieg rankingowy (dzień N z 91).”, a po nim pytanie. */
 export function rankedAskText(reason: RankedStartRequest['reason'], facts: RankedAskFacts): string {
-  if (reason === 'unsent') return facts.score === null ? `Masz niewysłany bieg. ${TAIL}` : `Masz niewysłany bieg (wynik ${zl(facts.score)}). ${TAIL}`;
-  return facts.day === null ? `Masz rozpoczęty bieg rankingowy. ${TAIL}` : `Masz rozpoczęty bieg rankingowy (dzień ${facts.day} z ${facts.days}). ${TAIL}`;
+  if (reason === 'unsent') return facts.score === null ? t`Masz niewysłany bieg. ${tail()}` : t`Masz niewysłany bieg (wynik ${zl(facts.score)}). ${tail()}`;
+  return facts.day === null ? t`Masz rozpoczęty bieg rankingowy. ${tail()}` : t`Masz rozpoczęty bieg rankingowy (dzień ${facts.day} z ${facts.days}). ${tail()}`;
 }
 
 /**

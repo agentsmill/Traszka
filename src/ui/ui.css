@@ -2329,3 +2329,21 @@
 .tt-howto details[open] summary {
   padding-bottom: 3px;
 }
+
+/* Przełącznik języka (ui/LanguageSwitch.tsx): w nagłówku ekranu startowego skróty PL/EN obok tytułu, w ⚙ pełne nazwy (`tt-seg wide`). */
+.tt-start-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.tt-lang.compact {
+  flex: none;
+  gap: 4px;
+}
+
+.tt-lang.compact .tt-btn {
+  padding: 4px 9px;
+  font-size: 13px;
+}

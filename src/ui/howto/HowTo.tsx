@@ -1,3 +1,5 @@
+import { isEn, t } from '@/i18n';
+import { howToDetailsEn, howToPointsEn } from '@/i18n/en/howTo';
 import { closeHowTo, howTo } from '../state';
 import { howToDetails, howToPoints } from './howToText';
 
@@ -12,19 +14,19 @@ export function HowTo() {
   if (!howTo.value) return null;
   return (
     <div class="tt-modal-wrap">
-      <div class="tt-modal tt-howto" role="dialog" aria-modal="true" aria-label="Jak grać">
-        <h2>Jak grać</h2>
+      <div class="tt-modal tt-howto" role="dialog" aria-modal="true" aria-label={t`Jak grać`}>
+        <h2>{t`Jak grać`}</h2>
         <ul class="tt-list tt-howto-points">
-          {howToPoints().map((point) => <li key={point}>{point}</li>)}
+          {(isEn() ? howToPointsEn() : howToPoints()).map((point) => <li key={point}>{point}</li>)}
         </ul>
-        {howToDetails().map((section) => (
+        {(isEn() ? howToDetailsEn() : howToDetails()).map((section) => (
           <details key={section.title}>
             <summary>{section.title}</summary>
             {section.paragraphs.map((p) => <p key={p}>{p}</p>)}
           </details>
         ))}
         <div class="tt-modal-foot">
-          <button type="button" class="tt-btn tt-primary big" onClick={closeHowTo}>Zaczynamy</button>
+          <button type="button" class="tt-btn tt-primary big" onClick={closeHowTo}>{t`Zaczynamy`}</button>
         </div>
       </div>
     </div>

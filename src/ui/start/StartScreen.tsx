@@ -7,7 +7,9 @@ import { randomSeed } from '@/game/seedWords';
 import { hasStoredSave } from '@/game/session';
 import { submitStart } from '@/game/start';
 import type { OutfitFile } from '@/render/characters/modularPack';
+import { lang, t, tr } from '@/i18n';
 import { DISCLAIMER } from '../game/overlays';
+import { LanguageSwitch } from '../LanguageSwitch';
 import { confirmRankedStart, start, type StartRequest } from '../state';
 import '../ranking/ranking.css';
 import { createLauncher, type Launcher } from './launch';
@@ -62,9 +64,9 @@ export function RankedConfirm({ question, busy, cancelRef, onReplace, onCancel }
     <div class="tt-ranked-ask">
       <p class="tt-ranked-ask-text" role="alert">{question}</p>
       <button type="button" class={`tt-btn big tt-ranked-go${busy ? ' is-working' : ''}`} disabled={busy} onClick={onReplace}>
-        {busy ? 'Otwieramy…' : 'Porzuć i zacznij'}
+        {busy ? t`Otwieramy…` : t`Porzuć i zacznij`}
       </button>
-      <button ref={cancelRef} type="button" class="tt-btn big" disabled={busy} onClick={onCancel}>Wróć</button>
+      <button ref={cancelRef} type="button" class="tt-btn big" disabled={busy} onClick={onCancel}>{t`Wróć`}</button>
     </div>
   );
 }
@@ -125,7 +127,7 @@ export function StartScreen({ request }: { request: StartRequest }) {
   const week = weekRef.current;
   /** Pytanie o porzucenie biegu (ustawia je ekran po kliknięciu „Start rankingowy”, a `startRanked`, gdyby start nie wyszedł mimo sprawdzenia). */
   const asked = confirmRankedStart.value;
-  const question = useMemo(() => (asked ? rankedAskText(asked.reason, rankedAskFacts()) : null), [asked]);
+  const question = useMemo(() => (asked ? rankedAskText(asked.reason, rankedAskFacts()) : null), [asked, lang.value]);
   const previewRef = useRef<StartPreview | null>(null);
   const lookRef = useRef(look);
   lookRef.current = look;
@@ -265,63 +267,66 @@ export function StartScreen({ request }: { request: StartRequest }) {
   };
 
   const weekWaiting = week?.status.value === 'loading';
-  const label = OUTFIT_LABEL[look.outfit];
+  const label = tr(OUTFIT_LABEL[look.outfit]);
   const at = OUTFIT_ORDER.indexOf(look.outfit) + 1;
   return (
     <div ref={wrapRef} class="tt-modal-wrap tt-start-wrap">
       <div class="tt-modal tt-start" role="dialog" aria-modal="true" aria-labelledby="tt-start-title">
         <form class={`tt-start-grid${busy ? ' is-busy' : ''}`} noValidate aria-busy={busy} onSubmit={submit}>
           <header class="tt-start-head">
-            <h2 id="tt-start-title">Twój kasjer</h2>
-            <p class="tt-hint">Wybierz, kto stanie za ladą, wpisz nazwę i seed sklepu, i otwieramy.</p>
+            <div class="tt-start-title-row">
+              <h2 id="tt-start-title">{t`Twój kasjer`}</h2>
+              <LanguageSwitch compact />
+            </div>
+            <p class="tt-hint">{t`Wybierz, kto stanie za ladą, wpisz nazwę i seed sklepu, i otwieramy.`}</p>
           </header>
 
-          <section class="tt-start-cashier" aria-label="Wygląd kasjera">
+          <section class="tt-start-cashier" aria-label={t`Wygląd kasjera`}>
             <div class="tt-stage">
-              <canvas ref={canvasRef} class="tt-stage-canvas" role="img" aria-label={`Podgląd kasjera: ${label}`} />
-              {stage === 'none' && <div class="tt-stage-note"><b>{label}</b>Podgląd 3D jest niedostępny na tym urządzeniu, kasjera zobaczysz w sklepie.</div>}
-              {stage === 'loading' && <div class="tt-stage-note">Wczytuję kasjerów…</div>}
-              {stage === 'ready' && pending && <div class="tt-stage-note small">Wczytuję strój…</div>}
+              <canvas ref={canvasRef} class="tt-stage-canvas" role="img" aria-label={t`Podgląd kasjera: ${label}`} />
+              {stage === 'none' && <div class="tt-stage-note"><b>{label}</b>{t`Podgląd 3D jest niedostępny na tym urządzeniu, kasjera zobaczysz w sklepie.`}</div>}
+              {stage === 'loading' && <div class="tt-stage-note">{t`Wczytuję kasjerów…`}</div>}
+              {stage === 'ready' && pending && <div class="tt-stage-note small">{t`Wczytuję strój…`}</div>}
             </div>
-            <div class="tt-picker" role="group" aria-label="Strój kasjera">
-              <button type="button" class="tt-btn tt-arrow" aria-label="Poprzedni strój" onClick={() => setLook((l) => stepOutfit(l, -1))}>‹</button>
+            <div class="tt-picker" role="group" aria-label={t`Strój kasjera`}>
+              <button type="button" class="tt-btn tt-arrow" aria-label={t`Poprzedni strój`} onClick={() => setLook((l) => stepOutfit(l, -1))}>‹</button>
               <div class="tt-outfit" aria-live="polite"><b>{label}</b><span>{at} / {OUTFIT_ORDER.length}</span></div>
-              <button type="button" class="tt-btn tt-arrow" aria-label="Następny strój" onClick={() => setLook((l) => stepOutfit(l, 1))}>›</button>
+              <button type="button" class="tt-btn tt-arrow" aria-label={t`Następny strój`} onClick={() => setLook((l) => stepOutfit(l, 1))}>›</button>
             </div>
-            <button type="button" class="tt-btn tt-roll" onClick={() => setLook(rollCashierLook(special))}>🎲 Losuj</button>
+            <button type="button" class="tt-btn tt-roll" onClick={() => setLook(rollCashierLook(special))}>{t`🎲 Losuj`}</button>
             <label class="tt-check-row">
-              <input type="checkbox" checked={special} onChange={(e) => setSpecial(e.currentTarget.checked)} /> Stroje specjalne w losowaniu
+              <input type="checkbox" checked={special} onChange={(e) => setSpecial(e.currentTarget.checked)} /> {t`Stroje specjalne w losowaniu`}
             </label>
           </section>
 
           <section class="tt-start-form">
-            <label class="tt-field-label" for="tt-nick">Nazwa gracza</label>
+            <label class="tt-field-label" for="tt-nick">{t`Nazwa gracza`}</label>
             <input id="tt-nick" ref={nickRef} class="tt-input" type="text" value={nick} maxLength={NICK_MAX} autocomplete="nickname"
-              autocapitalize="words" spellcheck={false} placeholder="np. Mateusz" aria-invalid={nickError !== null} aria-describedby="tt-nick-error"
+              autocapitalize="words" spellcheck={false} placeholder={t`np. Mateusz`} aria-invalid={nickError !== null} aria-describedby="tt-nick-error"
               onInput={(e) => { setNick(e.currentTarget.value); if (nickError !== null) setNickError(null); }} />
-            <p id="tt-nick-error" class="tt-field-error" role="alert">{nickError}</p>
+            <p id="tt-nick-error" class="tt-field-error" role="alert">{tr(nickError)}</p>
 
-            <label class="tt-field-label" for="tt-seed">Seed sklepu</label>
+            <label class="tt-field-label" for="tt-seed">{t`Seed sklepu`}</label>
             <div class="tt-seedrow">
               <input id="tt-seed" class="tt-input" type="text" value={seed} autocomplete="off" autocapitalize="off"
-                spellcheck={false} placeholder="dowolny tekst" onInput={(e) => editSeed(e.currentTarget)} />
+                spellcheck={false} placeholder={t`dowolny tekst`} onInput={(e) => editSeed(e.currentTarget)} />
               {week && (
                 <button type="button" class="tt-btn tt-weekseed" disabled={busy || weekWaiting} onClick={() => week.pick()}>
-                  {weekWaiting ? WEEK_WAITING : WEEK_CHIP}
+                  {tr(weekWaiting ? WEEK_WAITING : WEEK_CHIP)}
                 </button>
               )}
-              <button type="button" class="tt-btn tt-dice" aria-label="Wylosuj seed" title="Wylosuj seed"
+              <button type="button" class="tt-btn tt-dice" aria-label={t`Wylosuj seed`} title={t`Wylosuj seed`}
                 onClick={() => { setSeed(freeSeed(randomSeed, hasStoredSave)); week?.reset(); }}>🎲</button>
             </div>
-            {week?.status.value === 'unavailable' && <p class="tt-hint warn" role="status">{WEEK_UNAVAILABLE}</p>}
-            <p class="tt-hint">Dowolny tekst. Ten sam seed to ten sam sklep, a każdy seed ma własny zapis gry.</p>
+            {week?.status.value === 'unavailable' && <p class="tt-hint warn" role="status">{tr(WEEK_UNAVAILABLE)}</p>}
+            <p class="tt-hint">{t`Dowolny tekst. Ten sam seed to ten sam sklep, a każdy seed ma własny zapis gry.`}</p>
 
             <div ref={bandRef} class="tt-start-go">
               {question !== null ? (
                 <RankedConfirm question={question} busy={busy} cancelRef={cancelRef} onReplace={() => begin(true, true)}
                   onCancel={() => { confirmRankedStart.value = null; }} />
               ) : (
-                <button type="submit" class="tt-btn tt-primary big" disabled={busy}>{busyKind === 'casual' ? 'Otwieramy…' : 'Otwieramy sklep!'}</button>
+                <button type="submit" class="tt-btn tt-primary big" disabled={busy}>{busyKind === 'casual' ? t`Otwieramy…` : t`Otwieramy sklep!`}</button>
               )}
             </div>
             <div class="tt-start-more">
@@ -329,14 +334,14 @@ export function StartScreen({ request }: { request: StartRequest }) {
                 <>
                   <button type="button" class={`tt-btn big tt-ranked-go${busyKind === 'ranked' ? ' is-working' : ''}`} aria-describedby="tt-ranked-note"
                     disabled={busy} onClick={() => begin(true)}>
-                    {busyKind === 'ranked' ? 'Otwieramy…' : 'Start rankingowy'}
+                    {busyKind === 'ranked' ? t`Otwieramy…` : t`Start rankingowy`}
                   </button>
-                  <p id="tt-ranked-note" class="tt-hint tt-ranked-note">{RANKED_NOTE}</p>
+                  <p id="tt-ranked-note" class="tt-hint tt-ranked-note">{tr(RANKED_NOTE)}</p>
                 </>
               )}
-              {request.mode === 'new' && <button type="button" class="tt-btn big tt-back" disabled={busy} onClick={back}>Wróć do gry</button>}
+              {request.mode === 'new' && <button type="button" class="tt-btn big tt-back" disabled={busy} onClick={back}>{t`Wróć do gry`}</button>}
             </div>
-            <p class="tt-disclaimer2">{DISCLAIMER}</p>
+            <p class="tt-disclaimer2">{tr(DISCLAIMER)}</p>
           </section>
         </form>
       </div>
