@@ -22,7 +22,7 @@ import {
 } from '@/sim/economy/upgrades';
 import { nextRankAt, rankFor, xpToNext } from '@/sim/economy/progress';
 import { networkIncomeOf, prestigePoints, prestigeReady } from '@/game/meta';
-import { econ, metaView, ranked, selection, showPrestige, tab, type GameActions, type TabId } from '../state';
+import { econ, metaView, openMonthPreview, ranked, selection, showPrestige, tab, type GameActions, type TabId } from '../state';
 import { duration, int, pct, people, plural, signedZl, zl } from './format';
 import { SpendNote, spendRisk } from './spend';
 import { tapBlock } from './tapBlock';
@@ -505,6 +505,7 @@ export function GoalsPanel({ s, info }: { s: EconomyState; info: StoreInfo; game
         <Row label="Wolne środki po rozliczeniu"><b class={`tt-free ${spendCheck(forecast, 0).level}`}>{signedZl(forecast.free)}</b></Row>
         <p class="tt-hint">Opłatę franczyzową, ubytki ponad limit Centrali i premię od obrotu Centrala rozlicza przy zamknięciu miesiąca. Zostaw gotówkę na opłaty.</p>
         <p class="tt-hint">Kwota „do oddania” rośnie z obrotem. Wolne środki to gotówka minus ona, bez dochodów i płac z reszty miesiąca.</p>
+        <button type="button" class="tt-btn" onClick={openMonthPreview}>Koniec miesiąca: rachunek i podgląd</button>
         {/* ostrzeżenie wynika ze stanu (gotówka), więc wraca po przeładowaniu, a okno „OK” z chwili zejścia pod próg nie jest zapisywane */}
         {s.cash < DEBT_WARN && <p class="tt-hint warn">{debtWarningText(s.cash)}</p>}
       </Section>

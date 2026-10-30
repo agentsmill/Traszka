@@ -10,7 +10,7 @@ import { EQUIPMENT, UPGRADES } from '@/sim/economy/upgrades';
 import { upgradeBlocker, level } from '@/sim/economy/economy';
 import { equipmentCost, upgradeCost } from '@/sim/economy/upgrades';
 import { layoutFor } from '@/sim/store/layoutFor';
-import { econ, ranked, selection, speed, tab, type GameActions } from '../state';
+import { econ, monthPreview, ranked, selection, speed, tab, type GameActions } from '../state';
 import { DueChip } from './Hud';
 import { SelectionCard } from './overlays';
 import { PeoplePanel, ShopPanel } from './panels';
@@ -41,6 +41,7 @@ function shop(cash: number, revenue: number): { s: EconomyState; info: StoreInfo
 
 afterEach(() => {
   tab.value = null;
+  monthPreview.value = null;
   econ.value = null;
   selection.value = null;
   speed.value = 1;
@@ -200,7 +201,7 @@ describe('wydatki w panelach: ostrzega, ale nie blokuje', () => {
 });
 
 describe('DueChip: rachunek Centrali w pasku', () => {
-  it('pokazuje kwotę do oddania i wolne środki, a stuknięcie otwiera zakładkę Cele', () => {
+  it('pokazuje kwotę do oddania i wolne środki, a stuknięcie otwiera okno rachunku z podglądem końca miesiąca', () => {
     const { s } = shop(10_000, 0);
     const f = forecastMonth(s);
     const chip = DueChip({ f, cash: s.cash }) as unknown as Vnode;
@@ -210,9 +211,10 @@ describe('DueChip: rachunek Centrali w pasku', () => {
     expect(textOf(chip)).toContain('Centrali');
     expect(String(chip.props.class)).toBe('tt-due');
     expect(chip.props['aria-label']).toBe(`Do oddania Centrali ${zl(f.due)}, wolne środki ${zl(f.free)}`);
-    expect(tab.value).toBeNull();
+    expect(monthPreview.value).toBeNull();
     click(chip);
-    expect(tab.value).toBe('cele');
+    expect(monthPreview.value).toEqual({ phase: 'idle' });
+    expect(tab.value).toBeNull();   // zakładka Cele nie otwiera się sama
   });
 
   it('kwota rośnie z obrotem (z każdym klientem)', () => {

@@ -2075,6 +2075,37 @@
   background: var(--tt-cream);
 }
 
+/* Rachunek końca miesiąca (okno z podglądem): sumy w wierszach, pasek postępu liczenia i czerwone ostrzeżenie o debecie. */
+.tt-preview .tt-section {
+  margin: 0 0 8px;
+}
+
+/* kwota w jednej linii (wąski telefon: „2003 zł” nie łamie się na „2003” i „zł”) */
+.tt-preview .tt-row > span:last-child {
+  flex: none;
+  white-space: nowrap;
+}
+
+.tt-preview-progress {
+  display: grid;
+  gap: 2px;
+  margin: 12px 0 4px;
+}
+
+.tt-preview-warn {
+  margin: 10px 0 4px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(194, 65, 12, 0.12);
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.tt-preview-warn.danger {
+  background: rgba(185, 28, 28, 0.14);
+  color: #b91c1c;
+}
+
 /* Tekst wpisu może mieć kilka wierszy (lista odblokowań w oknie poziomu): \n zostaje podziałem wiersza. */
 .tt-story-text {
   margin: 8px 0 4px;

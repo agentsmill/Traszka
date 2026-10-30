@@ -146,7 +146,8 @@ describe('treść okna „Jak grać”', () => {
     const money = howToDetails().find((s) => s.title === 'Pieniądze i ubytki')!;
     const settle = money.paragraphs.find((p) => p.includes('jednym przelewem'))!;
     expect(settle).toContain('Opłata, ubytki i premia schodzą jednym przelewem na koniec miesiąca.');
-    expect(settle).toContain('zakupy ostrzegają, nie blokują');
+    expect(settle).toContain('Stuknij pasek: rachunek i podgląd końca miesiąca.');
+    expect(settle).toContain('Zakupy ostrzegają, nie blokują.');
   });
 
   it('punkty nie obiecują nic o częstości mandatów ani o stukaniu w kasę (to opisze balans po zmianie mechaniki)', () => {

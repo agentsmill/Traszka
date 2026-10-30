@@ -3,6 +3,7 @@ import { PALETTE } from '@/render/style';
 import { BenchOverlay } from './BenchOverlay';
 import { CardDesk } from './game/cards';
 import { Hud } from './game/Hud';
+import { MonthPreviewModal } from './game/monthPreview';
 import {
   CelebrationBanner, ClickerBar, ComboChip, FirstDayHints, PrestigeModal, ReportModal, RotateButtons, SelectionCard, Settings,
   StoreBadge, StoryModal, Toasts, WelcomeModal,
@@ -63,6 +64,7 @@ export function App(
           <StoryModal />
           <ReportModal game={game} />
           <HowTo />
+          <MonthPreviewModal />
           <WelcomeModal game={game} />
           <PrestigeModal game={game} />
           <CelebrationBanner />

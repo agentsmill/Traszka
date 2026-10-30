@@ -8,6 +8,7 @@ import type { BenchProgress } from '@/bench/bench';
 import type { PerfSnapshot } from './perfMeter';
 import type { Command } from '@/sim/economy/commands';
 import { awaitingDecision, type CommandResult, type EconEventKind, type EconomyState, type MonthReport } from '@/sim/economy/economy';
+import type { MonthPreview } from '@/sim/economy/monthPreview';
 import type { StoreInfo } from '@/sim/economy/storeInfo';
 import { readMs } from '@/sim/economy/tycoon/notices';
 import type { RankingTab } from './ranking/client';
@@ -63,6 +64,26 @@ export const showSettings: Signal<boolean> = signal(false);
  * a podpowiedzi pierwszego dnia czekają. Otwiera i zamyka je `openHowTo` / `closeHowTo`. Nie jest częścią zapisu.
  */
 export const howTo: Signal<boolean> = signal(false);
+/**
+ * Okno „Rachunek końca miesiąca” (`ui/game/monthPreview.tsx`): rachunek na dziś i podgląd, co będzie na koniec miesiąca, jeśli gracz nic nie
+ * zrobi. Podgląd liczy się na kopii stanu (`monthPreviewRun.ts`), więc ten sygnał to jedyne, co się zmienia, a dopóki okno jest otwarte,
+ * gra stoi (`isWindowOpen`). `null`: okno zamknięte. Faza: `idle` (czeka na przycisk), `running` (porcje liczą kopię; `run` odróżnia
+ * to liczenie od porzuconego), `done` (sumy), `none` (nie było czego policzyć). Nie jest częścią zapisu.
+ */
+export type MonthPreviewView =
+  | { phase: 'idle' }
+  | { phase: 'running'; run: number; day: number; days: number }
+  | { phase: 'done'; result: MonthPreview; ms: number }
+  | { phase: 'none' };
+export const monthPreview: Signal<MonthPreviewView | null> = signal<MonthPreviewView | null>(null);
+/** Otwiera okno rachunku (podgląd czeka na przycisk). */
+export function openMonthPreview(): void {
+  monthPreview.value = { phase: 'idle' };
+}
+/** Zamyka okno; liczenie w toku porzuca się samo (jego `run` przestaje być bieżący). */
+export function closeMonthPreview(): void {
+  monthPreview.value = null;
+}
 /** Sklep tymczasowy (zapis się nie zbudował albo jest z nowszej wersji gry): nic się w nim nie zapisuje, więc ekran gry to pokazuje. */
 export const ephemeral: Signal<boolean> = signal(false);
 
@@ -295,11 +316,11 @@ export interface GameActions {
 
 /**
  * Czy otwarte jest okno, które zatrzymuje grę i ma swój sygnał: raport miesiąca, ważne zdarzenie czekające na „OK”, ekran startowy,
- * powitanie, prestiż, „Jak grać”, okno końca sezonu (`finish`) albo panel rankingu i kodu odzyskiwania (`panel`). Czyta to `isModalOpen` (game/frame.ts: pętla klatek) i `hintsHeld`.
+ * powitanie, prestiż, „Jak grać”, rachunek końca miesiąca (`monthPreview`), okno końca sezonu (`finish`) albo panel rankingu i kodu odzyskiwania (`panel`). Czyta to `isModalOpen` (game/frame.ts: pętla klatek) i `hintsHeld`.
  * Karta decyzji i koniec gry nie mają sygnału okna: wynikają ze stanu gry.
  */
 export const isWindowOpen = (): boolean =>
-  !!report.value || story.value.length > 0 || !!start.value || !!welcome.value || showPrestige.value || howTo.value || !!finish.value || !!panel.value;
+  !!report.value || story.value.length > 0 || !!start.value || !!welcome.value || showPrestige.value || howTo.value || !!monthPreview.value || !!finish.value || !!panel.value;
 
 /**
  * Czy dymki pierwszego dnia mają czekać: pod każdym oknem, które zatrzymuje grę (`isWindowOpen`), pod kartą decyzji, która ją trzyma

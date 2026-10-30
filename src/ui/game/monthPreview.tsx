@@ -1,0 +1,110 @@
+import type { ComponentChildren } from 'preact';
+import { DEBT_LIMIT } from '@/sim/economy/catalog';
+import { DEBT_WARN, debtWarningText } from '@/sim/economy/economy';
+import { forecastMonth } from '@/sim/economy/forecast';
+import type { MonthPreview } from '@/sim/economy/monthPreview';
+import { closeMonthPreview, econ, monthPreview } from '../state';
+import { int, pct, signedZl, zl } from './format';
+import { runMonthPreview } from './monthPreviewRun';
+
+/*
+ * Okno „Rachunek końca miesiąca”. Góra: rachunek na dziś (to, co Centrala zabrałaby, gdyby miesiąc skończył się teraz). Przycisk
+ * „Koniec miesiąca” liczy podgląd na kopii sklepu: sumy za cały miesiąc i gotówka po zamknięciu, przy założeniu „nic nie robię”.
+ * Pokazuje tylko sumy: bez kart, fal klientów i złotych palet z przyszłości.
+ */
+
+/** Założenie podglądu, powiedziane graczowi wprost. */
+export const PREVIEW_ASSUMPTION =
+  'Podgląd liczy kopia sklepu, prawdziwa gra się nie zmienia. Zakładam, że do końca miesiąca nic nie robisz: nie stukasz, nie kupujesz, a karty decyzji dostają odpowiedź domyślną.';
+
+/** Kwota z „−” (U+2212) przed ujemną, jak reszta okna (`signedZl`); `zl` dałby tu łącznik. */
+const money = (n: number): string => (n < 0 ? `−${zl(-n)}` : zl(n));
+
+function Row({ label, children, strong = false }: { label: ComponentChildren; children: ComponentChildren; strong?: boolean }) {
+  return <div class={`tt-row${strong ? ' total' : ''}`}><span>{label}</span><span>{children}</span></div>;
+}
+
+/** Czerwone ostrzeżenie o debecie na końcu podglądu albo `null`. Progi z `DEBT_WARN` i `DEBT_LIMIT`, nic na sztywno. */
+export function previewWarning(r: MonthPreview): { level: 'warn' | 'danger'; text: string } | null {
+  if (r.endedEarly) {
+    return { level: 'danger', text: `Gra skończyłaby się przed zamknięciem miesiąca: gotówka spadłaby poniżej granicy debetu (${signedZl(DEBT_LIMIT)}).` };
+  }
+  if (r.gameOver === 'debt') {
+    return { level: 'danger', text: `Centrala wypowie umowę: po zamknięciu miesiąca gotówka wyniesie ${signedZl(r.cashAfter)}, poniżej granicy debetu (${signedZl(DEBT_LIMIT)}).` };
+  }
+  if (r.gameOver === 'trust') return { level: 'danger', text: 'Centrala wypowie umowę: zaufanie spadnie do zera.' };
+  if (r.cashAfter < DEBT_WARN) return { level: 'warn', text: debtWarningText(r.cashAfter) };
+  if (r.lowestCash < DEBT_WARN) return { level: 'warn', text: `W trakcie miesiąca gotówka spadnie do ${signedZl(r.lowestCash)}, poniżej progu ostrzeżenia (${signedZl(DEBT_WARN)}).` };
+  return null;
+}
+
+function PreviewResult({ r }: { r: MonthPreview }) {
+  const warning = previewWarning(r);
+  return (
+    <section class="tt-section tt-preview-result" aria-label="Wynik podglądu">
+      <h3>Jeśli nic nie zrobisz{r.label ? `: ${r.label}` : ''}</h3>
+      <Row label="Obrót">{zl(r.revenue)}</Row>
+      <Row label="Klienci">{int(r.customers)}</Row>
+      <Row label="Marża">{zl(r.margin)}</Row>
+      {r.bonus > 0 && <Row label="Premie Centrali">+{zl(r.bonus)}</Row>}
+      {r.other !== 0 && <Row label="Inne przychody i koszty">{signedZl(r.other)}</Row>}
+      <Row label="Płace">−{zl(r.wages)}</Row>
+      <Row label="Media">−{zl(r.media)}</Row>
+      {r.fines > 0 && <Row label="Mandaty">−{zl(r.fines)}</Row>}
+      {r.logistics > 0 && <Row label="Logistyka">−{zl(r.logistics)}</Row>}
+      {r.wut > 0 && <Row label="Ubytki ponad limit Centrali">−{zl(r.wut)}</Row>}
+      <Row label="Opłata franczyzowa">−{zl(r.fee)}</Row>
+      <Row label="Wynik miesiąca" strong>{signedZl(r.profit)}</Row>
+      <Row label="Gotówka teraz">{money(r.cashNow)}</Row>
+      <Row label="Gotówka po zamknięciu" strong><span class={`tt-free ${warning ? warning.level : 'ok'}`}>{money(r.cashAfter)}</span></Row>
+      {warning && <p class={`tt-hint warn tt-preview-warn ${warning.level}`} role="alert">{warning.text}</p>}
+    </section>
+  );
+}
+
+/** Okno rachunku i podglądu; zamknięte nic nie rysuje. Gra stoi, dopóki jest otwarte (`isWindowOpen`). */
+export function MonthPreviewModal() {
+  const view = monthPreview.value;
+  const game = econ.value;
+  if (!view || !game) return null;
+  const f = forecastMonth(game.s);
+  return (
+    <div class="tt-modal-wrap">
+      <div class="tt-modal tt-preview" role="dialog" aria-modal="true" aria-label="Rachunek końca miesiąca">
+        <h2>Rachunek końca miesiąca</h2>
+        <section class="tt-section" aria-label="Rachunek na dziś">
+          <h3>Na dziś</h3>
+          <Row label="Opłata franczyzowa (do dziś)">{zl(f.fee)}</Row>
+          {f.wut > 0 && <Row label="Ubytki ponad limit">{zl(f.wut)}</Row>}
+          {f.bonus > 0 && <Row label="Premia od obrotu">−{zl(f.bonus)}</Row>}
+          <Row label="Do oddania Centrali" strong>{zl(f.due)}</Row>
+          <Row label="Gotówka">{money(game.s.cash)}</Row>
+          <Row label="Wolne środki po rozliczeniu" strong>{signedZl(f.free)}</Row>
+          <p class="tt-hint">Centrala rozlicza się raz, przy zamknięciu miesiąca. Kwota rośnie z każdym klientem.</p>
+        </section>
+        {view.phase === 'idle' && (
+          <>
+            <p class="tt-hint">{PREVIEW_ASSUMPTION}</p>
+            <button type="button" class="tt-btn tt-primary big" onClick={() => runMonthPreview(econ.value)}>Koniec miesiąca: policz podgląd</button>
+          </>
+        )}
+        {view.phase === 'running' && (
+          <div class="tt-preview-progress" role="status" aria-live="polite">
+            <span class="tt-bar" role="presentation"><span style={{ width: pct(view.day / view.days) }} /></span>
+            <span class="tt-hint">Liczę: dzień {view.day} z {view.days}…</span>
+          </div>
+        )}
+        {view.phase === 'none' && <p class="tt-hint">Nie ma czego liczyć: gra już się skończyła.</p>}
+        {view.phase === 'done' && (
+          <>
+            <PreviewResult r={view.result} />
+            <p class="tt-hint" data-ms={Math.round(view.ms)}>{PREVIEW_ASSUMPTION}</p>
+          </>
+        )}
+        <div class="tt-modal-foot">
+          <button type="button" class="tt-btn big" onClick={closeMonthPreview}>Zamknij</button>
+        </div>
+      </div>
+    </div>
+  );
+}

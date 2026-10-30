@@ -5,7 +5,7 @@ import { DEBT_WARN, debtWarningText, isClosedForRemont } from '@/sim/economy/eco
 import { forecastMonth, spendCheck, type MonthForecast, type SpendLevel } from '@/sim/economy/forecast';
 import { rankFor, xpToNext } from '@/sim/economy/progress';
 import { trustTier } from '@/sim/economy/tycoon/trust';
-import { econ, openHowTo, openRanking, showSettings, speed, tab, type Controls } from '../state';
+import { econ, openHowTo, openMonthPreview, openRanking, showSettings, speed, tab, type Controls } from '../state';
 import { dueTitle } from './forecastText';
 import { int, zl } from './format';
 
@@ -72,7 +72,7 @@ export function RankingButton() {
 
 /**
  * Rachunek końca miesiąca przy gotówce: ile oddasz Centrali przy zamknięciu miesiąca (rośnie z każdym klientem) i ile gotówki
- * zostanie wolnej po rozliczeniu. Stuknięcie otwiera zakładkę Cele z rozbiciem. Kolor wolnych środków mówi o debecie: poniżej
+ * zostanie wolnej po rozliczeniu. Stuknięcie otwiera okno rachunku z podglądem końca miesiąca (`MonthPreviewModal`). Kolor wolnych środków mówi o debecie: poniżej
  * zera ostrzegawczy, poniżej progu ostrzeżenia (`DEBT_WARN`) czerwony, poniżej granicy gry (`DEBT_LIMIT`) czerwony z wykrzyknikiem.
  */
 export function DueChip({ f, cash }: { f: MonthForecast; cash: number }) {
@@ -81,7 +81,7 @@ export function DueChip({ f, cash }: { f: MonthForecast; cash: number }) {
   const title = dueTitle(f, cash, spendCheck(f, 0));
   return (
     <button type="button" class={`tt-due${tone ? ` ${tone}` : ''}`} title={title}
-      aria-label={`Do oddania Centrali ${zl(f.due)}, wolne środki ${zl(f.free)}`} onClick={() => { tab.value = 'cele'; }}>
+      aria-label={`Do oddania Centrali ${zl(f.due)}, wolne środki ${zl(f.free)}`} onClick={openMonthPreview}>
       <span class="tt-due-part"><span class="tt-due-label"><span class="tt-due-pre">Do oddania </span>Centrali</span> <b>{zl(f.due)}</b></span>
       <span class="tt-due-part"><span class="tt-due-label">Wolne</span> <b class="tt-due-free">{level === 'danger' ? '⚠ ' : ''}{zl(f.free)}</b></span>
     </button>

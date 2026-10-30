@@ -115,7 +115,7 @@ export function howToDetails(): HowToSection[] {
       paragraphs: [
         `Zarabiasz marżę, nie obrót: od ${percent(margins.low.margin)} (${margins.low.label}) do ${percent(margins.high.margin)} (${margins.high.label}) ceny towaru, a hot-dogi i kawa dają ${percent(HOT.margin)}.`,
         `Opłata franczyzowa to ${zl(FRANCHISE_FEE_FIXED)} plus ${percent(FRANCHISE_FEE_SHARE)} obrotu.`,
-        'Opłata, ubytki i premia schodzą jednym przelewem na koniec miesiąca. Pasek liczy go na bieżąco, a zakupy ostrzegają, nie blokują.',
+        'Opłata, ubytki i premia schodzą jednym przelewem na koniec miesiąca. Stuknij pasek: rachunek i podgląd końca miesiąca. Zakupy ostrzegają, nie blokują.',
         `Ubytki to przeterminowany towar, kradzieże, pomyłki i „zapomniane” skany na kasach samoobsługowych. Do ${percent(WUT.threshold)} obrotu miesiąca pokrywa je Centrala, ponad limit płacisz Ty (zakładka Sklep).`,
       ],
     },

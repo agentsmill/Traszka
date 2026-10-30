@@ -29,5 +29,5 @@ export function dueTitle(f: MonthForecast, cash: number, check: SpendCheck): str
     ? ` Poniżej granicy debetu (${signedZl(check.limitAt)}) Centrala wypowie umowę.`
     : check.level === 'warn' ? ` Blisko granicy debetu (${signedZl(check.limitAt)}).` : '';
   return `Centrala rozlicza się raz, przy zamknięciu miesiąca: ${parts.join(', ')}. Do oddania ${zl(f.due)}, liczone od obrotu do dziś, więc rośnie z każdym klientem. `
-    + `Wolne środki to gotówka ${zl(cash)} minus ta kwota: ${zl(f.free)}.${debt} Stuknij, żeby zobaczyć rozliczenie.`;
+    + `Wolne środki to gotówka ${zl(cash)} minus ta kwota: ${zl(f.free)}.${debt} Stuknij po rachunek i podgląd końca miesiąca.`;
 }
