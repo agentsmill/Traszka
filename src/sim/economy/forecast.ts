@@ -1,4 +1,4 @@
-import { isLastDayOfMonth, dayOf, minuteOfDay } from './calendar';
+import { dateOfDay, isLastDayOfMonth, dayOf, minuteOfDay } from './calendar';
 import { DEBT_LIMIT, GUARANTEE, OPEN_FROM, OPEN_TO, WAGE_PER_DAY } from './catalog';
 import {
   DEBT_WARN, estimatedDailyMargin, estimatedDailyRevenue, mediaPerDay, type EconomyState,
@@ -9,7 +9,8 @@ import { turnoverBonusShare } from './tycoon/trust';
 
 /**
  * Prognoza wyciągu od Centrali na koniec miesiąca (spec SIM 6, §8): to, co już naliczone (saldo, płace, media, palety), plus reszta
- * miesiąca z przewidywanej marży i obrotu dnia (`estimatedDailyMargin`, `estimatedDailyRevenue`), płac i mediów razy dni do zamknięcia,
+ * miesiąca w tempie marży i obrotu od początku miesiąca (w pierwszym dniu z przewidywań: `estimatedDailyMargin`, `estimatedDailyRevenue`),
+ * płac i mediów razy dni do zamknięcia,
  * do tego premia od obrotu, dopłata z gwarancji, raty i koszty stałe. Szacunek bez symulacji (pasek liczy go co klatkę), czysta funkcja:
  * nie wchodzi do symulacji, więc nie zmienia biegu gry ani `SIM_VERSION`. Dokładny wyciąg daje podgląd końca miesiąca (`monthPreview.ts`).
  *
@@ -30,27 +31,35 @@ export interface MonthForecast {
   cashAfter: number;
 }
 
-/** Ile jeszcze zamknięć dnia przed zamknięciem miesiąca (z dzisiejszym, jeśli jeszcze się nie odbyło) i ile dzisiejszego ruchu przed nami. */
-function remaining(minute: number): { closes: number; days: number } {
+/**
+ * Ile jeszcze zamknięć dnia przed zamknięciem miesiąca (z dzisiejszym, jeśli jeszcze się nie odbyło), ile dni ruchu przed nami i ile
+ * już za nami (dni otwarcia od początku miesiąca, z ułamkiem dzisiejszego).
+ */
+function remaining(minute: number): { closes: number; days: number; elapsed: number } {
   const day = dayOf(minute);
   const mod = minuteOfDay(minute);
   let last = day;
   while (!isLastDayOfMonth(last)) last++;
   const todayClose = mod <= OPEN_TO ? 1 : 0;
   const todayOpen = Math.min(1, Math.max(0, (OPEN_TO - Math.max(mod, OPEN_FROM)) / (OPEN_TO - OPEN_FROM)));
-  return { closes: last - day + todayClose, days: last - day + todayOpen };
+  return { closes: last - day + todayClose, days: last - day + todayOpen, elapsed: dateOfDay(day).date - 1 + (1 - todayOpen) };
 }
 
 export function forecastMonth(s: EconomyState, info: StoreInfo): MonthForecast {
   const f = s.franchisee;
   const m = s.month;
-  const { closes, days } = remaining(s.minute);
-  const margin = f.month.margin + days * estimatedDailyMargin(s, info);
-  const revenue = m.revenue + days * estimatedDailyRevenue(s, info);
+  const { closes, days, elapsed } = remaining(s.minute);
+  // reszta miesiąca w tempie od jego początku (liczniki całego miesiąca), a przed pierwszym pełnym dniem z przewidywań sklepu. Przewidywania
+  // nie znają fal, rosnącej reputacji ani premii, więc z nich prognoza wychodzi ok. 10–15% za nisko; od kilku dni miesiąca tempo trafia
+  // w zamknięcie z dokładnością do ok. 2–3 tys. zł (pomiar: tests/measure/forecast.measure.test.ts)
+  const pace = elapsed >= 1 ? { ...m, days: elapsed } : null;
+  const margin = f.month.margin + days * (pace ? pace.margin / pace.days : estimatedDailyMargin(s, info));
+  const revenue = m.revenue + days * (pace ? pace.revenue / pace.days : estimatedDailyRevenue(s, info));
   const turnoverBonus = Math.round(turnoverBonusShare(s.tycoon.trust.value) * revenue);
-  const bonus = f.month.bonus + turnoverBonus;
+  // premie z miesiąca (KPI tygodnia, złote palety, karty) też w tym samym tempie
+  const bonus = f.month.bonus + (pace ? (pace.bonus / pace.days) * days : 0) + turnoverBonus;
   // gwarancja z liczników całego miesiąca (jak `guaranteeTopUp`), przy dzisiejszym zaufaniu i bez mandatu w miesiącu
-  const income = m.margin + m.bonus + (margin - f.month.margin) + turnoverBonus;
+  const income = m.margin + m.bonus + (margin - f.month.margin) + (bonus - f.month.bonus);
   const guaranteed = s.history.length < GUARANTEE.months && s.tycoon.trust.value >= GUARANTEE.minTrust && m.fineCount === 0;
   const guarantee = guaranteed ? Math.max(0, Math.round(GUARANTEE.income - income)) : 0;
   const installments = installmentsDue(f);
