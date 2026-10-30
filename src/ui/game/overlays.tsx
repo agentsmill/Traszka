@@ -1,13 +1,13 @@
 import { computed, signal, untracked, type ReadonlySignal } from '@preact/signals';
 import { useEffect, useState } from 'preact/hooks';
 import { DEBT_LIMIT } from '@/sim/economy/catalog';
-import { formatDate } from '@/sim/economy/calendar';
+import { dateText, hintTextOf, t, tr } from '@/i18n';
 import {
   DEBT_WARN, debtWarningText, effects, slotFree, slotUsage, tapCombo, tillTapBlock, type EconomyState, type MonthReport,
 } from '@/sim/economy/economy';
 import { visibleCards } from '@/sim/economy/tycoon/cards';
 import { FATIGUE } from '@/sim/economy/tycoon/fatigue';
-import { REPORT_LINE_LABEL, hintText, reportCommentText } from '@/sim/economy/tycoon/report';
+import { REPORT_LINE_LABEL, reportCommentText } from '@/sim/economy/tycoon/report';
 import { TRUST_REASON_LABEL, trustTerminates } from '@/sim/economy/tycoon/trust';
 import { WUT, WUT_LABEL, WUT_REASONS } from '@/sim/economy/tycoon/wut';
 import { EQUIPMENT, EQUIPMENT_BY_ID, equipmentCost } from '@/sim/economy/upgrades';
@@ -155,7 +155,7 @@ const lineAmount = (amount: number): string => {
 };
 
 /** Komentarz Centrali (zwykła funkcja, nie komponent: testy `vnodeTree` widzą wtedy jego tekst). */
-const centralaQuote = (text: string) => <p class="tt-quote">„{text}”<br /><span class="tt-muted">— Centrala</span></p>;
+const centralaQuote = (text: string) => <p class="tt-quote">{t`„${tr(text)}”`}<br /><span class="tt-muted">{t`— Centrala`}</span></p>;
 
 /**
  * Treść raportu miesięcznego. Z wyciągiem (`statement`, od SIM_VERSION 6): na górze wyciąg od Centrali (`statementView`: przelew,
@@ -174,35 +174,35 @@ export function ReportBody({ r, closing }: { r: MonthReport; closing?: string })
       return (
         <>
           {statementView(st)}
-          <p class="tt-muted tt-st-meta">Obrót {zl(c.revenue)} · klienci {int(c.customers)} (utraceni: {int(c.lost)})</p>
-          {r.cash < DEBT_WARN && <p class="tt-hint warn">{debtWarningText(r.cash)}</p>}
+          <p class="tt-muted tt-st-meta">{t`Obrót ${zl(c.revenue)} · klienci ${int(c.customers)} (utraceni: ${int(c.lost)})`}</p>
+          {r.cash < DEBT_WARN && <p class="tt-hint warn">{tr(debtWarningText(r.cash))}</p>}
           {centralaQuote(closing ?? r.comment)}
         </>
       );
     }
     return (
       <>
-        <div class="tt-row"><span>Klienci</span><span>{int(c.customers)} (utraceni: {int(c.lost)})</span></div>
-        <div class="tt-row"><span>Obrót</span><span>{zl(c.revenue)}</span></div>
-        <div class="tt-row"><span>Marża i inne przychody</span><span>{zl(c.margin + c.other)}</span></div>
-        <div class="tt-row"><span>Premie Centrali</span><span>{zl(c.bonus)}</span></div>
-        <div class="tt-row"><span>Płace</span><span>−{zl(c.wages)}</span></div>
-        <div class="tt-row"><span>Media</span><span>−{zl(c.media)}</span></div>
-        <div class="tt-row"><span>Opłata franczyzowa</span><span>−{zl(c.fee)}</span></div>
-        <div class="tt-row"><span>Mandaty</span><span>−{zl(c.fines)}</span></div>
-        <div class="tt-row"><span>Ubytki ponad limit Centrali</span><span>−{zl(c.wut)}</span></div>
-        <div class="tt-row"><span>Logistyka</span><span>−{zl(c.logistics)}</span></div>
-        <div class="tt-row total"><span>Wynik miesiąca</span><span>{signedZl(r.profit)}</span></div>
-        <div class="tt-row"><span>Inwestycje</span><span>{zl(c.investments)}</span></div>
-        <div class="tt-row"><span>Gotówka na koniec</span><span>{zl(r.cash)}</span></div>
-        {r.cash < DEBT_WARN && <p class="tt-hint warn">{debtWarningText(r.cash)}</p>}
+        <div class="tt-row"><span>{t`Klienci`}</span><span>{t`${int(c.customers)} (utraceni: ${int(c.lost)})`}</span></div>
+        <div class="tt-row"><span>{t`Obrót`}</span><span>{zl(c.revenue)}</span></div>
+        <div class="tt-row"><span>{t`Marża i inne przychody`}</span><span>{zl(c.margin + c.other)}</span></div>
+        <div class="tt-row"><span>{t`Premie Centrali`}</span><span>{zl(c.bonus)}</span></div>
+        <div class="tt-row"><span>{t`Płace`}</span><span>−{zl(c.wages)}</span></div>
+        <div class="tt-row"><span>{t`Media`}</span><span>−{zl(c.media)}</span></div>
+        <div class="tt-row"><span>{t`Opłata franczyzowa`}</span><span>−{zl(c.fee)}</span></div>
+        <div class="tt-row"><span>{t`Mandaty`}</span><span>−{zl(c.fines)}</span></div>
+        <div class="tt-row"><span>{t`Ubytki ponad limit Centrali`}</span><span>−{zl(c.wut)}</span></div>
+        <div class="tt-row"><span>{t`Logistyka`}</span><span>−{zl(c.logistics)}</span></div>
+        <div class="tt-row total"><span>{t`Wynik miesiąca`}</span><span>{signedZl(r.profit)}</span></div>
+        <div class="tt-row"><span>{t`Inwestycje`}</span><span>{zl(c.investments)}</span></div>
+        <div class="tt-row"><span>{t`Gotówka na koniec`}</span><span>{zl(r.cash)}</span></div>
+        {r.cash < DEBT_WARN && <p class="tt-hint warn">{tr(debtWarningText(r.cash))}</p>}
         {centralaQuote(closing ?? r.comment)}
       </>
     );
   }
   // wynik w nagłówku to suma pozycji tak, jak je widać (każda zaokrąglona do złotych): zaokrąglenie samej sumy bywa o 1 zł obok
   const result = d.lines.reduce((n, l) => n + Math.round(l.amount), 0);
-  const t = d.trust;
+  const trust = d.trust;
   const kpiWeeks = d.kpi.hit + d.kpi.miss;
   return (
     <>
@@ -210,40 +210,40 @@ export function ReportBody({ r, closing }: { r: MonthReport; closing?: string })
         ? (
           <>
             {statementView(st)}
-            <p class="tt-muted tt-st-meta">Obrót {zl(d.revenue)} · klienci {int(c.customers)} (utraceni: {int(c.lost)})</p>
-            {r.cash < DEBT_WARN && <p class="tt-hint warn">{debtWarningText(r.cash)}</p>}
+            <p class="tt-muted tt-st-meta">{t`Obrót ${zl(d.revenue)} · klienci ${int(c.customers)} (utraceni: ${int(c.lost)})`}</p>
+            {r.cash < DEBT_WARN && <p class="tt-hint warn">{tr(debtWarningText(r.cash))}</p>}
           </>
         )
         : (
           <>
             <div class="tt-report-head">
-              <span class="tt-muted">Wynik miesiąca</span>
+              <span class="tt-muted">{t`Wynik miesiąca`}</span>
               <b class={`tt-report-result ${result < 0 ? 'neg' : 'pos'}`}>{signedZl(result)}</b>
-              <span class="tt-muted">Obrót {zl(d.revenue)} · klienci {int(c.customers)} (utraceni: {int(c.lost)})</span>
-              <span class="tt-muted">Gotówka na koniec: {zl(r.cash)} · inwestycje: {zl(c.investments)}</span>
+              <span class="tt-muted">{t`Obrót ${zl(d.revenue)} · klienci ${int(c.customers)} (utraceni: ${int(c.lost)})`}</span>
+              <span class="tt-muted">{t`Gotówka na koniec: ${zl(r.cash)} · inwestycje: ${zl(c.investments)}`}</span>
             </div>
-            {r.cash < DEBT_WARN && <p class="tt-hint warn">{debtWarningText(r.cash)}</p>}
+            {r.cash < DEBT_WARN && <p class="tt-hint warn">{tr(debtWarningText(r.cash))}</p>}
             <div class="tt-report-lines">
               {d.lines.map((l) => (
-                <div key={l.key} class="tt-row"><span>{REPORT_LINE_LABEL[l.key]}</span><span class={Math.round(l.amount) < 0 ? 'tt-neg' : undefined}>{lineAmount(l.amount)}</span></div>
+                <div key={l.key} class="tt-row"><span>{tr(REPORT_LINE_LABEL[l.key])}</span><span class={Math.round(l.amount) < 0 ? 'tt-neg' : undefined}>{lineAmount(l.amount)}</span></div>
               ))}
             </div>
           </>
         )}
       <div class="tt-report-trust">
-        <div class="tt-row"><b>Zaufanie Centrali: {int(t.start)} → {int(t.end)}</b><span class={t.delta < 0 ? 'tt-neg' : undefined}>{signedPts(t.delta)} pkt</span></div>
-        {t.reasons.slice(0, REPORT_TRUST_REASONS).map(([reason, v]) => (
-          <div key={reason} class="tt-row tt-reason"><span>{TRUST_REASON_LABEL[reason]}</span><span class={v < 0 ? 'tt-neg' : 'tt-pos'}>{signedPts(v)}</span></div>
+        <div class="tt-row"><b>{t`Zaufanie Centrali: ${int(trust.start)} → ${int(trust.end)}`}</b><span class={trust.delta < 0 ? 'tt-neg' : undefined}>{t`${signedPts(trust.delta)} pkt`}</span></div>
+        {trust.reasons.slice(0, REPORT_TRUST_REASONS).map(([reason, v]) => (
+          <div key={reason} class="tt-row tt-reason"><span>{tr(TRUST_REASON_LABEL[reason])}</span><span class={v < 0 ? 'tt-neg' : 'tt-pos'}>{signedPts(v)}</span></div>
         ))}
-        {t.reasons.length === 0 && <p class="tt-hint">Bez zmian w tym miesiącu.</p>}
+        {trust.reasons.length === 0 && <p class="tt-hint">{t`Bez zmian w tym miesiącu.`}</p>}
       </div>
       {centralaQuote(closing ?? (reportCommentText(d.commentId) || r.comment))}
       <div class="tt-report-hint" role="note">
-        <b>Wskazówka</b>
-        <span>{hintText(d.hint, int)}</span>
+        <b>{t`Wskazówka`}</b>
+        <span>{hintTextOf(d.hint, int)}</span>
       </div>
       <p class="tt-report-kpi">
-        {kpiWeeks > 0 ? `KPI tygodnia w miesiącu: ${d.kpi.hit} trafione, ${d.kpi.miss} nietrafione` : 'KPI tygodnia w miesiącu: żaden tydzień nie został jeszcze rozliczony'}
+        {kpiWeeks > 0 ? t`KPI tygodnia w miesiącu: ${d.kpi.hit} trafione, ${d.kpi.miss} nietrafione` : t`KPI tygodnia w miesiącu: żaden tydzień nie został jeszcze rozliczony`}
       </p>
     </>
   );
@@ -260,9 +260,9 @@ export function terminationReason(s: EconomyState): string | null {
   const debt = s.cash < DEBT_LIMIT;
   const distrust = trustTerminates(s.tycoon.trust.value);
   const floor = signedZl(DEBT_LIMIT);
-  if (debt && distrust) return `Powód: zaufanie Centrali spadło do zera, a gotówka spadła poniżej granicy debetu ${floor}.`;
-  if (debt) return `Powód: za duży debet. Gotówka spadła do ${signedZl(s.cash)}, poniżej granicy ${floor}, a wtedy Centrala od razu kończy współpracę.`;
-  if (distrust) return 'Powód: zaufanie Centrali spadło do zera.';
+  if (debt && distrust) return t`Powód: zaufanie Centrali spadło do zera, a gotówka spadła poniżej granicy debetu ${floor}.`;
+  if (debt) return t`Powód: za duży debet. Gotówka spadła do ${signedZl(s.cash)}, poniżej granicy ${floor}, a wtedy Centrala od razu kończy współpracę.`;
+  if (distrust) return t`Powód: zaufanie Centrali spadło do zera.`;
   return null;
 }
 
@@ -279,7 +279,7 @@ export function ReportModal({ game }: { game: GameActions }) {
   const over = !!view?.s.gameOver;
   const r = report.value ?? (over ? view?.s.lastReport ?? null : null);
   if (!r && !over) return null;
-  const title = over ? 'Koniec współpracy' : r!.statement ? `Wyciąg od Centrali: ${r!.label}` : `Raport: ${r!.label}`;
+  const title = over ? t`Koniec współpracy` : r!.statement ? t`Wyciąg od Centrali: ${tr(r!.label)}` : t`Raport: ${tr(r!.label)}`;
   const reason = over && view ? terminationReason(view.s) : null;
   const bankrupt = over && !!view && seasonBankrupt(view.s);   // koniec gry przed ostatnim raportem: poza rankingiem
   const seasonEnd = ranked.value?.phase === 'over' && !bankrupt;   // sezon doigrany (też z debetem z ostatniego zamknięcia): za raportem czeka okno z wynikiem
@@ -288,7 +288,7 @@ export function ReportModal({ game }: { game: GameActions }) {
       <div class="tt-modal" role="dialog" aria-modal="true" aria-label={title}>
         <h2>{title}</h2>
         {reason && <p class="tt-end-reason" role="note"><b>{reason}</b></p>}
-        {bankrupt && ranked.value && <p class="tt-end-reason" role="note">{RANKED_BANKRUPT_TEXT}</p>}
+        {bankrupt && ranked.value && <p class="tt-end-reason" role="note">{tr(RANKED_BANKRUPT_TEXT)}</p>}
         {r ? <ReportBody r={r} closing={over ? TERMINATION : undefined} /> : centralaQuote(TERMINATION)}
         <div class="tt-modal-foot">
           {over
@@ -296,13 +296,13 @@ export function ReportModal({ game }: { game: GameActions }) {
               // bieg rankingowy nie zaczyna się od nowa (`restart` odmawia): wyjście do zwykłej gry. Bankrut nie ma czego wysyłać; sezon doigrany
               // z debetem z ostatniego zamknięcia ma wynik w szufladzie, więc najpierw okno z wynikiem
               ? seasonEnd && unsent.value
-                ? <button type="button" class="tt-btn tt-primary big" onClick={() => { report.value = null; game.openFinish(); }}>Dalej: wynik sezonu</button>
-                : <button type="button" class="tt-btn tt-primary big" onClick={() => game.leaveRanked()}>Wróć do zwykłej gry</button>
-              : <button type="button" class="tt-btn tt-primary big" onClick={() => game.restart()}>Zacznij od nowa</button>
+                ? <button type="button" class="tt-btn tt-primary big" onClick={() => { report.value = null; game.openFinish(); }}>{t`Dalej: wynik sezonu`}</button>
+                : <button type="button" class="tt-btn tt-primary big" onClick={() => game.leaveRanked()}>{t`Wróć do zwykłej gry`}</button>
+              : <button type="button" class="tt-btn tt-primary big" onClick={() => game.restart()}>{t`Zacznij od nowa`}</button>
             : seasonEnd
               // raport za listopad zamyka sezon: „Dalej” zdejmuje raport i otwiera okno z wynikiem (`concludeSeason` nie otwiera go nad raportem)
-              ? <button type="button" class="tt-btn tt-primary big" onClick={() => { report.value = null; game.openFinish(); }}>{unsent.value ? 'Dalej: wynik sezonu' : 'Dalej'}</button>
-              : <button type="button" class="tt-btn tt-primary big" onClick={() => { report.value = null; }}>Dalej</button>}
+              ? <button type="button" class="tt-btn tt-primary big" onClick={() => { report.value = null; game.openFinish(); }}>{unsent.value ? t`Dalej: wynik sezonu` : t`Dalej`}</button>
+              : <button type="button" class="tt-btn tt-primary big" onClick={() => { report.value = null; }}>{t`Dalej`}</button>}
         </div>
       </div>
     </div>
@@ -369,19 +369,19 @@ export function RemanentModal() {
   };
   return (
     <div class="tt-modal-wrap">
-      <div class="tt-modal tt-remanent" role="dialog" aria-modal="true" aria-label="Protokół remanentu">
-        <h2>Protokół remanentu</h2>
-        <p class="tt-muted">Okres: {formatDate(p.fromDay)} – {formatDate(p.day)}</p>
-        <div class="tt-row"><span>Obrót w okresie</span><span>{zl(p.revenue)}</span></div>
-        <h3>Ubytki</h3>
+      <div class="tt-modal tt-remanent" role="dialog" aria-modal="true" aria-label={t`Protokół remanentu`}>
+        <h2>{t`Protokół remanentu`}</h2>
+        <p class="tt-muted">{t`Okres: ${dateText(p.fromDay)} – ${dateText(p.day)}`}</p>
+        <div class="tt-row"><span>{t`Obrót w okresie`}</span><span>{zl(p.revenue)}</span></div>
+        <h3>{t`Ubytki`}</h3>
         {WUT_REASONS.map((reason) => (
-          <div key={reason} class="tt-row"><span>{WUT_LABEL[reason]}</span><span>{zl(p.byReason[reason])}</span></div>
+          <div key={reason} class="tt-row"><span>{tr(WUT_LABEL[reason])}</span><span>{zl(p.byReason[reason])}</span></div>
         ))}
-        <div class="tt-row total"><span>Ubytki razem</span><span>{zl(p.total)}</span></div>
-        <div class="tt-row"><span>Limit Centrali</span><span>{zl(p.limit)}</span></div>
-        {p.first && <p class="tt-hint" role="note">Limit poznajesz dopiero teraz: {percentOf(WUT.threshold)} obrotu.</p>}
+        <div class="tt-row total"><span>{t`Ubytki razem`}</span><span>{zl(p.total)}</span></div>
+        <div class="tt-row"><span>{t`Limit Centrali`}</span><span>{zl(p.limit)}</span></div>
+        {p.first && <p class="tt-hint" role="note">{t`Limit poznajesz dopiero teraz: ${percentOf(WUT.threshold)} obrotu.`}</p>}
         <p class={`tt-remanent-verdict${p.charge > 0 ? ' over' : ''}`}>
-          {p.charge > 0 ? `Nadwyżka ${zl(p.charge)} zejdzie z dzisiejszego przelewu.` : 'Ubytki mieszczą się w limicie.'}
+          {p.charge > 0 ? t`Nadwyżka ${zl(p.charge)} zejdzie z dzisiejszego przelewu.` : t`Ubytki mieszczą się w limicie.`}
         </p>
         {centralaQuote(view.text)}
         <button type="button" class="tt-btn tt-primary big" onClick={ok}>OK</button>
