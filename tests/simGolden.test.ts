@@ -33,6 +33,7 @@ const GOLDEN: Record<number, string> = {
   3: '1c05f23716a31cb5f11cbb41a82f5f0eeebaf4e88f1b2d46456b39b4ce5aa79b',   // Straż z upomnieniem, limit asystenta, stukanie w kasę tylko gdy pomaga
   4: '16a2834398928b489f50dc3b39de8cf18a49e3c700a0e4fbfc058b3f381a2239',   // więcej klientów i fale, 6 palet, limit debetu, nowy balans opłaty i premii
   5: 'fc9c4c590639fc761f798d8711cc05c7cc5bc1bbcd43f18494fa9b7fa8ba232f',   // palety bez odsyłania, paleta 480 szt., debet −100 tys., cele „Odbierz”, 0,5 karty na dobę, urealniona ekonomia
+  6: '5e9bf18c7a4f04ad3e55081aa2c7ee3fb8ad1ef5262ab0b4469d9be3cca08c0e',   // trzy kieszenie: saldo u Centrali, wyciąg, raty, remanent
 };
 
 const SEED = 'kiełbasa-42';
@@ -71,10 +72,9 @@ function mulberry32(seed: number): () => number {
 
 /**
  * Wydatki i decyzje gracza w wybranych dniach (dzień, godzina, minuta, polecenie). Terminy dobrane do ekonomii tak, żeby każde
- * polecenie poza zapasowymi było przyjęte, a bieg przetrwał sezon: gotówka po raporcie miesięcznym spada o opłatę franczyzową
- * (2000 zł + udział w obrocie), a gotówka poniżej granicy debetu (`DEBT_LIMIT`, od SIM_VERSION 5 −100 tys. zł) kończy grę od razu, więc droższe zakupy
- * idą we wrześniu (małe) i w listopadzie, a w październiku tylko kilka. Po wrześniu bieg wchodzi w strefę ostrzeżenia o debecie
- * (odtworzenie przechodzi też przez to zdarzenie). Trzecia osoba przychodzi dopiero w październiku: od SIM_VERSION 4 sklep na
+ * polecenie poza zapasowymi było przyjęte, a bieg przetrwał sezon. Od SIM_VERSION 6 gotówka rośnie tylko przy przelewie od Centrali
+ * na koniec miesiąca (marża idzie na saldo), więc za gotówkę idą małe zakupy, a kasa samoobsługowa, bankomat, piec i remont na raty
+ * (`raty: true`: pole przechodzi przez dziennik i odtworzenie). Trzecia osoba przychodzi dopiero w październiku: od SIM_VERSION 4 sklep na
  * start ma ludzi akurat na swój ruch, więc etat od drugiego dnia zjadał gotówkę na opłatę. Remont 1 (25 tys. zł, poziom 8) ma dwie próby: dziś przyjmowana jest
  * pierwsza, a druga jest zapasem na zmiany cen (rush bez trwającego remontu jest odrzucany, nie błędem).
  * Palety startowe mają numery 1 i 2; sloty `equipmentSlot-1…3` (pojemność 2) są od układu 0, `equipmentSlot-4` od remontu 1.
@@ -98,11 +98,11 @@ const PLAN: readonly (readonly [day: number, hour: number, minute: number, cmd: 
   [3, 7, 0, { type: 'setOrder', auto: true }],
   [6, 12, 30, { type: 'setStaffProfile', profile: 'porzadek' }],
   [7, 6, 0, { type: 'setStaffProfile', profile: 'kolejka' }],
-  [10, 12, 0, { type: 'buyEquipment', id: 'sco' }],
+  [10, 12, 0, { type: 'buyEquipment', id: 'sco', raty: true }],   // od SIM_VERSION 6 droższe zakupy na raty u Centrali
   [11, 12, 0, { type: 'setOrder', auto: false, manual: 40 }],   // ponad granicę: stan przytnie do 30
   [12, 7, 0, { type: 'setOrder', auto: true, manual: 5.5 }],   // ułamek: stan zaokrągli
   [14, 12, 0, { type: 'buyUpgrade', id: 'wozek' }],
-  [20, 12, 0, { type: 'buyEquipment', id: 'bankomat' }],
+  [20, 12, 0, { type: 'buyEquipment', id: 'bankomat', raty: true }],
   [25, 12, 0, { type: 'campaign' }],
   // październik: zakupy po opłacie za wrzesień i zmiany w załodze
   [42, 12, 0, { type: 'buyUpgrade', id: 'kawa' }],
@@ -111,11 +111,11 @@ const PLAN: readonly (readonly [day: number, hour: number, minute: number, cmd: 
   [48, 12, 0, { type: 'pinStaff', task: 'kasa', count: 1 }],
   [50, 12, 0, { type: 'fire' }],
   [50, 12, 5, { type: 'setStaffProfile', profile: 'kolejka' }],
-  [55, 12, 0, { type: 'buyEquipment', id: 'piec', slotId: 'equipmentSlot-2' }],
+  [55, 12, 0, { type: 'buyEquipment', id: 'piec', slotId: 'equipmentSlot-2', raty: true }],
   [60, 12, 0, { type: 'buyUpgrade', id: 'asystent' }],
   // listopad: kampania, remont 1 (dwie próby: zapas na zmiany cen) i zakupy po remoncie
   [78, 12, 0, { type: 'campaign' }],
-  [84, 7, 0, { type: 'startRemont' }],
+  [84, 7, 0, { type: 'startRemont', raty: true }],
   [84, 7, 5, { type: 'rushRemont' }],
   [86, 12, 0, { type: 'campaign' }],
   [87, 12, 0, { type: 'hire' }],
@@ -144,7 +144,7 @@ const CARD_ANSWERS: readonly (readonly [seq: number, id: string, day: number, ho
   [11, 'fefo', 17, 18, 0, 1],
   [12, 'okolnik-refundacja', 18, 8, 0, 0],
   [13, 'wiralowy', 19, 10, 0, 0],
-  [14, 'glitch', 20, 10, 0, 1],
+  [14, 'glitch', 20, 10, 0, 0],
   [15, 'okolnik-usmiech', 22, 8, 0, 0],
   [16, 'okolnik-premia', 26, 8, 0, 0],
   [17, 'fefo', 27, 18, 0, 1],

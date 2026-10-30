@@ -221,7 +221,7 @@ export function buildStatement(i: StatementInput): Statement {
 
 // --- Zapis -----------------------------------------------------------------------------------------------
 
-const MAX_MONEY = 1e12;
+const MAX_MONEY = 1e60;   // jak straż pieniędzy w zapisie (`LIMITS.money`): przed przepełnieniem, nie granica rozgrywki
 const money = (v: unknown, fallback = 0): number => num(v, fallback, -MAX_MONEY, MAX_MONEY);
 const plus = (v: unknown): number => num(v, 0, 0, MAX_MONEY);
 
@@ -267,7 +267,8 @@ export function sanitizeFranchisee(raw: unknown, minute: number, monthRevenue: n
     remanent: {
       revenue: plus(r.revenue),
       fromDay: whole(r.fromDay, fresh.remanent.fromDay, 0, day),
-      nextDay: whole(r.nextDay, fresh.remanent.nextDay, day, day + 400),
+      // remanent może być zaległy (przeskok zegara bez gry): odbędzie się najbliższego ranka, więc dzień z przeszłości zostaje
+      nextDay: whole(r.nextDay, fresh.remanent.nextDay, 0, day + 400),
       known: r.known === true,
       pending: plus(r.pending),
       last: protocol(r.last),

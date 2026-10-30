@@ -1128,7 +1128,7 @@ describe('powłoka gry (createShell)', () => {
       const s = open(h, 'traszka-1');
       s.econ.cash = 777_777;
       saveSession(s);
-      ui.report.value = { label: 'x', counters: s.econ.total, profit: 0, cash: 0, comment: '', detail: null };
+      ui.report.value = { label: 'x', counters: s.econ.total, profit: 0, cash: 0, comment: '', detail: null, statement: null };
 
       h.shell.game.restart();
 
@@ -1381,7 +1381,7 @@ describe('powłoka gry (createShell)', () => {
     it('handleEvents: dzień zapisuje, raport miesiąca idzie do interfejsu, reszta do toastów z dźwiękiem', () => {
       const h = harness();
       const s = open(h);
-      const report = { label: 'wrzesień', counters: s.econ.total, profit: 1, cash: 2, comment: 'ok', detail: null };
+      const report = { label: 'wrzesień', counters: s.econ.total, profit: 1, cash: 2, comment: 'ok', detail: null, statement: null };
       h.shell.handleEvents([
         { kind: 'day', text: 'Dzień' },
         { kind: 'month', text: 'Miesiąc', report },
@@ -1475,7 +1475,7 @@ describe('powłoka gry (createShell)', () => {
     it('handleEvents: raport miesiąca ma własne okno, koniec gry też (okno końca współpracy), więc żadne nie trafia do story', () => {
       const h = harness();
       const s = open(h);
-      const report = { label: 'wrzesień', counters: s.econ.total, profit: 1, cash: 2, comment: 'ok', detail: null };
+      const report = { label: 'wrzesień', counters: s.econ.total, profit: 1, cash: 2, comment: 'ok', detail: null, statement: null };
       h.shell.handleEvents([
         { kind: 'month', text: 'Raport za wrzesień', report },
         { kind: 'gameover', text: 'Centrala wypowiada umowę franczyzową.' },
@@ -1615,7 +1615,7 @@ describe('powłoka gry (createShell)', () => {
         ui.tab.value = 'palety';
         ui.story.value = [{ id: 1, title: 'x', text: 'y' }];
         ui.picked.value = { seq: 3, answer: 1 };
-        ui.report.value = { label: 'x', counters: casual.econ.total, profit: 0, cash: 0, comment: '', detail: null };
+        ui.report.value = { label: 'x', counters: casual.econ.total, profit: 0, cash: 0, comment: '', detail: null, statement: null };
         h.urls.length = 0;
 
         expect(h.shell.startRanked(RANKED_SEED)).toBe(true);
@@ -2207,7 +2207,7 @@ describe('powłoka gry (createShell)', () => {
         h.shell.startRanked(RANKED_SEED);
         h.shell.game.dispatch({ type: 'setOrder', auto: false, manual: 4 });   // bez zapisu: zapisze go dopiero wyjście
         ui.tab.value = 'palety';
-        ui.report.value = { label: 'x', counters: h.shell.session!.econ.total, profit: 0, cash: 0, comment: '', detail: null };
+        ui.report.value = { label: 'x', counters: h.shell.session!.econ.total, profit: 0, cash: 0, comment: '', detail: null, statement: null };
         h.urls.length = 0;
         h.scene.loads.length = 0;
 
@@ -3475,7 +3475,7 @@ describe('powłoka gry (createShell)', () => {
           casualOpen(h, 'traszka-1');
           h.shell.startRanked(RANKED_SEED);
           const s = h.shell.session!;
-          ui.report.value = { label: 'x', counters: s.econ.total, profit: 0, cash: 0, comment: '', detail: null };
+          ui.report.value = { label: 'x', counters: s.econ.total, profit: 0, cash: 0, comment: '', detail: null, statement: null };
           const keys = snapshot();
           h.scene.loads.length = 0;
 

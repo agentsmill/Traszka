@@ -69,8 +69,8 @@ interface Step { minute: number; make: (s: GameSession) => Command }
 
 /**
  * Wydatki i decyzje gracza w wybranych dniach (dzień, godzina, minuta, polecenie): ten sam rytm co `PLAN` z `tests/simGolden.test.ts`,
- * dobrany do ekonomii tak, żeby bieg przetrwał sezon i każdy zakup był przyjęty (od SIM_VERSION 5 z realną ekonomią gotówka rośnie o kilkaset
- * złotych dziennie, więc zakupy są rozłożone na wrzesień i październik, a remont przychodzi w listopadzie). Są tu wszystkie typy poleceń poza stuknięciami i kartami, które dochodzą
+ * dobrany do ekonomii tak, żeby bieg przetrwał sezon i każdy zakup był przyjęty (od SIM_VERSION 6 gotówka rośnie tylko przy przelewie
+ * na koniec miesiąca, więc małe zakupy idą za gotówkę, a sprzęt i remont w listopadzie na raty u Centrali). Są tu wszystkie typy poleceń poza stuknięciami i kartami, które dochodzą
  * niżej. Remont 1 ma dwie próby (zapas na zmiany cen): rush bez trwającego remontu jest odrzucany i ląduje w dzienniku jak każde
  * odrzucone polecenie.
  */
@@ -87,11 +87,11 @@ const PLAN: readonly (readonly [day: number, hour: number, minute: number, cmd: 
   [3, 7, 0, { type: 'setOrder', auto: true }],
   [6, 12, 30, { type: 'setStaffProfile', profile: 'porzadek' }],
   [7, 6, 0, { type: 'setStaffProfile', profile: 'kolejka' }],
-  [10, 12, 0, { type: 'buyEquipment', id: 'sco' }],
+  [10, 12, 0, { type: 'buyEquipment', id: 'sco', raty: true }],   // od SIM_VERSION 6 droższe zakupy na raty u Centrali
   [11, 12, 0, { type: 'setOrder', auto: false, manual: 40 }],   // ponad granicę: stan przytnie do 30
   [12, 7, 0, { type: 'setOrder', auto: true, manual: 5.5 }],   // ułamek: stan zaokrągli
   [14, 12, 0, { type: 'buyUpgrade', id: 'wozek' }],
-  [20, 12, 0, { type: 'buyEquipment', id: 'bankomat' }],
+  [20, 12, 0, { type: 'buyEquipment', id: 'bankomat', raty: true }],
   [25, 12, 0, { type: 'campaign' }],
   // październik: zakupy po opłacie za wrzesień i zmiany w załodze
   [42, 12, 0, { type: 'buyUpgrade', id: 'kawa' }],
@@ -100,11 +100,11 @@ const PLAN: readonly (readonly [day: number, hour: number, minute: number, cmd: 
   [48, 12, 0, { type: 'pinStaff', task: 'kasa', count: 1 }],
   [50, 12, 0, { type: 'fire' }],
   [50, 12, 5, { type: 'setStaffProfile', profile: 'kolejka' }],
-  [55, 12, 0, { type: 'buyEquipment', id: 'piec', slotId: 'equipmentSlot-2' }],
+  [55, 12, 0, { type: 'buyEquipment', id: 'piec', slotId: 'equipmentSlot-2', raty: true }],
   [60, 12, 0, { type: 'buyUpgrade', id: 'asystent' }],
   // listopad: kampania, remont 1 (dwie próby: zapas na zmiany cen) i zakupy po remoncie
   [78, 12, 0, { type: 'campaign' }],
-  [84, 7, 0, { type: 'startRemont' }],
+  [84, 7, 0, { type: 'startRemont', raty: true }],
   [84, 7, 5, { type: 'rushRemont' }],
   [86, 12, 0, { type: 'campaign' }],
   [87, 12, 0, { type: 'hire' }],

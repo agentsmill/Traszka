@@ -4,9 +4,10 @@ import { formatMonth, isLastDayOfMonth } from '@/sim/economy/calendar';
 import { CAT_INFO, CATS, CREDIT_LIMIT, MINUTES_PER_DAY, OPEN_FROM, PALLET_ITEMS } from '@/sim/economy/catalog';
 import {
   buyEquipment, buyUpgrade, effects, emptyCounters, kpiMetricsOf, kpiScaleOf, stepMinute, tapPallet, type CommandResult,
-  type Counters, type EconEvent, type EconomyState,
+  type Counters, type EconEvent, type EconomyState, type MonthReport,
 } from '@/sim/economy/economy';
 import { applyCommand } from '@/sim/economy/commands';
+import { createFranchisee } from '@/sim/economy/franchisee';
 import { visibleCards } from '@/sim/economy/tycoon/cards';
 import { newKpiWeek } from '@/sim/economy/tycoon/kpi';
 import { LIMITS } from '@/sim/economy/sanitize';
@@ -96,18 +97,21 @@ const legacyTrust = (e: EconomyState): number => (e as unknown as { trust: numbe
 const asLoaded = (e: EconomyState): Omit<EconomyState, 'tycoon'> => {
   const { trust: _, priority: __, giftSeq: ___, tapBoostUntil: ____, ...rest } = withoutTycoon(withoutQuests(e)) as
     Omit<EconomyState, 'tycoon'> & { trust?: number; priority?: string; giftSeq?: number; tapBoostUntil?: number };
-  const counters = (c: Counters): Counters => ({ ...c, bonus: 0, guarantee: 0, wut: 0, fineCount: 0 });
+  const counters = (c: Counters): Counters => ({
+    ...c, bonus: 0, guarantee: 0, wut: 0, fineCount: 0, zus: 0, vat: 0, accounting: 0, installments: 0, remanent: 0,
+  });
   return {
     ...rest,
     today: counters(rest.today),
     month: counters(rest.month),
     total: counters(rest.total),
-    lastReport: rest.lastReport && { ...rest.lastReport, counters: counters(rest.lastReport.counters), detail: null },
+    lastReport: rest.lastReport && { ...rest.lastReport, counters: counters(rest.lastReport.counters), detail: null, statement: null },
     shift: { staff: 0, human: { kasa: 0, rozladunek: 0, wykladanie: 0, sprzatanie: 0 }, people: [] },
     tapStreak: 0,
     lastTapAt: -1e9,
     lastWarnAt: -1e9,   // zapis sprzed upomnień Straży: żadnego upomnienia
     milestonesReady: [],   // zapis sprzed SIM 5: cele z `milestones` są już odebrane, nic nie czeka na „Odbierz”
+    franchisee: createFranchisee(rest.minute, rest.month.revenue),   // zapis sprzed SIM 6: saldo od zera, remanent od obrotu miesiąca
   };
 };
 
@@ -520,6 +524,46 @@ describe('zapis z SIM_VERSION 4 (palety po 320 sztuk, cele odebrane same, zamów
   });
 });
 
+describe('zapis z SIM_VERSION 5 w połowie miesiąca (marża w gotówce, opłata na koniec miesiąca)', () => {
+  // zapis zrobiony kodem z commita 5bf6947 (SIM_VERSION 5): bierny sklep `kiełbasa-42`, ulotki 4. dnia, zapisany 16 października
+  // o 14:00 z raportem za wrzesień; marża, płace i media z pierwszej połowy października są już w gotówce
+  const FILE = 'save-sim5-polowa-miesiaca.json';
+  const SEED_SIM5 = 'kiełbasa-42';
+
+  it('saldo od zera i bez podwójnej marży ani płac: przelew 31 października liczy tylko dni od migracji, z notką', () => {
+    const was = (JSON.parse(text(FILE)) as SaveEnvelope).econ;
+    storage.setItem(key(SEED_SIM5), text(FILE));
+    const s = createSession(SEED_SIM5);
+    expect(s.fromSave).toBe(true);
+    expect(s.loadNotice).toBeNull();
+    expect(errorLog).not.toHaveBeenCalled();
+    expect(s.econ.cash).toBe(was.cash);
+    expect(s.econ.month.margin).toBe(was.month.margin);
+    expect(s.econ.franchisee.month).toEqual({ margin: 0, bonus: 0, pallets: 0, wages: 0, media: 0 });
+    expect(s.econ.franchisee.remanent).toMatchObject({ revenue: was.month.revenue, nextDay: 90, known: false });
+    expect(s.econ.history).toEqual(was.history);   // raport za wrzesień bez przelewu: limit rat liczy się od gwarancji
+    let report: MonthReport | undefined;
+    let cashBefore = s.econ.cash;
+    while (!report) {
+      const out: EconEvent[] = [];
+      for (const card of visibleCards(s.econ.tycoon.cards, s.econ.minute)) applyCommand(s.econ, s.info, { type: 'answerCard', seq: card.seq, answer: card.defaultAnswer });
+      cashBefore = s.econ.cash;
+      stepMinute(s.econ, s.info, out);
+      report = out.find((e) => e.kind === 'month')?.report;
+    }
+    const st = report.statement!;
+    expect(report.label).toBe('październik 2026');
+    expect(st.partial).toBe(true);
+    // od 16 października 14:00 do 31 października: mniej niż dwie trzecie miesiąca w przelewie, cały miesiąc w licznikach
+    expect(st.margin).toBeGreaterThan(0.3 * report.counters.margin);
+    expect(st.margin).toBeLessThan(0.65 * report.counters.margin);
+    expect(st.wages).toBeLessThan(report.counters.wages);
+    expect(st.guarantee).toBe(0);
+    expect(s.econ.cash - cashBefore).toBeCloseTo(st.net, 6);
+    expectPlayable(s);
+  });
+});
+
 describe('uszkodzone zapisy', () => {
   const v1 = (): Record<string, unknown> => JSON.parse(text('save-v1-blok-dzien40.json')) as Record<string, unknown>;
   const v2 = (econ: unknown = v1(), layout: unknown = layoutFor(BLOK, 0)): Record<string, unknown> => ({
@@ -810,7 +854,7 @@ describe('pieniądze w zapisie: LIMITS.money to straż przed przepełnieniem, a 
     e.partner = { ...e.partner, networkIncome: value };
     for (const k of Object.keys(emptyCounters()) as (keyof Counters)[]) e.today[k] = e.month[k] = e.total[k] = value;
     e.history = [{ label: 'wrzesień 2026', profit: value, revenue: value }];
-    e.lastReport = { label: 'wrzesień 2026', counters: { ...e.total }, profit: value, cash: value, comment: 'Rekordowy miesiąc!', detail: null };
+    e.lastReport = { label: 'wrzesień 2026', counters: { ...e.total }, profit: value, cash: value, comment: 'Rekordowy miesiąc!', detail: null, statement: null };
   }
   const savedEcon = (): EconomyState => (JSON.parse(storage.getItem(key(BLOK))!) as { econ: EconomyState }).econ;
 

@@ -78,19 +78,21 @@ const LOG: LogEntry[] = withTaps([
  * 45. dzień): układ sklepu zmienia się w trakcie odtwarzania.
  */
 const LOG_REMONT: LogEntry[] = withTaps([
-  { minute: at(55, 7), cmd: { type: 'startRemont' } },
+  { minute: at(55, 7), cmd: { type: 'startRemont', raty: true } },   // od SIM_VERSION 6 na raty: gotówka rośnie tylko przy przelewie
   { minute: at(55, 7, 5), cmd: { type: 'rushRemont' } },
 ], 90);
 /**
- * Stuknięcia przez cały sezon, a od 10 października (dzień 40) osiem osób na zmianie i 30 palet dziennie: pensje, opłata logistyczna
- * i przejścia zasypane paletami sprowadzają gotówkę poniżej granicy debetu (od SIM_VERSION 5 −100 tys. zł) 29 listopada, przed ostatnim
- * raportem. Wrześniowy raport jest na plusie, czyli taki bieg gracz mógłby wysłać z tym, co zdążył zarobić, gdyby sędzia liczył
- * raporty, które powstały. Strojone pod `SEED` przy SIM_VERSION 5 (do SIM_VERSION 4 wystarczał tu sam remont).
+ * Bundle, którego odtworzenie kończy grę po zamknięciu października: ten sam prawdziwy bieg do 31 października, 23:00, z `gameOver` jak przy
+ * wypowiedzeniu umowy. Od SIM_VERSION 6 („trzy kieszenie”) żaden dziennik nie bankrutuje przed ostatnim zamknięciem sezonu: gotówka zmienia się
+ * przy przelewach na koniec miesiąca, a najgłębszy dołek po dwóch miesiącach, jaki dało się zbudować (sześć etatów więcej, 30 palet dziennie,
+ * raty do limitu, najdroższe odpowiedzi na karty, siedem sklepów), to ok. −90 tys. zł przy granicy −100 tys. (raport analizy SIM 6). Regułę
+ * `season-bankrupt` sprawdzamy więc na bundlu z takim końcem: sędzia ma odrzucić bieg z dwoma raportami, choć wrzesień jest na plusie.
  */
-const LOG_BANKRUPT: LogEntry[] = withTaps([
-  ...Array.from({ length: 6 }, (_, i) => ({ minute: at(40, 9, i), cmd: { type: 'hire' } as const })),
-  { minute: at(40, 9, 10), cmd: { type: 'setOrder', auto: false, manual: 30 } },
-], 90);
+const OCTOBER_CLOSE = 60 * MINUTES_PER_DAY + 23 * 60 + 1;
+const loadEndedAfterOctober = async (): Promise<unknown> => {
+  const b = (await load()) as Record<string, unknown> & { replayRun: (run: RunRecord, until: number) => ReturnType<typeof replayRun> };
+  return { ...b, replayRun: (run: RunRecord, until: number) => ({ ...b.replayRun(run, Math.min(until, OCTOBER_CLOSE)), gameOver: true }) };
+};
 /** Wynik policzony bezpośrednio z src/sim, tym samym kodem co w bundlu (drugi sposób do porównania). */
 const direct = (run: RunRecord): number => seasonScore(replayRun(run, RANKED_SEASON_END_MINUTE));
 
@@ -219,13 +221,13 @@ describe('sędzia na zbudowanym bundlu daje ten sam wynik co symulacja z src', (
   }, 60_000);
 
   it('bieg, który bankrutuje przed końcem sezonu, choć ma raport z dodatnim wynikiem: season-bankrupt, a nie wynik z raportów', async () => {
-    const run: RunRecord = { ...RUN, log: LOG_BANKRUPT };
-    const state = replayRun(run, RANKED_SEASON_END_MINUTE);
-    expect(state.gameOver, 'dziennik naprawdę kończy grę').toBe(true);
-    expect(state.minute).toBeLessThan(RANKED_SEASON_END_MINUTE);
-    expect(state.history.length, 'raporty, które powstały przed bankructwem').toBeGreaterThan(0);
+    const run: RunRecord = { ...RUN, log: LOG };
+    const state = replayRun(run, OCTOBER_CLOSE);
+    expect(state.history.length, 'raporty, które powstały przed końcem gry').toBe(2);
     expect(state.history[0]!.profit, 'wrzesień na plusie').toBeGreaterThan(0);
-    expect(await makeBundleVerifier(load)(run)).toEqual({ ok: false, reason: 'season-bankrupt' });
+    expect(await makeBundleVerifier(loadEndedAfterOctober)(run)).toEqual({ ok: false, reason: 'season-bankrupt' });
+    // ten sam bieg bez podstawionego końca przeżywa sezon i ma wynik
+    expect(await makeBundleVerifier(load)(run)).toMatchObject({ ok: true });
   }, 60_000);
 
   it('simVersion inny niż SIM_VERSION w bundlu: old-version', async () => {
