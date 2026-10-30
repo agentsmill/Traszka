@@ -16,6 +16,8 @@ import { bindControls } from './controls';
 import { advanceClock, clockAlpha } from './loop';
 import type { GameSession } from './session';
 import { crowdObstaclesOf, palletMarkersOf, palletRefsOf } from './palletRefs';
+import type { RobotsSync } from '@/render/robots/robotsView';
+import { EDWARD_ID } from '@/render/staff/types';
 import { SIM_STEP, crowdHeadcount, feedCrowdMirror, payLook, setCrowdExtras, setCrowdRate, stepCrowd, type CrowdOptions } from '@/sim/crowd/crowd';
 import { CATS, HOUR_CURVE } from '@/sim/economy/catalog';
 import { minuteOfDay } from '@/sim/economy/calendar';
@@ -221,6 +223,7 @@ export function createSceneHost(deps: SceneDeps): SceneHost {
   const angrySeen = new Set<number>();   // utraceni, którzy już dostali dymek
   let mirrored: GameSession | null = null;
   let staffSyncFailed = false;           // błąd synchronizacji załogi zgłaszamy raz, a nie co ~100 ms
+  let robotsSyncFailed = false;          // tak samo robotów z warsztatu
 
   ctx.setTimeOfDay(tod);
   ui.timeOfDay.value = tod;
@@ -275,10 +278,22 @@ export function createSceneHost(deps: SceneDeps): SceneHost {
       headcount: crowdHeadcount(loaded.world.crowd),
     }));
     // załoga: kto jest na zmianie i co robi (numery osób są stałe, `shift.people`), oraz palety (przeszkody i cele rozładunku);
-    // scena tylko to odgrywa
-    // Błąd w teatrze załogi nie może przerwać reszty tej metody (pora dnia, znaczniki, nakładka kasy) ani klatki: raz do konsoli.
+    // scena tylko to odgrywa. Błąd w teatrze załogi nie może przerwać reszty tej metody (pora dnia, znaczniki, nakładka kasy) ani
+    // klatki: raz do konsoli.
+    // Roboty z warsztatu: maszyny stają na zapleczu i na meblu (`robots`), a eDward jest osobą załogi z własnym numerem, która ma
+    // zadanie wg tego, co właśnie szło do przodu. Maszyny na zapleczu są dla załogi przeszkodami jak palety. Błąd maszyn nie
+    // zatrzymuje załogi (ludzie dalej pracują, tylko bez eDwarda), a załogi nie zatrzymuje maszyn.
+    let robots: RobotsSync | undefined;
     try {
-      loaded.staffView?.sync({ people: staffOnShift(s), minute: s.minute, pallets: palletRefsOf(s, info) });
+      robots = loaded.robots?.sync(s);
+    } catch (error) {
+      if (!robotsSyncFailed) console.error('Nie udało się zsynchronizować robotów z ekonomią.', error);
+      robotsSyncFailed = true;
+    }
+    try {
+      const people = staffOnShift(s);
+      if (robots?.edward) people.push({ id: EDWARD_ID, task: robots.edward });
+      loaded.staffView?.sync({ people, minute: s.minute, pallets: palletRefsOf(s, info), obstacles: loaded.robots?.obstacles });
     } catch (error) {
       if (!staffSyncFailed) console.error('Nie udało się zsynchronizować załogi z ekonomią.', error);
       staffSyncFailed = true;
@@ -373,6 +388,8 @@ export function createSceneHost(deps: SceneDeps): SceneHost {
     syncVisuals,
 
     animate(frameDt, realDt, paused) {
+      // maszyny z warsztatu nie potrzebują fabryki postaci, więc ruszają się, zanim dojdzie tłum
+      if (loaded?.robots) loaded.robots.update(realDt * Math.min(paused ? 0 : loaded.world.speed, ANIM_SPEED_CAP));
       if (!loaded?.crowdView) return;
       const { world, crowdView, cashierView, staffView } = loaded;
       const steps = paused ? 0 : advanceClock(clock, frameDt, world.speed);

@@ -8,7 +8,7 @@ import { LEAVE_RUSH, StaffCrew, doorstepPoint, staffSpeedFactor, type CrewInput,
 import { buildStaffNav, type StaffNav } from './staffNav';
 import { pickStaffSpots } from './targets';
 import { QUARTER_MIN, TASK_DWELL_S } from './taskHold';
-import { STAFF_VIEW_MAX, type PalletRef, type StaffAssignment, type StaffDuty, type StaffSpot } from './types';
+import { EDWARD_ID, ROBOT_VIEW_MAX, STAFF_VIEW_MAX, isRobotId, type PalletRef, type StaffAssignment, type StaffDuty, type StaffSpot } from './types';
 import { STAFF_WALK_SPEED, StaffWalker } from './walker';
 
 // Szpiedzy: ile razy załoga liczy miejsca, buduje siatkę, wyznacza cele i każe przeplanować drogi (te same dane, ten sam wynik).
@@ -1460,5 +1460,92 @@ describe('StaffCrew: zamknięcie sklepu', () => {
     const elapsed = until(crew, () => m.walker.atGoal, 30);
     expect(elapsed).toBeGreaterThan(expected - 2 * DT);
     expect(elapsed).toBeLessThan(expected + 4 * DT);
+  });
+});
+
+describe('StaffCrew: roboty (eDward) w załodze', () => {
+  const sc = SCENES[0]!;
+  const withEdward = (humans: readonly StaffAssignment[], task: StaffDuty = 'wolny'): StaffAssignment[] => [...humans, { id: EDWARD_ID, task }];
+
+  it('numery robotów są spoza zakresu ludzi, a robot ma własny limit', () => {
+    expect(isRobotId(EDWARD_ID)).toBe(true);
+    expect(isRobotId(STAFF_VIEW_MAX - 1)).toBe(false);
+    expect(EDWARD_ID).toBeGreaterThan(STAFF_VIEW_MAX);
+    expect(ROBOT_VIEW_MAX).toBeGreaterThanOrEqual(1);
+  });
+
+  it('eDward obok kompletu ludzi nie zabiera miejsca nikomu: wszyscy ludzie i on', () => {
+    const crew = new StaffCrew(sc.layout);
+    crew.sync(input(withEdward(people(STAFF_VIEW_MAX)), sc.pallets));
+    expect(crew.members).toHaveLength(STAFF_VIEW_MAX + 1);
+    expect(idsOf(crew)).toEqual([...Array.from({ length: STAFF_VIEW_MAX }, (_, i) => i), EDWARD_ID]);
+  });
+
+  it('nadmiar robotów jest ucięty do limitu, a ludzi nie dotyka', () => {
+    const crew = new StaffCrew(sc.layout);
+    crew.sync(input([...people(3), { id: EDWARD_ID, task: 'wolny' }, { id: EDWARD_ID + 1, task: 'wolny' }, { id: EDWARD_ID + 2, task: 'wolny' }], sc.pallets));
+    expect(crew.members.filter((m) => isRobotId(m.id))).toHaveLength(ROBOT_VIEW_MAX);
+    expect(crew.members.filter((m) => !isRobotId(m.id))).toHaveLength(3);
+  });
+
+  it('robot nigdy nie bierze ciała kasjera, nawet gdy jest jedynym przybyszem (noc, wczytanie zapisu)', () => {
+    const crew = new StaffCrew(sc.layout);
+    crew.sync(input(withEdward([]), sc.pallets));
+    expect(crew.members.map((m) => [m.id, m.isCashier])).toEqual([[EDWARD_ID, false]]);
+    // człowiek, który przychodzi później, dostaje ciało kasjera
+    crew.sync(input(withEdward(assign([0, 'kasa'])), sc.pallets));
+    expect(member(crew, 0).isCashier).toBe(true);
+    expect(member(crew, EDWARD_ID).isCashier).toBe(false);
+  });
+
+  it('człowiek i robot przychodzący razem: ciało kasjera ma człowiek (najmniejsze id)', () => {
+    const crew = new StaffCrew(sc.layout);
+    crew.sync(input(withEdward(people(2)), sc.pallets));
+    expect(crew.members.filter((m) => m.isCashier).map((m) => m.id)).toEqual([0]);
+  });
+
+  it('eDward zostaje, gdy ludzie kończą zmianę, i wychodzi dopiero wtedy, gdy znika z listy', () => {
+    const crew = new StaffCrew(sc.layout);
+    crew.sync(input(withEdward(people(3)), sc.pallets));
+    crew.sync(input(withEdward([]), sc.pallets, MINUTE + 15 * 60));
+    expect(member(crew, EDWARD_ID).leaving).toBe(false);
+    for (const id of [0, 1, 2]) expect(member(crew, id).leaving).toBe(true);
+    crew.sync(input([], sc.pallets, MINUTE + 15 * 60 + 15));
+    expect(member(crew, EDWARD_ID).leaving).toBe(true);
+  });
+
+  it('bez eDwarda wynik jest taki sam jak dawniej (robot niczego nie zmienia ludziom)', () => {
+    const a = new StaffCrew(sc.layout);
+    const b = new StaffCrew(sc.layout);
+    a.sync(input(people(5), sc.pallets));
+    b.sync(input(withEdward(people(5)), sc.pallets));
+    for (let i = 0; i < 40; i++) { a.step(DT); b.step(DT); }
+    for (let id = 0; id < 5; id++) expect(pos(member(b, id))).toEqual(pos(member(a, id)));
+  });
+
+  describe('przeszkody (maszyny na zapleczu)', () => {
+    const blocked: Cell[] = [{ x: 3, y: sc.layout.depth - 2 }, { x: 4, y: sc.layout.depth - 2 }];
+
+    it('buduje siatkę z przeszkodami i planuje drogi od nowa tylko przy zmianie ich zbioru', () => {
+      const crew = new StaffCrew(sc.layout);
+      crew.sync({ ...input(people(2), sc.pallets), obstacles: blocked });
+      const builds = navSpy.mock.calls.length;
+      const lastBlocked = navSpy.mock.calls[builds - 1]![1] as readonly Cell[];
+      for (const c of blocked) expect(lastBlocked.some((b) => b.x === c.x && b.y === c.y)).toBe(true);
+      crew.sync({ ...input(people(2), sc.pallets), obstacles: blocked });
+      expect(navSpy.mock.calls.length).toBe(builds);
+      crew.sync({ ...input(people(2), sc.pallets), obstacles: [] });
+      expect(navSpy.mock.calls.length).toBe(builds + 1);
+    });
+
+    it('nikt nie dostaje miejsca na kratce przeszkody', () => {
+      const crew = new StaffCrew(sc.layout);
+      const wolni = Array.from({ length: STAFF_VIEW_MAX }, (_, id): StaffAssignment => ({ id, task: 'wolny' }));
+      crew.sync({ ...input(wolni, sc.pallets), obstacles: blocked });
+      for (const m of crew.members) {
+        const cell = cellOf(m);
+        expect(blocked.some((b) => b.x === cell.x && b.y === cell.y), `osoba ${m.id} na ${cell.x},${cell.y}`).toBe(false);
+      }
+    });
   });
 });

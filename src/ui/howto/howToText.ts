@@ -96,7 +96,7 @@ export function howToPoints(): string[] {
     'Po dostawie przenieś palety spod sklepu na zaplecze (zakładka Palety, przycisk „Na zaplecze”), zanim wróci Straż Miejska.',
     `W zakładce Ludzie ustaw profil pracy, czyli co ludzie robią najpierw: ${profiles}.`,
     'Gdy kolejka rośnie, kup kasę samoobsługową albo drugą kasę (zakładka Ulepszenia): kasjerów jest tyle, ile stanowisk.',
-    'Na koniec miesiąca Centrala pobiera opłatę franczyzową: zostaw na nią gotówkę (zakładka Cele, sekcja „Ten miesiąc”).',
+    'Na koniec miesiąca Centrala pobiera opłatę: pasek pod gotówką pokazuje, ile oddasz i ile zostaje (zakładka Cele, sekcja „Ten miesiąc”).',
     `Tempo zmieniasz u góry (${slowest.label}–${fastest.label}), a Spacja pauzuje.`,
   ];
 }
@@ -115,6 +115,7 @@ export function howToDetails(): HowToSection[] {
       paragraphs: [
         `Zarabiasz marżę, nie obrót: od ${percent(margins.low.margin)} (${margins.low.label}) do ${percent(margins.high.margin)} (${margins.high.label}) ceny towaru, a hot-dogi i kawa dają ${percent(HOT.margin)}.`,
         `Opłata franczyzowa to ${zl(FRANCHISE_FEE_FIXED)} plus ${percent(FRANCHISE_FEE_SHARE)} obrotu.`,
+        'Opłata, ubytki i premia schodzą jednym przelewem na koniec miesiąca. Stuknij pasek: rachunek i podgląd końca miesiąca. Zakupy ostrzegają, nie blokują.',
         `Ubytki to przeterminowany towar, kradzieże, pomyłki i „zapomniane” skany na kasach samoobsługowych. Do ${percent(WUT.threshold)} obrotu miesiąca pokrywa je Centrala, ponad limit płacisz Ty (zakładka Sklep).`,
       ],
     },
@@ -124,8 +125,8 @@ export function howToDetails(): HowToSection[] {
         `Zamówienie na jutro zamyka się o ${hourOf(ORDER_DEADLINE)}, dostawa przyjeżdża zwykle o ${hourOf(DELIVERY_AT)}. Domyślnie zamawia Asystent Traszki, ręcznie ustawisz je w zakładce Palety.`,
         `Asystent zamawia najwyżej tyle palet, ile ludzie poza kasą rozładują w ${hours(ASSISTANT_UNLOAD_MIN / 60)}: więcej ludzi, więcej towaru.`,
         `Straż Miejska zagląda od ${hourOf(STRAZ.from)}, gdy palety stoją pod sklepem ponad ${hours(STRAZ.graceMin / 60)}: najpierw upomina, potem daje mandat.`,
-        `Palety ponad ${PALLETS_FREE} w zamówieniu kosztują po ${zl(PALLET_FEE)}. Palet nikt nie odsyła: gdy zabraknie miejsca, nadmiar stoi w przejściach sali, klienci się o niego potykają i odchodzą, a reputacja spada, dopóki palet nie rozładujesz.`,
-        'Paleta „Do sali” przeszkadza klientom. Worki po rozładunku trzeba wynieść, inaczej zajmą zaplecze.',
+        `Palety ponad ${PALLETS_FREE} w zamówieniu kosztują po ${zl(PALLET_FEE)}, a nadmiaru nikt nie odsyła.`,
+        'Paleta „Do sali” i nadmiar w przejściach odstraszają klientów i psują reputację. Worki po rozładunku trzeba wynieść, inaczej zajmą zaplecze.',
       ],
     },
     {
@@ -153,7 +154,7 @@ export function howToDetails(): HowToSection[] {
       title: 'Czas i cele',
       paragraphs: [
         `Doba trwa ok. ${dayLengthText()} przy ${slowest.label}, a sklep działa od ${hourOf(OPEN_FROM)} do ${hourOf(OPEN_TO)}. W niedzielę ruch rośnie ×${num(SUNDAY_TRAFFIC)}.`,
-        `W zakładce Cele czeka cel do niedzieli: trafiony daje premię, zaufanie i XP, a nietrafiony odbiera zaufanie (${signedPts(KPI.trustMiss)}). Spełnione kamienie milowe odbierzesz przyciskiem „Odbierz”: dopiero wtedy wpadają Ogonki i XP.`,
+        `W zakładce Cele czeka cel do niedzieli: trafiony daje premię, zaufanie i XP, a nietrafiony odbiera zaufanie (${signedPts(KPI.trustMiss)}). Nagrody za kamienie milowe: „Odbierz”.`,
       ],
     },
   ];

@@ -2,9 +2,11 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import type { Speed } from '@/game/loop';
 import { dayOf, formatClock, formatDate } from '@/sim/economy/calendar';
 import { DEBT_WARN, debtWarningText, isClosedForRemont } from '@/sim/economy/economy';
+import { forecastMonth, spendCheck, type MonthForecast, type SpendLevel } from '@/sim/economy/forecast';
 import { rankFor, xpToNext } from '@/sim/economy/progress';
 import { trustTier } from '@/sim/economy/tycoon/trust';
-import { econ, openHowTo, openRanking, showSettings, speed, tab, type Controls } from '../state';
+import { econ, openHowTo, openMonthPreview, openRanking, showSettings, speed, tab, type Controls } from '../state';
+import { dueTitle } from './forecastText';
 import { int, plural, zl } from './format';
 
 /** Przyciski prędkości w pasku (pierwszy to pauza); „Jak grać” podaje z nich zakres tempa. */
@@ -83,6 +85,24 @@ export function RankingButton() {
 }
 
 /**
+ * Rachunek końca miesiąca przy gotówce: ile oddasz Centrali przy zamknięciu miesiąca (rośnie z każdym klientem) i ile gotówki
+ * zostanie wolnej po rozliczeniu. Stuknięcie otwiera okno rachunku z podglądem końca miesiąca (`MonthPreviewModal`). Kolor wolnych środków mówi o debecie: poniżej
+ * zera ostrzegawczy, poniżej progu ostrzeżenia (`DEBT_WARN`) czerwony, poniżej granicy gry (`DEBT_LIMIT`) czerwony z wykrzyknikiem.
+ */
+export function DueChip({ f, cash }: { f: MonthForecast; cash: number }) {
+  const level: SpendLevel = spendCheck(f, 0).level;
+  const tone = level === 'danger' || level === 'warn' ? level : f.free < 0 ? 'neg' : '';
+  const title = dueTitle(f, cash, spendCheck(f, 0));
+  return (
+    <button type="button" class={`tt-due${tone ? ` ${tone}` : ''}`} title={title}
+      aria-label={`Do oddania Centrali ${zl(f.due)}, wolne środki ${zl(f.free)}`} onClick={openMonthPreview}>
+      <span class="tt-due-part"><span class="tt-due-label"><span class="tt-due-pre">Do oddania </span>Centrali</span> <b>{zl(f.due)}</b></span>
+      <span class="tt-due-part"><span class="tt-due-label">Wolne</span> <b class="tt-due-free">{level === 'danger' ? '⚠ ' : ''}{zl(f.free)}</b></span>
+    </button>
+  );
+}
+
+/**
  * Górny pasek: poziom z pierścieniem XP, gotówka, reputacja, Ogonki, zaufanie Centrali, data i godzina, prędkość czasu, ranking
  * i ustawienia. `ranking`: czy gra ma panele rankingu (bez nich przycisku „🏆” nie ma, bo nie miałby czego otworzyć).
  */
@@ -111,6 +131,9 @@ export function Hud({ controls, ranking = false }: { controls: Controls; ranking
           <button type="button" class="tt-iconbtn tt-help" aria-label="Jak grać" onClick={() => openHowTo()}>?</button>
           <button type="button" class="tt-iconbtn tt-gear" aria-label="Ustawienia" onClick={() => { showSettings.value = true; }}>⚙</button>
         </span>
+      </div>
+      <div class="tt-hud-row tt-hud-due">
+        <DueChip f={forecastMonth(s)} cash={s.cash} />
       </div>
       <div class="tt-hud-row">
         <span class="tt-clock">

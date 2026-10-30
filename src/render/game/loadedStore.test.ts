@@ -171,9 +171,19 @@ describe('loadStore / unloadStore', () => {
     expect(loaded.street).toBeNull();
   });
 
+  it('roboty z warsztatu: widok maszyn stoi w bryle sklepu także bez fabryki postaci (nie czeka na nią), a benchmark go nie ma', () => {
+    const loaded = loadStore(source({ factory: null }));
+    expect(loaded.robots).not.toBeNull();
+    expect(loaded.robots!.root.parent).toBe(loaded.view.root);
+    expect(loaded.crowdView).toBeNull();
+    unloadStore(loaded);
+    expect(loaded.robots!.root.parent).toBeNull();
+    expect(loadStore(source({ info: null })).robots).toBeNull();
+  });
+
   it('bez opisu układu dla ekonomii (benchmark) nie ma palet, sprzętu ani kasy; bez fabryki postaci nie ma widoku tłumu, kasjera ani załogi', () => {
     const loaded = loadStore(source({ info: null, factory: null }));
-    expect([loaded.pallets, loaded.equipment, loaded.till, loaded.tillTop, loaded.crowdView, loaded.cashierView, loaded.staffView]).toEqual([null, null, null, null, null, null, null]);
+    expect([loaded.pallets, loaded.equipment, loaded.robots, loaded.till, loaded.tillTop, loaded.crowdView, loaded.cashierView, loaded.staffView]).toEqual([null, null, null, null, null, null, null, null]);
     expect(stores()).toBe(1);
     expect(crowdParent.children).toHaveLength(1);
   });

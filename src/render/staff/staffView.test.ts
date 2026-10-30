@@ -18,7 +18,7 @@ import { layoutFromParts, validParts } from '@/sim/store/testLayouts';
 import type { CrewInput, CrewMember } from './crew';
 import { buildStaffNav } from './staffNav';
 import { StaffView } from './staffView';
-import { STAFF_VIEW_MAX, type StaffAssignment, type StaffDuty } from './types';
+import { EDWARD_ID, STAFF_VIEW_MAX, type StaffAssignment, type StaffDuty } from './types';
 import { STAFF_WALK_SPEED } from './walker';
 
 afterEach(() => { vi.restoreAllMocks(); });
@@ -716,5 +716,87 @@ describe('StaffView z prawdziwą fabryką postaci', () => {
     expect(parent.children[0]).toBe(cashier.character!.object);
     cashier.dispose();
     expect(blobs.mesh.count).toBe(0);
+  });
+});
+
+describe('StaffView: robot (eDward)', () => {
+  const edward = (r: Rig): Object3D | undefined => r.parent.children.find((o) => o.name === 'eDward');
+  const withEdward = (n: number, task: StaffDuty = 'wolny'): StaffAssignment[] => [...crowd(n), { id: EDWARD_ID, task }];
+
+  it('ma własną bryłę, a postaci z fabryki nie buduje (nie ma dla niego munduru ani seeda)', () => {
+    const r = rig();
+    r.staff.sync(input(withEdward(3)));
+    frame(r);
+    expect(edward(r)).toBeDefined();
+    expect(employees(r).map((m) => m.seed)).toEqual(['pracownik-1', 'pracownik-2']);
+    expect(r.attempts.has(`pracownik-${EDWARD_ID}`)).toBe(false);
+    expect(r.staff.size).toBe(3);                       // dwóch pracowników i eDward; kasjer ma CashierView
+    expect(member(r, EDWARD_ID).isCashier).toBe(false);
+    expect(member(r, 0).isCashier).toBe(true);
+  });
+
+  it('samotny eDward (noc, wczytany zapis) nie rusza kasjera i też ma bryłę', () => {
+    const r = rig();
+    r.staff.sync(input([{ id: EDWARD_ID, task: 'wolny' }]));
+    frame(r);
+    expect(edward(r)).toBeDefined();
+    expect(r.poses.every((p) => p === null)).toBe(true);   // robot nie prowadzi `CashierView` (bez kasjera w załodze jest on schowany)
+    expect(r.visibility.at(-1)).toBe(false);
+    expect(members(r).some((m) => m.isCashier)).toBe(false);
+  });
+
+  it('stoi na swojej kratce, patrzy w kierunku marszu i ma plamę cienia o promieniu robota', () => {
+    const r = rig();
+    r.staff.sync(input(withEdward(1, 'wykladanie')));
+    frame(r);
+    const m = member(r, EDWARD_ID);
+    const at = worldOf(m);
+    const o = edward(r)!;
+    expect(o.position.x).toBeCloseTo(at.x, 6);
+    expect(o.position.z).toBeCloseTo(at.z, 6);
+    const free = [...Array(r.blobs.capacity).keys()].map((i) => blobAt(r.blobs, i));
+    expect(free.some((b) => Math.abs(b.x - at.x) < 1e-6 && Math.abs(b.z - at.z) < 1e-6 && b.rx < 0.5)).toBe(true);
+  });
+
+  it('chodzi: po wejściu z chodnika zmienia pozycję i dochodzi na swoje miejsce', () => {
+    const r = rig();
+    r.staff.sync(input(crowd(2)));                      // pierwsza synchronizacja: wszyscy stoją na miejscach
+    frame(r);
+    r.staff.sync(input(withEdward(2, 'wykladanie')));   // eDward dochodzi później: wchodzi z chodnika
+    frame(r);
+    const m = member(r, EDWARD_ID);
+    const start = { ...worldOf(m) };
+    expect(until(r, () => m.walker.atGoal, 40)).toBe(true);
+    const end = worldOf(m);
+    expect(Math.hypot(end.x - start.x, end.z - start.z)).toBeGreaterThan(1);
+  });
+
+  it('cień z mapy cieni obejmuje robota tak samo jak ludzi (tylko wysoka), także nowo zbudowanego', () => {
+    const r = rig();
+    r.staff.sync(input(withEdward(2)));
+    r.staff.setCharacterShadows(false);
+    frame(r);
+    const castFlags = (o: Object3D): boolean[] => { const out: boolean[] = []; o.traverse((c) => { if ((c as Mesh).isMesh) out.push(c.castShadow); }); return out; };
+    expect(castFlags(edward(r)!).some(Boolean)).toBe(false);
+    r.staff.setCharacterShadows(true);
+    expect(castFlags(edward(r)!).some(Boolean)).toBe(true);
+  });
+
+  it('znika razem z załogą: zwalnia bryłę i miejsce w plamach cienia', () => {
+    const r = rig();
+    r.staff.sync(input(withEdward(1)));
+    frame(r);
+    const o = edward(r)!;
+    r.staff.dispose();
+    expect(o.parent).toBeNull();
+    expect(r.staff.size).toBe(0);
+    r.staff.dispose();                                   // kolejne wywołania nic nie robią
+  });
+
+  it('człowiek i robot mieszczą się razem w komplecie, a plamy dla wszystkich są zarezerwowane', () => {
+    const r = rig({ blobCapacity: 16 });
+    r.staff.sync(input([...crowd(STAFF_VIEW_MAX), { id: EDWARD_ID, task: 'wolny' }]));
+    frame(r);
+    expect(r.staff.size).toBe(STAFF_VIEW_MAX);          // osiem osób bez kasjera: siedmiu pracowników i eDward
   });
 });

@@ -140,6 +140,16 @@ describe('treść okna „Jak grać”', () => {
     expect(speed).toBe(`Tempo zmieniasz u góry (${SPEEDS[1]!.label}–${SPEEDS[SPEEDS.length - 1]!.label}), a Spacja pauzuje.`);
   });
 
+  it('rozliczenie miesiąca: punkt i szczegół opisują pasek z rachunkiem Centrali i ostrzeżenia przy zakupach', () => {
+    const fee = howToPoints()[5]!;
+    expect(fee).toContain('pasek pod gotówką pokazuje, ile oddasz i ile zostaje');
+    const money = howToDetails().find((s) => s.title === 'Pieniądze i ubytki')!;
+    const settle = money.paragraphs.find((p) => p.includes('jednym przelewem'))!;
+    expect(settle).toContain('Opłata, ubytki i premia schodzą jednym przelewem na koniec miesiąca.');
+    expect(settle).toContain('Stuknij pasek: rachunek i podgląd końca miesiąca.');
+    expect(settle).toContain('Zakupy ostrzegają, nie blokują.');
+  });
+
   it('punkty nie obiecują nic o częstości mandatów ani o stukaniu w kasę (to opisze balans po zmianie mechaniki)', () => {
     expect(pointsText()).not.toMatch(/stuk|raz na|co \d/i);
     expect(howToPoints().slice(0, -1).join('\n')).not.toMatch(/\d/);   // bez cyfr (poza zakresem tempa w ostatnim punkcie)
@@ -168,7 +178,8 @@ describe('treść okna „Jak grać”', () => {
     expect(t).toContain(`Zamówienie na jutro zamyka się o ${ORDER_DEADLINE / 60}:00, dostawa przyjeżdża zwykle o ${DELIVERY_AT / 60}:00`);
     expect(t).toContain('Domyślnie zamawia Asystent Traszki, ręcznie ustawisz je w zakładce Palety');
     expect(t).toContain(`Palety ponad ${PALLETS_FREE} w zamówieniu kosztują po ${PALLET_FEE} zł`);
-    expect(t).toContain('Palet nikt nie odsyła: gdy zabraknie miejsca, nadmiar stoi w przejściach sali, klienci się o niego potykają i odchodzą, a reputacja spada, dopóki palet nie rozładujesz');
+    expect(t).toContain('a nadmiaru nikt nie odsyła');
+    expect(t).toContain('Paleta „Do sali” i nadmiar w przejściach odstraszają klientów i psują reputację');
     expect(t).not.toMatch(/odesł|zabiera paletę|zabrane/);   // odsyłania palet już nie ma (decyzja z 30.10.2026)
     expect(t).toContain(`Najwięcej zatrudnisz ${STAFF_MAX} ${plural(STAFF_MAX, 'osobę', 'osoby', 'osób')}`);
     expect(t).toContain(`Doba trwa ok. 3 min 20 s przy ${SPEEDS[1]!.label}, a sklep działa od ${OPEN_FROM / 60}:00 do ${OPEN_TO / 60}:00`);

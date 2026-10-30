@@ -77,6 +77,7 @@ export function debugHandleOf({ ctx, shell, scene }: DebugParts): object {
     get crowdView() { return scene.loaded?.crowdView ?? null; },
     get cashierView() { return scene.loaded?.cashierView ?? null; },
     get staffView() { return scene.loaded?.staffView ?? null; },
+    get robots() { return scene.loaded?.robots ?? null; },
     get factory() { return scene.factory; },
   };
 }

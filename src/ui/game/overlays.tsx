@@ -19,6 +19,7 @@ import {
 } from '../state';
 import { int, people, signedPts, signedZl, zl } from './format';
 import { Bar, PalletItem } from './panels';
+import { SpendNote, spendRisk } from './spend';
 import { ENERGY_TITLE, NO_ENERGY_TITLE, tapBlock, tillReason } from './tapBlock';
 
 export const DISCLAIMER = 'Wszystkie firmy, postacie i zdarzenia są fikcyjne.';
@@ -66,8 +67,8 @@ export function SelectionCard({ game }: { game: GameActions }) {
             const cost = equipmentCost(e, s.equipment.filter((x) => x.id === e.id).length);
             return (
               <div key={e.id} class="tt-item">
-                <div><b>{e.name}</b><div class="tt-muted">{e.effect}</div></div>
-                <button type="button" class="tt-btn tt-buy" disabled={cost > s.cash} onClick={() => game.dispatch({ type: 'buyEquipment', id: e.id, slotId: slot.id })}>{zl(cost)}</button>
+                <div><b>{e.name}</b><div class="tt-muted">{e.effect}</div><SpendNote s={s} price={cost} /></div>
+                <button type="button" class="tt-btn tt-buy" data-risk={spendRisk(s, cost)} disabled={cost > s.cash} onClick={() => game.dispatch({ type: 'buyEquipment', id: e.id, slotId: slot.id })}>{zl(cost)}</button>
               </div>
             );
           })
