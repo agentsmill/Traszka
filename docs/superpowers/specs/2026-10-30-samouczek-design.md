@@ -1,6 +1,6 @@
 # Samouczek: krótki przelot po grze, dymki „pierwszy raz” i słowniczek
 
-Status: projekt sesji `samouczek` (2026-10-30), czeka na akceptację właściciela · Gałąź: `claude/samouczek` (od `main` 14541c8, SIM 6) · Podstawa: burza mózgów z właścicielem 2026-10-30 (sesja local_8ef1db87), opis zatwierdzony słowami „Jest super, wprowadzaj”. Dopisek właściciela po wejściu SIM 6: samouczek tłumaczy nowe pojęcia SIM 6 i dostaje słowniczek.
+Status: zaakceptowany przez właściciela 2026-10-30 (z odpowiedziami w §14) · Gałąź: `claude/samouczek` (od `main` 14541c8, SIM 6) · Podstawa: burza mózgów z właścicielem 2026-10-30 (sesja local_8ef1db87), opis zatwierdzony słowami „Jest super, wprowadzaj”. Dopisek właściciela po wejściu SIM 6: samouczek tłumaczy nowe pojęcia SIM 6 i dostaje słowniczek.
 
 Samouczek to wyłącznie warstwa widoku. Nie zmienia `src/sim/**`, `SIM_VERSION` (6), `GOLDEN[6]` ani `judgeBundle.js`, więc serwer rankingu odtwarza biegi tak samo jak dziś. Samouczek nigdy sam nie wywołuje `dispatch`: każde polecenie dla symulacji klika gracz.
 
@@ -38,7 +38,7 @@ ekran „Twój kasjer”
  ├─ „Otwieramy sklep!” → nowy zwykły sklep ──→ okno „Pierwszy dzień w Traszce” (gra czeka)
  │                                              ├─ „Samouczek (ok. 3 min)” → przelot (§4) → gra rusza
  │                                              └─ „Pomiń, znam grę”       → gra rusza od razu
- └─ „Start rankingowy” → bieg rankingowy ──────→ „Jak grać” jak dziś, bez propozycji samouczka
+ └─ „Start rankingowy” → bieg rankingowy ──────→ nic się nie otwiera (bez „Jak grać” i bez propozycji)
 ```
 
 **Kiedy pojawia się okno wyboru.** Gdy gracz jeszcze nigdy nie odpowiedział na to okno (`tour === null` w pamięci, §9), a otwiera się zupełnie nowy zwykły sklep:
@@ -48,7 +48,7 @@ ekran „Twój kasjer”
 Każde z tych miejsc woła `ui.offerTutorial()`. Funkcja sama sprawdza pamięć, więc rogalik i każdy kolejny nowy sklep tego samego gracza okna nie dostają.
 
 **Co znika:**
-- automatyczne `ui.openHowTo()` w obu miejscach wyżej (start rankingowy w `main.ts` zostaje, §14 pytanie 1). Zmienia się to też dla wyboru z ekranu startowego, który wczytuje istniejący zapis: dziś dostaje „Jak grać”, po zmianie nic (gracz wraca do swojej gry);
+- automatyczne `ui.openHowTo()` w obu miejscach wyżej i w `main.ts` przy starcie rankingowym (`onStarted`, decyzja właściciela, §14 pytanie 1). Zmienia się to też dla wyboru z ekranu startowego, który wczytuje istniejący zapis: dziś dostaje „Jak grać”, po zmianie nic (gracz wraca do swojej gry);
 - `FIRST_DAY_HINTS`, komponent `FirstDayHints` i mechanizm dymków pierwszego dnia w `state.ts` (`hints`, `showHints`, `nextHint`, `HINT_MS`, `hintsHeld`, `armHint`), pole `firstDayHints` w `ShellDeps` oraz style `.tt-hintbubble*`. Testy tych elementów idą razem z nimi (`state.test.ts`, `overlays.test.tsx`, `actions.test.ts`, a `services.test.ts:57` przestaje podawać `firstDayHints`, inaczej `tsc` w `npm run build` padnie na nadmiarowym polu).
 
 **Gracze sprzed tej zmiany** mają już metę, więc ekranu startowego nie widzą. Okno wyboru zobaczą raz, gdy otworzą zupełnie nowy sklep (⚙ → „Nowy sklep” albo nowy seed z adresu). Samouczek mogą też włączyć sami (§10).
@@ -68,12 +68,12 @@ Każde z tych miejsc woła `ui.offerTutorial()`. Funkcja sama sprawdza pamięć,
 ### 4.1 Czas
 
 - Na starcie przelot zapamiętuje bieżącą prędkość (`saved`) i woła `controls.setSpeed(0)`. Pod oknem wyboru czas stoi jak pod „Jak grać” (`isWindowOpen`). Sam przelot korzysta tylko z prędkości i nie wchodzi do `isWindowOpen`.
-- Ostatni krok (16) zdejmuje pauzę: ustawia `saved`, a gdy było 0, ×1. Bez tego 📦 jest wyłączony (`tapBlock` w `src/ui/game/tapBlock.ts`: „Gra wstrzymana: wznów czas”). „Zakończ” i zaliczenie kroku 16 zostawiają czas w ruchu.
-- „Pomiń” przed krokiem 16 przywraca `saved`. W kroku 16 czas już idzie i tak zostaje.
+- Przedostatni krok (15) zdejmuje pauzę: ustawia `saved`, a gdy było 0, ×1. Bez tego 📦 jest wyłączony (`tapBlock` w `src/ui/game/tapBlock.ts`: „Gra wstrzymana: wznów czas”). Ostatni krok (16, „?”) i „Zakończ” zostawiają czas w ruchu.
+- „Pomiń” przed krokiem 15 przywraca `saved`. Od kroku 15 czas już idzie i tak zostaje.
 
 ### 4.2 Wstrzymanie, gdy wstanie okno gry
 
-Gdy w trakcie przelotu jest otwarte okno gry, przelot się wstrzymuje. Dotyczy to sytuacji, gdy `isWindowOpen()` jest prawdą, czeka karta decyzji (`awaitingDecision`), gra się skończyła (`gameOver`) albo są otwarte ustawienia. Przykłady: wpis „OK” po awansie z odblokowaniem, karta, która przyszła w kroku 16, gdy czas już idzie.
+Gdy w trakcie przelotu jest otwarte okno gry, przelot się wstrzymuje. Dotyczy to sytuacji, gdy `isWindowOpen()` jest prawdą, czeka karta decyzji (`awaitingDecision`), gra się skończyła (`gameOver`) albo są otwarte ustawienia. Przykłady: wpis „OK” po awansie z odblokowaniem, karta, która przyszła w kroku 15 albo 16, gdy czas już idzie.
 
 W tym czasie:
 - warstwa przelotu znika razem z przygaszeniem i blokadami, a gracz obsługuje okno normalnie;
@@ -82,7 +82,7 @@ W tym czasie:
 
 Po zamknięciu okna przelot wraca do tego samego kroku. Dzięki temu warstwa nigdy nie zasłania okna, którego gracz potrzebuje, i nie ma zakleszczeń.
 
-W nowej grze o 6:00 karta nie leży na biurku. Jedyna karta na 6:00 (`chory`) wymaga dostawy w `s.deliveries`, a ta lista jest w `createEconomy` pusta. Pomiar: 0 na 300 seedów, najwcześniejsza karta o 7:00. W kroku 16 czas idzie, więc karta o 7:00 może przyjść po ok. 10 s przy ×1. Wtedy działa wstrzymanie, a po odpowiedzi krok 16 wraca z aktywnym 📦.
+W nowej grze o 6:00 karta nie leży na biurku. Jedyna karta na 6:00 (`chory`) wymaga dostawy w `s.deliveries`, a ta lista jest w `createEconomy` pusta. Pomiar: 0 na 300 seedów, najwcześniejsza karta o 7:00. Od kroku 15 czas idzie, więc karta o 7:00 może przyjść po ok. 10 s przy ×1. Wtedy działa wstrzymanie, a po odpowiedzi przelot wraca do tego samego kroku (w kroku 15 z aktywnym 📦).
 
 ### 4.3 Kliknięcia, klawiatura i fokus
 
@@ -143,19 +143,19 @@ Liczby w tekstach pochodzą ze stałych gry, tak jak w `howToText.ts`: zmiana st
 | 12 | `ulepszenia` | `buy` | info; ustawia `tab = 'ulepszenia'` | **Ulepszenia.** Sprzęt do slotów, szkolenia i remont, który powiększa sklep. {MONEY_NOTES.ulepszenia} | — |
 | 13 | `cele` | `sheet` | info; ustawia `tab = 'cele'` | **Cele i rozwój.** Cel tygodnia od Centrali daje XP i {MONEY_NOTES.kpi}. Poziomy odblokowują sprzęt i remonty. Kamienie milowe dają Ogonki 🦎: „Odbierz”. Po {PRESTIGE_REMONT}. remoncie albo na {PRESTIGE_LEVEL}. poziomie otworzysz kolejną Traszkę. | — |
 | 14 | `karta` | — | info | **Karty decyzji.** Codziennie może przyjść karta: sprawa od Centrali albo od życia. Gra czeka, aż wybierzesz. Koszty i zyski są na przyciskach, a domyślna odpowiedź jest zaznaczona. | — |
-| 15 | `pomoc` | `help` | info; zamyka zakładkę | **Pomoc.** Pod „?” jest instrukcja, słowniczek (saldo, wyciąg, raty, remanent…) i ten samouczek. Przy pierwszych zdarzeniach podpowiemy jeszcze krótko. | — |
-| 16 | `start` | `clicker` | zadanie; zamyka zakładkę i zaznaczenie, zdejmuje pauzę (§4.1) | **Czas rusza.** Twoje ręce: 📦 rozładowuje najpilniejszą paletę, 🧾 obsługuje klienta, gdy kasa się korkuje. Każde stuknięcie zjada siły z paska nad przyciskami. | 👉 Stuknij 📦. Zaliczone, gdy `s.total.taps` wzrośnie względem wejścia w krok. „Zakończ” jest zawsze. |
+| 15 | `start` | `clicker` | zadanie; zamyka zakładkę i zaznaczenie, zdejmuje pauzę (§4.1) | **Czas rusza.** Twoje ręce: 📦 rozładowuje najpilniejszą paletę, 🧾 obsługuje klienta, gdy kasa się korkuje. Każde stuknięcie zjada siły z paska nad przyciskami. | 👉 Stuknij 📦. Zaliczone, gdy `s.total.taps` wzrośnie względem wejścia w krok. |
+| 16 | `pomoc` | `help` | info, ostatni; główny przycisk „Zakończ” | **Więcej informacji.** Pod „?” jest instrukcja, słowniczek (saldo, wyciąg, raty, remanent…) i ten samouczek. Przy pierwszych zdarzeniach podpowiemy jeszcze krótko. | — |
 
 Ustalenia do tabeli:
 - **Numeracja.** Tabela numeruje wariant z Asystentem (16 kroków). Przy zamówieniu ręcznym jeden krok 8* zastępuje 8 i 9, a licznik numeruje 15 kroków po kolei.
 - **Liczby.** `finalRank()` i `dayLengthText()` pochodzą z `howToText.ts`.
 - **Próg kolejnej Traszki.** `PRESTIGE_LEVEL` (20) i `PRESTIGE_REMONT` (2) to dziś liczby wpisane w `prestigeReady` (`src/game/meta.ts`, warstwa gry: nie ma go w bundlu sędziego ani na serwerze). Wynosimy je do nazwanych stałych w tym samym pliku, bez zmiany wartości.
-- **Krok 16** jest wykonalny, gdy 📦 jest aktywny: palety są, siły są, czas idzie, nie czeka karta (`tapBlock` i `s.pallets.length > 0`). Inaczej zostaje sam „Zakończ”. Karta, która przyjdzie w tym kroku, wstrzymuje przelot (§4.2). W nowej grze o 6:00 pod sklepem stoją dwie palety, a siły są pełne.
+- **Krok 15** jest wykonalny, gdy 📦 jest aktywny: palety są, siły są, czas idzie, nie czeka karta (`tapBlock` i `s.pallets.length > 0`). Inaczej jest zwykłym krokiem z „Dalej”. Karta, która przyjdzie w tym kroku, wstrzymuje przelot (§4.2). W nowej grze o 6:00 pod sklepem stoją dwie palety, a siły są pełne.
 - **Zaliczenia zadań** to czyste funkcje `done(ctx, mark)`, gdzie `mark` to migawka z wejścia w krok (np. `taps`). Sprawdzają się przy każdej publikacji stanu (co 200 ms) i przy zmianie zakładki.
 
 ### 4.7 Koniec przelotu
 
-- **„Zakończ” albo zaliczony krok 16:** pamięć `tour: 'done'`, warstwa znika, czas idzie.
+- **„Zakończ” w kroku 16 („?”):** pamięć `tour: 'done'`, warstwa znika, czas idzie. Ostatnim, co gracz widzi w przelocie, jest „?”, czyli miejsce, gdzie szukać więcej informacji (decyzja właściciela).
 - **„Pomiń”:** pamięć `tour: 'skipped'` (gdy wcześniej było `'done'`, zostaje `'done'`). Warstwa znika, prędkość jak w §4.1, zakładka się zamyka.
 - **Przeładowanie strony w trakcie** kończy przelot bez śladu, bo stan przelotu się nie zapisuje. W pamięci zostaje `'started'`, więc okno wyboru już nie wraca. Samouczek da się włączyć z „?”.
 
@@ -205,7 +205,7 @@ Ustalenia:
 - **Liczby** pochodzą ze stałych `GUARANTEE`, `INSTALLMENTS`, `REMANENT` i `OWN_COSTS` (`src/sim/economy/catalog.ts`, tylko odczyt).
 - **Limit ubytków.** Słowniczek nie zdradza go przed pierwszym remanentem, tak jak panel Sklep („Centrala poda przy remanencie”).
 - **Słowa zakazane.** Test słowniczka sprawdza, że każde hasło z listy właściciela jest na miejscu, ZUS ma rozwinięcie, a teksty nie zawierają „opłata franczyzowa”, „do oddania” ani procentu limitu ubytków.
-- **Odesłania.** Krok 15 i `tip-wyciag` odsyłają do słowniczka.
+- **Odesłania.** Krok 16 i `tip-wyciag` odsyłają do słowniczka.
 
 ## 7. Lista pieniędzy (`src/ui/tutorial/money.ts`)
 
@@ -348,7 +348,7 @@ Gdy selektor pasuje do kilku elementów, warstwa bierze pierwszy widoczny po prz
 - **`src/main.ts`:**
   - bez `FIRST_DAY_HINTS`;
   - `blocked` w `bindControls` z warunkiem „trwa przelot”;
-  - `onStarted` (start rankingowy) bez zmian.
+  - `onStarted` (start rankingowy) bez `ui.openHowTo()`: nic się nie otwiera (zostaje toast z `notice`).
 - **`src/ui/App.tsx`:** `TutorialOffer`, `TourLayer` i `TipLayer` jako ostatnie warstwy, bez `FirstDayHints`.
 - **`src/ui/howto/HowTo.tsx`:** przycisk „Samouczek” w stopce i sekcja „Słowniczek”.
 - **`src/ui/game/overlays.tsx`:**
@@ -386,7 +386,7 @@ Gdy selektor pasuje do kilku elementów, warstwa bierze pierwszy widoczny po prz
   - kolejność, `seen`, `tips: false`;
   - brak dymków przy widocznej warstwie przelotu i pod oknem wyboru.
 - **`tour.test.ts`:**
-  - start zapamiętuje prędkość i pauzuje, „Pomiń” przywraca `saved`, krok 16 ustawia `saved` albo ×1, a koniec ją zostawia;
+  - start zapamiętuje prędkość i pauzuje, „Pomiń” przywraca `saved`, krok 15 ustawia `saved` albo ×1, a krok 16 i koniec ją zostawiają;
   - pamięć `started`, `skipped`, `done`;
   - w biegu rankingowym toast i brak przelotu;
   - wstrzymanie przy oknie gry i powrót do tego samego kroku;
@@ -411,7 +411,7 @@ Gdy selektor pasuje do kilku elementów, warstwa bierze pierwszy widoczny po prz
 - **Środowisko:** Playwright z Chromium (WebGL2 działa w kontenerze) i `vite preview` na zbudowanym `dist`, lokalnie. Wszystkie zapytania poza `localhost` są blokowane i liczone, a smoke sprawdza, że nic nie poszło do `*.vercel.app` ani do `/api/runs`.
 - **Rozmiary okna:** 390×844 (dotyk) i 1280×800. Każdy scenariusz z czystym kontekstem przeglądarki.
 - **Scenariusze, na każdym rozmiarze:**
-  1. Ekran startowy → „Otwieramy sklep!” → okno wyboru (zrzut) → „Samouczek” → wszystkie kroki ze zrzutem każdego. Smoke klika wskazany element w zadaniach, a w krokach informacyjnych „Dalej”. Przy każdym kroku sprawdza, że prostokąt dymka nie przecina prostokąta celu i że nie ma `covers`. W kroku 16, gdy przyjdzie karta, smoke klika „Zatwierdź” i wraca do kroku.
+  1. Ekran startowy → „Otwieramy sklep!” → okno wyboru (zrzut) → „Samouczek” → wszystkie kroki ze zrzutem każdego. Smoke klika wskazany element w zadaniach, a w krokach informacyjnych „Dalej”. Przy każdym kroku sprawdza, że prostokąt dymka nie przecina prostokąta celu i że nie ma `covers`. Od kroku 15, gdy przyjdzie karta, smoke klika „Zatwierdź” i wraca do kroku.
   2. Po końcu: `tour: 'done'`, czas idzie, warstwa zniknęła.
   3. „?” → „Jak grać” → „Samouczek” → krok 1 (zrzut) → „Pomiń”: warstwa znika, prędkość wraca.
   4. ⚙ → „Samouczek” → krok 1 (zrzut) → „Pomiń”.
@@ -422,11 +422,12 @@ Gdy selektor pasuje do kilku elementów, warstwa bierze pierwszy widoczny po prz
 - **Konsola:** zero `console.error` i zero `pageerror`. Ostrzeżenia sterownika swiftshader są notowane, ale nie są błędem.
 - **Zrzuty i raport:** `docs/superpowers/reports/2026-10-30-samouczek.md` i katalog `docs/superpowers/reports/2026-10-30-samouczek/`. Zrzuty w JPEG (jakość 80), żeby repozytorium nie urosło o kilkanaście MB.
 
-## 14. Pytania do właściciela i ryzyka
+## 14. Pytania do właściciela, odpowiedzi i ryzyka
 
-1. **Start rankingowy z ekranu startowego** nadal otwiera „Jak grać”, bez propozycji samouczka. Alternatywa: nic się nie otwiera. Proponuję zostawić „Jak grać”, bo to jedyna pomoc w biegu rankingowym.
-2. **„Stuknij 📦” jest ostatnim zadaniem, po zdjęciu pauzy** (§4.1). W pauzie przyciski stukania są dziś wyłączone i tak zostaje. Stukanie w paletę w scenie 3D działa w pauzie także dziś, ale przelot zasłania scenę.
-3. **Dwa zadania z zamówieniem** (na „Ręcznie” i z powrotem), żeby przelot nie zostawił nowego gracza na ręcznym zamówieniu. Alternatywa: jedno zadanie „Ręcznie” i wybór dla gracza.
-4. **Usunięcie `FIRST_DAY_HINTS` razem z mechanizmem dymków**, zamiast zostawiać martwy kod.
-5. **Słowniczek jako sekcja „Jak grać”** z dziewięcioma hasłami z §6. Rozumiem dopisek „dotłumacz nowe teksty” jako „wytłumacz graczowi pojęcia SIM 6”, a nie przekład na inny język. W repozytorium nie ma warstwy tłumaczeń.
+1. **Start rankingowy z ekranu startowego.** Decyzja właściciela: nic się nie otwiera (bez „Jak grać” i bez propozycji), a ostatnim krokiem samouczka jest wskazanie „?”, gdzie jest więcej informacji.
+2. **„Stuknij 📦” jest ostatnim zadaniem, po zdjęciu pauzy** (§4.1), a po nim już tylko „?”. W pauzie przyciski stukania są dziś wyłączone i tak zostaje. Stukanie w paletę w scenie 3D działa w pauzie także dziś, ale przelot zasłania scenę. Zaakceptowane.
+3. **Dwa zadania z zamówieniem** (na „Ręcznie” i z powrotem), żeby przelot nie zostawił nowego gracza na ręcznym zamówieniu. Decyzja właściciela: dwa kroki.
+4. **Usunięcie `FIRST_DAY_HINTS` razem z mechanizmem dymków**, zamiast zostawiać martwy kod. Zaakceptowane.
+5. **Słowniczek jako sekcja „Jak grać”** z dziewięcioma hasłami z §6. Rozumiem dopisek „dotłumacz nowe teksty” jako „wytłumacz graczowi pojęcia SIM 6”, a nie przekład na inny język. W repozytorium nie ma warstwy tłumaczeń. Zaakceptowane.
+7. **PR.** Decyzja właściciela: po wszystkim otwieram pull request z `claude/samouczek` do `main` (bez scalania; scala koordynator).
 6. **Ryzyko:** przyszła zmiana paska pieniędzy albo wyciągu może przenieść elementy z `data-tut`. Wtedy kroki [$] pokażą dymek na środku ekranu, bez strzałki. Przelot się nie zepsuje, a test źródeł (`steps.test.ts`) wskaże brakujący atrybut.
