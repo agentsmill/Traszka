@@ -16,7 +16,7 @@ describe('spendWarningText: napis ostrzeżenia przy wydatku', () => {
   it('ponad wolne środki: mówi, ile wyjdzie po rozliczeniu miesiąca', () => {
     const c = spendCheck(forecast(8_000), 9_000);
     expect(c.level).toBe('tight');
-    expect(spendWarningText(c)).toBe(`Ponad wolne środki: po rozliczeniu miesiąca wyjdzie ${signedZl(-1_000)}.`);
+    expect(spendWarningText(c)).toBe(`Ponad wolne środki: przy dotychczasowym obrocie po rozliczeniu miesiąca wyjdzie ${signedZl(-1_000)}.`);
   });
 
   it('poniżej progu ostrzeżenia: podaje próg ze stałej', () => {

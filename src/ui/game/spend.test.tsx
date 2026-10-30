@@ -65,7 +65,7 @@ describe('SpendNote: ostrzeżenie pod ceną', () => {
     const v = SpendNote({ s, price: f.free + 1_000 }) as unknown as Vnode;
     expect(String(v.props.class)).toBe('tt-spend tight');
     expect(v.props.role).toBe('note');
-    expect(textOf(v)).toBe(`Ponad wolne środki: po rozliczeniu miesiąca wyjdzie ${signedZl(-1_000)}.`);
+    expect(textOf(v)).toBe(`Ponad wolne środki: przy dotychczasowym obrocie po rozliczeniu miesiąca wyjdzie ${signedZl(-1_000)}.`);
   });
 
   it('cena ponad gotówką: bez dubla do „Za mało gotówki” (przycisk i tak wyłączony)', () => {

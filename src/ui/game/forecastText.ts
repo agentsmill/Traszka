@@ -14,7 +14,7 @@ export function spendWarningText(c: SpendCheck): string | null {
   const after = signedZl(c.freeAfter);
   switch (c.level) {
     case 'ok': return null;
-    case 'tight': return `Ponad wolne środki: po rozliczeniu miesiąca wyjdzie ${after}.`;
+    case 'tight': return `Ponad wolne środki: przy dotychczasowym obrocie po rozliczeniu miesiąca wyjdzie ${after}.`;
     case 'warn': return `Po rozliczeniu miesiąca wyjdzie ${after}, poniżej progu ostrzeżenia (${signedZl(c.warnAt)}).`;
     case 'danger': return `Po rozliczeniu miesiąca wyjdzie ${after}, poniżej granicy debetu (${signedZl(c.limitAt)}): Centrala wypowie umowę.`;
   }
