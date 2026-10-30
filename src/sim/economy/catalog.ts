@@ -82,12 +82,14 @@ export const HOUR_CURVE: Record<number, number> = {
 
 /**
  * Klientów na godzinę przy krzywej 1, reputacji 50 i bez marketingu: stały ruch z ulicy (`TRAFFIC_BASE`) plus tyle, ile
- * ściągną półki (pojemność / 180), razy położenie lokalu (kamienica w śródmieściu ma więcej przechodniów). Sklep na start
- * (1200–2100 sztuk na półkach) ma tak 450–550 klientów dziennie, a większy po remoncie sam ściąga ludzi.
+ * ściągną półki (pojemność / 300), razy położenie lokalu (kamienica w śródmieściu ma więcej przechodniów). Sklep na start
+ * (1200–2100 sztuk na półkach) ma tak ok. 300–350 klientów dziennie, czyli obrót ok. 6,5–7,5 tys. zł, mniej więcej tyle co
+ * przeciętny prawdziwy sklep convenience w Polsce (2,4–2,7 mln zł obrotu rocznie, dane sieci z 2025). Większy sklep po remoncie
+ * sam ściąga ludzi, a marketing, kampanie i reputacja dokładają swoje. Do SIM_VERSION 5 było 23 + pojemność / 180 (450–550 klientów).
  */
-export const TRAFFIC_BASE = 23;
-export const TRAFFIC_PER_SHELF_ITEM = 1 / 180;
-export const TRAFFIC_RANGE: [number, number] = [12, 60];
+export const TRAFFIC_BASE = 13;
+export const TRAFFIC_PER_SHELF_ITEM = 1 / 320;
+export const TRAFFIC_RANGE: [number, number] = [7, 34];
 /**
  * Fale klientów (autobus, przerwa w szkole): godzina dzieli się na bloki po `block` minut i w bloku z szansą `chance` przez
  * `length` minut przychodzi ich więcej, a w pozostałych minutach bloku o `depth` mniej. Średnia bloku zostaje równa
@@ -118,7 +120,13 @@ export const TAP_ITEMS = 8;
  * (`MINUTES_PER_SECOND_OPEN`), czyli mniej więcej tyle co dawne 650 ms.
  */
 export const COMBO_WINDOW = 5;
-export const WAGE_PER_DAY = 340;
+/**
+ * Koszt jednej osoby na zmianie za dzień otwarcia (17 h, więc w praktyce dwa etaty na zmianach): ok. 29 zł za godzinę. Pełny koszt
+ * pracodawcy przy płacy minimalnej z 2025 r. to ok. 37 zł za godzinę, ale w prawdziwym sklepie część godzin pokrywa sam
+ * franczyzobiorca z rodziną. Do SIM_VERSION 5 było 340 zł (ok. 20 zł za godzinę), co przy realnym udziale franczyzobiorcy w obrocie
+ * (`FRANCHISE_FEE_SHARE`) dawało biernemu graczowi ponad 20 tys. zł na rękę miesięcznie zamiast kilku.
+ */
+export const WAGE_PER_DAY = 500;
 export const HIRE_COST = 300;
 export const STAFF_MAX = 8;
 export const STAFF_START = 2;
@@ -127,13 +135,21 @@ export const STAFF_START = 2;
 
 export const MEDIA_PER_DAY = 140;
 /**
- * Opłata franczyzowa na koniec miesiąca: stała część plus udział w obrocie. Centrala bierze swoje (satyra ze specu), a udział
- * rośnie z wielkością sklepu, więc wyrównuje seedy: dwuosobowa zmiana bez decyzji kończy dwa miesiące w okolicy zera, i to
- * w budce, i w flagowcu (balans: tycoon/balance.test.ts). Zaufana Centrali część wraca jako premia od obrotu (trust.ts).
- * Udział 0,153 od SIM_VERSION 5 (dawniej 0,151): rzadsze karty mniej obciążały biernego gracza.
+ * Opłata franczyzowa na koniec miesiąca: stała część plus udział w obrocie, jawny przelew przy zamknięciu miesiąca. Marża sklepu
+ * to ok. 19% obrotu (`MARGIN_PER_CUSTOMER`), a franczyzobiorcy przy przeciętnym zaufaniu zostaje z niej ok. 16,5–16,7% obrotu
+ * przed jego kosztami, jak w prawdziwych sieciach convenience (2025: ok. 16,7 zł na 100 zł obrotu, razem z wynagrodzeniem
+ * motywacyjnym). Przy wysokim zaufaniu Centrala oddaje jeszcze premię od obrotu (trust.ts). Do SIM_VERSION 5 brała 2000 zł plus
+ * 15,1–15,3% obrotu, a franczyzobiorcy zostawało ok. 4% (balans: tycoon/balance.test.ts).
  */
-export const FRANCHISE_FEE_FIXED = 2000;
-export const FRANCHISE_FEE_SHARE = 0.153;
+export const FRANCHISE_FEE_FIXED = 1000;
+export const FRANCHISE_FEE_SHARE = 0.034;
+/**
+ * Przychód gwarantowany nowego franczyzobiorcy (prawdziwe sieci: 25 tys. zł miesięcznie w latach 2023–2025, „pod szeregiem
+ * warunków”): przez pierwsze `months` miesięcy gry Centrala przy zamknięciu miesiąca dopłaca do `income` przychodu franczyzobiorcy
+ * (marża minus opłata plus premie Centrali), o ile zaufanie jest co najmniej `minTrust` i w miesiącu nie było mandatu. Trzy
+ * miesiące to kwartał wdrożenia i zarazem cały sezon rankingowy: siatka chroni początek gry, a nie zastępuje decyzji.
+ */
+export const GUARANTEE = { income: 25_000, months: 3, minTrust: 40 } as const;
 /** Palet w dostawie bez opłaty logistycznej; każda kolejna kosztuje (na sztukę towaru tyle co dawne 6 palet po 60 zł). */
 export const PALLETS_FREE = 4;
 export const PALLET_FEE = 90;
@@ -186,7 +202,8 @@ export const CREDIT_LIMIT = 70_000;
  */
 export const DEBT_LIMIT = -100_000;
 export const DEBT_WARN_SHARE = 0.5;
-export const START_CASH = 2000;
+/** Gotówka na start: ok. 5000 zł, tyle co wkład własny w prawdziwej franczyzie convenience (kasa fiskalna, koncesja). */
+export const START_CASH = 5000;
 
 /** Cierpliwość: ilu ludzi w kolejce klient jeszcze toleruje. */
 export const PATIENCE = 6;

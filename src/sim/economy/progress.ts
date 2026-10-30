@@ -13,8 +13,12 @@ export function xpToNext(level: number): number {
   return xpCurve(level);
 }
 
-/** Gotówka za poziom: stała część plus kwota za każdy poziom (stała część wyrównuje małe i duże sklepy, balans: tycoon/balance.test.ts). */
-export const LEVEL_CASH = { base: 400, perLevel: 200 } as const;
+/**
+ * Gotówka za poziom: stała część plus kwota za każdy poziom (stała część wyrównuje małe i duże sklepy, balans: tycoon/balance.test.ts).
+ * Od SIM_VERSION 5 (realny udział franczyzobiorcy w obrocie) to drobna nagroda: dawne 400 + 200 zł za poziom dawały biernemu ok.
+ * 9 tys. zł miesięcznie, tyle co wcześniej wyrównywało mu opłatę Centrali.
+ */
+export const LEVEL_CASH = { base: 100, perLevel: 50 } as const;
 
 /** Nagroda za wejście na poziom `level`. */
 export function levelReward(level: number): { cash: number; ogonki: number } {
@@ -23,7 +27,8 @@ export function levelReward(level: number): { cash: number; ogonki: number } {
 
 /** XP za czynności (poza KPI tygodnia i kartami decyzji, które mają własną nagrodę). */
 export const XP = {
-  customer: 1,
+  /** Za obsłużonego klienta: 1,3 od SIM_VERSION 5, bo klientów jest ok. 40% mniej (realny ruch), a poziomy mają przychodzić podobnie szybko. */
+  customer: 1.3,
   /** Za rozładowaną paletę: 18 od SIM_VERSION 5 (paleta półtora raza większa, `PALLET_ITEMS`), na sztukę tyle co dawne 12. */
   pallet: 18,
   purchase: 20,

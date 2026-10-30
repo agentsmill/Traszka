@@ -27,6 +27,7 @@ function atHour(hour: number): GameSession {
 function busy(hour: number): GameSession {
   const s = atHour(hour);
   s.econ.reputation = 100;
+  s.econ.upgrades.ulotki = 5;   // od SIM_VERSION 5 ruch z ulicy jest realny (ok. 300 klientów dziennie): sam limit ruchu nie zapcha sklepu
   s.info = { ...s.info, shelfCapTotal: 1e6 };
   return s;
 }

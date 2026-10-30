@@ -33,8 +33,10 @@ export interface MonthPreview {
   customers: number;
   /** Marża z klientów (bez premii). */
   margin: number;
-  /** Premie Centrali: od obrotu przy zamknięciu miesiąca i KPI tygodnia. */
+  /** Premie Centrali: od obrotu przy zamknięciu miesiąca i KPI tygodnia (bez dopłaty do gwarancji, ta jest w `guarantee`). */
   bonus: number;
+  /** Dopłata Centrali do przychodu gwarantowanego (`GUARANTEE`, pierwsze miesiące gry), 0 bez dopłaty. */
+  guarantee: number;
   /** Inne przychody i koszty z kart (ze znakiem: koszt zmniejsza). */
   other: number;
   wages: number;
@@ -117,16 +119,16 @@ export function startMonthPreview(s: EconomyState, info: StoreInfo): MonthPrevie
       const c = month.counters;
       result = {
         label: month.label, cashNow, cashAfter: month.cash, lowestCash: lowest, revenue: c.revenue, customers: c.customers, margin: c.margin,
-        bonus: c.bonus, other: c.other, wages: c.wages, media: c.media, fines: c.fines, logistics: c.logistics, fee: c.fee, wut: c.wut,
-        profit: month.profit, gameOver: reason, endedEarly: false,
+        bonus: c.bonus - c.guarantee, guarantee: c.guarantee, other: c.other, wages: c.wages, media: c.media, fines: c.fines,
+        logistics: c.logistics, fee: c.fee, wut: c.wut, profit: month.profit, gameOver: reason, endedEarly: false,
       };
     } else if (copy.gameOver) {
       // koniec gry w środku miesiąca (debet): sumy z liczników miesiąca do tej chwili
       const c = copy.month;
       result = {
         label: '', cashNow, cashAfter: copy.cash, lowestCash: lowest, revenue: c.revenue, customers: c.customers, margin: c.margin,
-        bonus: c.bonus, other: c.other, wages: c.wages, media: c.media, fines: c.fines, logistics: c.logistics, fee: c.fee, wut: c.wut,
-        profit: c.margin + c.bonus + c.other - c.wages - c.media - c.fee - c.fines - c.logistics - c.wut, gameOver: reason, endedEarly: true,
+        bonus: c.bonus - c.guarantee, guarantee: c.guarantee, other: c.other, wages: c.wages, media: c.media, fines: c.fines,
+        logistics: c.logistics, fee: c.fee, wut: c.wut, profit: c.margin + c.bonus + c.other - c.wages - c.media - c.fee - c.fines - c.logistics - c.wut, gameOver: reason, endedEarly: true,
       };
     }
   };

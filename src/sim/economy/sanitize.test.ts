@@ -32,7 +32,7 @@ const fixture = (name: string): Record<string, unknown> =>
   JSON.parse(readFileSync(new URL(`../../game/fixtures/${name}`, import.meta.url), 'utf8')) as Record<string, unknown>;
 
 /** Liczniki z zapisu sprzed tycoona: trzy nowe pola (premie Centrali, WUT, mandaty) są zerowe. */
-const withNewCounters = (c: unknown): Record<string, unknown> => ({ ...(c as Record<string, unknown>), bonus: 0, wut: 0, fineCount: 0 });
+const withNewCounters = (c: unknown): Record<string, unknown> => ({ ...(c as Record<string, unknown>), bonus: 0, guarantee: 0, wut: 0, fineCount: 0 });
 
 describe('sanitizeEconomy: poprawny stan przechodzi bez zmian', () => {
   it('nowa gra', () => {

@@ -69,42 +69,40 @@ interface Step { minute: number; make: (s: GameSession) => Command }
 
 /**
  * Wydatki i decyzje gracza w wybranych dniach (dzień, godzina, minuta, polecenie): ten sam rytm co `PLAN` z `tests/simGolden.test.ts`,
- * dobrany do ekonomii z C2 tak, żeby bieg przetrwał sezon (opłata franczyzowa po raporcie miesięcznym zjada gotówkę, więc droższe zakupy
- * idą we wrześniu i w listopadzie, a w październiku tylko kilka). Są tu wszystkie typy poleceń poza stuknięciami i kartami, które dochodzą
+ * dobrany do ekonomii tak, żeby bieg przetrwał sezon i każdy zakup był przyjęty (od SIM_VERSION 5 z realną ekonomią gotówka rośnie o kilkaset
+ * złotych dziennie, więc zakupy są rozłożone na wrzesień i październik, a remont przychodzi w listopadzie). Są tu wszystkie typy poleceń poza stuknięciami i kartami, które dochodzą
  * niżej. Remont 1 ma dwie próby (zapas na zmiany cen): rush bez trwającego remontu jest odrzucany i ląduje w dzienniku jak każde
  * odrzucone polecenie.
  */
 const PLAN: readonly (readonly [day: number, hour: number, minute: number, cmd: Command])[] = [
-  [0, 6, 0, { type: 'setOrder', auto: false, manual: 6 }],
+  [0, 6, 0, { type: 'setOrder', auto: false, manual: 4 }],
   [0, 6, 0, { type: 'movePallet', palletId: 1, loc: 'backroom' }],
   [0, 6, 1, { type: 'returnPallet', palletId: 2 }],
   [0, 6, 2, { type: 'setStaffProfile', profile: 'dostawa' }],
+  [0, 12, 0, { type: 'setStaffProfile', profile: 'kolejka' }],
   [1, 9, 0, { type: 'claimMilestone', id: 'pallet1' }],
   [1, 12, 0, { type: 'buyUpgrade', id: 'szkolenie' }],
-  [2, 13, 0, { type: 'claimMilestone', id: 'upgrade1' }],
   [2, 12, 0, { type: 'buyUpgrade', id: 'ulotki' }],
+  [2, 13, 0, { type: 'claimMilestone', id: 'upgrade1' }],
   [3, 7, 0, { type: 'setOrder', auto: true }],
-  [4, 12, 0, { type: 'buyEquipment', id: 'sco' }],
-  [5, 12, 0, { type: 'buyUpgrade', id: 'wozek' }],
-  [6, 12, 0, { type: 'campaign' }],
   [6, 12, 30, { type: 'setStaffProfile', profile: 'porzadek' }],
-  [7, 12, 0, { type: 'buyUpgrade', id: 'regaly' }],
-  [9, 12, 0, { type: 'buyEquipment', id: 'bankomat' }],
-  [10, 12, 0, { type: 'buyUpgrade', id: 'kawa' }],
+  [7, 6, 0, { type: 'setStaffProfile', profile: 'kolejka' }],
+  [10, 12, 0, { type: 'buyEquipment', id: 'sco' }],
   [11, 12, 0, { type: 'setOrder', auto: false, manual: 40 }],   // ponad granicę: stan przytnie do 30
   [12, 7, 0, { type: 'setOrder', auto: true, manual: 5.5 }],   // ułamek: stan zaokrągli
-  [14, 12, 0, { type: 'buyEquipment', id: 'piec', slotId: 'equipmentSlot-2' }],
-  [16, 12, 0, { type: 'buyUpgrade', id: 'ulotki' }],
-  [18, 12, 0, { type: 'buyUpgrade', id: 'szkolenie' }],
-  // październik: kilka droższych zakupów i zmiany w załodze
-  [40, 12, 0, { type: 'buyUpgrade', id: 'traszkapka' }],
-  [41, 12, 0, { type: 'buyUpgrade', id: 'asystent' }],
-  [45, 12, 0, { type: 'buyUpgrade', id: 'klima' }],
+  [14, 12, 0, { type: 'buyUpgrade', id: 'wozek' }],
+  [20, 12, 0, { type: 'buyEquipment', id: 'bankomat' }],
+  [25, 12, 0, { type: 'campaign' }],
+  // październik: zakupy po opłacie za wrzesień i zmiany w załodze
+  [42, 12, 0, { type: 'buyUpgrade', id: 'kawa' }],
+  [45, 12, 0, { type: 'buyUpgrade', id: 'ulotki' }],
   [46, 12, 0, { type: 'hire' }],
   [48, 12, 0, { type: 'pinStaff', task: 'kasa', count: 1 }],
   [50, 12, 0, { type: 'fire' }],
   [50, 12, 5, { type: 'setStaffProfile', profile: 'kolejka' }],
-  // listopad: kampania, remont 1 (dwie próby) i zakupy po remoncie
+  [55, 12, 0, { type: 'buyEquipment', id: 'piec', slotId: 'equipmentSlot-2' }],
+  [60, 12, 0, { type: 'buyUpgrade', id: 'asystent' }],
+  // listopad: kampania, remont 1 (dwie próby: zapas na zmiany cen) i zakupy po remoncie
   [78, 12, 0, { type: 'campaign' }],
   [84, 7, 0, { type: 'startRemont' }],
   [84, 7, 5, { type: 'rushRemont' }],

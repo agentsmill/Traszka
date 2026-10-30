@@ -118,7 +118,8 @@ describe('answerCashCost: ile gotówki zabiera odpowiedź na kartę', () => {
 
 describe('wydatki w panelach: ostrzega, ale nie blokuje', () => {
   // gotówka 50 000, opłata ok. 47 000: wolne środki ok. 2 700, więc większość zakupów jest ponad nie
-  const tight = (): { s: EconomyState; info: StoreInfo } => shop(50_000, 300_000);
+  // opłata od obrotu 1,2 mln zł zjada większość z 50 tys. gotówki: część cen jest ponad wolnymi środkami, ale w zasięgu gotówki
+  const tight = (): { s: EconomyState; info: StoreInfo } => shop(50_000, 1_200_000);
 
   it('Ulepszenia: każda cena z przycisku przechodzi przez SpendNote (sprzęt, ulepszenia, remont)', () => {
     const { s, info } = tight();
@@ -232,10 +233,10 @@ describe('DueChip: rachunek Centrali w pasku', () => {
       return String((DueChip({ f: forecastMonth(s), cash: s.cash }) as unknown as Vnode).props.class);
     };
     expect(cls(10_000, 0)).toBe('tt-due');
-    expect(cls(1_000, 0)).toBe('tt-due neg');   // opłata 2 000 > gotówka 1 000: wolne −1 000, nad progiem ostrzeżenia
-    const warnCash = 2_000 + DEBT_WARN - 1;   // wolne = DEBT_WARN − 1
+    expect(cls(FRANCHISE_FEE_FIXED - 1_000, 0)).toBe('tt-due neg');   // gotówka o 1 000 mniejsza niż stała część opłaty: wolne −1 000
+    const warnCash = FRANCHISE_FEE_FIXED + DEBT_WARN - 1;   // wolne = DEBT_WARN − 1
     expect(cls(warnCash, 0)).toBe('tt-due warn');
-    const danger = shop(0, 1_500_000);
+    const danger = shop(0, 4_000_000);
     const chip = DueChip({ f: forecastMonth(danger.s), cash: 0 }) as unknown as Vnode;
     expect(String(chip.props.class)).toBe('tt-due danger');
     expect(textOf(chip)).toContain('⚠');

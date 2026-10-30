@@ -96,7 +96,7 @@ const legacyTrust = (e: EconomyState): number => (e as unknown as { trust: numbe
 const asLoaded = (e: EconomyState): Omit<EconomyState, 'tycoon'> => {
   const { trust: _, priority: __, giftSeq: ___, tapBoostUntil: ____, ...rest } = withoutTycoon(withoutQuests(e)) as
     Omit<EconomyState, 'tycoon'> & { trust?: number; priority?: string; giftSeq?: number; tapBoostUntil?: number };
-  const counters = (c: Counters): Counters => ({ ...c, bonus: 0, wut: 0, fineCount: 0 });
+  const counters = (c: Counters): Counters => ({ ...c, bonus: 0, guarantee: 0, wut: 0, fineCount: 0 });
   return {
     ...rest,
     today: counters(rest.today),

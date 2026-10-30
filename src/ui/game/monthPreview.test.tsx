@@ -1,6 +1,6 @@
 import type { ComponentChild } from 'preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { DEBT_LIMIT } from '@/sim/economy/catalog';
+import { DEBT_LIMIT, FRANCHISE_FEE_SHARE } from '@/sim/economy/catalog';
 import { DEBT_WARN, createEconomy, type EconomyState } from '@/sim/economy/economy';
 import { forecastMonth } from '@/sim/economy/forecast';
 import type { MonthPreview } from '@/sim/economy/monthPreview';
@@ -195,7 +195,7 @@ describe('runMonthPreview: porcje i porzucanie', () => {
 
 describe('previewWarning: czerwone ostrzeżenie z progów gry', () => {
   const base: MonthPreview = {
-    label: 'wrzesień', cashNow: 5_000, cashAfter: 5_000, lowestCash: 5_000, revenue: 0, customers: 0, margin: 0, bonus: 0, other: 0, wages: 0, media: 0, fines: 0,
+    label: 'wrzesień', cashNow: 5_000, cashAfter: 5_000, lowestCash: 5_000, revenue: 0, customers: 0, margin: 0, bonus: 0, guarantee: 0, other: 0, wages: 0, media: 0, fines: 0,
     logistics: 0, fee: 0, wut: 0, profit: 0, gameOver: null, endedEarly: false,
   };
 
@@ -230,7 +230,7 @@ describe('previewWarning: czerwone ostrzeżenie z progów gry', () => {
     vi.useFakeTimers();
     const { s, info } = world();
     s.cash = 0;
-    s.month.revenue = Math.ceil((2 * Math.abs(DEBT_LIMIT)) / 0.151);   // opłata ponad dwie granice debetu
+    s.month.revenue = Math.ceil((2 * Math.abs(DEBT_LIMIT)) / FRANCHISE_FEE_SHARE);   // opłata ponad dwie granice debetu
     econ.value = { s, info, v: 1 };
     openMonthPreview();
     click(buttonLabelled(MonthPreviewModal() as Vnode, 'Koniec miesiąca: policz podgląd'));

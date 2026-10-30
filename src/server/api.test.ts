@@ -158,14 +158,13 @@ describe('api/** na Vercelu (atrapa Upstash przez fetch)', () => {
   // a jej wynik zawiera listopadową stratę (debet z ostatniego zamknięcia jest już w raporcie).
   it.runIf(bundleOnDisk)(
     'ze zbudowanym bundlem sędziego: bieg z debetem dopiero przy zamknięciu listopada (trzy raporty) jest przyjęty, a wynik zawiera listopadową stratę', async () => {
-      // od SIM_VERSION 5 (granica debetu −100 tys. zł) bierny sezon tego sklepu przeżywa: osiem osób i 30 palet dziennie od 18 października
-      // sprowadzają go poniżej granicy dopiero przy zamknięciu 30 listopada (ten sam bieg w src/sim/ranked.test.ts)
-      const from = 48 * 1440 + 9 * 60;
+      // od SIM_VERSION 5 (granica debetu −100 tys. zł) bierny sezon tego sklepu przeżywa: 30 palet dziennie od 25 października i osiem
+      // osób od 26 października sprowadzają go poniżej granicy dopiero przy zamknięciu 30 listopada (ten sam bieg w src/sim/ranked.test.ts)
       const lateDebt: RunRecord = {
         seed: 'kiełbasa-42', gameVersion: run.gameVersion, generatorVersion: GENERATOR_VERSION, simVersion: SIM_VERSION, mode: 'ranked',
         log: [
-          ...Array.from({ length: 6 }, (_, i) => ({ minute: from + i, seq: i, cmd: { type: 'hire' } as const })),
-          { minute: from + 10, seq: 6, cmd: { type: 'setOrder', auto: false, manual: 30 } },
+          { minute: 55 * 1440 + 9 * 60, seq: 0, cmd: { type: 'setOrder', auto: false, manual: 30 } },
+          ...Array.from({ length: 6 }, (_, i) => ({ minute: 56 * 1440 + 9 * 60 + i, seq: 1 + i, cmd: { type: 'hire' } as const })),
         ],
       };
       const state = replayRun(lateDebt, RANKED_SEASON_END_MINUTE);

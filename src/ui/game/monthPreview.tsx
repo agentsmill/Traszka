@@ -1,5 +1,5 @@
 import type { ComponentChildren } from 'preact';
-import { DEBT_LIMIT } from '@/sim/economy/catalog';
+import { DEBT_LIMIT, GUARANTEE } from '@/sim/economy/catalog';
 import { DEBT_WARN, debtWarningText } from '@/sim/economy/economy';
 import { forecastMonth } from '@/sim/economy/forecast';
 import type { MonthPreview } from '@/sim/economy/monthPreview';
@@ -47,6 +47,8 @@ function PreviewResult({ r }: { r: MonthPreview }) {
       <Row label="Klienci">{int(r.customers)}</Row>
       <Row label="Marża">{zl(r.margin)}</Row>
       {r.bonus > 0 && <Row label="Premie Centrali">+{zl(r.bonus)}</Row>}
+      {r.guarantee > 0 && <Row label="Dopłata do przychodu gwarantowanego">+{zl(r.guarantee)}</Row>}
+      {r.guarantee > 0 && <p class="tt-hint">Centrala dopłaca do {zl(GUARANTEE.income)} przychodu w pierwszych {GUARANTEE.months} miesiącach, o ile nie będzie mandatu i zaufanie nie spadnie poniżej {GUARANTEE.minTrust}. „Wierzymy w Ciebie. Do odwołania.”</p>}
       {r.other !== 0 && <Row label="Inne przychody i koszty">{signedZl(r.other)}</Row>}
       <Row label="Płace">−{zl(r.wages)}</Row>
       <Row label="Media">−{zl(r.media)}</Row>

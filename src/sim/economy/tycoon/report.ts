@@ -13,11 +13,12 @@ import { OPEN_MINUTES } from './time';
  * i formatowanie liczb robi interfejs (`reportCommentText`, `hintText`).
  */
 
-export type ReportLineKey = 'marza' | 'premie' | 'inne' | 'place' | 'media' | 'oplata' | 'mandaty' | 'wut' | 'logistyka';
-export const REPORT_LINES: readonly ReportLineKey[] = ['marza', 'premie', 'inne', 'place', 'media', 'oplata', 'mandaty', 'wut', 'logistyka'];
+export type ReportLineKey = 'marza' | 'premie' | 'gwarancja' | 'inne' | 'place' | 'media' | 'oplata' | 'mandaty' | 'wut' | 'logistyka';
+export const REPORT_LINES: readonly ReportLineKey[] = ['marza', 'premie', 'gwarancja', 'inne', 'place', 'media', 'oplata', 'mandaty', 'wut', 'logistyka'];
 export const REPORT_LINE_LABEL: Record<ReportLineKey, string> = {
   marza: 'Marża ze sprzedaży',
   premie: 'Premie Centrali',
+  gwarancja: 'Dopłata do przychodu gwarantowanego',
   inne: 'Inne przychody i koszty',
   place: 'Płace',
   media: 'Media',
@@ -31,7 +32,10 @@ export const REPORT_LINE_LABEL: Record<ReportLineKey, string> = {
 export interface MonthFigures {
   revenue: number;
   margin: number;
+  /** Premie Centrali razem z dopłatą do gwarancji (licznik `bonus`). */
   bonuses: number;
+  /** W tym dopłata do przychodu gwarantowanego (osobna pozycja raportu, gdy jest). Brak pola: 0. */
+  guarantee?: number;
   other: number;
   wages: number;
   media: number;
@@ -169,7 +173,8 @@ export function buildMonthReport(r: ReportInput, seedHash: number): TycoonMonthR
   // koszty jako 0 − x, a nie −x: −0 nie przeżywa JSON-a, a raport ma wracać z zapisu bez zmian
   const lines: TycoonMonthReport['lines'] = [
     { key: 'marza', amount: f.margin },
-    { key: 'premie', amount: f.bonuses },
+    { key: 'premie', amount: f.bonuses - (f.guarantee ?? 0) },
+    ...((f.guarantee ?? 0) > 0 ? [{ key: 'gwarancja' as const, amount: f.guarantee! }] : []),
     { key: 'inne', amount: f.other },
     { key: 'place', amount: 0 - f.wages },
     { key: 'media', amount: 0 - f.media },

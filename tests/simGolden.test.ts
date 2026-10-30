@@ -32,7 +32,7 @@ const GOLDEN: Record<number, string> = {
   2: 'de237366de4f5c764dde1bdbdd3f7adcc7fb7b80ff80673a4f73785a24e8cdca',   // C2: karty, profile i przypięcia załogi, KPI zamiast zleceń, bez prezentu
   3: '1c05f23716a31cb5f11cbb41a82f5f0eeebaf4e88f1b2d46456b39b4ce5aa79b',   // Straż z upomnieniem, limit asystenta, stukanie w kasę tylko gdy pomaga
   4: '16a2834398928b489f50dc3b39de8cf18a49e3c700a0e4fbfc058b3f381a2239',   // więcej klientów i fale, 6 palet, limit debetu, nowy balans opłaty i premii
-  5: '7f4ffe2fe367dbba4d62ccec244c6e90815716733e8c5aa39d139be632f1a009',   // palety bez odsyłania (przejścia, zagracenie), paleta 480 szt., debet −100 tys., cele „Odbierz”, 0,5 karty na dobę
+  5: 'fc9c4c590639fc761f798d8711cc05c7cc5bc1bbcd43f18494fa9b7fa8ba232f',   // palety bez odsyłania, paleta 480 szt., debet −100 tys., cele „Odbierz”, 0,5 karty na dobę, urealniona ekonomia
 };
 
 const SEED = 'kiełbasa-42';
@@ -90,30 +90,29 @@ const PLAN: readonly (readonly [day: number, hour: number, minute: number, cmd: 
   [0, 6, 4, { type: 'claimMilestone', id: 'pallet1' }],
   [1, 9, 0, { type: 'claimMilestone', id: 'pallet1' }],
   [2, 13, 0, { type: 'claimMilestone', id: 'upgrade1' }],
-  // pierwsze inwestycje, jeszcze na układzie 0
+  // pierwsze inwestycje, jeszcze na układzie 0 (od SIM_VERSION 5 z realną ekonomią gotówka rośnie o kilkaset złotych dziennie, więc
+  // zakupy są rozłożone na wrzesień i październik, a krótki „porządek” wraca do domyślnej kolejki następnego ranka)
+  [0, 12, 0, { type: 'setStaffProfile', profile: 'kolejka' }],
   [1, 12, 0, { type: 'buyUpgrade', id: 'szkolenie' }],
   [2, 12, 0, { type: 'buyUpgrade', id: 'ulotki' }],
   [3, 7, 0, { type: 'setOrder', auto: true }],
-  [4, 12, 0, { type: 'buyEquipment', id: 'sco' }],
-  [5, 12, 0, { type: 'buyUpgrade', id: 'wozek' }],
-  [6, 12, 0, { type: 'campaign' }],
   [6, 12, 30, { type: 'setStaffProfile', profile: 'porzadek' }],
-  [7, 12, 0, { type: 'buyUpgrade', id: 'regaly' }],
-  [9, 12, 0, { type: 'buyEquipment', id: 'bankomat' }],
-  [10, 12, 0, { type: 'buyUpgrade', id: 'kawa' }],
+  [7, 6, 0, { type: 'setStaffProfile', profile: 'kolejka' }],
+  [10, 12, 0, { type: 'buyEquipment', id: 'sco' }],
   [11, 12, 0, { type: 'setOrder', auto: false, manual: 40 }],   // ponad granicę: stan przytnie do 30
   [12, 7, 0, { type: 'setOrder', auto: true, manual: 5.5 }],   // ułamek: stan zaokrągli
-  [14, 12, 0, { type: 'buyEquipment', id: 'piec', slotId: 'equipmentSlot-2' }],
-  [16, 12, 0, { type: 'buyUpgrade', id: 'ulotki' }],
-  [18, 12, 0, { type: 'buyUpgrade', id: 'szkolenie' }],
-  // październik: kilka droższych zakupów i zmiany w załodze (reszta wydatków zostaje na listopad, bo opłata franczyzowa zjada gotówkę po raporcie)
-  [40, 12, 0, { type: 'buyUpgrade', id: 'traszkapka' }],
-  [41, 12, 0, { type: 'buyUpgrade', id: 'asystent' }],
-  [45, 12, 0, { type: 'buyUpgrade', id: 'klima' }],
+  [14, 12, 0, { type: 'buyUpgrade', id: 'wozek' }],
+  [20, 12, 0, { type: 'buyEquipment', id: 'bankomat' }],
+  [25, 12, 0, { type: 'campaign' }],
+  // październik: zakupy po opłacie za wrzesień i zmiany w załodze
+  [42, 12, 0, { type: 'buyUpgrade', id: 'kawa' }],
+  [45, 12, 0, { type: 'buyUpgrade', id: 'ulotki' }],
   [46, 12, 0, { type: 'hire' }],
   [48, 12, 0, { type: 'pinStaff', task: 'kasa', count: 1 }],
   [50, 12, 0, { type: 'fire' }],
   [50, 12, 5, { type: 'setStaffProfile', profile: 'kolejka' }],
+  [55, 12, 0, { type: 'buyEquipment', id: 'piec', slotId: 'equipmentSlot-2' }],
+  [60, 12, 0, { type: 'buyUpgrade', id: 'asystent' }],
   // listopad: kampania, remont 1 (dwie próby: zapas na zmiany cen) i zakupy po remoncie
   [78, 12, 0, { type: 'campaign' }],
   [84, 7, 0, { type: 'startRemont' }],
@@ -145,12 +144,13 @@ const CARD_ANSWERS: readonly (readonly [seq: number, id: string, day: number, ho
   [11, 'fefo', 17, 18, 0, 1],
   [12, 'okolnik-refundacja', 18, 8, 0, 0],
   [13, 'wiralowy', 19, 10, 0, 0],
-  [14, 'glitch', 20, 10, 0, 0],
+  [14, 'glitch', 20, 10, 0, 1],
   [15, 'okolnik-usmiech', 22, 8, 0, 0],
   [16, 'okolnik-premia', 26, 8, 0, 0],
   [17, 'fefo', 27, 18, 0, 1],
   [18, 'okolnik-ankieta', 32, 8, 0, 1],
   [19, 'audyt', 34, 9, 0, 0],
+  [20, 'okolnik-witryna', 38, 8, 0, 0],
   [22, 'fefo', 41, 18, 0, 1],
   [23, 'okolnik-refundacja', 43, 8, 0, 0],
   [24, 'glitch', 44, 10, 0, 0],

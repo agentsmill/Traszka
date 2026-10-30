@@ -61,15 +61,17 @@ describe('forecastMonth: co Centrala zabierze przy zamknięciu miesiąca', () =>
     expect(forecastMonth(s).wut).toBe(0);
   });
 
-  it('przypadek z produkcji: po zakupach gotówka pozwala wejść w głęboki debet, a prognoza to pokazuje przed zakupem', () => {
+  it('przypadek z produkcji: po zakupach gotówka pozwala wejść w debet, a prognoza to pokazuje przed zakupem', () => {
+    // obrót z playtestu właściciela (30.10.2026): przy SIM_VERSION 4 opłata za niego wynosiła ok. 104 tys. zł i kończyła grę;
+    // od SIM_VERSION 5 (realny udział franczyzobiorcy) to ok. 24 tys., ale wydana do zera gotówka i tak schodzi pod kreskę
     const s = fresh();
     s.month.revenue = 690_000;
     s.tycoon.trust.value = 50;
     s.cash = 5_000;   // wydano prawie wszystko, zanim przyszła opłata
     const f = forecastMonth(s);
-    expect(f.due).toBeGreaterThan(100_000);
+    expect(f.due).toBe(franchiseFee(690_000));
     expect(f.free).toBe(5_000 - f.due);
-    expect(f.free).toBeLessThan(-100_000);   // stan, w którym właściciel zobaczył koniec gry (30.10.2026)
+    expect(f.free).toBeLessThan(0);
   });
 
   it('nie zmienia stanu', () => {
@@ -103,8 +105,8 @@ describe('spendCheck: ostrzeżenie przed wydatkiem (nigdy blokada)', () => {
   });
 
   it('cena ponad wolne środki, ale prognoza nad progiem ostrzeżenia: „ciasno”', () => {
-    const f = base(10_000);   // wolne 8 000
-    const c = spendCheck(f, 8_000 + 1_000);
+    const f = base(10_000);   // wolne 10 000 minus stała część opłaty
+    const c = spendCheck(f, 10_000 - FRANCHISE_FEE_FIXED + 1_000);
     expect(c.freeAfter).toBe(-1_000);
     expect(c.freeAfter).toBeGreaterThan(DEBT_WARN);
     expect(c.level).toBe('tight');

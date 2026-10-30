@@ -649,17 +649,17 @@ describe('finishRun', () => {
   }, SEASON_TIMEOUT);
 
   it('bieg, który kończy grę dopiero przy ostatnim zamknięciu (trzy raporty, debet z listopada), jest do wysłania: wynik zawiera listopadową stratę', () => {
-    // ten sklep z sześcioma etatami więcej i 30 paletami dziennie od 18 października schodzi poniżej granicy debetu dopiero przy
-    // zamknięciu 30 listopada (test w src/sim/ranked.test.ts); „na skróty”: polecenia w swoich minutach, potem koniec sezonu
+    // ten sklep z 30 paletami dziennie od 25 października i sześcioma etatami więcej od 26 października schodzi poniżej granicy debetu
+    // dopiero przy zamknięciu 30 listopada (test w src/sim/ranked.test.ts); „na skróty”: polecenia w swoich minutach, potem koniec sezonu
     const seed = 'kiełbasa-42';
     const s = createRankedSession(seed);
-    const from = 48 * MINUTES_PER_DAY + 9 * 60;
+    s.econ.minute = 55 * MINUTES_PER_DAY + 9 * 60;
+    expect(dispatch(s, { type: 'setOrder', auto: false, manual: 30 })).toBe(true);
+    const from = 56 * MINUTES_PER_DAY + 9 * 60;
     for (let i = 0; i < 6; i++) {
       s.econ.minute = from + i;
       expect(dispatch(s, { type: 'hire' })).toBe(true);
     }
-    s.econ.minute = from + 10;
-    expect(dispatch(s, { type: 'setOrder', auto: false, manual: 30 })).toBe(true);
     s.econ.minute = END - 1;
     const replayed = replayRun({ ...s.run!.record, log: log(s).map((e) => ({ ...e })) }, END);
     expect(replayed.gameOver, 'debet z ostatniego zamknięcia kończy grę').toBe(true);

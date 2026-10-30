@@ -73,10 +73,13 @@ const LOG: LogEntry[] = withTaps([
   { minute: at(3, 7), cmd: { type: 'setOrder', auto: true } },
   { minute: at(40, 12), cmd: { type: 'campaign' } },
 ], 28);
-/** Stuknięcia przez cały sezon i remont 1 w 45. dniu (po stuknięciach sklepu stać na 25 tys. zł): układ sklepu zmienia się w trakcie odtwarzania. */
+/**
+ * Stuknięcia przez cały sezon i remont 1 w 55. dniu (po stuknięciach sklepu stać wtedy na 25 tys. zł; przy SIM_VERSION 4 wystarczał
+ * 45. dzień): układ sklepu zmienia się w trakcie odtwarzania.
+ */
 const LOG_REMONT: LogEntry[] = withTaps([
-  { minute: at(45, 7), cmd: { type: 'startRemont' } },
-  { minute: at(45, 7, 5), cmd: { type: 'rushRemont' } },
+  { minute: at(55, 7), cmd: { type: 'startRemont' } },
+  { minute: at(55, 7, 5), cmd: { type: 'rushRemont' } },
 ], 90);
 /**
  * Stuknięcia przez cały sezon, a od 10 października (dzień 40) osiem osób na zmianie i 30 palet dziennie: pensje, opłata logistyczna

@@ -211,8 +211,8 @@ describe('treść okna „Jak grać”', () => {
     expect(t).toContain(`Zaufanie startuje od ${TRUST.start} punktów`);
     expect(t).toContain(`trafione KPI (+${KPI.trustHit}) i miesiąc na plusie (+${TRUST.monthProfit})`);
     expect(t).toContain(`mandat (−${-TRUST.fine}) i miesiąc na minusie (−${-TRUST.monthLoss}).`);
-    expect([turnoverBonusShare(69), turnoverBonusShare(70), turnoverBonusShare(84), turnoverBonusShare(85)]).toEqual([0, 0.02, 0.02, 0.03]);
-    expect(t).toContain('Od 70 punktów Centrala oddaje premię od obrotu: 2%, od 85 punktów 3%.');
+    expect([turnoverBonusShare(69), turnoverBonusShare(70), turnoverBonusShare(84), turnoverBonusShare(85)]).toEqual([0, 0.005, 0.005, 0.01]);
+    expect(t).toContain('Od 70 punktów Centrala oddaje premię od obrotu: 0,5%, od 85 punktów 1%.');
     expect(t).toContain(`Umowę stracisz przy zerze na koniec miesiąca albo od razu, gdy gotówka spadnie poniżej −${pl(-DEBT_LIMIT)} zł`);
     expect(t).toContain(`nietrafiony odbiera zaufanie (−${-KPI.trustMiss})`);
   });

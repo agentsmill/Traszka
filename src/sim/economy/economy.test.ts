@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { generateStore } from '@/sim/store/generateStore';
 import {
-  CATS, CAT_INFO, DEBT_LIMIT, FRANCHISE_FEE_FIXED, FRANCHISE_FEE_SHARE, HOT, ITEMS_PER_CUSTOMER, MARGIN_PER_CUSTOMER, MINUTES_PER_DAY, OPEN_FROM, OPEN_TO, REVENUE_PER_CUSTOMER,
+  CATS, CAT_INFO, DEBT_LIMIT, FRANCHISE_FEE_FIXED, GUARANTEE, FRANCHISE_FEE_SHARE, HOT, ITEMS_PER_CUSTOMER, MARGIN_PER_CUSTOMER, MINUTES_PER_DAY, OPEN_FROM, OPEN_TO, REVENUE_PER_CUSTOMER,
   START_CASH, STRAZ, TILL_RATE, UNLOAD_AT, UNLOAD_RATE, WAGE_PER_DAY, WAVES,
 } from './catalog';
 import { dateOfDay, dayOf, formatDate, isLastDayOfMonth, minuteOfDay } from './calendar';
@@ -90,6 +90,7 @@ describe('ekonomia', () => {
       const s = createEconomy(SEED, info);
       s.reputation = 100;
       s.upgrades.ulotki = 5;
+      s.boostUntil = s.minute + MINUTES_PER_DAY;   // kampania: od SIM_VERSION 5 ruch jest realny, a test potrzebuje tłoku
       s.cash = 1e6;
       setup(s);
       run(s, info, MINUTES_PER_DAY);
@@ -351,7 +352,7 @@ describe('rozładunek z automatyką warsztatu', () => {
     s.order = { auto: false, manual: 6 };
     run(s, pavilion, 40 * MINUTES_PER_DAY);
     const created = s.nextPalletId - 1;
-    expect(created).toBeGreaterThan(80);   // ok. 2,5 palety po 480 szt. dziennie (od SIM_VERSION 5)
+    expect(created).toBeGreaterThan(50);   // ok. 1,5 palety po 480 szt. dziennie (od SIM_VERSION 5, realny ruch)
     expect(s.total.palletsUnloaded).toBe(created - s.pallets.length);
   });
 });
@@ -548,6 +549,8 @@ describe('ostatni raport miesięczny w stanie', () => {
     const atClose = (): EconomyState => {
       const s = createEconomy(SEED, info);
       run(s, info, 29 * MINUTES_PER_DAY + 17 * 60);
+      s.month.revenue = 3_000_000;   // od SIM_VERSION 5 opłata to kilka procent obrotu: dopiero wielki obrót przebija próg ostrzeżenia
+      s.tycoon.trust.value = 30;     // bez premii od obrotu i bez dopłaty do gwarancji (ta wyrównałaby sztuczny obrót bez marży)
       return s;
     };
     const base = atClose();
@@ -571,6 +574,53 @@ describe('ostatni raport miesięczny w stanie', () => {
     expect(ended.gameOver).toBe(true);
     expect(ev2.map((e) => e.kind)).toEqual(expect.arrayContaining(['month', 'gameover']));
     expect(ended.lastReport?.label).toBe('wrzesień 2026');   // okno końca gry pokaże raport tego miesiąca
+  });
+});
+
+describe('przychód gwarantowany (GUARANTEE)', () => {
+  /** 30 września, 23:00, a miesiąc słaby: mała marża i obrót (np. sklep stał zamknięty), więc przychód jest poniżej gwarancji. */
+  const weakClose = (): EconomyState => {
+    const s = createEconomy(SEED, info);
+    run(s, info, 29 * MINUTES_PER_DAY + 17 * 60);
+    s.month.revenue = 40_000;
+    s.month.margin = 8_000;
+    s.month.bonus = 0;
+    s.month.fineCount = 0;
+    s.tycoon.trust.value = 65;
+    return s;
+  };
+
+  it('słaby miesiąc: Centrala dopłaca do 25 tys. zł przychodu (marża minus opłata plus premie), osobna pozycja raportu i komunikat', () => {
+    const s = weakClose();
+    const events = run(s, info, 1);
+    const report = s.lastReport!;
+    const c = report.counters;
+    expect(c.guarantee).toBeGreaterThan(0);
+    expect(c.margin - c.fee + c.bonus).toBeCloseTo(GUARANTEE.income, 6);
+    expect(report.detail!.lines.map((l) => l.key)).toContain('gwarancja');
+    expect(report.detail!.lines.find((l) => l.key === 'gwarancja')!.amount).toBe(c.guarantee);
+    expect(report.detail!.lines.reduce((n, l) => n + l.amount, 0)).toBeCloseTo(report.profit, 6);
+    expect(s.total.guarantee).toBe(c.guarantee);
+    expect(events.some((e) => e.text.includes('Przychód gwarantowany') && e.text.includes('dopłaca'))).toBe(true);
+  });
+
+  it('bez dopłaty po mandacie albo przy zaufaniu poniżej progu, a po trzech miesiącach gry w ogóle', () => {
+    const fined = weakClose();
+    fined.month.fineCount = 1;
+    const ev1 = run(fined, info, 1);
+    expect(fined.lastReport!.counters.guarantee).toBe(0);
+    expect(ev1.some((e) => e.text.includes('nie dopłaci') && e.text.includes('mandat'))).toBe(true);
+
+    const distrusted = weakClose();
+    distrusted.tycoon.trust.value = GUARANTEE.minTrust - 1;
+    run(distrusted, info, 1);
+    expect(distrusted.lastReport!.counters.guarantee).toBe(0);
+
+    const late = weakClose();
+    late.history = Array.from({ length: GUARANTEE.months }, (_, i) => ({ label: `m${i}`, profit: 0, revenue: 0 }));
+    const ev3 = run(late, info, 1);
+    expect(late.lastReport!.counters.guarantee).toBe(0);
+    expect(ev3.some((e) => e.text.includes('Przychód gwarantowany'))).toBe(false);
   });
 });
 
@@ -981,11 +1031,12 @@ describe('WUT, KPI tygodnia zamiast zleceń i raport miesięczny', () => {
   });
 
   describe('raport miesięczny', () => {
-    it('wynik raportu = suma pozycji = wynik w historii (30 dni biernej gry), z dziewięcioma pozycjami', () => {
+    it('wynik raportu = suma pozycji = wynik w historii (30 dni biernej gry), z dziewięcioma pozycjami (dopłata do gwarancji tylko, gdy jest)', () => {
       const s = createEconomy(SEED, info);
       const report = monthReport(run(s, info, 30 * MINUTES_PER_DAY));
       const detail = report.detail!;
-      expect(detail.lines.map((l) => l.key)).toEqual(REPORT_LINES);
+      expect(report.counters.guarantee).toBe(0);
+      expect(detail.lines.map((l) => l.key)).toEqual(REPORT_LINES.filter((k) => k !== 'gwarancja'));
       expect(detail.lines.reduce((n, l) => n + l.amount, 0)).toBeCloseTo(detail.result, 6);
       expect(detail.result).toBeCloseTo(s.history[0]!.profit, 6);
       expect(detail.result).toBeCloseTo(report.profit, 6);

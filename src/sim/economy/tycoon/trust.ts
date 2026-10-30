@@ -87,10 +87,11 @@ export function trustTier(value: number): TrustTier {
 export const viralShare = (value: number): number => clamp((value - 20) / 70, 0, 1);
 
 /**
- * Premia Centrali od obrotu miesiąca: zaufany franczyzobiorca dostaje z powrotem część opłaty franczyzowej (od 70 dwa procent
- * obrotu, od 85 trzy). To główny zysk z dobrych decyzji w małym sklepie, gdzie mandatów jest mało (balans: balance.test.ts).
+ * Premia Centrali od obrotu miesiąca: zaufany franczyzobiorca dostaje z powrotem część opłaty franczyzowej (od 70 pół procenta
+ * obrotu, od 85 cały procent). Przy przeciętnym zaufaniu zostaje mu ok. 16,5–16,7% obrotu, a przy wysokim ok. 17–17,5%
+ * (catalog.ts: `FRANCHISE_FEE_SHARE`). Do SIM_VERSION 5 było 2% i 3%, przy opłacie 15% obrotu.
  */
-export const turnoverBonusShare = (value: number): number => (value >= 85 ? 0.03 : value >= 70 ? 0.02 : 0);
+export const turnoverBonusShare = (value: number): number => (value >= 85 ? 0.01 : value >= 70 ? 0.005 : 0);
 
 /** Mnożnik szansy na zapowiedź audytu: przy niskim zaufaniu Centrala przyjeżdża częściej (do ×3 przy zerze). */
 export const auditWeight = (value: number): number => 1 + Math.max(0, 60 - value) / 30;

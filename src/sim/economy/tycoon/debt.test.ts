@@ -10,11 +10,12 @@ import { economyEnv } from './economyEnv';
 
 /**
  * Granica debetu na biernym graczu. Duży koszt to mandat z ryzyka karty „Nastolatek po energetyka” (`minorSaleFine`: dwie typowe
- * marże dnia, nie mniej niż 4000 zł; w tym sklepie ok. 4,5 tys. zł), wymuszony tą samą drogą co odpowiedź na kartę (`applyCommand`,
+ * marże dnia, nie mniej niż 4000 zł; od SIM_VERSION 5 z realnym ruchem zawsze to minimum), wymuszony tą samą drogą co odpowiedź na kartę (`applyCommand`,
  * `answerCard`): skutek ryzyka z definicji karty trafia do odpowiedzi, którą test wybiera.
  * Do SIM_VERSION 4 granica stała na −10 000 zł i trzy takie mandaty kończyły grę. Od SIM_VERSION 5 stoi na −100 000 zł (decyzja
- * właściciela z 30.10.2026: „zwiększ możliwy debet do 100k”), a mandatu nie przestrajano: trzy to dziś zwykły zły tydzień,
- * ostrzeżenie (−50 000 zł) przychodzi przy kilkunastu, a koniec gry dopiero przy ponad dwudziestu w dwa miesiące.
+ * właściciela z 30.10.2026: „zwiększ możliwy debet do 100k”), a mandatu nie przestrajano. Po urealnieniu ekonomii bierny gracz
+ * zarabia kilka tysięcy miesięcznie, więc trzy mandaty to zwykły zły tydzień, ostrzeżenie (−50 000 zł) przychodzi przy ok. 18,
+ * a koniec gry przy ok. 30 w dwa miesiące.
  */
 const SEED = 'makieta';
 const DAYS = 61;
@@ -65,16 +66,16 @@ describe('granica debetu na biernym graczu (dwa miesiące, wymuszone duże koszt
     expect(r.minCash).toBeGreaterThan(DEBT_WARN);
   }, 60_000);
 
-  it('piętnaście dużych kosztów: gotówka w strefie ostrzeżenia (50–90% granicy), ostrzeżenie, gra trwa', () => {
-    const r = passiveWith(15);
+  it('osiemnaście dużych kosztów: gotówka w strefie ostrzeżenia (50–90% granicy), ostrzeżenie, gra trwa', () => {
+    const r = passiveWith(18);
     expect(r.gameOver).toBe(false);
     expect(r.warnings).toBeGreaterThanOrEqual(1);
     expect(r.minCash / DEBT_LIMIT).toBeGreaterThanOrEqual(0.5);
     expect(r.minCash / DEBT_LIMIT).toBeLessThanOrEqual(0.9);
   }, 60_000);
 
-  it('dwadzieścia sześć dużych kosztów: koniec gry w dwa miesiące, gotówka poniżej granicy w chwili końca', () => {
-    const r = passiveWith(26);
+  it('trzydzieści cztery duże koszty: koniec gry w dwa miesiące, gotówka poniżej granicy w chwili końca', () => {
+    const r = passiveWith(34);
     expect(r.gameOver).toBe(true);
     expect(r.endDay).toBeLessThan(DAYS);
     expect(r.minCash).toBeLessThan(DEBT_LIMIT);

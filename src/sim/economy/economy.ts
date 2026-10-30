@@ -1,6 +1,6 @@
 import { hashString } from '@/sim/rng';
 import {
-  ASSISTANT_UNLOAD_MIN, CATS, CAT_INFO, CLUTTER, COMBO_WINDOW, CREDIT_LIMIT, DELIVERY_AT, DELIVERY_AT_AFTERNOON, DELIVERY_AT_NIGHT,
+  ASSISTANT_UNLOAD_MIN, CATS, CAT_INFO, CLUTTER, COMBO_WINDOW, GUARANTEE, CREDIT_LIMIT, DELIVERY_AT, DELIVERY_AT_AFTERNOON, DELIVERY_AT_NIGHT,
   DEBT_LIMIT, DEBT_WARN_SHARE, FINE_BASE, FINE_PER_PALLET, FRANCHISE_FEE_FIXED, FRANCHISE_FEE_SHARE,
   HIRE_COST, HOT, HOUR_CURVE, ITEMS_PER_CUSTOMER,
   LOT_TRAFFIC, MARGIN_PER_CUSTOMER, MEDIA_PER_DAY, MINUTES_PER_DAY, OPEN_FROM, OPEN_TO, ORDER_DEADLINE, PALLET_FEE, PALLET_ITEMS,
@@ -75,7 +75,8 @@ export interface Counters {
   logistics: number;    // opłaty za palety ponad przydział (do SIM_VERSION 4 także za odesłane palety)
   investments: number;  // ulepszenia, sprzęt, remont, rekrutacja
   other: number;        // inne przychody (najem bankomatu, sieć sklepów, nagrody)
-  bonus: number;        // premie Centrali (od obrotu miesiąca)
+  bonus: number;        // premie Centrali (od obrotu miesiąca, KPI, złote palety i dopłata do gwarancji)
+  guarantee: number;    // w tym dopłata do przychodu gwarantowanego (`GUARANTEE`); tylko miesiąc i suma gry
   wut: number;          // opłata za WUT (ubytki) ponad próg
   fineCount: number;    // liczba mandatów (kwoty są w `fines`)
   missingItems: number;
@@ -164,7 +165,7 @@ export interface EconEvent { kind: EconEventKind; text: string; report?: MonthRe
 
 export const emptyCounters = (): Counters => ({
   customers: 0, lost: 0, revenue: 0, margin: 0, wages: 0, media: 0, fee: 0, fines: 0, logistics: 0, investments: 0, other: 0,
-  bonus: 0, wut: 0, fineCount: 0, missingItems: 0, palletsUnloaded: 0, taps: 0, hotSold: 0, purchases: 0,
+  bonus: 0, guarantee: 0, wut: 0, fineCount: 0, missingItems: 0, palletsUnloaded: 0, taps: 0, hotSold: 0, purchases: 0,
 });
 
 const perCat = (f: (c: Cat) => number): Record<Cat, number> => {
@@ -964,7 +965,7 @@ function kpiWeekText(r: KpiWeekResult, trustApplied: number): string {
 
 /** Liczniki miesiąca w kształcie raportu tycoona (`report.ts`): koszty jako kwoty dodatnie, `other` ze znakiem. */
 const figuresOf = (m: Counters): MonthFigures => ({
-  revenue: m.revenue, margin: m.margin, bonuses: m.bonus, other: m.other, wages: m.wages, media: m.media, fee: m.fee, fines: m.fines,
+  revenue: m.revenue, margin: m.margin, bonuses: m.bonus, guarantee: m.guarantee, other: m.other, wages: m.wages, media: m.media, fee: m.fee, fines: m.fines,
   wut: m.wut, logistics: m.logistics, customers: m.customers, lost: m.lost,
 });
 
@@ -976,6 +977,28 @@ export function franchiseFee(revenue: number): number {
   return Math.round(FRANCHISE_FEE_FIXED + FRANCHISE_FEE_SHARE * revenue);
 }
 
+/**
+ * Przychód gwarantowany (`GUARANTEE`): w pierwszych miesiącach gry Centrala dopłaca do 25 tys. zł przychodu franczyzobiorcy, czyli
+ * marży minus opłata plus premie (bez płac i innych kosztów, jak w prawdziwej umowie). Warunki: zaufanie co najmniej `minTrust`
+ * i miesiąc bez mandatu. Dopłata to premia Centrali (licznik `bonus`), a osobny licznik `guarantee` pokazuje ją w raporcie.
+ * Liczy się przed zmianą zaufania z wyniku miesiąca, a o tym, który to miesiąc, decyduje liczba raportów w historii.
+ */
+function guaranteeTopUp(s: EconomyState, out: EconEvent[]): void {
+  if (s.history.length >= GUARANTEE.months) return;
+  const m = s.month;
+  const income = m.margin - m.fee + m.bonus;
+  const gap = Math.round(GUARANTEE.income - income);
+  if (gap <= 0) return;
+  if (s.tycoon.trust.value < GUARANTEE.minTrust || m.fineCount > 0) {
+    const why = m.fineCount > 0 ? 'w miesiącu był mandat' : `zaufanie poniżej ${GUARANTEE.minTrust}`;
+    out.push({ kind: 'info', text: `Przychód gwarantowany: Centrala nie dopłaci ${fmt(gap)} zł, bo ${why}. Regulamin, punkt 7.3.b, przypis drobnym drukiem.` });
+    return;
+  }
+  bonus(s, gap, 'month');
+  for (const k of ledgers(s, 'month')) k.guarantee += gap;
+  out.push({ kind: 'info', text: `Przychód gwarantowany: Centrala dopłaca ${fmt(gap)} zł do ${fmt(GUARANTEE.income)} zł. „Wierzymy w Ciebie. Do odwołania.”` });
+}
+
 function closeMonth(s: EconomyState, day: number, out: EconEvent[]): void {
   const m = s.month;
   const t = s.tycoon;
@@ -984,6 +1007,7 @@ function closeMonth(s: EconomyState, day: number, out: EconEvent[]): void {
   bonus(s, Math.round(turnoverBonusShare(t.trust.value) * m.revenue), 'month');
   // WUT: ubytki miesiąca (naturalne, z SCO i z kart) do progu pokrywa Centrala, nadwyżkę płaci franczyzobiorca; ubytki liczą się od zera
   charge(s, 'wut', closeWutMonth(t.wut, m.revenue).charge, 'month');
+  guaranteeTopUp(s, out);
   const profit = m.margin + m.bonus + m.other - m.wages - m.media - m.fee - m.fines - m.logistics - m.wut;
   changeTrust(s, 'wynik', profit > 0 ? TRUST.monthProfit : TRUST.monthLoss, out);
   // podsumowania modułów wchodzą do raportu raz każde i same zerują licznik miesiąca; zaufanie dopiero po zmianie z wyniku

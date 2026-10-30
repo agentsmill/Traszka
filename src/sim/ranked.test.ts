@@ -64,8 +64,13 @@ describe('wynik sezonu', () => {
   });
 });
 
-/** Minuta, od której bieg zatrudnia sześć osób i zamawia 30 palet dziennie: 18 października (dzień 48), 9:00. Strojone pod `kiełbasa-42` przy SIM_VERSION 5. */
-const SPREE_FROM = 48 * MINUTES_PER_DAY + 9 * 60;
+/**
+ * Bieg, który kończy grę dokładnie przy zamknięciu 30 listopada: od 25 października (dzień 55, 9:00) 30 palet dziennie, a od 26 października
+ * (dzień 56, 9:00) sześć osób więcej. Strojone pod `kiełbasa-42` przy SIM_VERSION 5 po urealnieniu ekonomii (zapas ok. 500 zł: każda zmiana
+ * ekonomii może to przesunąć, a test powie to wprost).
+ */
+const ORDER_FROM = 55 * MINUTES_PER_DAY + 9 * 60;
+const HIRE_FROM = 56 * MINUTES_PER_DAY + 9 * 60;
 
 describe('seasonBankrupt: koniec gry przed ostatnim raportem', () => {
   const state = (gameOver: boolean, reports: number): Pick<EconomyState, 'gameOver' | 'history'> => ({ gameOver, ...history(...Array<number>(reports).fill(1000)) });
@@ -82,12 +87,12 @@ describe('seasonBankrupt: koniec gry przed ostatnim raportem', () => {
     expect(seasonBankrupt(state(true, RANKED_SEASON_MONTHS))).toBe(false);
   });
 
-  it('prawdziwa symulacja: sklep kiełbasa-42 z ośmioma osobami i 30 paletami dziennie od 18 października kończy grę dopiero przy zamknięciu 30 listopada, z trzema raportami, a strata listopada jest w wyniku', () => {
-    // od SIM_VERSION 5 (granica debetu −100 000 zł) bierny sezon nie kończy się debetem: dopiero sześć etatów więcej i 30 palet dziennie
-    // od 18 października (pensje, opłata logistyczna, przejścia zasypane paletami) dają dołek, który przekracza granicę przy zamknięciu 30 listopada
+  it('prawdziwa symulacja: sklep kiełbasa-42 z ośmioma osobami i 30 paletami dziennie od końca października kończy grę dopiero przy zamknięciu 30 listopada, z trzema raportami, a strata listopada jest w wyniku', () => {
+    // od SIM_VERSION 5 (granica debetu −100 000 zł) bierny sezon nie kończy się debetem: dopiero 30 palet dziennie i sześć etatów więcej
+    // (pensje, opłata logistyczna, przejścia zasypane paletami) dają dołek, który przekracza granicę przy zamknięciu 30 listopada
     const log: LogEntry[] = [
-      ...Array.from({ length: 6 }, (_, i): LogEntry => ({ minute: SPREE_FROM + i, seq: i, cmd: { type: 'hire' } })),
-      { minute: SPREE_FROM + 10, seq: 6, cmd: { type: 'setOrder', auto: false, manual: 30 } },
+      { minute: ORDER_FROM, seq: 0, cmd: { type: 'setOrder', auto: false, manual: 30 } },
+      ...Array.from({ length: 6 }, (_, i): LogEntry => ({ minute: HIRE_FROM + i, seq: 1 + i, cmd: { type: 'hire' } })),
     ];
     const run: RunRecord = { seed: 'kiełbasa-42', gameVersion: 'test', generatorVersion: GENERATOR_VERSION, simVersion: SIM_VERSION, mode: 'ranked', log };
     const s = replayRun(run, RANKED_SEASON_END_MINUTE);

@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { generateStore } from '@/sim/store/generateStore';
-import { DEBT_LIMIT } from './catalog';
+import { DEBT_LIMIT, FRANCHISE_FEE_SHARE } from './catalog';
 import { advanceEconomy } from './clock';
 import { applyCommand } from './commands';
 import { awaitingDecision, createEconomy, stepMinute, type EconEvent, type EconomyState, type MonthReport } from './economy';
@@ -164,7 +164,7 @@ describe('podgląd końca miesiąca: wynik', () => {
   it('wielki obrót przy pustej kasie: opłata kończy grę, podgląd mówi o debecie i podaje gotówkę po przelewie', () => {
     const s = midMonth(3);
     s.cash = 0;
-    s.month.revenue = Math.ceil((2 * Math.abs(DEBT_LIMIT)) / 0.151);   // opłata ponad dwie granice debetu
+    s.month.revenue = Math.ceil((2 * Math.abs(DEBT_LIMIT)) / FRANCHISE_FEE_SHARE);   // opłata ponad dwie granice debetu
     const r = finish(s, 1440)!;
     expect(r.gameOver).toBe('debt');
     expect(r.cashAfter).toBeLessThan(DEBT_LIMIT);
