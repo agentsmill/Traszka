@@ -172,6 +172,8 @@ const SEEDS = Array.from({ length: 12 }, (_, i) => `traszka-${i + 1}`);
 const START = OPEN_FROM;
 /** Wiele dób gry na seedach: ok. 4 s na wolnym rdzeniu, a przy obciążonej maszynie (cały zestaw równolegle) dłużej niż domyślne 5 s. */
 const TIMEOUT = 60_000;
+/** 12 seedów × 90 dni: od SIM 6 ok. 75 s na maszynie GitHuba (CI padał na 60 s), lokalnie kilkanaście sekund. */
+const REPLAY_TIMEOUT = 240_000;
 
 describe('strażniki kształtu biegu (dla serwera rankingu przed replayRun)', () => {
   const cmd = { type: 'tapTill' };
@@ -256,7 +258,7 @@ describe('odtwarzanie biegu', () => {
     }
     expect(checked).toBeGreaterThanOrEqual(12);
     expect(withCommands).toBeGreaterThanOrEqual(3);
-  }, TIMEOUT);
+  }, REPLAY_TIMEOUT);
 
   it('dziennik bez odpowiedzi na kartę odtwarza się do końca: karty dostają odpowiedź zaznaczoną z góry', () => {
     const seed = SEEDS[2]!;
