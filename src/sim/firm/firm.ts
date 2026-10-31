@@ -204,17 +204,16 @@ export function stepFirmMinute(f: FirmState, out: FirmStepOut): void {
   // 5. (Zadanie 6): zamknięcia sklepów; (Zadanie 5): grantPartnerIfDue(f, out) po `month` sklepu startowego
 
   const months = stepped.flatMap(({ st, events }) => events.filter((e) => e.kind === 'month' && e.report).map((e) => ({ id: st.id, report: e.report! })));
-  if (months.length > 0) {
-    if (months.length >= 2) {
-      const stores = months.map(({ id, report }) => ({ id, profit: report.profit, net: report.statement?.net ?? 0 }));
-      out.firm.push({
-        kind: 'network-report',
-        summary: {
-          label: months[0]!.report.label, wallet: f.person.wallet, stores, invest: f.monthInvest, total: stores.reduce((n, s) => n + s.net, 0),
-        },
-      });
-    }
-    f.monthInvest = 0;   // pakiety otwarcia liczą się w miesiącu, w którym je zapłacono
+  if (months.length >= 2) {
+    const stores = months.map(({ id, report }) => ({ id, profit: report.profit, net: report.statement?.net ?? 0 }));
+    out.firm.push({
+      kind: 'network-report',
+      summary: {
+        label: months[0]!.report.label, wallet: f.person.wallet, stores, invest: f.monthInvest, total: stores.reduce((n, s) => n + s.net, 0),
+      },
+    });
+    // pakiet zapłacony, gdy działał jeszcze jeden sklep (budowa przez koniec miesiąca), czeka na pierwsze podsumowanie sieci (§11.5)
+    f.monthInvest = 0;
   }
 
   if (!f.person.remanentKnown && stepped.some(({ st }) => st.econ.franchisee.remanent.known)) f.person.remanentKnown = true;

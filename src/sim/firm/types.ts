@@ -44,7 +44,7 @@ export interface FirmState {
   stores: FirmStore[];
   activeId: number;
   builds: FirmBuild[];
-  /** Pakiety otwarcia zapłacone gotówką w bieżącym miesiącu (do podsumowania sieci). */
+  /** Pakiety otwarcia zapłacone gotówką od ostatniego podsumowania sieci (zeruje je `network-report`). */
   monthInvest: number;
   inbox: FirmNote[];
   /** Skrót pogody miasta: `seedHash` sklepu startowego (pogodę losuje sklep #1, §11.1). */

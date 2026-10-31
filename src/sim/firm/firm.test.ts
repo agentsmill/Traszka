@@ -705,7 +705,7 @@ describe('wspólne i osobne', () => {
     const out = playTo(f, SEPT_CLOSE + 1);
     expect(ofKind(out.active, 'month')).toHaveLength(1);
     expect(ofKind(out.firm, 'network-report')).toEqual([]);
-    expect(f.monthInvest).toBe(0);   // inwestycja miesiąca nie przechodzi na następny
+    expect(f.monthInvest).toBe(100);   // pakiet czeka na pierwsze podsumowanie sieci (§11.5)
   });
 
   it('ten sam seed i te same kroki dają ten sam stan obu sklepów', () => {
