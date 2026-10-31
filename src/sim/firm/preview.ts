@@ -1,10 +1,11 @@
-import { dayOf, isLastDayOfMonth } from '@/sim/economy/calendar';
+import { dayOf } from '@/sim/economy/calendar';
 import { DEBT_LIMIT } from '@/sim/economy/catalog';
-import { awaitingDecision, type EconomyState, type MonthReport } from '@/sim/economy/economy';
-import { buildStatement } from '@/sim/economy/franchisee';
-import { defaultAnswer, type MonthPreview, type PreviewProgress } from '@/sim/economy/monthPreview';
+import { awaitingDecision, type MonthReport } from '@/sim/economy/economy';
+import {
+  MAX_PREVIEW_MINUTES, closedMonthPreview, defaultAnswer, endedEarlyPreview, gameOverReason, lastDayOfMonthFrom, previewProgress,
+  type MonthPreview, type PreviewProgress,
+} from '@/sim/economy/monthPreview';
 import { visibleCards } from '@/sim/economy/tycoon/cards';
-import { trustTerminates } from '@/sim/economy/tycoon/trust';
 import { activeStore, applyStoreCommand, emptyStepOut, refreshSites, stepFirmMinute } from './firm';
 import type { FirmState, FirmStore, NetworkSummary } from './types';
 
@@ -36,11 +37,12 @@ export interface FirmPreview {
   /** Pakiety otwarcia zapłacone gotówką od ostatniego podsumowania sieci (to samo pole co w podsumowaniu sieci przy zamknięciu). */
   invest: number;
   /**
-   * Czy gra firmy kończy się w tym scenariuszu: debet całej gotówki albo zamknięcie ostatniego sklepu. Sklep, który traci umowę,
-   * gdy inny gra dalej, gry nie kończy (ma `gameOver` w swojej części). Zamknięcie ostatniego sklepu po wypowiedzeniu to też `trust`
-   * (typ zna tylko dwa powody).
+   * Czy gra firmy kończy się w tym scenariuszu i dlaczego: debet całej gotówki (`debt`), zaufanie 0 w ostatnim sklepie (`trust`) albo
+   * koniec okresu wypowiedzenia ostatniego sklepu (`notice`). Sklep, który traci umowę, gdy inny gra dalej, gry nie kończy: ma wtedy
+   * `gameOver: 'trust'` w swojej części, a firma `null`. Koniec po wypowiedzeniu widać tylko tutaj: część sklepu ma typ jak w podglądzie
+   * pojedynczego sklepu, który zna tylko `debt` i `trust`.
    */
-  gameOver: 'debt' | 'trust' | null;
+  gameOver: 'debt' | 'trust' | 'notice' | null;
   /** Gra skończyła się, zanim którykolwiek sklep zdążył zamknąć miesiąc (debet w środku miesiąca): sumy są wtedy częściowe. */
   endedEarly: boolean;
 }
@@ -53,16 +55,6 @@ export interface FirmPreviewJob {
   result(): FirmPreview | null;
 }
 
-/** Bezpiecznik jak w podglądzie sklepu: miesiąc ma najwyżej 31 dni, plus dzień zapasu. Podgląd, który tyle nie wystarczył, kończy się bez wyniku. */
-const MAX_PREVIEW_MINUTES = 32 * 1440;
-
-/** Ostatni dzień miesiąca, w którym jest dzień `from` (jego zamknięcie kończy podgląd). */
-function lastDayOfMonthFrom(from: number): number {
-  let day = from;
-  while (!isLastDayOfMonth(day)) day++;
-  return day;
-}
-
 /**
  * Kopia do liczenia: wszystko poza miastem przez `structuredClone`, miasto to samo (jest niezmienne, to czysta funkcja seeda, a jego
  * kopia kosztowałaby najwięcej). Flagi sklepów liczą się od nowa z miasta, jak po każdej zmianie składu.
@@ -73,10 +65,6 @@ function cloneFirm(f: FirmState): FirmState {
   refreshSites(copy);
   return copy;
 }
-
-/** Powód końca gry sklepu jak w podglądzie sklepu: debet (gotówka poniżej granicy) przed zaufaniem. */
-const storeReason = (s: EconomyState): MonthPreview['gameOver'] =>
-  !s.gameOver ? null : s.cash < DEBT_LIMIT ? 'debt' : trustTerminates(s.tycoon.trust.value) ? 'trust' : null;
 
 /**
  * Zaczyna podgląd: kopiuje `f` i zwraca zadanie do wykonywania porcjami. Gra, która już się skończyła, daje zadanie od razu skończone
@@ -94,6 +82,7 @@ export function startFirmMonthPreview(f: FirmState): FirmPreviewJob {
   const out = emptyStepOut();
   const reports = new Map<number, MonthReport>();   // wyciągi miesiąca po `id` sklepu (zamknięty w tej minucie też ma wyciąg)
   let summary: NetworkSummary | undefined;
+  let noticeEnd = false;   // ostatni sklep zamknięty końcem wypowiedzenia (zaufanie 0 nie niesie takiego zdarzenia firmy)
 
   /** Koniec gry firmy: koniec z `over`, albo jedyny sklep z własnym debetem lub zaufaniem (wtedy `over` ustawia dopiero zamknięcie). */
   const ended = (): boolean => copy.over !== null || activeStore(copy).econ.gameOver;
@@ -107,28 +96,11 @@ export function startFirmMonthPreview(f: FirmState): FirmPreviewJob {
     return ok;
   };
 
-  /** Podgląd sklepu: z wyciągu zamknięcia albo, gdy gra skończyła się w środku miesiąca, z naliczeń do tej chwili (bez rat, gwarancji i premii od obrotu). */
+  /** Podgląd sklepu: z wyciągu zamknięcia albo, gdy gra skończyła się w środku miesiąca, z naliczeń do tej chwili. */
   const storePreview = (st: FirmStore): MonthPreview | null => {
-    const month = reports.get(st.id);
-    const reason = storeReason(st.econ);
-    if (month?.statement) {
-      const c = month.counters;
-      return {
-        label: month.label, cashNow, cashAfter: month.cash, lowestCash: lowest, revenue: c.revenue, customers: c.customers,
-        statement: month.statement, profit: month.profit, gameOver: reason, endedEarly: false,
-      };
-    }
-    if (st.closed || !st.econ.gameOver) return null;
-    const e = st.econ;
-    const c = e.month;
-    const statement = buildStatement({
-      month: e.franchisee.month, guarantee: 0, installments: 0, remanent: e.franchisee.remanent.pending, spent: c.investments,
-      fines: c.fines, other: c.other, cashBefore: e.cash, partial: false, ownCosts: st.info.site?.ownCosts ?? true,
-    });
-    return {
-      label: '', cashNow, cashAfter: e.cash, lowestCash: lowest, revenue: c.revenue, customers: c.customers, statement,
-      profit: statement.result, gameOver: reason, endedEarly: true,
-    };
+    const reason = gameOverReason(st.econ);
+    return closedMonthPreview(reports.get(st.id), cashNow, lowest, reason)
+      ?? (st.closed || !st.econ.gameOver ? null : endedEarlyPreview(st.econ, st.info, cashNow, lowest, reason));
   };
 
   const finish = (): void => {
@@ -140,8 +112,9 @@ export function startFirmMonthPreview(f: FirmState): FirmPreviewJob {
     }
     if (stores.length === 0) return;
     // debet całej gotówki; sklep zamknięty zaufaniem zostawia rozliczenie na portfelu, więc granicę przekracza dopiero ono (koniec gry
-    // ogłasza wtedy pozostały sklep w następnej minucie)
-    const gameOver: FirmPreview['gameOver'] = copy.person.wallet < DEBT_LIMIT ? 'debt' : copy.over === 'closed' ? 'trust' : null;
+    // ogłasza wtedy pozostały sklep w następnej minucie). Zamknięcie ostatniego sklepu to zaufanie 0 albo koniec jego wypowiedzenia
+    const gameOver: FirmPreview['gameOver'] =
+      copy.person.wallet < DEBT_LIMIT ? 'debt' : copy.over === 'closed' ? (noticeEnd ? 'notice' : 'trust') : null;
     result = {
       label: stores.find((s) => !s.preview.endedEarly)?.preview.label ?? '', cashNow, cashAfter: copy.person.wallet, lowestCash: lowest, stores,
       invest: summary?.invest ?? copy.monthInvest, gameOver, endedEarly: reports.size === 0,
@@ -169,15 +142,15 @@ export function startFirmMonthPreview(f: FirmState): FirmPreviewJob {
         let closed = false;
         for (const e of out.active) if (e.kind === 'month' && e.report) { reports.set(activeId, e.report); closed = true; }
         for (const b of out.background) if (b.event.kind === 'month' && b.event.report) { reports.set(b.storeId, b.event.report); closed = true; }
-        for (const e of out.firm) if (e.kind === 'network-report') summary = e.summary;
+        for (const e of out.firm) {
+          if (e.kind === 'network-report') summary = e.summary;
+          else if (e.kind === 'gameover' && e.params?.reason === 'notice') noticeEnd = true;
+        }
         if (closed || ended()) finish();
       }
       return finished;
     },
-    progress(): PreviewProgress {
-      const days = lastDay - startDay + 1;
-      return { day: Math.min(days, Math.max(1, dayOf(activeStore(copy).econ.minute) - startDay + 1)), days };
-    },
+    progress: (): PreviewProgress => previewProgress(startDay, lastDay, activeStore(copy).econ.minute),
     result: () => result,
   };
 }

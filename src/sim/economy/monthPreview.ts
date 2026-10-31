@@ -1,7 +1,7 @@
 import { dayOf, isLastDayOfMonth } from './calendar';
 import { DEBT_LIMIT } from './catalog';
 import { applyCommand } from './commands';
-import { awaitingDecision, stepMinute, type EconEvent, type EconomyState } from './economy';
+import { awaitingDecision, stepMinute, type EconEvent, type EconomyState, type MonthReport } from './economy';
 import { buildStatement, type Statement } from './franchisee';
 import type { StoreInfo } from './storeInfo';
 import { visibleCards } from './tycoon/cards';
@@ -61,7 +61,7 @@ export interface MonthPreviewJob {
 }
 
 /** Bezpiecznik: miesiąc ma najwyżej 31 dni, plus dzień zapasu. Podgląd, który tyle nie wystarczył, kończy się bez wyniku. */
-const MAX_PREVIEW_MINUTES = 32 * 1440;
+export const MAX_PREVIEW_MINUTES = 32 * 1440;
 
 /** Numer odpowiedzi domyślnej karty (jak `selectedAnswer` w oknie karty: poza zakresem pierwsza). Tak odpowiada też zastępca w sklepie w tle. */
 export function defaultAnswer(card: { answers: readonly unknown[]; defaultAnswer: number }): number {
@@ -70,10 +70,51 @@ export function defaultAnswer(card: { answers: readonly unknown[]; defaultAnswer
 }
 
 /** Ostatni dzień miesiąca, w którym jest dzień `from` (jego zamknięcie kończy podgląd). */
-function lastDayOfMonthFrom(from: number): number {
+export function lastDayOfMonthFrom(from: number): number {
   let day = from;
   while (!isLastDayOfMonth(day)) day++;
   return day;
+}
+
+/** Postęp podglądu w minucie `minute`: numer dnia (1 to dzień startu) i liczba dni od startu do końca miesiąca włącznie. */
+export function previewProgress(startDay: number, lastDay: number, minute: number): PreviewProgress {
+  const days = lastDay - startDay + 1;
+  return { day: Math.min(days, Math.max(1, dayOf(minute) - startDay + 1)), days };
+}
+
+/** Powód końca gry sklepu: debet (gotówka poniżej granicy) przed zaufaniem; `null`, gdy sklep gra dalej. */
+export function gameOverReason(s: EconomyState): MonthPreview['gameOver'] {
+  return !s.gameOver ? null : s.cash < DEBT_LIMIT ? 'debt' : trustTerminates(s.tycoon.trust.value) ? 'trust' : null;
+}
+
+/** Podgląd sklepu, który zamknął miesiąc: wyciąg, wynik i liczniki z raportu zamknięcia. `null`, gdy raport nie niesie wyciągu. */
+export function closedMonthPreview(
+  month: MonthReport | undefined, cashNow: number, lowestCash: number, gameOver: MonthPreview['gameOver'],
+): MonthPreview | null {
+  if (!month?.statement) return null;
+  const c = month.counters;
+  return {
+    label: month.label, cashNow, cashAfter: month.cash, lowestCash, revenue: c.revenue, customers: c.customers,
+    statement: month.statement, profit: month.profit, gameOver, endedEarly: false,
+  };
+}
+
+/**
+ * Podgląd sklepu, któremu gra skończyła się przed zamknięciem miesiąca (debet w środku miesiąca): naliczenia miesiąca do tej chwili,
+ * bez pozycji zamknięcia (rat, gwarancji i premii od obrotu).
+ */
+export function endedEarlyPreview(
+  s: EconomyState, info: StoreInfo, cashNow: number, lowestCash: number, gameOver: MonthPreview['gameOver'],
+): MonthPreview {
+  const c = s.month;
+  const statement = buildStatement({
+    month: s.franchisee.month, guarantee: 0, installments: 0, remanent: s.franchisee.remanent.pending, spent: c.investments,
+    fines: c.fines, other: c.other, cashBefore: s.cash, partial: false, ownCosts: info.site?.ownCosts ?? true,
+  });
+  return {
+    label: '', cashNow, cashAfter: s.cash, lowestCash, revenue: c.revenue, customers: c.customers, statement,
+    profit: statement.result, gameOver, endedEarly: true,
+  };
 }
 
 /**
@@ -104,25 +145,9 @@ export function startMonthPreview(s: EconomyState, info: StoreInfo): MonthPrevie
   const finish = (): void => {
     finished = true;
     const month = events.find((e) => e.kind === 'month')?.report;
-    const reason: MonthPreview['gameOver'] = !copy.gameOver ? null : copy.cash < DEBT_LIMIT ? 'debt' : trustTerminates(copy.tycoon.trust.value) ? 'trust' : null;
-    if (month?.statement) {
-      const c = month.counters;
-      result = {
-        label: month.label, cashNow, cashAfter: month.cash, lowestCash: lowest, revenue: c.revenue, customers: c.customers,
-        statement: month.statement, profit: month.profit, gameOver: reason, endedEarly: false,
-      };
-    } else if (copy.gameOver) {
-      // koniec gry w środku miesiąca (debet): naliczenia miesiąca do tej chwili, bez pozycji zamknięcia
-      const c = copy.month;
-      const statement = buildStatement({
-        month: copy.franchisee.month, guarantee: 0, installments: 0, remanent: copy.franchisee.remanent.pending, spent: c.investments,
-        fines: c.fines, other: c.other, cashBefore: copy.cash, partial: false, ownCosts: info.site?.ownCosts ?? true,
-      });
-      result = {
-        label: '', cashNow, cashAfter: copy.cash, lowestCash: lowest, revenue: c.revenue, customers: c.customers, statement,
-        profit: statement.result, gameOver: reason, endedEarly: true,
-      };
-    }
+    const reason = gameOverReason(copy);
+    // koniec gry w środku miesiąca (debet): naliczenia miesiąca do tej chwili, bez pozycji zamknięcia
+    result = closedMonthPreview(month, cashNow, lowest, reason) ?? (copy.gameOver ? endedEarlyPreview(copy, info, cashNow, lowest, reason) : null);
   };
 
   return {
@@ -144,10 +169,7 @@ export function startMonthPreview(s: EconomyState, info: StoreInfo): MonthPrevie
       }
       return finished;
     },
-    progress(): PreviewProgress {
-      const days = lastDay - startDay + 1;
-      return { day: Math.min(days, Math.max(1, dayOf(copy.minute) - startDay + 1)), days };
-    },
+    progress: () => previewProgress(startDay, lastDay, copy.minute),
     result: () => result,
   };
 }

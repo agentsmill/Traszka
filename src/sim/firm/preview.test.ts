@@ -11,7 +11,7 @@ import { applyFirmCommand } from './commands';
 import { activeStore, applyStoreCommand, createFirm, emptyStepOut, openStores, stepFirmMinute, syncWallet } from './firm';
 import { forecastFirm } from './forecast';
 import { startFirmMonthPreview, type FirmPreview } from './preview';
-import type { FirmState, FirmStepOut, NetworkSummary } from './types';
+import type { FirmEvent, FirmState, FirmStepOut, NetworkSummary } from './types';
 
 /*
  * Prognoza paska i podgląd końca miesiąca dla sieci (spec §11.3): liczą się na kopii firmy tym samym rdzeniem co gra
@@ -27,6 +27,7 @@ const SEPT_CLOSE = 29 * DAY + OPEN_TO;
 const WALLET = 200_000;
 
 const digest = (f: FirmState): string => JSON.stringify(f);
+const ofKind = (events: readonly FirmEvent[], kind: string): FirmEvent[] => events.filter((e) => e.kind === kind);
 const clockOf = (f: FirmState): number => activeStore(f).econ.minute;
 
 const newFirm = (): FirmState => {
@@ -92,21 +93,25 @@ function runPreview(f: FirmState, chunk = 100_000): FirmPreview | null {
   return job.result();
 }
 
-interface Close { reports: Map<number, MonthReport>; wallet: number; summary: NetworkSummary | undefined }
+interface Close { reports: Map<number, MonthReport>; wallet: number; summary: NetworkSummary | undefined; firm: FirmEvent[] }
 
 /** Prawdziwa gra bez poleceń gracza do zamknięcia miesiąca (karty aktywnego sklepu: odpowiedź zaznaczona z góry); zbiera wyciągi. */
 function playToClose(f: FirmState): Close {
   const reports = new Map<number, MonthReport>();
   let summary: NetworkSummary | undefined;
+  const firm: FirmEvent[] = [];
   for (let guard = 0; guard < 40 * DAY; guard++) {
     const activeId = f.activeId;   // zdarzenia `active` należą do sklepu, który był aktywny przed krokiem (zamknięcie mogło przełączyć)
     const out = tick(f);
     for (const e of out.active) if (e.kind === 'month' && e.report) reports.set(activeId, e.report);
     for (const b of out.background) if (b.event.kind === 'month' && b.event.report) reports.set(b.storeId, b.event.report);
-    for (const e of out.firm) if (e.kind === 'network-report') summary = e.summary;
+    for (const e of out.firm) {
+      if (e.kind === 'network-report') summary = e.summary;
+      firm.push(e);
+    }
     if (reports.size > 0 || f.over !== null || activeStore(f).econ.gameOver) break;
   }
-  return { reports, wallet: f.person.wallet, summary };
+  return { reports, wallet: f.person.wallet, summary, firm };
 }
 
 /** Podgląd równa się zamknięciu: wyciąg, etykieta, gotówka po zamknięciu, wynik i liczniki każdego sklepu oraz gotówka firmy. */
@@ -410,6 +415,70 @@ describe('podgląd końca miesiąca dla sieci: koniec gry', () => {
     expect(f.over).toBeNull();
     expect(f.stores.find((s) => s.id === lost)!.closed).toBe(true);
     expectSameAsReal(preview, real);
+  });
+});
+
+// --- Koniec wypowiedzenia w podglądanym miesiącu ---------------------------------------------------------------------------
+
+describe('podgląd końca miesiąca dla sieci: koniec okresu wypowiedzenia', () => {
+  /** Dzień 59 w południe: wypowiedzenie złożone we wrześniu kończy się z zamknięciem października (dzień 60). */
+  const BEFORE_OCT_CLOSE = 59 * DAY + 720;
+  const terminate = (f: FirmState, storeId: number): void => {
+    expect(applyFirmCommand(f, { type: 'terminateStore', storeId }, emptyStepOut())).toEqual({ ok: true });
+    expect(f.stores.find((s) => s.id === storeId)!.notice).toEqual({ endDay: 60 });
+  };
+
+  it('ostatni sklep: #2 wypadł przez zaufanie, a wypowiedzenie #1 kończy się w podglądanym miesiącu, więc gra kończy się z powodu wypowiedzenia', () => {
+    const f = twoStores('raty');
+    terminate(f, 1);
+    playTo(f, SEPT_CLOSE);
+    loseTrust(f, 2);
+    tick(f);   // wrzesień: #2 traci umowę, #1 zostaje sam z wypowiedzeniem
+    expect(f.stores[1]!.closed).toBe(true);
+    expect(f.over).toBeNull();
+    playTo(f, BEFORE_OCT_CLOSE);
+
+    const before = digest(f);
+    const preview = runPreview(f)!;
+    expect(digest(f)).toBe(before);
+    expect(preview.gameOver).toBe('notice');
+    expect(preview.endedEarly).toBe(false);
+    expect(preview.stores.map((s) => s.id)).toEqual([1]);
+
+    const real = playToClose(f);
+    expect(f.over).toBe('closed');
+    expect(ofKind(real.firm, 'gameover')).toEqual([{ kind: 'gameover', params: { reason: 'notice' } }]);
+    expectSameAsReal(preview, real);
+  });
+
+  it('sklep w tle kończy wypowiedzenie, a #1 gra dalej: rozliczenie końcowe schodzi z gotówki firmy, gra się nie kończy', () => {
+    const f = twoStores('raty');
+    terminate(f, 2);
+    playTo(f, BEFORE_OCT_CLOSE);
+    // prognoza paska nie zna rozliczenia końcowego (ukryte ubytki ujawnia dopiero remanent): portfel plus suma „Zostaje Ci”
+    const fc = forecastFirm(f);
+    expect(fc.cashAfter).toBe(f.person.wallet + fc.stores.reduce((n, s) => n + s.f.net, 0));
+
+    const before = digest(f);
+    const preview = runPreview(f)!;
+    expect(digest(f)).toBe(before);
+    expect(preview.gameOver).toBeNull();
+    expect(preview.endedEarly).toBe(false);
+    expect(preview.stores.map((s) => s.id)).toEqual([1, 2]);
+
+    const real = playToClose(f);
+    expect(f.over).toBeNull();
+    expect(f.stores[1]!.closed).toBe(true);
+    expect(f.activeId).toBe(1);
+    const settlement = ofKind(real.firm, 'settlement');
+    expect(settlement).toHaveLength(1);
+    const total = settlement[0]!.params!.total as number;
+    expect(total).toBeGreaterThan(0);   // niespłacone raty pakietu
+    expectSameAsReal(preview, real);
+    // gotówka firmy w podglądzie to wyciągi obu sklepów bez rozliczenia sklepu #2
+    const last = preview.stores[1]!.preview;
+    expect(last.cashAfter - total).toBeCloseTo(preview.cashAfter, 6);
+    expect(preview.cashAfter).toBeLessThan(last.cashAfter);
   });
 });
 
