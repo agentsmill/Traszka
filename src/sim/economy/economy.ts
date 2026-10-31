@@ -13,6 +13,7 @@ import {
   type FranchiseeState, type RemanentProtocol, type Statement,
 } from './franchisee';
 import { rand01 } from './rand';
+import { activeSite, siteDayTraffic, type SiteMods } from './site';
 import type { PalletLoc, StoreInfo } from './storeInfo';
 import {
   EQUIPMENT_BY_ID, REMONTS, UPGRADE_BY_ID, WORKSHOP_LEVEL, equipmentCost, upgradeCost,
@@ -216,6 +217,8 @@ export interface Effects {
   ogonkiMult: number;
   /** Mnożnik marży (punkty partnera z sieci sklepów). */
   marginMult: number;
+  /** Dzielnica sklepu (site.ts), tylko gdy zmienia ekonomię (`activeSite`); jej poprawka cierpliwości jest już w `patience`. */
+  site?: SiteMods;
 }
 
 export function activeEquipment(s: EconomyState, id: EquipmentId): number {
@@ -230,7 +233,7 @@ export const aislePallets = (s: EconomyState): number => s.pallets.filter((p) =>
 export function effects(s: EconomyState, info: StoreInfo): Effects {
   const regaly = level(s, 'regaly');
   const humanoid = level(s, 'humanoid') > 0;
-  return {
+  const fx: Effects = {
     tills: 1 + level(s, 'drugaKasa'),
     tillSpeed: 1 + 0.15 * level(s, 'szkolenie'),
     sco: activeEquipment(s, 'sco'),
@@ -252,7 +255,16 @@ export function effects(s: EconomyState, info: StoreInfo): Effects {
     ogonkiMult: 1 + 0.5 * level(s, 'traszkapka'),
     marginMult: 1 + 0.04 * s.partner.points,
   };
+  const site = activeSite(info);
+  if (site) {
+    fx.site = site;
+    fx.patience += site.patience;   // Śródmieście: −2 osoby, Dworzec: +1
+  }
+  return fx;
 }
+
+/** Kara reputacji (strata albo ujemna stawka na klienta) po mnożniku dzielnicy; bez dzielnicy bez zmian. */
+const withRepPenalty = (fx: Effects, penalty: number): number => (fx.site ? penalty * fx.site.repPenalty : penalty);
 
 export const reputationFactor = (rep: number): number => 0.6 + 0.8 * (rep / 100);
 
@@ -297,15 +309,21 @@ export const kpiScaleOf = (s: EconomyState, info: StoreInfo): KpiScale => ({
 
 // --- Tworzenie ---------------------------------------------------------------------------------------
 
-/** Nowa gra: sklep na kreskę (towar Centrali na półkach, 2 palety pod drzwiami), 1 września, 6:00. */
-export function createEconomy(seed: string, info: StoreInfo, partner: EconomyState['partner'] = { points: 0, networkIncome: 0, stores: 0 }): EconomyState {
+/**
+ * Nowa gra: sklep na kreskę (towar Centrali na półkach, 2 palety pod drzwiami), 1 września, 6:00. `startMinute` otwiera sklep w
+ * środku gry (drugi sklep firmy): kalendarz, pogoda, tydzień KPI i termin remanentu liczą się wtedy od tej minuty, a stan
+ * początkowy jest ten sam.
+ */
+export function createEconomy(
+  seed: string, info: StoreInfo, partner: EconomyState['partner'] = { points: 0, networkIncome: 0, stores: 0 }, startMinute: number = OPEN_FROM,
+): EconomyState {
   const backroomStart = info.backroomCap * 0.35;
   const seedHash = hashString(`${seed}:economy`);
   const s: EconomyState = {
     version: 1,
     seed,
     seedHash,
-    minute: OPEN_FROM,
+    minute: startMinute,
     cash: START_CASH,
     ogonki: 0,
     ogonkiAcc: 0,
@@ -345,13 +363,13 @@ export function createEconomy(seed: string, info: StoreInfo, partner: EconomySta
     bestDayProfit: 0,
     partner: { ...partner },
     tycoon: createTycoon({ day: 0, seedHash, trust: TRUST.start, metrics: NO_KPI_METRICS, scale: { dailyCustomers: 0, dailyMargin: 0 } }),
-    franchisee: createFranchisee(OPEN_FROM),
+    franchisee: createFranchisee(startMinute),
   };
   // Cel KPI pierwszego tygodnia zależy od skali sklepu i liczników (kpiScaleOf, kpiMetricsOf czytają gotowy stan), więc
   // właściwy tycoon powstaje po obiekcie bazowym; ten z literału jest tylko zaślepką z czystą salą.
   const day = dayOf(s.minute);
   s.tycoon = createTycoon({
-    day, seedHash, trust: TRUST.start, weather: rollWeather(seedHash, day, dateOfGameDay(day).month),
+    day, seedHash, trust: TRUST.start, weather: rollWeather(activeSite(info)?.weatherHash ?? seedHash, day, dateOfGameDay(day).month),
     metrics: kpiMetricsOf(s), scale: kpiScaleOf(s, info),
   });
   const ev: EconEvent[] = [];
@@ -382,7 +400,7 @@ export function stepMinute(s: EconomyState, info: StoreInfo, out: EconEvent[]): 
   const mod = minuteOfDay(s.minute);
   // o północy pogoda dnia (zaczep: później ustawi ją system pogody) i karty dnia z jej wynikiem; dzień 0 ma jedno i drugie z `createEconomy`
   if (mod === 0) {
-    s.tycoon.hall.weather = rollWeather(s.seedHash, dayOf(s.minute), dateOfGameDay(dayOf(s.minute)).month);
+    s.tycoon.hall.weather = rollWeather(activeSite(info)?.weatherHash ?? s.seedHash, dayOf(s.minute), dateOfGameDay(dayOf(s.minute)).month);
     drawDayCards(s.tycoon.cards, cardContext(s, info), s.seedHash);
   }
   pruneCardMods(s.tycoon.cards, s.minute);   // efekty kart po czasie znikają (ruch, marża i ludzie czytają je niżej)
@@ -418,7 +436,7 @@ export function stepMinute(s: EconomyState, info: StoreInfo, out: EconEvent[]): 
   if (mod === OPEN_TO) closeDay(s, info, out);
   if (mod % 60 === 0) checkMilestones(s, info, out);
   processLevels(s, out);
-  checkDebt(s, cashBefore, out);
+  if (!info.site?.firmDebt) checkDebt(s, cashBefore, out);   // sklep w firmie: debet sprawdza firma po minucie wszystkich sklepów
 
   s.minute++;
   // karta, której godzina właśnie nadeszła: gra staje na niej (wołający sprawdzają `awaitingDecision`), a interfejs dostaje sygnał
@@ -435,8 +453,9 @@ export function arrivalRate(s: EconomyState, info: StoreInfo, fx: Effects = effe
   const hour = Math.floor(minuteOfDay(s.minute) / 60);
   const boost = s.minute < s.boostUntil ? 1.3 : 1;
   const clutter = Math.max(CLUTTER.trafficFloor, 1 - CLUTTER.trafficPerPallet * (hallPallets(s) + hallObstacle(s.tycoon.waste)));
+  const day = dayOf(s.minute);
   return (baseTraffic(info) * (HOUR_CURVE[hour] ?? 0) / 60) * reputationFactor(s.reputation)
-    * fx.traffic * boost * clutter * dayTrafficMult(dayOf(s.minute))
+    * fx.traffic * boost * clutter * (fx.site ? siteDayTraffic(fx.site, day) : dayTrafficMult(day))
     * cardModifiers(s.tycoon.cards, s.minute).traffic;
 }
 
@@ -474,7 +493,7 @@ function arrive(s: EconomyState, info: StoreInfo, fx: Effects): number {
   const lost = arrivals * balk;
   s.queue += arrivals - lost;
   if (lost > 0) {
-    s.reputation -= lost * 0.03;
+    s.reputation -= withRepPenalty(fx, lost * 0.03);
     for (const c of [s.today, s.month, s.total]) c.lost += lost;
   }
   return arrivals;
@@ -501,17 +520,22 @@ export function sell(s: EconomyState, fx: Effects, served: number, scoShare: num
   const hot = served * HOT.chance * fx.hotMult;
   revenue += hot * HOT.price;
   margin += hot * HOT.price * HOT.margin;
+  if (fx.site) {
+    // koszyk dzielnicy to poziom cen: obrót i marża z klienta rosną albo maleją, a towaru schodzi tyle samo
+    revenue *= fx.site.basket;
+    margin *= fx.site.basket;
+  }
   margin *= fx.marginMult * cardModifiers(s.tycoon.cards, s.minute).margin;   // partner i efekt karty (rabat z glitcha, promocja)
   s.xp += served * XP.customer;
   // ubytki towarowe: naturalne od obrotu i „zapomniane” skany na SCO (kamery zmniejszają); do progu płaci Centrala, nadwyżkę franczyzobiorca
   // przy remanencie (limit liczy się od obrotu z okresu między remanentami)
-  wutFromSales(s.tycoon.wut, revenue);
+  wutFromSales(s.tycoon.wut, revenue, fx.site?.theft);
   s.franchisee.remanent.revenue += revenue;
-  wutFromSco(s.tycoon.wut, revenue * scoShare, 1 - 0.4 * level(s, 'kamery'));
+  wutFromSco(s.tycoon.wut, revenue * scoShare, 1 - 0.4 * level(s, 'kamery'), fx.site?.theft);
 
   const missing = want > 0 ? 1 - got / want : 0;
-  s.reputation += served * (0.0025 * (1 - missing) - 0.02 * missing);
-  s.reputation += served * cleanlinessEffects(s.tycoon.hall.cleanliness).repPerCustomer;   // brudna sala: do −0,003 na klienta
+  s.reputation += served * (0.0025 * (1 - missing) - withRepPenalty(fx, 0.02 * missing));
+  s.reputation += served * withRepPenalty(fx, cleanlinessEffects(s.tycoon.hall.cleanliness).repPerCustomer);   // brudna sala: do −0,003 na klienta
   s.franchisee.month.margin += margin;   // marża idzie na saldo u Centrali, do gotówki przychodzi przelewem przy zamknięciu miesiąca
   s.ogonkiAcc += (served / 250) * fx.ogonkiMult;
   if (s.ogonkiAcc >= 1) { const n = Math.floor(s.ogonkiAcc); s.ogonki += n; s.ogonkiAcc -= n; }
@@ -592,7 +616,7 @@ function runStaff(s: EconomyState, info: StoreInfo, fx: Effects, open: boolean, 
     const served = serveTill(till, alloc.total.kasa, tillRate);
     s.queue = Math.max(0, s.queue - served.total);
     if (served.total > 0) sell(s, fx, served.total, served.sco / served.total);
-    if (s.queue > 4) s.reputation -= 0.002 * (s.queue - 4);
+    if (s.queue > 4) s.reputation -= withRepPenalty(fx, 0.002 * (s.queue - 4));
     s.reputation = Math.min(100, Math.max(0, s.reputation));
   }
 
@@ -805,7 +829,10 @@ export function plPallets(n: number): string {
 /** Ile klientów dziennie spodziewa się asystent (przy obecnej reputacji i marketingu). */
 export function expectedDailyCustomers(s: EconomyState, info: StoreInfo): number {
   const curve = Object.values(HOUR_CURVE).reduce((n, v) => n + v, 0);
-  return baseTraffic(info) * curve * reputationFactor(s.reputation) * effects(s, info).traffic;
+  const fx = effects(s, info);
+  const customers = baseTraffic(info) * curve * reputationFactor(s.reputation) * fx.traffic;
+  // szacunek jest dla zwykłego dnia, bez premii niedzieli (cele KPI doliczają ją osobno), więc z dzielnicy bierze ruch roboczy
+  return fx.site ? customers * fx.site.traffic : customers;
 }
 
 const stockItems = (s: EconomyState): number => sum(s.shelf) + sum(s.backroom) + s.pallets.reduce((n, p) => n + p.total, 0);
@@ -995,7 +1022,7 @@ function closeDay(s: EconomyState, info: StoreInfo, out: EconEvent[]): void {
   fatigueNight(s.tycoon.fatigue);   // noc oddaje część sił, reszta zmęczenia przechodzi na jutro
   closeStaffDay(s.tycoon.staff);    // statystyki dnia ludzi od zera (miesięczne zostają do raportu)
 
-  if (isLastDayOfMonth(day)) closeMonth(s, day, out);
+  if (isLastDayOfMonth(day)) closeMonth(s, info, day, out);
 }
 
 /** Zmiana zaufania ze znakiem i przecinkiem dziesiętnym („+1,5”, „−2”), a gdy nic się nie zmieniło, „bez zmian”. */
@@ -1031,8 +1058,8 @@ const marginPerCustomer = (m: Counters): number => (m.customers > 0 ? m.margin /
  * z SIM 5 w połowie miesiąca ma marżę sprzed migracji już w gotówce i nie może dostać dopłaty do połowy miesiąca. Zwraca dopłatę
  * (0 bez niej); liczy się przed zmianą zaufania z wyniku miesiąca, a o tym, który to miesiąc, decyduje liczba raportów w historii.
  */
-function guaranteeTopUp(s: EconomyState, out: EconEvent[]): number {
-  if (s.history.length >= GUARANTEE.months) return 0;
+function guaranteeTopUp(s: EconomyState, info: StoreInfo, out: EconEvent[]): number {
+  if (info.site?.extra || s.history.length >= GUARANTEE.months) return 0;   // gwarancja jest dla nowych franczyzobiorców, nie dla drugiego sklepu
   const m = s.month;
   const gap = Math.round(GUARANTEE.income - (m.margin + m.bonus));
   if (gap <= 0) return 0;
@@ -1058,19 +1085,19 @@ const partialMonth = (s: EconomyState): boolean => {
  * i rankingu jest bez rat (inwestycja, jak zakup za gotówkę). Kontrola debetu biegnie po minucie (`stepMinute`), więc bankructwo wypada
  * w chwili przelewu.
  */
-function closeMonth(s: EconomyState, day: number, out: EconEvent[]): void {
+function closeMonth(s: EconomyState, info: StoreInfo, day: number, out: EconEvent[]): void {
   const m = s.month;
   const t = s.tycoon;
   const f = s.franchisee;
   bonus(s, Math.round(turnoverBonusShare(t.trust.value) * m.revenue), 'month');
-  const guarantee = guaranteeTopUp(s, out);
+  const guarantee = guaranteeTopUp(s, info, out);
   const partial = partialMonth(s);
   const installments = payInstallments(f);
   const remanentCharge = f.remanent.pending;
   f.remanent.pending = 0;
   const st = buildStatement({
     month: f.month, guarantee, installments, remanent: remanentCharge, spent: m.investments, fines: m.fines, other: m.other,
-    cashBefore: s.cash, partial,
+    cashBefore: s.cash, partial, ownCosts: info.site?.ownCosts ?? true,
   });
   s.cash += st.net;
   for (const k of ledgers(s, 'month')) {

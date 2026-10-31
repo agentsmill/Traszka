@@ -194,12 +194,14 @@ export function applyCommand(state: EconomyState, info: StoreInfo, cmd: Command)
   const cashBefore = state.cash;
   const result = run(state, info, c, events);
   processLevels(state, events);   // poziom z nagrody albo stuknięcia od razu, także w pauzie (H1)
-  checkDebt(state, cashBefore, events);   // np. mandat z ryzyka karty: za duży debet kończy grę od razu, nie dopiero w następnej minucie
+  // np. mandat z ryzyka karty: za duży debet kończy grę od razu, nie dopiero w następnej minucie (sklep w firmie: debet sprawdza firma)
+  if (!info.site?.firmDebt) checkDebt(state, cashBefore, events);
   if (state.remontLevel === remontBefore) return { result, events, layoutChanged: false };
 
-  // remont zmienił wielkość sklepu: układ z seeda i poziomu, a palety i sprzęt na jego miejsca (H2)
-  const layout = layoutFor(state.seed, state.remontLevel);
+  // remont zmienił wielkość sklepu: układ z seeda i poziomu (sklep z miasta: z jego lokalu), a palety i sprzęt na jego miejsca (H2)
+  const layout = layoutFor(state.seed, state.remontLevel, info.site?.lot ?? undefined);
   const next = computeStoreInfo(layout);
+  if (info.site) next.site = info.site;
   relayout(state, next);
   return { result, events, layoutChanged: true, layout, info: next };
 }

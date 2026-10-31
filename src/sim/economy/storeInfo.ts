@@ -3,6 +3,7 @@ import type { Cell } from '@/sim/grid';
 import { FRONT_WALL_Y, type Fixture, type LotKind, type StoreLayout } from '@/sim/store/types';
 import { accessCells, isWalkable } from '@/sim/store/validate';
 import { CAPACITY, CATS, CAT_INFO, type Cat } from './catalog';
+import type { SiteMods } from './site';
 
 /** Miejsce na paletę: kwadrat 2×2 kratki, `x`/`y` to jego lewy-przedni róg. */
 export interface PalletSpot { x: number; y: number }
@@ -29,6 +30,11 @@ export interface StoreInfo {
   spots: Record<PalletLoc, PalletSpot[]>;
   /** Powierzchnia sali w kratkach (do mediów i do skali ruchu). */
   salesCells: number;
+  /**
+   * Dzielnica i flagi sklepu w mieście (site.ts). `computeStoreInfo` go nie ustawia: dokłada go wołający, a po remoncie
+   * `applyCommand` przenosi je do nowego `StoreInfo`. Brak pola to sklep jak dziś.
+   */
+  site?: SiteMods;
 }
 
 const FLOOR_SPOTS_MAX = 3;

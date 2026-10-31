@@ -60,7 +60,7 @@ export function forecastMonth(s: EconomyState, info: StoreInfo): MonthForecast {
   const bonus = f.month.bonus + (pace ? (pace.bonus / pace.days) * days : 0) + turnoverBonus;
   // gwarancja z liczników całego miesiąca (jak `guaranteeTopUp`), przy dzisiejszym zaufaniu i bez mandatu w miesiącu
   const income = m.margin + m.bonus + (margin - f.month.margin) + (bonus - f.month.bonus);
-  const guaranteed = s.history.length < GUARANTEE.months && s.tycoon.trust.value >= GUARANTEE.minTrust && m.fineCount === 0;
+  const guaranteed = !info.site?.extra && s.history.length < GUARANTEE.months && s.tycoon.trust.value >= GUARANTEE.minTrust && m.fineCount === 0;
   const guarantee = guaranteed ? Math.max(0, Math.round(GUARANTEE.income - income)) : 0;
   const installments = installmentsDue(f);
   const statement = buildStatement({
@@ -69,7 +69,7 @@ export function forecastMonth(s: EconomyState, info: StoreInfo): MonthForecast {
       wages: f.month.wages + closes * s.staff * WAGE_PER_DAY, media: f.month.media + closes * mediaPerDay(info),
     },
     guarantee, installments, remanent: f.remanent.pending, spent: m.investments, fines: m.fines, other: m.other, cashBefore: s.cash,
-    partial: false,
+    partial: false, ownCosts: info.site?.ownCosts ?? true,
   });
   return { saldo: saldoOf(f), installments, statement, net: statement.net, cashAfter: statement.cashAfter };
 }

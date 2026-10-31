@@ -58,15 +58,21 @@ export function addWut(w: WutState, reason: WutReason, zl: number): void {
   }
 }
 
-/** Naturalne ubytki od obrotu tej minuty (`revenue` w zł). */
-export function wutFromSales(w: WutState, revenue: number): void {
+/** Naturalne ubytki od obrotu tej minuty (`revenue` w zł). `theftMult` to mnożnik kradzieży dzielnicy (brak = jak dawniej). */
+export function wutFromSales(w: WutState, revenue: number, theftMult?: number): void {
   if (!(revenue > 0)) return;
-  for (const r of ['termin', 'kradziez', 'pomylki'] as const) w.month[r] += revenue * WUT.baseline[r];
+  for (const r of ['termin', 'kradziez', 'pomylki'] as const) {
+    w.month[r] += theftMult !== undefined && r === 'kradziez' ? revenue * WUT.baseline[r] * theftMult : revenue * WUT.baseline[r];
+  }
 }
 
-/** Ubytek na kasach samoobsługowych od obrotu przez nie (`scoRevenue` w zł); `mult` to wpływ kamer (1 bez kamer). */
-export function wutFromSco(w: WutState, scoRevenue: number, mult = 1): void {
-  if (scoRevenue > 0 && mult > 0) w.month.kradziez += scoRevenue * WUT.scoShrink * mult;
+/**
+ * Ubytek na kasach samoobsługowych od obrotu przez nie (`scoRevenue` w zł); `mult` to wpływ kamer (1 bez kamer), `theftMult`
+ * mnożnik kradzieży dzielnicy (brak = jak dawniej).
+ */
+export function wutFromSco(w: WutState, scoRevenue: number, mult = 1, theftMult?: number): void {
+  if (!(scoRevenue > 0 && mult > 0)) return;
+  w.month.kradziez += theftMult === undefined ? scoRevenue * WUT.scoShrink * mult : scoRevenue * WUT.scoShrink * mult * theftMult;
 }
 
 export const wutTotal = (w: WutState): number => WUT_REASONS.reduce((n, r) => n + w.month[r], 0);

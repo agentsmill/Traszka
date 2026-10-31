@@ -200,6 +200,8 @@ export interface StatementInput {
   /** Gotówka tuż przed przelewem. */
   cashBefore: number;
   partial: boolean;
+  /** Czy ten sklep płaci ZUS i księgową; `false` (dodatkowy sklep, `site.ts`) daje oba koszty 0. Brak = płaci. */
+  ownCosts?: boolean;
 }
 
 /** Wyciąg z naliczeń miesiąca. Jedno miejsce tej arytmetyki: zamknięcie miesiąca, prognoza paska i podgląd liczą przez nie. */
@@ -208,12 +210,14 @@ export function buildStatement(i: StatementInput): Statement {
   const transfer = m.margin + m.bonus + i.guarantee;
   const deductions = i.installments + m.pallets + i.remanent;
   const vat = vatOf(transfer);
-  const costs = m.wages + m.media + OWN_COSTS.zus + OWN_COSTS.accounting + vat;
+  const zus = i.ownCosts === false ? 0 : OWN_COSTS.zus;
+  const accounting = i.ownCosts === false ? 0 : OWN_COSTS.accounting;
+  const costs = m.wages + m.media + zus + accounting + vat;
   const net = transfer - deductions - costs;
   return {
     margin: m.margin, bonus: m.bonus, guarantee: i.guarantee, transfer,
     installments: i.installments, pallets: m.pallets, remanent: i.remanent, deductions,
-    wages: m.wages, media: m.media, zus: OWN_COSTS.zus, vat, accounting: OWN_COSTS.accounting, costs,
+    wages: m.wages, media: m.media, zus, vat, accounting, costs,
     net, result: net + i.installments + i.other - i.fines,
     spent: i.spent, fines: i.fines, other: i.other, cashAfter: i.cashBefore + net, partial: i.partial,
   };
