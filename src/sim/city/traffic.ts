@@ -225,7 +225,7 @@ const TEN = 10;
  * dodatkowego sklepu, ruch z `siteFor`): skala SIM 6, na start ok. 300–350. Środek widełek jest przesunięty o ≤ 15% (deterministycznie
  * z seeda i lokalu), żeby karta nie zdradzała liczby, a szerokość to ±25% od środka. Prawdziwa liczba zawsze mieści się w widełkach:
  * środek to 0,85…1,15 jej wartości, więc dolna granica jest najwyżej 0,8625 jej wartości, a górna co najmniej 1,0625; zaokrąglenie do
- * dziesiątek ten zapas zjada dopiero poniżej ok. 40 klientów dziennie. `who` to dwa najbliższe rodzaje punktów ruchu (słowa daje UI).
+ * dziesiątek mógłby ten zapas zjeść poniżej ok. 80 klientów dziennie, więc granice nigdy nie przechodzą przez prawdziwą liczbę. `who` to dwa najbliższe rodzaje punktów ruchu (słowa daje UI).
  */
 export function lotEstimate(seed: string, city: CityState, lotId: number): LotEstimate {
   const lot = lotOf(city, lotId);
@@ -245,8 +245,8 @@ export function lotEstimate(seed: string, city: CityState, lotId: number): LotEs
   const who = SOURCE_KINDS.filter((k) => nearest.has(k)).sort((p, q) => nearest.get(p)! - nearest.get(q)!).slice(0, 2);
 
   return {
-    lo: Math.round(mid * (1 - ESTIMATE_SPREAD) / TEN) * TEN,
-    hi: Math.round(mid * (1 + ESTIMATE_SPREAD) / TEN) * TEN,
+    lo: Math.min(Math.round(mid * (1 - ESTIMATE_SPREAD) / TEN), Math.floor(trueDaily / TEN)) * TEN,
+    hi: Math.max(Math.round(mid * (1 + ESTIMATE_SPREAD) / TEN), Math.ceil(trueDaily / TEN)) * TEN,
     trueDaily, who,
   };
 }
