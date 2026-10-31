@@ -48,6 +48,9 @@ export interface BubbleProps {
   place: Placement | null;
   compact?: boolean;
   bubbleRef?: Ref<HTMLDivElement>;
+  /** Identyfikator kroku i wartość `data-tut` celu: atrybuty `data-step` i `data-target` (czyta je smoke, `scripts/tutorial-smoke.mjs`). */
+  stepId?: string;
+  targetId?: string | null;
   onNext(): void;
   onSkip(): void;
 }
@@ -63,7 +66,8 @@ export function Bubble(p: BubbleProps) {
   const side = p.place?.side ?? 'center';
   return (
     <div ref={p.bubbleRef} class={`tt-tut-bubble side-${side}${p.compact ? ' compact' : ''}`} style={placeStyle(p.place)} tabIndex={-1}
-      role="dialog" aria-modal="true" aria-label={`Samouczek, krok ${p.n} z ${p.total}`}>
+      role="dialog" aria-modal="true" aria-label={`Samouczek, krok ${p.n} z ${p.total}`}
+      data-step={p.stepId} data-target={p.targetId ?? undefined} data-covers={p.place?.covers ? 'true' : undefined}>
       <div class="tt-tut-head">
         <b class="tt-tut-title">{p.title}</b>
         <span class="tt-tut-count">{p.n} / {p.total}</span>
@@ -79,9 +83,13 @@ export function Bubble(p: BubbleProps) {
 }
 
 /** Dymek „pierwszy raz”: tekst ze strzałką przy elemencie i „OK”. Nie przygasza ekranu i nie zatrzymuje gry. */
-export function TipBubble({ text, place, bubbleRef, onOk }: { text: string; place: Placement | null; bubbleRef?: Ref<HTMLDivElement>; onOk(): void }) {
+export function TipBubble(
+  { text, place, bubbleRef, tipId, targetId, onOk }:
+  { text: string; place: Placement | null; bubbleRef?: Ref<HTMLDivElement>; tipId?: string; targetId?: string; onOk(): void },
+) {
   return (
-    <div ref={bubbleRef} class={`tt-tut-bubble tt-tip-bubble side-${place?.side ?? 'center'}`} style={placeStyle(place)} role="status">
+    <div ref={bubbleRef} class={`tt-tut-bubble tt-tip-bubble side-${place?.side ?? 'center'}`} style={placeStyle(place)} role="status"
+      data-tip={tipId} data-target={targetId} data-covers={place?.covers ? 'true' : undefined}>
       <p class="tt-tut-text">{text}</p>
       <div class="tt-tut-foot">
         <button type="button" class="tt-btn tt-primary tt-tut-next" onClick={onOk}>OK</button>
@@ -186,7 +194,10 @@ export function TourLayer() {
   const geo = useGeometry(visible, key, () => (step?.target ? findTarget(step.target)?.el ?? null : null), bubble);
   const ctx = tourCtx();
   const targetShown = !!geo?.target;
-  const taskLive = !!step?.task && !!ctx && (step.task.can ? step.task.can(ctx) : true) && (targetShown || !step.target);
+  // Element brakuje dopiero, gdy pomiar go nie znalazł; przed pierwszym pomiarem dymek ma już wiersz zadania, żeby jego wysokość
+  // (a z nią miejsce przy celu) nie zmieniła się zaraz po ustawieniu
+  const targetMissing = !!geo && !geo.target && !!step?.target;
+  const taskLive = !!step?.task && !!ctx && (step.task.can ? step.task.can(ctx) : true) && !targetMissing;
   const holeOpen = taskLive && !run?.done && targetShown;
 
   // przewinięcie arkusza do celu i fokus przy każdym kroku (w zadaniu fokus na dymku, żeby Enter nie trafił w „Pomiń”)
@@ -230,7 +241,8 @@ export function TourLayer() {
       <Bubble bubbleRef={bubble} title={step.title} text={step.text} n={run.index + 1} total={run.steps.length}
         hint={taskLive ? step.task!.hint : undefined} done={run.done}
         primary={last ? 'Zakończ' : taskLive ? null : 'Dalej'} skip={!last}
-        place={geo?.place ?? null} compact={geo?.compact} onNext={nextStep} onSkip={skipTour} />
+        place={geo?.place ?? null} compact={geo?.compact} stepId={step.id} targetId={geo?.target ? step.target : null}
+        onNext={nextStep} onSkip={skipTour} />
     </div>
   );
 }
@@ -295,7 +307,7 @@ export function TipLayer() {
   return (
     <div class="tt-tip-layer">
       {ring && <div class="tt-tip-ring" style={boxStyle(ring)} />}
-      <TipBubble bubbleRef={bubble} text={shown.text} place={geo?.place ?? null} onOk={dismissTip} />
+      <TipBubble bubbleRef={bubble} text={shown.text} place={geo?.place ?? null} tipId={shown.id} targetId={shown.target} onOk={dismissTip} />
     </div>
   );
 }

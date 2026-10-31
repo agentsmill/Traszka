@@ -127,7 +127,10 @@
   margin-top: 10px;
 }
 
-.tt-tut-bubble .tt-btn {
+/* Przyciski dymka: ogólne `.tt-btn:hover:not(.on)` i `.tt-primary:hover` z ui.css (ładowanego później) dałyby jasny przycisk na kremowym
+   tle, więc dymek ustawia też stan pod kursorem, z wyższą specyficznością. */
+.tt-tut-bubble .tt-btn,
+.tt-tut-bubble .tt-btn:hover:not(.on) {
   min-height: 36px;
   padding: 8px 14px;
   border-radius: 10px;
@@ -135,12 +138,18 @@
   color: var(--tt-green-dark);
 }
 
-.tt-tut-bubble .tt-btn.tt-primary {
+.tt-tut-bubble .tt-btn.tt-primary,
+.tt-tut-bubble .tt-btn.tt-primary:hover:not(.on) {
   background: var(--tt-green);
   color: #fff;
 }
 
-.tt-tut-bubble .tt-tut-skip {
+.tt-tut-bubble .tt-btn.tt-primary:hover:not(.on):not(:disabled) {
+  background: var(--tt-green-dark);
+}
+
+.tt-tut-bubble .tt-btn.tt-tut-skip,
+.tt-tut-bubble .tt-btn.tt-tut-skip:hover:not(.on) {
   margin-right: auto;
   background: none;
   color: rgba(34, 48, 42, 0.7);
@@ -166,7 +175,8 @@
   margin-top: 6px;
 }
 
-.tt-tut-bubble.compact .tt-btn {
+.tt-tut-bubble.compact .tt-btn,
+.tt-tut-bubble.compact .tt-btn:hover:not(.on) {
   min-height: 30px;
   padding: 5px 10px;
 }
