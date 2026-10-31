@@ -20,10 +20,11 @@ import { CITY_GENERATOR_VERSION, CITY_SIZE, type CityLot, type CityState, type D
 const sha256 = (text: string): string => createHash('sha256').update(text).digest('hex');
 
 /**
- * Skrót kanonicznego JSON-a miasta dla `kiełbasa-42` (wpis z pierwszego przebiegu). Zmiana skrótu to zmiana miast dla tych samych
- * seedów, więc wymaga podbicia `CITY_GENERATOR_VERSION`.
+ * Skrót kanonicznego JSON-a miasta dla `kiełbasa-42`. Zmiana skrótu to zmiana miast dla tych samych seedów, więc wymaga podbicia
+ * `CITY_GENERATOR_VERSION`. Raz zmieniony przed wydaniem (bez podbicia wersji, bo żadne miasto jeszcze nie wyszło do graczy):
+ * Zadanie 2 wypełniło `sources` i `hourly`, lokale zostały bit w bit te z Zadania 1.
  */
-const CITY_GOLDEN = 'f559f47c21f336153dce2350f1e292ddf3b8ca548c739c9bd1bf58ba2be6219c';
+const CITY_GOLDEN = '2d7d633e095712de121f1281d397acf7ab1e85ba08b678d4cbbdde587e842ea4';
 
 const SEEDS: string[] = [
   'kiełbasa-42', 'kiełbasa-12', 'a', 'b', 'c', 'd',

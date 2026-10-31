@@ -5,6 +5,7 @@ import { takeoverSide } from '@/sim/store/takeover';
 import type { LotSpec } from '@/sim/store/types';
 import { BLOCK_M, DISTRICTS } from './districts';
 import { CITY_HEADS, CITY_TAILS, STREET_NAMES } from './names';
+import { streetIntensity } from './traffic';
 import {
   CITY_GENERATOR_VERSION,
   CITY_SIZE,
@@ -12,14 +13,17 @@ import {
   type CityState,
   type DistrictId,
   type RivalBrand,
+  type SourceKind,
   type StoreDistrict,
   type StreetSegment,
+  type TrafficSource,
 } from './types';
 
 /*
  * Generator miasta (spec §7.1, §7.2): czysta funkcja seeda. Jeden strumień `createRng(subSeed(seed, 'city'))`, kolejność losowań:
- * nazwa miasta, nazwy ulic, podział na dzielnice, specyfikacje lokali, lokal startowy, wolne lokale, konkurencja. Punkty ruchu i
- * natężenie ulic (`sources`, `hourly`) mają dopisać swoje losowania na końcu strumienia, żeby lokale się nie przesuwały.
+ * nazwa miasta, nazwy ulic, podział na dzielnice, specyfikacje lokali, lokal startowy, wolne lokale, konkurencja, punkty ruchu. Punkty
+ * ruchu (`sources`) dopisują swoje losowania na końcu strumienia, żeby lokale się nie przesuwały; natężenie ulic (`hourly`) jest ich
+ * funkcją (traffic.ts) i niczego nie losuje.
  *
  * Siatka: ulice biegną co `BLOCK_M` (linie x = i·BLOCK_M i y = j·BLOCK_M, i, j = 0…CITY_SIZE), kwartał (bx, by) leży między liniami
  * bx…bx+1 i by…by+1. Każdy kwartał z lokalami ma dwie pierzeje wzdłuż ulic poziomych: północną (front na północ, przy linii y = by·BLOCK_M)
@@ -44,6 +48,13 @@ const RIVAL_MIN_BLOCKS = 2;
 /** Pakiet każdego lokalu poza narożną kamienicą sięga najwyżej tej części widełek dzielnicy; narożna kamienica ma całą górną granicę. */
 const PACKAGE_SHARE = 0.9;
 const PACKAGE_STEP = 100;
+/** Punkty ruchu: waga (ilu ludzi ściąga punkt przy profilu 1) losowana z widełek rodzaju, położenie względem środka kwartału o ±SOURCE_JITTER_M. */
+const SOURCE_WEIGHT: Record<SourceKind, readonly [number, number]> = {
+  osiedle: [0.8, 1.2], biurowiec: [1.2, 1.8], dworzec: [2.5, 3.5], uczelnia: [1.5, 2.2], szkola: [1, 1.4], przystanek: [0.6, 1],
+};
+const SOURCE_JITTER_M = 15;
+const SCHOOLS = 2;
+const STOPS: readonly [number, number] = [6, 8];
 
 type Side = 'minX' | 'maxX';
 
@@ -105,17 +116,52 @@ function layoutDistricts(rng: Rng): DistrictId[] {
 
 // --- Ulice ---------------------------------------------------------------------------------------------------
 
-/** Odcinki ulic: poziome linie y = j·BLOCK_M (nazwy 0…CITY_SIZE), potem pionowe x = i·BLOCK_M (nazwy CITY_SIZE+1…), każdy odcinek to jeden kwartał. */
-function layoutStreets(names: readonly string[]): StreetSegment[] {
+/**
+ * Odcinki ulic: poziome linie y = j·BLOCK_M (nazwy 0…CITY_SIZE), potem pionowe x = i·BLOCK_M (nazwy CITY_SIZE+1…), każdy odcinek to jeden
+ * kwartał. `hourly` to natężenie dnia roboczego z punktów ruchu (traffic.ts).
+ */
+function layoutStreets(names: readonly string[], sources: readonly TrafficSource[]): StreetSegment[] {
   const lines = CITY_SIZE + 1;
   const out: StreetSegment[] = [];
-  const hourly = (): number[] => new Array<number>(HOURS_PER_DAY).fill(0);
+  const add = (name: string, ax: number, ay: number, bx: number, by: number): void => {
+    const segment: StreetSegment = { id: out.length, name, ax, ay, bx, by, hourly: [] };
+    segment.hourly = Array.from({ length: HOURS_PER_DAY }, (_, h) => streetIntensity(sources, segment, h, false));
+    out.push(segment);
+  };
   for (let j = 0; j < lines; j++) {
-    for (let i = 0; i < CITY_SIZE; i++) out.push({ id: out.length, name: names[j]!, ax: i * BLOCK_M, ay: j * BLOCK_M, bx: (i + 1) * BLOCK_M, by: j * BLOCK_M, hourly: hourly() });
+    for (let i = 0; i < CITY_SIZE; i++) add(names[j]!, i * BLOCK_M, j * BLOCK_M, (i + 1) * BLOCK_M, j * BLOCK_M);
   }
   for (let i = 0; i < lines; i++) {
-    for (let j = 0; j < CITY_SIZE; j++) out.push({ id: out.length, name: names[lines + i]!, ax: i * BLOCK_M, ay: j * BLOCK_M, bx: i * BLOCK_M, by: (j + 1) * BLOCK_M, hourly: hourly() });
+    for (let j = 0; j < CITY_SIZE; j++) add(names[lines + i]!, i * BLOCK_M, j * BLOCK_M, i * BLOCK_M, (j + 1) * BLOCK_M);
   }
+  return out;
+}
+
+// --- Punkty ruchu --------------------------------------------------------------------------------------------
+
+/**
+ * Punkty ruchu (§7.3), ostatnie losowania strumienia: osiedle w każdym kwartale Osiedla, biurowiec w każdym kwartale Biurowców, jeden
+ * dworzec w Dworcu, jedna uczelnia w Śródmieściu, dwie szkoły w różnych kwartałach Osiedla i kilka przystanków na skrzyżowaniach ulic.
+ */
+function placeSources(blocks: readonly DistrictId[], rng: Rng): TrafficSource[] {
+  const out: TrafficSource[] = [];
+  const weight = (kind: SourceKind): number => Math.round(rng.range(SOURCE_WEIGHT[kind][0], SOURCE_WEIGHT[kind][1]) * 10) / 10;
+  const inBlock = (kind: SourceKind, block: number): void => {
+    const x = (block % CITY_SIZE) * BLOCK_M + BLOCK_M / 2 + rng.int(-SOURCE_JITTER_M, SOURCE_JITTER_M + 1);
+    const y = Math.floor(block / CITY_SIZE) * BLOCK_M + BLOCK_M / 2 + rng.int(-SOURCE_JITTER_M, SOURCE_JITTER_M + 1);
+    out.push({ kind, x, y, weight: weight(kind) });
+  };
+  const of = (district: DistrictId): number[] => blocks.map((d, i) => (d === district ? i : -1)).filter((i) => i >= 0);
+
+  for (const block of of('osiedle')) inBlock('osiedle', block);
+  for (const block of of('biurowce')) inBlock('biurowiec', block);
+  inBlock('dworzec', rng.pick(of('dworzec')));
+  inBlock('uczelnia', rng.pick(of('srodmiescie')));
+  for (const block of rng.shuffle(of('osiedle')).slice(0, SCHOOLS)) inBlock('szkola', block);
+  const crossings: [number, number][] = [];
+  for (let j = 1; j < CITY_SIZE; j++) for (let i = 1; i < CITY_SIZE; i++) crossings.push([i, j]);
+  const stops = rng.int(STOPS[0], STOPS[1] + 1);
+  for (const [i, j] of rng.shuffle(crossings).slice(0, stops)) out.push({ kind: 'przystanek', x: i * BLOCK_M, y: j * BLOCK_M, weight: weight('przystanek') });
   return out;
 }
 
@@ -262,12 +308,14 @@ export function generateCity(seed: string): CityState {
   const neighbour = side === null ? null : neighbourIn(lots, start, side);
   if (neighbour) neighbour.state = 'obok';
 
+  const sources = placeSources(blocks, rng);
+
   return {
     version: CITY_GENERATOR_VERSION,
     name,
     blocks,
-    streets: layoutStreets(streetNames),
-    sources: [],
+    streets: layoutStreets(streetNames, sources),
+    sources,
     lots,
     startLotId: start.id,
     neighbourLotId: neighbour?.id ?? null,

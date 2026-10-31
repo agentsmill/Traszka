@@ -26,6 +26,7 @@ export interface CityLot {
 }
 
 export interface TrafficSource { kind: SourceKind; x: number; y: number; weight: number }
+/** `hourly`: natężenie dnia roboczego w godzinach 0–23, liczby całkowite 0–255 (`streetIntensity` w traffic.ts liczy też weekend). */
 export interface StreetSegment { id: number; name: string; ax: number; ay: number; bx: number; by: number; hourly: number[] }
 
 export interface CityState {
