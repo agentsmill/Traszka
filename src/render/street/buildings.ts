@@ -2,6 +2,7 @@ import { BufferGeometry, Color, Float32BufferAttribute, Group, Matrix4, Mesh, Me
 import { createRng, subSeed, type Rng } from '@/sim/rng';
 import { REMONTS } from '@/sim/economy/upgrades';
 import { pickLot } from '@/sim/store/lots';
+import { cornerSide, takeoverSide } from '@/sim/store/takeover';
 import { FRONT_WALL_Y, type LotKind, type StoreLayout } from '@/sim/store/types';
 import { CELL_SIZE_M } from '@/sim/grid';
 import { PALETTE } from '@/render/style';
@@ -452,14 +453,8 @@ export function storeOuter(layout: Pick<StoreLayout, 'width' | 'depth'>): StoreO
   };
 }
 
-/** Strona drugiej witryny w lokalu narożnym ('minX' = lewa, −x), inaczej null. Tam zamiast sąsiada jest przecznica. */
-export function cornerSide(layout: StoreLayout): 'minX' | 'maxX' | null {
-  if (!layout.lot.corner) return null;
-  const row = (FRONT_WALL_Y + 1) * layout.width;
-  if (layout.cells[row] === 'window') return 'minX';
-  if (layout.cells[row + layout.width - 1] === 'window') return 'maxX';
-  return null;
-}
+/** Narożnik i strona przejęcia lokalu liczy symulacja (`src/sim/store/takeover.ts`), bo potrzebuje ich też miasto. */
+export { cornerSide };
 
 /** Przecznica przy lokalu narożnym: chodnik, jezdnia, chodnik (m). */
 export const SIDE_STREET = { sidewalk: SIDE_STREET_SIDEWALK_M, road: 5, total: 2 * SIDE_STREET_SIDEWALK_M + 5 } as const;
@@ -494,21 +489,10 @@ export function grownWidth(layout: Pick<StoreLayout, 'width'>, seed: string): nu
 }
 
 /**
- * Strona, po której sklep zajmuje lokal sąsiada, albo null. Kamienica nienarożna: przeciwna do bramy. Kamienica narożna:
- * brak, bo po jednej stronie jest brama, a po drugiej przecznica. Blok i pawilon: zawsze `maxX`, czyli dalszy sąsiad przy
- * domyślnej kamerze (`yawIndex` 0): bliższego przekrój ścina do 0,5 m, więc jego kartki „DO WYNAJĘCIA” nie byłoby widać.
- */
-function takenSideOf(kind: LotKind, corner: 'minX' | 'maxX' | null, gateSide: 'minX' | 'maxX' | null): 'minX' | 'maxX' | null {
-  if (corner !== null) return null;
-  if (kind === 'kamienica') return gateSide === 'minX' ? 'maxX' : 'minX';
-  return 'maxX';
-}
-
-/**
  * Plan wiersza: bryła nad sklepem (i brama kamienicy), potem sąsiedzi po obu stronach. Pierwsza lista to to, co należy
  * do `building:<kind>`, druga to sąsiedzi (`neighbour:<i>`).
  *
- * Sklep poszerzony remontem zajmuje lokal sąsiada po stronie przejęcia (`takenSideOf`): ten sąsiad ma wylosowaną szerokość
+ * Sklep poszerzony remontem zajmuje lokal sąsiada po stronie przejęcia (`takeoverSide`): ten sąsiad ma wylosowaną szerokość
  * pomniejszoną o przyrost sklepu (nie mniej niż `MIN_TAKEN_NEIGHBOUR_W`), reszta losowań jest jak bez remontu. Dopóki
  * zostaje jeszcze następny remont (`remontLevel` < liczba remontów), w jego witrynie przy sklepie wisi kartka „DO WYNAJĘCIA”.
  */
@@ -543,7 +527,7 @@ export function planRow(layout: StoreLayout, seed: string, remontLevel = 0): { o
     if (gateSide === 'minX') lo = gate.x0; else hi = gate.x1;
   }
 
-  const takeover = takenSideOf(kind, corner, gateSide);
+  const takeover = takeoverSide(layout, seed);
   const grown = grownWidth(layout, seed);
   const neighbours: VolumeSpec[] = [];
   for (const side of ['minX', 'maxX'] as const) {

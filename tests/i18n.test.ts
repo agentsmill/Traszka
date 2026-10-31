@@ -20,6 +20,7 @@ import { localizeEn } from '@/i18n/messages';
 import { NICK_ERRORS } from '@/game/nick';
 import { RECOVERY_ERRORS } from '@/game/playerKey';
 import { API_ERRORS } from '@/server/errors';
+import { CITY_HEADS, CITY_TAILS, STREET_NAMES } from '@/sim/city/names';
 import { MONTH_NAME, WEEKDAY_SHORT } from '@/sim/economy/calendar';
 import { CATS } from '@/sim/economy/catalog';
 import { LOC_LABEL } from '@/sim/economy/economy';
@@ -288,6 +289,8 @@ const SKIP: Record<string, string> = {
   // polskie formy liczebników w polskich funkcjach instrukcji (howToText.ts); angielska instrukcja ma własne (en/howTo.ts)
   'osobę': 'howToText.ts po polsku', 'godzinę': 'howToText.ts po polsku', 'godziny': 'howToText.ts po polsku', 'godzin': 'howToText.ts po polsku',
   'kasę': 'howToText.ts po polsku', 'półki': 'howToText.ts po polsku', 'sprzątanie': 'howToText.ts po polsku',
+  // nazwy własne (spec §18): człony nazw miasta i ulic z polskich członów (src/sim/city/names.ts); marki Szop 24h i Kawka Express to id, tekst dopiero w UI
+  ...Object.fromEntries([...CITY_HEADS, ...CITY_TAILS, ...STREET_NAMES].map((name) => [name, 'nazwy własne, §18'])),
 };
 /** Pliki, których cała treść jest po polsku z założenia: polska instrukcja i słowniczek (angielskie są w en/howTo.ts i en/glossary.ts). */
 const PL_ONLY_FILES = new Set(['src/ui/howto/howToText.ts', 'src/ui/howto/glossary.ts']);

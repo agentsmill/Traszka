@@ -6,6 +6,7 @@ import { CELL_SIZE_M } from '@/sim/grid';
 import { REMONTS } from '@/sim/economy/upgrades';
 import { layoutFor } from '@/sim/store/layoutFor';
 import { pickLot } from '@/sim/store/lots';
+import { cornerSide as simCornerSide, takeoverSide } from '@/sim/store/takeover';
 import type { LotKind } from '@/sim/store/types';
 import { MIN_TAKEN_NEIGHBOUR_W, SIDE_STREET, buildBuildings, cornerSide, grownWidth, planRow, storeOuter, type VolumeSpec } from './buildings';
 import { buildStreet, type StreetView } from './buildStreet';
@@ -53,8 +54,8 @@ const width = (v: VolumeSpec): number => v.x1 - v.x0;
 const side = (i: number): 'minX' | 'maxX' => (i === 0 ? 'minX' : 'maxX');
 
 /** Strona przejęcia wg decyzji: kamienica nienarożna: przeciwna do bramy, narożna: brak, blok i pawilon: zawsze maxX. */
-function expectedTakenSide(seed: string): 'minX' | 'maxX' | null {
-  const layout = layoutFor(seed, 0);
+function expectedTakenSide(seed: string, level = 0): 'minX' | 'maxX' | null {
+  const layout = layoutFor(seed, level);
   const o = storeOuter(layout);
   if (cornerSide(layout) !== null) return null;
   if (layout.lot.kind === 'kamienica') {
@@ -357,6 +358,51 @@ describe('przejęcie lokalu: ulica z poziomem remontu', () => {
         const view = await buildStreet(layoutFor(seed, level), seed, failing, level);
         views.push(view);
         for (const name of ['neighbour:0', 'neighbour:1']) expect(signsIn(view, name), `${seed} poziom ${level} ${name}`).toBe(0);
+      }
+    }
+  });
+});
+
+describe('przejęcie lokalu: takeoverSide z sim odtwarza planRow', () => {
+  const SEEDS_200 = Array.from({ length: 200 }, (_, i) => `przejecie-${i}`);
+  /** Strona z planu wiersza: indeks sąsiada z kartką (0 = minX, 1 = maxX) albo null, gdy kartki nie ma. */
+  const planSide = (layout: ReturnType<typeof layoutFor>, seed: string): 'minX' | 'maxX' | null => {
+    const i = planRow(layout, seed, 0).neighbours.findIndex((n) => n.rentSign);
+    return i < 0 ? null : side(i);
+  };
+
+  it('cornerSide w buildings.ts to ta sama funkcja co w sim (render tylko reeksportuje)', () => {
+    expect(cornerSide).toBe(simCornerSide);
+  });
+
+  it('200 seedów: strona przejęcia równa się stronie sąsiada z kartką w planRow i stronie przeciwnej do bramy, a null wypada dokładnie bez takiego sąsiada', () => {
+    const kinds = new Set<LotKind>();
+    const kamienicaSides = new Set<string>();
+    let corners = 0;
+    for (const seed of SEEDS_200) {
+      const layout = layoutFor(seed, 0);
+      const got = takeoverSide(layout, seed);
+      expect(got, `${seed}: strona kartki w planRow`).toBe(planSide(layout, seed));
+      // niezależna wyrocznia: gdzie planRow naprawdę postawił bramę (jego własne losowania), a nie to, co z nich wyliczono
+      expect(got, `${seed}: przeciwna do bramy`).toBe(expectedTakenSide(seed));
+      expect(got === null, `${seed}: null tylko przy narożniku`).toBe(cornerSide(layout) !== null);
+      kinds.add(layout.lot.kind);
+      if (got === null) corners++;
+      else if (layout.lot.kind === 'kamienica') kamienicaSides.add(got);
+      else expect(got, `${seed}: blok i pawilon`).toBe('maxX');
+    }
+    // zestaw seedów obejmuje wszystkie rodzaje lokali, narożniki i obie strony bramy kamienicy
+    expect([...kinds].sort()).toEqual(['blok', 'kamienica', 'pawilon']);
+    expect(corners).toBeGreaterThan(5);
+    expect([...kamienicaSides].sort()).toEqual(['maxX', 'minX']);
+  });
+
+  it('po remontach 1–3 strona przejęcia zostaje ta sama co w planie wiersza i co brama (układ się zmienia, losowania budynków nie)', () => {
+    for (const seed of SEEDS_200.slice(0, 40)) {
+      for (const level of LEVELS) {
+        const layout = layoutFor(seed, level);
+        expect(takeoverSide(layout, seed), `${seed} poziom ${level}`).toBe(planSide(layout, seed));
+        expect(takeoverSide(layout, seed), `${seed} poziom ${level} (brama)`).toBe(expectedTakenSide(seed, level));
       }
     }
   });

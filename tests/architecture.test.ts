@@ -796,6 +796,87 @@ describe('które pliki src/sim są skanowane', () => {
   });
 });
 
+// --- Sędzia nie dostaje miasta ani firmy ---------------------------------------------------------------------------
+
+/**
+ * Wejścia, z których `npm run build:judge` składa bundel sędziego rankingu: odtwarzanie biegu (`run.ts`), wynik sezonu (`ranked.ts`)
+ * i lista eksportów (`scripts/judge-entry.ts`). Tryb rankingowy zostaje na jednym sklepie, więc sędzia nie ma prawa wciągnąć miasta
+ * ani firmy: ich kod istnieje tylko w zwykłej grze, a bundel sędziego nie rośnie o to, czego nie odtwarza.
+ */
+const JUDGE_ENTRIES = ['src/sim/run.ts', 'src/sim/ranked.ts', 'scripts/judge-entry.ts'];
+const NOT_FOR_JUDGE = /^src\/sim\/(city|firm)(\/|$)/;
+const MODULE_SUFFIXES = ['', '.ts', '.tsx', '/index.ts', '/index.tsx'];
+
+/**
+ * Pliki osiągalne importami z `entries`: każdy import (wartości i typy, `export … from`, `import()`, `require`), także przechodnio,
+ * bez pakietów. `read` daje treść pliku albo null, gdy go nie ma, więc próbki nie dotykają dysku. Cel, którego nie udało się
+ * odczytać, też trafia do wyniku (jako ścieżka bez rozszerzenia), żeby import z `src/sim/city/…` nie umknął przez nietypową ścieżkę.
+ */
+function reachableFiles(entries: string[], read: (path: string) => string | null): Set<string> {
+  const seen = new Set<string>();
+  const queue = [...entries];
+  while (queue.length > 0) {
+    const file = queue.pop()!;
+    if (seen.has(file)) continue;
+    seen.add(file);
+    const source = read(file);
+    if (source === null) continue;
+    for (const specifier of importSpecifiers(scanCode(source))) {
+      const target = resolveTarget(file, specifier);
+      if (target === '') continue;
+      queue.push(MODULE_SUFFIXES.map((suffix) => target + suffix).find((candidate) => read(candidate) !== null) ?? target);
+    }
+  }
+  return seen;
+}
+
+function readFromDisk(path: string): string | null {
+  try {
+    return statSync(path).isFile() ? readFileSync(path, 'utf8') : null;
+  } catch {
+    return null;
+  }
+}
+
+describe('sędzia nie dostaje miasta ani firmy', () => {
+  const graph = (files: Record<string, string>) => (path: string): string | null => files[path] ?? null;
+  const forbidden = (reached: Set<string>): string[] => [...reached].filter((f) => NOT_FOR_JUDGE.test(f)).sort();
+
+  it('próbki: alias, ścieżka względna, export … from, import() i import type prowadzą do miasta i firmy także przechodnio', () => {
+    const reached = reachableFiles(['src/sim/run.ts'], graph({
+      'src/sim/run.ts': "import { a } from '@/sim/economy/a';",
+      'src/sim/economy/a.ts': "export { b } from './b';",
+      'src/sim/economy/b.ts': "import type { C } from '../city/types'; const d = await import('@/sim/firm/firm');",
+      'src/sim/city/types.ts': "import { x } from './nested';",
+      'src/sim/city/nested.ts': '',
+      'src/sim/firm/firm.ts': '',
+    }));
+    expect(forbidden(reached)).toEqual(['src/sim/city/nested.ts', 'src/sim/city/types.ts', 'src/sim/firm/firm.ts']);
+  });
+
+  it('próbki: katalog z index.ts, nieczytelny cel, pakiety i podobne nazwy katalogów', () => {
+    const reached = reachableFiles(['src/sim/run.ts'], graph({
+      'src/sim/run.ts': "import './firm'; import 'preact'; import { c } from '@/sim/cityscape/c';",
+      'src/sim/firm/index.ts': '',
+      'src/sim/cityscape/c.ts': '',
+    }));
+    // `firm/index.ts` jest wykryty; `cityscape` (inny katalog) i pakiet `preact` nie
+    expect(forbidden(reached)).toEqual(['src/sim/firm/index.ts']);
+    expect(reached).not.toContain('preact');
+    // import pliku, którego nie da się odczytać, też liczy się jako dotarcie do katalogu
+    const unreadable = reachableFiles(['src/sim/run.ts'], graph({ 'src/sim/run.ts': "import { g } from '@/sim/city/generateCity';" }));
+    expect(forbidden(unreadable)).toEqual(['src/sim/city/generateCity']);
+  });
+
+  it('src/sim/run.ts, src/sim/ranked.ts i scripts/judge-entry.ts nie sięgają do src/sim/city ani src/sim/firm, także przechodnio', () => {
+    const reached = reachableFiles(JUDGE_ENTRIES, readFromDisk);
+    // skan naprawdę widzi symulację (nie zatrzymał się na wejściach)
+    expect(reached.size).toBeGreaterThan(MIN_SIM_FILES);
+    for (const f of ['src/sim/economy/economy.ts', 'src/sim/store/generateStore.ts', 'src/sim/simVersion.ts']) expect(reached).toContain(f);
+    expect(forbidden(reached)).toEqual([]);
+  });
+});
+
 describe('architektura', () => {
   it('src/sim: bez three, zegara, przeglądarki, node, warstw wyżej i matematyki zależnej od silnika', () => {
     const offenders = simProductionFiles().flatMap((f) =>
