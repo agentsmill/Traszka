@@ -1,3 +1,4 @@
+import { rankText, t } from '@/i18n';
 import { awaitingDecision, type EconomyState } from '@/sim/economy/economy';
 import type { StoreInfo } from '@/sim/economy/storeInfo';
 import { tapCost } from '@/sim/economy/tycoon/fatigue';
@@ -52,21 +53,21 @@ export function canTapPallet(ctx: TourCtx): boolean {
 
 const cel = (): TourStep => ({
   id: 'cel', target: null, tab: null, clearSelection: true,
-  title: 'Witaj w Traszce',
-  text: `Prowadzisz sklep Traszki na franczyzie. Cel: dojść do rangi „${finalRank().name}” i nie stracić umowy z Centralą. Czas stoi, dopóki nie skończymy.`,
+  title: t`Witaj w Traszce`,
+  text: t`Prowadzisz sklep Traszki na franczyzie. Cel: dojść do rangi „${rankText(finalRank().level)}” i nie stracić umowy z Centralą. Czas stoi, dopóki nie skończymy.`,
 });
 
 const czas = (): TourStep => ({
   id: 'czas', target: 'speed',
-  title: 'Czas',
-  text: `❚❚ zatrzymuje grę (także spacja), ×1–×8 przyspiesza. Doba przy ×1 trwa ok. ${dayLengthText()}. Teraz czas stoi: samouczek trzyma pauzę.`,
+  title: t`Czas`,
+  text: t`❚❚ zatrzymuje grę (także spacja), ×1–×8 przyspiesza. Doba przy ×1 trwa ok. ${dayLengthText()}. Teraz czas stoi: samouczek trzyma pauzę.`,
 });
 
 const zakladki = (): TourStep => ({
   id: 'zakladki', target: 'tabs',
-  title: 'Zakładki',
-  text: 'Tu jest zarządzanie: Sklep (kolejka, półki, remanent), Palety, Ludzie, Ulepszenia i Cele. Drugie stuknięcie zamyka zakładkę.',
-  task: { hint: 'Otwórz Palety.', done: (ctx) => ctx.tab === 'palety' },
+  title: t`Zakładki`,
+  text: t`Tu jest zarządzanie: Sklep (kolejka, półki, remanent), Palety, Ludzie, Ulepszenia i Cele. Drugie stuknięcie zamyka zakładkę.`,
+  task: { hint: t`Otwórz Palety.`, done: (ctx) => ctx.tab === 'palety' },
 });
 
 /** Zamówienie: przy Asystencie dwa zadania (na „Ręcznie” i z powrotem), przy ręcznym jeden krok bez namawiania do zmiany. */
@@ -74,69 +75,69 @@ function zamowienie(auto: boolean): TourStep[] {
   if (!auto) {
     return [{
       id: 'zamowienie', target: 'order', tab: 'palety',
-      title: 'Zamówienie',
-      text: 'Zamawiasz ręcznie. Gdy zechcesz, Asystent Traszki policzy za Ciebie: przełącznik jest tutaj.',
+      title: t`Zamówienie`,
+      text: t`Zamawiasz ręcznie. Gdy zechcesz, Asystent Traszki policzy za Ciebie: przełącznik jest tutaj.`,
     }];
   }
   return [
     {
       id: 'reczne', target: 'order-manual', tab: 'palety',
-      title: 'Zamówienie',
-      text: 'Domyślnie zamawia Asystent Traszki. Zwykle trochę przesadza, bo „klienci to kochają”. Ręcznie sam ustawiasz liczbę palet na jutro.',
-      task: { hint: 'Przełącz na „Ręcznie”.', done: (ctx) => !ctx.s.order.auto },
+      title: t`Zamówienie`,
+      text: t`Domyślnie zamawia Asystent Traszki. Zwykle trochę przesadza, bo „klienci to kochają”. Ręcznie sam ustawiasz liczbę palet na jutro.`,
+      task: { hint: t`Przełącz na „Ręcznie”.`, done: (ctx) => !ctx.s.order.auto },
     },
     {
       id: 'asystent', target: 'order-auto', tab: 'palety',
-      title: 'Zamówienie',
-      text: 'Teraz liczbę palet ustawiasz przyciskami − i +. Na początek zostaw to Asystentowi: liczy za Ciebie.',
-      task: { hint: 'Wróć do „Asystent Traszki”.', done: (ctx) => ctx.s.order.auto },
+      title: t`Zamówienie`,
+      text: t`Teraz liczbę palet ustawiasz przyciskami − i +. Na początek zostaw to Asystentowi: liczy za Ciebie.`,
+      task: { hint: t`Wróć do „Asystent Traszki”.`, done: (ctx) => ctx.s.order.auto },
     },
   ];
 }
 
 const miejsca = (): TourStep => ({
   id: 'miejsca', target: 'pallets', tab: 'palety',
-  title: 'Gdzie stoją palety',
-  text: `Pod sklepem grozi mandat Straży Miejskiej. Zaplecze jest bezpieczne, ale małe. W sali i w przejściach palety przeszkadzają klientom, a ⭐ reputacja spada. ${MONEY_NOTES.palety()}`,
+  title: t`Gdzie stoją palety`,
+  text: t`Pod sklepem grozi mandat Straży Miejskiej. Zaplecze jest bezpieczne, ale małe. W sali i w przejściach palety przeszkadzają klientom, a ⭐ reputacja spada. ${MONEY_NOTES.palety()}`,
 });
 
 const ludzie = (): TourStep => ({
   id: 'ludzie', target: 'hire', tab: 'ludzie',
-  title: 'Ludzie',
-  text: `„+” zatrudnia, „−” zwalnia. ${MONEY_NOTES.ludzie()} Niżej ustawiasz, czym ludzie zajmują się najpierw. Samouczek niczego tu nie kupi.`,
+  title: t`Ludzie`,
+  text: t`„+” zatrudnia, „−” zwalnia. ${MONEY_NOTES.ludzie()} Niżej ustawiasz, czym ludzie zajmują się najpierw. Samouczek niczego tu nie kupi.`,
 });
 
 const ulepszenia = (): TourStep => ({
   id: 'ulepszenia', target: 'buy', tab: 'ulepszenia',
-  title: 'Ulepszenia',
-  text: `Sprzęt do slotów, szkolenia i remont, który powiększa sklep. ${MONEY_NOTES.ulepszenia()}`,
+  title: t`Ulepszenia`,
+  text: t`Sprzęt do slotów, szkolenia i remont, który powiększa sklep. ${MONEY_NOTES.ulepszenia()}`,
 });
 
 const cele = (): TourStep => ({
   id: 'cele', target: 'sheet', tab: 'cele',
-  title: 'Cele i rozwój',
-  text: `Cel tygodnia od Centrali daje XP, ${MONEY_NOTES.kpi()}. Poziomy odblokowują sprzęt i remonty. Kamienie milowe dają Ogonki 🦎: „Odbierz”. `
-    + `Po ${PRESTIGE_REMONT}. remoncie albo na ${PRESTIGE_LEVEL}. poziomie otworzysz kolejną Traszkę.`,
+  title: t`Cele i rozwój`,
+  text: t`Cel tygodnia od Centrali daje XP, ${MONEY_NOTES.kpi()}. Poziomy odblokowują sprzęt i remonty. Kamienie milowe dają Ogonki 🦎: „Odbierz”. `
+    + t`Po ${PRESTIGE_REMONT}. remoncie albo na ${PRESTIGE_LEVEL}. poziomie otworzysz kolejną Traszkę.`,
 });
 
 const karta = (): TourStep => ({
   id: 'karta', target: null, tab: null,
-  title: 'Karty decyzji',
-  text: 'Codziennie może przyjść karta: sprawa od Centrali albo od życia. Gra czeka, aż wybierzesz. Koszty i zyski są na przyciskach, a domyślna odpowiedź jest zaznaczona.',
+  title: t`Karty decyzji`,
+  text: t`Codziennie może przyjść karta: sprawa od Centrali albo od życia. Gra czeka, aż wybierzesz. Koszty i zyski są na przyciskach, a domyślna odpowiedź jest zaznaczona.`,
 });
 
 const start = (): TourStep => ({
   id: 'start', target: 'clicker', tab: null, clearSelection: true, resume: true,
-  title: 'Czas rusza',
-  text: 'Twoje ręce: 📦 rozładowuje najpilniejszą paletę, 🧾 obsługuje klienta, gdy kasa się korkuje. Każde stuknięcie zjada siły z paska nad przyciskami.',
-  task: { hint: 'Stuknij 📦.', can: canTapPallet, done: (ctx, mark) => ctx.s.total.taps > mark.taps },
+  title: t`Czas rusza`,
+  text: t`Twoje ręce: 📦 rozładowuje najpilniejszą paletę, 🧾 obsługuje klienta, gdy kasa się korkuje. Każde stuknięcie zjada siły z paska nad przyciskami.`,
+  task: { hint: t`Stuknij 📦.`, can: canTapPallet, done: (ctx, mark) => ctx.s.total.taps > mark.taps },
 });
 
 /** Ostatni krok: gdzie szukać więcej (decyzja właściciela: przelot kończy się na „?”). */
 const pomoc = (): TourStep => ({
   id: 'pomoc', target: 'help', tab: null,
-  title: 'Więcej informacji',
-  text: 'Pod „?” jest instrukcja, słowniczek (saldo, wyciąg, raty, remanent…) i ten samouczek. Przy pierwszych zdarzeniach podpowiemy jeszcze krótko.',
+  title: t`Więcej informacji`,
+  text: t`Pod „?” jest instrukcja, słowniczek (saldo, wyciąg, raty, remanent…) i ten samouczek. Przy pierwszych zdarzeniach podpowiemy jeszcze krótko.`,
 });
 
 /**

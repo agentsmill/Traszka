@@ -1,5 +1,6 @@
 import type { Ref } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
+import { t, tr } from '@/i18n';
 import { econ, remanent, report, showSettings, story, tab, tutorialOffer, isWindowOpen, type Controls } from '../state';
 import { RING, blockersAround, clipRect, inflate, placeBubble, type Placement, type Rect, type Size } from './layout';
 import { loadTutorial, type TipId } from './memory';
@@ -18,14 +19,14 @@ export function TutorialOffer() {
   if (!tutorialOffer.value) return null;
   return (
     <div class="tt-modal-wrap">
-      <div class="tt-modal tt-center tt-tut-offer" role="dialog" aria-modal="true" aria-label="Pierwszy dzień w Traszce">
-        <h2>Pierwszy dzień w Traszce</h2>
-        <p>Centrala przygotowała krótkie szkolenie: co jest na ekranie, palety, pieniądze, ludzie i rozwój. Czas w sklepie stoi, dopóki nie skończysz.</p>
+      <div class="tt-modal tt-center tt-tut-offer" role="dialog" aria-modal="true" aria-label={t`Pierwszy dzień w Traszce`}>
+        <h2>{t`Pierwszy dzień w Traszce`}</h2>
+        <p>{t`Centrala przygotowała krótkie szkolenie: co jest na ekranie, palety, pieniądze, ludzie i rozwój. Czas w sklepie stoi, dopóki nie skończysz.`}</p>
         <div class="tt-tut-offer-actions">
-          <button type="button" class="tt-btn tt-primary big" onClick={acceptOffer}>Samouczek (ok. 3 min)</button>
-          <button type="button" class="tt-btn big" onClick={declineOffer}>Pomiń, znam grę</button>
+          <button type="button" class="tt-btn tt-primary big" onClick={acceptOffer}>{t`Samouczek (ok. 3 min)`}</button>
+          <button type="button" class="tt-btn big" onClick={declineOffer}>{t`Pomiń, znam grę`}</button>
         </div>
-        <p class="tt-hint">Samouczek i słowniczek znajdziesz też pod „?”.</p>
+        <p class="tt-hint">{t`Samouczek i słowniczek znajdziesz też pod „?”.`}</p>
       </div>
     </div>
   );
@@ -66,17 +67,17 @@ export function Bubble(p: BubbleProps) {
   const side = p.place?.side ?? 'center';
   return (
     <div ref={p.bubbleRef} class={`tt-tut-bubble side-${side}${p.compact ? ' compact' : ''}`} style={placeStyle(p.place)} tabIndex={-1}
-      role="dialog" aria-modal="true" aria-label={`Samouczek, krok ${p.n} z ${p.total}`}
+      role="dialog" aria-modal="true" aria-label={t`Samouczek, krok ${p.n} z ${p.total}`}
       data-step={p.stepId} data-target={p.targetId ?? undefined} data-covers={p.place?.covers ? 'true' : undefined}>
       <div class="tt-tut-head">
         <b class="tt-tut-title">{p.title}</b>
         <span class="tt-tut-count">{p.n} / {p.total}</span>
       </div>
       <p class="tt-tut-text">{p.text}</p>
-      {p.hint && <p class={`tt-tut-task${p.done ? ' done' : ''}`}>{p.done ? '✓ Zrobione' : `👉 ${p.hint}`}</p>}
+      {p.hint && <p class={`tt-tut-task${p.done ? ' done' : ''}`}>{p.done ? t`✓ Zrobione` : `👉 ${p.hint}`}</p>}
       <div class="tt-tut-foot">
-        {p.skip && <button type="button" class="tt-btn tt-tut-skip" onClick={p.onSkip}>Pomiń</button>}
-        {p.primary && <button type="button" class="tt-btn tt-primary tt-tut-next" onClick={p.onNext}>{p.primary}</button>}
+        {p.skip && <button type="button" class="tt-btn tt-tut-skip" onClick={p.onSkip}>{t`Pomiń`}</button>}
+        {p.primary && <button type="button" class="tt-btn tt-primary tt-tut-next" onClick={p.onNext}>{tr(p.primary)}</button>}
       </div>
     </div>
   );

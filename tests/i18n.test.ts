@@ -12,6 +12,7 @@ import {
   EN_PROFILE_HINT, EN_PROFILE_LABEL, EN_RANKS, EN_REMONTS, EN_REPORT_LINES, EN_TASK_LABEL, EN_TRUST_REASONS, EN_TRUST_TIERS, EN_UPGRADES,
   EN_WEATHER, EN_WEEKDAY_SHORT, EN_WUT_LABEL,
 } from '@/i18n/en/content';
+import { glossaryEn } from '@/i18n/en/glossary';
 import { howToDetailsEn, howToPointsEn } from '@/i18n/en/howTo';
 import { EN_RENDER } from '@/i18n/en/render';
 import { EN_PLURALS, EN_UI } from '@/i18n/en/ui';
@@ -40,6 +41,7 @@ import { forecastLabel } from '@/ui/game/forecastText';
 import { plural, zl } from '@/ui/game/format';
 import { ENERGY_TITLE } from '@/ui/game/tapBlock';
 import { howToDetails, howToPoints } from '@/ui/howto/howToText';
+import { glossary } from '@/ui/howto/glossary';
 import { MemoryStorage } from '@/game/memoryStorage';
 import { PL_CHARS, jsxTextsWithLines, scanLiterals, type Literal } from './i18nScan';
 
@@ -151,6 +153,13 @@ describe('angielski tekst jest po angielsku', () => {
     expect(howToPointsEn().length).toBe(howToPoints().length);
     expect(howToDetailsEn().map((s) => s.paragraphs.length)).toEqual(howToDetails().map((s) => s.paragraphs.length));
     const all = [...howToPointsEn(), ...howToDetailsEn().flatMap((s) => [s.title, ...s.paragraphs])];
+    expect(all.filter((x) => PL_CHARS.test(x.replace(PL_NAMES, '')))).toEqual([]);
+  });
+
+  it('słowniczek w „Jak grać” po angielsku ma te same hasła co po polsku i nie ma polskich liter', () => {
+    lang.value = 'en';
+    expect(glossaryEn().length).toBe(glossary().length);
+    const all = glossaryEn().flatMap((e) => [e.term, e.text]);
     expect(all.filter((x) => PL_CHARS.test(x.replace(PL_NAMES, '')))).toEqual([]);
   });
 
@@ -280,8 +289,8 @@ const SKIP: Record<string, string> = {
   'osobę': 'howToText.ts po polsku', 'godzinę': 'howToText.ts po polsku', 'godziny': 'howToText.ts po polsku', 'godzin': 'howToText.ts po polsku',
   'kasę': 'howToText.ts po polsku', 'półki': 'howToText.ts po polsku', 'sprzątanie': 'howToText.ts po polsku',
 };
-/** Pliki, których cała treść jest po polsku z założenia: polska instrukcja (angielska jest w en/howTo.ts) i sam słownik. */
-const PL_ONLY_FILES = new Set(['src/ui/howto/howToText.ts']);
+/** Pliki, których cała treść jest po polsku z założenia: polska instrukcja i słowniczek (angielskie są w en/howTo.ts i en/glossary.ts). */
+const PL_ONLY_FILES = new Set(['src/ui/howto/howToText.ts', 'src/ui/howto/glossary.ts']);
 
 /** Klucze składane ze stałych gry (`ENERGY_TITLE` to dwa szablony połączone `+`): kawałek takiego klucza jest pokryty, gdy klucz ma wpis. */
 const COMPUTED = [ENERGY_TITLE];

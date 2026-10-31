@@ -1,4 +1,5 @@
 import { isEn, t } from '@/i18n';
+import { glossaryEn } from '@/i18n/en/glossary';
 import { howToDetailsEn, howToPointsEn } from '@/i18n/en/howTo';
 import { closeHowTo, howTo } from '../state';
 import { requestTour } from '../tutorial/tour';
@@ -28,9 +29,9 @@ export function HowTo() {
           </details>
         ))}
         <details class="tt-glossary">
-          <summary>Słowniczek</summary>
+          <summary>{t`Słowniczek`}</summary>
           <dl>
-            {glossary().map((e) => [<dt key={`t-${e.term}`}>{e.term}</dt>, <dd key={`d-${e.term}`}>{e.text}</dd>])}
+            {(isEn() ? glossaryEn() : glossary()).map((e) => [<dt key={`t-${e.term}`}>{e.term}</dt>, <dd key={`d-${e.term}`}>{e.text}</dd>])}
           </dl>
         </details>
         <div class="tt-modal-foot">

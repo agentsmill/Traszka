@@ -39,19 +39,6 @@ export const GAME_UI: Dict = {
     + `palety), w kasę – jeden klient; noc oddaje ${FATIGUE.nightRecovery}, a przemęczenie obniża jutrzejszą wydajność.`]:
     `Energy is what you spend on tapping: one tap on a pallet moves ${TAP_ITEMS} items (the whole pool is about two thirds of a pallet), `
     + `one tap on the till serves one customer; a night’s rest gives back ${FATIGUE.nightRecovery}, and overdoing it lowers tomorrow’s efficiency.`,
-  // overlays.tsx: podpowiedzi pierwszego dnia (`FIRST_DAY_HINTS`, przez `tr`); pierwsze użycie terminów dostaje krótkie objaśnienie
-  '🦎 Od dziś prowadzisz franczyzę Traszki. Cel: zbudować sieć Traszek i dojść do rangi Legendarnej Palety.':
-    '🦎 As of today you run a Traszka franchise (traszka is Polish for “newt”). Goal: build a network of Traszkas and reach the rank of Legendary Pallet.',
-  '📦 Palety pod sklepem grożą mandatem Straży: przenieś je „Na zaplecze” w zakładce Palety. Złota paleta to premia.':
-    '📦 Pallets left outside risk a fine from the City Wardens (the local council patrol): move them “To stockroom” in the Pallets tab. A golden pallet means a bonus.',
-  '🧾 Kolejka za długa? Klienci odchodzą. Stuknij w kasę albo kup kasę samoobsługową.':
-    '🧾 Queue too long? Customers walk out. Tap the till or buy a self-checkout.',
-  '🎯 Cele: KPI tygodnia od Centrali daje zaufanie, premię i XP, a poziomy odblokowują sprzęt i remonty.':
-    '🎯 Goals: the weekly KPI from Head Office (the franchisor’s headquarters) earns you trust, a bonus and XP, and levels unlock equipment and refits.',
-  '💪 Stukanie męczy: dzienna pula sił się kończy, a noc oddaje tylko część. Resztę robią pracownicy.':
-    '💪 Tapping is tiring: your daily energy runs out, and a night’s rest only restores part of it. Your staff do the rest.',
-  '👆 Przeciągnij, żeby przesunąć widok, a szczypnięciem albo kółkiem myszy przybliżysz. Gra zapisuje się sama.':
-    '👆 Drag to move the view; pinch or use the mouse wheel to zoom. The game saves itself.',
   // overlays.tsx: plakietki, ⚙
   'Sklep tymczasowy: postęp nie jest zapisywany': 'Temporary shop: progress isn’t being saved',
   'Ten sklep jest tymczasowy: nic się w nim nie zapisuje, a ewentualny zapis pod jego seedem zostaje nietknięty.':

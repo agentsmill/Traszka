@@ -436,14 +436,14 @@ export function StoreActions(
 /** Przycisk „Samouczek” w ⚙: zamyka ustawienia i uruchamia przelot (w biegu rankingowym tylko komunikat, `requestTour`). */
 export function TutorialButton() {
   return (
-    <button type="button" class="tt-btn" onClick={() => { showSettings.value = false; requestTour(); }}>Samouczek</button>
+    <button type="button" class="tt-btn" onClick={() => { showSettings.value = false; requestTour(); }}>{t`Samouczek`}</button>
   );
 }
 
 /** Pole „Podpowiedzi przy pierwszych zdarzeniach” w ⚙ (pamięć samouczka, `traszka:tutorial`). */
 export function TipsToggle() {
   return (
-    <label class="tt-check-row"><input type="checkbox" checked={loadTutorial().tips} onChange={(e) => setTips(e.currentTarget.checked)} /> Podpowiedzi przy pierwszych zdarzeniach</label>
+    <label class="tt-check-row"><input type="checkbox" checked={loadTutorial().tips} onChange={(e) => setTips(e.currentTarget.checked)} /> {t`Podpowiedzi przy pierwszych zdarzeniach`}</label>
   );
 }
 

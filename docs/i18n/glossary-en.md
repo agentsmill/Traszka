@@ -78,6 +78,9 @@ tych samych nazw.
 | ranga: Drewniana Paleta … Legendarna Paleta | rank: Wooden Pallet … Legendary Pallet | *EURO Pallet, Shrink-Wrapped Pallet, Silver, Golden, Platinum, Diamond*. |
 | sieć Traszek, Punkty Partnera | Traszka network, Partner Points | |
 | ranking, bieg rankingowy, start rankingowy | leaderboard, ranked run, ranked start | |
+| samouczek | tutorial | Okno wyboru: *Your first day at Traszka*, przyciski *Tutorial (about 3 min)* i *Skip, I know the game*. |
+| dymki „pierwszy raz”, podpowiedzi przy pierwszych zdarzeniach | tips, first-time tips | W ⚙: *Tips the first time things happen*. |
+| słowniczek (w „Jak grać”) | glossary | Hasła jak w tej tabeli: *Head Office balance, Transfer, Statement, Instalments, Stocktake, Shrinkage, “You keep”, ZUS, Accountant*. |
 | seed, seed tygodnia | seed, seed of the week | |
 | kod odzyskiwania | recovery code | |
 | szuflada (Centrali, niewysłany bieg) | drawer (Head Office’s drawer) | |

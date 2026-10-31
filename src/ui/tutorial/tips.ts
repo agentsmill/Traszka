@@ -1,4 +1,5 @@
 import { signal, type Signal } from '@preact/signals';
+import { t } from '@/i18n';
 import { awaitingDecision, type EconomyState, type MonthReport } from '@/sim/economy/economy';
 import { visibleCards } from '@/sim/economy/tycoon/cards';
 import type { TabId } from '../state';
@@ -51,22 +52,22 @@ export const TIPS: readonly TipDef[] = [
     id: 'tip-cel',
     when: (ctx) => ctx.s.milestonesReady.length > 0,
     targets: (ctx) => (ctx.tab === 'cele' ? ['claim-btn', 'tab-cele'] : ['claim']),
-    text: (ctx) => (ctx.tab === 'cele' ? 'Tu „Odbierz”. Centrala lubi, jak się o coś prosi.' : 'Cel spełniony. Nagroda nie przyjdzie sama: stuknij 🎁.'),
+    text: (ctx) => (ctx.tab === 'cele' ? t`Tu „Odbierz”. Centrala lubi, jak się o coś prosi.` : t`Cel spełniony. Nagroda nie przyjdzie sama: stuknij 🎁.`),
   },
   {
     id: 'tip-przejscia',
     when: (ctx) => ctx.s.pallets.some((p) => p.loc === 'aisle'),
     targets: (ctx) => (ctx.tab === 'palety' ? ['pallet-aisle', 'tab-palety'] : ['tab-palety']),
     text: (ctx) => (ctx.tab === 'palety'
-      ? 'Rozładuj ją albo przenieś na wolne miejsce. Na przyszłość: mniej palet w zamówieniu.'
-      : 'Zabrakło miejsc: palety stoją w przejściach, a klienci się o nie potykają. Zajrzyj do Palet.'),
+      ? t`Rozładuj ją albo przenieś na wolne miejsce. Na przyszłość: mniej palet w zamówieniu.`
+      : t`Zabrakło miejsc: palety stoją w przejściach, a klienci się o nie potykają. Zajrzyj do Palet.`),
   },
   {
     id: 'tip-karta',
     inWindow: true,
     when: (ctx) => cardShown(ctx) && ctx.s.history.length === 0,
     targets: () => ['card'],
-    text: () => 'Karta decyzji. Gra czeka, aż wybierzesz. Koszty i zyski są na przyciskach, a domyślna odpowiedź jest już zaznaczona.',
+    text: () => t`Karta decyzji. Gra czeka, aż wybierzesz. Koszty i zyski są na przyciskach, a domyślna odpowiedź jest już zaznaczona.`,
   },
 ];
 
