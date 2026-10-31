@@ -101,10 +101,18 @@ function remont(f: FirmState, level: number): void {
   expect(applyStoreCommand(f, { type: 'startRemont' }).result.ok).toBe(true);
 }
 
+/** Wyposażenie aktywnego sklepu prawdziwymi zakupami: dwa ulepszenia i dwa urządzenia (po zamknięciu zostają w lokalu, §13.3). */
+function fit(f: FirmState): void {
+  grantToFirm(f, (s) => { s.level = 14; s.cash += 100_000; });
+  for (const cmd of [
+    { type: 'buyUpgrade', id: 'szkolenie' }, { type: 'buyUpgrade', id: 'wozek' }, { type: 'buyEquipment', id: 'sco' }, { type: 'buyEquipment', id: 'bankomat' },
+  ] as const) expect(applyStoreCommand(f, cmd).result.ok).toBe(true);
+}
+
 /**
- * Firma w stanie, który zapis musi unieść: sklep #1 wypowiedziany i zamknięty (wypowiedzenie zostaje w zapisie), aktywny #2 po
- * remoncie, na koniec nowa budowa w toku. Wszystko prawdziwymi poleceniami i krokami, z jedynym skrótem: status Partnera nadany
- * od razu. Zapis powstaje w wieczór przed dniem otwarcia budowy.
+ * Firma w stanie, który zapis musi unieść: sklep #1 z wyposażeniem i remontem, wypowiedziany i zamknięty (wypowiedzenie zostaje w
+ * zapisie), aktywny #2 po remoncie, na koniec nowa budowa w toku. Wszystko prawdziwymi poleceniami i krokami, z jedynym skrótem:
+ * status Partnera nadany od razu. Zapis powstaje w wieczór przed dniem otwarcia budowy.
  */
 function playScenario(): FirmState {
   const f = newFirm();
@@ -113,6 +121,8 @@ function playScenario(): FirmState {
   expect(command(f, { type: 'rentLot', lotId: freeLot(f), pay: 'raty' })).toEqual({ ok: true });
   playTo(f, f.builds[0]!.readyDay * DAY + OPEN_FROM + 1);
   expect(f.stores).toHaveLength(2);
+  fit(f);
+  remont(f, 8);
   expect(command(f, { type: 'switchStore', storeId: 2 })).toEqual({ ok: true });
   remont(f, 8);
   expect(command(f, { type: 'terminateStore', storeId: 1 })).toEqual({ ok: true });
@@ -243,23 +253,32 @@ describe('schemat 3: zapis i odczyt firmy', () => {
     expect(f.stores[0]!.notice).not.toBeNull();
     expect(f.activeId).toBe(2);
     expect(f.stores[1]!.econ.remontLevel).toBe(1);
+    expect(f.stores[0]!.econ).toMatchObject({ remontLevel: 1, upgrades: { szkolenie: 1, wozek: 1 } });
+    expect(f.stores[0]!.econ.equipment.map((e) => e.id)).toEqual(['sco', 'bankomat']);
     expect(f.builds).toHaveLength(1);
     expect(lotState(f, f.builds[0]!.lotId)).toBe('budowa');
     expect(lotState(f, f.stores[0]!.lotId)).toBe('po-traszce');
   });
 
-  it('koperta: seed, wersje, osoba, budowy i skrzynka, a w sklepach tylko lotId, układ, econ i flagi (bez miasta i info)', () => {
+  it('koperta: seed, wersje, osoba, budowy i skrzynka; sklep otwarty z układem i econ, zamknięty tylko z wyposażeniem (bez miasta i info)', () => {
     const f = scenario();
     const env = firmEnvelopeOf(f);
     expect(env).toMatchObject({ schema: 3, gameVersion: GAME_VERSION, cityGeneratorVersion: CITY_GENERATOR_VERSION, seed: SEED });
     expect(env.firm).toEqual({
       person: f.person, activeId: 2, builds: f.builds, monthInvest: f.monthInvest, inbox: f.inbox, weatherHash: f.weatherHash, over: null,
     });
-    expect(env.stores.map((s) => Object.keys(s).sort())).toEqual(env.stores.map(() => ['closed', 'econ', 'generatorVersion', 'id', 'layout', 'lotId', 'notice']));
+    expect(env.stores.map((s) => Object.keys(s).sort())).toEqual([
+      ['closed', 'econ', 'generatorVersion', 'id', 'lotId', 'notice'],
+      ['closed', 'econ', 'generatorVersion', 'id', 'layout', 'lotId', 'notice'],
+    ]);
     expect(env.stores.map((s) => ({ id: s.id, lotId: s.lotId, closed: s.closed, notice: s.notice, generatorVersion: s.generatorVersion }))).toEqual(
       f.stores.map((s) => ({ id: s.id, lotId: s.lotId, closed: s.closed, notice: s.notice, generatorVersion: s.layout.generatorVersion })),
     );
-    expect(env.stores[1]!.layout).toBe(f.stores[1]!.layout);
+    const [closed, open] = env.stores;
+    expect(open).toMatchObject({ closed: false, layout: f.stores[1]!.layout, econ: f.stores[1]!.econ });
+    const kept = f.stores[0]!.econ;
+    expect(closed).toMatchObject({ closed: true, econ: { version: 1, seed: SEED, minute: kept.minute, upgrades: kept.upgrades, equipment: kept.equipment, remontLevel: 1, gameOver: true } });
+    expect(Object.keys(closed!.econ).sort()).toEqual(['equipment', 'gameOver', 'minute', 'remontLevel', 'seed', 'upgrades', 'version']);
   });
 
   it('Review Focus 3: po odczycie te same sklepy, układy, lokale, budowa (readyDay) i aktywny #2; info i site od nowa', () => {
@@ -275,9 +294,10 @@ describe('schemat 3: zapis i odczyt firmy', () => {
       live.stores.map((s) => ({ id: s.id, lotId: s.lotId, closed: s.closed, notice: s.notice })),
     );
     for (const [i, st] of back.stores.entries()) {
-      expect(st.econ).toEqual(live.stores[i]!.econ);
       expect(st.layout).toEqual(live.stores[i]!.layout);
-      if (!st.closed) expect(st.info).toEqual(live.stores[i]!.info);   // zamknięty sklep nie liczy się dalej, a jego stare `site` nic nie znaczy
+      if (st.closed) continue;   // zamknięty sklep wraca z samym wyposażeniem (patrz niżej), a jego stare `site` nic nie znaczy
+      expect(st.econ).toEqual(live.stores[i]!.econ);
+      expect(st.info).toEqual(live.stores[i]!.info);
     }
     // układ #2 powstał z lokalu miasta: `site.lot` wrócił do StoreInfo, więc kolejny remont da układ z tego lokalu (nie z pickLot seeda sklepu)
     const info2 = back.stores[1]!.info;
@@ -316,6 +336,32 @@ describe('schemat 3: zapis i odczyt firmy', () => {
     expect(activeStore(b).info).toEqual(activeStore(a).info);
   });
 
+  it('zamknięty sklep: lokal zostaje „po Traszce”, wyposażenie (ulepszenia, sprzęt, poziom remontu) i układ wracają, reszta z domyślnych', () => {
+    const live = scenario();
+    const back = opened(viaJson(live));
+    const [liveStore, store] = [live.stores[0]!, back.stores[0]!];
+    expect(store).toMatchObject({ id: 1, closed: true, lotId: liveStore.lotId, notice: liveStore.notice });
+    expect(lotState(back, store.lotId)).toBe('po-traszce');
+    expect(store.econ.upgrades).toEqual({ szkolenie: 1, wozek: 1 });
+    expect(store.econ.equipment).toEqual(liveStore.econ.equipment);
+    expect(store.econ.equipment.length).toBe(2);
+    expect(store.econ.remontLevel).toBe(1);
+    expect(store.econ.gameOver).toBe(true);
+    expect(store.econ.minute).toBe(liveStore.econ.minute);
+    expect(store.layout).toEqual(liveStore.layout);   // z lokalu miasta i poziomu remontu, jak przed zapisem
+    expect(store.econ.history).toEqual([]);   // reszta ekonomii z domyślnych: historia, zapasy i saldo przepadły w rozliczeniu
+    expect(store.econ.franchisee.installments).toEqual([]);
+  });
+
+  it('save -> load -> save daje tę samą kopertę (też z zamkniętym sklepem), a kolejny odczyt ten sam stan', () => {
+    const first = JSON.stringify(firmEnvelopeOf(scenario()));
+    const back = opened(restoreFirmFrom(JSON.parse(first), SEED));
+    const second = JSON.stringify(firmEnvelopeOf(back));
+    expect(JSON.parse(second)).toEqual(JSON.parse(first));
+    expect(second).toBe(first);
+    expect(JSON.stringify(firmEnvelopeOf(opened(restoreFirmFrom(JSON.parse(second), SEED))))).toBe(second);
+  });
+
   it('premia sieci z mety wygrywa z zapisaną; dochód z sieci ma otwarty sklep o najniższym id (tu #2, bo #1 zamknięty)', () => {
     const partner = { points: 3, networkIncome: 200, stores: 2 };
     const live = structuredClone(scenario());
@@ -323,7 +369,7 @@ describe('schemat 3: zapis i odczyt firmy', () => {
     expect(none.stores.map((s) => s.econ.partner)).toEqual(live.stores.map((s) => s.econ.partner));   // bez parametru zostaje zapisana
     const f = opened(viaJson(live, partner));
     expect(f.stores[1]!.econ.partner).toEqual(partner);
-    expect(f.stores[0]!.econ.partner).toEqual(live.stores[0]!.econ.partner);   // zamknięty sklep zostaje, jak był
+    expect(f.stores[0]!.econ.partner).toEqual({ points: 0, networkIncome: 0, stores: 0 });   // zamknięty sklep nie dostaje premii
     const two = opened(restoreFirmFrom(smallEnvelope(), SEED, partner));
     expect(two.stores.map((s) => s.econ.partner)).toEqual([partner, { ...partner, networkIncome: 0 }]);
   });
@@ -347,9 +393,13 @@ describe('schemat 3: zapis i odczyt firmy', () => {
   it('fixture save-v3-dwa-sklepy.json: schemat 3, wczytuje się jako firma i dalej gra deterministycznie', () => {
     const raw = json('save-v3-dwa-sklepy.json');
     expect(raw).toMatchObject({ schema: 3, seed: SEED, cityGeneratorVersion: CITY_GENERATOR_VERSION });
+    const stored = raw.stores as { closed: boolean; layout?: unknown; econ: Record<string, unknown> }[];
+    expect(stored.map((s) => [s.closed, s.layout !== undefined])).toEqual([[true, false], [false, true]]);   // zamknięty sklep bez układu
+    expect(Object.keys(stored[0]!.econ).sort()).toEqual(['equipment', 'gameOver', 'minute', 'remontLevel', 'seed', 'upgrades', 'version']);
     const f = opened(restoreFirmFrom(raw, SEED));
     expect(f.stores.map((s) => ({ id: s.id, closed: s.closed }))).toEqual([{ id: 1, closed: true }, { id: 2, closed: false }]);
     expect(f.stores[0]!.notice).not.toBeNull();
+    expect(f.stores[0]!.econ).toMatchObject({ remontLevel: 1, gameOver: true, upgrades: { szkolenie: 1, wozek: 1 } });
     expect(f.activeId).toBe(2);
     expect(f.stores[1]!.econ.remontLevel).toBe(1);
     expect(f.builds).toHaveLength(1);
@@ -481,8 +531,24 @@ describe('schemat 3: odczyt zepsutej koperty', () => {
     const f = opened(restoreFirmFrom(env, SEED));
     expect(f.stores[1]!.econ.remontLevel).toBe(1);
     expect(f.stores[1]!.layout).toEqual(live.stores[1]!.layout);
-    env.stores[0].layout = 'płaski';
+    env.stores[0].layout = 'płaski';   // zamknięty sklep nie niesie układu: cokolwiek tu leży, układ i tak wraca z lokalu miasta
     expect(opened(restoreFirmFrom(env, SEED)).stores[0]!.layout).toEqual(live.stores[0]!.layout);
+  });
+
+  it('otwarte sklepy w różnych minutach to invalid (zegary sklepów chodzą razem); zamknięty może stać w swojej', () => {
+    const skewed = smallEnvelope();
+    skewed.stores[1].econ.minute += 1;
+    expect(restoreFirmFrom(skewed, SEED)).toEqual(invalid);
+    const far = smallEnvelope();
+    far.stores[0].econ.minute -= 3 * DAY;
+    expect(restoreFirmFrom(far, SEED)).toEqual(invalid);
+    const closed = smallEnvelope();
+    closed.stores[0].closed = true;
+    closed.stores[0].econ.minute -= 3 * DAY;
+    const f = opened(restoreFirmFrom(closed, SEED));
+    expect(f.stores[0]).toMatchObject({ closed: true });
+    expect(f.stores[0]!.econ.minute).toBe(closed.stores[0].econ.minute);
+    expect(f.stores[1]!.econ.minute).toBe(closed.stores[1].econ.minute);
   });
 
   it('wersje miasta: 0 i śmieci to invalid, inna niż w kodzie to poprawny zapis, którego świata nie złożymy (unbuildable)', () => {
@@ -528,8 +594,7 @@ describe('sesja: odczyt zapisu schematu 3 (createSession)', () => {
     const partner = { points: 9, networkIncome: 40, stores: 3 };
     const s = createSession(SEED, false, partner);
     expect(s.econ.partner).toEqual(partner);
-    const saved = json('save-v3-dwa-sklepy.json').stores as { econ: EconomyState }[];
-    expect(s.firm!.stores[0]!.econ.partner).toEqual(saved[0]!.econ.partner);   // zamknięty #1 zostaje, jak był
+    expect(s.firm!.stores[0]!.econ.partner).toEqual({ points: 0, networkIncome: 0, stores: 0 });   // zamknięty #1 nie dostaje premii
   });
 
   it('stary zapis (schemat 2) otwiera się jak dotąd, bez firmy w sesji', () => {
@@ -591,29 +656,79 @@ describe('sesja: odczyt zapisu schematu 3 (createSession)', () => {
 
 // --- Rozmiar ------------------------------------------------------------------------------------------------------------
 
-/**
- * Najgorszy przypadek 4a.1: dwa sklepy, każdy po dwóch remontach, koniec roku (365 dni prawdziwych kroków). Oba sklepy z historią
- * dwunastu miesięcy, ratą pakietu, pełną skrzynką zastępcy.
- */
-function playWorstCase(): FirmState {
+/** Dwa remonty (poziom 8, potem 14) kolejnym sklepom z listy: każdy w swoim czasie jest aktywny, a remont kosztuje z portfela osoby. */
+function remontEach(f: FirmState, ids: number[], level: number): void {
+  for (const id of ids) {
+    expect(command(f, { type: 'switchStore', storeId: id })).toEqual({ ok: true });
+    remont(f, level);
+  }
+}
+
+/** Firma po wynajmie drugiego sklepu w dniu 3: oba sklepy działają, aktywny jest #1. */
+function twoOpenStores(): FirmState {
   const f = newFirm();
   f.person.partner = true;
   playTo(f, 3 * DAY + OPEN_FROM);
   expect(command(f, { type: 'rentLot', lotId: freeLot(f), pay: 'raty' })).toEqual({ ok: true });
   playTo(f, f.builds[0]!.readyDay * DAY + OPEN_FROM + 1);
   expect(f.stores).toHaveLength(2);
-  const twice = (level: number): void => {
-    for (const id of [1, 2]) {
-      expect(command(f, { type: 'switchStore', storeId: id })).toEqual({ ok: true });
-      remont(f, level);
-    }
-  };
-  twice(8);
+  expect(command(f, { type: 'switchStore', storeId: 1 })).toEqual({ ok: true });
+  return f;
+}
+
+/**
+ * Najgorszy przypadek 4a.1: dwa sklepy, każdy po dwóch remontach, koniec roku (365 dni prawdziwych kroków). Oba sklepy z historią
+ * dwunastu miesięcy, ratą pakietu, pełną skrzynką zastępcy.
+ */
+function playWorstCase(): FirmState {
+  const f = twoOpenStores();
+  remontEach(f, [1, 2], 8);
   playTo(f, 20 * DAY + OPEN_FROM);
-  twice(14);
+  remontEach(f, [1, 2], 14);
   expect(f.stores.map((s) => s.econ.remontLevel)).toEqual([2, 2]);
   playTo(f, 365 * DAY + OPEN_FROM);
   return f;
+}
+
+/**
+ * Zamknięte sklepy gromadzą się (zamknięcie i ponowny wynajem), więc lista sklepów w zapisie bywa dłuższa niż limit sklepów: #1 z
+ * wyposażeniem i dwoma remontami wypowiedziany i zamknięty, potem #2 i #3 otwarte, każdy po dwóch remontach, koniec roku.
+ */
+function playWithClosedStore(): FirmState {
+  const f = twoOpenStores();
+  fit(f);
+  remontEach(f, [1, 2], 8);
+  playTo(f, 20 * DAY + OPEN_FROM);
+  remontEach(f, [1, 2], 14);
+  playTo(f, 25 * DAY + OPEN_FROM);
+  expect(command(f, { type: 'switchStore', storeId: 2 })).toEqual({ ok: true });
+  expect(command(f, { type: 'terminateStore', storeId: 1 })).toEqual({ ok: true });
+  for (let guard = 0; !f.stores[0]!.closed && guard < 90 * DAY; guard++) tick(f);
+  expect(f.stores[0]!.closed).toBe(true);
+  expect(command(f, { type: 'rentLot', lotId: freeLot(f), pay: 'raty' })).toEqual({ ok: true });
+  playTo(f, f.builds[0]!.readyDay * DAY + OPEN_FROM + 1);
+  expect(f.stores).toHaveLength(3);
+  remontEach(f, [3], 8);
+  playTo(f, clockOf(f) + 10 * DAY);
+  remontEach(f, [3], 14);
+  playTo(f, 365 * DAY + OPEN_FROM);
+  return f;
+}
+
+const bytes = (x: unknown): number => new TextEncoder().encode(JSON.stringify(x)).length;
+
+/** Paczka „Wyślij zapis” z kopertą firmy i metą ze średnio rozbudowaną siecią sklepów (12 wpisów); drukuje rozmiar i zwraca bajty paczki. */
+function transferSize(label: string, f: FirmState): number {
+  const meta: Meta = {
+    version: 1, partnerPoints: 120, network: Array.from({ length: 12 }, (_, n) => ({ seed: `stary-sklep-${n}`, income: 400, level: 21, margin: 90_000 })),
+    daily: { date: '2026-10-27', streak: 4 }, lastSeen: 1_790_000_000_000, sound: true, vibration: true,
+    player: { nick: 'Mateusz', look: { ...DEFAULT_CASHIER_LOOK }, specialOutfits: true },
+  };
+  const bundle = { format: TRANSFER_FORMAT, version: 1, seed: SEED, meta, save: firmEnvelopeOf(f) };
+  const total = bytes(bundle);
+  const perStore = bundle.save.stores.map((s) => `${bytes(s)}${s.closed ? ' zamknięty' : ` (układ ${bytes(s.layout)}, ekonomia ${bytes(s.econ)})`}`);
+  console.log(`${label}: paczka ${total} B z ${SAVE_TRANSFER_MAX_BYTES} B (zapis ${bytes(bundle.save)} B, meta ${bytes(meta)} B, skrzynka ${f.inbox.length} wpisów); sklepy: ${perStore.join(' + ')} B.`);
+  return total;
 }
 
 describe('rozmiar paczki „Wyślij zapis”', () => {
@@ -622,18 +737,27 @@ describe('rozmiar paczki „Wyślij zapis”', () => {
     expect(f.over).toBeNull();
     expect(openStores(f)).toHaveLength(2);
     expect(f.stores.map((s) => s.econ.history.length)).toEqual([12, 12]);
-
-    const meta: Meta = {
-      version: 1, partnerPoints: 120, network: Array.from({ length: 12 }, (_, n) => ({ seed: `stary-sklep-${n}`, income: 400, level: 21, margin: 90_000 })),
-      daily: { date: '2026-10-27', streak: 4 }, lastSeen: 1_790_000_000_000, sound: true, vibration: true,
-      player: { nick: 'Mateusz', look: { ...DEFAULT_CASHIER_LOOK }, specialOutfits: true },
-    };
-    const bundle = { format: TRANSFER_FORMAT, version: 1, seed: SEED, meta, save: firmEnvelopeOf(f) };
-    const bytes = (x: unknown): number => new TextEncoder().encode(JSON.stringify(x)).length;
-    const total = bytes(bundle);
-    const perStore = bundle.save.stores.map((s) => `${bytes(s)} (układ ${bytes(s.layout)}, ekonomia ${bytes(s.econ)})`);
-    console.log(`Zapis schematu 3, dwa sklepy po dwóch remontach, 365 dni: paczka ${total} B z ${SAVE_TRANSFER_MAX_BYTES} B (zapis ${bytes(bundle.save)} B, meta ${bytes(meta)} B, skrzynka ${f.inbox.length} wpisów); sklepy: ${perStore.join(' + ')} B.`);
+    const total = transferSize('Zapis schematu 3, dwa sklepy po dwóch remontach, 365 dni', f);
     expect(f.inbox.length).toBeGreaterThan(0);
     expect(total).toBeLessThanOrEqual(SAVE_TRANSFER_MAX_BYTES);
+  }, 60_000);
+
+  it('zamknięty sklep w zapisie jest zwarty: #1 zamknięty, #2 i #3 po dwóch remontach na koniec roku też mieszczą się w 64 KB', () => {
+    const f = playWithClosedStore();
+    expect(f.over).toBeNull();
+    expect(f.stores.map((s) => [s.id, s.closed, s.econ.remontLevel])).toEqual([[1, true, 2], [2, false, 2], [3, false, 2]]);
+    const total = transferSize('Zapis schematu 3, #1 zamknięty, #2 i #3 po dwóch remontach, 365 dni', f);
+    const closed = firmEnvelopeOf(f).stores[0]!;
+    expect(closed.closed).toBe(true);
+    expect('layout' in closed).toBe(false);
+    expect(bytes(closed)).toBeLessThan(1024);   // wyposażenie i flagi, bez układu i ekonomii
+    expect(total).toBeLessThanOrEqual(SAVE_TRANSFER_MAX_BYTES);
+
+    // zwarty zapis wraca: ten sam zestaw sklepów, wyposażenie zamkniętego #1 i idempotentna koperta
+    const back = opened(viaJson(f));
+    expect(back.stores.map((s) => [s.id, s.closed, s.econ.remontLevel])).toEqual([[1, true, 2], [2, false, 2], [3, false, 2]]);
+    expect(back.stores[0]!.econ.upgrades).toEqual(f.stores[0]!.econ.upgrades);
+    expect(back.stores[0]!.econ.equipment).toEqual(f.stores[0]!.econ.equipment);
+    expect(JSON.stringify(firmEnvelopeOf(back))).toBe(JSON.stringify(firmEnvelopeOf(f)));
   }, 60_000);
 });

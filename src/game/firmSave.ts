@@ -18,7 +18,7 @@ import { GAME_VERSION } from './version';
 
 /*
  * Zapis zwykłej gry z firmą (spec §7.4, §16): koperta schematu 3 pod `traszka:save:<seed>`. Zapisuje się to, czego nie da się policzyć z
- * seeda: osobę, skrzynkę, budowy i sklepy (układ i `EconomyState` każdego, także zamkniętego). Miasto jest czystą funkcją seeda i
+ * seeda: osobę, skrzynkę, budowy i sklepy (układ i `EconomyState` każdego otwartego, a zamkniętego tylko wyposażenie lokalu). Miasto jest czystą funkcją seeda i
  * `CITY_GENERATOR_VERSION`, więc nie leży w zapisie; `StoreInfo` (z dzielnicą sklepu) też powstaje od nowa z układu i miasta.
  * Schemat 1 i 2 (jeden sklep, każda wersja SIM) wczytuje się przez `restoreSessionFrom` jak dziś i staje się sklepem #1 firmy.
  * Biegu rankingowego to nie dotyczy: jego zapis (`traszka:ranked`) zostaje w schemacie 2 (`SAVE_SCHEMA`).
@@ -32,16 +32,29 @@ export const FIRM_SAVE_SCHEMA = 3;
 /** Tyle bajtów paczki „Wyślij zapis” przyjmuje serwer (`SAVE_MAX_BYTES` w `src/server/config.ts`); test pilnuje zgodności. */
 export const SAVE_TRANSFER_MAX_BYTES = 64 * 1024;
 
-/** Sklep w kopercie: układ i ekonomia, lokal w mieście i flagi. `info` i miasto nie są zapisane, powstają przy odczycie. */
-export interface SavedStore {
+/** Pola sklepu, które zapis niesie niezależnie od tego, czy sklep jeszcze działa. */
+interface SavedStoreBase {
   id: number;
   lotId: number;
   generatorVersion: number;
-  layout: StoreLayout;
-  econ: EconomyState;
-  closed: boolean;
   notice: { endDay: number } | null;
 }
+
+/**
+ * Wyposażenie zamkniętego sklepu (spec §13.3: lokal „po Traszce” zachowuje ulepszenia, sprzęt i poziom remontu; towar, ludzie, saldo
+ * i raty przepadają w rozliczeniu). To jedyne pola `EconomyState`, które zamknięty sklep niesie w zapisie, plus to, co `sanitizeEconomy`
+ * wymaga od każdego stanu (`version`, `seed`) i co mówi, że sklep jest skończony (`minute` z chwili zamknięcia, `gameOver`). Reszta
+ * (układ, zapasy, historia, zaufanie…) przy odczycie wraca z domyślnych, a układ z lokalu miasta i poziomu remontu.
+ */
+export type ClosedFittings = Pick<EconomyState, 'version' | 'seed' | 'minute' | 'upgrades' | 'equipment' | 'remontLevel'> & { gameOver: true };
+
+/**
+ * Sklep w kopercie: otwarty z układem i pełnym `EconomyState`, zamknięty tylko z wyposażeniem lokalu (zamknięte sklepy gromadzą się:
+ * pełny kosztuje ok. 25 KB, a paczka „Wyślij zapis” ma 64 KB). `info` i miasto nie są zapisane, powstają przy odczycie.
+ */
+export type SavedStore =
+  | (SavedStoreBase & { closed: false; layout: StoreLayout; econ: EconomyState })
+  | (SavedStoreBase & { closed: true; econ: ClosedFittings });
 
 export interface FirmSaveEnvelope {
   schema: typeof FIRM_SAVE_SCHEMA;
@@ -52,14 +65,20 @@ export interface FirmSaveEnvelope {
   stores: SavedStore[];
 }
 
-/** Koperta zapisu firmy: seed, wersje gry i miasta, osoba z budowami i skrzynką oraz sklepy (układ, ekonomia, flagi). */
+/** Wyposażenie lokalu zamkniętego sklepu: patrz `ClosedFittings`. Zamknięty sklep zawsze wraca jako skończony (`gameOver`). */
+const fittingsOf = (e: EconomyState): ClosedFittings => ({
+  version: e.version, seed: e.seed, minute: e.minute, upgrades: e.upgrades, equipment: e.equipment, remontLevel: e.remontLevel, gameOver: true,
+});
+
+/** Koperta zapisu firmy: seed, wersje gry i miasta, osoba z budowami i skrzynką oraz sklepy (otwarte z układem i ekonomią, zamknięte z wyposażeniem). */
 export function firmEnvelopeOf(f: FirmState): FirmSaveEnvelope {
   return {
     schema: FIRM_SAVE_SCHEMA, gameVersion: GAME_VERSION, cityGeneratorVersion: f.city.version, seed: f.seed,
     firm: { person: f.person, activeId: f.activeId, builds: f.builds, monthInvest: f.monthInvest, inbox: f.inbox, weatherHash: f.weatherHash, over: f.over },
-    stores: f.stores.map((st) => ({
-      id: st.id, lotId: st.lotId, generatorVersion: st.layout.generatorVersion, layout: st.layout, econ: st.econ, closed: st.closed, notice: st.notice,
-    })),
+    stores: f.stores.map((st): SavedStore => {
+      const base = { id: st.id, lotId: st.lotId, generatorVersion: st.layout.generatorVersion, notice: st.notice };
+      return st.closed ? { ...base, closed: true, econ: fittingsOf(st.econ) } : { ...base, closed: false, layout: st.layout, econ: st.econ };
+    }),
   };
 }
 
@@ -116,7 +135,7 @@ function buildShell(seed: string, city: CityState, raw: Rec, id: number, lotId: 
   const level = whole(rawEcon.remontLevel, 0, 0, REMONTS.length);
   const storeSeed = storeSeedOf(seed, city, lotId);
   const spec = lotId === city.startLotId ? undefined : city.lots[lotId]!.spec;
-  const stored = sanitizeLayout(raw.layout);
+  const stored = closed ? null : sanitizeLayout(raw.layout);   // zamknięty sklep nie niesie układu: wraca z lokalu miasta i poziomu remontu
   const parts = (known: StoreLayout | null): { layout: StoreLayout; info: StoreInfo; econ: EconomyState } => {
     const layout = known ?? layoutFor(storeSeed, level, spec);
     const info = computeStoreInfo(layout);
@@ -159,8 +178,10 @@ const readInbox = (raw: unknown): FirmNote[] => (Array.isArray(raw) ? (raw as un
 
 /**
  * Koperta schematu 3. Miasto z `generateCity(seed)`, każdy sklep przez `sanitizeLayout` i `sanitizeEconomy` (brakujące pola z
- * `createEconomy` sklepu), `info` od nowa i `refreshSites`, premia sieci przez `setPartner`. Sprawdzane: seed, wersja miasta, sklepy
- * (rosnące `id`, różne lokale z miasta, #1 w lokalu startowym), a naprawiane: `activeId` spoza otwartych sklepów (wraca najniższy
+ * `createEconomy` sklepu), `info` od nowa i `refreshSites`, premia sieci przez `setPartner`. Zamknięty sklep nie ma w zapisie układu
+ * ani pełnej ekonomii (`ClosedFittings`): układ powstaje z lokalu miasta i poziomu remontu, ekonomia z domyślnych z nałożonym
+ * wyposażeniem i `gameOver`. Sprawdzane: seed, wersja miasta, sklepy (rosnące `id`, różne lokale z miasta, #1 w lokalu startowym,
+ * wszystkie otwarte w tej samej minucie), a naprawiane: `activeId` spoza otwartych sklepów (wraca najniższy
  * otwarty), portfel (w `LIMITS.money`), budowy, skrzynka. Gotówka i Ogonki otwartych sklepów to portfel osoby.
  */
 function restoreEnvelope(data: Rec, seed: string, partner: EconomyState['partner'] | undefined): FirmOpened {
@@ -214,8 +235,11 @@ function restoreEnvelope(data: Rec, seed: string, partner: EconomyState['partner
   for (const { raw: rawStore, storeSeed, minute, st } of shells) {
     const econ = sanitizeEconomy(rawStore.econ, createEconomy(storeSeed, st.info, undefined, minute), st.info);
     if (!econ) return INVALID;
+    if (st.closed) econ.gameOver = true;   // zamknięty sklep jest skończony; z zapisu wraca samo wyposażenie, reszta z domyślnych
     st.econ = econ;
   }
+  // otwarte sklepy liczą się razem, minuta po minucie: zapis z rozjechanymi zegarami nie powstał w grze
+  if (new Set(open.map((s) => s.econ.minute)).size > 1) return INVALID;
 
   f.activeId = open.some((s) => s.id === raw.activeId) ? (raw.activeId as number) : open[0]!.id;
   const active = activeStore(f).econ;
