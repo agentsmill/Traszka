@@ -326,6 +326,7 @@ describe('terminateStore', () => {
     expect(terminate(g, 2, out)).toEqual({ ok: true });
     expect(st2.notice).not.toBeNull();
     refused(g, 2, 'store');   // już wypowiedziany
+    refused(g, 1, 'single');  // drugi sklep ma wypowiedzenie, więc #1 byłby ostatnim
     g.stores[0]!.closed = true;
     refused(g, 1, 'store');   // zamknięty
   });

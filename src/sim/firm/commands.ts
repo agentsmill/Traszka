@@ -204,13 +204,15 @@ export function switchStore(f: FirmState, storeId: number): FirmCommandResult {
 
 /**
  * Wypowiedzenie umowy sklepu przez gracza (§13.2): sklep działa do końca następnego miesiąca, potem rozliczenie końcowe (`closeStore`).
- * Przy jednym otwartym sklepie nie ma czego wypowiadać (`single`); sklep nieznany, zamknięty albo już wypowiedziany to `store`.
+ * Bez innego otwartego sklepu bez wypowiedzenia nie ma czego wypowiadać (`single`); sklep nieznany, zamknięty albo już wypowiedziany
+ * to `store`.
  */
 function terminateStore(f: FirmState, storeId: number, out: FirmStepOut): FirmCommandResult {
   if (f.over !== null || activeStore(f).econ.gameOver) return refuse('over');
   const st = f.stores.find((s) => s.id === storeId);
   if (!st || st.closed) return refuse('store');
-  if (openStores(f).length < 2) return refuse('single');
+  // musi zostać choć jeden otwarty sklep bez wypowiedzenia: dwa wypowiedzenia naraz kończyłyby grę rozliczeniem, którego §13.4 nie zna
+  if (!openStores(f).some((s) => s.id !== storeId && s.notice === null)) return refuse('single');
   if (st.notice !== null) return refuse('store');
   const endDay = noticeEndDay(dayOf(activeStore(f).econ.minute));
   st.notice = { endDay };
