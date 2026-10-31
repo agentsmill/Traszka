@@ -239,7 +239,7 @@ describe('odtwarzanie biegu', () => {
     expect(remonts.filter((n) => n >= 1).length).toBeGreaterThanOrEqual(3);
     expect(COMMAND_TYPES.filter((t) => !seen.has(t))).toEqual([]);
     expect(seen.has('nuke')).toBe(true);
-  }, TIMEOUT);
+  }, REPLAY_TIMEOUT);
 
   it('odtworzenie do minuty pośredniej = stan żywej gry w tej minucie', () => {
     // południe dni 10, 30 i 60: pełna godzina, więc bot często kupuje właśnie w tej minucie (polecenia minuty M wchodzą przed stopem w M)
@@ -258,7 +258,7 @@ describe('odtwarzanie biegu', () => {
     }
     expect(checked).toBeGreaterThanOrEqual(12);
     expect(withCommands).toBeGreaterThanOrEqual(3);
-  }, REPLAY_TIMEOUT);
+  }, TIMEOUT);
 
   it('dziennik bez odpowiedzi na kartę odtwarza się do końca: karty dostają odpowiedź zaznaczoną z góry', () => {
     const seed = SEEDS[2]!;
