@@ -200,6 +200,8 @@ export function simRules(sub: (pl: string) => string): Rule[] {
       re: /^Adaptacja lokalu: ul\. (.+) (\d+)$/,
       en: (street, number) => `Premises fit-out: ${number} ${street} St.`,
     },
+    // --- firm/closure.ts: odmowa rat w okresie wypowiedzenia ---
+    { pl: 'Centrala nie finansuje rat placówki w okresie wypowiedzenia.', en: 'Head Office doesn’t finance the shop’s instalments during the notice period.' },
     // --- commands.ts, cards.ts, fatigue.ts, staff.ts, franchisee.ts ---
     { pl: 'Centrala nie przyjmuje zwrotów: każda paleta zostaje w sklepie.', en: 'Head Office doesn’t accept returns: every pallet stays in the shop.' },
     { pl: 'Najpierw karta na biurku.', en: 'Deal with the card on your desk first.' },

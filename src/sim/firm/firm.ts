@@ -13,6 +13,7 @@ import { computeStoreInfo, type StoreInfo } from '@/sim/economy/storeInfo';
 import { visibleCards } from '@/sim/economy/tycoon/cards';
 import { layoutFor } from '@/sim/store/layoutFor';
 import type { StoreLayout } from '@/sim/store/types';
+import { NOTICE_NO_CREDIT, closeDueStores, endedByTrust } from './closure';
 import { grantPartnerIfDue, openDueBuilds } from './commands';
 import { INBOX_MAX, type FirmState, type FirmStepOut, type FirmStore } from './types';
 
@@ -166,7 +167,8 @@ function deputy(f: FirmState, st: FirmStore, events: EconEvent[], out: FirmStepO
  * 2. sklepy po `id`: zastępca w tle, potem krok na portfelu osoby;
  * 3. zdarzenia: aktywnego bez zmian, tła z ważnością;
  * 4. debet całej gotówki raz po minucie wszystkich sklepów (§11.4), od dwóch sklepów;
- * 5. (Zadanie 6) tu wchodzą zamknięcia sklepów; status Partnera po `month` sklepu startowego;
+ * 5. zamknięcia sklepów (zaufanie 0 przy zamknięciu miesiąca, koniec wypowiedzenia; nie po końcu gry z debetu), potem status Partnera
+ *    po `month` sklepu startowego;
  * 6. raport sieci przy zamknięciu miesiąca w kilku sklepach;
  * 7. pierwszy remanent któregokolwiek sklepu to wiedza osoby;
  * 8. portfel do kas wszystkich sklepów.
@@ -187,9 +189,12 @@ export function stepFirmMinute(f: FirmState, out: FirmStepOut): void {
     stepped.push({ st, events });
   }
 
+  // zaufanie 0 przy zamknięciu miesiąca, gdy inny sklep gra dalej: sklep zamknie krok 5, więc jego `gameover` nie idzie do gracza
+  const survivor = openStores(f).some((s) => !s.econ.gameOver);
   for (const { st, events } of stepped) {
-    if (st.id === f.activeId) out.active.push(...events);
-    else for (const event of events) out.background.push({ storeId: st.id, event, important: IMPORTANT.includes(event.kind) });
+    const shown = survivor && endedByTrust(st, events) ? events.filter((e) => e.kind !== 'gameover') : events;
+    if (st.id === f.activeId) out.active.push(...shown);
+    else for (const event of shown) out.background.push({ storeId: st.id, event, important: IMPORTANT.includes(event.kind) });
   }
 
   if (openStores(f).length >= 2) {
@@ -202,7 +207,8 @@ export function stepFirmMinute(f: FirmState, out: FirmStepOut): void {
     }
   }
 
-  // 5. (Zadanie 6): zamknięcia sklepów
+  // 5. zamknięcia sklepów; zamknięcie ostatniego sklepu kończy grę (`over = 'closed'`) jak dziś, bez rozliczenia
+  if (f.over === null) closeDueStores(f, stepped, out);
   if (stepped.some(({ st, events }) => st.id === 1 && events.some((e) => e.kind === 'month'))) grantPartnerIfDue(f, out);
 
   const months = stepped.flatMap(({ st, events }) => events.filter((e) => e.kind === 'month' && e.report).map((e) => ({ id: st.id, report: e.report! })));
@@ -252,6 +258,10 @@ export function advanceFirm(f: FirmState, clock: EconClock, seconds: number, out
  */
 export function applyStoreCommand(f: FirmState, cmd: Command): CommandOutcome {
   const st = activeStore(f);
+  // okres wypowiedzenia (§13.2): Centrala nie finansuje nowych rat tego sklepu; zakup za gotówkę przechodzi jak zawsze
+  if (st.notice !== null && typeof cmd === 'object' && cmd !== null && (cmd as { raty?: unknown }).raty === true) {
+    return { result: { ok: false, text: NOTICE_NO_CREDIT }, events: [], layoutChanged: false };
+  }
   const before = f.person.wallet;
   load(f, st);
   const outcome = applyCommand(st.econ, st.info, cmd);

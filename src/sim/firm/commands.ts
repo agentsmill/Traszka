@@ -7,21 +7,24 @@ import { installmentLimit, planFor } from '@/sim/economy/franchisee';
 import { TRUST } from '@/sim/economy/tycoon/trust';
 import { layoutFor } from '@/sim/store/layoutFor';
 import { takeoverSide } from '@/sim/store/takeover';
+import { noticeEndDay } from './closure';
 import { activeStore, openStoreAt, openStores, syncWallet } from './firm';
 import { MAX_STORES, type FirmRefusal, type FirmState, type FirmStepOut, type FirmStore } from './types';
 
 /*
- * Polecenia firmy (spec §10, §12): status Partnera Strategicznego, wynajem lokalu z pakietem otwarcia (gotówka albo 12 rat), budowa,
- * otwarcie sklepu o `OPEN_FROM` w dniu odbioru i przełączanie aktywnego sklepu. To osobny typ od `Command` ze sklepu: `Command`,
- * `COMMAND_TYPES` i `AFTER` się nie zmieniają, a pola zostają płaskie. Polskich zdań stąd nie ma: zdarzenia i odmowy to identyfikatory
- * i parametry, tekst składa interfejs (wyjątek: etykieta raty „Adaptacja lokalu: ul. …”, bo żyje w `EconomyState` jak każda rata).
+ * Polecenia firmy (spec §10, §12, §13): status Partnera Strategicznego, wynajem lokalu z pakietem otwarcia (gotówka albo 12 rat), budowa,
+ * otwarcie sklepu o `OPEN_FROM` w dniu odbioru, przełączanie aktywnego sklepu i wypowiedzenie umowy sklepu. To osobny typ od `Command`
+ * ze sklepu: `Command`, `COMMAND_TYPES` i `AFTER` się nie zmieniają, a pola zostają płaskie. Polskich zdań stąd nie ma: zdarzenia
+ * i odmowy to identyfikatory i parametry, tekst składa interfejs (wyjątek: etykieta raty „Adaptacja lokalu: ul. …”, bo żyje
+ * w `EconomyState` jak każda rata).
  */
 
 export type FirmCommand =
   | { type: 'rentLot'; lotId: number; pay: 'gotowka' | 'raty' }
-  | { type: 'switchStore'; storeId: number };   // Zadanie 6 dokłada terminateStore
+  | { type: 'switchStore'; storeId: number }
+  | { type: 'terminateStore'; storeId: number };
 
-export const FIRM_COMMAND_TYPES: readonly FirmCommand['type'][] = ['rentLot', 'switchStore'];
+export const FIRM_COMMAND_TYPES: readonly FirmCommand['type'][] = ['rentLot', 'switchStore', 'terminateStore'];
 
 const PAYS: readonly string[] = ['gotowka', 'raty'];
 const isInt = (x: unknown): x is number => typeof x === 'number' && Number.isInteger(x);
@@ -31,6 +34,7 @@ type Fields = Record<string, unknown>;
 const VALID = {
   rentLot: (c) => isInt(c.lotId) && typeof c.pay === 'string' && PAYS.includes(c.pay),
   switchStore: (c) => isInt(c.storeId),
+  terminateStore: (c) => isInt(c.storeId),
 } satisfies Record<FirmCommand['type'], (c: Fields) => boolean>;
 
 /** Czy `x` ma kształt polecenia firmy. Zbędne klucze są dozwolone; `Object.hasOwn`, bo `in` przepuszczałby `toString` i `__proto__`. */
@@ -186,13 +190,31 @@ export function openDueBuilds(f: FirmState, out: FirmStepOut): void {
 // --- Przełączanie ------------------------------------------------------------------------------------------------
 
 /** Natychmiastowe, także w pauzie i przy karcie. Siły franczyzobiorcy idą za nim: nowy aktywny sklep dostaje kopię zmęczenia poprzedniego. */
-function switchStore(f: FirmState, storeId: number): FirmCommandResult {
+export function switchStore(f: FirmState, storeId: number): FirmCommandResult {
   if (f.over !== null) return refuse('over');
   const to = f.stores.find((s) => s.id === storeId);
   if (!to || to.closed) return refuse('store');
   if (to.id === f.activeId) return { ok: true };
   to.econ.tycoon.fatigue = structuredClone(activeStore(f).econ.tycoon.fatigue);
   f.activeId = to.id;
+  return { ok: true };
+}
+
+// --- Wypowiedzenie -----------------------------------------------------------------------------------------------
+
+/**
+ * Wypowiedzenie umowy sklepu przez gracza (§13.2): sklep działa do końca następnego miesiąca, potem rozliczenie końcowe (`closeStore`).
+ * Przy jednym otwartym sklepie nie ma czego wypowiadać (`single`); sklep nieznany, zamknięty albo już wypowiedziany to `store`.
+ */
+function terminateStore(f: FirmState, storeId: number, out: FirmStepOut): FirmCommandResult {
+  if (f.over !== null || activeStore(f).econ.gameOver) return refuse('over');
+  const st = f.stores.find((s) => s.id === storeId);
+  if (!st || st.closed) return refuse('store');
+  if (openStores(f).length < 2) return refuse('single');
+  if (st.notice !== null) return refuse('store');
+  const endDay = noticeEndDay(dayOf(activeStore(f).econ.minute));
+  st.notice = { endDay };
+  out.firm.push({ kind: 'notice', storeId, params: { endDay } });
   return { ok: true };
 }
 
@@ -207,6 +229,7 @@ export function applyFirmCommand(f: FirmState, cmd: FirmCommand, out: FirmStepOu
   switch (c.type) {
     case 'rentLot': return rentLot(f, c.lotId, c.pay, out);
     case 'switchStore': return switchStore(f, c.storeId);
+    case 'terminateStore': return terminateStore(f, c.storeId, out);
     default: {
       const unreachable: never = c;
       void unreachable;

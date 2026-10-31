@@ -673,14 +673,15 @@ describe('lotState', () => {
 // --- Kształt poleceń --------------------------------------------------------------------------------------------------
 
 describe('FirmCommand', () => {
-  it('FIRM_COMMAND_TYPES to rentLot i switchStore', () => {
-    expect([...FIRM_COMMAND_TYPES]).toEqual(['rentLot', 'switchStore']);
+  it('FIRM_COMMAND_TYPES to rentLot, switchStore i terminateStore', () => {
+    expect([...FIRM_COMMAND_TYPES]).toEqual(['rentLot', 'switchStore', 'terminateStore']);
   });
 
   it('isFirmCommand: poprawne kształty przechodzą', () => {
     expect(isFirmCommand({ type: 'rentLot', lotId: 12, pay: 'gotowka' })).toBe(true);
     expect(isFirmCommand({ type: 'rentLot', lotId: 0, pay: 'raty', extra: 1 })).toBe(true);
     expect(isFirmCommand({ type: 'switchStore', storeId: 2 })).toBe(true);
+    expect(isFirmCommand({ type: 'terminateStore', storeId: 2 })).toBe(true);
   });
 
   it.each([
@@ -689,6 +690,7 @@ describe('FirmCommand', () => {
     { type: 'rentLot', lotId: 1.5, pay: 'gotowka' }, { type: 'rentLot', lotId: '1', pay: 'gotowka' }, { type: 'rentLot', lotId: Number.NaN, pay: 'gotowka' },
     { type: 'rentLot', lotId: 1, pay: 'karta' }, { type: 'rentLot', lotId: 1, pay: true }, { type: 'rentLot', lotId: 1, pay: ['raty'] },
     { type: 'switchStore' }, { type: 'switchStore', storeId: '2' }, { type: 'switchStore', storeId: 2.5 }, { type: 'switchStore', storeId: null },
+    { type: 'terminateStore' }, { type: 'terminateStore', storeId: '2' }, { type: 'terminateStore', storeId: 2.5 }, { type: 'terminateStore', storeId: null },
   ])('isFirmCommand: %j nie przechodzi', (x) => {
     expect(isFirmCommand(x)).toBe(false);
   });
