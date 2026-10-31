@@ -354,7 +354,9 @@ export function createSceneHost(deps: SceneDeps): SceneHost {
       throw error;
     }
 
-    void buildStreet(layout, seed).then((built) => {
+    // poziom remontu z ekonomii: od niego zależy kartka „DO WYNAJĘCIA” u sąsiada i to, ile lokalu obok sklep już zajął
+    // (po remoncie `load` buduje ulicę od nowa, a wczytany zapis z remontem dostaje właściwy stan od razu)
+    void buildStreet(layout, seed, undefined, session ? session.econ.remontLevel : 0).then((built) => {
       if (mine !== generation) { built.dispose(); return; }
       current.street = built;
       built.setBuildingCutaway(!exterior, ctx.rig.yawIndex);

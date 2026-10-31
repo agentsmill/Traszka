@@ -16,7 +16,7 @@ import { createFacadeAtlas, type AtlasCellName } from './facadeAtlas';
 /** Po jednym seedzie na rodzaj lokalu; `d` to kamienica narożna z przecznicą po prawej, `kiełbasa-12` z przecznicą po lewej. */
 const SEEDS: Record<LotKind, string> = { blok: 'kiełbasa-42', kamienica: 'kiełbasa-12', pawilon: 'traszka-1' };
 const KINDS = Object.keys(SEEDS) as LotKind[];
-const CELLS: AtlasCellName[] = ['okno', 'oknoGasne', 'loggia', 'szewPlyty', 'tynk', 'witryna', 'brama', 'gzyms', 'mural', 'muralSzop', 'podloga'];
+const CELLS: AtlasCellName[] = ['okno', 'oknoGasne', 'loggia', 'szewPlyty', 'tynk', 'witryna', 'witrynaWynajem', 'brama', 'gzyms', 'mural', 'muralSzop', 'podloga'];
 
 /** Loader, który zawsze zawodzi: w Node nie ma sieci ani WebGL, a ulica ma wtedy dać same grupy rekwizytów (ruling R5). */
 const failing = (): Promise<GLTF> => Promise.reject(new Error('brak sieci'));

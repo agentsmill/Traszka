@@ -1,5 +1,7 @@
 import { BufferGeometry, Color, Float32BufferAttribute, Group, Matrix4, Mesh, MeshStandardMaterial } from 'three';
 import { createRng, subSeed, type Rng } from '@/sim/rng';
+import { REMONTS } from '@/sim/economy/upgrades';
+import { pickLot } from '@/sim/store/lots';
 import { FRONT_WALL_Y, type LotKind, type StoreLayout } from '@/sim/store/types';
 import { CELL_SIZE_M } from '@/sim/grid';
 import { PALETTE } from '@/render/style';
@@ -14,6 +16,9 @@ import type { AtlasCellName, FacadeAtlas } from './facadeAtlas';
  *
  * Układ: wiersz budynków wzdłuż ulicy (ściana frontowa na linii frontu sklepu), sklep w parterze środkowego budynku.
  * Lokal narożny (`lot.corner`) ma po stronie drugiej witryny przecznicę zamiast sąsiada.
+ *
+ * Remont „dokupienie lokalu obok” poszerza sklep o lokal sąsiada: sąsiad po stronie przejęcia (patrz `planRow`) jest o tyle
+ * węższy, o ile urósł sklep, a zanim sklep go przejmie (remonty 0–2), w jego witrynie przy granicy wisi kartka „DO WYNAJĘCIA”.
  */
 
 export type V3 = [number, number, number];
@@ -181,6 +186,13 @@ export interface VolumeSpec {
    * sąsiad zostaje w pełnej wysokości, więc ta ściana jest odsłonięta.
    */
   mural: 'mural' | 'muralSzop' | null;
+  /**
+   * Sąsiad po stronie przejęcia, którego lokal sklep jeszcze nie zajął: w witrynie parteru przy granicy ze sklepem wisi
+   * kartka „DO WYNAJĘCIA” (komórka 'witrynaWynajem'). Tylko sąsiedzi; bryła nad sklepem i brama jej nie mają.
+   */
+  rentSign: boolean;
+  /** Koniec frontu sąsiada zwrócony ku sklepowi (`x1` dla sąsiada z lewej, `x0` z prawej); null dla bryły nad sklepem i bramy. */
+  towardStore: 'x0' | 'x1' | null;
 }
 
 const PARAPET_H = 0.5;
@@ -244,11 +256,28 @@ function upperFloors(c: Ctx, s: VolumeSpec, f: Face, fromFloor: number, loggias:
   }
 }
 
+/** Przęsło frontu z wejściem do klatki (kamienica i blok mające ich kilka); pawilon ma same witryny. */
+const entranceBay = (s: VolumeSpec, n: number): number => (n > 1 && s.style !== 'pawilon' ? Math.floor(n / 2) : -1);
+
+/**
+ * Przęsło frontu z kartką „DO WYNAJĘCIA”: najbliższe sklepowi, a jeśli to wejście do klatki, to najbliższa witryna.
+ * Front biegnie od `x1` ku `x0`, więc przęsło 0 stoi przy `x1`. −1, gdy sąsiad kartki nie ma.
+ */
+function rentBay(s: VolumeSpec, n: number): number {
+  if (!s.rentSign || s.towardStore === null) return -1;
+  for (let k = 0; k < n; k++) {
+    const i = s.towardStore === 'x1' ? k : n - 1 - k;
+    if (i !== entranceBay(s, n)) return i;
+  }
+  return -1;
+}
+
 /** Parter budynku obok sklepu: witryny z wejściem, brama (kamienica) albo gołe płyty na bokach i z tyłu. */
 function groundFloor(c: Ctx, s: VolumeSpec, f: Face, front: boolean): void {
   const panel = c.cell(s.style === 'blok' ? 'szewPlyty' : 'tynk');
   const n = bayCount(f.length, s.gate ? f.length : 2.9);
   const bw = f.length / n;
+  const rent = front ? rentBay(s, n) : -1;
   for (let i = 0; i < n; i++) {
     const s0 = i * bw;
     const s1 = s0 + bw;
@@ -262,9 +291,9 @@ function groundFloor(c: Ctx, s: VolumeSpec, f: Face, front: boolean): void {
       c.b.faceQuad(f, mid - 1.2, mid + 1.2, 0, 3.0, 0.03, c.cell('brama'), WHITE);
       continue;
     }
-    const entrance = i === Math.floor(n / 2) && n > 1 && s.style !== 'pawilon';
+    const entrance = i === entranceBay(s, n);
     if (entrance) c.b.faceQuad(f, mid - 0.8, mid + 0.8, 0, 2.5, 0.03, c.cell('brama'), WHITE);
-    else c.b.faceQuad(f, s0 + 0.2, s1 - 0.2, 0.25, 2.95, 0.03, c.cell('witryna'), WHITE);
+    else c.b.faceQuad(f, s0 + 0.2, s1 - 0.2, 0.25, 2.95, 0.03, c.cell(i === rent ? 'witrynaWynajem' : 'witryna'), WHITE);
     c.b.faceBox(f, s0 + 0.05, s1 - 0.05, 0, 0.25, 0.012, 0.08, s.accent);
     if (!entrance && c.rng.chance(0.5)) c.b.faceRBox(f, s0 + 0.15, s1 - 0.15, 3.0, 3.18, 0.012, 0.85, s.accent, 0.05, 2);
   }
@@ -444,6 +473,8 @@ const STYLE_RANGES: Record<LotKind, {
   pawilon: { own: [1, 1], neighbour: [1, 1], floorH: 0, groundH: 3.4, width: [7, 10] },
 };
 const GATE_W = 3.2;
+/** Najwęższy sąsiad po stronie przejęcia (m): zjedzony lokal nie znika, bo na ulicy ma zostać budynek. */
+export const MIN_TAKEN_NEIGHBOUR_W = 4;
 
 function pickColors(style: LotKind, rng: Rng, taken: string[]): [string, string] {
   const pool = style === 'blok' ? STREET.blokPastel : STREET.kamienicaPlaster;
@@ -454,10 +485,34 @@ function pickColors(style: LotKind, rng: Rng, taken: string[]): [string, string]
 }
 
 /**
+ * O ile metrów remonty poszerzyły sklep względem układu z poziomu 0 (lokal sąsiada, który sklep zajął). Układ bazowy to
+ * `pickLot(seed)`, a `layoutFor` dokłada do jego `interiorWidth` kratki remontu, więc różnica szerokości obrysu
+ * (`storeOuter`) to dokładnie różnica kratek razy `CELL_SIZE_M`. Na poziomie 0 jest 0.
+ */
+export function grownWidth(layout: Pick<StoreLayout, 'width'>, seed: string): number {
+  return Math.max(0, layout.width - (pickLot(seed).interiorWidth + 2)) * CELL_SIZE_M;
+}
+
+/**
+ * Strona, po której sklep zajmuje lokal sąsiada, albo null. Kamienica nienarożna: przeciwna do bramy. Kamienica narożna:
+ * brak, bo po jednej stronie jest brama, a po drugiej przecznica. Blok i pawilon: z osobnego strumienia losowego, żeby nie
+ * przesunąć żadnego losowania w strumieniu 'budynki'.
+ */
+function takenSideOf(kind: LotKind, corner: 'minX' | 'maxX' | null, gateSide: 'minX' | 'maxX' | null, seed: string): 'minX' | 'maxX' | null {
+  if (corner !== null) return null;
+  if (kind === 'kamienica') return gateSide === 'minX' ? 'maxX' : 'minX';
+  return createRng(subSeed(subSeed(seed, 'street'), 'przejecie')).chance(0.5) ? 'minX' : 'maxX';
+}
+
+/**
  * Plan wiersza: bryła nad sklepem (i brama kamienicy), potem sąsiedzi po obu stronach. Pierwsza lista to to, co należy
  * do `building:<kind>`, druga to sąsiedzi (`neighbour:<i>`).
+ *
+ * Sklep poszerzony remontem zajmuje lokal sąsiada po stronie przejęcia (`takenSideOf`): ten sąsiad ma wylosowaną szerokość
+ * pomniejszoną o przyrost sklepu (nie mniej niż `MIN_TAKEN_NEIGHBOUR_W`), reszta losowań jest jak bez remontu. Dopóki
+ * zostaje jeszcze następny remont (`remontLevel` < liczba remontów), w jego witrynie przy sklepie wisi kartka „DO WYNAJĘCIA”.
  */
-export function planRow(layout: StoreLayout, seed: string): { own: VolumeSpec[]; neighbours: VolumeSpec[] } {
+export function planRow(layout: StoreLayout, seed: string, remontLevel = 0): { own: VolumeSpec[]; neighbours: VolumeSpec[] } {
   const rng = createRng(subSeed(subSeed(seed, 'street'), 'budynki'));
   const o = storeOuter(layout);
   const kind = layout.lot.kind;
@@ -469,7 +524,8 @@ export function planRow(layout: StoreLayout, seed: string): { own: VolumeSpec[];
     taken.push(colors[0]);
     return {
       style, x0, x1, z0: o.z0, z1: o.z1, floors, groundH: r.groundH, floorH: r.floorH,
-      main: colors[0], accent: colors[1], overStore: false, gate: false, coverMin: 0, coverMax: 0, mural: null, ...extra,
+      main: colors[0], accent: colors[1], overStore: false, gate: false, coverMin: 0, coverMax: 0, mural: null,
+      rentSign: false, towardStore: null, ...extra,
     };
   };
   const between = (range: [number, number]): number => rng.int(range[0], range[1] + 1);
@@ -478,22 +534,29 @@ export function planRow(layout: StoreLayout, seed: string): { own: VolumeSpec[];
   const own: VolumeSpec[] = [store];
   let lo = o.x0;
   let hi = o.x1;
+  let gateSide: 'minX' | 'maxX' | null = null;
   if (kind === 'kamienica') {
-    const gateSide = corner === 'minX' ? 'maxX' : corner === 'maxX' ? 'minX' : rng.chance(0.5) ? 'minX' : 'maxX';
+    gateSide = corner === 'minX' ? 'maxX' : corner === 'maxX' ? 'minX' : rng.chance(0.5) ? 'minX' : 'maxX';
     const gate = mk('kamienica', gateSide === 'minX' ? o.x0 - GATE_W : o.x1, gateSide === 'minX' ? o.x0 : o.x1 + GATE_W,
       store.floors, { gate: true, main: store.main, accent: store.accent });
     own.push(gate);
     if (gateSide === 'minX') lo = gate.x0; else hi = gate.x1;
   }
 
+  const takeover = takenSideOf(kind, corner, gateSide, seed);
+  const grown = grownWidth(layout, seed);
   const neighbours: VolumeSpec[] = [];
   for (const side of ['minX', 'maxX'] as const) {
     const gap = corner === side ? SIDE_STREET.total : 0;
     const style: LotKind = kind === 'pawilon' ? (rng.chance(0.6) ? 'pawilon' : 'blok') : kind;
     const r = STYLE_RANGES[style];
-    const width = rng.range(r.width[0], r.width[1]);
+    const drawn = rng.range(r.width[0], r.width[1]);
     const floors = between(r.neighbour);
-    neighbours.push(side === 'minX' ? mk(style, lo - gap - width, lo - gap, floors) : mk(style, hi + gap, hi + gap + width, floors));
+    // wszystkie losowania są jak bez remontu; po wylosowaniu sąsiad po stronie przejęcia oddaje sklepowi `grown` metrów
+    const eaten = side === takeover;
+    const width = eaten ? Math.max(drawn - grown, MIN_TAKEN_NEIGHBOUR_W) : drawn;
+    const extra: Partial<VolumeSpec> = { rentSign: eaten && remontLevel < REMONTS.length, towardStore: side === 'minX' ? 'x1' : 'x0' };
+    neighbours.push(side === 'minX' ? mk(style, lo - gap - width, lo - gap, floors, extra) : mk(style, hi + gap, hi + gap + width, floors, extra));
   }
 
   // murale na ślepych ścianach od strony sklepu: reklama Centrali i konkurencji, kolejność z osobnego strumienia,

@@ -56,6 +56,10 @@ export const EN_RENDER: Record<string, string> = {
   'TRASZKA · ZAWSZE BLISKO': 'TRASZKA · ALWAYS NEARBY',
   'OTWARTE, GDY TRASZKA ŚPI': 'OPEN WHILE TRASZKA SLEEPS',
   '* Traszka nie śpi. Sprawdzaliśmy.': '* Traszka never sleeps. We checked.',
+  // kartka w witrynie lokalu do wynajęcia obok sklepu (facadeAtlas.ts: komórka 'witrynaWynajem'): „DO” nad „WYNAJĘCIA”, po angielsku „TO” nad „LET”
+  'DO': 'TO',
+  'WYNAJĘCIA': 'LET',
+  'pytać w Centrali': 'ask Head Office',
   // tabliczki przy meblach (plateTexture) i nadstawki kategorii (CATEGORY_LABEL)
   'SAMOOBSŁUGA': 'SELF-CHECKOUT',
   'TRASZDOG 4,99': 'TRASZDOG 4.99',

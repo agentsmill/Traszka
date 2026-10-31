@@ -501,12 +501,16 @@ function poolTexture(): Texture {
  * Buduje ulicę wokół sklepu. Rekwizyty z modeli (drzewa, latarnie, dostawczak) to nazwane grupy `prop:<rodzaj>:<i>`
  * ustawione z seeda; model dochodzi, gdy `load` go zwróci. Gdy wczytanie się nie uda, grupa zostaje pusta,
  * a ulica loguje jedno ostrzeżenie. Losowość: wyłącznie `createRng(subSeed(seed, 'street'))` i jego strumienie pochodne.
+ * `remontLevel` (0 do `REMONTS.length`) to poziom remontu, dla którego jest `layout`: od niego zależy, czy lokal sąsiada
+ * czeka jeszcze z kartką „DO WYNAJĘCIA” (patrz `planRow`). Po remoncie ulicę buduje się od nowa z nowym poziomem.
  */
-export async function buildStreet(layout: StoreLayout, seed: string, load: (url: string) => Promise<GLTF> = loadGLB): Promise<StreetView> {
+export async function buildStreet(
+  layout: StoreLayout, seed: string, load: (url: string) => Promise<GLTF> = loadGLB, remontLevel = 0,
+): Promise<StreetView> {
   const street = subSeed(seed, 'street');
   const o = storeOuter(layout);
   const corner = cornerSide(layout);
-  const plan = planRow(layout, seed);
+  const plan = planRow(layout, seed, remontLevel);
   const ownMin = Math.min(...plan.own.map((v) => v.x0));
   const ownMax = Math.max(...plan.own.map((v) => v.x1));
   const zr0 = o.zs - CURB_W;

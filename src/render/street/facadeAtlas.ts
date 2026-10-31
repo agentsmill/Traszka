@@ -5,7 +5,7 @@ import { cachedTexture, canvasTexture, font } from '@/render/store/parts';
 import { drawNewt } from '@/render/store/signTexture';
 
 /**
- * Atlas elewacji (1024×1024): jedna tekstura koloru i jedna emissive dla wszystkich budynków ulicy, więc budynki
+ * Atlas elewacji (1024×1280): jedna tekstura koloru i jedna emissive dla wszystkich budynków ulicy, więc budynki
  * to jedna siatka z UV w tym atlasie (jeden draw call na budynek). Komórki są prostokątami o różnych proporcjach.
  *
  * Tekstury są neutralne (kremowe), żeby kolor wierzchołków (pastele z PALETTE.street) mnożył się z nimi jak farba:
@@ -17,7 +17,7 @@ import { drawNewt } from '@/render/store/signTexture';
  * świecenia), nie kolorem powierzchni, więc czerń i szarości w niej nie łamią zasady „bez czerni i szarości” z przewodnika.
  */
 
-export type AtlasCellName = 'okno' | 'oknoGasne' | 'loggia' | 'szewPlyty' | 'tynk' | 'witryna' | 'brama' | 'gzyms'
+export type AtlasCellName = 'okno' | 'oknoGasne' | 'loggia' | 'szewPlyty' | 'tynk' | 'witryna' | 'witrynaWynajem' | 'brama' | 'gzyms'
   | 'mural' | 'muralSzop' | 'podloga';
 
 export interface FacadeAtlas {
@@ -27,7 +27,9 @@ export interface FacadeAtlas {
   cell(name: AtlasCellName): [number, number, number, number];
 }
 
-const SIZE = 1024;
+const WIDTH = 1024;
+/** Cztery pierwsze rzędy (y < 1024) są zapełnione, więc komórki dołożone później leżą w dolnym rzędzie. */
+const HEIGHT = 1280;
 /** Margines (px) wokół komórki, który nie wchodzi do UV, żeby mipmapy nie mieszały sąsiadów. */
 const GUTTER = 6;
 
@@ -45,6 +47,7 @@ const LAYOUT: Record<AtlasCellName, Rect> = {
   podloga: { x: 768, y: 320, w: 256, h: 256 },
   mural: { x: 0, y: 512, w: 512, h: 512 },
   muralSzop: { x: 512, y: 576, w: 512, h: 448 },
+  witrynaWynajem: { x: 0, y: 1024, w: 256, h: 256 },
 };
 
 const CELL_NAMES = Object.keys(LAYOUT) as AtlasCellName[];
@@ -190,6 +193,77 @@ function drawFloorBoards(ctx: Ctx, w: number, h: number): void {
   }
 }
 
+/** Witryna sklepu: ciemna rama, duża szyba, pas szyldu u góry, cokolik. */
+function drawShopWindow(ctx: Ctx, w: number, h: number): void {
+  rect(ctx, DARK_FRAME, 0, 0, w, h);
+  const g = ctx.createLinearGradient(0, 0, 0, h);
+  g.addColorStop(0, SKY_LIGHT);
+  g.addColorStop(1, SKY_DEEP);
+  ctx.fillStyle = g;
+  ctx.fillRect(14, 54, w - 28, h - 80);
+  rect(ctx, plaster[1], 14, 14, w - 28, 34);
+  rect(ctx, FRAME, 14, 14, w - 28, 6, 0.8);
+  rect(ctx, FRAME, w / 2 - 5, 54, 10, h - 80);
+  rect(ctx, FRAME, 14, h * 0.6, w - 28, 8, 0.7);
+  rect(ctx, FRAME, 28, 70, 50, 14, 0.35);
+}
+
+/** Maska emissive witryny: szyba świeci, słupek zostaje ciemny. */
+function drawShopWindowGlow(ctx: Ctx, w: number, h: number): void {
+  rect(ctx, '#000000', 0, 0, w, h);
+  rect(ctx, '#808080', 14, 54, w - 28, h - 80);
+  rect(ctx, '#000000', w / 2 - 5, 54, 10, h - 80);
+}
+
+/** Napis ściśnięty w poziomie do szerokości ≤ `maxW`: wysokie, wąskie litery jak na plakacie, wyśrodkowane w (`x`, `y`). */
+function condensedText(ctx: Ctx, text: string, x: number, y: number, px: number, maxW: number, color: string): void {
+  ctx.font = font(px, '900');
+  const sx = Math.min(1, maxW / ctx.measureText(text).width);
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(sx, 1);
+  ctx.fillStyle = color;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, 0, 0);
+  ctx.restore();
+}
+
+/** Prostokąt kartki w szybie lokalu do wynajęcia (współrzędne komórki 256 × 256). */
+const RENT_POSTER = { x: 20, y: 62, w: 216, h: 160 } as const;
+
+/**
+ * Witryna lokalu do wynajęcia (sąsiad, którego lokal Traszka przejmie przy następnym remoncie): ta sama witryna co
+ * 'witryna', ale z kartką „DO WYNAJĘCIA” zasłaniającą większość szyby: żółty arkusz w czerwonej ramce, doklejony taśmą,
+ * lekko krzywo. Litery „WYNAJĘCIA” są ściśnięte w poziomie, żeby miały wysokość czytelną z domyślnego zoomu (na telefonie
+ * przęsło ma ok. 60 × 75 px), a pod spodem drobny żart o Centrali, czytelny dopiero z bliska.
+ */
+function drawRentWindow(ctx: Ctx, w: number, h: number): void {
+  drawShopWindow(ctx, w, h);
+  const { x, y, w: pw, h: ph } = RENT_POSTER;
+  const red = PALETTE.productCategory.napoje[0]!;
+  const yellow = PALETTE.productCategory.przekaski[0]!;
+  ctx.save();
+  ctx.translate(x + pw / 2, y + ph / 2);
+  ctx.rotate(-0.025);
+  ctx.translate(-(x + pw / 2), -(y + ph / 2));
+  rect(ctx, PALETTE.wall[4], x + 4, y + 6, pw, ph, 0.25);   // cień kartki na szybie
+  rect(ctx, red, x, y, pw, ph);
+  rect(ctx, yellow, x + 8, y + 8, pw - 16, ph - 16);
+  condensedText(ctx, tr('DO'), x + pw / 2, y + 36, 50, pw - 40, red);
+  condensedText(ctx, tr('WYNAJĘCIA'), x + pw / 2, y + 94, 70, pw - 30, red);
+  fitText(ctx, tr('pytać w Centrali'), x + pw / 2, y + ph - 26, 20, pw - 40, red);
+  for (const tx of [x + 10, x + pw - 38]) rect(ctx, FRAME, tx, y - 7, 28, 14, 0.85);   // taśma przy górnych rogach
+  ctx.restore();
+}
+
+/** Maska emissive lokalu do wynajęcia: pusty, więc szyba nie świeci, tylko kartka odbija światło latarni. */
+function drawRentWindowGlow(ctx: Ctx, w: number, h: number): void {
+  rect(ctx, '#000000', 0, 0, w, h);
+  const { x, y, w: pw, h: ph } = RENT_POSTER;
+  rect(ctx, '#383838', x, y, pw, ph);
+}
+
 const DIM_GLOW: DrawCell = (ctx, w, h) => rect(ctx, '#404040', 0, 0, w, h);
 
 const DRAW: Record<AtlasCellName, { color: DrawCell; glow: DrawCell | null }> = {
@@ -240,27 +314,8 @@ const DRAW: Record<AtlasCellName, { color: DrawCell; glow: DrawCell | null }> = 
     },
     glow: null,
   },
-  witryna: {
-    color: (ctx, w, h) => {
-      // witryna sklepu: ciemna rama, duża szyba, pas szyldu u góry, cokolik
-      rect(ctx, DARK_FRAME, 0, 0, w, h);
-      const g = ctx.createLinearGradient(0, 0, 0, h);
-      g.addColorStop(0, SKY_LIGHT);
-      g.addColorStop(1, SKY_DEEP);
-      ctx.fillStyle = g;
-      ctx.fillRect(14, 54, w - 28, h - 80);
-      rect(ctx, plaster[1], 14, 14, w - 28, 34);
-      rect(ctx, FRAME, 14, 14, w - 28, 6, 0.8);
-      rect(ctx, FRAME, w / 2 - 5, 54, 10, h - 80);
-      rect(ctx, FRAME, 14, h * 0.6, w - 28, 8, 0.7);
-      rect(ctx, FRAME, 28, 70, 50, 14, 0.35);
-    },
-    glow: (ctx, w, h) => {
-      rect(ctx, '#000000', 0, 0, w, h);
-      rect(ctx, '#808080', 14, 54, w - 28, h - 80);
-      rect(ctx, '#000000', w / 2 - 5, 54, 10, h - 80);
-    },
-  },
+  witryna: { color: drawShopWindow, glow: drawShopWindowGlow },
+  witrynaWynajem: { color: drawRentWindow, glow: drawRentWindowGlow },
   brama: {
     color: (ctx, w, h) => {
       // brama przejazdowa: kamienny łuk, drewniane skrzydła z deskami, ciemny prześwit w lunecie
@@ -323,18 +378,18 @@ function paintAtlas(glow: boolean): (ctx: Ctx, w: number, h: number) => void {
 }
 
 export function createFacadeAtlas(): FacadeAtlas {
-  const map = cachedTexture('facadeAtlas|map', () => canvasTexture(SIZE, SIZE, paintAtlas(false)));
-  const emissive = cachedTexture('facadeAtlas|emissive', () => canvasTexture(SIZE, SIZE, paintAtlas(true)));
+  const map = cachedTexture('facadeAtlas|map', () => canvasTexture(WIDTH, HEIGHT, paintAtlas(false)));
+  const emissive = cachedTexture('facadeAtlas|emissive', () => canvasTexture(WIDTH, HEIGHT, paintAtlas(true)));
   return {
     map,
     emissive,
     cell(name) {
       const r = LAYOUT[name];
-      const u0 = (r.x + GUTTER) / SIZE;
-      const u1 = (r.x + r.w - GUTTER) / SIZE;
+      const u0 = (r.x + GUTTER) / WIDTH;
+      const u1 = (r.x + r.w - GUTTER) / WIDTH;
       // canvas ma początek u góry, tekstura (flipY) u dołu
-      const v1 = 1 - (r.y + GUTTER) / SIZE;
-      const v0 = 1 - (r.y + r.h - GUTTER) / SIZE;
+      const v1 = 1 - (r.y + GUTTER) / HEIGHT;
+      const v0 = 1 - (r.y + r.h - GUTTER) / HEIGHT;
       return [u0, v0, u1, v1];
     },
   };
