@@ -899,6 +899,7 @@ describe('pieniądze w zapisie: LIMITS.money to straż przed przepełnieniem, a 
   });
 });
 
+// Schemat 3 to koperta firmy (`firmSave.ts`), więc najniższy schemat z przyszłości to 4.
 describe('zapis z nowszej wersji gry (schemat wyższy niż obsługiwany)', () => {
   const futureBlob = (schema: unknown): string => JSON.stringify({
     schema, seed: BLOK, gameVersion: '9.9.9', generatorVersion: 99, layout: { zupełnie: 'inny kształt' },
@@ -906,10 +907,9 @@ describe('zapis z nowszej wersji gry (schemat wyższy niż obsługiwany)', () =>
   });
   const put = (raw: string): string => { storage.setItem(key(BLOK), raw); return raw; };
   const versions: [string, string][] = [
-    ['schema: 3', futureBlob(3)],
     ['schema: 4', futureBlob(4)],
     ['schema: 99', futureBlob(99)],
-    ['schema: 2.5', futureBlob(2.5)],
+    ['schema: 3.5', futureBlob(3.5)],
     ['schema: 1e999 (JSON.parse daje Infinity)', '{"schema":1e999,"seed":"kiełbasa-42","econ":{}}'],
   ];
 
@@ -961,13 +961,13 @@ describe('zapis z nowszej wersji gry (schemat wyższy niż obsługiwany)', () =>
     const normal = playedSession(BLOK);
     discardSave(normal);
     expect(storage.getItem(key(BLOK))).toBeNull();
-    const raw = put(futureBlob(3));
+    const raw = put(futureBlob(4));
     discardSave(createSession(BLOK));
     expect(storage.getItem(key(BLOK))).toBe(raw);
   });
 
   it('po „zacznij od nowa” w sklepie tymczasowym świeża gra też jest tymczasowa (createSession z fresh nie zna cudzego zapisu)', () => {
-    const raw = put(futureBlob(3));
+    const raw = put(futureBlob(4));
     const first = createSession(BLOK);
     const restarted = createSession(BLOK, true, undefined, { ephemeral: first.ephemeral });
     expect(restarted.ephemeral).toBe(true);

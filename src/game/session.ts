@@ -4,6 +4,8 @@ import { sanitizeEconomy } from '@/sim/economy/sanitize';
 import { computeStoreInfo, palletPlace, type StoreInfo } from '@/sim/economy/storeInfo';
 import { REMONTS } from '@/sim/economy/upgrades';
 import type { EconClock } from '@/sim/economy/clock';
+import { activeStore } from '@/sim/firm/firm';
+import type { FirmState } from '@/sim/firm/types';
 import { isRec, whole } from '@/sim/guards';
 import type { RunRecord } from '@/sim/run';
 import { SIM_VERSION } from '@/sim/simVersion';
@@ -11,6 +13,7 @@ import { GENERATOR_VERSION } from '@/sim/store/generateStore';
 import { layoutFor } from '@/sim/store/layoutFor';
 import { sanitizeLayout } from '@/sim/store/sanitize';
 import type { StoreLayout } from '@/sim/store/types';
+import { FIRM_SAVE_SCHEMA, isNewerSave, restoreFirmFrom } from './firmSave';
 import { GAME_VERSION } from './version';
 
 /**
@@ -73,6 +76,11 @@ export interface GameSession {
    * coś spoza dziennika (nagroda powitalna, `skip`: `markOffLog`) albo dziennik przekroczył `RUN_LOG_MAX`.
    */
   run: RunLog | null;
+  /**
+   * Firma odtworzona z zapisu schematu 3 (`firmSave.ts`): wszystkie sklepy, osoba, budowy i skrzynka. Wtedy `econ`, `layout` i `info`
+   * sesji to ten sam obiekt co w aktywnym sklepie firmy. Sesja ze schematu 1 i 2 oraz nowa gra firmy tu jeszcze nie mają.
+   */
+  firm?: FirmState;
 }
 
 /**
@@ -208,13 +216,20 @@ type ReadResult =
   | { status: 'newer' }
   | { status: 'unbuildable' };
 
-/** Zapis z nowszej wersji gry: schemat wyższy niż ten, który umiemy czytać. Nie wiemy, co w nim jest, więc go nie ruszamy. */
-const isNewerSchema = (data: unknown): boolean => isRec(data) && typeof data.schema === 'number' && data.schema > SAVE_SCHEMA;
+/** Sesja z firmy odtworzonej z zapisu schematu 3: stan aktywnego sklepu, a cała firma w `firm`. */
+function sessionOfFirm(f: FirmState): GameSession {
+  const st = activeStore(f);
+  return {
+    seed: f.seed, mode: 'casual', econ: st.econ, layout: st.layout, info: st.info, clock: { acc: 0 }, layoutLevel: st.econ.remontLevel, fromSave: true,
+    loadNotice: null, retired: false, ephemeral: false, run: null, firm: f,
+  };
+}
 
 /**
  * Czyta zapis sklepu. Do kopii (`:broken`) idzie tylko to, co nie przeszło parsowania albo walidacji: takiego zapisu nie
  * naprawiamy na siłę, a wołający zaczyna nową grę. Zapis, który walidację przeszedł, a świat z niego się nie złożył
- * (generator, układ), jest dobry: zostaje na miejscu, a wołający dostaje `unbuildable`.
+ * (generator, układ), jest dobry: zostaje na miejscu, a wołający dostaje `unbuildable`. Koperta firmy (schemat 3) wraca przez
+ * `restoreFirmFrom`: sesja jest aktywnym sklepem, a cała firma leży w `session.firm`. Zapis z nowszej wersji (`isNewerSave`) zostaje nietknięty.
  */
 function readSave(seed: string, partner?: EconomyState['partner']): ReadResult {
   let raw: string | null;
@@ -226,10 +241,16 @@ function readSave(seed: string, partner?: EconomyState['partner']): ReadResult {
   if (raw === null) return { status: 'none' };
   try {
     const data = JSON.parse(raw) as unknown;
-    if (isNewerSchema(data)) return { status: 'newer' };
-    const opened = restoreSessionFrom(data, seed, partner);
-    if (opened.ok) return { status: 'ok', session: opened.session };
-    if (opened.reason === 'unbuildable') return { status: 'unbuildable' };
+    if (isNewerSave(data)) return { status: 'newer' };
+    if (isRec(data) && data.schema === FIRM_SAVE_SCHEMA) {
+      const firm = restoreFirmFrom(data, seed, partner);
+      if (firm.ok) return { status: 'ok', session: sessionOfFirm(firm.firm) };
+      if (firm.reason === 'unbuildable') return { status: 'unbuildable' };
+    } else {
+      const opened = restoreSessionFrom(data, seed, partner);
+      if (opened.ok) return { status: 'ok', session: opened.session };
+      if (opened.reason === 'unbuildable') return { status: 'unbuildable' };
+    }
   } catch (error) {
     console.error(`Zapis sklepu „${seed}” nie dał się wczytać.`, error);
   }
@@ -243,7 +264,7 @@ export type Opened = { ok: true; session: GameSession } | { ok: false; reason: '
  * zapleczu. Prawdziwy zapis zawsze pasuje do swojego układu; nie pasuje po ręcznej zmianie albo po przejściu na inny
  * układ (druga próba z seeda), i wtedy `relayout` ustawia wszystko od nowa.
  */
-function fitsStore(econ: EconomyState, info: StoreInfo): boolean {
+export function fitsStore(econ: EconomyState, info: StoreInfo): boolean {
   const eps = 1e-6;
   return econ.pallets.every((p) => palletPlace(info, p.loc, p.spot) !== null)
     && econ.equipment.every((e) => e.slot === null || info.slots.some((slot) => slot.id === e.slot))

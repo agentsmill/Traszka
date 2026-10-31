@@ -1,11 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_CASHIER_LOOK } from '@/game/cashier';
+import { firmEnvelopeOf } from '@/game/firmSave';
 import { MemoryStorage } from '@/game/memoryStorage';
 import { loadMeta, saveMeta, type Meta } from '@/game/meta';
 import { NEWER_SAVE_NOTICE, createSession, hasStoredSave, lastSavedSeed, saveSession } from '@/game/session';
 import { bootImport } from '@/game/boot';
 import { getPlayMode, setPlayMode } from '@/game/rankedRun';
 import { entrySeed } from '@/game/seeds';
+import { CITY_GENERATOR_VERSION } from '@/sim/city/types';
+import { createFirm } from '@/sim/firm/firm';
+import { freshRun } from '@/sim/run';
 import { SAVE_BUNDLE_FORMAT, SAVE_BUNDLE_VERSION, SAVE_MAX_BYTES } from '@/server/config';
 import { checkSave } from '@/server/saves';
 import {
@@ -138,6 +142,54 @@ describe('przeniesienie zapisu: wszystko, czego gra potrzebuje do wczytania', ()
     switchDevice();
     storage.failWrites = true;
     expect(importTransfer(text)).toEqual({ error: TRANSFER_ERRORS.storage });
+  });
+});
+
+describe('przeniesienie zapisu: koperta firmy (schemat 3)', () => {
+  /** Urządzenie A z zapisem zwykłej gry w schemacie 3 (firma z jednym sklepem i gotówką portfela osoby). */
+  function deviceAWithFirm(seed = 'pierogi-731') {
+    saveMeta(meta());
+    const { state, layout, info } = freshRun(seed);
+    state.cash = 98_765;
+    const firm = createFirm(seed, { econ: state, layout, info }, { ranked: false });
+    storage.setItem(`traszka:save:${seed}`, JSON.stringify(firmEnvelopeOf(firm)));
+    storage.setItem('traszka:last', seed);
+    return firm;
+  }
+
+  it('paczka niesie kopertę schematu 3 i przechodzi kontrolę serwera', () => {
+    deviceAWithFirm();
+    const text = exportTransfer()!;
+    expect((JSON.parse(text) as TransferBundle).save).toMatchObject({ schema: 3, seed: 'pierogi-731', cityGeneratorVersion: CITY_GENERATOR_VERSION });
+    expect(checkSave(text)).toEqual({ ok: true, value: text });
+  });
+
+  it('saveTransfer przyjmuje schemat 3: na drugim urządzeniu gra otwiera firmę z tym samym portfelem', () => {
+    deviceAWithFirm();
+    const text = exportTransfer()!;
+    switchDevice();
+    expect(importTransfer(text)).toEqual({ seed: 'pierogi-731' });
+    const loaded = createSession('pierogi-731');
+    expect(loaded.fromSave).toBe(true);
+    expect(loaded.loadNotice).toBeNull();
+    expect(loaded.firm?.person.wallet).toBe(98_765);
+    expect(loaded.econ.cash).toBe(98_765);
+    expect(loadMeta()).toEqual(meta());
+  });
+
+  it('saveTransfer odrzuca schemat 4 i miasto z nowszego generatora (importTransfer i stageImport): nic nie zapisane', () => {
+    deviceAWithFirm();
+    const bundle = JSON.parse(exportTransfer()!) as Record<string, Record<string, unknown>>;
+    switchDevice();
+    const before = storage.keys().sort();
+    for (const newer of [{ schema: 4 }, { cityGeneratorVersion: CITY_GENERATOR_VERSION + 1 }]) {
+      const text = JSON.stringify({ ...bundle, save: { ...bundle.save, ...newer } });
+      expect(importTransfer(text)).toEqual({ error: NEWER_SAVE_NOTICE });
+      expect(stageImport(text)).toEqual({ error: NEWER_SAVE_NOTICE });
+    }
+    expect(storage.keys().sort()).toEqual(before);
+    expect(hasStoredSave('pierogi-731')).toBe(false);
+    expect(importTransfer(JSON.stringify(bundle))).toEqual({ seed: 'pierogi-731' });   // ta sama paczka w schemacie 3 przechodzi
   });
 });
 
