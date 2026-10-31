@@ -320,7 +320,8 @@ export const GAME_UI: Dict = {
   'ryzyko {0}%: {1}': 'risk {0}%: {1}',
   'ryzyko {0}%': 'risk {0}%',
   // spend.tsx: zakupy na raty
-  'na raty: {0} × {1}': 'in instalments: {0} × {1}',
+  // przycisk ma 128 px (kolumna `.tt-buys`), więc krótko, jak w sklepowych reklamach rat; pełny opis „In instalments: …” jest w podpowiedzi
+  'na raty: {0} × {1}': '{0} × {1}/mo',
   'wolny limit rat {0} z {1} miesięcznie': 'free instalment limit {0} of {1} a month',
   'Na raty: {0} × {1}. Opłata za finansowanie {2} ({3}), razem do spłaty {4}.': 'In instalments: {0} × {1}. Financing fee {2} ({3}), {4} to repay in total.',
   'Pierwsza rata zejdzie z najbliższego przelewu. {0}': 'The first instalment comes off the next transfer. {0}',

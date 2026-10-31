@@ -305,3 +305,5 @@ export const EN_RANKS: Record<number, string> = {
 export const EN_WEEKDAY_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
 export const EN_MONTH_NAME = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November',
   'December'] as const;
+/** Skróty miesięcy do daty dnia (`dateText`: „Tue 1 Sep”): pasek gry ma na datę tyle miejsca co polskie „wt 1 września”. */
+export const EN_MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'] as const;

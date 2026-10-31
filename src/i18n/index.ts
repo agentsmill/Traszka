@@ -2,7 +2,7 @@ import { dateOfDay, formatDate, formatMonth } from '@/sim/economy/calendar';
 import { rankFor } from '@/sim/economy/progress';
 import { hintText, type ReportHint } from '@/sim/economy/tycoon/report';
 import { kpiTitle, type KpiKind } from '@/sim/economy/tycoon/kpi';
-import { EN_HINTS, EN_KPI_TITLE, EN_MONTH_NAME, EN_RANKS, EN_WEEKDAY_SHORT } from './en/content';
+import { EN_HINTS, EN_KPI_TITLE, EN_MONTH_NAME, EN_MONTH_SHORT, EN_RANKS, EN_WEEKDAY_SHORT } from './en/content';
 import { EN_PLURALS } from './en/ui';
 import { lang } from './lang';
 
@@ -14,11 +14,11 @@ import { lang } from './lang';
 export { LANGS, LANG_KEY, detectLang, initLang, isEn, lang, numberLocale, setLang, type Lang } from './lang';
 export { t, tr } from './t';
 
-/** Data dnia gry: „wt 1 września” albo „Tue 1 September”. */
+/** Data dnia gry: „wt 1 września” albo „Tue 1 Sep” (skrót miesiąca: na pasku gry data ma mało miejsca). */
 export function dateText(day: number): string {
   if (lang.value === 'pl') return formatDate(day);
   const d = dateOfDay(day);
-  return `${EN_WEEKDAY_SHORT[d.weekday]} ${d.date} ${EN_MONTH_NAME[d.month]}`;
+  return `${EN_WEEKDAY_SHORT[d.weekday]} ${d.date} ${EN_MONTH_SHORT[d.month]}`;
 }
 
 /** Miesiąc gry: „wrzesień 2026” albo „September 2026”. */
