@@ -1,8 +1,8 @@
 # Etap 4a: miasto i drugi sklep (wersja z 31.10, pod SIM 6 i rogalika)
 
-Status: **szkic do zatwierdzenia, zastępuje `2026-10-29-etap-4a-miasto-design.md`** (zatwierdzony 30.10, gałąź `claude/modest-curran-de1dae`, 5dd6f3a) · data: 2026-10-31 · baza: `main` 7e2fb66 (SIM_VERSION 6, samouczek) · plan: powstanie po odpowiedziach właściciela; stary plan `2026-10-29-etap-4a-miasto.md` jest nieaktualny · makieta ekranu: `git show 5dd6f3a:docs/superpowers/specs/2026-10-29-etap-4a-miasto-makieta.html` (układ dalej obowiązuje) · spec główny `2026-10-27-traszka-tycoon-design.md` (§5.3, §9, §10, §12, §14.7), spec SIM 6 `2026-10-30-prawdziwy-model-rozliczen-design.md`, spec samouczka `2026-10-30-samouczek-design.md`.
+Status: **zatwierdzony przez właściciela 2026-10-31 (odpowiedzi 1a, 2a, 3a, 4a), zastępuje `2026-10-29-etap-4a-miasto-design.md`** (zatwierdzony 30.10, gałąź `claude/modest-curran-de1dae`, 5dd6f3a) · data: 2026-10-31 · baza: `main` 7e2fb66 (SIM_VERSION 6, samouczek) · plan: `docs/superpowers/plans/2026-10-31-etap-4a1-miasto.md` (część 4a.1); stary plan `2026-10-29-etap-4a-miasto.md` jest nieaktualny · makieta ekranu: `git show 5dd6f3a:docs/superpowers/specs/2026-10-29-etap-4a-miasto-makieta.html` (układ dalej obowiązuje) · spec główny `2026-10-27-traszka-tycoon-design.md` (§5.3, §9, §10, §12, §14.7), spec SIM 6 `2026-10-30-prawdziwy-model-rozliczen-design.md`, spec samouczka `2026-10-30-samouczek-design.md`.
 
-Oznaczenia: **[U]** decyzja właściciela, **[C]** decyzja Claude'a do sprawdzenia przy czytaniu, **[R]** wniosek z kodu. **[P1]–[P4]**: czeka na odpowiedź właściciela (§21). Do czasu odpowiedzi projekt przyjmuje rekomendację, a miejsca, które zależą od odpowiedzi, mają to oznaczenie.
+Oznaczenia: **[U]** decyzja właściciela, **[C]** decyzja Claude'a do sprawdzenia przy czytaniu, **[R]** wniosek z kodu.
 
 ---
 
@@ -11,9 +11,9 @@ Oznaczenia: **[U]** decyzja właściciela, **[C]** decyzja Claude'a do sprawdzen
 1. **Pieniądze to dziś trzy kieszenie (SIM 6), a nie opłata na koniec miesiąca.** Stary projekt miał „raport i opłatę dla Centrali osobno dla każdego sklepu”. Opłaty już nie ma, więc każdy sklep ma swój **wyciąg od Centrali** (saldo, przelew, potrącenia, raty, remanent), a gotówka zostaje jedna (§11). Decyzja [U] o wspólnym portfelu i osobnych rozliczeniach zostaje, zmienia się tylko jej mechanika.
 2. **Czynszu za nowy lokal nie ma.** W prawdziwej sieci lokal i sprzęt daje sieć, a franczyzobiorca płaci za lokal symbolicznie (ok. 200 zł). Właściciel z tego samego powodu kazał usunąć opłatę bez źródła („Tak, urealnij”). Koszt lokalu to teraz **pakiet otwarcia**: adaptacja za gotówkę albo na raty z przelewów nowego sklepu (§10.3).
 3. **Liczby z SIM 4 są nieaktualne.** Granica debetu to −100 tys. zł, a nie −10 tys. Sklep na start ma ok. 300–350 klientów dziennie, a nie 520–560. Gotówka na start to 5000 zł, a pierwsze 3 miesiące chroni gwarancja 25 tys. zł. Ceny lokali liczę od nowa, z limitu rat nowego sklepu (§10.3).
-4. **Rogalik.** Gra idzie w cykl życia franczyzobiorcy: sklep zostaje, ludzie się zmieniają. Stan dzieli się więc na trzy warstwy: miasto z lokalami, osobę franczyzobiorcy i placówki (§14). Dzięki temu 4a i rogalik dają się zbudować w dowolnej kolejności. Co dzieje się z dodatkowymi sklepami przy upadku, rozstrzyga **[P2]**, a cel przy kilku sklepach **[P4]**.
+4. **Rogalik.** Gra idzie w cykl życia franczyzobiorcy: sklep zostaje, ludzie się zmieniają. Stan dzieli się więc na trzy warstwy: miasto z lokalami, osobę franczyzobiorcy i placówki (§14). Dzięki temu 4a i rogalik dają się zbudować w dowolnej kolejności. Przy upadku następca dostaje tylko sklep startowy, a dodatkowe sklepy wracają na mapę jako lokale „po Traszce” **[U]** (§14.2). Cel przy kilku sklepach zostaje 1 mln zł **[U]** (§14.3).
 5. **Ranking.** Właściciel akceptuje reset rankingu przy podbiciu `SIM_VERSION`. Twardy zakaz zmian w symulacji ze starego projektu łagodnieje: celem jest 4a.1 bez podbicia, a najwyżej jedno podbicie zbiorcze, jeśli okaże się czystsze (§3.1).
-6. **Zakres w dwóch częściach** zamiast całości naraz **[P1]**. 4a.1 to płaski widok miasta i jeden wynajem, czyli najwyżej dwa sklepy. 4a.2 to makieta 3D, trzeci sklep, profile godzin i karty dzielnic (§5).
+6. **Zakres w dwóch częściach** zamiast całości naraz **[U]**. 4a.1 to płaski widok miasta i jeden wynajem, czyli najwyżej dwa sklepy. 4a.2 to makieta 3D, trzeci sklep, profile godzin i karty dzielnic (§5).
 7. **Nowe ograniczenia z dzisiejszego `main`:**
    - dymki „pierwszy raz” samouczka dla miasta i drugiego sklepu (§17);
    - angielska wersja każdego nowego tekstu po scaleniu tłumaczenia (§18);
@@ -21,7 +21,7 @@ Oznaczenia: **[U]** decyzja właściciela, **[C]** decyzja Claude'a do sprawdzen
 8. **Dwie pułapki znalezione w kodzie [R]:**
    - `createEconomy` zawsze startuje 1 września, więc nowy sklep potrzebuje startu w bieżącej minucie (§10.4);
    - debet sprawdza każdy sklep po swojej minucie, więc przy wspólnej gotówce kolejność sklepów decydowałaby o bankructwie. Debet sprawdza więc firma, po minucie wszystkich sklepów (§11.4).
-9. **Zamknięcie sklepu ma rozliczenie końcowe.** Przy zamknięciu sklepu niespłacone raty i ubytki od ostatniego remanentu płaci się od razu (`outstandingDebt`). Bez tego zamknięcie przez Centralę byłoby darmową ucieczką od rat. Czy gracz może sam oddać sklep, rozstrzyga **[P3]**.
+9. **Zamknięcie sklepu ma rozliczenie końcowe.** Przy zamknięciu sklepu niespłacone raty i ubytki od ostatniego remanentu płaci się od razu (`outstandingDebt`). Bez tego zamknięcie przez Centralę byłoby darmową ucieczką od rat. Gracz może też sam wypowiedzieć umowę sklepu, z tym samym rozliczeniem końcowym **[U]** (§13.2).
 10. **Prestiż** zostaje jak w decyzji [U]: przycisk „Otwórz kolejną Traszkę” znika. Jego relację do rogalika opisuje §15.
 
 ## 1. Intencja
@@ -38,7 +38,7 @@ Ton zostaje ten z SIM 6: zła lokalizacja to „błędna decyzja z opóźnionym 
 
 ## 2. Cele, nie-cele, anty-cele
 
-**Cele 4a.1** (pierwsza część, **[P1]**)
+**Cele 4a.1** (pierwsza część, **[U]**)
 1. Miasto z seeda: kwartały, cztery dzielnice, ulice z natężeniem ruchu, lokale i statyczna konkurencja (§7).
 2. Dzielnice, które przestawiają ekonomię sklepu: ruch, koszyk, oczekiwania, kradzieże, dzień tygodnia (§8).
 3. Ekran Miasta w widoku płaskim (warstwy), z listą i kartą lokalu, także na telefonie (§9).
@@ -132,14 +132,14 @@ Z rozmowy z 29.10, zatwierdzone 30.10:
 | 1 | Widok miasta z góry z natężeniem ruchu, konkurencją i listą wolnych lokali; przy lokalu przewidywani klienci, rodzaj klienta i cena | zostaje; „cena” to pakiet otwarcia (§10.3) |
 | 2 | Droga dzielnica: zamożni klienci, wyższe oczekiwania. Tania: kradzieże i trudni klienci | zostaje |
 | 3 | Pierwszy sklep neutralny, różnice od drugiego lokalu | zostaje |
-| 4 | Zakres 4a; konkurencja, analizy, odkup i przejęcie w 4b | zostaje; 4a dzieli się na dwie części **[P1]** |
+| 4 | Zakres 4a; konkurencja, analizy, odkup i przejęcie w 4b | zostaje; 4a dzieli się na dwie części **[U]** |
 | 5 | Tryb rankingowy bez ekspansji | zostaje |
-| 6 | Wspólny portfel; raport, opłata, zaufanie i zamknięcie osobno dla sklepu; debet na portfelu; koniec gry przy ostatnim sklepie albo debecie | zostaje w duchu. „Opłata” to dziś wyciąg sklepu (§11). „Koniec gry” w rogaliku to upadek franczyzobiorcy **[P2]** |
+| 6 | Wspólny portfel; raport, opłata, zaufanie i zamknięcie osobno dla sklepu; debet na portfelu; koniec gry przy ostatnim sklepie albo debecie | zostaje w duchu. „Opłata” to dziś wyciąg sklepu (§11). „Koniec gry” w rogaliku to upadek franczyzobiorcy **[U]** |
 | 7 | Sklep w tle liczy się pełną ekonomią; ręce tylko w aktywnym | zostaje |
 | 8 | Karta w tle: zastępca od razu wybiera odpowiedź zaznaczoną z góry | zostaje (zgodne z odtwarzaniem w `replayRun` i z życzeniem z playtestu o automatycznych decyzjach) |
-| 9 | Ekran miasta „makieta + warstwy”, na telefonie domyślnie warstwa | zostaje; w 4a.1 tylko warstwa, makieta w 4a.2 **[P1]** |
+| 9 | Ekran miasta „makieta + warstwy”, na telefonie domyślnie warstwa | zostaje; w 4a.1 tylko warstwa, makieta w 4a.2 **[U]** |
 | 10 | Prestiż na poziomie miasta: przycisk „Otwórz kolejną Traszkę” znika, Punkty Partnera i dochód z sieci działają dalej | zostaje (§15) |
-| 11 | Najwyżej 3 sklepy w 4a | zostaje; w 4a.1 najwyżej 2 **[P1]** |
+| 11 | Najwyżej 3 sklepy w 4a | zostaje; w 4a.1 najwyżej 2 **[U]** |
 
 Późniejsze decyzje, które 4a musi uszanować:
 - **trzy kieszenie** (30.10);
@@ -155,7 +155,7 @@ Późniejsze decyzje, które 4a musi uszanować:
   - dymki „pierwszy raz” działają też w rankingu;
   - samouczek nie wysyła poleceń.
 
-## 5. Zakres i kolejność części **[P1]**
+## 5. Zakres i kolejność części **[U]**
 
 | Część | Co dostaje gracz | Co się buduje |
 |---|---|---|
@@ -336,7 +336,7 @@ Na botach z harnessu SIM 6 (`tests/measure/trzyKieszenie.measure.test.ts`, strat
 - Nadanie to ważne zdarzenie z „OK”, np. „Po wnikliwej analizie i z pewnymi oporami nadajemy Panu/Pani status Partnera Strategicznego.”
 - **Ranking:** status nie przychodzi. Pasek: „W sezonie rankingowym Centrala ocenia jedną placówkę. Prosimy wrócić po sezonie.”
 
-### 10.2 Limit sklepów **[U]** / **[P1]**
+### 10.2 Limit sklepów **[U]**
 - W 4a.1 najwyżej 2 sklepy, wliczając budowę. W 4a.2 najwyżej 3.
 - Przy limicie przycisk mówi tekstem Centrali, np. „Dwie placówki to na tym etapie partnerstwa wszystko, na co Centrala jest gotowa się zgodzić.”
 
@@ -444,8 +444,8 @@ Wchodzą przez `StoreInfo.site` (§8.3). Sklep startowy ich nie ma, więc liczy 
   Bez tego zamknięcie byłoby darmowym sposobem na pozbycie się rat. Ten sam mechanizm przyda się rogalikowi przy upadku franczyzobiorcy.
 - Lokal wraca na mapę jako „po Traszce” z wyposażeniem (§13.3).
 
-### 13.2 Wypowiedzenie przez gracza **[P3]**
-Rekomendacja: przycisk „Wypowiedz umowę” w panelu sklepu, dostępny tylko wtedy, gdy gracz ma więcej niż jeden sklep.
+### 13.2 Wypowiedzenie przez gracza **[U]**
+Przycisk „Wypowiedz umowę” jest w panelu sklepu, dostępny tylko wtedy, gdy gracz ma więcej niż jeden sklep.
 - Sklep działa normalnie do końca następnego miesiąca. To miesięczny okres wypowiedzenia, jak w pierwszym roku prawdziwej umowy.
 - Potem przychodzi to samo rozliczenie końcowe co w §13.1.
 - Przez okres wypowiedzenia Centrala nie finansuje nowych rat tego sklepu.
@@ -457,7 +457,7 @@ Rekomendacja: przycisk „Wypowiedz umowę” w panelu sklepu, dostępny tylko w
 
 ### 13.4 Koniec gry (do czasu rogalika) **[U]**
 - Gotówka poniżej −100 tys. zł: franczyzobiorca upada, a wszystkie sklepy kończą się razem. Ekran końca jak dziś.
-- Zamknięcie ostatniego sklepu przez Centralę (albo wypowiedzenie ostatniego, jeśli **[P3]** pozwoli) też kończy grę.
+- Zamknięcie ostatniego sklepu przez Centralę (albo koniec wypowiedzenia ostatniego sklepu, §13.2 **[U]**) też kończy grę.
 - Po rogaliku upadek w sztafecie zamiast końca gry uruchamia przejęcie (§14).
 
 ## 14. Rogalik: kto jest właścicielem czego
@@ -469,31 +469,30 @@ Rogalik mówi: sklep zostaje, franczyzobiorcy się zmieniają. W prawdziwej siec
 |---|---|---|
 | **Miasto i lokale** | generator, stany lokali, wyposażenie lokali „po Traszce”, konkurencja | zostaje (ten sam seed) |
 | **Franczyzobiorca (osoba)** | gotówka, status Partnera, siły, ZUS i księgowa, wiedza o limicie ubytków, Ogonki; w rogaliku imię i zdjęcie | wymienia się na nową osobę (5000 zł, bez statusu) |
-| **Placówki** | `EconomyState` każdego sklepu z rozliczeniem umowy (saldo, raty, remanent) | według **[P2]** |
+| **Placówki** | `EconomyState` każdego sklepu z rozliczeniem umowy (saldo, raty, remanent) | sklep startowy przechodzi na następcę, pozostałe wracają jako lokale „po Traszce” (§14.2) **[U]** |
 
 Dzięki temu rogalik nie musi przebudowywać 4a ani odwrotnie. Przejęcie to wymiana osoby i decyzja, które placówki przechodzą dalej.
 
-### 14.2 Upadek franczyzobiorcy z kilkoma sklepami **[P2]**
-Rekomendacja:
+### 14.2 Upadek franczyzobiorcy z kilkoma sklepami **[U]**
 - następca w sztafecie dostaje **tylko sklep startowy**, z całym wyposażeniem, jak dziś przewiduje rogalik;
 - pozostałe sklepy przechodzą rozliczenie końcowe (dług zostaje przy upadłym, na zdjęciu w ramce) i wracają na mapę jako lokale „po Traszce” z wyposażeniem;
 - następca może je znów wziąć, gdy sam zdobędzie status (4a.2, §13.3).
 
 Każdy sklep „zostaje”. Celowe topienie franczyzobiorców z trzema sklepami kosztuje: status i pakiety otwarcia trzeba zdobyć od nowa. Właściciel chciał, żeby to kosztowało („Niech kosztuje”).
 
-W trybie hardcore upadek kończy grę, więc pytanie go nie dotyczy.
+W trybie hardcore upadek kończy grę, więc ta zasada go nie dotyczy.
 
-### 14.3 Cel 1 mln zł przy kilku sklepach **[U]** / **[P4]**
+### 14.3 Cel 1 mln zł przy kilku sklepach **[U]**
 - **[U]** Cel to 1 mln zł gotówki. Gotówka jest wspólna (§11.1), więc kilka sklepów zbiera na jeden cel.
 - **[R]** Z raportu SIM 6: jeden sklep „mistrz z zakupami” dochodzi do miliona w 21.–22. miesiącu, a bierny w 6–13 lat. Miasto skróci ten czas. Ile, zmierzy strategia „mistrz z ekspansją” (§8.4).
-- **[U]** W pamięci projektu jest zapisane, że miasto podniesie albo zmieni cel, a cel ma być przypięty do trybu. Decyzja, czy cel zostaje, czy rośnie, to **[P4]**. Rekomendacja: zostaje 1 mln zł.
-- **[C]** Niezależnie od odpowiedzi cel siedzi w jednej tabeli „tryb → cel”, a każdy wynik zapisuje tryb i wersję celu. Podniesienie poprzeczki później nie miesza wyników.
+- **[U]** W pamięci projektu jest zapisane, że miasto podniesie albo zmieni cel, a cel ma być przypięty do trybu. Cel zostaje 1 mln zł także przy kilku sklepach.
+- **[C]** Cel siedzi w jednej tabeli „tryb → cel”, a każdy wynik zapisuje tryb i wersję celu. Podniesienie poprzeczki później nie miesza wyników.
 - 4a.1 celu nie pokazuje (SIM 6 i tak zostawiło to rogalikowi), ale podsumowanie sieci ma na niego miejsce.
 
 ### 14.4 Tryby **[C]**
 - **Zwykła gra:** miasto jest.
 - **Ranking:** bez miasta **[U]**.
-- **Hardcore i sztafeta rogalika:** miasto jest, z celem według **[P4]**.
+- **Hardcore i sztafeta rogalika:** miasto jest, z celem 1 mln zł **[U]**.
 - Punkty Partnera w trybach rogalika: §15.
 
 ## 15. Prestiż **[U]**
@@ -629,16 +628,12 @@ W trybie hardcore upadek kończy grę, więc pytanie go nie dotyczy.
 
 **4a.2:** makieta z benchmarkiem na presetach, trzeci sklep i zapis trzech sklepów, karty Dworca bez przesunięcia talii w innych dzielnicach, profile dnia, ponowny wynajem „po Traszce”, przegląd etapu (Opus).
 
-## 21. Pytania do właściciela
+## 21. Odpowiedzi właściciela (2026-10-31)
 
-Pełna treść z odpowiedziami do wyboru jest w osobnym pliku pytań. Do odpowiedzi projekt przyjmuje rekomendację.
-
-| | Pytanie | Rekomendacja |
-|---|---|---|
-| **[P1]** | Co wchodzi najpierw: płaska mapa z jednym wynajmem, sama mapa czy całe miasto naraz? | płaska mapa z jednym wynajmem (4a.1) |
-| **[P2]** | Co z drugim i trzecim sklepem, gdy franczyzobiorca upada i w sztafecie przychodzi następny? | następca dostaje sklep startowy, pozostałe wracają jako lokale „po Traszce” z wyposażeniem |
-| **[P3]** | Czy gracz może sam oddać sklep w złej lokalizacji? | tak, z miesięcznym wypowiedzeniem i rozliczeniem końcowym |
-| **[P4]** | Czy przy kilku sklepach cel zostaje 1 mln zł? | tak, 1 mln zł; cel przypięty do trybu |
+1. **Co wchodzi najpierw (1a):** płaska mapa miasta z wynajmem jednego lokalu (4a.1, najwyżej dwa sklepy), a makieta 3D, trzeci sklep i karty dzielnic w 4a.2.
+2. **Dodatkowe sklepy przy upadku w sztafecie (2a):** następca dostaje tylko sklep startowy, a pozostałe wracają na mapę jako lokale „po Traszce” z wyposażeniem, które następca może znów wziąć po zdobyciu statusu.
+3. **Oddanie sklepu przez gracza (3a):** tak, przez wypowiedzenie umowy z miesięcznym okresem i rozliczeniem końcowym (niespłacone raty i braki z ostatniego liczenia).
+4. **Cel przy kilku sklepach (4a):** zostaje 1 mln zł gotówki, a cel jest przypięty do trybu, więc poprzeczkę da się podnieść później bez mieszania wyników.
 
 ## 22. Co zostaje budowniczemu
 
