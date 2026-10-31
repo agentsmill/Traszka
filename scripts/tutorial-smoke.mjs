@@ -61,7 +61,7 @@ async function startPreview() {
 // --- Strona i pomiary ---------------------------------------------------------------------------------------------------------
 
 async function newPage(browser, vp, { debug = false, seed = 'samouczek-1' } = {}) {
-  const ctx = await browser.newContext({ viewport: vp.size, deviceScaleFactor: 1, isMobile: vp.mobile, hasTouch: vp.mobile });
+  const ctx = await browser.newContext({ locale: 'pl-PL', viewport: vp.size, deviceScaleFactor: 1, isMobile: vp.mobile, hasTouch: vp.mobile });
   await ctx.route('**/*', (route) => {
     const url = new URL(route.request().url());
     if (url.hostname === 'localhost' || url.protocol === 'blob:' || url.protocol === 'data:') return route.continue();
