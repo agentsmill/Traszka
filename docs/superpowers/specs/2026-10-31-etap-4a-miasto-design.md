@@ -375,6 +375,8 @@ Na botach z harnessu SIM 6 (`tests/measure/trzyKieszenie.measure.test.ts`, strat
 ### 11.1 Co jest wspólne, a co osobne **[U]** (zasada) / **[C]** (podział)
 Każdy sklep to osobna umowa z Centralą, więc ma osobne rozliczenie. Gotówka to pieniądze jednej osoby. Wspólne jest to, co należy do franczyzobiorcy albo do miasta, a osobne to, co należy do placówki i jej umowy.
 
+Właściciel potwierdził to 31.10.2026 po pytaniu o osobne kasy dla sklepów: „wspólna gotówka, tak jakby to było w życiu”. W życiu franczyzobiorca z dwoma sklepami ma jedną działalność i jedno konto, a z Centralą podpisuje osobną umowę na każdą placówkę. Osobnych kas dla sklepów nie robimy, suma w pasku to nie podgląd, tylko prawdziwy portfel.
+
 | Wspólne (raz na osobę albo miasto) | Osobne (każdy sklep i jego umowa) |
 |---|---|
 | **Gotówka** (portfel, licznik do celu) | **Saldo u Centrali, przelew, wyciąg** |
