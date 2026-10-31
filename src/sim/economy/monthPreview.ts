@@ -116,7 +116,7 @@ export function startMonthPreview(s: EconomyState, info: StoreInfo): MonthPrevie
       const c = copy.month;
       const statement = buildStatement({
         month: copy.franchisee.month, guarantee: 0, installments: 0, remanent: copy.franchisee.remanent.pending, spent: c.investments,
-        fines: c.fines, other: c.other, cashBefore: copy.cash, partial: false,
+        fines: c.fines, other: c.other, cashBefore: copy.cash, partial: false, ownCosts: info.site?.ownCosts ?? true,
       });
       result = {
         label: '', cashNow, cashAfter: copy.cash, lowestCash: lowest, revenue: c.revenue, customers: c.customers, statement,
