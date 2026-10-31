@@ -495,13 +495,13 @@ export function grownWidth(layout: Pick<StoreLayout, 'width'>, seed: string): nu
 
 /**
  * Strona, po której sklep zajmuje lokal sąsiada, albo null. Kamienica nienarożna: przeciwna do bramy. Kamienica narożna:
- * brak, bo po jednej stronie jest brama, a po drugiej przecznica. Blok i pawilon: z osobnego strumienia losowego, żeby nie
- * przesunąć żadnego losowania w strumieniu 'budynki'.
+ * brak, bo po jednej stronie jest brama, a po drugiej przecznica. Blok i pawilon: zawsze `maxX`, czyli dalszy sąsiad przy
+ * domyślnej kamerze (`yawIndex` 0): bliższego przekrój ścina do 0,5 m, więc jego kartki „DO WYNAJĘCIA” nie byłoby widać.
  */
-function takenSideOf(kind: LotKind, corner: 'minX' | 'maxX' | null, gateSide: 'minX' | 'maxX' | null, seed: string): 'minX' | 'maxX' | null {
+function takenSideOf(kind: LotKind, corner: 'minX' | 'maxX' | null, gateSide: 'minX' | 'maxX' | null): 'minX' | 'maxX' | null {
   if (corner !== null) return null;
   if (kind === 'kamienica') return gateSide === 'minX' ? 'maxX' : 'minX';
-  return createRng(subSeed(subSeed(seed, 'street'), 'przejecie')).chance(0.5) ? 'minX' : 'maxX';
+  return 'maxX';
 }
 
 /**
@@ -543,7 +543,7 @@ export function planRow(layout: StoreLayout, seed: string, remontLevel = 0): { o
     if (gateSide === 'minX') lo = gate.x0; else hi = gate.x1;
   }
 
-  const takeover = takenSideOf(kind, corner, gateSide, seed);
+  const takeover = takenSideOf(kind, corner, gateSide);
   const grown = grownWidth(layout, seed);
   const neighbours: VolumeSpec[] = [];
   for (const side of ['minX', 'maxX'] as const) {

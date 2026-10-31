@@ -4,7 +4,6 @@ import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { lang, tr } from '@/i18n';
 import { CELL_SIZE_M } from '@/sim/grid';
 import { REMONTS } from '@/sim/economy/upgrades';
-import { createRng, subSeed } from '@/sim/rng';
 import { layoutFor } from '@/sim/store/layoutFor';
 import { pickLot } from '@/sim/store/lots';
 import type { LotKind } from '@/sim/store/types';
@@ -53,7 +52,7 @@ const rowOf = (v: VolumeSpec): Row => [v.x0, v.x1, v.floors, v.style, v.main];
 const width = (v: VolumeSpec): number => v.x1 - v.x0;
 const side = (i: number): 'minX' | 'maxX' => (i === 0 ? 'minX' : 'maxX');
 
-/** Strona przejęcia wg decyzji: kamienica nienarożna: przeciwna do bramy, narożna: brak, blok i pawilon: osobny strumień. */
+/** Strona przejęcia wg decyzji: kamienica nienarożna: przeciwna do bramy, narożna: brak, blok i pawilon: zawsze maxX. */
 function expectedTakenSide(seed: string): 'minX' | 'maxX' | null {
   const layout = layoutFor(seed, 0);
   const o = storeOuter(layout);
@@ -62,7 +61,7 @@ function expectedTakenSide(seed: string): 'minX' | 'maxX' | null {
     const gate = planRow(layout, seed).own.find((v) => v.gate)!;
     return gate.x1 <= o.x0 + 1e-6 ? 'maxX' : 'minX';
   }
-  return createRng(subSeed(subSeed(seed, 'street'), 'przejecie')).chance(0.5) ? 'minX' : 'maxX';
+  return 'maxX';
 }
 
 describe('przejęcie lokalu: plan wiersza', () => {
@@ -109,7 +108,7 @@ describe('przejęcie lokalu: plan wiersza', () => {
     }
   });
 
-  it('strona przejęcia: kamienica nienarożna przeciwna do bramy, narożna żadna, blok i pawilon z osobnego strumienia; obie strony się zdarzają', () => {
+  it('strona przejęcia: kamienica nienarożna przeciwna do bramy (obie strony się zdarzają), narożna żadna, blok i pawilon zawsze maxX', () => {
     const sides = new Map<LotKind, Set<string>>();
     for (const [kind, seed] of ALL) {
       const taken = expectedTakenSide(seed);
@@ -121,9 +120,10 @@ describe('przejęcie lokalu: plan wiersza', () => {
       }
       if (taken) sides.set(kind, (sides.get(kind) ?? new Set()).add(taken));
     }
-    // narożna kamienica (kiełbasa-12 i d) jest w zestawie; blok, pawilon i kamienica nienarożna mają obie strony
-    expect(sides.get('blok')!.size).toBe(2);
-    expect(sides.get('pawilon')!.size).toBe(2);
+    // narożna kamienica (kiełbasa-12 i d) jest w zestawie; kamienica nienarożna ma obie strony (brama), blok i pawilon tylko
+    // dalszą od domyślnej kamery
+    expect([...sides.get('blok')!]).toEqual(['maxX']);
+    expect([...sides.get('pawilon')!]).toEqual(['maxX']);
     expect(sides.get('kamienica')!.size).toBe(2);
     expect(ALL.filter(([, seed]) => cornerSide(layoutFor(seed, 0)) !== null).map(([, seed]) => seed)).toEqual(['kiełbasa-12', 'd']);
   });
