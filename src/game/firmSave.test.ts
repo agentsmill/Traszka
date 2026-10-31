@@ -160,6 +160,12 @@ const LEGACY = [
   'save-sim5-polowa-miesiaca.json',
 ];
 
+// Koperta pomija układy, które generator odtwarza z lokalu (zamknięte i otwarte sklepy). Podbicie GENERATOR_VERSION musi więc
+// zachować stary generator dla tych zapisów albo je zmigrować, zanim wejdzie nowy — inaczej zapisy firm przestaną się wczytywać.
+it('GENERATOR_VERSION 1: zapisy bez układów odtwarzają się tym generatorem', () => {
+  expect(GENERATOR_VERSION).toBe(1);
+});
+
 describe('schemat 1 i 2: wczytanie jako firma z jednym sklepem', () => {
   it('stałe: koperta firmy to schemat 3, schemat biegu rankingowego zostaje 2, a paczka mieści tyle, co przyjmuje serwer', () => {
     expect(FIRM_SAVE_SCHEMA).toBe(3);
