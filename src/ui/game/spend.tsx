@@ -97,7 +97,7 @@ export function buyButtons(s: EconomyState, info: StoreInfo, cost: number, locke
   const room = installmentRoom(s);
   const noRaty = locked || plan.monthly > room.free;
   return (
-    <div class="tt-buys">
+    <div class="tt-buys" data-tut="buy">
       <button type="button" class="tt-btn tt-buy" data-risk={locked ? undefined : spendRisk(s, info, cost)} disabled={locked || cost > s.cash} onClick={() => buy(false)}>{zl(cost)}</button>
       <button type="button" class="tt-btn tt-rata" data-risk={noRaty ? undefined : spendRisk(s, info, plan.monthly, true)} disabled={noRaty}
         title={ratyTitle(plan, room)} onClick={() => buy(true)}>{ratyLabel(plan)}</button>

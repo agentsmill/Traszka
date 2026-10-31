@@ -507,8 +507,6 @@ class FakeScene implements ShellScene {
   setCashierLook(look: CashierLook): void { this.looks.push(look); }
 }
 
-/** Wskazówki pierwszego dnia z atrapy (prawdziwe leżą w ui/game/overlays.tsx). */
-const HINTS = ['wskazówka 1', 'wskazówka 2'];
 
 interface Harness {
   shell: GameShell;
@@ -548,7 +546,6 @@ function harness(options: { meta?: Meta; benchMode?: boolean; seeds?: string[]; 
     writeSeedToUrl: (seed) => { urls.push(seed); },
     clearSeedFromUrl: () => { clears.push('seed'); },
     characterFactory: () => Promise.resolve({} as CharacterFactory),
-    firstDayHints: HINTS,
     weekSeed: options.weekSeed,
   });
   const startup = calls.splice(0);
@@ -581,6 +578,7 @@ describe('powłoka gry (createShell)', () => {
     ui.tab.value = null;
     ui.showSettings.value = false;
     ui.howTo.value = false;
+    ui.tutorialOffer.value = false;
     ui.toasts.value = [];
     ui.story.value = [];
     ui.picked.value = null;
@@ -673,9 +671,9 @@ describe('powłoka gry (createShell)', () => {
   });
 
   describe('open (rozruch: pierwszy sklep)', () => {
-    afterEach(() => { ui.showHints([]); });
+    afterEach(() => { ui.tutorialOffer.value = false; });
 
-    it('nowa gra: sesja i świat, adres, wskazówki pierwszego dnia, bez okna powitalnego, zapis', () => {
+    it('nowa gra: sesja i świat, adres, propozycja samouczka, bez okna powitalnego, zapis', () => {
       const h = harness();
       expect(h.shell.open({ seed: 'traszka-1', fresh: false, choice: null })).toBe(true);
 
@@ -686,13 +684,13 @@ describe('powłoka gry (createShell)', () => {
       expect(h.urls).toEqual(['traszka-1']);
       expect(ui.seed.value).toBe('traszka-1');
       expect(ui.econ.value!.s).toBe(s.econ);
-      expect(ui.hints.value).toEqual(HINTS);   // pierwszy dzień: krótkie dymki zamiast okna powitalnego
+      expect(ui.tutorialOffer.value).toBe(true);   // zupełnie nowy sklep: okno wyboru samouczka zamiast dawnych dymków pierwszego dnia
       expect(ui.welcome.value).toBeNull();
       expect(hasStoredSave('traszka-1')).toBe(true);
       expect(h.notices).toEqual([]);
     });
 
-    it('zapis sprzed dłuższej nieobecności: okno „Witaj z powrotem” z zarobkiem, bez wskazówek; nic nie jest odebrane', () => {
+    it('zapis sprzed dłuższej nieobecności: okno „Witaj z powrotem” z zarobkiem, bez propozycji samouczka; nic nie jest odebrane', () => {
       const old = createSession('traszka-1', true);
       for (let i = 0; i < 30; i++) stepMinute(old.econ, old.info, []);
       old.econ.lastDayProfit = 99_999;   // wynik dnia przed opłatą nie liczy się do nagrody; liczy się ostatni zamknięty miesiąc
@@ -706,7 +704,7 @@ describe('powłoka gry (createShell)', () => {
       const s = h.shell.session!;
       expect(s.fromSave).toBe(true);
       expect(s.econ.minute).toBe(OPEN_FROM + 30);
-      expect(ui.hints.value).toEqual([]);
+      expect(ui.tutorialOffer.value).toBe(false);
       expect(ui.welcome.value).toMatchObject({ offline: 1250, streak: 1, daily: { cash: 0, ogonki: 2 } });   // 1000 zł dziennie × ćwierć × 5 h
       expect(s.econ.cash).toBe(old.econ.cash);   // nagroda czeka na „Odbierz!”
       expect(h.shell.meta.lastSeen).toBe(meta.lastSeen);   // czas wyjścia stoi, dopóki okno czeka
@@ -741,29 +739,44 @@ describe('powłoka gry (createShell)', () => {
       expect(ui.toasts.value.map((t) => t.text)).toEqual(['Wczytujemy Twój sklep spod tego seeda']);
     });
 
-    it('pierwsze wejście przez ekran startowy otwiera okno „Jak grać”; wejście bez ekranu (adres, zapis) nie', () => {
-      const look = { outfit: 'normal', appearanceSeed: 'abc' } as unknown as CashierLook;
-      const withChoice = harness();
-      withChoice.shell.open({ seed: 'traszka-1', fresh: false, choice: { nick: 'Kasia', seed: 'traszka-1', look, specialOutfits: true, notice: null, ranked: false } });
-      expect(ui.howTo.value).toBe(true);
-      expect(isModalOpen()).toBe(true);   // gra stoi do „Zaczynamy”
-
-      ui.howTo.value = false;
-      const without = harness();
-      without.shell.open({ seed: 'traszka-2', fresh: false, choice: null });
-      expect(ui.howTo.value).toBe(false);
-    });
-
-    it('dymki pierwszego dnia czekają pod oknem „Jak grać”: ich zegar rusza od „Zaczynamy”', () => {
+    it('pierwsze wejście przez ekran startowy: okno wyboru samouczka zamiast „Jak grać”, a gra czeka na odpowiedź', () => {
       const look = { outfit: 'normal', appearanceSeed: 'abc' } as unknown as CashierLook;
       const h = harness();
       h.shell.open({ seed: 'traszka-1', fresh: false, choice: { nick: 'Kasia', seed: 'traszka-1', look, specialOutfits: true, notice: null, ranked: false } });
-      expect(ui.hints.value).toEqual(HINTS);
-      vi.advanceTimersByTime(ui.HINT_MS * (HINTS.length + 2));   // dłużej, niż wszystkie dymki razem
-      expect(ui.hints.value).toEqual(HINTS);                      // nic nie wygasło pod oknem
-      ui.closeHowTo();
-      vi.advanceTimersByTime(ui.HINT_MS);
-      expect(ui.hints.value).toEqual(HINTS.slice(1));             // pierwszy dymek dostał pełny czas
+      expect(ui.tutorialOffer.value).toBe(true);
+      expect(ui.howTo.value).toBe(false);
+      expect(isModalOpen()).toBe(true);   // gra stoi, dopóki gracz nie wybierze
+    });
+
+    it('wybór z ekranu startowego, który wczytuje zapis: bez okna wyboru i bez „Jak grać” (gracz wraca do swojej gry)', () => {
+      const old = createSession('stary', true);
+      for (let i = 0; i < 30; i++) stepMinute(old.econ, old.info, []);
+      saveSession(old);
+      const look = { outfit: 'normal', appearanceSeed: 'abc' } as unknown as CashierLook;
+      const h = harness();
+      h.shell.open({ seed: 'stary', fresh: false, choice: { nick: 'Kasia', seed: 'stary', look, specialOutfits: true, notice: null, ranked: false } });
+      expect(h.shell.session!.fromSave).toBe(true);
+      expect([ui.tutorialOffer.value, ui.howTo.value]).toEqual([false, false]);
+    });
+
+    it('gracz, który już odpowiedział na okno wyboru, nie dostaje go przy kolejnym nowym sklepie (rogalik, nowy seed)', () => {
+      for (const tour of ['started', 'skipped', 'done'] as const) {
+        storage.setItem('traszka:tutorial', JSON.stringify({ v: 1, tour, seen: [], tips: true }));
+        const h = harness();
+        h.shell.open({ seed: `nowy-${tour}`, fresh: true, choice: null });
+        expect(ui.tutorialOffer.value, tour).toBe(false);
+      }
+    });
+
+    it('przeładowanie przy otwartym oknie wyboru: sklep stoi zapisany na 6:00 bez klientów, więc okno wraca', () => {
+      const first = harness();
+      first.shell.open({ seed: 'traszka-1', fresh: false, choice: null });
+      expect(ui.tutorialOffer.value).toBe(true);
+      ui.tutorialOffer.value = false;   // strona przeładowana, zanim gracz odpowiedział
+      const again = harness();
+      again.shell.open({ seed: 'traszka-1', fresh: false, choice: null });
+      expect(again.shell.session!.fromSave).toBe(true);
+      expect(ui.tutorialOffer.value).toBe(true);
     });
 
     it('świat zapisanego sklepu się nie buduje: sklep tymczasowy o losowym seedzie, adres zostaje, komunikat o bezpiecznym zapisie', () => {
@@ -1275,15 +1288,28 @@ describe('powłoka gry (createShell)', () => {
       });
     });
 
-    it('newStore: okno „Jak grać” otwiera się dopiero po zamknięciu ekranu startowego i gdy sklep się otworzył', () => {
+    it('newStore: okno wyboru samouczka wstaje dopiero po zamknięciu ekranu startowego i gdy sklep się otworzył; „Jak grać” już nie', () => {
       const h = harness({ seeds: ['wolny-1'] });
       open(h, 'traszka-1');
+      ui.tutorialOffer.value = false;   // odpowiedź na okno z pierwszego sklepu jeszcze nie padła: pamięć samouczka jest pusta
       h.shell.game.newStore();
-      expect(ui.howTo.value).toBe(false);   // ekran startowy jeszcze stoi
+      expect(ui.tutorialOffer.value).toBe(false);   // ekran startowy jeszcze stoi
       const request = ui.start.value!;
       request.onStart({ nick: 'Kasia', seed: 'traszka-5', look: request.form.look, specialOutfits: true, notice: null, ranked: false });
       expect(h.shell.session!.seed).toBe('traszka-5');
-      expect(ui.howTo.value).toBe(true);
+      expect(ui.tutorialOffer.value).toBe(true);
+      expect(ui.howTo.value).toBe(false);
+    });
+
+    it('newStore: gracz, który już odpowiedział na okno wyboru, nie dostaje go znowu', () => {
+      const h = harness({ seeds: ['wolny-1'] });
+      open(h, 'traszka-1');
+      ui.tutorialOffer.value = false;
+      storage.setItem('traszka:tutorial', JSON.stringify({ v: 1, tour: 'skipped', seen: [], tips: true }));
+      h.shell.game.newStore();
+      const request = ui.start.value!;
+      request.onStart({ nick: 'Kasia', seed: 'traszka-5', look: request.form.look, specialOutfits: true, notice: null, ranked: false });
+      expect(ui.tutorialOffer.value).toBe(false);
     });
 
     it('newStore: sklep, który się nie zbudował, zostawia gracza w poprzednim i nie otwiera instrukcji', () => {
@@ -1295,7 +1321,7 @@ describe('powłoka gry (createShell)', () => {
       const request = ui.start.value!;
       request.onStart({ nick: 'Kasia', seed: 'zepsuty', look: request.form.look, specialOutfits: true, notice: null, ranked: false });
       expect(h.shell.session).toBe(old);
-      expect(ui.howTo.value).toBe(false);
+      expect([ui.tutorialOffer.value, ui.howTo.value]).toEqual([false, false]);
     });
 
     it('newStore w benchmarku nie robi nic', () => {
@@ -1318,7 +1344,7 @@ describe('powłoka gry (createShell)', () => {
       expect(h.shell.session!.fromSave).toBe(true);
       expect(h.shell.session!.econ.cash).toBe(4242);
       expect(ui.toasts.value.map((t) => t.text)).toEqual(['Wczytujemy Twój sklep spod tego seeda']);
-      expect(ui.howTo.value).toBe(false);   // gracz wraca do swojego sklepu: instrukcji nie narzucamy
+      expect([ui.tutorialOffer.value, ui.howTo.value]).toEqual([false, false]);   // gracz wraca do swojego sklepu: nic mu nie narzucamy
     });
 
     it('setSound i setVibration: meta w pamięci i w zapisie, efekt, widok mety', () => {
@@ -1647,10 +1673,10 @@ describe('powłoka gry (createShell)', () => {
         expect(ui.seed.value).toBe(RANKED_SEED);
         expect(ui.econ.value!.s).toBe(s.econ);
         expect(ui.ranked.value).toEqual({ seed: RANKED_SEED, day: 1, days: 91, phase: 'playing' });
-        // stan sklepu poprzedniej gry nie przechodzi do nowej; bez wskazówek, okna powitalnego i instrukcji
+        // stan sklepu poprzedniej gry nie przechodzi do nowej; bez okna wyboru samouczka, okna powitalnego i instrukcji
         expect([ui.selection.value, ui.tab.value, ui.report.value, ui.picked.value]).toEqual([null, null, null, null]);
         expect(ui.story.value).toEqual([]);
-        expect([ui.welcome.value, ui.hints.value, ui.howTo.value, ui.confirmRankedStart.value]).toEqual([null, [], false, null]);
+        expect([ui.welcome.value, ui.tutorialOffer.value, ui.howTo.value, ui.confirmRankedStart.value]).toEqual([null, false, false, null]);
         expect(h.notices).toEqual([]);
         // pamięć: bieg, tryb; poprzedni sklep zapisany, cudzy zapis i traszka:last bez zmian
         expect(loadRanked()).toMatchObject({ status: 'ok', session: { seed: RANKED_SEED, mode: 'ranked' } });
@@ -1847,7 +1873,7 @@ describe('powłoka gry (createShell)', () => {
         expect(h.scene.looks).toEqual([LOOK]);   // wygląd idzie do sceny przed budową świata
         expect(getPlayMode()).toBe('ranked');
         expect(h.urls).toEqual([]);   // seed biegu nie trafia do adresu
-        expect(ui.howTo.value).toBe(false);   // instrukcja otwiera się tylko przy zwykłym zupełnie nowym sklepie
+        expect([ui.tutorialOffer.value, ui.howTo.value]).toEqual([false, false]);   // start rankingowy niczego nie otwiera (samouczek tylko w zwykłym sklepie)
         expect(ui.confirmRankedStart.value).toBeNull();
       });
 
@@ -1892,12 +1918,12 @@ describe('powłoka gry (createShell)', () => {
         expect(ui.toasts.value.map((t) => t.text)).toEqual(['Ten lokal się nie zmieścił, wzięliśmy sąsiedni.']);
       });
 
-      it('wybór zwykły (`ranked: false`) nadal otwiera zwykły sklep i instrukcję; `opts.replace` go nie dotyczy', () => {
+      it('wybór zwykły (`ranked: false`) nadal otwiera zwykły sklep i okno wyboru samouczka; `opts.replace` go nie dotyczy', () => {
         const h = harness();
         casualOpen(h);
         openedScreen(h).onStart(rankedChoice({ ranked: false, seed: 'traszka-5' }), { replace: true });
         expect(h.shell.session).toMatchObject({ seed: 'traszka-5', mode: 'casual' });
-        expect(ui.howTo.value).toBe(true);
+        expect(ui.tutorialOffer.value).toBe(true);
         expect(getPlayMode()).toBe('casual');
       });
 
@@ -2054,7 +2080,7 @@ describe('powłoka gry (createShell)', () => {
         expect(second.scene.loads).toEqual([{ seed: RANKED_SEED, session: s }]);   // bez drugiej budowy: zwykłego sklepu nikt nie otwierał
         expect(second.urls).toEqual([]);
         expect(second.notices).toEqual([]);
-        expect([ui.welcome.value, ui.hints.value, ui.howTo.value]).toEqual([null, [], false]);
+        expect([ui.welcome.value, ui.tutorialOffer.value, ui.howTo.value]).toEqual([null, false, false]);
         expect(ui.seed.value).toBe(RANKED_SEED);
         expect(ui.ranked.value).toMatchObject({ seed: RANKED_SEED, phase: 'playing' });
         expect(ui.econ.value!.s).toBe(s.econ);
@@ -2430,22 +2456,16 @@ describe('powłoka gry (createShell)', () => {
     });
 
     describe('stan interfejsu przy przejściach: wspólny reset sklepu', () => {
-      it('wejście w bieg zamyka wskazówki pierwszego dnia i pytanie o start; zwykłe przejście wskazówek nie rusza', () => {
+      it('wejście w bieg zamyka okno wyboru samouczka i pytanie o start', () => {
         const h = harness();
         casualOpen(h);
-        ui.showHints(HINTS);
-        h.shell.setSeed('traszka-2');
-        expect(ui.hints.value).toEqual(HINTS);   // zwykły sklep tak jak dotąd: dymki zostają
+        ui.tutorialOffer.value = true;
         ui.confirmRankedStart.value = { seed: 'x', reason: 'active' };
 
         expect(h.shell.startRanked(RANKED_SEED)).toBe(true);
 
-        expect(ui.hints.value).toEqual([]);
+        expect(ui.tutorialOffer.value).toBe(false);
         expect(ui.confirmRankedStart.value).toBeNull();
-        ui.showHints(HINTS);
-        h.shell.leaveRanked();   // powrót do zwykłego sklepu też nie rusza dymków
-        expect(ui.hints.value).toEqual(HINTS);
-        ui.showHints([]);
       });
 
       it('zwykłe przejście nie zamyka zakładki ani raportu (jak dotąd); wyjście z biegu i wejście w bieg tak', () => {
@@ -3505,12 +3525,12 @@ describe('powłoka gry (createShell)', () => {
           expect(getPlayMode()).toBe('ranked');
         });
 
-        it('wejście w bieg nie pokazuje okna powitalnego ani dymków, choć meta ma nagrodę za nieobecność i serię dni', () => {
+        it('wejście w bieg nie pokazuje okna powitalnego ani okna wyboru samouczka, choć meta ma nagrodę za nieobecność i serię dni', () => {
           const meta: Meta = { ...loadMeta(), lastSeen: Date.now() - 6 * 3_600_000 };
           const h = harness({ meta });
           h.shell.startRanked(RANKED_SEED);
           expect(ui.welcome.value).toBeNull();
-          expect(ui.hints.value).toEqual([]);
+          expect(ui.tutorialOffer.value).toBe(false);
           expect(h.shell.session!.run).not.toBeNull();
         });
 

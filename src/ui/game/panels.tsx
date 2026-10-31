@@ -43,8 +43,9 @@ function Row({ label, children }: { label: ComponentChildren; children: Componen
   return <div class="tt-row"><span>{typeof label === 'string' ? tr(label) : label}</span><span>{children}</span></div>;
 }
 
-function Section({ title, children }: { title: string; children: ComponentChildren }) {
-  return <section class="tt-section"><h3>{tr(title)}</h3>{children}</section>;
+/** Sekcja panelu; `tut`: wartość `data-tut`, gdy sekcję wskazuje samouczek (`ui/tutorial/steps.ts`). */
+function Section({ title, tut, children }: { title: string; tut?: string; children: ComponentChildren }) {
+  return <section class="tt-section" data-tut={tut}><h3>{tr(title)}</h3>{children}</section>;
 }
 
 const TABS: { id: TabId; icon: string; label: string }[] = [
@@ -67,9 +68,9 @@ export function TabBar() {
     badge.ulepszenia = affordable || undefined;
   }
   return (
-    <nav class="tt-tabs" aria-label={t`Zakładki`}>
+    <nav class="tt-tabs" data-tut="tabs" aria-label={t`Zakładki`}>
       {TABS.map((x) => (
-        <button key={x.id} type="button" class={`tt-tab${tab.value === x.id ? ' on' : ''}`} aria-pressed={tab.value === x.id}
+        <button key={x.id} type="button" class={`tt-tab${tab.value === x.id ? ' on' : ''}`} data-tut={`tab-${x.id}`} aria-pressed={tab.value === x.id}
           onClick={() => { tab.value = tab.value === x.id ? null : x.id; selection.value = null; }}>
           <span class="tt-tab-icon" aria-hidden="true">{x.icon}</span>
           <span class="tt-tab-label">{tr(x.label)}</span>
@@ -87,7 +88,7 @@ export function Sheet({ game }: { game: GameActions }) {
   if (!view || !open) return null;
   const title = tr(TABS.find((x) => x.id === open)!.label);
   return (
-    <aside class="tt-sheet" aria-label={title}>
+    <aside class="tt-sheet" data-tut="sheet" aria-label={title}>
       <div class="tt-sheet-head">
         <h2>{title}</h2>
         <button type="button" class="tt-iconbtn" aria-label={t`Zamknij`} onClick={() => { tab.value = null; }}>✕</button>
@@ -198,9 +199,9 @@ export function PalletsPanel({ s, info, game }: { s: EconomyState; info: StoreIn
   return (
     <>
       <Section title="Zamówienie na jutro">
-        <div class="tt-seg wide" role="group" aria-label={t`Kto zamawia`}>
-          <button type="button" class={`tt-btn${s.order.auto ? ' on' : ''}`} onClick={() => game.dispatch({ type: 'setOrder', auto: true })}>{t`Asystent Traszki`}</button>
-          <button type="button" class={`tt-btn${!s.order.auto ? ' on' : ''}`} onClick={() => game.dispatch({ type: 'setOrder', auto: false, manual: s.order.manual })}>{t`Ręcznie`}</button>
+        <div class="tt-seg wide" data-tut="order" role="group" aria-label={t`Kto zamawia`}>
+          <button type="button" class={`tt-btn${s.order.auto ? ' on' : ''}`} data-tut="order-auto" onClick={() => game.dispatch({ type: 'setOrder', auto: true })}>{t`Asystent Traszki`}</button>
+          <button type="button" class={`tt-btn${!s.order.auto ? ' on' : ''}`} data-tut="order-manual" onClick={() => game.dispatch({ type: 'setOrder', auto: false, manual: s.order.manual })}>{t`Ręcznie`}</button>
         </div>
         {s.order.auto
           ? <p class="tt-hint">{t`Asystent zamówi `}<b>{suggestion} {plural(suggestion, 'paleta', 'palety', 'palet')}</b>. {level(s, 'asystent') === 0 ? t`Zwykle trochę przesadza („klienci to kochają”).` : t`Po szkoleniu już mniej przesadza.`}</p>
@@ -214,7 +215,7 @@ export function PalletsPanel({ s, info, game }: { s: EconomyState; info: StoreIn
           )}
         <p class="tt-hint">{t`Zamówienie zamyka się o ${formatClock(ORDER_DEADLINE)}${mod < ORDER_DEADLINE ? t` (dziś)` : t` (jutro)`}. Dostawa rano${fx.splitDelivery ? t` i o 15:00` : ''}. W drodze: ${pending} ${plural(pending, 'paleta', 'palety', 'palet')}.`}</p>
       </Section>
-      <Section title={t`Palety (${s.pallets.length})`}>
+      <Section title={t`Palety (${s.pallets.length})`} tut="pallets">
         <Row label="Wolne miejsca">{t`pod sklepem ${freeSpots(s, info, 'sidewalk')} · zaplecze ${freeSpots(s, info, 'backroom')} · sala ${freeSpots(s, info, 'floor')}`}{aisle > 0 ? t` · w przejściach ${aisle} ${plural(aisle, 'paleta', 'palety', 'palet')} ⚠️` : ''}</Row>
         <Row label="Rozładunek teraz">{t`~${int(workPerHour)} szt./h (${people(s.shift.human.rozladunek)} os.${robots.tasmociag > 0 || robots.edward > 0 ? t` + automatyka` : ''})`}</Row>
         {s.pallets.length === 0 && <p class="tt-hint">{t`Brak palet. Cisza przed dostawą.`}</p>}
@@ -234,7 +235,7 @@ export function PalletItem({ s, info, id, game, compact = false }: { s: EconomyS
   const block = tapBlock(s, 'paleta');
   const warn = p.loc === 'sidewalk' || p.loc === 'aisle';
   return (
-    <div class={`tt-pallet${warn ? ' risk' : ''}`}>
+    <div class={`tt-pallet${warn ? ' risk' : ''}`} data-tut={p.loc === 'aisle' ? 'pallet-aisle' : undefined}>
       <div class="tt-row">
         <span><b>{tr(LOC_LABEL[p.loc])}</b>{warn ? ' ⚠️' : ''}</span>
         <span class="tt-muted">{t`${int(p.total)} szt. · ${duration(age)}`}</span>
@@ -271,7 +272,7 @@ export function PeoplePanel({ s, info, game }: { s: EconomyState; info: StoreInf
   return (
     <>
       <Section title="Zmiana">
-        <div class="tt-stepper">
+        <div class="tt-stepper" data-tut="hire">
           <button type="button" class="tt-btn" aria-label={t`Zwolnij`} onClick={() => game.dispatch({ type: 'fire' })}>−</button>
           <b>{osoby(s.staff)}</b>
           <button type="button" class="tt-btn" aria-label={t`Zatrudnij`} data-risk={s.staff >= STAFF_MAX ? undefined : spendRisk(s, info, HIRE_COST)} disabled={s.staff >= STAFF_MAX} onClick={() => game.dispatch({ type: 'hire' })}>+</button>
@@ -486,7 +487,7 @@ export function GoalsPanel({ s, info, game }: { s: EconomyState; info: StoreInfo
           <div key={g.id} class="tt-goal ready">
             <div class="tt-row">
               <span><span class="tt-goal-tag">{t`🎁 Do odebrania`}</span> <b>{tr(g.label)}</b></span>
-              <button type="button" class="tt-btn tt-primary" aria-label={t`Odbierz: ${tr(g.label)}`} onClick={() => game.dispatch({ type: 'claimMilestone', id: g.id })}>{t`Odbierz`}</button>
+              <button type="button" class="tt-btn tt-primary" data-tut="claim-btn" aria-label={t`Odbierz: ${tr(g.label)}`} onClick={() => game.dispatch({ type: 'claimMilestone', id: g.id })}>{t`Odbierz`}</button>
             </div>
             <div class="tt-muted">{t`Nagroda: +${g.reward} 🦎 i XP`}</div>
           </div>

@@ -1839,7 +1839,7 @@
   }
 }
 
-/* --- Plakietki sklepu tymczasowego i biegu rankingowego, podpowiedzi pierwszego dnia, przyciski sklepu w ⚙ ------------------- */
+/* --- Plakietki sklepu tymczasowego i biegu rankingowego, przyciski sklepu w ⚙ --------------------------------------------- */
 
 .tt-ephemeral,
 .tt-ranked-badge {
@@ -1876,41 +1876,6 @@
 
 .tt-ranked-badge + .tt-ephemeral {
   bottom: calc(var(--tabs-h) + 46px);
-}
-
-.tt-hintbubble {
-  pointer-events: auto;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 8px 8px 14px;
-  border-left: 4px solid var(--tt-orange);
-  border-radius: 12px;
-  background: var(--tt-cream);
-  color: #22302a;
-  font-size: 13px;
-  font-weight: 600;
-  line-height: 1.35;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28);
-  animation: tt-in 0.2s ease-out;
-}
-
-.tt-hintbubble-text {
-  flex: 1;
-  min-width: 0;
-}
-
-.tt-hintbubble .tt-hintbubble-next {
-  flex: 0 0 auto;
-  background: var(--tt-green);
-  color: #fff;
-  min-height: 34px;
-  padding: 6px 12px;
-  border-radius: 10px;
-}
-
-.tt-hintbubble .tt-hintbubble-next:hover:not(.on) {
-  background: var(--tt-green-dark);
 }
 
 .tt-store-actions {
@@ -2346,4 +2311,29 @@
 .tt-lang.compact .tt-btn {
   padding: 4px 9px;
   font-size: 13px;
+}
+
+/* Słowniczek na końcu „Jak grać”: hasło pogrubione, objaśnienie pod nim. */
+.tt-howto .tt-glossary dl {
+  margin: 0 0 8px;
+}
+
+.tt-howto .tt-glossary dt {
+  margin-top: 6px;
+  color: var(--tt-green-dark);
+  font-weight: 800;
+}
+
+.tt-howto .tt-glossary dd {
+  margin: 1px 0 0;
+}
+
+/* Dwa przyciski w stopce „Jak grać”: „Samouczek” i „Zaczynamy” obok siebie. */
+.tt-howto .tt-modal-foot {
+  display: flex;
+  gap: 8px;
+}
+
+.tt-howto .tt-modal-foot .tt-btn {
+  flex: 1;
 }

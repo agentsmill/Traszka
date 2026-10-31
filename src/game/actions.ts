@@ -246,8 +246,6 @@ export interface ShellDeps {
   clearSeedFromUrl(): void;
   /** Fabryka postaci dla ekranu „Nowy sklep”: ta sama, z której korzysta gra. */
   characterFactory(): Promise<CharacterFactory>;
-  /** Podpowiedzi pierwszego dnia w krótkich dymkach (`FIRST_DAY_HINTS` w ui/game/overlays.tsx: moduł interfejsu, więc podaje je main.ts). */
-  firstDayHints: readonly string[];
   /** Seed tygodnia z serwera rankingu dla chipa na ekranie „Nowy sklep” (main.ts: `weekSeedOf(createRankingClient())`); bez niej ekran nie ma chipa. */
   weekSeed?(): Promise<string | null>;
 }
@@ -272,7 +270,7 @@ export interface GameShell {
   meta: Meta;
   /**
    * Otwiera pierwszy sklep przy wejściu na stronę (`openStore`: zapis, który przeszedł walidację, nie przepada z powodu świata,
-   * który się nie zbudował) i pokazuje, co gracza czeka: komunikaty, adres, wskazówki pierwszego dnia albo okno powitalne.
+   * który się nie zbudował) i pokazuje, co gracza czeka: komunikaty, adres, propozycję samouczka albo okno powitalne.
    * Zwraca false, gdy żaden sklep się nie zbudował (renderer): zapis zostaje nietknięty, a gracz dostaje komunikat.
    */
   open(request: OpenAtStart): boolean;
@@ -670,8 +668,8 @@ export function createShell(deps: ShellDeps): GameShell {
    * Przejście na sesję rankingową (nowy bieg albo bieg z zapisu): `switchSession` z komunikatem `failure`, a po sukcesie `onEntered`
    * (porządki, które wolno zrobić dopiero teraz, np. skasowanie tego, co nowy bieg zastępuje; przed zapisem, żeby nie skasować nowego
    * biegu), tryb `ranked`, `?seed=` zdjęty z adresu (decyzja 3: bieg nie wpisuje seeda, a stary seed zwykłego sklepu kazałby odświeżeniu
-   * otworzyć ten sklep zamiast wznowić bieg), interfejs sklepu (z zamknięciem zakładki i raportu), bez pytania o start i bez dymków
-   * pierwszego dnia, publikacja i zapis. Bez okna powitalnego (także tego, które czekało w zwykłym sklepie) i nagród: bieg rankingowy zaczyna się od razu.
+   * otworzyć ten sklep zamiast wznowić bieg), interfejs sklepu (z zamknięciem zakładki i raportu), bez pytania o start i bez okna
+   * wyboru samouczka (samouczek działa tylko w zwykłym sklepie), publikacja i zapis. Bez okna powitalnego (także tego, które czekało w zwykłym sklepie) i nagród: bieg rankingowy zaczyna się od razu.
    */
   function enterRanked(seed: string, make: () => GameSession, failure: string, onEntered?: () => void): boolean {
     if (!switchSession({ seed, make, failure, restoreWithoutPrevious: false })) return false;
@@ -681,7 +679,7 @@ export function createShell(deps: ShellDeps): GameShell {
     resetShopUi(seed, true);
     ui.welcome.value = null;   // okno „Witaj z powrotem” czekające w zwykłym sklepie: „Odbierz!” dałoby nagrodę poza dziennikiem i unieważniło bieg (`markOffLog`)
     ui.confirmRankedStart.value = null;
-    ui.showHints([]);
+    ui.tutorialOffer.value = false;
     publish();
     persist();
     return true;
@@ -786,11 +784,12 @@ export function createShell(deps: ShellDeps): GameShell {
    * sklep otwiera `openChosen` (start.ts, z testem): przez `setSeed` zawsze bez `fresh`, więc seed z zapisem wczytuje ten zapis, a
    * zapisu z nowszej wersji gry ani takiego, którego świata nie dało się zbudować, nic nie nadpisze (`createSession`). Wygląd idzie
    * do sceny przed `setSeed`: każdy sklep (także poprzedni, odtworzony, gdy nowy się nie otworzył) stawia kasjera z tego wyglądu,
-   * więc `CashierView.setLook` na żywo nie jest tu potrzebne. Po otwarciu zupełnie nowego sklepu wstaje okno „Jak grać” (gra czeka na
-   * „Zaczynamy”); sklep wczytany z zapisu i sklep, który się nie otworzył (gracz zostaje w poprzednim), instrukcji nie otwierają.
+   * więc `CashierView.setLook` na żywo nie jest tu potrzebne. Po otwarciu zupełnie nowego sklepu wstaje okno wyboru samouczka, o ile
+   * gracz jeszcze na nie nie odpowiedział (`offerTutorial`); sklep wczytany z zapisu i sklep, który się nie otworzył (gracz zostaje
+   * w poprzednim), go nie dostają.
    *
    * Wybór rankingowy (`choice.ranked`, „Start rankingowy”) idzie do `startRanked(seed, opts)` zamiast do `openChosen`: bieg zaczyna się
-   * od zera bez wczytywania zwykłego zapisu pod tym seedem, a instrukcji nie otwiera (tylko zwykły, zupełnie nowy sklep). `opts.replace`
+   * od zera bez wczytywania zwykłego zapisu pod tym seedem i niczego nie otwiera (samouczek działa tylko w zwykłym sklepie). `opts.replace`
    * to „Porzuć i zacznij” z pytania. Ekran pyta o porzucenie biegu jeszcze przed zamknięciem (`rankedBlock`), więc tu pytanie nie powinno
    * paść; gdyby stan zmienił się po drodze (`startRanked` odmówił i ustawił `confirmRankedStart`), nic nie zostaje skasowane, a ekran
    * wraca z tym samym wyborem i pytaniem. Inna porażka (świat się nie zbudował) zostawia gracza w poprzednim sklepie z komunikatem.
@@ -808,7 +807,7 @@ export function createShell(deps: ShellDeps): GameShell {
       }
       return;
     }
-    if (openChosen(choice, storeSwitch) && shell.session && !shell.session.fromSave) ui.openHowTo();
+    if (openChosen(choice, storeSwitch) && shell.session && !shell.session.fromSave) ui.offerTutorial();
   }
 
   /** Ekran „Nowy sklep” (tryb `new`): gra czeka pod nim (modal w pętli klatek). Pola z `form`; zatwierdzenie to `openChosenStore`. */
@@ -952,9 +951,10 @@ export function createShell(deps: ShellDeps): GameShell {
       publish();
       // nic się nie zapisuje, dopóki gracz nie kliknie „Odbierz!”; po wypowiedzeniu umowy wstaje samo okno końca gry
       const start = startupWindow(shell.meta, session.econ, session.ephemeral, new Date(), session.mode);
-      ui.showHints(start.intro ? deps.firstDayHints : []);   // nowa gra: wskazówki pierwszego dnia w krótkich dymkach
       ui.welcome.value = start.welcome;
-      if (choice) ui.openHowTo();   // pierwsze wejście przez ekran startowy: instrukcja, gra i dymki pierwszego dnia czekają na „Zaczynamy”
+      // zupełnie nowy sklep (także po przeładowaniu przy otwartym oknie wyboru): propozycja samouczka, o ile gracz jeszcze na nią nie
+      // odpowiedział; przy `intro` okna powitalnego nie ma, więc nie stoją naraz
+      if (start.intro) ui.offerTutorial();
       persist();
       return true;
     },

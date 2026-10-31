@@ -55,7 +55,7 @@ export function TrustChip({ value }: { value: number }) {
   const tier = trustTier(value);
   const shown = Math.round(value);
   return (
-    <span class={`tt-stat tt-trust${value < TRUST_WARN_BELOW ? ' warn' : ''}`} role="img" aria-label={t`Zaufanie ${shown}: ${tr(tier.label)}`}
+    <span class={`tt-stat tt-trust${value < TRUST_WARN_BELOW ? ' warn' : ''}`} data-tut="trust" role="img" aria-label={t`Zaufanie ${shown}: ${tr(tier.label)}`}
       title={t`Zaufanie Centrali ${shown} / 100: ${tr(tier.label)}. ${tr(tier.flavor)}`}>
       <span>🤝 {shown}</span>
       <span class="tt-trust-tier">{tr(tier.label)}</span>
@@ -71,7 +71,7 @@ export function ClaimChip({ count }: { count: number }) {
   if (count <= 0) return null;
   const label = t`${count} ${plural(count, 'cel czeka', 'cele czekają', 'celów czeka')} na odbiór nagrody`;
   return (
-    <button type="button" class="tt-stat tt-claim hot" title={t`${label}: zakładka Cele`} aria-label={label} onClick={() => { tab.value = 'cele'; }}>
+    <button type="button" class="tt-stat tt-claim hot" data-tut="claim" title={t`${label}: zakładka Cele`} aria-label={label} onClick={() => { tab.value = 'cele'; }}>
       🎁 {count}
     </button>
   );
@@ -99,7 +99,7 @@ export function ForecastChip({ f, cash }: { f: MonthForecast; cash: number }) {
   const tone = level === 'danger' || level === 'warn' ? level : f.cashAfter < 0 ? 'neg' : '';
   return (
     <button type="button" class={`tt-due${tone ? ` ${tone}` : ''}`} title={forecastTitle(f, cash, check)} aria-label={forecastLabel(f)} onClick={openMonthPreview}>
-      <span class="tt-due-part"><span class="tt-due-label">{t`Saldo`}<span class="tt-due-pre">{t` u Centrali`}</span></span> <b>{zl(f.saldo)}</b></span>
+      <span class="tt-due-part" data-tut="saldo"><span class="tt-due-label">{t`Saldo`}<span class="tt-due-pre">{t` u Centrali`}</span></span> <b>{zl(f.saldo)}</b></span>
       <span class="tt-due-part"><span class="tt-due-label">{t`Raty`}</span> <b>{zl(f.installments)}</b></span>
       <span class="tt-due-part">
         <span class="tt-due-label"><span class="tt-due-pre">{t`Po zamknięciu `}</span><span class="tt-due-word">{t`zostanie`}</span></span>
@@ -128,18 +128,18 @@ export function Hud({ controls, ranking = false }: { controls: Controls; ranking
           onClick={() => { tab.value = 'cele'; }}>
           <span>{s.level}</span>
         </button>
-        <span class={`tt-cash${s.cash < 0 ? ' neg' : ''}${s.cash < DEBT_WARN ? ' debt' : ''}${rising ? ' up' : ''}`}
+        <span data-tut="cash" class={`tt-cash${s.cash < 0 ? ' neg' : ''}${s.cash < DEBT_WARN ? ' debt' : ''}${rising ? ' up' : ''}`}
           title={s.cash < DEBT_WARN ? tr(debtWarningText(s.cash)) : t`Gotówka`}>{zl(cash)}</span>
         <span class="tt-stat" title={t`Reputacja sklepu (0–100): ściąga klientów`}>⭐ {int(s.reputation)}</span>
         <span class="tt-stat" title={t`Ogonki: nagrody za cele, wydajesz w Ulepszeniach`}>🦎 {int(s.ogonki)}</span>
         <TrustChip value={s.tycoon.trust.value} />
         <span class="tt-hud-tools">
           {ranking && <RankingButton />}
-          <button type="button" class="tt-iconbtn tt-help" aria-label={t`Jak grać`} onClick={() => openHowTo()}>?</button>
+          <button type="button" class="tt-iconbtn tt-help" data-tut="help" aria-label={t`Jak grać`} onClick={() => openHowTo()}>?</button>
           <button type="button" class="tt-iconbtn tt-gear" aria-label={t`Ustawienia`} onClick={() => { showSettings.value = true; }}>⚙</button>
         </span>
       </div>
-      <div class="tt-hud-row tt-hud-due">
+      <div class="tt-hud-row tt-hud-due" data-tut="due">
         <ForecastChip f={forecastMonth(s, view.info)} cash={s.cash} />
       </div>
       <div class="tt-hud-row">
@@ -147,7 +147,7 @@ export function Hud({ controls, ranking = false }: { controls: Controls; ranking
           {dateText(dayOf(s.minute))} · <b>{formatClock(s.minute)}</b>{closed ? t` · remont` : ''}
         </span>
         <ClaimChip count={s.milestonesReady.length} />
-        <div class="tt-seg" role="group" aria-label={t`Prędkość czasu`}>
+        <div class="tt-seg" data-tut="speed" role="group" aria-label={t`Prędkość czasu`}>
           {SPEEDS.map((o) => (
             <button key={o.value} type="button" class={`tt-btn${o.value === speed.value ? ' on' : ''}`} aria-pressed={o.value === speed.value}
               title={tr(o.title)} onClick={() => controls.setSpeed(o.value)}>{o.label}</button>

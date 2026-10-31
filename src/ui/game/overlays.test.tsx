@@ -17,7 +17,7 @@ import { MemoryStorage } from '@/game/memoryStorage';
 import { RANKED_BANKRUPT_TEXT, RANKED_KEYS, createRankedSession, saveFinished, saveRanked, clearFinished, type FinishedRun } from '@/game/rankedRun';
 import { newRunLog } from '@/game/session';
 import {
-  econ, ephemeral, hints, isWindowOpen, panel, pushStory, ranked, remanent, report, selection, showHints, showSettings, speed, start, story, tab, unsent, welcome,
+  econ, ephemeral, isWindowOpen, panel, pushStory, ranked, remanent, report, selection, showSettings, speed, start, story, tab, unsent, welcome,
   type Controls, type GameActions,
 } from '../state';
 import { App } from '../App';
@@ -26,7 +26,7 @@ import { int, minusZl, money, percentOf, signedZl, zl } from './format';
 import { Bar, PalletItem } from './panels';
 import { ENERGY_TITLE } from './tapBlock';
 import {
-  ClickerBar, ComboChip, EPHEMERAL_BADGE, EPHEMERAL_NOTE, FIRST_DAY_HINTS, FirstDayHints, RANKED_NOTE, RESTART_CONFIRM, RankingSettings, ReportBody,
+  ClickerBar, ComboChip, EPHEMERAL_BADGE, EPHEMERAL_NOTE, RANKED_NOTE, RESTART_CONFIRM, RankingSettings, ReportBody,
   RemanentModal, ReportModal, STORY_GRACE_MS, SelectionCard, StoreActions, StoreBadge, StoryModal, WelcomeModal, abandonQuestion, refreshStoredRun, storedRun,
   storedRunNow, terminationReason,
 } from './overlays';
@@ -48,7 +48,6 @@ const resetSignals = (): void => {
   unsent.value = null;
   speed.value = 1;
   story.value = [];
-  showHints([]);
 };
 beforeEach(resetSignals);
 afterEach(() => {
@@ -152,37 +151,6 @@ describe('plakietka biegu rankingowego', () => {
     expect(text).toContain('Ranking · dzień 1/91');
   });
 });
-
-describe('podpowiedzi pierwszego dnia: dymki zamiast okna powitalnego', () => {
-  it('lista krótkich wskazówek z dawnego okna (cel gry, palety, kolejka, KPI tygodnia, siły, sterowanie), każda krótka i po polsku', () => {
-    expect(FIRST_DAY_HINTS.length).toBeGreaterThanOrEqual(5);
-    expect(new Set(FIRST_DAY_HINTS).size).toBe(FIRST_DAY_HINTS.length);
-    for (const hint of FIRST_DAY_HINTS) {
-      expect(hint.length, hint).toBeLessThanOrEqual(120);
-      expect(hint, hint).toMatch(/[ąćęłńóśźż]/i);
-    }
-    const all = FIRST_DAY_HINTS.join(' ').toLowerCase();
-    for (const word of ['franczyz', 'palet', 'kolejk', 'cele', 'sił', 'przeciągnij']) expect(all, word).toContain(word);
-    expect(FIRST_DAY_HINTS[0]).toContain('Cel');   // najpierw o co chodzi, potem jak grać
-  });
-
-  it('bez podpowiedzi nic nie widać; z listą widać pierwszą z przyciskiem „Dalej” (ostatnia: „OK”)', () => {
-    expect(FirstDayHints()).toBeNull();
-    showHints(['Pierwsza', 'Druga']);
-    const first = FirstDayHints();
-    expect(textOf(first)).toContain('Pierwsza');
-    expect(labels(first)).toEqual(['Dalej']);
-    (buttonsOf(first)[0]!.props.onClick as () => void)();
-    expect(hints.value).toEqual(['Druga']);
-    const last = FirstDayHints();
-    expect(textOf(last)).toContain('Druga');
-    expect(labels(last)).toEqual(['OK']);
-    (buttonsOf(last)[0]!.props.onClick as () => void)();
-    expect(hints.value).toEqual([]);
-    expect(FirstDayHints()).toBeNull();
-  });
-});
-
 
 // --- Polecenia z interfejsu, paczka i combo ze stanu symulacji ---------------------------------------------------
 
@@ -1319,14 +1287,6 @@ describe('okno remanentu (RemanentModal): protokół i „OK”', () => {
   });
 });
 
-describe('podpowiedź pierwszego dnia o kolejce', () => {
-  it('nie radzi zatrudniać: kasa obsługuje najwyżej jedną osobę na stanowisko, więc kolejki nie skróci kolejny pracownik', () => {
-    const hint = FIRST_DAY_HINTS.find((h) => h.includes('Kolejka'))!;
-    expect(hint).toBeDefined();
-    expect(hint).not.toMatch(/zatrudni/i);
-    expect(hint).toContain('kasę samoobsługową');
-  });
-});
 
 describe('„Witaj z powrotem”: wiersz gotówki tylko tam, gdzie jest gotówka', () => {
   it('seria dni to same Ogonki: bez kwoty w złotych, z serią i przyciskiem odbioru', () => {

@@ -172,6 +172,8 @@ const SEEDS = Array.from({ length: 12 }, (_, i) => `traszka-${i + 1}`);
 const START = OPEN_FROM;
 /** Wiele dób gry na seedach: ok. 4 s na wolnym rdzeniu, a przy obciążonej maszynie (cały zestaw równolegle) dłużej niż domyślne 5 s. */
 const TIMEOUT = 60_000;
+/** 12 seedów × 90 dni: od SIM 6 ok. 75 s na maszynie GitHuba (CI padał na 60 s), lokalnie kilkanaście sekund. */
+const REPLAY_TIMEOUT = 240_000;
 
 describe('strażniki kształtu biegu (dla serwera rankingu przed replayRun)', () => {
   const cmd = { type: 'tapTill' };
@@ -237,7 +239,7 @@ describe('odtwarzanie biegu', () => {
     expect(remonts.filter((n) => n >= 1).length).toBeGreaterThanOrEqual(3);
     expect(COMMAND_TYPES.filter((t) => !seen.has(t))).toEqual([]);
     expect(seen.has('nuke')).toBe(true);
-  }, TIMEOUT);
+  }, REPLAY_TIMEOUT);
 
   it('odtworzenie do minuty pośredniej = stan żywej gry w tej minucie', () => {
     // południe dni 10, 30 i 60: pełna godzina, więc bot często kupuje właśnie w tej minucie (polecenia minuty M wchodzą przed stopem w M)

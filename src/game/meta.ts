@@ -144,8 +144,13 @@ export function partnerOf(meta: Meta): EconomyState['partner'] {
   };
 }
 
+/** Remont, po którym można otworzyć kolejny sklep (samouczek podaje go w tekście). */
+export const PRESTIGE_REMONT = 2;
+/** Poziom, od którego można otworzyć kolejny sklep bez remontu. */
+export const PRESTIGE_LEVEL = 20;
+
 /** Kiedy można otworzyć kolejny sklep: po drugim remoncie albo na 20. poziomie. */
-export const prestigeReady = (s: EconomyState): boolean => s.remontLevel >= 2 || s.level >= 20;
+export const prestigeReady = (s: EconomyState): boolean => s.remontLevel >= PRESTIGE_REMONT || s.level >= PRESTIGE_LEVEL;
 
 /** Ile Punktów Partnera da zamknięcie obecnego sklepu (pierwiastek z zarobionej marży, min. 1). */
 export const prestigePoints = (s: EconomyState): number => Math.max(1, Math.floor(Math.sqrt(s.total.margin / 20_000)));

@@ -5,12 +5,14 @@ import { applyCommand } from '@/sim/economy/commands';
 import { awaitingDecision, createEconomy, stepMinute, type EconomyState, type MonthReport } from '@/sim/economy/economy';
 import { computeStoreInfo } from '@/sim/economy/storeInfo';
 import { visibleCards } from '@/sim/economy/tycoon/cards';
+import { MemoryStorage } from '@/game/memoryStorage';
 import {
-  HINT_MS, closeFinish, closeHowTo, closePanel, dismissStory, econ, finish, hints, howTo, isWindowOpen, nextHint, openHowTo, openPanel, openRanking,
-  panel, pushStory, pushToast, ranked, report, showHints, showPrestige, start, story, toasts, welcome, type GameActions,
+  closeFinish, closeHowTo, closePanel, dismissStory, econ, finish, howTo, isWindowOpen, offerTutorial, openHowTo, openPanel, openRanking,
+  panel, pushStory, pushToast, ranked, report, showPrestige, start, story, toasts, tutorialOffer, welcome, type GameActions,
 } from './state';
+import { setTour } from './tutorial/memory';
 
-/** Wszystko, co zatrzymuje grę albo dymki, do stanu wyjściowego. */
+/** Wszystko, co zatrzymuje grę, do stanu wyjściowego. */
 const clearWindows = (): void => {
   howTo.value = false;
   report.value = null;
@@ -22,112 +24,18 @@ const clearWindows = (): void => {
   finish.value = null;
   ranked.value = null;
   panel.value = null;
+  tutorialOffer.value = false;
 };
 
 beforeEach(() => {
   vi.useFakeTimers();
   clearWindows();
-  showHints([]);
   toasts.value = [];
 });
 afterEach(() => {
   clearWindows();
-  showHints([]);
   toasts.value = [];
   vi.useRealTimers();
-});
-
-describe('podpowiedzi pierwszego dnia (krótkie dymki zamiast okna „Witaj w Traszce”)', () => {
-  it('pierwsza podpowiedź jest widoczna od razu, kolejne wchodzą same po HINT_MS, a po ostatniej lista jest pusta', () => {
-    showHints(['a', 'b', 'c']);
-    expect(hints.value).toEqual(['a', 'b', 'c']);
-    vi.advanceTimersByTime(HINT_MS - 1);
-    expect(hints.value[0]).toBe('a');
-    vi.advanceTimersByTime(1);
-    expect(hints.value).toEqual(['b', 'c']);
-    vi.advanceTimersByTime(HINT_MS);
-    expect(hints.value).toEqual(['c']);
-    vi.advanceTimersByTime(HINT_MS);
-    expect(hints.value).toEqual([]);
-    expect(vi.getTimerCount()).toBe(0);   // nic nie tyka dalej
-  });
-
-  it('nextHint („Dalej”) przeskakuje od razu i liczy czas następnej od nowa', () => {
-    showHints(['a', 'b', 'c']);
-    vi.advanceTimersByTime(HINT_MS - 100);
-    nextHint();
-    expect(hints.value).toEqual(['b', 'c']);
-    vi.advanceTimersByTime(HINT_MS - 1);
-    expect(hints.value).toEqual(['b', 'c']);      // zegar poszedł od nowa, a nie dokończył starego
-    vi.advanceTimersByTime(1);
-    expect(hints.value).toEqual(['c']);
-  });
-
-  it('nextHint na pustej liście niczego nie robi i nie zostawia zegara', () => {
-    nextHint();
-    expect(hints.value).toEqual([]);
-    expect(vi.getTimerCount()).toBe(0);
-  });
-
-  it('nowa lista zastępuje starą, z jednym zegarem (nic się nie dubluje); pusta lista czyści i zatrzymuje zegar', () => {
-    showHints(['a', 'b']);
-    showHints(['x', 'y', 'z']);
-    expect(vi.getTimerCount()).toBe(1);
-    expect(hints.value).toEqual(['x', 'y', 'z']);
-    showHints([]);
-    expect(hints.value).toEqual([]);
-    expect(vi.getTimerCount()).toBe(0);
-  });
-
-  it('lista jest kopią: zmiana tablicy przekazanej do showHints nie rusza podpowiedzi', () => {
-    const list = ['a', 'b'];
-    showHints(list);
-    list.push('c');
-    expect(hints.value).toEqual(['a', 'b']);
-  });
-});
-
-describe('podpowiedzi pierwszego dnia czekają pod oknem „Jak grać”', () => {
-  it('lista pokazana przy otwartym oknie nie ma zegara: po minucie nadal pierwsza, a „Zaczynamy” daje jej pełny czas', () => {
-    openHowTo();
-    showHints(['a', 'b']);
-    expect(hints.value).toEqual(['a', 'b']);
-    expect(vi.getTimerCount()).toBe(0);
-    vi.advanceTimersByTime(HINT_MS * 10);
-    expect(hints.value).toEqual(['a', 'b']);   // nikt tego nie zobaczył, więc nie wygasa
-
-    closeHowTo();
-    expect(howTo.value).toBe(false);
-    vi.advanceTimersByTime(HINT_MS - 1);
-    expect(hints.value).toEqual(['a', 'b']);
-    vi.advanceTimersByTime(1);
-    expect(hints.value).toEqual(['b']);
-  });
-
-  it('okno otwarte w trakcie zatrzymuje zegar, a po zamknięciu czas liczy się od nowa (nie z reszty)', () => {
-    showHints(['a', 'b']);
-    vi.advanceTimersByTime(HINT_MS - 100);
-    openHowTo();
-    expect(vi.getTimerCount()).toBe(0);
-    vi.advanceTimersByTime(HINT_MS * 5);
-    expect(hints.value).toEqual(['a', 'b']);
-    closeHowTo();
-    vi.advanceTimersByTime(HINT_MS - 1);
-    expect(hints.value).toEqual(['a', 'b']);
-    vi.advanceTimersByTime(1);
-    expect(hints.value).toEqual(['b']);
-  });
-
-  it('„Dalej” pod otwartym oknem też nie uruchamia zegara; bez podpowiedzi zamknięcie okna nie zostawia zegara', () => {
-    openHowTo();
-    showHints(['a', 'b', 'c']);
-    nextHint();
-    expect(hints.value).toEqual(['b', 'c']);
-    expect(vi.getTimerCount()).toBe(0);
-    showHints([]);
-    closeHowTo();
-    expect(vi.getTimerCount()).toBe(0);
-  });
 });
 
 describe('toasty: czas na przeczytanie zależy od długości tekstu (bez migania)', () => {
@@ -223,98 +131,62 @@ describe('ważne zdarzenia czekające na „OK” (story)', () => {
   });
 });
 
-describe('podpowiedzi pierwszego dnia czekają pod każdym oknem, które zatrzymuje grę', () => {
-  const INFO = computeStoreInfo(generateStore('traszka-hints'));
-  const view = (s: EconomyState, v = 1): NonNullable<typeof econ.value> => ({ s, info: INFO, v });
-  /** Gra stojąca na karcie decyzji (dzień 0 zawsze ma kartę). */
-  const onCard = (): EconomyState => {
-    const s = createEconomy('traszka-hints', INFO);
-    for (let i = 0; i < 2000 && !awaitingDecision(s); i++) stepMinute(s, INFO, []);
-    expect(awaitingDecision(s)).toBe(true);
-    return s;
-  };
-  const answerAll = (s: EconomyState): void => {
-    for (const c of visibleCards(s.tycoon.cards, s.minute)) applyCommand(s, INFO, { type: 'answerCard', seq: c.seq, answer: c.defaultAnswer });
-  };
-  const rep = {} as MonthReport;
+describe('okno wyboru samouczka (tutorialOffer)', () => {
+  beforeEach(() => { vi.stubGlobal('localStorage', new MemoryStorage()); });
+  afterEach(() => { vi.unstubAllGlobals(); tutorialOffer.value = false; });
 
-  /** Otwiera okno, sprawdza, że zegar stoi mimo długiego czekania, zamyka je i sprawdza, że dymek dostaje pełny czas od zamknięcia. */
-  function holdsUntilClosed(open: () => void, close: () => void): void {
-    showHints(['a', 'b']);
-    vi.advanceTimersByTime(HINT_MS - 100);   // dymek jest już prawie na końcu czasu
-    open();
-    expect(vi.getTimerCount()).toBe(0);
-    vi.advanceTimersByTime(HINT_MS * 10);
-    expect(hints.value).toEqual(['a', 'b']);   // pod oknem nic nie wygasa
-    close();
-    vi.advanceTimersByTime(HINT_MS - 1);
-    expect(hints.value).toEqual(['a', 'b']);   // czas liczy się od zamknięcia, a nie z reszty sprzed okna
-    vi.advanceTimersByTime(1);
-    expect(hints.value).toEqual(['b']);
+  it('offerTutorial otwiera okno tylko graczowi, który jeszcze na nie nie odpowiedział', () => {
+    offerTutorial();
+    expect(tutorialOffer.value).toBe(true);
+    tutorialOffer.value = false;
+    for (const tour of ['started', 'skipped', 'done'] as const) {
+      setTour(tour);
+      offerTutorial();
+      expect(tutorialOffer.value, tour).toBe(false);
+    }
+  });
+
+  it('otwarte okno wyboru zatrzymuje grę jak każde inne okno', () => {
+    expect(isWindowOpen()).toBe(false);
+    tutorialOffer.value = true;
+    expect(isWindowOpen()).toBe(true);
+  });
+});
+
+describe('isWindowOpen: każde okno z sygnałem zatrzymuje grę, karta decyzji i koniec gry nie mają sygnału', () => {
+  const INFO = computeStoreInfo(generateStore('traszka-okna'));
+  const rep = {} as MonthReport;
+  const cases: [string, () => void][] = [
+    ['raport miesiąca', () => { report.value = rep; }],
+    ['ważne zdarzenie czekające na „OK”', () => pushStory('Remont zakończony', 'Sklep otwarty.')],
+    ['okno powitalne', () => { welcome.value = { hours: 2, offline: 0, streak: 1, daily: { cash: 0, ogonki: 2 } }; }],
+    ['prestiż', () => { showPrestige.value = true; }],
+    ['okno końca sezonu', () => { finish.value = { open: true }; }],
+    ['ekran „Nowy sklep”', () => { start.value = {} as NonNullable<typeof start.value>; }],
+    ['„Jak grać”', () => openHowTo()],
+  ];
+  for (const [name, open] of cases) {
+    it(name, () => {
+      expect(isWindowOpen()).toBe(false);
+      open();
+      expect(isWindowOpen()).toBe(true);
+    });
   }
 
-  it('raport miesiąca', () => holdsUntilClosed(() => { report.value = rep; }, () => { report.value = null; }));
-  it('ważne zdarzenie czekające na „OK”', () => holdsUntilClosed(() => pushStory('Remont zakończony', 'Sklep otwarty.'), () => dismissStory()));
-  it('okno powitalne', () => holdsUntilClosed(
-    () => { welcome.value = { hours: 2, offline: 0, streak: 1, daily: { cash: 0, ogonki: 2 } }; }, () => { welcome.value = null; },
-  ));
-  it('prestiż', () => holdsUntilClosed(() => { showPrestige.value = true; }, () => { showPrestige.value = false; }));
-  it('okno końca sezonu rankingowego i ponownej wysyłki wyniku', () => holdsUntilClosed(
-    () => { finish.value = { open: true }; }, () => { finish.value = null; },
-  ));
-  it('ekran „Nowy sklep”', () => holdsUntilClosed(
-    () => { start.value = {} as NonNullable<typeof start.value>; }, () => { start.value = null; },
-  ));
-
-  it('karta decyzji, która trzyma grę: dymki czekają, choć żadne okno z sygnałem nie jest otwarte; po odpowiedzi dostają pełny czas', () => {
-    const s = createEconomy('traszka-hints', INFO);
-    econ.value = view(s);
-    const stopped = onCard();
-    holdsUntilClosed(() => { econ.value = view(stopped, 2); }, () => { answerAll(stopped); econ.value = view(stopped, 3); });
-    expect(isWindowOpen()).toBe(false);   // to nie było okno z sygnałem, tylko stan gry
+  it('karta decyzji trzyma grę w symulacji, a nie sygnałem okna', () => {
+    const s = createEconomy('traszka-okna', INFO);
+    for (let i = 0; i < 2000 && !awaitingDecision(s); i++) stepMinute(s, INFO, []);
+    expect(awaitingDecision(s)).toBe(true);
+    econ.value = { s, info: INFO, v: 1 };
+    expect(isWindowOpen()).toBe(false);
+    for (const c of visibleCards(s.tycoon.cards, s.minute)) applyCommand(s, INFO, { type: 'answerCard', seq: c.seq, answer: c.defaultAnswer });
+    expect(awaitingDecision(s)).toBe(false);
   });
 
-  it('publikacja stanu (co 200 ms) pod kartą ani w grze bez karty nie przesuwa zegara dymka', () => {
-    const s = createEconomy('traszka-hints', INFO);
-    econ.value = view(s);
-    showHints(['a', 'b']);
-    for (let v = 2, t = 0; t < HINT_MS - 200; v++, t += 200) {
-      vi.advanceTimersByTime(200);
-      econ.value = view(s, v);
-    }
-    vi.advanceTimersByTime(200);
-    expect(hints.value).toEqual(['b']);   // dymek zszedł o czasie, mimo kilkudziesięciu publikacji po drodze
-  });
-
-  it('koniec gry też wstrzymuje dymki (stoi wtedy okno końca współpracy)', () => {
-    const s = createEconomy('traszka-hints', INFO);
-    showHints(['a']);
-    s.gameOver = true;
-    econ.value = view(s);
-    expect(vi.getTimerCount()).toBe(0);
-    vi.advanceTimersByTime(HINT_MS * 3);
-    expect(hints.value).toEqual(['a']);
-  });
-
-  it('dwa okna jedno po drugim: zegar rusza dopiero po zamknięciu ostatniego', () => {
-    showHints(['a', 'b']);
-    report.value = rep;
-    pushStory('Poziom 5', 'Nagroda');
-    report.value = null;
-    expect(vi.getTimerCount()).toBe(0);   // „OK” jeszcze czeka
-    dismissStory();
-    expect(vi.getTimerCount()).toBe(1);
-    vi.advanceTimersByTime(HINT_MS);
-    expect(hints.value).toEqual(['b']);
-  });
-
-  it('lista pokazana przy otwartym oknie nie ma zegara, a pusta lista po zamknięciu nie zostawia go', () => {
-    report.value = rep;
-    showHints(['a']);
-    expect(vi.getTimerCount()).toBe(0);
-    showHints([]);
-    report.value = null;
-    expect(vi.getTimerCount()).toBe(0);
+  it('„Zaczynamy” zamyka „Jak grać”', () => {
+    openHowTo();
+    closeHowTo();
+    expect(isWindowOpen()).toBe(false);
   });
 });
 
@@ -385,20 +257,6 @@ describe('panele rankingu: sygnał panel', () => {
     expect(isWindowOpen()).toBe(false);
     openPanel('recovery');
     expect(isWindowOpen()).toBe(true);
-  });
-
-  it('dymki pierwszego dnia czekają pod panelem, a po jego zamknięciu dostają pełny czas', () => {
-    showHints(['a', 'b']);
-    vi.advanceTimersByTime(HINT_MS - 100);
-    openPanel('recovery');
-    expect(vi.getTimerCount()).toBe(0);
-    vi.advanceTimersByTime(HINT_MS * 10);
-    expect(hints.value).toEqual(['a', 'b']);
-    closePanel();
-    vi.advanceTimersByTime(HINT_MS - 1);
-    expect(hints.value).toEqual(['a', 'b']);
-    vi.advanceTimersByTime(1);
-    expect(hints.value).toEqual(['b']);
   });
 
   it('openRanking: w biegu rankingowym zakładka „Ten seed”, w zwykłej grze „Globalny”', () => {

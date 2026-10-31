@@ -16,7 +16,7 @@ import { networkIncomeOf, prestigePoints } from '@/game/meta';
 import { seasonBankrupt } from '@/sim/ranked';
 import { RANKED_BANKRUPT_TEXT, RANKED_DAYS, loadRanked, rankedDayOf, storedRankedBlock } from '@/game/rankedRun';
 import {
-  celebration, dismissStory, ephemeral, econ, hints, howTo, metaView, nextHint, openHowTo, openPanel, openRanking, preset, ranked, report, selection,
+  celebration, dismissStory, ephemeral, econ, howTo, metaView, openHowTo, openPanel, openRanking, preset, ranked, report, selection,
   seed, showPerf, showPrestige, showSettings, story, tab, toasts, unsent, welcome, closeRemanent, remanent, type Controls, type GameActions, type RankedView, type RemanentView,
 } from '../state';
 import { int, people, percentOf, signedPts, signedZl, zl } from './format';
@@ -24,6 +24,8 @@ import { Bar, PalletItem } from './panels';
 import { LanguageSwitch, setLangAndReload } from '../LanguageSwitch';
 import { buyButtons, buyNotes } from './spend';
 import { statementView } from './statement';
+import { loadTutorial, setTips } from '../tutorial/memory';
+import { requestTour } from '../tutorial/tour';
 import { ENERGY_TITLE, NO_ENERGY_TITLE, tapBlock, tillReason } from './tapBlock';
 
 export const DISCLAIMER = 'Wszystkie firmy, postacie i zdarzenia są fikcyjne.';
@@ -108,7 +110,7 @@ export function ClickerBar({ game, onFloat }: { game: GameActions; onFloat: (x: 
   const tillNote = tr(tillTapBlock(s, view.info))?.replace(/\.$/, '');
   const at = (e: MouseEvent): [number, number] => [e.clientX || window.innerWidth - 60, e.clientY || window.innerHeight - 140];
   return (
-    <div class="tt-clicker">
+    <div class="tt-clicker" data-tut="clicker">
       <div class="tt-energy" title={tr(ENERGY_TITLE)}>
         <span>{t`Siły ${int(energy)}/${FATIGUE.pool}`}</span>
         <Bar value={energy / FATIGUE.pool} warn={energy < LOW_ENERGY} />
@@ -287,7 +289,7 @@ export function ReportModal({ game }: { game: GameActions }) {
   return (
     <div class="tt-modal-wrap">
       <div class="tt-modal" role="dialog" aria-modal="true" aria-label={title}>
-        <h2>{title}</h2>
+        <h2 data-tut="report">{title}</h2>
         {reason && <p class="tt-end-reason" role="note"><b>{reason}</b></p>}
         {bankrupt && ranked.value && <p class="tt-end-reason" role="note">{tr(RANKED_BANKRUPT_TEXT)}</p>}
         {r ? <ReportBody r={r} closing={over ? TERMINATION : undefined} /> : centralaQuote(TERMINATION)}
@@ -381,37 +383,12 @@ export function RemanentModal() {
         <div class="tt-row total"><span>{t`Ubytki razem`}</span><span>{zl(p.total)}</span></div>
         <div class="tt-row"><span>{t`Limit Centrali`}</span><span>{zl(p.limit)}</span></div>
         {p.first && <p class="tt-hint" role="note">{t`Limit poznajesz dopiero teraz: ${percentOf(WUT.threshold)} obrotu.`}</p>}
-        <p class={`tt-remanent-verdict${p.charge > 0 ? ' over' : ''}`}>
+        <p class={`tt-remanent-verdict${p.charge > 0 ? ' over' : ''}`} data-tut="remanent-verdict">
           {p.charge > 0 ? t`Nadwyżka ${zl(p.charge)} zejdzie z dzisiejszego przelewu.` : t`Ubytki mieszczą się w limicie.`}
         </p>
         {centralaQuote(view.text)}
         <button type="button" class="tt-btn tt-primary big" onClick={ok}>OK</button>
       </div>
-    </div>
-  );
-}
-
-/**
- * Podpowiedzi pierwszego dnia nowej gry: krótkie dymki zamiast dawnego okna „Witaj w Traszce” (jego wskazówki, po jednej na
- * dymek). Nie pauzują gry. Zastrzeżenie o fikcji zostało na ekranie startowym i w ⚙.
- */
-export const FIRST_DAY_HINTS: readonly string[] = [
-  '🦎 Od dziś prowadzisz franczyzę Traszki. Cel: zbudować sieć Traszek i dojść do rangi Legendarnej Palety.',
-  '📦 Palety pod sklepem grożą mandatem Straży: przenieś je „Na zaplecze” w zakładce Palety. Złota paleta to premia.',
-  '🧾 Kolejka za długa? Klienci odchodzą. Stuknij w kasę albo kup kasę samoobsługową.',
-  '🎯 Cele: KPI tygodnia od Centrali daje zaufanie, premię i XP, a poziomy odblokowują sprzęt i remonty.',
-  '💪 Stukanie męczy: dzienna pula sił się kończy, a noc oddaje tylko część. Resztę robią pracownicy.',
-  '👆 Przeciągnij, żeby przesunąć widok, a szczypnięciem albo kółkiem myszy przybliżysz. Gra zapisuje się sama.',
-];
-
-/** Dymek z bieżącą podpowiedzią pierwszego dnia; „Dalej” przeskakuje, a kolejna wchodzi sama (`state.ts`). */
-export function FirstDayHints() {
-  const list = hints.value;
-  if (list.length === 0) return null;
-  return (
-    <div class="tt-hintbubble" role="status">
-      <span class="tt-hintbubble-text">{tr(list[0]!)}</span>
-      <button type="button" class="tt-btn tt-hintbubble-next" onClick={nextHint}>{list.length > 1 ? t`Dalej` : 'OK'}</button>
     </div>
   );
 }
@@ -453,6 +430,20 @@ export function StoreActions(
         ? <p class="tt-hint">{tr(EPHEMERAL_NOTE)}</p>
         : <button type="button" class="tt-btn" onClick={onRestart}>{t`Zacznij od nowa`}</button>}
     </div>
+  );
+}
+
+/** Przycisk „Samouczek” w ⚙: zamyka ustawienia i uruchamia przelot (w biegu rankingowym tylko komunikat, `requestTour`). */
+export function TutorialButton() {
+  return (
+    <button type="button" class="tt-btn" onClick={() => { showSettings.value = false; requestTour(); }}>Samouczek</button>
+  );
+}
+
+/** Pole „Podpowiedzi przy pierwszych zdarzeniach” w ⚙ (pamięć samouczka, `traszka:tutorial`). */
+export function TipsToggle() {
+  return (
+    <label class="tt-check-row"><input type="checkbox" checked={loadTutorial().tips} onChange={(e) => setTips(e.currentTarget.checked)} /> Podpowiedzi przy pierwszych zdarzeniach</label>
   );
 }
 
@@ -599,7 +590,11 @@ export function Settings({ controls, game, panels = true }: { controls: Controls
         <RankingSettings game={game} stored={storedRun.value} confirming={asking} onConfirming={setAsking} onRefresh={refreshStoredRun} close={close}
           panels={panels} />
         <h3>{t`Pomoc`}</h3>
-        <HowToButton />
+        <div class="tt-store-actions">
+          <HowToButton />
+          <TutorialButton />
+        </div>
+        <TipsToggle />
         <h3>{t`Grafika`}</h3>
         <div class="tt-seg wide" role="group" aria-label={t`Jakość grafiki`}>
           {PRESETS.map((p) => (

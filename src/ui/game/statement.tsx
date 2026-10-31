@@ -49,7 +49,7 @@ export function statementView(st: Statement, tone: CashTone = cashTone(st.cashAf
       {row(t`Księgowa`, minusZl(st.accounting))}
       {row(t`Media`, minusZl(st.media))}
       {row(t`Razem`, minusZl(st.costs), true)}
-      <div class={`tt-st-net ${st.net < 0 ? 'neg' : 'pos'}`}>
+      <div class={`tt-st-net ${st.net < 0 ? 'neg' : 'pos'}`} data-tut="zostaje-ci">
         <span>{t`Zostaje Ci`}</span>
         <b>{signedZl(st.net)}</b>
       </div>
