@@ -8,8 +8,8 @@ import { isRec } from '@/sim/guards';
  * Paczka do „Wyślij zapis” i „Pobierz zapis” (spec §14.7): wszystko, czego gra potrzebuje, żeby na drugim urządzeniu wczytać
  * się tak jak na pierwszym (decyzja właściciela gry, 2026-10-28): meta (gracz, sieć sklepów, Punkty Partnera, seria dni,
  * ustawienia), zapis bieżącego sklepu (ostatnio granego) i to, który sklep otworzyć. Zapis sklepu to schemat 2 (jeden sklep, ok. 10 KB po
- * pełnym sezonie) albo koperta firmy ze schematu 3 (`firmSave.ts`: dwa sklepy po dwóch remontach na koniec roku to ok. 52 KB; test
- * rozmiaru pilnuje 64 KB). Pozostałe sklepy zapisane na pierwszym urządzeniu zostają tam. Klucza gracza w paczce nie
+ * pełnym sezonie) albo koperta firmy ze schematu 3 (`firmSave.ts`: dwa sklepy po trzech remontach na koniec drugiego roku to ok. 27 KB, bo
+ * odtwarzalne układy nie leżą w zapisie; test rozmiaru pilnuje 64 KB). Pozostałe sklepy zapisane na pierwszym urządzeniu zostają tam. Klucza gracza w paczce nie
  * ma: serwer trzyma paczkę pod skrótem klucza i samego klucza nie przechowuje (§14.7), a drugie urządzenie ma już ten klucz z kodu.
  *
  * Gra trzyma metę i sesję w pamięci i zapisuje je przy każdym zamknięciu karty (`visibilitychange`, `pagehide`), także wtedy, gdy

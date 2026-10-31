@@ -9,13 +9,16 @@ import { awaitingDecision, stepMinute, type EconomyState } from '@/sim/economy/e
 import { defaultAnswer } from '@/sim/economy/monthPreview';
 import { LIMITS } from '@/sim/economy/sanitize';
 import { visibleCards } from '@/sim/economy/tycoon/cards';
+import { storeSeedFor } from '@/sim/city/traffic';
 import { applyFirmCommand, lotState } from '@/sim/firm/commands';
 import {
   activeStore, applyStoreCommand, createFirm, emptyStepOut, grantToFirm, openStoreAt, openStores, stepFirmMinute,
 } from '@/sim/firm/firm';
 import { INBOX_MAX, type FirmState, type FirmStepOut } from '@/sim/firm/types';
 import { freshRun } from '@/sim/run';
+import { GENERATOR_VERSION } from '@/sim/store/generateStore';
 import { layoutFor } from '@/sim/store/layoutFor';
+import type { StoreLayout } from '@/sim/store/types';
 import { SAVE_MAX_BYTES } from '@/server/config';
 import { TRANSFER_FORMAT } from '@/ui/ranking/saveTransfer';
 import { DEFAULT_CASHIER_LOOK } from './cashier';
@@ -260,22 +263,20 @@ describe('schemat 3: zapis i odczyt firmy', () => {
     expect(lotState(f, f.stores[0]!.lotId)).toBe('po-traszce');
   });
 
-  it('koperta: seed, wersje, osoba, budowy i skrzynka; sklep otwarty z układem i econ, zamknięty tylko z wyposażeniem (bez miasta i info)', () => {
+  it('koperta: seed, wersje, osoba, budowy i skrzynka; sklep otwarty z econ, zamknięty tylko z wyposażeniem, układów odtwarzalnych nie ma (bez miasta i info)', () => {
     const f = scenario();
     const env = firmEnvelopeOf(f);
     expect(env).toMatchObject({ schema: 3, gameVersion: GAME_VERSION, cityGeneratorVersion: CITY_GENERATOR_VERSION, seed: SEED });
     expect(env.firm).toEqual({
       person: f.person, activeId: 2, builds: f.builds, monthInvest: f.monthInvest, inbox: f.inbox, weatherHash: f.weatherHash, over: null,
     });
-    expect(env.stores.map((s) => Object.keys(s).sort())).toEqual([
-      ['closed', 'econ', 'generatorVersion', 'id', 'lotId', 'notice'],
-      ['closed', 'econ', 'generatorVersion', 'id', 'layout', 'lotId', 'notice'],
-    ]);
+    // układ odtwarzalny z lokalu miasta i poziomu remontu nie leży w kopercie (ani zamkniętego, ani otwartego sklepu)
+    expect(env.stores.map((s) => Object.keys(s).sort())).toEqual(env.stores.map(() => ['closed', 'econ', 'generatorVersion', 'id', 'lotId', 'notice']));
     expect(env.stores.map((s) => ({ id: s.id, lotId: s.lotId, closed: s.closed, notice: s.notice, generatorVersion: s.generatorVersion }))).toEqual(
       f.stores.map((s) => ({ id: s.id, lotId: s.lotId, closed: s.closed, notice: s.notice, generatorVersion: s.layout.generatorVersion })),
     );
     const [closed, open] = env.stores;
-    expect(open).toMatchObject({ closed: false, layout: f.stores[1]!.layout, econ: f.stores[1]!.econ });
+    expect(open).toMatchObject({ closed: false, generatorVersion: GENERATOR_VERSION, econ: f.stores[1]!.econ });
     const kept = f.stores[0]!.econ;
     expect(closed).toMatchObject({ closed: true, econ: { version: 1, seed: SEED, minute: kept.minute, upgrades: kept.upgrades, equipment: kept.equipment, remontLevel: 1, gameOver: true } });
     expect(Object.keys(closed!.econ).sort()).toEqual(['equipment', 'gameOver', 'minute', 'remontLevel', 'seed', 'upgrades', 'version']);
@@ -309,7 +310,10 @@ describe('schemat 3: zapis i odczyt firmy', () => {
 
   it('Review Focus 3: oba stany (żywy i odczytany) przechodzą 1000 kroków z tym samym skrótem, a budowa otwiera się w dniu z zapisu', () => {
     const a = structuredClone(scenario());
-    const b = opened(viaJson(a));
+    const text = JSON.stringify(firmEnvelopeOf(a));
+    expect((JSON.parse(text) as { stores: { layout?: unknown }[] }).stores.map((s) => s.layout)).toEqual([undefined, undefined]);   // oba układy wracają z generatora
+    const b = opened(restoreFirmFrom(JSON.parse(text), SEED));
+    expect(b.stores.map((s) => s.layout)).toEqual(a.stores.map((s) => s.layout));
     const { readyDay, lotId } = a.builds[0]!;
     for (let i = 0; i < 1000; i++) {
       tick(a);
@@ -362,6 +366,73 @@ describe('schemat 3: zapis i odczyt firmy', () => {
     expect(JSON.stringify(firmEnvelopeOf(opened(restoreFirmFrom(JSON.parse(second), SEED))))).toBe(second);
   });
 
+  it('układ, którego generator nie odtworzy, zostaje w kopercie: starsza wersja generatora albo układ inny niż z lokalu', () => {
+    const data = json('save-v2-remont2.json');
+    const seed = data.seed as string;
+    const f = opened(restoreFirmFrom(data, seed));
+    const envelope = (): Record<string, any> => JSON.parse(JSON.stringify(firmEnvelopeOf(f))) as Record<string, any>;
+    expect(envelope().stores[0]).toMatchObject({ generatorVersion: GENERATOR_VERSION });
+    expect(envelope().stores[0].layout).toBeUndefined();   // układ ze starego zapisu odtwarza dzisiejszy generator, więc nie jest potrzebny
+
+    const original = f.stores[0]!.layout;
+    const changed = original.cells.map((c, i) => (i === 0 ? (c === 'wall' ? 'floor' : 'wall') : c));
+    const variants: [string, StoreLayout][] = [
+      ['starsza wersja generatora', { ...original, generatorVersion: GENERATOR_VERSION - 1 }],
+      ['ta sama wersja, inna siatka', { ...original, cells: changed }],
+      ['ta sama wersja, inny seed układu', { ...original, seed: `${original.seed}:inny` }],
+    ];
+    for (const [name, layout] of variants) {
+      f.stores[0]!.layout = layout;
+      const env = envelope();
+      expect(env.stores[0].layout, name).toEqual(layout);
+      expect(env.stores[0].generatorVersion, name).toBe(layout.generatorVersion);
+      const back = opened(restoreFirmFrom(env, seed));
+      expect(back.stores[0]!.layout, name).toEqual(layout);   // zapisany układ wraca, nie ten z generatora
+      expect(JSON.stringify(firmEnvelopeOf(back)), name).toBe(JSON.stringify(env));   // i zostaje w kolejnym zapisie
+    }
+  });
+
+  it('remont w toku: układ już jest nowy, więc odtwarza się z poziomu remontu i odczyt oddaje ten sam sklep', () => {
+    const f = twoOpenStores();
+    remontEach(f, [1, 2], 8);
+    playTo(f, clockOf(f) + 60);
+    for (const st of f.stores) expect([st.econ.remontLevel, st.econ.remontUntil !== null]).toEqual([1, true]);
+    const env = JSON.parse(JSON.stringify(firmEnvelopeOf(f))) as { stores: { layout?: unknown }[] };
+    expect(env.stores.map((s) => s.layout)).toEqual([undefined, undefined]);
+    const back = opened(restoreFirmFrom(env, SEED));
+    for (const [i, st] of back.stores.entries()) {
+      expect(st.layout).toEqual(f.stores[i]!.layout);
+      expect(st.econ).toEqual(f.stores[i]!.econ);
+      expect(st.info).toEqual(f.stores[i]!.info);
+    }
+  });
+
+  it('wypowiedzenie otwartego sklepu przechodzi przez zapis: oba stany zamykają go w tym samym kroku', () => {
+    const a = smallFirm();
+    expect(command(a, { type: 'terminateStore', storeId: 1 })).toEqual({ ok: true });
+    const { endDay } = a.stores[0]!.notice!;
+    playTo(a, 30 * DAY + OPEN_FROM);
+    expect(a.stores[0]).toMatchObject({ closed: false, notice: { endDay } });
+    const b = opened(viaJson(a));
+    expect(b.stores[0]).toMatchObject({ closed: false, notice: { endDay } });
+    const closeMinute = (f: FirmState): number => {
+      for (let guard = 0; !f.stores[0]!.closed && guard < 60 * DAY; guard++) tick(f);
+      return clockOf(f);
+    };
+    const [minuteA, minuteB] = [closeMinute(a), closeMinute(b)];
+    expect(a.stores[0]!.closed).toBe(true);
+    expect(b.stores[0]!.closed).toBe(true);
+    expect(minuteB).toBe(minuteA);
+    expect(minuteA).toBeGreaterThan(endDay * DAY);
+    for (let i = 0; i < 1000; i++) {
+      tick(a);
+      tick(b);
+    }
+    expect(hashOf(firmEnvelopeOf(b))).toBe(hashOf(firmEnvelopeOf(a)));
+    expect(b.activeId).toBe(2);
+    expect(b.person.wallet).toBe(a.person.wallet);
+  });
+
   it('premia sieci z mety wygrywa z zapisaną; dochód z sieci ma otwarty sklep o najniższym id (tu #2, bo #1 zamknięty)', () => {
     const partner = { points: 3, networkIncome: 200, stores: 2 };
     const live = structuredClone(scenario());
@@ -394,7 +465,7 @@ describe('schemat 3: zapis i odczyt firmy', () => {
     const raw = json('save-v3-dwa-sklepy.json');
     expect(raw).toMatchObject({ schema: 3, seed: SEED, cityGeneratorVersion: CITY_GENERATOR_VERSION });
     const stored = raw.stores as { closed: boolean; layout?: unknown; econ: Record<string, unknown> }[];
-    expect(stored.map((s) => [s.closed, s.layout !== undefined])).toEqual([[true, false], [false, true]]);   // zamknięty sklep bez układu
+    expect(stored.map((s) => [s.closed, s.layout !== undefined])).toEqual([[true, false], [false, false]]);   // układy odtwarzalne z lokalu miasta nie leżą w zapisie
     expect(Object.keys(stored[0]!.econ).sort()).toEqual(['equipment', 'gameOver', 'minute', 'remontLevel', 'seed', 'upgrades', 'version']);
     const f = opened(restoreFirmFrom(raw, SEED));
     expect(f.stores.map((s) => ({ id: s.id, closed: s.closed }))).toEqual([{ id: 1, closed: true }, { id: 2, closed: false }]);
@@ -527,7 +598,8 @@ describe('schemat 3: odczyt zepsutej koperty', () => {
   it('uszkodzony układ sklepu powstaje od nowa z lokalu miasta i poziomu remontu (ten sam co przed zapisem)', () => {
     const live = scenario();
     const env = JSON.parse(JSON.stringify(firmEnvelopeOf(live))) as Record<string, any>;
-    delete env.stores[1].layout.cells;
+    expect(env.stores[1].layout).toBeUndefined();   // koperta nie niesie układu, który odtworzy generator
+    env.stores[1].layout = { ...live.stores[1]!.layout, cells: 'nie siatka' };
     const f = opened(restoreFirmFrom(env, SEED));
     expect(f.stores[1]!.econ.remontLevel).toBe(1);
     expect(f.stores[1]!.layout).toEqual(live.stores[1]!.layout);
@@ -549,6 +621,27 @@ describe('schemat 3: odczyt zepsutej koperty', () => {
     expect(f.stores[0]).toMatchObject({ closed: true });
     expect(f.stores[0]!.econ.minute).toBe(closed.stores[0].econ.minute);
     expect(f.stores[1]!.econ.minute).toBe(closed.stores[1].econ.minute);
+  });
+
+  it('otwarty sklep bez układu: odtwarzany tylko bieżącym generatorem (inny to unbuildable, bez liczby invalid)', () => {
+    const env = smallEnvelope();
+    expect(env.stores[1].layout).toBeUndefined();
+    expect(opened(restoreFirmFrom(env, SEED)).stores[1]!.layout.generatorVersion).toBe(GENERATOR_VERSION);
+    for (const other of [GENERATOR_VERSION + 1, GENERATOR_VERSION - 1]) {
+      const changed = smallEnvelope();
+      changed.stores[1].generatorVersion = other;
+      expect(restoreFirmFrom(changed, SEED)).toEqual({ ok: false, reason: 'unbuildable' });
+    }
+    for (const bad of ['1', 1.5, null, undefined]) {
+      const garbage = smallEnvelope();
+      garbage.stores[1].generatorVersion = bad;
+      expect(restoreFirmFrom(garbage, SEED)).toEqual(invalid);
+    }
+    // z zapisanym układem wersja generatora niczego nie blokuje: układ jest, nie trzeba go odtwarzać
+    const withLayout = smallEnvelope();
+    withLayout.stores[1].layout = layoutFor(storeSeedFor(SEED, withLayout.stores[1].lotId), 0, generateCity(SEED).lots[withLayout.stores[1].lotId]!.spec);
+    withLayout.stores[1].generatorVersion = GENERATOR_VERSION + 1;
+    expect(opened(restoreFirmFrom(withLayout, SEED)).stores[1]!.layout).toEqual(withLayout.stores[1].layout);
   });
 
   it('wersje miasta: 0 i śmieci to invalid, inna niż w kodzie to poprawny zapis, którego świata nie złożymy (unbuildable)', () => {
@@ -664,12 +757,19 @@ function remontEach(f: FirmState, ids: number[], level: number): void {
   }
 }
 
-/** Firma po wynajmie drugiego sklepu w dniu 3: oba sklepy działają, aktywny jest #1. */
-function twoOpenStores(): FirmState {
-  const f = newFirm();
+/** Wolny lokal z największym układem po trzecim remoncie (najcięższy sklep, jaki da się wynająć). */
+function largestFreeLot(f: FirmState): number {
+  const size = (id: number): number => layoutFor(storeSeedFor(f.seed, id), 3, f.city.lots[id]!.spec).cells.length;
+  const free = f.city.lots.filter((l) => lotState(f, l.id) === 'wolny');
+  return free.reduce((best, l) => (size(l.id) > size(best.id) ? l : best)).id;
+}
+
+/** Firma po wynajmie drugiego sklepu w dniu 3 (domyślnie w pierwszym wolnym lokalu): oba sklepy działają, aktywny jest #1. */
+function twoOpenStores(seed = SEED, lot: (f: FirmState) => number = freeLot): FirmState {
+  const f = newFirm(seed);
   f.person.partner = true;
   playTo(f, 3 * DAY + OPEN_FROM);
-  expect(command(f, { type: 'rentLot', lotId: freeLot(f), pay: 'raty' })).toEqual({ ok: true });
+  expect(command(f, { type: 'rentLot', lotId: lot(f), pay: 'raty' })).toEqual({ ok: true });
   playTo(f, f.builds[0]!.readyDay * DAY + OPEN_FROM + 1);
   expect(f.stores).toHaveLength(2);
   expect(command(f, { type: 'switchStore', storeId: 1 })).toEqual({ ok: true });
@@ -677,16 +777,27 @@ function twoOpenStores(): FirmState {
 }
 
 /**
- * Najgorszy przypadek 4a.1: dwa sklepy, każdy po dwóch remontach, koniec roku (365 dni prawdziwych kroków). Oba sklepy z historią
- * dwunastu miesięcy, ratą pakietu, pełną skrzynką zastępcy.
+ * Najgorszy przypadek 4a.1: dwa sklepy, każdy po trzech remontach (wszystkie poziomy `REMONTS`), drugi w największym wolnym lokalu,
+ * koniec drugiego roku (731 dni prawdziwych kroków: 2028 jest przestępny). Oba sklepy z historią dwudziestu czterech miesięcy, ratą pakietu, pełną skrzynką
+ * zastępcy.
  */
-function playWorstCase(): FirmState {
-  const f = twoOpenStores();
+function playWorstCase(seed: string): FirmState {
+  const f = twoOpenStores(seed, largestFreeLot);
+  // karty zaznaczone z góry potrafią wyzerować zaufanie sklepu w ciągu dwóch lat i Centrala zamyka go (§13.1): tu sklepy mają przetrwać,
+  // więc o północy zaufanie nie spada poniżej 70
+  const play = (minute: number): void => {
+    while (clockOf(f) < minute && f.over === null && !activeStore(f).econ.gameOver) {
+      if (clockOf(f) % DAY === 0) for (const st of openStores(f)) st.econ.tycoon.trust.value = Math.max(st.econ.tycoon.trust.value, 70);
+      tick(f);
+    }
+  };
   remontEach(f, [1, 2], 8);
-  playTo(f, 20 * DAY + OPEN_FROM);
+  play(20 * DAY + OPEN_FROM);
   remontEach(f, [1, 2], 14);
-  expect(f.stores.map((s) => s.econ.remontLevel)).toEqual([2, 2]);
-  playTo(f, 365 * DAY + OPEN_FROM);
+  play(30 * DAY + OPEN_FROM);
+  remontEach(f, [1, 2], 20);
+  expect(f.stores.map((s) => s.econ.remontLevel)).toEqual([3, 3]);
+  play(731 * DAY + OPEN_FROM);
   return f;
 }
 
@@ -717,30 +828,41 @@ function playWithClosedStore(): FirmState {
 
 const bytes = (x: unknown): number => new TextEncoder().encode(JSON.stringify(x)).length;
 
-/** Paczka „Wyślij zapis” z kopertą firmy i metą ze średnio rozbudowaną siecią sklepów (12 wpisów); drukuje rozmiar i zwraca bajty paczki. */
+/**
+ * Paczka „Wyślij zapis” z kopertą firmy i metą ze średnio rozbudowaną siecią sklepów (12 wpisów); drukuje rozmiar (i ile bajtów zjadłyby
+ * układy, które zapis pomija) i zwraca bajty paczki.
+ */
 function transferSize(label: string, f: FirmState): number {
   const meta: Meta = {
     version: 1, partnerPoints: 120, network: Array.from({ length: 12 }, (_, n) => ({ seed: `stary-sklep-${n}`, income: 400, level: 21, margin: 90_000 })),
     daily: { date: '2026-10-27', streak: 4 }, lastSeen: 1_790_000_000_000, sound: true, vibration: true,
     player: { nick: 'Mateusz', look: { ...DEFAULT_CASHIER_LOOK }, specialOutfits: true },
   };
-  const bundle = { format: TRANSFER_FORMAT, version: 1, seed: SEED, meta, save: firmEnvelopeOf(f) };
+  const bundle = { format: TRANSFER_FORMAT, version: 1, seed: f.seed, meta, save: firmEnvelopeOf(f) };
   const total = bytes(bundle);
-  const perStore = bundle.save.stores.map((s) => `${bytes(s)}${s.closed ? ' zamknięty' : ` (układ ${bytes(s.layout)}, ekonomia ${bytes(s.econ)})`}`);
-  console.log(`${label}: paczka ${total} B z ${SAVE_TRANSFER_MAX_BYTES} B (zapis ${bytes(bundle.save)} B, meta ${bytes(meta)} B, skrzynka ${f.inbox.length} wpisów); sklepy: ${perStore.join(' + ')} B.`);
+  const perStore = bundle.save.stores.map((s) => `${bytes(s)}${s.closed ? ' zamknięty' : ` (ekonomia ${bytes(s.econ)})`}`);
+  const omitted = f.stores.reduce((n, st, i) => n + (bundle.save.stores[i]!.closed || 'layout' in bundle.save.stores[i]! ? 0 : bytes(st.layout)), 0);
+  console.log(`${label}: paczka ${total} B z ${SAVE_TRANSFER_MAX_BYTES} B (zapis ${bytes(bundle.save)} B, meta ${bytes(meta)} B, skrzynka ${f.inbox.length} wpisów); sklepy: ${perStore.join(' + ')} B; pominięte układy: ${omitted} B.`);
   return total;
 }
 
 describe('rozmiar paczki „Wyślij zapis”', () => {
-  it('dwa sklepy po dwóch remontach na koniec roku mieszczą się w 64 KB (paczka z kopertą schematu 3)', () => {
-    const f = playWorstCase();
+  it.each([SEED, 'x2'])('dwa sklepy po trzech remontach, drugi w największym wolnym lokalu, koniec drugiego roku (%s): mieszczą się w 64 KB', (seed) => {
+    const f = playWorstCase(seed);
     expect(f.over).toBeNull();
     expect(openStores(f)).toHaveLength(2);
-    expect(f.stores.map((s) => s.econ.history.length)).toEqual([12, 12]);
-    const total = transferSize('Zapis schematu 3, dwa sklepy po dwóch remontach, 365 dni', f);
-    expect(f.inbox.length).toBeGreaterThan(0);
+    expect(f.stores.map((s) => s.econ.history.length)).toEqual([24, 24]);
+    expect(f.stores[1]!.layout.cells.length).toBeGreaterThan(f.stores[0]!.layout.cells.length / 2);   // test nie jest pusty: to duży układ
+    const total = transferSize(`Zapis schematu 3 (${seed}), dwa sklepy po trzech remontach, 731 dni`, f);
     expect(total).toBeLessThanOrEqual(SAVE_TRANSFER_MAX_BYTES);
-  }, 60_000);
+    expect(f.inbox.length).toBeGreaterThan(0);
+    expect(firmEnvelopeOf(f).stores.map((s) => 'layout' in s)).toEqual([false, false]);   // układy są odtwarzalne, więc zapis ich nie niesie
+
+    // zwarta koperta wraca do tego samego sklepu
+    const back = opened(viaJson(f));
+    expect(back.stores.map((s) => s.layout)).toEqual(f.stores.map((s) => s.layout));
+    expect(JSON.stringify(firmEnvelopeOf(back))).toBe(JSON.stringify(firmEnvelopeOf(f)));
+  }, 90_000);
 
   it('zamknięty sklep w zapisie jest zwarty: #1 zamknięty, #2 i #3 po dwóch remontach na koniec roku też mieszczą się w 64 KB', () => {
     const f = playWithClosedStore();

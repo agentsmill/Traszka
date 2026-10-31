@@ -10,6 +10,7 @@ import { lotState } from '@/sim/firm/commands';
 import { activeStore, createFirm, openStores, refreshSites, setPartner, syncWallet } from '@/sim/firm/firm';
 import { INBOX_MAX, type FirmBuild, type FirmNote, type FirmState, type FirmStore } from '@/sim/firm/types';
 import { isNum, isRec, num, whole, type Rec } from '@/sim/guards';
+import { GENERATOR_VERSION } from '@/sim/store/generateStore';
 import { layoutFor } from '@/sim/store/layoutFor';
 import { sanitizeLayout } from '@/sim/store/sanitize';
 import type { StoreLayout } from '@/sim/store/types';
@@ -18,7 +19,8 @@ import { GAME_VERSION } from './version';
 
 /*
  * Zapis zwykłej gry z firmą (spec §7.4, §16): koperta schematu 3 pod `traszka:save:<seed>`. Zapisuje się to, czego nie da się policzyć z
- * seeda: osobę, skrzynkę, budowy i sklepy (układ i `EconomyState` każdego otwartego, a zamkniętego tylko wyposażenie lokalu). Miasto jest czystą funkcją seeda i
+ * seeda: osobę, skrzynkę, budowy i sklepy (`EconomyState` każdego otwartego, a zamkniętego tylko wyposażenie lokalu). Układ sklepu też jest
+ * czystą funkcją seeda, lokalu i poziomu remontu, więc zapis niesie go tylko wtedy, gdy ta funkcja go nie odtworzy. Miasto jest czystą funkcją seeda i
  * `CITY_GENERATOR_VERSION`, więc nie leży w zapisie; `StoreInfo` (z dzielnicą sklepu) też powstaje od nowa z układu i miasta.
  * Schemat 1 i 2 (jeden sklep, każda wersja SIM) wczytuje się przez `restoreSessionFrom` jak dziś i staje się sklepem #1 firmy.
  * Biegu rankingowego to nie dotyczy: jego zapis (`traszka:ranked`) zostaje w schemacie 2 (`SAVE_SCHEMA`).
@@ -49,11 +51,13 @@ interface SavedStoreBase {
 export type ClosedFittings = Pick<EconomyState, 'version' | 'seed' | 'minute' | 'upgrades' | 'equipment' | 'remontLevel'> & { gameOver: true };
 
 /**
- * Sklep w kopercie: otwarty z układem i pełnym `EconomyState`, zamknięty tylko z wyposażeniem lokalu (zamknięte sklepy gromadzą się:
- * pełny kosztuje ok. 25 KB, a paczka „Wyślij zapis” ma 64 KB). `info` i miasto nie są zapisane, powstają przy odczycie.
+ * Sklep w kopercie: otwarty z pełnym `EconomyState`, zamknięty tylko z wyposażeniem lokalu (zamknięte sklepy gromadzą się: pełny
+ * kosztuje ok. 25 KB, a paczka „Wyślij zapis” ma 64 KB). Układ otwartego sklepu to ponad połowa jego bajtów, więc `layout` jest tylko
+ * wtedy, gdy `generatorVersion` sklepu nie jest bieżącą wersją generatora albo układ różni się od odtworzonego z lokalu miasta i
+ * poziomu remontu (patrz `layoutAt`); bez `layout` odczyt odtwarza go stąd. `info` i miasto nie są zapisane, powstają przy odczycie.
  */
 export type SavedStore =
-  | (SavedStoreBase & { closed: false; layout: StoreLayout; econ: EconomyState })
+  | (SavedStoreBase & { closed: false; layout?: StoreLayout; econ: EconomyState })
   | (SavedStoreBase & { closed: true; econ: ClosedFittings });
 
 export interface FirmSaveEnvelope {
@@ -70,14 +74,56 @@ const fittingsOf = (e: EconomyState): ClosedFittings => ({
   version: e.version, seed: e.seed, minute: e.minute, upgrades: e.upgrades, equipment: e.equipment, remontLevel: e.remontLevel, gameOver: true,
 });
 
-/** Koperta zapisu firmy: seed, wersje gry i miasta, osoba z budowami i skrzynką oraz sklepy (otwarte z układem i ekonomią, zamknięte z wyposażeniem). */
+/** Seed sklepu w lokalu miasta; sklep startowy ma seed gry (jak w `openStoreAt` i `lotEstimate`). */
+const storeSeedOf = (seed: string, city: CityState, lotId: number): string => (lotId === city.startLotId ? seed : storeSeedFor(seed, lotId));
+
+/**
+ * Układ sklepu w lokalu miasta na poziomie remontu: czysta funkcja seeda, lokalu i poziomu. Sklep startowy ma układ z seeda gry
+ * (lokal startowy to `pickLot`), pozostałe z `LotSpec` lokalu, jak przy otwarciu sklepu i po remoncie (`info.site.lot`). Układ zmienia się
+ * razem z `remontLevel`, także w trakcie remontu (`startRemont` ustawia poziom i nowy układ naraz).
+ */
+const layoutAt = (seed: string, city: CityState, lotId: number, level: number): StoreLayout =>
+  layoutFor(storeSeedOf(seed, city, lotId), level, lotId === city.startLotId ? undefined : city.lots[lotId]!.spec);
+
+/** Równość struktur JSON bez względu na kolejność kluczy (układ z `sanitizeLayout` ma je inaczej niż z generatora). */
+function sameJson(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null || Array.isArray(a) !== Array.isArray(b)) return false;
+  if (Array.isArray(a)) return a.length === (b as unknown[]).length && a.every((x, i) => sameJson(x, (b as unknown[])[i]));
+  const keys = Object.keys(a);
+  return keys.length === Object.keys(b).length && keys.every((k) => Object.hasOwn(b, k) && sameJson((a as Rec)[k], (b as Rec)[k]));
+}
+
+/** Wynik ostatniej próby odtworzenia układu: układ sklepu zmienia się tylko z remontem, więc sprawdzamy go raz na układ, a nie przy każdym zapisie. */
+const regenerated = new WeakMap<StoreLayout, { seed: string; lotId: number; level: number; same: boolean }>();
+
+/** Czy `layoutAt` odtworzy układ sklepu co do znaku i czy jest on z bieżącego generatora; wtedy zapis go nie niesie. */
+function layoutIsRegenerable(f: FirmState, st: FirmStore): boolean {
+  const level = st.econ.remontLevel;
+  const known = regenerated.get(st.layout);
+  if (known && known.seed === f.seed && known.lotId === st.lotId && known.level === level) return known.same;
+  let same = false;
+  try {
+    same = st.layout.generatorVersion === GENERATOR_VERSION && sameJson(st.layout, layoutAt(f.seed, f.city, st.lotId, level));
+  } catch {
+    // generator nie dał układu: zapis niesie ten, który sklep ma
+  }
+  regenerated.set(st.layout, { seed: f.seed, lotId: st.lotId, level, same });
+  return same;
+}
+
+/**
+ * Koperta zapisu firmy: seed, wersje gry i miasta, osoba z budowami i skrzynką oraz sklepy (otwarte z ekonomią i, gdy nie da się go
+ * odtworzyć, z układem; zamknięte z wyposażeniem).
+ */
 export function firmEnvelopeOf(f: FirmState): FirmSaveEnvelope {
   return {
     schema: FIRM_SAVE_SCHEMA, gameVersion: GAME_VERSION, cityGeneratorVersion: f.city.version, seed: f.seed,
     firm: { person: f.person, activeId: f.activeId, builds: f.builds, monthInvest: f.monthInvest, inbox: f.inbox, weatherHash: f.weatherHash, over: f.over },
     stores: f.stores.map((st): SavedStore => {
       const base = { id: st.id, lotId: st.lotId, generatorVersion: st.layout.generatorVersion, notice: st.notice };
-      return st.closed ? { ...base, closed: true, econ: fittingsOf(st.econ) } : { ...base, closed: false, layout: st.layout, econ: st.econ };
+      if (st.closed) return { ...base, closed: true, econ: fittingsOf(st.econ) };
+      return layoutIsRegenerable(f, st) ? { ...base, closed: false, econ: st.econ } : { ...base, closed: false, layout: st.layout, econ: st.econ };
     }),
   };
 }
@@ -96,9 +142,6 @@ export type FirmOpened = { ok: true; firm: FirmState } | { ok: false; reason: 'i
 
 const INVALID: FirmOpened = { ok: false, reason: 'invalid' };
 const UNBUILDABLE: FirmOpened = { ok: false, reason: 'unbuildable' };
-
-/** Seed sklepu w lokalu miasta; sklep startowy ma seed gry (jak w `openStoreAt` i `lotEstimate`). */
-const storeSeedOf = (seed: string, city: CityState, lotId: number): string => (lotId === city.startLotId ? seed : storeSeedFor(seed, lotId));
 
 /**
  * Firma z zapisu w schemacie 3, 2 albo 1. Dwa rodzaje porażki jak w `restoreSessionFrom`: `invalid` (zapis nie przeszedł walidacji,
@@ -134,10 +177,9 @@ function buildShell(seed: string, city: CityState, raw: Rec, id: number, lotId: 
   const minute = whole(rawEcon.minute, OPEN_FROM, 0, LIMITS.minute);
   const level = whole(rawEcon.remontLevel, 0, 0, REMONTS.length);
   const storeSeed = storeSeedOf(seed, city, lotId);
-  const spec = lotId === city.startLotId ? undefined : city.lots[lotId]!.spec;
-  const stored = closed ? null : sanitizeLayout(raw.layout);   // zamknięty sklep nie niesie układu: wraca z lokalu miasta i poziomu remontu
+  const stored = closed ? null : sanitizeLayout(raw.layout);   // zamknięty sklep nie niesie układu, otwarty tylko nieodtwarzalny: reszta z `layoutAt`
   const parts = (known: StoreLayout | null): { layout: StoreLayout; info: StoreInfo; econ: EconomyState } => {
-    const layout = known ?? layoutFor(storeSeed, level, spec);
+    const layout = known ?? layoutAt(seed, city, lotId, level);
     const info = computeStoreInfo(layout);
     return { layout, info, econ: createEconomy(storeSeed, info, undefined, minute) };
   };
@@ -180,7 +222,9 @@ const readInbox = (raw: unknown): FirmNote[] => (Array.isArray(raw) ? (raw as un
  * Koperta schematu 3. Miasto z `generateCity(seed)`, każdy sklep przez `sanitizeLayout` i `sanitizeEconomy` (brakujące pola z
  * `createEconomy` sklepu), `info` od nowa i `refreshSites`, premia sieci przez `setPartner`. Zamknięty sklep nie ma w zapisie układu
  * ani pełnej ekonomii (`ClosedFittings`): układ powstaje z lokalu miasta i poziomu remontu, ekonomia z domyślnych z nałożonym
- * wyposażeniem i `gameOver`. Sprawdzane: seed, wersja miasta, sklepy (rosnące `id`, różne lokale z miasta, #1 w lokalu startowym,
+ * wyposażeniem i `gameOver`. Otwarty sklep bez `layout` dostaje układ tak samo, ale tylko gdy jego `generatorVersion` to bieżący
+ * generator: z innym wychodzi `unbuildable` (inny generator dałby graczowi inny sklep pod postępem; zapis zostaje na miejscu, a podbicie
+ * `GENERATOR_VERSION` musi zachować stary generator albo zapis z układem), bez liczby całkowitej `invalid`. Sprawdzane: seed, wersja miasta, sklepy (rosnące `id`, różne lokale z miasta, #1 w lokalu startowym,
  * wszystkie otwarte w tej samej minucie), a naprawiane: `activeId` spoza otwartych sklepów (wraca najniższy
  * otwarty), portfel (w `LIMITS.money`), budowy, skrzynka. Gotówka i Ogonki otwartych sklepów to portfel osoby.
  */
@@ -210,6 +254,11 @@ function restoreEnvelope(data: Rec, seed: string, partner: EconomyState['partner
     const lot = city.lots[lotId as number];
     if (!lot || lot.id !== lotId || usedLots.has(lot.id)) return INVALID;
     if (shells.length === 0 && (id !== 1 || lot.id !== city.startLotId)) return INVALID;   // sklep startowy: #1 w lokalu startowym
+    if (!raw.closed && raw.layout === undefined) {
+      // otwarty sklep bez układu: odtwarzamy go, ale tylko generatorem, z którego zapis powstał (inny dałby graczowi inny sklep pod postępem)
+      if (!Number.isInteger(raw.generatorVersion)) return INVALID;
+      if (raw.generatorVersion !== GENERATOR_VERSION) return UNBUILDABLE;
+    }
     const shell = buildShell(seed, city, raw, id as number, lot.id, raw.closed);
     if (shell === null) return UNBUILDABLE;
     shells.push(shell);
