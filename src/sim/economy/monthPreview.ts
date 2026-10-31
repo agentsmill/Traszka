@@ -63,8 +63,8 @@ export interface MonthPreviewJob {
 /** Bezpiecznik: miesiąc ma najwyżej 31 dni, plus dzień zapasu. Podgląd, który tyle nie wystarczył, kończy się bez wyniku. */
 const MAX_PREVIEW_MINUTES = 32 * 1440;
 
-/** Numer odpowiedzi domyślnej karty (jak `selectedAnswer` w oknie karty: poza zakresem pierwsza). */
-function defaultAnswer(card: { answers: readonly unknown[]; defaultAnswer: number }): number {
+/** Numer odpowiedzi domyślnej karty (jak `selectedAnswer` w oknie karty: poza zakresem pierwsza). Tak odpowiada też zastępca w sklepie w tle. */
+export function defaultAnswer(card: { answers: readonly unknown[]; defaultAnswer: number }): number {
   const ok = Number.isInteger(card.defaultAnswer) && card.defaultAnswer >= 0 && card.defaultAnswer < card.answers.length;
   return ok ? card.defaultAnswer : 0;
 }
