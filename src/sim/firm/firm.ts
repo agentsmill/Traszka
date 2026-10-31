@@ -13,6 +13,7 @@ import { computeStoreInfo, type StoreInfo } from '@/sim/economy/storeInfo';
 import { visibleCards } from '@/sim/economy/tycoon/cards';
 import { layoutFor } from '@/sim/store/layoutFor';
 import type { StoreLayout } from '@/sim/store/types';
+import { grantPartnerIfDue, openDueBuilds } from './commands';
 import { INBOX_MAX, type FirmState, type FirmStepOut, type FirmStore } from './types';
 
 /*
@@ -161,11 +162,11 @@ function deputy(f: FirmState, st: FirmStore, events: EconEvent[], out: FirmStepO
 
 /**
  * Jedna minuta firmy. Kolejność kroków jest częścią determinizmu:
- * 1. (Zadanie 5) tu wchodzi otwarcie budów o `OPEN_FROM`, przed krokiem sklepów;
+ * 1. otwarcie budów, których dzień odbioru wybił `OPEN_FROM`, przed krokiem sklepów (nowy sklep liczy się od tej samej minuty);
  * 2. sklepy po `id`: zastępca w tle, potem krok na portfelu osoby;
  * 3. zdarzenia: aktywnego bez zmian, tła z ważnością;
  * 4. debet całej gotówki raz po minucie wszystkich sklepów (§11.4), od dwóch sklepów;
- * 5. (Zadania 5 i 6) tu wchodzą zamknięcia sklepów i status Partnera po `month` sklepu startowego;
+ * 5. (Zadanie 6) tu wchodzą zamknięcia sklepów; status Partnera po `month` sklepu startowego;
  * 6. raport sieci przy zamknięciu miesiąca w kilku sklepach;
  * 7. pierwszy remanent któregokolwiek sklepu to wiedza osoby;
  * 8. portfel do kas wszystkich sklepów.
@@ -174,7 +175,7 @@ export function stepFirmMinute(f: FirmState, out: FirmStepOut): void {
   if (f.over !== null) return;
   const walletBefore = f.person.wallet;
 
-  // 1. (Zadanie 5): openDueBuilds(f, out)
+  openDueBuilds(f, out);
 
   const stepped: { st: FirmStore; events: EconEvent[] }[] = [];
   for (const st of openStores(f)) {
@@ -201,7 +202,8 @@ export function stepFirmMinute(f: FirmState, out: FirmStepOut): void {
     }
   }
 
-  // 5. (Zadanie 6): zamknięcia sklepów; (Zadanie 5): grantPartnerIfDue(f, out) po `month` sklepu startowego
+  // 5. (Zadanie 6): zamknięcia sklepów
+  if (stepped.some(({ st, events }) => st.id === 1 && events.some((e) => e.kind === 'month'))) grantPartnerIfDue(f, out);
 
   const months = stepped.flatMap(({ st, events }) => events.filter((e) => e.kind === 'month' && e.report).map((e) => ({ id: st.id, report: e.report! })));
   if (months.length >= 2) {

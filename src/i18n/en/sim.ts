@@ -194,6 +194,12 @@ export function simRules(sub: (pl: string) => string): Rule[] {
     { pl: 'Przyspieszenie kosztuje {} Ogonków.', en: (x) => `Speeding it up costs ${plNum(x!)} Ogonki.` },
     { pl: 'Ekipa remontowa dostała premię w Ogonkach. Pracują szybciej (podobno).', en: 'The refit crew got a bonus in Ogonki. They’re working faster (apparently).' },
     { pl: 'Poziom {}! Nagroda: +{} zł i +{} Ogonków.', en: (lvl, c, o) => `Level ${plNum(lvl!)}! Reward: +${plNum(c!)} zł and +${plNum(o!)} Ogonki.` },
+    // --- firm/commands.ts: etykieta raty pakietu otwarcia (ulica to nazwa własna i zostaje po polsku; adres po angielsku: numer, ulica, „St.”) ---
+    {
+      pl: 'Adaptacja lokalu: ul. {} {}',
+      re: /^Adaptacja lokalu: ul\. (.+) (\d+)$/,
+      en: (street, number) => `Premises fit-out: ${number} ${street} St.`,
+    },
     // --- commands.ts, cards.ts, fatigue.ts, staff.ts, franchisee.ts ---
     { pl: 'Centrala nie przyjmuje zwrotów: każda paleta zostaje w sklepie.', en: 'Head Office doesn’t accept returns: every pallet stays in the shop.' },
     { pl: 'Najpierw karta na biurku.', en: 'Deal with the card on your desk first.' },

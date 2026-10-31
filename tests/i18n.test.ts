@@ -364,4 +364,9 @@ describe('tłumacz rozpoznaje zdania z prawdziwej gry', () => {
     const unknown = [...texts].filter((x) => localizeEn(x) === null);
     expect(unknown).toEqual([]);
   }, 120_000);
+
+  it('etykieta raty pakietu otwarcia: adres po angielsku (numer, ulica, „St.”), a ulica zostaje po polsku', () => {
+    expect(localizeEn('Adaptacja lokalu: ul. Lipowa 3')).toBe('Premises fit-out: 3 Lipowa St.');
+    for (const street of STREET_NAMES) expect(localizeEn(`Adaptacja lokalu: ul. ${street} 118`)).toBe(`Premises fit-out: 118 ${street} St.`);
+  });
 });
