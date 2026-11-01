@@ -1,7 +1,7 @@
 import { dateText, t, tr } from '@/i18n';
 import { lotById } from '@/sim/city/generateCity';
 import { DEBT_LIMIT, GUARANTEE } from '@/sim/economy/catalog';
-import { debtWarningText } from '@/sim/economy/economy';
+import { debtWarningText, type EconEvent } from '@/sim/economy/economy';
 import type { StoreInfo } from '@/sim/economy/storeInfo';
 import { cardDef } from '@/sim/economy/tycoon/cards';
 import type { FirmEvent, FirmRefusal, FirmState, FirmStore } from '@/sim/firm/types';
@@ -27,6 +27,15 @@ export function lotAddress(f: FirmState, lotId: number): string {
 export function storeName(f: FirmState, id: number): string {
   const st = f.stores.find((s) => s.id === id);
   return st ? `Traszka #${id}, ${lotById(f.city, st.lotId).street}` : `Traszka #${id}`;
+}
+
+/**
+ * Toast o zdarzeniu sklepu w tle (§12): nazwa sklepu i zdanie symulacji w bieżącym języku (`tr`), a przy poziomie także lista odblokowań
+ * (`🔓 nazwa`, jak w banerze aktywnego sklepu). Poziom niesie nagrodę, która wpada do wspólnej gotówki, więc gracz widzi, skąd ona jest.
+ */
+export function backgroundToastText(f: FirmState, storeId: number, e: EconEvent): string {
+  const unlocks = e.kind === 'levelup' ? (e.unlocks ?? []).map((u) => tr(`🔓 ${u}`)) : [];
+  return `${storeName(f, storeId)}: ${[tr(e.text), ...unlocks].join(' ')}`;
 }
 
 /** Stan sklepu słowami: aktywny, w tle, z wypowiedzeniem (do kiedy działa umowa) albo zamknięty. */

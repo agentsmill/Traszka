@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { lang } from '@/i18n';
 import type { CharacterFactory } from '@/render/characters/characterFactory';
 import { DEBT_LIMIT, MINUTES_PER_DAY, MINUTES_PER_SECOND_OPEN, OPEN_FROM, OPEN_TO } from '@/sim/economy/catalog';
 import { applyCommand, COMMAND_TYPES, type Command } from '@/sim/economy/commands';
@@ -14,7 +15,7 @@ import { SEPT_CLOSE, answerActive, loseTrust, openSecond, partnerSession, playTo
 import { cardDef, visibleCards } from '@/sim/economy/tycoon/cards';
 import { CIRCULARS, DECK } from '@/sim/economy/tycoon/deck';
 import { xpToNext } from '@/sim/economy/progress';
-import { UPGRADES } from '@/sim/economy/upgrades';
+import { EQUIPMENT, UPGRADES } from '@/sim/economy/upgrades';
 import { RANKED_SEASON_END_MINUTE } from '@/sim/ranked';
 import { SIM_VERSION } from '@/sim/simVersion';
 import * as cityModule from '@/sim/city/generateCity';
@@ -4059,13 +4060,95 @@ describe('gra prowadzi firmę (powłoka)', () => {
       const persists = (): number => storage.keys().length;
       const before = persists();
       h.shell.handleFirmEvents(stepOut({
-        background: [bg(2, { kind: 'delivery', text: 'Dostawa.' }, false), bg(2, { kind: 'day', text: 'Dzień' }, false), bg(2, { kind: 'levelup', text: 'Poziom 3!', level: 3 }, false)],
+        background: [bg(2, { kind: 'delivery', text: 'Dostawa.' }, false), bg(2, { kind: 'day', text: 'Dzień' }, false), bg(2, { kind: 'fine', text: 'Mandat.' }, false)],
       }));
       expect(ui.story.value).toEqual([]);
       expect(ui.toasts.value).toEqual([]);
       expect(ui.celebration.value).toBeNull();
       expect(h.calls).toEqual([]);
       expect(persists()).toBe(before);
+    });
+
+    describe('poziom, remont i cel ze sklepu w tle: toast z nazwą sklepu, bez okna (§12)', () => {
+      const LEVEL_TEXT = 'Poziom 7! Nagroda: +1 000 zł i +5 Ogonków.';
+      const unlock = EQUIPMENT.find((e) => e.minLevel > 1)!.name;
+      const only = (h: Harness, event: EconEvent): ui.Toast[] => {
+        ui.toasts.value = [];
+        h.shell.handleFirmEvents(stepOut({ background: [bg(2, event, false)] }));
+        return ui.toasts.value;
+      };
+
+      it('poziom z odblokowaniami: jeden toast z nazwą sklepu, nagrodą i listą odblokowań; ani okna „OK”, ani fety, ani dźwięku', () => {
+        const h = harness();
+        const { f } = twoStores(h);
+        const toasts = only(h, { kind: 'levelup', level: 7, unlocks: [unlock], text: LEVEL_TEXT });
+        expect(toasts).toHaveLength(1);
+        expect(toasts[0]!.text).toBe(`${storeName(f, 2)}: ${LEVEL_TEXT} 🔓 ${unlock}`);
+        expect(toasts[0]!.kind).toBe('levelup');
+        expect(ui.story.value).toEqual([]);   // sklep w tle nie zatrzymuje gry, choć w aktywnym ten poziom byłby oknem
+        expect(ui.celebration.value).toBeNull();
+        expect(h.calls).toEqual([]);
+      });
+
+      it('poziom bez odblokowań to sam toast ze zdaniem o nagrodzie', () => {
+        const h = harness();
+        const { f } = twoStores(h);
+        const toasts = only(h, { kind: 'levelup', level: 7, text: LEVEL_TEXT });
+        expect(toasts.map((x) => x.text)).toEqual([`${storeName(f, 2)}: ${LEVEL_TEXT}`]);
+      });
+
+      it('koniec remontu i spełniony cel: toast z nazwą sklepu, bez okna', () => {
+        const h = harness();
+        const { f } = twoStores(h);
+        const remont = 'Remont zakończony! Sklep otwarty, pachnie nową farbą i starym kurzem.';
+        expect(only(h, { kind: 'remont', text: remont }).map((x) => x.text)).toEqual([`${storeName(f, 2)}: ${remont}`]);
+        const goal = '🏆 Cel osiągnięty: Pierwsza setka. Odbierz +10 Ogonków w zakładce Cele.';
+        const milestone = only(h, { kind: 'milestone', text: goal });
+        expect(milestone.map((x) => x.text)).toEqual([`${storeName(f, 2)}: ${goal}`]);
+        expect(milestone[0]!.kind).toBe('milestone');
+        expect(ui.story.value).toEqual([]);
+      });
+
+      it('po angielsku zdanie symulacji i odblokowania są po angielsku, a nazwa sklepu zostaje', () => {
+        const h = harness();
+        const { f } = twoStores(h);
+        lang.value = 'en';
+        try {
+          const toasts = only(h, { kind: 'levelup', level: 7, unlocks: [unlock], text: LEVEL_TEXT });
+          expect(toasts[0]!.text).toContain(storeName(f, 2));
+          expect(toasts[0]!.text).toContain('Level 7! Reward:');
+          expect(toasts[0]!.text).toContain('🔓');
+          expect(toasts[0]!.text).not.toContain('Nagroda');
+        } finally {
+          lang.value = 'pl';
+        }
+      });
+
+      it('sklep aktywny nic nie zmienia: poziom aktywnego sklepu to dalej baner (zdarzenia z out.active), a nie toast z nazwą', () => {
+        const h = harness();
+        twoStores(h);
+        ui.toasts.value = [];
+        h.shell.handleFirmEvents(stepOut({ active: [{ kind: 'levelup', level: 3, text: 'Poziom 3! Nagroda: +500 zł i +2 Ogonków.' }] }));
+        expect(ui.celebration.value?.title).toBe('POZIOM 3');
+        expect(ui.toasts.value).toEqual([]);
+      });
+
+      it('z symulacji: sklep w tle awansuje w kroku firmy, a nagroda we wspólnej gotówce ma wyjaśnienie w toaście', () => {
+        const h = harness();
+        const { second, f } = twoStores(h);
+        expect(second.id).toBe(2);
+        second.econ.xp = xpToNext(second.econ.level);   // pełny pasek: awans w następnej minucie
+        const before = f.person.wallet;
+        ui.toasts.value = [];
+        const out = tickFrame(h, 1, 8);
+        const levelup = out.background.find((b) => b.storeId === 2 && b.event.kind === 'levelup');
+        expect(levelup).toBeDefined();
+        expect(levelup!.important).toBe(false);   // sim nie robi z tego ważnego zdarzenia: toast to decyzja warstwy gry
+        expect(ui.story.value).toEqual([]);
+        const toast = ui.toasts.value.find((x) => x.kind === 'levelup');
+        expect(toast?.text.startsWith(`${storeName(f, 2)}: ${levelup!.event.text}`)).toBe(true);
+        expect(f.person.wallet).toBeGreaterThan(before);   // nagroda wpadła do wspólnej gotówki
+      });
     });
 
     it('dwa wyciągi z jednej minuty to jedno okno sieci z dwoma raportami (nie ui.report), a rozliczenia nie ma', () => {

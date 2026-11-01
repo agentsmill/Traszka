@@ -10,7 +10,7 @@ import { applyFirmCommand, type FirmCommand, type FirmCommandResult } from '@/si
 import { activeStore, applyStoreCommand, emptyStepOut, grantToFirm, openStores, stepFirmMinute } from '@/sim/firm/firm';
 import type { FirmStepOut } from '@/sim/firm/types';
 import { seasonBankrupt } from '@/sim/ranked';
-import { firmEventText, refusalText, storeName } from '@/ui/city/firmText';
+import { backgroundToastText, firmEventText, refusalText, storeName } from '@/ui/city/firmText';
 import type { Sfx } from '@/ui/sfx';
 import * as ui from '@/ui/state';
 import { bootMeta } from './bootMeta';
@@ -416,6 +416,12 @@ const STORY_TITLE: Partial<Record<EconEventKind, string>> = { 'trust-tier': 'Zau
 const STORY_FALLBACK_TITLE = 'Ważne zdarzenie';
 /** Mają własne okno, więc nie idą do wspólnego: raport miesiąca (`ui.report`), protokół remanentu (`ui.remanent`) i koniec gry (okno końca współpracy w `ReportModal`, z `gameOver`). */
 const OWN_WINDOW: ReadonlySet<EconEventKind> = new Set<EconEventKind>(['month', 'remanent', 'gameover']);
+/**
+ * Zdarzenia sklepu w tle, które dostają toast z nazwą sklepu zamiast okna (§12: do „OK” czekają tylko wyciąg, remanent, próg zaufania
+ * i koniec umowy, drobne informacje zamykają się same): poziom (nagroda wpada do wspólnej gotówki, odblokowania dotyczą tego sklepu),
+ * koniec remontu i spełniony cel. Reszta zdarzeń tła (dostawa, dzień, mandat…) widać na chipie sklepów.
+ */
+const BACKGROUND_TOAST: ReadonlySet<EconEventKind> = new Set<EconEventKind>(['levelup', 'remont', 'milestone']);
 
 // --- Bieg rankingowy w powłoce -----------------------------------------------------------------------------------------
 
@@ -608,7 +614,7 @@ export function createShell(deps: ShellDeps): GameShell {
     }
     handleEvents(active);
 
-    // sklepy w tle: tylko ważne zdarzenia, resztę widać na chipie
+    // sklepy w tle: ważne zdarzenia czekają na „OK”, poziom, remont i cel to toast z nazwą sklepu, resztę widać na chipie
     const remanents = out.background.filter((b) => b.important && b.event.kind === 'remanent' && b.event.remanent);
     if (remanents.length > 0) {
       const mine = [...out.active].reverse().find((e) => e.kind === 'remanent' && e.remanent);
@@ -621,6 +627,10 @@ export function createShell(deps: ShellDeps): GameShell {
       if (!mine) fx.play('pop');
     }
     for (const b of out.background) {
+      if (BACKGROUND_TOAST.has(b.event.kind)) {
+        ui.pushToast(backgroundToastText(f, b.storeId, b.event), b.event.kind);
+        continue;
+      }
       if (!b.important || (b.event.kind !== 'trust-tier' && b.event.kind !== 'gameover')) continue;
       const title = b.event.kind === 'gameover' ? tr('Koniec współpracy') : tr(STORY_TITLE[b.event.kind] ?? STORY_FALLBACK_TITLE);
       ui.pushStory(`${storeName(f, b.storeId)}: ${title}`, b.event.text);   // tekst Centrali z symulacji tłumaczy okno przy rysowaniu

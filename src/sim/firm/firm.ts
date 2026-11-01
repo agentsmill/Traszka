@@ -24,7 +24,7 @@ import { INBOX_MAX, type FirmState, type FirmStepOut, type FirmStore } from './t
  * sklepem startowym gra jak sama ekonomia co do bitu: bez `site`, bez zdarzeń firmy.
  */
 
-/** Zdarzenia sklepu w tle, które czekają na „OK” z nazwą sklepu (§12); reszta zamyka się sama. */
+/** Zdarzenia sklepu w tle, które czekają na „OK” z nazwą sklepu (§12); reszta zamyka się sama (poziom, remont i cel dostają w grze toast z nazwą sklepu, `BACKGROUND_TOAST`). */
 const IMPORTANT: readonly EconEventKind[] = ['month', 'remanent', 'trust-tier', 'gameover'];
 
 /** Firma z jednym sklepem: startowym (#1, w lokalu startowym miasta), na gotówce i Ogonkach tego sklepu. Miasto liczy się z seeda. */
