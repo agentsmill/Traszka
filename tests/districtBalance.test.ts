@@ -126,7 +126,7 @@ describe('balans dzielnic na botach (spec §8.4)', () => {
     expect(walkedOut('bierny', 'srodmiescie')).toBeGreaterThan(walkedOut('bierny', 'osiedle'));
   }, TIMEOUT);
 
-  it('srodmiescie: obrót na klienta ≥ 1,25× osiedla; dworzec: klientów ≥ 1,3× osiedla', () => {
+  it('srodmiescie: obrót na klienta ≥ 1,25× osiedla; dworzec: obsłużonych (bierny) i przychodzących klientów ≥ 1,3× osiedla', () => {
     for (const bot of ['bierny', 'mistrz'] as const) {
       const perCustomer = (d: StoreDistrict): number => sum(runs(bot, d), (r) => r.revenue) / sum(runs(bot, d), (r) => r.customers);
       expect(perCustomer('srodmiescie') / perCustomer('osiedle'), `${bot}: obrót na klienta`).toBeGreaterThanOrEqual(1.25);
@@ -136,9 +136,8 @@ describe('balans dzielnic na botach (spec §8.4)', () => {
     //  - obsłużeni (dosłownie): bierny 1,39× Osiedla (zapas 7% nad progiem), mistrz 1,30× (bez zapasu: kasy ucinają Dworzec, 4% klientów
     //    odchodzi z kolejki), więc u mistrza tego nie sprawdzamy;
     //  - przyszli = obsłużeni + odeszli z kolejki: bierny 1,42× (zapas 9%), mistrz 1,35× (zapas 4%).
-    //  Cel projektu to ruch ok. 1,4× (spec §8.1), a próg 1,3× z planu to ten ruch pomniejszony o sprzężenie z reputacją: Dworzec kończy z reputacją
-    //  ok. 72 (Osiedle 100), co obniża napływ (`reputationFactor`). Zapas mistrza (4%) jest cienki, ale to wynik deterministycznej gry,
-    //  a nie losowania; gdyby ruch Dworca spadł, test to pokaże.
+    //  Cel projektu to ruch ok. 1,4× (spec §8.1); 1,3× to próg z planu, z zapasem 4–9% nad zmierzonymi wartościami. Zapas mistrza (4%)
+    //  jest cienki, ale to wynik deterministycznej gry, a nie losowania; gdyby ruch Dworca spadł, test to pokaże.
     const served = (bot: BotName, d: StoreDistrict): number => sum(runs(bot, d), (r) => r.customers);
     const came = (bot: BotName, d: StoreDistrict): number => sum(runs(bot, d), (r) => r.customers + r.lost);
     expect(served('bierny', 'dworzec') / served('bierny', 'osiedle'), 'bierny: obsłużeni klienci Dworca').toBeGreaterThanOrEqual(1.3);
