@@ -209,6 +209,8 @@ export interface SceneHost {
   /**
    * Pokazuje miasto (widok warstw) zamiast sklepu: sklep, ulica i tłum są ukryte, a kamera obejmuje całe miasto. Wywołane przy już
    * pokazanym mieście odświeża tylko stany lokali i warstwę. Czas gry płynie dalej, scena sklepu nadal żyje pod spodem.
+   * To samo miasto to ten sam obiekt `CityState` (porównanie po tożsamości, nie po seedzie ani zawartości): wołający trzyma jedną
+   * instancję na grę, a inny obiekt (nawet o tym samym seedzie) wymienia scenę miasta na nową.
    */
   showCity(city: CityState, states: Record<number, LotState>, layer: CityLayer): void;
   /** Wraca do sklepu: pokazuje go i oddaje kamerze granice, przesunięcie i zoom sprzed `showCity`. Na presecie `niska` zwalnia scenę miasta. */
@@ -277,6 +279,7 @@ export function createSceneHost(deps: SceneDeps): SceneHost {
   function restoreCamera(frame: CameraFrame): void {
     const { bounds: b } = frame;
     if (b) ctx.rig.setBounds(b.minX, b.minZ, b.maxX, b.maxZ);
+    else ctx.rig.clearBounds();   // miasto pokazane przed wczytaniem sklepu: jego granice nie mogą zostać po powrocie
     ctx.rig.panBy(frame.x - ctx.rig.target.x, frame.z - ctx.rig.target.z);
     ctx.rig.zoomBy(ctx.rig.viewSize / frame.viewSize);
   }

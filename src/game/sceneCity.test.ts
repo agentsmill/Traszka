@@ -184,6 +184,18 @@ describe('showCity / hideCity', () => {
     expect(b.maxX).toBeLessThan(CITY_BOUNDS.maxX);   // granice nowego sklepu, nie miasta
   });
 
+  it('showCity przed wczytaniem jakiegokolwiek sklepu: po hideCity granice kamery znikają (nie zostają granice miasta)', () => {
+    const { host, ctx } = hostOn('srednia');
+    expect(ctx.rig.bounds).toBeNull();
+    host.showCity(CITY, STATES, 'ruch');
+    expect(ctx.rig.bounds).toEqual(CITY_BOUNDS);
+    host.hideCity();
+    expect(host.cityShown).toBe(false);
+    expect(ctx.rig.bounds).toBeNull();
+    ctx.rig.panBy(500, 500);   // bez granic pan nie jest ucinany do miasta
+    expect(ctx.rig.target.x).toBeCloseTo(500, 6);
+  });
+
   it('hideCity bez showCity nic nie robi', async () => {
     const { host, ctx } = hostOn('srednia');
     await withStore(host);

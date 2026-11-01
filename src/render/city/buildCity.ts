@@ -1,5 +1,5 @@
 import {
-  Box3, BufferGeometry, Color, DynamicDrawUsage, Float32BufferAttribute, Group, Mesh, MeshStandardMaterial, Vector3,
+  Box3, BufferGeometry, Color, DynamicDrawUsage, Float32BufferAttribute, Group, Mesh, MeshBasicMaterial, Vector3,
   type Material, type Object3D, type Raycaster,
 } from 'three';
 import { BLOCK_M } from '@/sim/city/districts';
@@ -12,7 +12,9 @@ import { PALETTE } from '@/render/style';
  * Widok warstw miasta (spec §9.1, §19): płaska, jasna mapa, na której widać ruch i dzielnice. Bez cieni, aut i drzew; cała scena to
  * 2 siatki (tło kwartałów, ulice) i do 9 siatek z budynkami (chunk 2 × 2 kwartały), czyli kilkanaście wywołań rysowania zamiast
  * budżetu 60. Budynki to niskie, wybielone bryły postawione na slocie każdego lokalu; kolory (ruch, dzielnice, stan lokalu) siedzą w
- * kolorach wierzchołków, więc warstwy i stany zmieniają tylko bufor koloru, nigdy geometrię ani materiał.
+ * kolorach wierzchołków, więc warstwy i stany zmieniają tylko bufor koloru, nigdy geometrię ani materiał. Materiał jest bez świateł
+ * (`MeshBasicMaterial`, cieniowanie ścian wypieczone w kolorach): gra przełącza słońce i niebo wg godziny (noc 20:00–6:00), a mapa
+ * danych ma wyglądać tak samo o każdej porze, żeby żółć i czerwień ruchu nie ciemniały ani nie niebieściały.
  *
  * Układ: jednostka sceny to `CITY_UNIT_M` metrów miasta, środek miasta leży w (0, 0), x miasta to x sceny, a y miasta to z sceny (jak
  * `cellToWorld` w sklepie). Korzeń stoi w początku układu i się nie przesuwa: `pickLot` liczy w tych samych współrzędnych co promień.
@@ -53,7 +55,12 @@ const TRAFFIC_QUIET = PALETTE.productCategory.przekaski[0]!;   // żółty
 const TRAFFIC_BUSY = PALETTE.productCategory.napoje[0]!;       // czerwony
 /** Średnia doba natężenia (0–255), od której odcinek jest cały czerwony. Skala stała jak w traffic.ts: najruchliwszy odcinek ma 70–100. */
 const TRAFFIC_FULL = 100;
-const ROOF_TO_WALL = 0.9;
+/**
+ * Cieniowanie budynku wypieczone w kolorach (materiał jest bez świateł): dach i dwie pary ścian. W rzucie izometrycznym widać
+ * zawsze po jednej ścianie ±z i ±x, więc przy każdym obrocie kamery dwie różnią się jasnością. Dach ma 0,88 bieli, żeby luminancja
+ * zostawała poniżej progu bloomu (0,9 w post.ts) także przy ekspozycji nocy, a jasne sklepy nie zaczęły świecić.
+ */
+const SHADE = { roof: 0.88, wallZ: 0.88 * 0.88, wallX: 0.88 * 0.76 } as const;
 
 /** Barwa budynku lokalu wg stanu (mieszana z bielą budynku): kolory pinezek, żeby mapa czytała się też bez nich. */
 function lotTint(state: LotState, brand: CityLot['brand']): { color: string; amount: number } | null {
@@ -99,6 +106,16 @@ export interface CityView {
   dispose(): void;
 }
 
+/** Kolory dachu i dwóch par ścian jednej bryły. */
+interface Shades { roof: Color; wallZ: Color; wallX: Color }
+
+/** Dach i ściany bryły z koloru bazowego budynku. */
+const shadesOf = (base: Color): Shades => ({
+  roof: base.clone().multiplyScalar(SHADE.roof),
+  wallZ: base.clone().multiplyScalar(SHADE.wallZ),
+  wallX: base.clone().multiplyScalar(SHADE.wallX),
+});
+
 // --- Budowa siatek ------------------------------------------------------------------------------------------------
 
 /** Rosnące bufory pozycji, normalnych, kolorów i indeksów jednej siatki. */
@@ -122,12 +139,12 @@ class Mesher {
   }
 
   /** Prostopadłościan bez spodu: najpierw dach (cztery wierzchołki), potem ściany. */
-  box(x0: number, x1: number, z0: number, z1: number, h: number, roof: Color, wall: Color): void {
-    this.quad([[x0, h, z0], [x0, h, z1], [x1, h, z1], [x1, h, z0]], [0, 1, 0], roof);
-    this.quad([[x0, 0, z1], [x1, 0, z1], [x1, h, z1], [x0, h, z1]], [0, 0, 1], wall);
-    this.quad([[x1, 0, z0], [x0, 0, z0], [x0, h, z0], [x1, h, z0]], [0, 0, -1], wall);
-    this.quad([[x1, 0, z1], [x1, 0, z0], [x1, h, z0], [x1, h, z1]], [1, 0, 0], wall);
-    this.quad([[x0, 0, z0], [x0, 0, z1], [x0, h, z1], [x0, h, z0]], [-1, 0, 0], wall);
+  box(x0: number, x1: number, z0: number, z1: number, h: number, c: Shades): void {
+    this.quad([[x0, h, z0], [x0, h, z1], [x1, h, z1], [x1, h, z0]], [0, 1, 0], c.roof);
+    this.quad([[x0, 0, z1], [x1, 0, z1], [x1, h, z1], [x0, h, z1]], [0, 0, 1], c.wallZ);
+    this.quad([[x1, 0, z0], [x0, 0, z0], [x0, h, z0], [x1, h, z0]], [0, 0, -1], c.wallZ);
+    this.quad([[x1, 0, z1], [x1, 0, z0], [x1, h, z0], [x1, h, z1]], [1, 0, 0], c.wallX);
+    this.quad([[x0, 0, z0], [x0, 0, z1], [x0, h, z1], [x0, h, z0]], [-1, 0, 0], c.wallX);
   }
 
   geometry(): BufferGeometry {
@@ -181,7 +198,7 @@ interface LotBox {
 export function buildCity(city: CityState, states: Record<number, LotState>): CityView {
   const root = new Group();
   root.name = 'city';
-  const surface = new MeshStandardMaterial({ vertexColors: true, roughness: 0.9, metalness: 0 });
+  const surface = new MeshBasicMaterial({ vertexColors: true });   // bez świateł: dane na mapie wyglądają tak samo o każdej porze doby
   const geometries: BufferGeometry[] = [];
   const add = (name: string, g: BufferGeometry): Mesh => {
     geometries.push(g);
@@ -237,7 +254,7 @@ export function buildCity(city: CityState, states: Record<number, LotState>): Ci
     const h = HEIGHT[lot.district] * (0.85 + 0.3 * unit(lot.id));
     const base = new Color(BUILDING_WHITE).multiplyScalar(0.95 + 0.05 * unit(lot.id + 7919));
     const first = mesher.vertices;
-    mesher.box(a.x, b.x, a.z, b.z, h, base, base.clone().multiplyScalar(ROOF_TO_WALL));
+    mesher.box(a.x, b.x, a.z, b.z, h, shadesOf(base));
     boxes.push({ lot, box: new Box3(new Vector3(a.x, 0, a.z), new Vector3(b.x, h, b.z)), top: new Vector3((a.x + b.x) / 2, h, (a.z + b.z) / 2), chunk, first, base });
   }
   const chunkMeshes = new Map<number, Mesh>();
@@ -252,11 +269,10 @@ export function buildCity(city: CityState, states: Record<number, LotState>): Ci
 
   const paintLot = (rec: LotBox): void => {
     const tint = lotTint(stateOf(rec.lot), rec.lot.brand);
-    const roof = tint ? rec.base.clone().lerp(new Color(tint.color), tint.amount) : rec.base;
-    const wall = roof.clone().multiplyScalar(ROOF_TO_WALL);
+    const shades = shadesOf(tint ? rec.base.clone().lerp(new Color(tint.color), tint.amount) : rec.base);
     const attr = chunkMeshes.get(rec.chunk)!.geometry.getAttribute('color');
     for (let v = 0; v < VERTS_PER_BOX; v++) {
-      const c = v < 4 ? roof : wall;
+      const c = v < 4 ? shades.roof : v < 12 ? shades.wallZ : shades.wallX;   // kolejność ścian jak w `Mesher.box`
       attr.setXYZ(rec.first + v, c.r, c.g, c.b);
     }
   };

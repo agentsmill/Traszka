@@ -2,35 +2,10 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { lang, tr } from '@/i18n';
 import { EN_RENDER } from '@/i18n/en/render';
 import { PALETTE } from '@/render/style';
+import { fakeContext, fontPx, type Call } from '../../tests/canvasFake';
 import { drawRentPoster } from './rentPoster';
 
-type Call = { op: string; args: unknown[]; font: string; fill: string; alpha: number };
-
-/**
- * Atrapa kontekstu 2D: zapisuje wywołania razem ze stanem (czcionka, kolor, przezroczystość w chwili rysowania). Mierzy napis
- * po 0,5 piksela czcionki na znak, więc dopasowanie szerokości napisów zachowuje się jak na prawdziwym płótnie, tylko deterministycznie.
- */
-function fakeContext(): { ctx: CanvasRenderingContext2D; calls: Call[] } {
-  const calls: Call[] = [];
-  const state = { font: '10px sans-serif', fillStyle: '#000000', globalAlpha: 1, textAlign: 'start', textBaseline: 'alphabetic' };
-  const px = (): number => Number(/(\d+(?:\.\d+)?)px/.exec(state.font)?.[1] ?? 10);
-  const record = (op: string, args: unknown[]): void => { calls.push({ op, args, font: state.font, fill: String(state.fillStyle), alpha: state.globalAlpha }); };
-  const ctx = new Proxy(state, {
-    get(target, key: string) {
-      if (key in target) return target[key as keyof typeof target];
-      if (key === 'measureText') return (text: string) => ({ width: text.length * px() * 0.5 });
-      return (...args: unknown[]) => { record(key, args); };
-    },
-    set(target, key: string, value: unknown) {
-      (target as Record<string, unknown>)[key] = value;
-      return true;
-    },
-  }) as unknown as CanvasRenderingContext2D;
-  return { ctx, calls };
-}
-
 const texts = (calls: Call[]): string[] => calls.filter((c) => c.op === 'fillText').map((c) => String(c.args[0]));
-const fontPx = (c: Call): number => Number(/(\d+(?:\.\d+)?)px/.exec(c.font)![1]);
 
 afterEach(() => { lang.value = 'pl'; });
 

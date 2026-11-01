@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { Color, Mesh, MeshStandardMaterial, Raycaster, Vector3, type BufferGeometry, type Material, type Object3D } from 'three';
+import { Color, Mesh, MeshBasicMaterial, MeshStandardMaterial, Raycaster, Vector3, type BufferGeometry, type Material, type Object3D } from 'three';
 import { generateCity } from '@/sim/city/generateCity';
 import { BLOCK_M } from '@/sim/city/districts';
 import { CITY_SIZE, type CityState, type LotState } from '@/sim/city/types';
@@ -264,6 +264,66 @@ describe('buildCity: kotwice pinezek i wybór lokalu', () => {
         const pa = new Vector3().fromBufferAttribute(pos, a);
         const geometric = new Vector3().subVectors(new Vector3().fromBufferAttribute(pos, b), pa).cross(new Vector3().subVectors(new Vector3().fromBufferAttribute(pos, c), pa));
         expect(geometric.dot(new Vector3().fromBufferAttribute(nor, a)), `${m.name} trójkąt ${t / 3}`).toBeGreaterThan(0);
+      }
+    }
+    view.dispose();
+  });
+});
+
+describe('buildCity: materiał bez świateł', () => {
+  const lum = (r: number, g: number, b: number): number => 0.2126 * r + 0.7152 * g + 0.0722 * b;
+
+  it('każda siatka miasta ma materiał bez świateł (MeshBasicMaterial z kolorami wierzchołków), więc mapa wygląda tak samo o każdej porze doby', () => {
+    const city = cityOf(SEEDS[0]!);
+    const view = buildCity(city, generated(city));
+    const meshes = meshesOf(view.root);
+    expect(meshes.length).toBeGreaterThan(2);
+    for (const m of meshes) {
+      for (const mat of Array.isArray(m.material) ? m.material : [m.material]) {
+        expect(mat.type, m.name).toBe('MeshBasicMaterial');
+        expect((mat as MeshBasicMaterial).vertexColors, m.name).toBe(true);
+        expect('roughness' in mat || 'metalness' in mat || 'emissive' in mat, m.name).toBe(false);
+      }
+      expect(m.castShadow, m.name).toBe(false);
+      expect(m.receiveShadow, m.name).toBe(false);
+    }
+    view.dispose();
+  });
+
+  it('cieniowanie jest w kolorach: dach jaśniejszy od ściany ±z, a ta od ściany ±x (w rzucie izometrycznym zawsze widać po jednej z nich)', () => {
+    const city = cityOf(SEEDS[0]!);
+    const plain = Object.fromEntries(city.lots.map((l) => [l.id, 'zajety' as LotState]));
+    const view = buildCity(city, plain);
+    const chunks = meshesOf(view.root).filter((m) => m.name.startsWith('chunk:'));
+    for (const m of chunks) {
+      const g = m.geometry;
+      for (let box = 0; box < g.getAttribute('position').count / 20; box++) {
+        const face = (k: number): number => { const [r, gr, b] = colorOf(g, box * 20 + k * 4); return lum(r, gr, b); };
+        const [roof, wallZ, wallX] = [face(0), face(1), face(3)];
+        expect(roof, `${m.name} bryła ${box}`).toBeGreaterThan(wallZ);
+        expect(wallZ, `${m.name} bryła ${box}`).toBeGreaterThan(wallX);
+        // dwie ściany tego samego kierunku mają ten sam kolor
+        expect(face(2)).toBeCloseTo(wallZ, 10);
+        expect(face(4)).toBeCloseTo(wallX, 10);
+      }
+    }
+    view.dispose();
+  });
+
+  it('żaden kolor wierzchołka nie sięga progu bloomu (luminancja 0,9 w post.ts), w obu warstwach i przy wszystkich stanach lokali', () => {
+    const city = cityOf(SEEDS[0]!);
+    const view = buildCity(city, generated(city));
+    const states = ['zajety', 'wolny', 'konkurencja', 'twoj', 'obok', 'budowa', 'po-traszce'] as const;
+    for (const layer of ['ruch', 'dzielnice'] as const) {
+      view.setLayer(layer);
+      for (const state of states) {
+        view.setLots(Object.fromEntries(city.lots.map((l) => [l.id, state])));
+        for (const m of meshesOf(view.root)) {
+          const attr = m.geometry.getAttribute('color');
+          for (let i = 0; i < attr.count; i++) {
+            expect(lum(attr.getX(i), attr.getY(i), attr.getZ(i)), `${layer} ${state} ${m.name}`).toBeLessThan(0.85);
+          }
+        }
       }
     }
     view.dispose();

@@ -1,8 +1,9 @@
 import type { Texture } from 'three';
 import { tr } from '@/i18n';
+import { fitText, rect } from '@/render/canvasDraw';
 import { drawRentPoster } from '@/render/rentPoster';
 import { PALETTE } from '@/render/style';
-import { cachedTexture, canvasTexture, font } from '@/render/store/parts';
+import { cachedTexture, canvasTexture } from '@/render/store/parts';
 import { drawNewt } from '@/render/store/signTexture';
 
 /**
@@ -64,13 +65,6 @@ const DARK_FRAME = PALETTE.fixture.fridgeFrame;
 const SKY_LIGHT = PALETTE.productCategory.nabial[2];
 const SKY_DEEP = PALETTE.productCategory.nabial[1];
 
-function rect(ctx: Ctx, color: string, x: number, y: number, w: number, h: number, alpha = 1): void {
-  ctx.globalAlpha = alpha;
-  ctx.fillStyle = color;
-  ctx.fillRect(x, y, w, h);
-  ctx.globalAlpha = 1;
-}
-
 /** Okno dwuskrzydłowe: kremowa rama, szyba z gradientem nieba, listwa środkowa, rolety/zasłona wg `curtain`. */
 function drawWindow(ctx: Ctx, w: number, h: number, curtain: string | null, blind: boolean): void {
   rect(ctx, FRAME, 0, 0, w, h);
@@ -114,17 +108,6 @@ function drawWindowGlow(ctx: Ctx, w: number, h: number): void {
   ctx.fillRect(m, m, w - 2 * m, h - 2 * m);
   rect(ctx, '#000000', w / 2 - 6, m, 12, h - 2 * m);
   rect(ctx, '#000000', m, h * 0.34, w - 2 * m, 10);
-}
-
-/** Wyśrodkowany napis o szerokości ≤ `maxW` (czcionka zmniejszana do skutku). */
-function fitText(ctx: Ctx, text: string, x: number, y: number, px: number, maxW: number, color: string): void {
-  ctx.font = font(px, '900');
-  const w = ctx.measureText(text).width;
-  if (w > maxW) ctx.font = font(Math.floor((px * maxW) / w), '900');
-  ctx.fillStyle = color;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(text, x, y);
 }
 
 /**

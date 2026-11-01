@@ -1,4 +1,5 @@
 import { tr } from '@/i18n';
+import { fitText, rect } from '@/render/canvasDraw';
 import { font } from '@/render/store/parts';
 import { PALETTE } from '@/render/style';
 
@@ -16,13 +17,6 @@ type Ctx = CanvasRenderingContext2D;
 const DESIGN_W = 216;
 const DESIGN_H = 160;
 
-function rect(ctx: Ctx, color: string, x: number, y: number, w: number, h: number, alpha = 1): void {
-  ctx.globalAlpha = alpha;
-  ctx.fillStyle = color;
-  ctx.fillRect(x, y, w, h);
-  ctx.globalAlpha = 1;
-}
-
 /** Napis ściśnięty w poziomie do szerokości ≤ `maxW`: wysokie, wąskie litery jak na plakacie, wyśrodkowane w (`x`, `y`). */
 function condensedText(ctx: Ctx, text: string, x: number, y: number, px: number, maxW: number, color: string): void {
   ctx.font = font(px, '900');
@@ -35,17 +29,6 @@ function condensedText(ctx: Ctx, text: string, x: number, y: number, px: number,
   ctx.textBaseline = 'middle';
   ctx.fillText(text, 0, 0);
   ctx.restore();
-}
-
-/** Wyśrodkowany napis o szerokości ≤ `maxW` (czcionka zmniejszana do skutku). */
-function fitText(ctx: Ctx, text: string, x: number, y: number, px: number, maxW: number, color: string): void {
-  ctx.font = font(px, '900');
-  const w = ctx.measureText(text).width;
-  if (w > maxW) ctx.font = font(Math.floor((px * maxW) / w), '900');
-  ctx.fillStyle = color;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(text, x, y);
 }
 
 /**

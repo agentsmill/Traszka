@@ -119,6 +119,21 @@ describe('CameraRig', () => {
     expect(rig.target.x).toBeCloseTo(6, 9);
   });
 
+  it('clearBounds zdejmuje granice: bounds wraca do null, pan nie jest już ograniczony, a onChange dostaje powiadomienie', () => {
+    const rig = new CameraRig(1);
+    rig.setBounds(-2, -2, 2, 2);
+    const cb = vi.fn();
+    rig.onChange(cb);
+    rig.clearBounds();
+    expect(rig.bounds).toBeNull();
+    expect(cb).toHaveBeenCalledTimes(1);
+    rig.panBy(100, 100);
+    expect(rig.target.x).toBeCloseTo(100, 9);
+    expect(cb).toHaveBeenCalledTimes(2);
+    rig.clearBounds();   // bez granic nie ma czego zdejmować: bez powiadomienia
+    expect(cb).toHaveBeenCalledTimes(2);
+  });
+
   it('onChange woła się przy obrocie, zoomie, panie i resize, ale nie przy braku zmiany', () => {
     const rig = new CameraRig(1);
     const cb = vi.fn();

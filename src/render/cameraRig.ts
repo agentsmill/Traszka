@@ -99,6 +99,13 @@ export class CameraRig {
     this.emit();
   }
 
+  /** Zdejmuje granice pana (`bounds` wraca do null). Bez granic nie ma czego zdejmować: wtedy bez powiadomienia. */
+  clearBounds(): void {
+    if (!this._bounds) return;
+    this._bounds = null;
+    this.emit();
+  }
+
   resize(aspect: number): void {
     if (aspect === this.aspect) return;
     this.aspect = aspect;
