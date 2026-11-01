@@ -196,7 +196,7 @@ export type SiteDistrictMatchesStoreDistrict = AssertTrue<Equal<SiteMods['distri
 export type SiteFlags = Pick<SiteMods, 'extra' | 'ownCosts' | 'firmDebt' | 'weatherHash'>;
 
 /**
- * `SiteMods` sklepu w lokalu miasta: charakter dzielnicy z `DISTRICTS` (z profilem dnia), ruch z `lotTrafficMult` (w weekend Biurowców
+ * `SiteMods` sklepu w lokalu miasta: charakter dzielnicy z `DISTRICTS` (z profilem dnia i trudnymi klientami), ruch z `lotTrafficMult` (w weekend Biurowców
  * ruch weekendowy dzielnicy z tym samym natężeniem lokalnym i konkurencją), układ z lokalu i flagi od firmy. Lokal startowy to
  * `NEUTRAL_SITE` z flagami: sklep startowy gra jak dziś.
  */
@@ -210,7 +210,7 @@ export function siteFor(city: CityState, lotId: number, flags: SiteFlags): SiteM
     traffic: d.traffic * factor,
     weekendTraffic: d.weekendTraffic === null ? null : d.weekendTraffic * factor,
     basket: d.basket, patience: d.patience, repPenalty: d.repPenalty, theft: d.theft,
-    lot: lot.spec, hours: siteHours(lot.district),
+    lot: lot.spec, hours: siteHours(lot.district), difficult: d.difficult,
     ...flags,
   };
 }

@@ -1558,13 +1558,14 @@ export const estimatedDailyRevenue = (s: EconomyState, info: StoreInfo): number 
 
 /**
  * Co karta wie o sklepie przy losowaniu (INTEGRATION.md, §5): dostawy w kolejce na dziś, personel, zaufanie, sala, pogoda i
- * skala sklepu (marża i obrót typowego dnia), z której karta liczy swoje kwoty.
+ * skala sklepu (marża i obrót typowego dnia), z której karta liczy swoje kwoty. Sklep z aktywną dzielnicą (`activeSite`) dopisuje jeszcze
+ * `district` i `difficult` (karta `wiek` i karty Dworca); bez niej kontekst ma dokładnie dzisiejsze klucze.
  */
 export function cardContext(s: EconomyState, info: StoreInfo): CardContext {
   const day = dayOf(s.minute);
   const dayStart = day * MINUTES_PER_DAY;
   const palletsToday = s.deliveries.filter((d) => d.at >= dayStart && d.at < dayStart + MINUTES_PER_DAY).reduce((n, d) => n + d.count, 0);
-  return {
+  const ctx: CardContext = {
     day,
     now: s.minute,
     weekday: weekdayOf(day),
@@ -1578,6 +1579,12 @@ export function cardContext(s: EconomyState, info: StoreInfo): CardContext {
     dailyMargin: estimatedDailyMargin(s, info),
     dailyRevenue: estimatedDailyRevenue(s, info),
   };
+  const site = activeSite(info);
+  if (site) {
+    ctx.district = site.district;
+    ctx.difficult = site.difficult;
+  }
+  return ctx;
 }
 
 /**

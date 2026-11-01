@@ -37,6 +37,11 @@ export interface SiteMods {
    * się rozkład klientów, a nie doba. Liczy go `siteHours` (miasto); null = `HOUR_CURVE`, jak dziś.
    */
   hours: readonly number[] | null;
+  /**
+   * Trudni klienci (§8.1, 4a.2): mnożnik wagi karty `wiek` („Nastolatek po energetyka”) w talii sklepu, wyżej częściej, niżej rzadziej.
+   * Czyta go tylko `cardContext` (`difficultWeight`, deck.ts); 1 = jak dziś.
+   */
+  difficult: number;
   /** Dodatkowy sklep: bez gwarancji (§11.2). */
   extra: boolean;
   /** Ten sklep płaci ZUS i księgową (§11.2). */
@@ -48,17 +53,17 @@ export interface SiteMods {
 /** Osiedle bez żadnego modyfikatora: gra jak dziś. */
 export const NEUTRAL_SITE: SiteMods = {
   district: 'osiedle', traffic: 1, weekendTraffic: null, basket: 1, patience: 0, repPenalty: 1, theft: 1, lot: null, weatherHash: null,
-  hours: null, extra: false, ownCosts: true, firmDebt: false,
+  hours: null, difficult: 1, extra: false, ownCosts: true, firmDebt: false,
 };
 
 /** Czy pola dzielnicy (bez flag) są wszystkie neutralne. Każdy nowy modyfikator dzielnicy w `SiteMods` dopisuje się tutaj, w jednym miejscu. */
 function districtNeutral(s: SiteMods): boolean {
   return s.traffic === 1 && s.weekendTraffic === null && s.basket === 1 && s.patience === 0 && s.repPenalty === 1
-    && s.theft === 1 && s.lot === null && s.weatherHash === null && s.hours === null;
+    && s.theft === 1 && s.lot === null && s.weatherHash === null && s.hours === null && s.difficult === 1;
 }
 
 /**
- * Dzielnica sklepu, o ile zmienia on ekonomię: null przy braku `site` i przy polach dzielnicy, `lot`, `weatherHash` i `hours`
+ * Dzielnica sklepu, o ile zmienia on ekonomię: null przy braku `site` i przy polach dzielnicy, `lot`, `weatherHash`, `hours` i `difficult`
  * neutralnych (same flagi nie włączają gałęzi dzielnicy). Wszystkie modyfikatory dzielnicy w `economy.ts` stoją za tym wynikiem.
  */
 export function activeSite(info: StoreInfo): SiteMods | null {

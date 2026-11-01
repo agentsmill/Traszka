@@ -10,8 +10,8 @@ export const BLOCK_M = 110;
 /**
  * Charakter dzielnicy (spec §8.1, pakiet i budowa §10.3). Liczby [C] po przeglądzie balansu na botach (`tests/districtBalance.test.ts`,
  * raport `docs/superpowers/reports/2026-10-31-miasto-4a1.md`); zmiana `package`, `buildDays` albo `rivals` zmienia złoty skrót miasta.
- * Mnożniki ekonomii (`traffic`, `basket`, `patience`, `repPenalty`, `theft`) i profil dnia (`hours`) wchodzą do ekonomii przez opcjonalne
- * `StoreInfo.site`; dzielnica neutralna (Osiedle) to dokładnie dzisiejsza gra.
+ * Mnożniki ekonomii (`traffic`, `basket`, `patience`, `repPenalty`, `theft`), profil dnia (`hours`) i trudni klienci (`difficult`) wchodzą do
+ * ekonomii przez opcjonalne `StoreInfo.site`; dzielnica neutralna (Osiedle) to dokładnie dzisiejsza gra.
  */
 export interface DistrictDef {
   /** Format lokalu w tej dzielnicy (spec §7.1): parter bloku, narożnik kamienicy, pawilon, parter biurowca. */
@@ -39,13 +39,18 @@ export interface DistrictDef {
    * jest niższy niż w pierwszym szkicu (2 → 1,75), bo przy ostrzejszych kasy nie nadążały i decydent miał 0,62 wyniku Osiedla (cel ≥ 0,7).
    */
   hours: readonly number[] | null;
+  /**
+   * Trudni klienci (§8.1, 4a.2): mnożnik wagi karty `wiek` w talii sklepu (`difficultWeight`): Dworzec częściej, Śródmieście i Biurowce rzadziej,
+   * Osiedle jak dziś (1). Dworzec ma poza tym trzy własne karty (`DWORZEC_CARD_IDS`). Liczby startowe [C], stroi je przegląd 4a.2.
+   */
+  difficult: number;
 }
 
 export const DISTRICTS: Record<StoreDistrict, DistrictDef> = {
-  osiedle:     { lotKind: 'blok',      traffic: 1,   weekendTraffic: null, basket: 1,    patience: 0,  repPenalty: 1,   theft: 1,   rivals: false, package: [45_000, 55_000], buildDays: [5, 6], hours: null },
-  srodmiescie: { lotKind: 'kamienica', traffic: 0.8, weekendTraffic: null, basket: 1.3,  patience: -4, repPenalty: 1.5, theft: 0.6, rivals: true,  package: [65_000, 85_000], buildDays: [7, 8], hours: [0.3, 0.8, 1, 0.8, 0.7, 0.8, 1, 1, 0.8, 0.9, 1.1, 1.4, 1.6, 1.6, 1.4, 1.1, 0.8] },
-  dworzec:     { lotKind: 'pawilon',   traffic: 1.4, weekendTraffic: null, basket: 0.8,  patience: 1,  repPenalty: 1,   theft: 2,   rivals: true,  package: [35_000, 42_000], buildDays: [5, 6], hours: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1] },
-  biurowce:    { lotKind: 'blok',      traffic: 1.2, weekendTraffic: 0.5,  basket: 1.1,  patience: 0,  repPenalty: 1,   theft: 0.8, rivals: true,  package: [50_000, 60_000], buildDays: [6, 7], hours: [0.45, 1.45, 1.75, 1.45, 0.9, 0.95, 1.55, 1.55, 1.2, 0.9, 0.85, 0.8, 0.4, 0.15, 0.1, 0.1, 0.1] },
+  osiedle:     { lotKind: 'blok',      traffic: 1,   weekendTraffic: null, basket: 1,    patience: 0,  repPenalty: 1,   theft: 1,   rivals: false, package: [45_000, 55_000], buildDays: [5, 6], hours: null, difficult: 1 },
+  srodmiescie: { lotKind: 'kamienica', traffic: 0.8, weekendTraffic: null, basket: 1.3,  patience: -4, repPenalty: 1.5, theft: 0.6, rivals: true,  package: [65_000, 85_000], buildDays: [7, 8], hours: [0.3, 0.8, 1, 0.8, 0.7, 0.8, 1, 1, 0.8, 0.9, 1.1, 1.4, 1.6, 1.6, 1.4, 1.1, 0.8], difficult: 0.6 },
+  dworzec:     { lotKind: 'pawilon',   traffic: 1.4, weekendTraffic: null, basket: 0.8,  patience: 1,  repPenalty: 1,   theft: 2,   rivals: true,  package: [35_000, 42_000], buildDays: [5, 6], hours: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1], difficult: 1.6 },
+  biurowce:    { lotKind: 'blok',      traffic: 1.2, weekendTraffic: 0.5,  basket: 1.1,  patience: 0,  repPenalty: 1,   theft: 0.8, rivals: true,  package: [50_000, 60_000], buildDays: [6, 7], hours: [0.45, 1.45, 1.75, 1.45, 0.9, 0.95, 1.55, 1.55, 1.2, 0.9, 0.85, 0.8, 0.4, 0.15, 0.1, 0.1, 0.1], difficult: 0.7 },
 };
 
 const FIRST_HOUR = 6;
@@ -91,6 +96,7 @@ export function districtSite(d: StoreDistrict, lotKind: LotKind = DISTRICTS[d].l
   };
   return {
     ...NEUTRAL_SITE, district: d, traffic: def.traffic, weekendTraffic: def.weekendTraffic, basket: def.basket, patience: def.patience,
-    repPenalty: def.repPenalty, theft: def.theft, lot, hours: siteHours(d), extra: true, ownCosts: false, firmDebt: true,
+    repPenalty: def.repPenalty, theft: def.theft, lot, hours: siteHours(d), difficult: def.difficult, extra: true, ownCosts: false,
+    firmDebt: true,
   };
 }

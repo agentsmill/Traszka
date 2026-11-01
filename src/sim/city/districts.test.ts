@@ -16,8 +16,12 @@ describe('districtSite: drugi sklep w środku widełek dzielnicy (balans, spec �
     const site = districtSite(id);
     expect(site).toMatchObject({
       district: id, traffic: d.traffic, weekendTraffic: d.weekendTraffic, basket: d.basket, patience: d.patience, repPenalty: d.repPenalty,
-      theft: d.theft, extra: true, ownCosts: false, firmDebt: true, weatherHash: null,
+      theft: d.theft, difficult: d.difficult, extra: true, ownCosts: false, firmDebt: true, weatherHash: null,
     });
+  });
+
+  it('trudni klienci (4a.2, §8.1): Osiedle 1, Śródmieście 0,6, Dworzec 1,6, Biurowce 0,7', () => {
+    expect(IDS.map((id) => [id, DISTRICTS[id].difficult])).toEqual([['osiedle', 1], ['srodmiescie', 0.6], ['dworzec', 1.6], ['biurowce', 0.7]]);
   });
 
   it('lokal ma format dzielnicy (albo podany) i wymiary ze środka widełek, bez narożnika, a układ się z niego buduje', () => {

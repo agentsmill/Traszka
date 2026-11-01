@@ -224,6 +224,45 @@ export const EN_CARDS: Record<string, EnCard> = {
       { label: 'Pass; I’ve got no room', result: 'Head Office noted a “lack of engagement with strategic drops”. The kids went to the Traszka down the road.' },
     ],
   },
+  'dworzec-pociag': {
+    title: 'Last train cancelled',
+    text: 'The last train has been cancelled, and {n} people who missed their connection have walked into the shop. Head Office’s procedure “Customer Who Is Not a Customer” runs to 14 pages and not a single radiator.',
+    answers: [
+      { label: 'Let them in to warm up', result: 'People warmed up, phones charged, and the chocolate bars on the shelf seem to have thinned out. Shrinkage doesn’t ask questions; it just counts.' },
+      { label: 'Half-price coffee out of my margin', result: 'The half-price coffee was gone within a quarter of an hour. “Thank you, Traszka” appeared on the Traszkapp, and Head Office asked who had approved the promotion.' },
+      {
+        label: 'Head Office regulations: no purchase, no loitering',
+        result: 'Regulations read aloud, the crowd dispersed in silence. Compliance with procedure: 100%. Compliance with common sense: not measured.',
+        risk: 'Someone filmed you reading the regulations to the crowd outside the shop. The video has more views than the whole Traszkapp.',
+      },
+    ],
+  },
+  'dworzec-bilon': {
+    title: 'A sack of small change',
+    text: 'A traveller pays for a coffee with a sack of small change, {n} gr in total, and their train leaves in seven minutes. Head Office’s “Coin Acceptance Procedure” says everything must be counted twice.',
+    answers: [
+      { label: 'Count it twice, as procedure says', result: 'Counted twice, and the two counts came out different. A third count began after the train had gone, but the paperwork says everything adds up.' },
+      {
+        label: 'Weigh it on the bread-roll scales',
+        result: 'The bread-roll scales said what they said, and the traveller caught the train. Procedure is wonderfully flexible when nobody is looking.',
+        risk: 'A Head Office auditor reviewed the footage. The bread-roll scales aren’t calibrated for coins, and calibration has a procedure of its own.',
+      },
+      { label: 'Card or banknotes only', result: 'The traveller put the sack away and paid by card. The queue sighed as one, and the coin procedure is still lying untouched in its binder.' },
+    ],
+  },
+  'dworzec-walizka': {
+    title: 'Suitcase by the door',
+    text: 'An unattended suitcase is standing by the door, and a three-page “Unusual Incident” form is waiting on the Traszkapp. Field 14: “Did the suitcase report itself?”.',
+    answers: [
+      { label: 'Station security, entrance closed', result: 'Station security had a look, nodded and took the suitcase away. Inside: socks. Head Office added a “socks” field to the form.' },
+      { label: 'Fill in the form', result: 'Three pages, four attachments and a photo of the suitcase in profile and from three-quarters. Head Office confirmed receipt after four days.' },
+      {
+        label: 'Someone will come back for it',
+        result: 'An hour later someone came back for the suitcase, said thank you and left. The “Unusual Incident” form stayed blank, and rightly so.',
+        risk: 'Nobody came back, but the fear did: customers avoided the entrance, and Head Office asked where the “Unusual Incident” form was.',
+      },
+    ],
+  },
   'okolnik-premia': {
     title: 'Circular: attendance bonus',
     text: 'Head Office awards a {b} zł attendance bonus. Condition: one week of displaying the drink “Kraftuś Zero Sense” at the till. The drink is “blue” flavoured.',

@@ -81,11 +81,11 @@ describe('SiteMods: neutralna dzielnica i aktywność', () => {
   it('NEUTRAL_SITE to osiedle bez żadnego modyfikatora, z kosztami własnymi i bez kontroli debetu przez firmę', () => {
     expect(NEUTRAL_SITE).toEqual({
       district: 'osiedle', traffic: 1, weekendTraffic: null, basket: 1, patience: 0, repPenalty: 1, theft: 1, lot: null, weatherHash: null,
-      hours: null, extra: false, ownCosts: true, firmDebt: false,
+      hours: null, difficult: 1, extra: false, ownCosts: true, firmDebt: false,
     });
   });
 
-  it('activeSite: brak pola, pole neutralne i same flagi to null; każdy modyfikator dzielnicy, profil dnia, lokal i pogoda włączają gałąź', () => {
+  it('activeSite: brak pola, pole neutralne i same flagi to null; każdy modyfikator dzielnicy, profil dnia, trudni klienci, lokal i pogoda włączają gałąź', () => {
     const info = infoOf(SEED);
     expect(activeSite(info)).toBeNull();
     expect(activeSite({ ...info, site: NEUTRAL_SITE })).toBeNull();
@@ -97,6 +97,7 @@ describe('SiteMods: neutralna dzielnica i aktywność', () => {
       { repPenalty: D.srodmiescie.repPenalty }, { theft: D.dworzec.theft }, { lot },
       { weatherHash: 0 },   // 0 to poprawny skrót, więc liczy się `!== null`, a nie prawda/fałsz
       { hours: siteHours('srodmiescie') },
+      { difficult: D.dworzec.difficult },   // trudni klienci (4a.2): sam `difficult ≠ 1` włącza gałąź dzielnicy
     ];
     for (const over of active) {
       const site = { ...NEUTRAL_SITE, ...over };

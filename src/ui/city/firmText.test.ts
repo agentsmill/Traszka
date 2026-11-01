@@ -1,12 +1,13 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { lang } from '@/i18n';
+import { EN_CARDS } from '@/i18n/en/cards';
 import { PL_CHARS } from '../../../tests/i18nScan';
 import { openSecond, partnerSession } from '../../../tests/firmKit';
 import { firmOf } from '@/game/session';
 import { lotById } from '@/sim/city/generateCity';
 import { DEBT_LIMIT } from '@/sim/economy/catalog';
 import { CARDS } from '@/sim/economy/tycoon/cards';
-import { DECK } from '@/sim/economy/tycoon/deck';
+import { DECK, DWORZEC_CARD_IDS } from '@/sim/economy/tycoon/deck';
 import type { FirmEvent, FirmRefusal, FirmState } from '@/sim/firm/types';
 import { addressText, firmEventText, lotAddress, refusalText, storeName } from './firmText';
 
@@ -127,6 +128,21 @@ describe('firmEventText', () => {
     const en = firmEventText(f, e);
     expect(en.text).toContain('deputy chose');
     expect(en.text).not.toContain(card.answers[1]!.label);
+  });
+
+  it('zastępca na karcie Dworca (4a.2): po polsku etykieta z talii, po angielsku etykieta z EN_CARDS', () => {
+    for (const id of DWORZEC_CARD_IDS) {
+      const def = DECK.find((d) => d.id === id)!;
+      for (let answer = 0; answer < def.answers.length; answer++) {
+        const e: FirmEvent = { kind: 'deputy', storeId: 2, params: { card: id, answer } };
+        lang.value = 'pl';
+        expect(firmEventText(f, e).text, `${id}#${answer}`).toContain(def.answers[answer]!.label);
+        lang.value = 'en';
+        const en = firmEventText(f, e).text;
+        expect(en, `${id}#${answer}`).toContain(EN_CARDS[id]!.answers[answer]!.label);
+        expect(en, `${id}#${answer}`).not.toContain(def.answers[answer]!.label);
+      }
+    }
   });
 
   it('zastępca z nieznaną kartą nie rzuca: numer odpowiedzi zamiast etykiety', () => {
