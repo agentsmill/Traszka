@@ -26,7 +26,7 @@ export interface DistrictDef {
   repPenalty: number;
   /** Mnożnik kradzieży (ukryty licznik ubytków). */
   theft: number;
-  /** Czy generator stawia tu sklepy konkurencji (spec §7.1, „lokale z dużym ruchem”); ich bliskość daje czynnik `RIVAL_FACTOR` w ruchu lokalu. */
+  /** Czy generator stawia tu sklepy konkurencji (Szop 24h, Kawka Express; spec §7.1); ich bliskość daje czynnik `RIVAL_FACTOR` w ruchu lokalu. Osiedle ich nie ma. */
   rivals: boolean;
   /** Widełki pakietu otwarcia w zł i dni budowy (włącznie). */
   package: readonly [number, number];

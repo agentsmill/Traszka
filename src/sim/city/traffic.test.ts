@@ -313,8 +313,9 @@ describe('lotEstimate: widełki klientów na karcie lokalu', () => {
       expect(e.trueDaily).toBeLessThanOrEqual(e.hi);
       expect(e.lo % 10).toBe(0);
       expect(e.hi % 10).toBe(0);
-      // zaokrąglenie obu granic do dziesiątek psuje stosunek o ok. 10 / lo, więc przy kilkuset klientach to ±0,08, a w Śródmieściu (ruch 0,8) trochę więcej
-      const tolerance = Math.max(0.08, 10 / e.lo + 0.01);
+      // granice to 0,75 i 1,25 środka, każda zaokrąglona do dziesiątek (błąd a, b ≤ 5): (H + b) / (L + a) − H / L = (b − a · H / L) / lo,
+      // czyli co najwyżej (5 + 5 · 5/3) / lo = 13,3 / lo. Przy kilkuset klientach to ±0,05, w Śródmieściu (ruch 0,8) ok. ±0,1.
+      const tolerance = (5 + 5 * (1.25 / 0.75)) / e.lo + 1e-9;
       expect(e.hi / e.lo, `${seed}: ${e.lo}–${e.hi}`).toBeGreaterThan(1.25 / 0.75 - tolerance);
       expect(e.hi / e.lo).toBeLessThan(1.25 / 0.75 + tolerance);
       expect(e.who).toHaveLength(2);

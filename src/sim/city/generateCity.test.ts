@@ -118,14 +118,14 @@ describe('generateCity: niezmienniki §20.3', () => {
     expect(free.length).toBeLessThanOrEqual(8);
     for (const d of ['srodmiescie', 'dworzec', 'biurowce'] as const) expect(free.some((l) => l.district === d)).toBe(true);
 
-    // konkurencja: 3–5, marka tylko u konkurencji, ≥ 2 kwartały od startu, w dzielnicach o dużym ruchu
+    // konkurencja: 3–5, marka tylko u konkurencji, ≥ 2 kwartały od startu, tylko w dzielnicach z flagą `rivals` (Osiedle bez konkurencji)
     const rivals = c.lots.filter((l) => l.state === 'konkurencja');
     expect(rivals.length).toBeGreaterThanOrEqual(3);
     expect(rivals.length).toBeLessThanOrEqual(5);
     expect(c.lots.filter((l) => l.brand !== null)).toEqual(rivals);
     for (const r of rivals) {
       expect(Math.max(Math.abs(r.bx - start.bx), Math.abs(r.by - start.by)), `konkurencja ${r.id} blisko startu`).toBeGreaterThanOrEqual(2);
-      expect(DISTRICTS[r.district].rivals, `konkurencja ${r.id} w dzielnicy z dużym ruchem`).toBe(true);
+      expect(DISTRICTS[r.district].rivals, `konkurencja ${r.id} w dzielnicy bez flagi rivals`).toBe(true);
       // R3: nie w rzędzie bezpośrednio obok wolnego ani startowego (po żadnej stronie)
       for (const side of ['minX', 'maxX'] as const) {
         const n = lotNeighbour(c, r.id, side);
