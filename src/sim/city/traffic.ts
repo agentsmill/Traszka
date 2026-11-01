@@ -1,16 +1,18 @@
-import { createEconomy, expectedDailyCustomers } from '@/sim/economy/economy';
+import { createEconomy, expectedDailyCustomers, type StoreFittings } from '@/sim/economy/economy';
 import { NEUTRAL_SITE, type SiteMods } from '@/sim/economy/site';
 import { computeStoreInfo, type StoreInfo } from '@/sim/economy/storeInfo';
 import { createRng, subSeed } from '@/sim/rng';
 import { layoutFor } from '@/sim/store/layoutFor';
-import { DISTRICTS } from './districts';
+import type { StoreLayout } from '@/sim/store/types';
+import { DISTRICTS, siteHours } from './districts';
 import type { CityLot, CityState, SourceKind, StoreDistrict, StreetSegment, TrafficSource } from './types';
 
 /*
  * Ruch w mieście (spec §7.3). Punkty ruchu (`CityState.sources`) mają profil godzinowy i tygodniowy; natężenie odcinka ulicy to suma
  * ich wpływów malejących z odległością. Mnożnik ruchu lokalu to iloczyn trzech czynników i mnoży `baseTraffic(info)` (rodzaj i
  * wielkość lokalu już tam siedzą): dzielnica, natężenie przy wejściu względem średniej dzielnicy i konkurencja w promieniu.
- * `siteFor` składa z tego `SiteMods` sklepu w lokalu, a `lotEstimate` widełki klientów na karcie lokalu.
+ * `siteFor` składa z tego `SiteMods` sklepu w lokalu, a `lotEstimate` widełki klientów na karcie lokalu. Profil dnia dzielnicy (`hours`)
+ * nie wchodzi do mnożnika ruchu: zmienia rozkład klientów w dobie, nie ich liczbę, więc widełki i skala sklepu go nie widzą.
  *
  * Moduł nie importuje `generateCity.ts` (generator woła `streetIntensity`), więc lokal po id szuka sam. Arytmetyka tylko z
  * działań IEEE (+, −, ·, /, sqrt), bez `Math.hypot` i `**`: wynik wchodzi do ekonomii, a serwer i przeglądarka muszą liczyć to samo.
@@ -195,8 +197,8 @@ export type SiteDistrictMatchesStoreDistrict = AssertTrue<Equal<SiteMods['distri
 export type SiteFlags = Pick<SiteMods, 'extra' | 'ownCosts' | 'firmDebt' | 'weatherHash'>;
 
 /**
- * `SiteMods` sklepu w lokalu miasta: charakter dzielnicy z `DISTRICTS`, ruch z `lotTrafficMult` (w weekend Biurowców ruch
- * weekendowy dzielnicy z tym samym natężeniem lokalnym i konkurencją), układ z lokalu i flagi od firmy. Lokal startowy to
+ * `SiteMods` sklepu w lokalu miasta: charakter dzielnicy z `DISTRICTS` (z profilem dnia i trudnymi klientami), ruch z `lotTrafficMult` (w weekend Biurowców
+ * ruch weekendowy dzielnicy z tym samym natężeniem lokalnym i konkurencją), układ z lokalu i flagi od firmy. Lokal startowy to
  * `NEUTRAL_SITE` z flagami: sklep startowy gra jak dziś.
  */
 export function siteFor(city: CityState, lotId: number, flags: SiteFlags): SiteMods {
@@ -209,7 +211,7 @@ export function siteFor(city: CityState, lotId: number, flags: SiteFlags): SiteM
     traffic: d.traffic * factor,
     weekendTraffic: d.weekendTraffic === null ? null : d.weekendTraffic * factor,
     basket: d.basket, patience: d.patience, repPenalty: d.repPenalty, theft: d.theft,
-    lot: lot.spec,
+    lot: lot.spec, hours: siteHours(lot.district), difficult: d.difficult,
     ...flags,
   };
 }
@@ -217,6 +219,12 @@ export function siteFor(city: CityState, lotId: number, flags: SiteFlags): SiteM
 // --- Widełki klientów --------------------------------------------------------------------------------------------
 
 export interface LotEstimate { lo: number; hi: number; trueDaily: number; who: SourceKind[] }
+
+/**
+ * Zamknięty sklep w lokalu „po Traszce” (spec §13.3): jego układ (po remontach jest większy niż układ poziomu 0 lokalu) i wyposażenie, które
+ * ponowny wynajem zostawia w sklepie (`StoreFittings`, jak `createEconomy`). Z tego liczą się widełki lokalu „po Traszce”.
+ */
+export interface ReletInput { layout: StoreLayout; fittings: StoreFittings }
 
 const TEN = 10;
 
@@ -226,13 +234,18 @@ const TEN = 10;
  * z seeda i lokalu), żeby karta nie zdradzała liczby, a szerokość to ±25% od środka. Prawdziwa liczba zawsze mieści się w widełkach:
  * środek to 0,85…1,15 jej wartości, więc dolna granica jest najwyżej 0,8625 jej wartości, a górna co najmniej 1,0625; zaokrąglenie do
  * dziesiątek mógłby ten zapas zjeść poniżej ok. 80 klientów dziennie, więc granice nigdy nie przechodzą przez prawdziwą liczbę. `who` to dwa najbliższe rodzaje punktów ruchu (słowa daje UI).
+ *
+ * `relet` (4a.2) to zamknięty sklep w lokalu: ponowny wynajem otwiera go z jego układem i wyposażeniem (`reopenStoreAt`), więc „prawdziwa liczba”
+ * liczy się z tego układu i `createEconomy(…, fittings)`, a nie z układu poziomu 0 bez wyposażenia (po remoncie i ulotkach to nawet 3× więcej).
+ * Bez `relet` wynik jest dokładnie taki jak dotąd (lokal wolny).
  */
-export function lotEstimate(seed: string, city: CityState, lotId: number): LotEstimate {
+export function lotEstimate(seed: string, city: CityState, lotId: number, relet?: ReletInput): LotEstimate {
   const lot = lotOf(city, lotId);
   const storeSeed = lotId === city.startLotId ? seed : storeSeedFor(seed, lotId);
   const site = siteFor(city, lotId, { extra: true, ownCosts: false, firmDebt: true, weatherHash: null });
-  const info: StoreInfo = { ...computeStoreInfo(layoutFor(storeSeed, 0, lot.spec)), site };
-  const trueDaily = expectedDailyCustomers(createEconomy(storeSeed, info), info);
+  const info: StoreInfo = { ...computeStoreInfo(relet ? relet.layout : layoutFor(storeSeed, 0, lot.spec)), site };
+  const econ = relet ? createEconomy(storeSeed, info, undefined, undefined, relet.fittings) : createEconomy(storeSeed, info);
+  const trueDaily = expectedDailyCustomers(econ, info);
 
   const u = createRng(subSeed(seed, `estimate:${lotId}`)).next();
   const mid = trueDaily * (1 + (2 * u - 1) * ESTIMATE_SHIFT);

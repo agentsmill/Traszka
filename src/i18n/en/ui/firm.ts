@@ -30,6 +30,10 @@ export const FIRM_UI: Dict = {
   'Traszka #{0} otwarta': 'Traszka #{0} is open',
   '{0} przyjmuje pierwszych klientów ({1}). Przełączysz się na nią w górnym pasku. Sklep w tle pracuje sam, a jego karty rozstrzyga zastępca.':
     '{0} is serving its first customers ({1}). Switch to it in the top bar. A shop in the background runs on its own, and your deputy settles its cards.',
+  // ponowne otwarcie lokalu „po Traszce” (§13.3, 4a.2): wyposażenie zostało, Centrala zaczyna znajomość od nowa
+  'Traszka #{0} znów otwarta': 'Traszka #{0} is open again',
+  '{0} znów przyjmuje klientów ({1}). Wyposażenie zostało, ale Centrala zaczyna znajomość od nowa: poziom 1, zaufanie {2}.':
+    '{0} is serving customers again ({1}). The fittings stayed, but Head Office is starting the relationship afresh: level 1, trust {2}.',
   // zastępca (§12)
   'Zastępca': 'Deputy',
   '{0}: zastępca wybrał: {1}': '{0}: the deputy chose: {1}',
@@ -61,8 +65,8 @@ export const FIRM_UI: Dict = {
     'During a ranked season Head Office reviews a single branch. Please come back after the season.',
   'Centrala rozważy kolejną placówkę, gdy nada Panu/Pani status Partnera Strategicznego.':
     'Head Office will consider another branch once it has granted you Strategic Partner status.',
-  'Dwie placówki to na tym etapie partnerstwa wszystko, na co Centrala jest gotowa się zgodzić.':
-    'Two branches is, at this stage of the partnership, all Head Office is prepared to agree to.',
+  'Trzy placówki to na tym etapie partnerstwa wszystko, na co Centrala jest gotowa się zgodzić.':
+    'Three branches is, at this stage of the partnership, all Head Office is prepared to agree to.',
   'Ten lokal nie jest do wzięcia.': 'This unit is not available.',
   'Po zapłaceniu pakietu gotówka musi zostać nie mniejsza od zera: Centrala nie finansuje budów na debecie.':
     'After you pay the package your cash must not drop below zero: Head Office does not finance fit-outs on overdraft.',
@@ -85,6 +89,7 @@ export const FIRM_UI: Dict = {
   'paleta w przejściu': 'pallet in the aisle',
   'pusta półka': 'empty shelf',
   'zastępca odpowiedział na kartę': 'the deputy answered a card',
+  'zaufanie {0} ({1})': 'trust {0} ({1})',
   'Skrzynka zastępcy': 'Deputy’s inbox',
   'Zastępca jeszcze niczego nie rozstrzygał.': 'The deputy has not settled anything yet.',
   // okno końca miesiąca w kilku sklepach i wiersz sieci z poprzednich gier (`NetworkReport.tsx`, `storeSwitcherModel.ts`)

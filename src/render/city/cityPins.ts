@@ -11,7 +11,8 @@ import { PALETTE } from '@/render/style';
  * Kotwice (`CityView.pinAnchors`) i stany lokali dostaje ten, kto zna firmę; render jej nie importuje.
  */
 
-export type CityPinKind = 'twoj' | 'szop' | 'kawka' | 'wolny' | 'budowa' | 'po-traszce';
+/** `obok` to lokal sąsiedni (kartka jak wolny, z napisem „lokal obok”); pod innymi pinezkami i bez napisu na telefonie (CSS). */
+export type CityPinKind = 'twoj' | 'szop' | 'kawka' | 'wolny' | 'obok' | 'budowa' | 'po-traszce';
 export interface CityPin { lotId: number; kind: CityPinKind; label: string; world: Vector3 }
 
 export interface CityPins {
@@ -47,6 +48,7 @@ export function pinStyle(kind: CityPinKind): PinStyle {
     case 'kawka':
       return { art: 'kropka', color: PIN_COLOR[kind], note: null };
     case 'wolny':
+    case 'obok':
       return { art: 'kartka', color: null, note: null };
     case 'po-traszce':
       return { art: 'kartka', color: null, note: tr('po Traszce') };
@@ -201,7 +203,8 @@ export function createCityPins(parent: HTMLElement): CityPins {
         e.x = x;
         e.y = y;
         e.el.style.transform = `translate(${x}px, ${y}px) translate(-50%, -100%)`;
-        e.el.style.zIndex = String(y);   // niżej na ekranie to bliżej kamery: przykrywa pinezki za sobą
+        // niżej na ekranie to bliżej kamery: przykrywa pinezki za sobą; lokal obok zawsze leży pod pozostałymi
+        e.el.style.zIndex = String(e.kind === 'obok' ? 0 : y);
       }
     },
     onTap(cb) {

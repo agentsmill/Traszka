@@ -8,7 +8,7 @@ import { MILESTONES } from '@/sim/economy/milestones';
 import { computeStoreInfo, type StoreInfo } from '@/sim/economy/storeInfo';
 import { visibleCards } from '@/sim/economy/tycoon/cards';
 import { layoutFor } from '@/sim/store/layoutFor';
-import { openSecond, partnerSession, SEED as FIRM_SEED } from '../../../tests/firmKit';
+import { openSecond, partnerSession, reletFirm, SEED as FIRM_SEED } from '../../../tests/firmKit';
 import { cityFacts } from './city';
 import { TIP_IDS, loadTutorial, type TipId, type TutorialMemory } from './memory';
 import { dismissTip, settleTips, showTip, shownTip, tipsFor, type TipCtx } from './tips';
@@ -312,6 +312,13 @@ describe('cityFacts: fakty o mieście i sklepach z prawdziwej firmy', () => {
     const other = f.city.lots.find((l) => l.state !== 'wolny')!.id;
     expect(cityFacts(f, view({ selectedLot: other })).lotOpen).toBe(false);
     expect(cityFacts(f, view({ selectedLot: f.stores[0]!.lotId })).lotOpen).toBe(false);   // własny sklep: karta informacyjna
+  });
+
+  it('lokal „po Traszce” ma tę samą kartę wynajmu (data-tut="lot-price"), więc też liczy się jako otwarta karta lokalu', () => {
+    const f = reletFirm();
+    expect(cityFacts(f, view({ selectedLot: f.city.startLotId })).lotOpen).toBe(true);
+    expect(cityFacts(f, view({ selectedLot: f.city.startLotId, cityTab: false })).lotOpen).toBe(false);
+    expect(cityFacts(f, view({ selectedLot: f.stores[1]!.lotId })).lotOpen).toBe(false);   // otwarty sklep #2: karta informacyjna
   });
 
   it('status Partnera, ranking i liczba otwartych sklepów (budowa i zamknięty sklep się nie liczą)', () => {

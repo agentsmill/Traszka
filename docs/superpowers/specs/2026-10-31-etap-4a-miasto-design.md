@@ -254,11 +254,12 @@ Dlaczego taki podział **[C]**:
 | Oczekiwania | 1 | wysokie: cierpliwość −4 osoby, kary reputacji za pustą półkę, brud i kolejkę ×1,5 | niskie: cierpliwość +1 | średnie |
 | Kradzieże | 1 | ok. 0,6 | ok. 2 | ok. 0,8 |
 | Pakiet otwarcia (§10.3) | średni | wysoki | niski | średni |
-| Profil dnia (4a.2) | jak dziś | mocniejszy wieczór | płaski | szczyty 7–9 i 12–14, pusto po 18 |
-| Trudni klienci (4a.2) | 1 | rzadziej | częściej, plus 2–3 karty tylko dla Dworca | rzadziej |
+| Profil dnia (4a.2) | jak dziś | mocniejszy wieczór: 0,3 0,8 1 0,8 0,7 0,8 1 1 0,8 0,9 1,1 1,4 1,6 1,6 1,4 1,1 0,8 | płaski: 17 × 1 | szczyty 7–9 i 12–14, pusto po 18: 0,45 1,45 1,75 1,45 0,9 0,95 1,55 1,55 1,2 0,9 0,85 0,8 0,4 0,15 0,1 0,1 0,1 |
+| Trudni klienci (4a.2) | 1 | rzadziej: 0,6 | częściej: 1,6, plus 3 karty tylko dla Dworca | rzadziej: 0,7 |
 
 - **Kradzieże** działają przez ukryty licznik ubytków, więc wychodzą przy remanencie. To zamierzone: tania dzielnica kusi ruchem, a rachunek przychodzi po kwartale. Mnożnik Dworca jest niższy niż w starym projekcie (2,5 → ok. 2; przegląd balansu podniósł 1,8 do 2, żeby remanent biernego sklepu bez kas samoobsługowych wychodził na kilka tysięcy złotych). Przy remanencie z SIM 6 kasy bez kamer w takim lokalu kosztowałyby inaczej 50–100 tys. zł na kwartał. Karta lokalu ostrzega: „kradzieże: wysokie, zobaczysz je przy remanencie”.
-- **Godziny otwarcia** wszędzie te same (6:00–23:00). Profil dnia zmienia tylko rozkład klientów.
+- **Godziny otwarcia** wszędzie te same (6:00–23:00). Profil dnia zmienia tylko rozkład klientów: liczby w tabeli to kształt godzin 6, 7, …, 22 (`DistrictDef.hours`, ten sam w każdym dniu), przeskalowany do sumy `HOUR_CURVE` (15,6), więc doba ma tyle samo klientów co bez profilu.
+- **Trudni klienci** to mnożnik wagi istniejącej karty „Nastolatek po energetyka” (`wiek`) w talii sklepu (`DistrictDef.difficult`, `SiteMods.difficult`, `difficultWeight` w `tycoon/deck.ts`). Karty Dworca (`dworzec-pociag`, `dworzec-bilon`, `dworzec-walizka`) mają poza Dworcem wagę 0, więc talia sklepu bez dzielnicy (także startowego) jest taka jak przed 4a.2. Liczby startowe **[C]**.
 - **„Kto przychodzi”** na karcie lokalu to opis z punktów ruchu, a nie nowe archetypy w symulacji.
 - **Niedziela** (`tycoon/sunday.ts`, więcej klientów) w Biurowcach ustępuje mnożnikowi weekendu.
 
@@ -284,6 +285,8 @@ Na botach z harnessu SIM 6 (`tests/measure/trzyKieszenie.measure.test.ts`, strat
 - na Dworcu remanent biernego sklepu bez kas samoobsługowych to kilka tysięcy złotych na kwartał. Z kasami bez kamer bez porównania więcej, a karta lokalu o tym ostrzega.
 
 **Wynik przeglądu (Zadanie 15, 2026-10-31; raport: `docs/superpowers/reports/2026-10-31-miasto-4a1.md`).** Cele pilnuje `tests/districtBalance.test.ts` (8 seedów, 92 dni z remanentem 30 listopada, drugi sklep w środku widełek dzielnicy). Tabela §8.1 jest po strojeniu. Kierunek zmian: przy liczbach z pierwszego szkicu Śródmieście dawało mistrzowi 2,2× wyniku Osiedla, więc dostało mniejszy ruch (0,8) przy dużym koszyku (1,3), a oczekiwania wzrosły do cierpliwości −4, żeby przy mniejszym ruchu nadal coś kosztowały. Pakiety i dni budowy zostały bez zmian.
+
+**Wynik przeglądu 4a.2 (Zadanie 8, 2026-11-01; raport: `docs/superpowers/reports/2026-11-01-miasto-4a2.md`).** Te same cele pilnuje ten sam test, teraz z profilem dnia i trudnymi klientami dzielnic (`districtSite` je niesie), bez zmiany progów i bez strojenia 4a.2: mistrz i decydent mają w 92 dniach 79–121% wyniku Osiedla (Biurowce 85% i 79%, bo szczyty kosztują kolejką; Śródmieście 121% i 120%, Dworzec 110%). Do testu doszły karty Dworca (2–7 na seed na 92 dni) i lokal „po Traszce” (po racie zostawia więcej niż świeży lokal w każdej dzielnicy). Liczby z tabeli §8.1 (profil dnia, trudni klienci) i §13.3 zostają.
 
 ## 9. Ekran Miasta
 
@@ -456,7 +459,7 @@ Przycisk „Wypowiedz umowę” jest w panelu sklepu, dostępny tylko wtedy, gdy
 
 ### 13.3 Lokal „po Traszce” **[C]**
 - Lokal zachowuje wyposażenie: ulepszenia, sprzęt, poziom remontu i układ. Towar, ludzie, saldo i raty przepadają w rozliczeniu.
-- **4a.2:** lokal można znów wziąć, a pakiet otwarcia kosztuje ok. 30% ceny, bo urządzenie lokalu zostało. Sklep startuje z wyposażeniem, ale z poziomem 1, reputacją 50 i zaufaniem 65.
+- **4a.2:** lokal można znów wziąć, a pakiet otwarcia kosztuje ok. 30% ceny (`RELET_SHARE`), bo urządzenie lokalu zostało, a budowa trwa 2 dni (`RELET_BUILD_DAYS`). Sklep startuje z wyposażeniem, ale z poziomem 1, reputacją 50 i zaufaniem 65. Liczby po przeglądzie 4a.2 bez zmian (raport `docs/superpowers/reports/2026-11-01-miasto-4a2.md`).
 - To jest „sklep zostaje” rogalika w wersji miejskiej (§14).
 
 ### 13.4 Koniec gry (do czasu rogalika) **[U]**

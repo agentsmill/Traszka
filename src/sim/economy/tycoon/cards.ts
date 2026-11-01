@@ -1,6 +1,7 @@
 import { isRec, num, whole, type Rec } from '@/sim/guards';
 import { MINUTES_PER_DAY, OPEN_FROM, OPEN_TO } from '../catalog';
 import { rand01 } from '../rand';
+import type { SiteMods } from '../site';
 import { CH } from './channels';
 import type { Weather } from './cleanliness';
 import { CIRCULARS, DECK, type CardDef, type CardParams } from './deck';
@@ -141,6 +142,12 @@ export interface CardContext {
   /** Skala sklepu: typowa marża i obrót dnia (zł). */
   dailyMargin: number;
   dailyRevenue: number;
+  /**
+   * Dzielnica sklepu i jej mnożnik trudnych klientów (4a.2, spec §8.1). Są tylko wtedy, gdy sklep ma aktywną dzielnicę (`activeSite`);
+   * sklep bez niej, w tym startowy w firmie, nie ma tych kluczy, więc jego talia jest taka jak przed 4a.2 (`difficultWeight`, karty Dworca).
+   */
+  district?: SiteMods['district'];
+  difficult?: number;
 }
 
 export function createCards(day: number): CardsState {

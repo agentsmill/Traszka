@@ -55,6 +55,18 @@ export interface CardDef {
   trustReason?: TrustReason;
 }
 
+/**
+ * Waga karty skalowana przez trudnych klientów dzielnicy (spec §8.1, 4a.2): `base` razy `difficult` z kontekstu. Sklep bez aktywnej dzielnicy
+ * nie ma `difficult` w kontekście i dostaje dokładnie `base`, bez mnożenia przez 1: jego talia jest taka jak przed 4a.2 co do bitu.
+ */
+export const difficultWeight = (base: number) => (c: CardContext): number => (c.difficult === undefined ? base : base * c.difficult);
+
+/** Karty tylko dla Dworca (stoją na końcu `DECK`): wypadają wyłącznie w sklepie, którego dzielnicą jest Dworzec. */
+export const DWORZEC_CARD_IDS = ['dworzec-pociag', 'dworzec-bilon', 'dworzec-walizka'] as const;
+
+/** Waga karty Dworca: `w` na Dworcu, poza nim 0. Waga 0 wypada z `eligible`, więc nowa karta nie przesuwa losowania talii innych sklepów. */
+const dworzecOnly = (w: number) => (c: CardContext): number => (c.district === 'dworzec' ? w : 0);
+
 const h = (hour: number, min = 0): number => hour * 60 + min;
 /** Skala sklepu: 1 przy marży dnia ok. 2000 zł. */
 const k = (c: CardContext): number => clamp(c.dailyMargin / 2000, 0.5, 6);
@@ -463,7 +475,7 @@ export const DECK: readonly CardDef[] = [
     kind: 'zdarzenie',
     title: 'Nastolatek po energetyka',
     text: 'Chłopak z wąsem namalowanym flamastrem chce kupić energetyka. Twierdzi, że ma 18 lat od wczoraj, a dowód zostawił w drugich spodniach.',
-    at: h(14, 30), weight: 1, cooldown: 6,
+    at: h(14, 30), weight: difficultWeight(1), cooldown: 6,
     defaultAnswer: 2,
     answers: [
       {
@@ -532,6 +544,93 @@ export const DECK: readonly CardDef[] = [
         label: 'Odpuszczam, nie mam miejsca',
         result: 'Centrala odnotowała „brak zaangażowania w strategiczne dropy”. Dzieciaki poszły do sąsiedniej Traszki.',
         delta: () => ({ trust: -1 }),
+      },
+    ],
+  },
+  // --- Karty Dworca (4a.2, spec §8.1): waga 0 poza Dworcem. Satyra celuje w procedury Centrali, nie w podróżnych. Liczby startowe [C]. ---
+  {
+    id: 'dworzec-pociag',
+    kind: 'zdarzenie',
+    title: 'Ostatni pociąg odwołany',
+    text: 'Odwołano ostatni pociąg i do sklepu weszło {n} osób, którym uciekło połączenie. Procedura Centrali „Klient niebędący klientem” ma 14 stron i ani jednego kaloryfera.',
+    at: h(21), weight: dworzecOnly(1), cooldown: 6,
+    defaultAnswer: 2,
+    params: (_, r) => ({ n: 8 + Math.floor(r * 12) }),
+    answers: [
+      {
+        label: 'Wpuszczam, niech się grzeją',
+        result: 'Ludzie się ogrzali, telefony naładowały. Wystawka batoników przy kaloryferze zrobiła się miękka, a procedura Centrali każe księgować ją jako ubytki, nie jako kaloryfer.',
+        delta: (c) => ({ wut: 0.03 * c.dailyRevenue, staffMinutes: 20 }),
+        mods: () => [{ kind: 'traffic', value: 0.5, minutes: 60 }],
+      },
+      {
+        label: 'Kawa za pół ceny z mojej marży',
+        result: 'Kawa za pół ceny rozeszła się w kwadrans. W Traszkapce pojawiło się „dziękujemy, Traszko”, a Centrala zapytała, kto zatwierdził promocję.',
+        delta: (c) => ({ cash: -0.05 * c.dailyMargin, reputation: 2, ogonki: 2 }),
+      },
+      {
+        label: 'Regulamin Centrali: bez zakupu nie przebywamy',
+        result: 'Regulamin odczytany na głos, tłum rozszedł się w ciszy. Zgodność z procedurą: 100%. Zgodność ze zdrowym rozsądkiem: nie mierzymy.',
+        risk: { chance: () => 0.5, delta: () => ({ reputation: -1.5 }), text: 'Ktoś nagrał, jak czytasz regulamin tłumowi przed sklepem. Film ma więcej wyświetleń niż cała Traszkapka.' },
+      },
+    ],
+  },
+  {
+    id: 'dworzec-bilon',
+    kind: 'zdarzenie',
+    title: 'Worek groszy',
+    text: 'Podróżny płaci za kawę workiem groszy, razem {n} gr, i ma pociąg za siedem minut. „Procedura przyjmowania bilonu” Centrali każe liczyć wszystko dwa razy.',
+    at: h(8), weight: dworzecOnly(1.2), cooldown: 5,
+    defaultAnswer: 2,
+    params: (_, r) => ({ n: 300 + 100 * Math.floor(r * 8) }),
+    answers: [
+      {
+        label: 'Liczę dwa razy, jak każe procedura',
+        result: 'Policzone dwa razy i dwa razy wyszło co innego. Trzecie liczenie ruszyło po odjeździe pociągu, ale w protokole wszystko się zgadza.',
+        delta: () => ({ staffMinutes: 25, trust: 1 }),
+      },
+      {
+        label: 'Ważę na wadze do bułek',
+        result: 'Waga do bułek pokazała, ile pokazała, a podróżny zdążył na pociąg. Procedura bywa elastyczna, kiedy nikt nie patrzy.',
+        delta: () => ({ staffMinutes: 5 }),
+        risk: {
+          chance: () => 0.25, delta: () => ({ trust: -2 }),
+          text: 'Audytor Centrali obejrzał nagranie. Waga do bułek nie jest wzorcowana do groszy, a wzorcowanie ma swoją procedurę.',
+        },
+      },
+      {
+        label: 'Tylko karta albo banknoty',
+        result: 'Podróżny schował worek i zapłacił kartą. Kolejka westchnęła jednym głosem, a procedura bilonowa dalej leży nietknięta w segregatorze.',
+        delta: () => ({ reputation: -1 }),
+      },
+    ],
+  },
+  {
+    id: 'dworzec-walizka',
+    kind: 'zdarzenie',
+    title: 'Walizka przy wejściu',
+    text: 'Przy wejściu stoi walizka bez właściciela, a w Traszkapce czeka trzystronicowy formularz „Zdarzenie nietypowe”. Rubryka 14: „Czy walizka zgłosiła się sama?”.',
+    at: h(13), weight: dworzecOnly(1), cooldown: 8,
+    defaultAnswer: 2,
+    answers: [
+      {
+        label: 'Ochrona dworca, wejście zamknięte',
+        result: 'Ochrona dworca zajrzała, pokiwała głową i zabrała walizkę. W środku były skarpetki. Centrala dopisała do formularza rubrykę „skarpetki”.',
+        delta: () => ({ trust: 1 }),
+        mods: () => [{ kind: 'closed', value: 1, minutes: 30 }],
+      },
+      {
+        label: 'Wypełniam formularz',
+        result: 'Trzy strony, cztery załączniki i zdjęcie walizki z profilu oraz z trzech czwartych. Centrala potwierdziła odbiór po czterech dniach.',
+        delta: () => ({ staffMinutes: 30, energy: -5, trust: 2 }),
+      },
+      {
+        label: 'Ktoś po nią wróci',
+        result: 'Po godzinie ktoś wrócił po walizkę, podziękował i poszedł. Formularz „Zdarzenie nietypowe” został niewypełniony i słusznie.',
+        risk: {
+          chance: () => 0.35, delta: () => ({ reputation: -2, trust: -2 }),
+          text: 'Nikt nie wrócił, za to wrócił strach: klienci omijali wejście, a Centrala spytała, gdzie formularz „Zdarzenie nietypowe”.',
+        },
       },
     ],
   },

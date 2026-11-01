@@ -1,7 +1,8 @@
 import { GUARANTEE, INSTALLMENTS, OWN_COSTS, REMANENT } from '@/sim/economy/catalog';
-import { PARTNER_MONTHS, PARTNER_TRUST } from '@/sim/firm/commands';
+import { TRUST } from '@/sim/economy/tycoon/trust';
+import { PARTNER_MONTHS, PARTNER_TRUST, RELET_BUILD_DAYS, RELET_SHARE } from '@/sim/firm/commands';
 import { plural, zl } from '../game/format';
-import { openingPlan } from '../tutorial/city';
+import { openingPlan, reletPlan } from '../tutorial/city';
 import { hourOf, percent } from './howToText';
 
 /*
@@ -19,6 +20,7 @@ const either = (items: string[]): string => (items.length < 2 ? items.join('') :
 export function glossary(): GlossaryEntry[] {
   const plans = INSTALLMENTS.plans;
   const opening = openingPlan();
+  const relet = reletPlan();
   return [
     {
       term: 'Saldo u Centrali',
@@ -68,7 +70,14 @@ export function glossary(): GlossaryEntry[] {
     {
       term: 'Pakiet otwarcia',
       text: `Cena urządzenia nowego lokalu zamiast czynszu. Płacisz od razu z gotówki (po zapłacie musi zostać co najmniej 0 zł) albo w ${opening.months} ratach `
-        + `z opłatą ${percent(opening.feeShare)} z przelewów nowego sklepu. Nowy sklep nie ma gwarancji ${zl(GUARANTEE.income)}: na siebie zarabia sam.`,
+        + `z opłatą ${percent(opening.feeShare)} z przelewów nowego sklepu. Pakiet lokalu po Traszce jest tańszy, więc rat jest zwykle ${relet.months} `
+        + `(opłata ${percent(relet.feeShare)}). Nowy sklep nie ma gwarancji ${zl(GUARANTEE.income)}: na siebie zarabia sam.`,
+    },
+    {
+      term: 'Lokal po Traszce',
+      text: `Lokal po zamkniętym sklepie. Pakiet kosztuje ${percent(RELET_SHARE)} ceny, a budowa trwa ${RELET_BUILD_DAYS} ${plural(RELET_BUILD_DAYS, 'dzień', 'dni', 'dni')}, `
+        + 'bo urządzenie lokalu zostało. Wyposażenie zostaje: remont, sprzęt i ulepszenia. Poziom i zaufanie Centrali zaczynasz od nowa '
+        + `(zaufanie ${TRUST.start}). Taki sklep nigdy nie ma gwarancji ${zl(GUARANTEE.income)}.`,
     },
     {
       term: 'Zastępca',
@@ -78,7 +87,9 @@ export function glossary(): GlossaryEntry[] {
     {
       term: 'Dzielnica',
       text: 'Część miasta, w której leży lokal: Osiedle, Śródmieście, Dworzec albo Biurowce. Od niej zależą ruch, koszyk klienta, oczekiwania, kradzieże '
-        + 'i cena pakietu otwarcia. Warstwa „Dzielnice” koloruje mapę.',
+        + 'i cena pakietu otwarcia. Dzielnica ma też rytm dnia: Biurowce tłoczą rano i w porze lunchu, a wieczorem pustoszeją, Śródmieście jest '
+        + 'najgęstsze wieczorem, Dworzec równy cały dzień. Rytm zmienia, kiedy klienci przychodzą, a nie ilu ich jest. Trudni klienci (spory przy kasie, '
+        + 'kontrola wieku) trafiają się najczęściej na Dworcu. Warstwa „Dzielnice” koloruje mapę.',
     },
     {
       term: 'Rozliczenie końcowe',

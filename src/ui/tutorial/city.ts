@@ -2,7 +2,7 @@ import { t } from '@/i18n';
 import { DISTRICTS } from '@/sim/city/districts';
 import { GUARANTEE } from '@/sim/economy/catalog';
 import { planFor, type InstallmentPlan } from '@/sim/economy/franchisee';
-import { lotState } from '@/sim/firm/commands';
+import { RELET_SHARE, lotRentable } from '@/sim/firm/commands';
 import { openStores } from '@/sim/firm/firm';
 import type { FirmState } from '@/sim/firm/types';
 import { validLot } from '../city/cityModel';
@@ -19,20 +19,28 @@ export function openingPlan(): InstallmentPlan {
   return planFor(Math.min(...Object.values(DISTRICTS).map((d) => d.package[0])));
 }
 
+/**
+ * Plan rat pakietu lokalu „po Traszce” (`RELET_SHARE` ceny, zaokrąglone do 100 zł jak w `rentPrice`) przy najtańszym pakiecie. Prawie każdy taki
+ * lokal mieści się w tym samym przedziale (6 rat); tylko najdroższe lokale ze Śródmieścia po zniżce przekraczają przedział i dostają 12.
+ */
+export function reletPlan(): InstallmentPlan {
+  return planFor(Math.round(Math.min(...Object.values(DISTRICTS).map((d) => d.package[0])) * RELET_SHARE / 100) * 100);
+}
+
 /** Pola `TipCtx` o mieście i sklepach: składa je `cityFacts` z firmy i z sygnałów widoku. */
 export type CityFacts = Pick<TipCtx, 'cityOpen' | 'lotOpen' | 'partner' | 'ranked' | 'stores' | 'networkOpen'>;
 
 /**
- * Fakty o mieście dla dymków: czy Miasto jest otwarte, czy widać kartę wolnego lokalu, status Partnera, ranking, liczba otwartych sklepów
- * i okno sieci. `data-tut="lot-price"` ma tylko karta wolnego lokalu (`LotCard.tsx`), więc lokal obok, własny i zajęty nie liczą się jako
- * karta pakietu. Bez firmy (sklep jeszcze się nie otworzył) nic nie jest otwarte.
+ * Fakty o mieście dla dymków: czy Miasto jest otwarte, czy widać kartę lokalu do wynajęcia, status Partnera, ranking, liczba otwartych sklepów
+ * i okno sieci. `data-tut="lot-price"` ma karta wynajmu (`LotCard.tsx`: wolny lokal albo „po Traszce”, czyli `lotRentable`), więc lokal obok,
+ * własny, w budowie i zajęty nie liczą się jako karta pakietu. Bez firmy (sklep jeszcze się nie otworzył) nic nie jest otwarte.
  */
 export function cityFacts(f: FirmState | null, view: { cityTab: boolean; selectedLot: number | null; networkOpen: boolean }): CityFacts {
   if (!f) return { cityOpen: false, lotOpen: false, partner: false, ranked: false, stores: 0, networkOpen: view.networkOpen };
   const lot = view.cityTab ? validLot(f, view.selectedLot) : null;
   return {
     cityOpen: view.cityTab,
-    lotOpen: lot !== null && lotState(f, lot) === 'wolny',
+    lotOpen: lot !== null && lotRentable(f, lot),
     partner: f.person.partner,
     ranked: f.ranked,
     stores: openStores(f).length,

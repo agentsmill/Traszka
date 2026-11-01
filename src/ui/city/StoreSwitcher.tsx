@@ -1,6 +1,7 @@
 import { signal } from '@preact/signals';
-import { dateText, t } from '@/i18n';
+import { dateText, t, tr } from '@/i18n';
 import type { FirmState } from '@/sim/firm/types';
+import { trustTier } from '@/sim/economy/tycoon/trust';
 import { firm, type GameActions } from '../state';
 import { signedZl } from '../game/format';
 import { firmEventText, storeName, storeStateText } from './firmText';
@@ -19,10 +20,11 @@ export const storeList = signal(false);
 /** Tyle najnowszych wpisów skrzynki zastępcy mieści lista (cała skrzynka ma ich do 30, `INBOX_MAX`). */
 const INBOX_SHOWN = 5;
 
-const WARNING_TEXT: Record<StoreWarning, () => string> = {
+const WARNING_TEXT: Record<StoreWarning, (m: StoreMini) => string> = {
   paleta: () => t`paleta w przejściu`,
   polka: () => t`pusta półka`,
   zastepca: () => t`zastępca odpowiedział na kartę`,
+  zaufanie: (m) => t`zaufanie ${Math.round(m.trust)} (${tr(trustTier(m.trust).label)})`,
 };
 
 const close = (): void => { storeList.value = false; };
@@ -40,7 +42,7 @@ function storeRow(f: FirmState, m: StoreMini, game: GameActions) {
       {!m.closed && (
         <span class="tt-store-stats">{`${t`Dziś ${signedZl(m.todayProfit)}`} · ${t`Zostanie ${signedZl(m.net)}`} · 🤝 ${Math.round(m.trust)}`}</span>
       )}
-      {m.warnings.map((w) => <span key={w} class="tt-store-warn" data-warn={w}>{`⚠ ${WARNING_TEXT[w]()}`}</span>)}
+      {m.warnings.map((w) => <span key={w} class="tt-store-warn" data-warn={w}>{`⚠ ${WARNING_TEXT[w](m)}`}</span>)}
     </button>
   );
 }

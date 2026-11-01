@@ -1,12 +1,14 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { lang } from '@/i18n';
+import { EN_CARDS } from '@/i18n/en/cards';
 import { PL_CHARS } from '../../../tests/i18nScan';
 import { openSecond, partnerSession } from '../../../tests/firmKit';
 import { firmOf } from '@/game/session';
 import { lotById } from '@/sim/city/generateCity';
 import { DEBT_LIMIT } from '@/sim/economy/catalog';
 import { CARDS } from '@/sim/economy/tycoon/cards';
-import { DECK } from '@/sim/economy/tycoon/deck';
+import { TRUST } from '@/sim/economy/tycoon/trust';
+import { DECK, DWORZEC_CARD_IDS } from '@/sim/economy/tycoon/deck';
 import type { FirmEvent, FirmRefusal, FirmState } from '@/sim/firm/types';
 import { addressText, firmEventText, lotAddress, refusalText, storeName } from './firmText';
 
@@ -62,6 +64,7 @@ describe('firmEventText', () => {
     { kind: 'build', params: { lotId: f.stores[1]!.lotId, readyDay: 40, price: 52_000, pay: 'raty' } },
     { kind: 'build', params: { lotId: f.stores[1]!.lotId, readyDay: 40, price: 52_000, pay: 'gotowka' } },
     { kind: 'opened', storeId: 2, params: { lotId: f.stores[1]!.lotId } },
+    { kind: 'opened', storeId: 2, params: { lotId: f.stores[1]!.lotId, reopened: 1 } },
     { kind: 'deputy', storeId: 2, params: { card: DECK[0]!.id, answer: 1 } },
     { kind: 'notice', storeId: 2, params: { endDay: 70 } },
     { kind: 'settlement', storeId: 2, params: { installments: 3_000, pending: 250, shrinkage: 9_000, limit: 7_000, remanent: 2_000, total: 5_250 } },
@@ -116,6 +119,23 @@ describe('firmEventText', () => {
     expect(trust.text).not.toBe(ended.text);
   });
 
+  it('ponowne otwarcie lokalu „po Traszce” (opened z reopened): „znów otwarta”, wyposażenie zostało, Centrala zaczyna od nowa: poziom 1 i zaufanie z TRUST.start', () => {
+    const e: FirmEvent = { kind: 'opened', storeId: 2, params: { lotId: f.stores[1]!.lotId, reopened: 1 } };
+    const pl = firmEventText(f, e);
+    expect(pl.title).toBe('Traszka #2 znów otwarta');
+    expect(pl.text).toBe(`${name2} znów przyjmuje klientów (${address2}). Wyposażenie zostało, ale Centrala zaczyna znajomość od nowa: poziom 1, zaufanie ${TRUST.start}.`);
+    expect(TRUST.start).toBe(65);
+    // zwykłe otwarcie (bez reopened) zostaje, jakie było
+    const first = firmEventText(f, { kind: 'opened', storeId: 2, params: { lotId: f.stores[1]!.lotId } });
+    expect(first.title).toBe('Traszka #2 otwarta');
+    expect(first.text).toContain('przyjmuje pierwszych klientów');
+    lang.value = 'en';
+    const en = firmEventText(f, e);
+    expect(en.title).toBe('Traszka #2 is open again');
+    expect(en.text).toBe(`${name2} is serving customers again (${lotAddress(f, f.stores[1]!.lotId)}). The fittings stayed, but Head Office is starting the relationship afresh: level 1, trust ${TRUST.start}.`);
+    expect(en.text).not.toBe(firmEventText(f, { kind: 'opened', storeId: 2, params: { lotId: f.stores[1]!.lotId } }).text);
+  });
+
   it('zastępca: nazwa sklepu i polska etykieta odpowiedzi z karty, po angielsku angielska', () => {
     const card = DECK[0]!;
     const e: FirmEvent = { kind: 'deputy', storeId: 2, params: { card: card.id, answer: 1 } };
@@ -127,6 +147,21 @@ describe('firmEventText', () => {
     const en = firmEventText(f, e);
     expect(en.text).toContain('deputy chose');
     expect(en.text).not.toContain(card.answers[1]!.label);
+  });
+
+  it('zastępca na karcie Dworca (4a.2): po polsku etykieta z talii, po angielsku etykieta z EN_CARDS', () => {
+    for (const id of DWORZEC_CARD_IDS) {
+      const def = DECK.find((d) => d.id === id)!;
+      for (let answer = 0; answer < def.answers.length; answer++) {
+        const e: FirmEvent = { kind: 'deputy', storeId: 2, params: { card: id, answer } };
+        lang.value = 'pl';
+        expect(firmEventText(f, e).text, `${id}#${answer}`).toContain(def.answers[answer]!.label);
+        lang.value = 'en';
+        const en = firmEventText(f, e).text;
+        expect(en, `${id}#${answer}`).toContain(EN_CARDS[id]!.answers[answer]!.label);
+        expect(en, `${id}#${answer}`).not.toContain(def.answers[answer]!.label);
+      }
+    }
   });
 
   it('zastępca z nieznaną kartą nie rzuca: numer odpowiedzi zamiast etykiety', () => {
@@ -152,7 +187,7 @@ describe('refusalText', () => {
   it('każda odmowa ma tekst, ranking i limit dosłownie z §10', () => {
     for (const r of reasons) expect(refusalText(r).length, r).toBeGreaterThan(0);
     expect(refusalText('ranked')).toBe('W sezonie rankingowym Centrala ocenia jedną placówkę. Prosimy wrócić po sezonie.');
-    expect(refusalText('limit')).toBe('Dwie placówki to na tym etapie partnerstwa wszystko, na co Centrala jest gotowa się zgodzić.');
+    expect(refusalText('limit')).toBe('Trzy placówki to na tym etapie partnerstwa wszystko, na co Centrala jest gotowa się zgodzić.');
   });
 
   it('po angielsku każda odmowa jest po angielsku', () => {

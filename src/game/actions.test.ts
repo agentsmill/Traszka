@@ -3743,17 +3743,18 @@ describe('dispatchFirm i polecenia firmy', () => {
     expect(s.run ?? null).toBeNull();
   });
 
-  it('drugi wynajem w trakcie budowy dostaje tekst limitu z §10.2 (budowa liczy się do limitu dwóch sklepów)', () => {
+  it('trzeci wynajem w trakcie dwóch budów dostaje tekst limitu z §10.2 (budowy liczą się do limitu trzech sklepów)', () => {
     const s = partnerSession(SEED, 300_000);
     const f = firmOf(s);
-    const [first, other] = f.city.lots.filter((l) => l.state === 'wolny');
+    const [first, second, other] = f.city.lots.filter((l) => l.state === 'wolny');
     const rec = recorder();
     expect(dispatchFirm(s, { type: 'rentLot', lotId: first!.id, pay: 'gotowka' }, rec.fx)).toEqual({ ok: true });
+    expect(dispatchFirm(s, { type: 'rentLot', lotId: second!.id, pay: 'gotowka' }, rec.fx)).toEqual({ ok: true });
     rec.calls.length = 0;
 
     expect(dispatchFirm(s, { type: 'rentLot', lotId: other!.id, pay: 'gotowka' }, rec.fx)).toEqual({ ok: false, reason: 'limit' });
-    expect(rec.named('toast')).toEqual([['toast', 'Dwie placówki to na tym etapie partnerstwa wszystko, na co Centrala jest gotowa się zgodzić.', 'error']]);
-    expect(f.builds).toHaveLength(1);
+    expect(rec.named('toast')).toEqual([['toast', 'Trzy placówki to na tym etapie partnerstwa wszystko, na co Centrala jest gotowa się zgodzić.', 'error']]);
+    expect(f.builds).toHaveLength(2);
   });
 
   it('polecenie firmy jest kopiowane na wejściu: późniejsza zmiana obiektu interfejsu nie zmienia dziennika', () => {

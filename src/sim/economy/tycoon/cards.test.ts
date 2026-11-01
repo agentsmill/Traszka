@@ -18,13 +18,20 @@ function ctx(day: number, over: Partial<CardContext> = {}): CardContext {
   };
 }
 
-/** Kontekst, w którym karta może wypaść (dzień tygodnia i pogoda pod jej warunek), na bazie dnia 10. */
+/**
+ * Kontekst, w którym karta może wypaść (dzień tygodnia i pogoda pod jej warunek, waga > 0), na bazie dnia 10. Najpierw sklep bez dzielnicy,
+ * potem Dworzec: karty Dworca mają poza nim wagę 0 (4a.2), więc `make()` losuje je tylko w kontekście z `district: 'dworzec'`.
+ */
 function ctxFor(id: string, over: Partial<CardContext> = {}): CardContext {
   const def = cardDef(id)!;
-  for (let day = 10; day < 17; day++) {
-    for (const weather of ['sucho', 'deszcz'] as const) {
-      const c = ctx(day, { weather, ...over });
-      if (!def.when || def.when(c)) return c;
+  const places: Partial<CardContext>[] = [{}, { district: 'dworzec', difficult: 1.6 }];
+  for (const place of places) {
+    for (let day = 10; day < 17; day++) {
+      for (const weather of ['sucho', 'deszcz'] as const) {
+        const c = ctx(day, { weather, ...place, ...over });
+        const weight = typeof def.weight === 'function' ? def.weight(c) : def.weight;
+        if ((!def.when || def.when(c)) && weight > 0) return c;
+      }
     }
   }
   throw new Error(`warunek karty ${id} nie do spełnienia`);

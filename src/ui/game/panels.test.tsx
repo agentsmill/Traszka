@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { DEBT_LIMIT, REMANENT, WAGE_PER_DAY } from '@/sim/economy/catalog';
-import { DEBT_WARN, LOC_LABEL, createEconomy, debtWarningText, freeSpots, kpiScaleOf, nextRemont, upgradeBlocker, type CommandResult, type EconomyState, type MonthReport } from '@/sim/economy/economy';
+import { DEBT_LIMIT, HOUR_CURVE, REMANENT, WAGE_PER_DAY } from '@/sim/economy/catalog';
+import { DEBT_WARN, LOC_LABEL, createEconomy, debtWarningText, expectedDailyCustomers, freeSpots, kpiScaleOf, nextRemont, upgradeBlocker, type CommandResult, type EconomyState, type MonthReport } from '@/sim/economy/economy';
 import type { Command } from '@/sim/economy/commands';
 import { forecastMonth, spendCheck } from '@/sim/economy/forecast';
 import { forecastFirm } from '@/sim/firm/forecast';
@@ -18,6 +18,7 @@ import { computeStoreInfo, type PalletLoc, type StoreInfo } from '@/sim/economy/
 import { EQUIPMENT, UPGRADES } from '@/sim/economy/upgrades';
 import { layoutFor } from '@/sim/store/layoutFor';
 import { lang } from '@/i18n';
+import { districtSite } from '@/sim/city/districts';
 import { noticeEndDay } from '@/sim/firm/closure';
 import { econ, firm, metaView, monthPreview, ranked, speed, tab, type GameActions } from '../state';
 import { firmOf } from '@/game/session';
@@ -28,7 +29,7 @@ import { networkRow } from '../city/storeSwitcherModel';
 import { openSecond, partnerSession } from '../../../tests/firmKit';
 import { CityPanel } from '../city/CityPanel';
 import { Bar, GoalsPanel, PalletItem, PalletsPanel, PeoplePanel, Sheet, ShopPanel, StorePanel, TabBar } from './panels';
-import { minusZl, money, percentOf, plural, signedZl, zl } from './format';
+import { int, minusZl, money, percentOf, plural, signedZl, zl } from './format';
 import { buttonAria, buttonLabelled, buttonsOf, click, labels, sectionTitled, textOf, walk, type Vnode } from './vnodeTree';
 
 /** Atrapa `GameActions`: panele tylko wysyłają polecenia, więc liczy się wyłącznie `dispatch`. */
@@ -774,6 +775,59 @@ describe('panel Sklep: wypowiedzenie umowy (spec §13.2)', () => {
     click(buttonLabelled(panel(session), 'Terminate agreement'));
     expect(String((confirmSpy.mock.calls[0] as unknown[])[0])).toContain(storeName(f, 1));
     expect(String((confirmSpy.mock.calls[0] as unknown[])[0])).toMatch(/Terminate the agreement for/);
+  });
+});
+
+describe('panel Sklep: ruch teraz i w szczycie z profilu dnia dzielnicy', () => {
+  const plain = (x: string): string => x.replace(/[\s\u00a0\u202f]/g, ' ');
+  const WARNING = 'W szczycie przyjdzie więcej ludzi, niż obsłużysz';
+  const WARM = 80;   // reputacja, przy której ruch ledwo przekracza przepustowość: szczyt 1,3 jeszcze nie, szczyt Biurowców już tak
+
+  /** Sklep w dzielnicy `id` o godzinie `hour`, z profilem dnia albo (ten sam sklep) bez niego. */
+  function inDistrict(id: 'biurowce' | 'dworzec', hour: number, profile: boolean): { s: EconomyState; info: StoreInfo } {
+    const site = districtSite(id);
+    const withSite = { ...site, hours: profile ? site.hours : null };
+    const info = { ...computeStoreInfo(layoutFor('panele', 0, site.lot!)), site: withSite };
+    const s = createEconomy('panele', info);
+    s.reputation = WARM;
+    s.minute = hour * 60;
+    return { s, info };
+  }
+  const queueSection = (s: EconomyState, info: StoreInfo): Vnode => sectionTitled(StorePanel({ s, info, game: fakeGame(), v: 1 }), 'Kasa i kolejka');
+  const flowRow = (section: Vnode): string => plain(textOf(walk(section).find((v) => v.props.label === 'Ruch teraz / w szczycie')!));
+
+  it('sklep bez dzielnicy pokazuje jak dotąd: krzywa HOUR_CURVE i szczyt 1,3 (o 8:00 teraz = szczyt)', () => {
+    const { s, info } = rich();
+    s.minute = 8 * 60;
+    const perUnit = expectedDailyCustomers(s, info) / 15.6;
+    expect(flowRow(queueSection(s, info))).toBe(plain(`${int(perUnit * 1.3)} / ${int(perUnit * 1.3)} klientów/h`));
+    s.minute = 20 * 60;
+    expect(flowRow(queueSection(s, info))).toBe(plain(`${int(perUnit * HOUR_CURVE[20]!)} / ${int(perUnit * 1.3)} klientów/h`));
+  });
+
+  it('Biurowce: szczyt z profilu (ok. 1,86 średniej godziny), o 20:00 pusto, a ostrzeżenie o szczycie pojawia się tam, gdzie ruch ponad kasy jest naprawdę', () => {
+    const { s, info } = inDistrict('biurowce', 20, true);
+    const perUnit = expectedDailyCustomers(s, info) / 15.6;
+    const h = info.site!.hours!;
+    expect(flowRow(queueSection(s, info))).toBe(plain(`${int(perUnit * h[20]!)} / ${int(perUnit * Math.max(...h))} klientów/h`));
+    expect(perUnit * Math.max(...h)).toBeGreaterThan(perUnit * 1.7);
+    expect(textOf(queueSection(s, info))).toContain(WARNING);
+    // ten sam sklep bez profilu pokazuje stary szczyt 1,3 i przy tym ruchu jeszcze nie ostrzega
+    const old = inDistrict('biurowce', 20, false);
+    expect(flowRow(queueSection(old.s, old.info))).toBe(plain(`${int(perUnit * HOUR_CURVE[20]!)} / ${int(perUnit * 1.3)} klientów/h`));
+    expect(textOf(queueSection(old.s, old.info))).not.toContain(WARNING);
+  });
+
+  it('Dworzec (płaski): szczyt poniżej 1,3 średniej godziny i bez ostrzeżenia, które stary szczyt 1,3 wywoływał', () => {
+    const { s, info } = inDistrict('dworzec', 17, true);
+    const perUnit = expectedDailyCustomers(s, info) / 15.6;
+    const h = info.site!.hours!;
+    expect(flowRow(queueSection(s, info))).toBe(plain(`${int(perUnit * h[17]!)} / ${int(perUnit * Math.max(...h))} klientów/h`));
+    expect(perUnit * Math.max(...h)).toBeLessThan(perUnit * 1.3);
+    expect(textOf(queueSection(s, info))).not.toContain(WARNING);
+    const old = inDistrict('dworzec', 17, false);
+    expect(flowRow(queueSection(old.s, old.info))).toBe(plain(`${int(perUnit * 1.3)} / ${int(perUnit * 1.3)} klientów/h`));
+    expect(textOf(queueSection(old.s, old.info))).toContain(WARNING);
   });
 });
 

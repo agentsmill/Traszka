@@ -8,7 +8,7 @@ import { CATS } from '@/sim/economy/catalog';
 import { cardDef } from '@/sim/economy/tycoon/cards';
 import { DECK } from '@/sim/economy/tycoon/deck';
 import type { FirmCommand, FirmCommandResult } from '@/sim/firm/commands';
-import { NO_FX, openSecond, partnerSession } from '../../../tests/firmKit';
+import { NO_FX, openSecond, openThird, partnerSession } from '../../../tests/firmKit';
 import { firm, isWindowOpen, speed, type GameActions } from '../state';
 import { signedZl } from '../game/format';
 import { buttonsOf, click, textOf, walk, type Vnode } from '../game/vnodeTree';
@@ -28,6 +28,15 @@ function fakeGame(result: FirmCommandResult = { ok: true }): GameActions & { fir
 function setup() {
   const session = partnerSession();
   openSecond(session);
+  const f = firmOf(session);
+  firm.value = { f, v: 1 };
+  return { session, f };
+}
+/** Trzy otwarte sklepy (limit 4a.2). */
+function setupThree() {
+  const session = partnerSession();
+  openSecond(session);
+  openThird(session);
   const f = firmOf(session);
   firm.value = { f, v: 1 };
   return { session, f };
@@ -143,6 +152,24 @@ describe('lista sklepów z mini-stanem', () => {
     expect(text).toContain('zastępca odpowiedział na kartę');
   });
 
+  it('zaufanie poniżej 40 w tle: chip świeci znakiem, a wiersz sklepu mówi, ile ma i jaki to próg', () => {
+    const { f } = setup();
+    f.stores[1]!.econ.tycoon.trust.value = 32;
+    expect(withClass(render()!, 'tt-stores-alert')).toHaveLength(1);
+    storeList.value = true;
+    const row2 = rows(render()!)[1]!;
+    expect(plain(textOf(row2))).toContain('⚠ zaufanie 32 (Na cenzurowanym)');
+    expect(walk(row2).filter((v) => v.props['data-warn'] === 'zaufanie')).toHaveLength(1);
+  });
+
+  it('po angielsku: ostrzeżenie o zaufaniu z tą samą etykietą progu co w grze', () => {
+    const { f } = setup();
+    f.stores[1]!.econ.tycoon.trust.value = 32;
+    lang.value = 'en';
+    storeList.value = true;
+    expect(plain(textOf(rows(render()!)[1]!))).toContain('⚠ trust 32 (In the Bad Books)');
+  });
+
   it('sklep z wypowiedzeniem mówi, do kiedy działa; zamknięty jest wyłączony i opisany', () => {
     const { f } = setup();
     f.stores[1]!.notice = { endDay: 120 };
@@ -242,5 +269,60 @@ describe('przełączanie z listy', () => {
     (backdrop.props.onClick as () => void)();
     expect(storeList.value).toBe(false);
     expect(game.firm).not.toHaveBeenCalled();
+  });
+});
+
+describe('chip i lista przy trzech sklepach', () => {
+  it('chip z nazwą aktywnego sklepu jest, a lista ma trzy wiersze z mini-stanem każdego', () => {
+    const { f } = setupThree();
+    expect(f.stores).toHaveLength(3);
+    expect(textOf(byTut(render()!, 'store-switch'))).toContain(storeName(f, 1));
+    expect(rows(render()!)).toHaveLength(0);
+    click(byTut(render()!, 'store-switch'));
+    const list = rows(render()!);
+    expect(list).toHaveLength(3);
+    const minis = storeMinis(f);
+    expect(minis.map((m) => m.id)).toEqual([1, 2, 3]);
+    minis.forEach((m, i) => {
+      const text = plain(textOf(list[i]!));
+      expect(text, `sklep ${m.id}`).toContain(storeName(f, m.id));
+      expect(text).toContain(plain(`Dziś ${signedZl(m.todayProfit)}`));
+      expect(text).toContain(plain(`Zostanie ${signedZl(m.net)}`));
+      expect(text).toContain(`🤝 ${Math.round(m.trust)}`);
+    });
+    expect(list.map((r) => r.props['aria-current'])).toEqual(['true', undefined, undefined]);
+    expect(list.every((r) => !r.props.disabled)).toBe(true);
+  });
+
+  it('wiersz trzeciego sklepu wysyła switchStore z id 3, a chip pokazuje go po przełączeniu', () => {
+    const { session, f } = setupThree();
+    storeList.value = true;
+    const game = { firm: (cmd: FirmCommand) => dispatchFirm(session, cmd, NO_FX) } as unknown as GameActions;
+    click(rows(render(game)!)[2]!);
+    expect(f.activeId).toBe(3);
+    expect(storeList.value).toBe(false);
+    expect(textOf(byTut(render(game)!, 'store-switch'))).toContain(storeName(f, 3));
+  });
+
+  it('chip świeci znakiem, gdy ostrzeżenie ma którykolwiek sklep w tle, także trzeci, a lista ma znak tylko przy nim', () => {
+    const { f } = setupThree();
+    expect(withClass(render()!, 'tt-stores-alert')).toHaveLength(0);
+    putInAisle(f, 3);
+    expect(withClass(render()!, 'tt-stores-alert')).toHaveLength(1);
+    storeList.value = true;
+    const warnsOf = (i: number): string[] => walk(rows(render()!)[i]!).filter((v) => v.props['data-warn']).map((v) => String(v.props['data-warn']));
+    expect(warnsOf(0)).toEqual([]);
+    expect(warnsOf(1)).toEqual([]);
+    expect(warnsOf(2)).toEqual(['paleta']);
+  });
+
+  it('zamknięty sklep z trzech zostaje na liście, a chip jest dalej, bo dwa sklepy działają', () => {
+    const { f } = setupThree();
+    f.stores[2]!.closed = true;
+    storeList.value = true;
+    const list = rows(render()!);
+    expect(list).toHaveLength(3);
+    expect(list[2]!.props.disabled).toBe(true);
+    expect(plain(textOf(list[2]!))).toContain('zamknięta');
   });
 });

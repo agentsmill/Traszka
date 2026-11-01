@@ -83,6 +83,9 @@ export function trustTier(value: number): TrustTier {
   return (TIERS.find((x) => value >= x.from) ?? TIERS[TIERS.length - 1]).tier;
 }
 
+/** Dolna granica poziomu zaufania (jego `from`): np. „Pod obserwacją” zaczyna się od 40. Dla progów w interfejsie, żeby nie powtarzały liczby z tabeli. */
+export const trustTierFrom = (id: TrustTier['id']): number => TIERS.find((x) => x.tier.id === id)!.from;
+
 /** Udział zamówionego produktu wiralowego, który Centrala przydzieli: nic poniżej 20, całość od 90. */
 export const viralShare = (value: number): number => clamp((value - 20) / 70, 0, 1);
 
