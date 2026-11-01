@@ -7,6 +7,7 @@ import type { FirmPreview } from '@/sim/firm/preview';
 import type { NetworkSummary } from '@/sim/firm/types';
 import { t, tr } from '@/i18n';
 import { NetworkSummaryView } from '../city/NetworkReport';
+import { noGuarantee } from '../city/firmText';
 import { StoreTabs } from '../city/StoreTabs';
 import { nameOf, resolveTab, storeTabDefs, tabState } from '../city/tabState';
 import { forecastNow, isNetwork } from '../city/storeSwitcherModel';
@@ -57,7 +58,7 @@ function storeWarning(r: MonthPreview): { level: 'warn' | 'danger'; text: string
 type Warning = ReturnType<typeof previewWarning>;
 
 /** Treść wyniku jednego sklepu: obrót, klienci, wyciąg, gotówka teraz i ostrzeżenie (zwykła funkcja: testy widzą jej wiersze w drzewie okna). */
-function previewRows(r: MonthPreview, warning: Warning) {
+function previewRows(r: MonthPreview, warning: Warning, noGuarantee = false) {
   const st = r.statement;
   return (
     <>
@@ -65,7 +66,7 @@ function previewRows(r: MonthPreview, warning: Warning) {
       <Row label={t`Klienci`}>{int(r.customers)}</Row>
       {st.guarantee > 0 && <p class="tt-hint">{t`Centrala dopłaca do ${zl(GUARANTEE.income)} przychodu w pierwszych ${GUARANTEE.months} miesiącach, o ile nie będzie mandatu i zaufanie nie spadnie poniżej ${GUARANTEE.minTrust}. „Wierzymy w Ciebie. Do odwołania.”`}</p>}
       {r.endedEarly && <p class="tt-hint">{t`To naliczenia do chwili końca gry: bez rat, dopłaty z gwarancji i premii od obrotu.`}</p>}
-      {statementView(st, warning ? warning.level : 'ok')}
+      {statementView(st, warning ? warning.level : 'ok', noGuarantee)}
       <Row label={t`Gotówka teraz`}>{money(r.cashNow)}</Row>
       {warning && <p class={`tt-hint warn tt-preview-warn ${warning.level}`} role="alert">{warning.text}</p>}
     </>
@@ -76,7 +77,7 @@ function PreviewResult({ r }: { r: MonthPreview }) {
   return (
     <section class="tt-section tt-preview-result" aria-label={t`Wynik podglądu`}>
       <h3>{t`Jeśli nic nie zrobisz`}{r.label ? `: ${tr(r.label)}` : ''}</h3>
-      {previewRows(r, previewWarning(r))}
+      {previewRows(r, previewWarning(r), noGuarantee(econ.value?.info, (econ.value?.s.history.length ?? 0) + 1))}
     </section>
   );
 }
@@ -92,6 +93,7 @@ function FirmPreviewResult({ p }: { p: FirmPreview }) {
   const tabs = storeTabDefs(f, p.stores.map((x) => x.id));
   const active = resolveTab(pickedPart, p, tabs);
   const part = p.stores.find((x) => x.id === active);
+  const store = f?.stores.find((s) => s.id === part?.id);
   const warning = previewWarning(p);
   const summary: NetworkSummary = {
     label: p.label, wallet: p.cashAfter, invest: p.invest, settlement: p.settlement, total: p.stores.reduce((n, x) => n + x.preview.statement.net, 0),
@@ -102,7 +104,7 @@ function FirmPreviewResult({ p }: { p: FirmPreview }) {
       <h3>{t`Jeśli nic nie zrobisz`}{p.label ? `: ${tr(p.label)}` : ''}</h3>
       {StoreTabs({ tabs, active, onPick: (id) => pickedPart.set(p, id) })}
       {part
-        ? (<><h3 class="tt-storetitle">{nameOf(f, part.id)}</h3>{previewRows(part.preview, storeWarning(part.preview))}</>)
+        ? (<><h3 class="tt-storetitle">{nameOf(f, part.id)}</h3>{previewRows(part.preview, storeWarning(part.preview), noGuarantee(store?.info, (store?.econ.history.length ?? 0) + 1))}</>)
         : (
           <>
             {p.endedEarly && <p class="tt-hint">{t`To naliczenia do chwili końca gry: bez rat, dopłaty z gwarancji i premii od obrotu.`}</p>}

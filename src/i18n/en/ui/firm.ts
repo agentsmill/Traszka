@@ -73,6 +73,9 @@ export const FIRM_UI: Dict = {
     'Head Office will not accept a notice if no other branch is left trading.',
   'Gra skończona: Centrala wypowiedziała umowę.': 'Game over: Head Office has terminated your agreement.',
   'Centrala odmawia.': 'Head Office declines.',
+  // dodatkowy sklep nie ma gwarancji (§11.2): tekst Centrali w wyciągu i w podglądzie miesiąca
+  'Gwarancja przysługuje nowym partnerom. Pan/Pani jest już strategiczny/a.':
+    'The guarantee is reserved for new partners. You are already a Strategic Partner.',
   // chip sklepów w pasku, lista sklepów i skrzynka zastępcy (`ui/city/StoreSwitcher.tsx`)
   'Przełącz sklep': 'Switch shop',
   'Sklep w tle wymaga uwagi': 'A shop in the background needs attention',

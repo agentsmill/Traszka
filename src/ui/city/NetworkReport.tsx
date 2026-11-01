@@ -6,6 +6,7 @@ import { minusZl, money, signedZl } from '../game/format';
 import { ReportBody } from '../game/reportBody';
 import { cashTone } from '../game/statement';
 import { StoreTabs } from './StoreTabs';
+import { noGuarantee } from './firmText';
 import { nameOf, resolveTab, storeTabDefs, tabState } from './tabState';
 
 /*
@@ -51,11 +52,12 @@ export function NetworkReportBody({ view }: { view: NetworkReportView }) {
   const tabs = storeTabDefs(f, view.reports.map((r) => r.storeId));
   const active = resolveTab(picked, view, tabs);
   const shown = view.reports.find((r) => r.storeId === active);
+  const store = f?.stores.find((s) => s.id === shown?.storeId);
   return (
     <>
       {StoreTabs({ tabs, active, onPick: (id) => picked.set(view, id) })}
       {shown
-        ? <section class="tt-storereport" aria-label={nameOf(f, shown.storeId)}><h3 class="tt-storetitle">{nameOf(f, shown.storeId)}</h3>{ReportBody({ r: shown.report })}</section>
+        ? <section class="tt-storereport" aria-label={nameOf(f, shown.storeId)}><h3 class="tt-storetitle">{nameOf(f, shown.storeId)}</h3>{ReportBody({ r: shown.report, noGuarantee: noGuarantee(store?.info, store?.econ.history.length ?? 0) })}</section>
         : NetworkSummaryView({ summary: view.summary, f })}
     </>
   );

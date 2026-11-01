@@ -29,9 +29,10 @@ export const centralaQuote = (text: string) => <p class="tt-quote">{t`„${tr(te
  * Bez wyciągu, z danymi tycoona (`detail`): wynik dużą liczbą i pozycje z `REPORT_LINE_LABEL` (koszty ze znakiem minus). Raport ze starego
  * zapisu (`detail` równe null, bez wyciągu) zostaje dawnym widokiem: marża i inne przychody, premie Centrali (osobny licznik) i koszty
  * (z opłatą i ubytkami ponad limit Centrali) sumują się do wyniku miesiąca. `closing` zastępuje komentarz Centrali (wypowiedzenie umowy
- * przy końcu gry).
+ * przy końcu gry). `noGuarantee`: sklep dodatkowy w oknie gwarancji (`city/firmText.noGuarantee`), więc wyciąg mówi tekstem Centrali, że
+ * gwarancji nie ma.
  */
-export function ReportBody({ r, closing }: { r: MonthReport; closing?: string }) {
+export function ReportBody({ r, closing, noGuarantee = false }: { r: MonthReport; closing?: string; noGuarantee?: boolean }) {
   const c = r.counters;
   const d = r.detail;
   const st = r.statement;
@@ -39,7 +40,7 @@ export function ReportBody({ r, closing }: { r: MonthReport; closing?: string })
     if (st) {
       return (
         <>
-          {statementView(st)}
+          {statementView(st, undefined, noGuarantee)}
           <p class="tt-muted tt-st-meta">{t`Obrót ${zl(c.revenue)} · klienci ${int(c.customers)} (utraceni: ${int(c.lost)})`}</p>
           {r.cash < DEBT_WARN && <p class="tt-hint warn">{tr(debtWarningText(r.cash))}</p>}
           {centralaQuote(closing ?? r.comment)}
@@ -75,7 +76,7 @@ export function ReportBody({ r, closing }: { r: MonthReport; closing?: string })
       {st
         ? (
           <>
-            {statementView(st)}
+            {statementView(st, undefined, noGuarantee)}
             <p class="tt-muted tt-st-meta">{t`Obrót ${zl(d.revenue)} · klienci ${int(c.customers)} (utraceni: ${int(c.lost)})`}</p>
             {r.cash < DEBT_WARN && <p class="tt-hint warn">{tr(debtWarningText(r.cash))}</p>}
           </>

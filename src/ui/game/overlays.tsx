@@ -22,6 +22,7 @@ import { LanguageSwitch, setLangAndReload } from '../LanguageSwitch';
 import { buyButtons, buyNotes } from './spend';
 import { ReportBody, centralaQuote } from './reportBody';
 import { NetworkReportBody } from '../city/NetworkReport';
+import { noGuarantee } from '../city/firmText';
 import { StoreTabs } from '../city/StoreTabs';
 import { nameOf, resolveTab, storeTabDefs, tabState } from '../city/tabState';
 import { loadTutorial, setTips } from '../tutorial/memory';
@@ -195,7 +196,7 @@ export function ReportModal({ game }: { game: GameActions }) {
         <h2 data-tut="report">{title}</h2>
         {reason && <p class="tt-end-reason" role="note"><b>{reason}</b></p>}
         {bankrupt && ranked.value && <p class="tt-end-reason" role="note">{tr(RANKED_BANKRUPT_TEXT)}</p>}
-        {net ? <NetworkReportBody view={net} /> : r ? <ReportBody r={r} closing={over ? TERMINATION : undefined} /> : centralaQuote(TERMINATION)}
+        {net ? <NetworkReportBody view={net} /> : r ? <ReportBody r={r} closing={over ? TERMINATION : undefined} noGuarantee={!!view && noGuarantee(view.info, view.s.history.length)} /> : centralaQuote(TERMINATION)}
         {net && over && centralaQuote(TERMINATION)}
         <div class="tt-modal-foot">
           {over

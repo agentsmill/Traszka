@@ -116,6 +116,47 @@ describe('podsumowanie sieci (zakładka „Sieć”)', () => {
   });
 });
 
+/** Centrala o gwarancji dodatkowego sklepu, słowo w słowo ze specu (§11.2). */
+const NO_GUARANTEE = 'Gwarancja przysługuje nowym partnerom. Pan/Pani jest już strategiczny/a.';
+
+describe('sklep dodatkowy nie ma gwarancji: tekst Centrali w jego wyciągu (spec §11.2)', () => {
+  const pickTab = (view: NetworkReportView, id: number) => {
+    click(buttonsOf(render(view)).find((b) => textOf(b) === shortStoreName(firm.value!.f, id))!);
+    return plain(textOf(render(view)));
+  };
+  const fakeHistory = (f: ReturnType<typeof setup>['f'], n: number): void => {
+    f.stores[1]!.econ.history.length = 0;
+    for (let i = 0; i < n; i++) f.stores[1]!.econ.history.push({ label: `m${i}`, profit: 0, revenue: 0 });
+  };
+
+  it('wyciąg sklepu #2 w pierwszych trzech miesiącach ma tekst Centrali, a sklep startowy i zakładka „Sieć” go nie mają', () => {
+    const { view, f } = setup();
+    expect(f.stores[1]!.info.site?.extra).toBe(true);
+    expect(plain(textOf(render(view)))).not.toContain(NO_GUARANTEE);   // „Sieć”
+    expect(pickTab(view, 1)).not.toContain(NO_GUARANTEE);
+    const text = pickTab(view, 2);
+    expect(text).toContain(NO_GUARANTEE);
+    expect(text.indexOf(NO_GUARANTEE)).toBeLessThan(text.indexOf('Potrącenia'));   // w przelewie, tam gdzie byłaby „Dopłata z gwarancji”
+    expect(text).not.toContain('Dopłata z gwarancji');
+  });
+
+  it('okno gwarancji to trzy raporty: trzeci miesiąc jeszcze ma tekst, czwarty już nie', () => {
+    const { view, f } = setup();
+    for (const [months, shown] of [[1, true], [2, true], [3, true], [4, false]] as const) {
+      fakeHistory(f, months);
+      expect(pickTab(view, 2).includes(NO_GUARANTEE), `raport nr ${months}`).toBe(shown);
+    }
+  });
+
+  it('po angielsku', () => {
+    const { view } = setup();
+    lang.value = 'en';
+    const text = pickTab(view, 2);
+    expect(text).toContain('The guarantee is reserved for new partners. You are already a Strategic Partner.');
+    expect(text).not.toContain(NO_GUARANTEE);
+  });
+});
+
 describe('zakładki sklepów', () => {
   it('stuknięcie w zakładkę pokazuje wyciąg tego sklepu (statementView) i chowa podsumowanie', () => {
     const { f, view, one, two } = setup();

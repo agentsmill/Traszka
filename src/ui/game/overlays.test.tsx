@@ -801,6 +801,24 @@ describe('raport miesięczny z wyciągiem od Centrali (statement)', () => {
 });
 
 describe('okno raportu miesiąca', () => {
+  it('dodatkowy sklep (jedyny otwarty) w pierwszych trzech miesiącach: wyciąg ma tekst Centrali o braku gwarancji, sklep startowy nie', () => {
+    const { f } = twoStoreWorld();
+    const text = (): string => {
+      const tree = ReportModal({ game: fakeGame() }) as Vnode;
+      const body = walk(tree).find((v) => v.type === ReportBody);
+      return plain(textOf(tree) + (body ? textOf(ReportBody(body.props as unknown as Parameters<typeof ReportBody>[0])) : ''));
+    };
+    const NO_GUARANTEE = 'Gwarancja przysługuje nowym partnerom. Pan/Pani jest już strategiczny/a.';
+    report.value = monthReport(detailed(), { statement: statementOf() });
+    expect(text()).not.toContain(NO_GUARANTEE);   // aktywny jest sklep startowy
+    const extra = f.stores[1]!;
+    econ.value = { s: extra.econ, info: extra.info, v: 1 };
+    for (let i = 0; i < 3; i++) extra.econ.history.push({ label: `m${i}`, profit: 0, revenue: 0 });
+    expect(text()).toContain(NO_GUARANTEE);
+    extra.econ.history.push({ label: 'm3', profit: 0, revenue: 0 });   // czwarty raport: gwarancji nie byłoby i w sklepie startowym
+    expect(text()).not.toContain(NO_GUARANTEE);
+  });
+
   const closeButton = (tree: Vnode, label: string): Vnode => buttonsOf(tree).find((b) => textOf(b) === label)!;
   /** Tekst okna razem z treścią raportu (komponent `ReportBody` w drzewie nie jest wołany, więc wołamy go z jego propsami). */
   const textWithBody = (tree: Vnode): string => {

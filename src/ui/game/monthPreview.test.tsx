@@ -392,6 +392,41 @@ describe('podgląd końca miesiąca przy firmie', () => {
     expect(walk(tree).some((v) => v.props['data-tut'] === 'network-summary')).toBe(false);   // to okno podglądu, nie okno końca miesiąca
   });
 
+  it('podgląd sklepu dodatkowego ma tekst Centrali o braku gwarancji w pierwszych trzech miesiącach, sklep startowy i „Sieć” nie', () => {
+    vi.useFakeTimers();
+    const { f } = networkWorld();
+    const NO_GUARANTEE = 'Gwarancja przysługuje nowym partnerom. Pan/Pani jest już strategiczny/a.';
+    openMonthPreview();
+    click(buttonLabelled(MonthPreviewModal() as Vnode, 'Koniec miesiąca: policz podgląd'));
+    vi.runAllTimers();
+    expect(plain(textOf(shown()))).not.toContain(NO_GUARANTEE);   // „Sieć”
+    const tab = (id: number): string => {
+      click(buttonsOf(shown()).find((b) => textOf(b) === shortStoreName(f, id))!);
+      return plain(textOf(shown()));
+    };
+    expect(tab(1)).not.toContain(NO_GUARANTEE);
+    const two = tab(2);
+    expect(two).toContain(NO_GUARANTEE);
+    expect(two).not.toContain('Dopłata z gwarancji');
+    // czwarty miesiąc sklepu (trzy raporty za nim): gwarancji nie byłoby i w sklepie startowym
+    for (let i = 0; i < 3; i++) f.stores[1]!.econ.history.push({ label: `m${i}`, profit: 0, revenue: 0 });
+    expect(tab(2)).not.toContain(NO_GUARANTEE);
+  });
+
+  it('podgląd jedynego otwartego sklepu, który jest dodatkowy (sklep startowy zamknięty): tekst Centrali o braku gwarancji też stoi', () => {
+    vi.useFakeTimers();
+    const { f } = networkWorld();
+    const extra = f.stores[1]!;
+    f.stores[0]!.closed = true;
+    f.activeId = 2;
+    econ.value = { s: extra.econ, info: extra.info, v: 1 };
+    firm.value = { f, v: 1 };
+    openMonthPreview();
+    click(buttonLabelled(MonthPreviewModal() as Vnode, 'Koniec miesiąca: policz podgląd'));
+    vi.runAllTimers();
+    expect(plain(textOf(shown()))).toContain('Gwarancja przysługuje nowym partnerom. Pan/Pani jest już strategiczny/a.');
+  });
+
   it('zakładka sklepu pokazuje wyciąg tego sklepu z podglądu', () => {
     vi.useFakeTimers();
     const { f } = networkWorld();

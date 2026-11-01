@@ -1,7 +1,8 @@
 import { dateText, t, tr } from '@/i18n';
 import { lotById } from '@/sim/city/generateCity';
-import { DEBT_LIMIT } from '@/sim/economy/catalog';
+import { DEBT_LIMIT, GUARANTEE } from '@/sim/economy/catalog';
 import { debtWarningText } from '@/sim/economy/economy';
+import type { StoreInfo } from '@/sim/economy/storeInfo';
 import { cardDef } from '@/sim/economy/tycoon/cards';
 import type { FirmEvent, FirmRefusal, FirmState, FirmStore } from '@/sim/firm/types';
 import { money, zl } from '../game/format';
@@ -34,6 +35,17 @@ export function storeStateText(f: FirmState, st: FirmStore): string {
   if (st.notice) return t`umowa wygasa ${dateText(st.notice.endDay)}`;
   return st.id === f.activeId ? t`aktywna` : t`w tle`;
 }
+
+/** Centrala o gwarancji dodatkowego sklepu (§11.2), dosłownie ze specu. */
+export const noGuaranteeText = (): string => t`Gwarancja przysługuje nowym partnerom. Pan/Pani jest już strategiczny/a.`;
+
+/**
+ * Czy miesiąc nr `month` (1 = pierwszy miesiąc sklepu) dodatkowego sklepu (`site.extra`) wypada tam, gdzie sklep startowy dostaje gwarancję
+ * (pierwsze `GUARANTEE.months` miesięcy). Gwarancja jest dla nowych franczyzobiorców (`guaranteeTopUp`), więc dodatkowy sklep nie ma wiersza
+ * „Dopłata z gwarancji” i właśnie tam wyciąg oraz podgląd miesiąca mówią to słowami Centrali (`noGuaranteeText`). Raport za miesiąc, który
+ * się zamknął, ma numer `history.length`, podgląd miesiąca, który się zamknie, `history.length + 1`.
+ */
+export const noGuarantee = (info: StoreInfo | undefined, month: number): boolean => !!info?.site?.extra && month <= GUARANTEE.months;
 
 const num = (e: FirmEvent, key: string): number => {
   const v = e.params?.[key];

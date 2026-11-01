@@ -2,6 +2,7 @@ import { DEBT_LIMIT } from '@/sim/economy/catalog';
 import { DEBT_WARN } from '@/sim/economy/economy';
 import type { Statement } from '@/sim/economy/franchisee';
 import { t, tr } from '@/i18n';
+import { noGuaranteeText } from '../city/firmText';
 import { minusZl, money, signedZl, zl } from './format';
 
 /*
@@ -27,15 +28,17 @@ const row = (label: string, value: string, total = false) => (
 /**
  * Wyciąg `st`. `tone`: ton gotówki po zamknięciu, gdy wywołujący wie więcej niż sama kwota (podgląd uwzględnia dołek w trakcie
  * miesiąca); domyślnie z progów gry. Kwoty odejmowane (potrącenia, koszty) mają „−”, żeby wiersze czytało się jak rachunek:
- * przelew minus potrącenia minus koszty to „Zostaje Ci”.
+ * przelew minus potrącenia minus koszty to „Zostaje Ci”. `noGuarantee`: sklep dodatkowy w oknie gwarancji (`city/firmText.noGuarantee`):
+ * w miejscu „Dopłaty z gwarancji” stoi tekst Centrali, dlaczego jej nie ma.
  */
-export function statementView(st: Statement, tone: CashTone = cashTone(st.cashAfter)) {
+export function statementView(st: Statement, tone: CashTone = cashTone(st.cashAfter), noGuarantee = false) {
   return (
     <section class="tt-statement" aria-label={t`Wyciąg od Centrali`}>
       <h3>{t`Przelew od Centrali`}</h3>
       {row(t`Marża`, zl(st.margin))}
       {row(t`Premie`, zl(st.bonus))}
       {st.guarantee > 0 && row(t`Dopłata z gwarancji`, zl(st.guarantee))}
+      {noGuarantee && <p class="tt-hint" role="note">{noGuaranteeText()}</p>}
       {row(t`Razem`, zl(st.transfer), true)}
       <h3>{t`Potrącenia`}</h3>
       {row(t`Raty`, minusZl(st.installments))}
