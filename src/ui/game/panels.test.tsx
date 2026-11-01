@@ -17,7 +17,8 @@ import { computeStoreInfo, type PalletLoc, type StoreInfo } from '@/sim/economy/
 import { EQUIPMENT, UPGRADES } from '@/sim/economy/upgrades';
 import { layoutFor } from '@/sim/store/layoutFor';
 import { econ, metaView, monthPreview, ranked, speed, tab, type GameActions } from '../state';
-import { Bar, GoalsPanel, PalletItem, PalletsPanel, PeoplePanel, ShopPanel, StorePanel, TabBar } from './panels';
+import { CityPanel } from '../city/CityPanel';
+import { Bar, GoalsPanel, PalletItem, PalletsPanel, PeoplePanel, Sheet, ShopPanel, StorePanel, TabBar } from './panels';
 import { minusZl, money, percentOf, plural, signedZl, zl } from './format';
 import { buttonAria, buttonLabelled, buttonsOf, click, labels, sectionTitled, textOf, walk, type Vnode } from './vnodeTree';
 
@@ -140,6 +141,33 @@ describe('panele wysyłają polecenia przez game.dispatch, a nie wołają symula
       expect(hint).toContain('Nadmiar staje w przejściach, a klienci się o niego potykają');
       expect(hint).not.toMatch(/odeśl/i);
     });
+  });
+
+  it('pasek zakładek ma sześć przycisków, a szósta to Miasto; stuknięcie otwiera ją i zamyka drugim stuknięciem', () => {
+    const { s, info } = rich();
+    econ.value = { s, info, v: 1 };
+    const tabs = walk(TabBar()).filter((v) => v.props.class === 'tt-tab' || String(v.props.class).startsWith('tt-tab '));
+    expect(tabs).toHaveLength(6);
+    expect(tabs.map((x) => textOf(walk(x).find((v) => v.props.class === 'tt-tab-label')!))).toEqual(['Sklep', 'Palety', 'Ludzie', 'Ulepszenia', 'Cele', 'Miasto']);
+    expect(tabs[5]!.props['data-tut']).toBe('tab-miasto');
+    click(tabs[5]!);
+    expect(tab.value).toBe('miasto');
+    click(walk(TabBar()).find((v) => v.props['data-tut'] === 'tab-miasto')!);
+    expect(tab.value).toBeNull();
+  });
+
+  it('arkusz zakładki Miasto ma tytuł „Miasto”, zamyka się ✕ i składa panel miasta', () => {
+    const { s, info } = rich();
+    econ.value = { s, info, v: 1 };
+    tab.value = 'miasto';
+    const sheet = Sheet({ game: fakeGame() }) as Vnode;
+    expect(walk(sheet).some((v) => v.type === CityPanel)).toBe(true);
+    expect(textOf(walk(sheet).find((v) => v.type === 'h2')!)).toBe('Miasto');
+    expect(String(sheet.props.class)).toContain('tt-sheet-city');
+    click(buttonAria(sheet, 'Zamknij'));
+    expect(tab.value).toBeNull();
+    tab.value = 'sklep';
+    expect(String((Sheet({ game: fakeGame() }) as Vnode).props.class)).not.toContain('tt-sheet-city');
   });
 
   it('znaczniki zakładek: Palety liczą palety pod sklepem i w przejściach, Cele kamienie milowe do odebrania', () => {

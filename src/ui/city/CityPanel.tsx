@@ -1,0 +1,101 @@
+import { t } from '@/i18n';
+import { DISTRICT_COLOR, TRAFFIC_BUSY, TRAFFIC_QUIET, type CityLayer } from '@/render/city/buildCity';
+import { partnerProgress } from '@/sim/firm/commands';
+import { openStores } from '@/sim/firm/firm';
+import { MAX_STORES, type FirmState } from '@/sim/firm/types';
+import { cityLayer, firm, selectedLot, type GameActions } from '../state';
+import { zl } from '../game/format';
+import { LotCard } from './LotCard';
+import { freeLotRows } from './cityModel';
+import { districtName, lotKindName, progressText } from './cityText';
+import { addressText } from './firmText';
+
+/*
+ * Ekran Miasta w arkuszu zakładki (spec §9): pasek statusu z przełącznikiem warstw, lista wolnych lokali i karta wybranego lokalu. Mapę
+ * rysuje scena (`game/cityScreen.ts` podnosi ją, gdy zakładka jest otwarta), a ten panel mówi, co na niej jest. Na komputerze lista
+ * i karta stoją w prawej kolumnie; na telefonie arkusz wysuwa się od dołu i pokazuje listę albo, po wyborze lokalu, kartę (CSS `.has-card`).
+ * Komponenty nie mają haków i dostają `v` (wersję firmy) w propsach, bo firma zmienia się w miejscu.
+ */
+
+const STATUS_ICON = { missing: '🔒', granted: '✅', ranked: '🏁' } as const;
+
+/** Legenda warstwy: skala ruchu od cichego do tłocznego albo kolory dzielnic. */
+function legend(layer: CityLayer) {
+  if (layer === 'ruch') {
+    return (
+      <div class="tt-citylegend">
+        <span class="tt-muted">{t`mały ruch`}</span>
+        <span class="tt-legend-grad" style={{ background: `linear-gradient(90deg, ${TRAFFIC_QUIET}, ${TRAFFIC_BUSY})` }} role="presentation" />
+        <span class="tt-muted">{t`duży ruch`}</span>
+      </div>
+    );
+  }
+  return (
+    <div class="tt-citylegend">
+      {(['osiedle', 'srodmiescie', 'dworzec', 'biurowce', 'park'] as const).map((d) => (
+        <span key={d} class="tt-legend-chip"><i style={{ background: DISTRICT_COLOR[d] }} role="presentation" />{districtName(d)}</span>
+      ))}
+    </div>
+  );
+}
+
+/** Pasek miasta: postęp do statusu Partnera (albo tekst rankingowy), nazwa miasta, licznik placówek i przełącznik „Ruch / Dzielnice”. */
+export function CityBar({ f }: { f: FirmState; v: number }) {
+  const p = partnerProgress(f);
+  const layer = cityLayer.value;
+  const text = progressText(p);
+  return (
+    <div class="tt-citybar">
+      <div class={`tt-citystatus ${p.kind}`} data-tut="city-status">
+        <span aria-hidden="true">{STATUS_ICON[p.kind]}</span>
+        <span>{p.kind === 'ranked' ? text : <><b>{t`Partner Strategiczny`}</b>: {text}</>}</span>
+      </div>
+      <div class="tt-citytools">
+        <span class="tt-cityname">{f.city.name}</span>
+        <span class="tt-muted">{t`placówki ${openStores(f).length + f.builds.length}/${MAX_STORES}`}</span>
+        <div class="tt-seg tt-layers" role="group" aria-label={t`Warstwa mapy`}>
+          <button type="button" class={`tt-btn${layer === 'ruch' ? ' on' : ''}`} aria-pressed={layer === 'ruch'} onClick={() => { cityLayer.value = 'ruch'; }}>{t`Ruch`}</button>
+          <button type="button" class={`tt-btn${layer === 'dzielnice' ? ' on' : ''}`} aria-pressed={layer === 'dzielnice'} onClick={() => { cityLayer.value = 'dzielnice'; }}>{t`Dzielnice`}</button>
+        </div>
+      </div>
+      {legend(layer)}
+    </div>
+  );
+}
+
+/** Lista wolnych lokali: numer z kartki, adres, dzielnica, format i metraż, widełki klientów dziennie i pakiet otwarcia. */
+export function LotList({ f }: { f: FirmState; v: number }) {
+  const rows = freeLotRows(f.seed, f);
+  const chosen = selectedLot.value;
+  return (
+    <section class="tt-lotlist" aria-label={t`Wolne lokale`}>
+      <h3>{t`Wolne lokale (${rows.length})`}</h3>
+      {rows.length === 0 && <p class="tt-hint">{t`Brak wolnych lokali.`}</p>}
+      {rows.map((r) => (
+        <button key={r.lotId} type="button" class={`tt-lotrow${chosen === r.lotId ? ' sel' : ''}`} data-lot={r.lotId} aria-pressed={chosen === r.lotId}
+          onClick={() => { selectedLot.value = r.lotId; }}>
+          <span class="tt-lotno">{r.no}</span>
+          <span class="tt-lotaddr">{addressText(r.street, r.number)} <span class="tt-dz" style={{ background: DISTRICT_COLOR[r.district] }}>{districtName(r.district)}</span></span>
+          <span class="tt-lotrange"><b>{`${r.lo}–${r.hi}`}</b></span>
+          <span class="tt-lotsub">{`${lotKindName(r.kind, r.corner, r.district)}, ${r.area} m²`}</span>
+          <span class="tt-lotprice-sm">{zl(r.price)}</span>
+        </button>
+      ))}
+    </section>
+  );
+}
+
+/** Zawartość arkusza Miasto. Bez firmy (sklep jeszcze się nie otworzył) nic nie pokazuje. */
+export function CityPanel({ game }: { game: GameActions }) {
+  const view = firm.value;
+  if (!view) return null;
+  const { f, v } = view;
+  const chosen = selectedLot.value;
+  return (
+    <div class={`tt-city${chosen !== null ? ' has-card' : ''}`}>
+      <CityBar f={f} v={v} />
+      <LotList f={f} v={v} />
+      {chosen !== null && <LotCard f={f} lotId={chosen} game={game} v={v} />}
+    </div>
+  );
+}

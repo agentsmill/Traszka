@@ -6,6 +6,7 @@ import { BLOCK_M } from '@/sim/city/districts';
 import { SLOT_M, STREET_HALF_M } from '@/sim/city/generateCity';
 import { CITY_SIZE, type CityLot, type CityState, type DistrictId, type LotState, type StreetSegment } from '@/sim/city/types';
 import type { LotKind } from '@/sim/store/types';
+import { ISO_PITCH_DEG } from '@/render/cameraRig';
 import { PALETTE } from '@/render/style';
 
 /**
@@ -38,6 +39,25 @@ export const CITY_BOUNDS: Readonly<{ minX: number; minZ: number; maxX: number; m
   return { minX: -half, minZ: -half, maxX: half, maxZ: half };
 })();
 
+/** Zapas na pinezki i etykiety nad dachami oraz na brzegi ekranu: miasto zajmuje najwyżej tyle ekranu, ile podaje `cityFitViewSize`, podzielone przez ten zapas. */
+const FIT_MARGIN = 1.1;
+/** Najwyższy budynek mapy w jednostkach sceny (`HEIGHT` biurowców +15%). */
+const FIT_ROOF = 0.6;
+
+/**
+ * Wysokość widoku kamery (`CameraRig.viewSize`, jednostki sceny), przy której całe miasto mieści się w prostokącie `visW` × `visH` px
+ * okna o wysokości `canvasH` px, gdy kamera celuje w środek miasta i środek miasta stoi w środku tego prostokąta (przy każdym obrocie
+ * o 90°; rzut izometryczny widzi kwadrat jako romb o przekątnej `bok · √2`). Poziomy ekran mieści się w `VIEW_SIZE_MAX`, telefon w pionie
+ * potrzebuje ok. dwa razy więcej, dlatego ekran Miasta podnosi limit zoomu (`CameraRig.setViewMax`).
+ */
+export function cityFitViewSize(visW: number, visH: number, canvasH: number): number {
+  const side = CITY_BOUNDS.maxX - CITY_BOUNDS.minX;
+  const pitch = (ISO_PITCH_DEG * Math.PI) / 180;
+  const spanW = side * Math.SQRT2;
+  const spanH = side * Math.SQRT2 * Math.sin(pitch) + 2 * FIT_ROOF * Math.cos(pitch);
+  return canvasH * Math.max(spanW / Math.max(1, visW), spanH / Math.max(1, visH)) * FIT_MARGIN;
+}
+
 /** Tło kwartału w warstwie „Dzielnice”. Legenda ekranu Miasta bierze kolory stąd. */
 export const DISTRICT_COLOR: Readonly<Record<DistrictId, string>> = {
   osiedle: PALETTE.street.blokPastel[1]!,       // łososiowy
@@ -51,8 +71,9 @@ const BLOCK_NEUTRAL = PALETTE.wall[3]!;          // tło kwartałów w „Ruchu�
 const PARK_RUCH = PALETTE.street.grass[0]!;
 const STREET_NEUTRAL = PALETTE.street.curb[0]!;  // ulice w „Dzielnicach”: jasne, bez koloru ruchu
 const BUILDING_WHITE = PALETTE.wall[0]!;
-const TRAFFIC_QUIET = PALETTE.productCategory.przekaski[0]!;   // żółty
-const TRAFFIC_BUSY = PALETTE.productCategory.napoje[0]!;       // czerwony
+/** Kolory skali ruchu w warstwie „Ruch” (legenda ekranu Miasta rysuje z nich pasek). */
+export const TRAFFIC_QUIET = PALETTE.productCategory.przekaski[0]!;   // żółty
+export const TRAFFIC_BUSY = PALETTE.productCategory.napoje[0]!;       // czerwony
 /** Średnia doba natężenia (0–255), od której odcinek jest cały czerwony. Skala stała jak w traffic.ts: najruchliwszy odcinek ma 70–100. */
 const TRAFFIC_FULL = 100;
 /**

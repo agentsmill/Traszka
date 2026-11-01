@@ -1,0 +1,299 @@
+/*
+ * Ekran Miasta (zakładka „Miasto”, `ui/city/CityPanel.tsx` i `LotCard.tsx`): arkusz z paskiem statusu, listą wolnych lokali i kartą lokalu.
+ * Komputer: prawa kolumna jak każdy arkusz (≥ 900 px), mapa po lewej. Telefon: arkusz od dołu niższy niż zwykły (do 46% ekranu), żeby mapa
+ * zostawała u góry; po wyborze lokalu lista ustępuje karcie (`.has-card`, na telefonie także pasek), a między lokalami przesuwa się palcem. Wysokość 46vh i prawa
+ * kolumna 390 px są też w `game/cityScreen.ts` (`visibleArea`): tam mapa ustawia się w tym, co arkusz zostawia widoczne.
+ */
+
+.tt-sheet-city {
+  max-height: min(46vh, calc(100vh - var(--hud-h) - var(--tabs-h) - 16px));
+}
+
+@media (min-width: 900px) {
+  .tt-sheet-city {
+    max-height: none;
+  }
+}
+
+.tt-city {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 6px;
+}
+
+/* --- Pasek miasta ---------------------------------------------------------------------------------- */
+
+.tt-citystatus {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 7px 9px;
+  border-radius: 10px;
+  border-left: 4px solid var(--tt-orange);
+  background: rgba(240, 138, 36, 0.14);
+  color: #4a3b12;
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.tt-citystatus.granted {
+  border-left-color: var(--tt-green);
+  background: rgba(29, 107, 58, 0.12);
+  color: var(--tt-green-dark);
+}
+
+.tt-citystatus.ranked {
+  border-left-color: #5c6b62;
+  background: rgba(92, 107, 98, 0.13);
+  color: #33413a;
+}
+
+.tt-citytools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  margin-top: 8px;
+}
+
+.tt-cityname {
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--tt-green-dark);
+}
+
+.tt-layers {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.tt-layers .tt-btn {
+  min-height: 32px;
+  padding: 5px 12px;
+  font-size: 12.5px;
+}
+
+.tt-citylegend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  margin-top: 6px;
+  font-size: 11px;
+}
+
+.tt-legend-grad {
+  flex: 0 0 90px;
+  height: 8px;
+  border-radius: 4px;
+}
+
+.tt-legend-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #33413a;
+}
+
+.tt-legend-chip i {
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  border-radius: 3px;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.18);
+}
+
+/* --- Lista wolnych lokali ------------------------------------------------------------------------------ */
+
+.tt-lotlist h3 {
+  margin: 4px 0 4px;
+  font-size: 13px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--tt-green-dark);
+}
+
+.tt-lotrow {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  gap: 1px 8px;
+  align-items: center;
+  width: 100%;
+  margin: 0;
+  padding: 7px 6px;
+  border: 0;
+  border-bottom: 1px solid rgba(29, 107, 58, 0.14);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.tt-lotrow.sel {
+  background: rgba(240, 138, 36, 0.16);
+  box-shadow: inset 3px 0 var(--tt-orange);
+}
+
+.tt-lotrow .tt-lotno {
+  grid-row: span 2;
+}
+
+.tt-lotaddr {
+  min-width: 0;
+  font-weight: 700;
+}
+
+.tt-lotrange {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.tt-lotsub,
+.tt-lotprice-sm {
+  color: #5c6b62;
+  font-size: 11.5px;
+  font-weight: 500;
+}
+
+.tt-lotprice-sm {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* numer z kartki „DO WYNAJĘCIA” */
+.tt-lotno {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--tt-orange);
+  color: #1a1a1a;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.tt-dz {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 4px;
+  color: #33413a;
+  font-size: 10.5px;
+  font-weight: 700;
+  white-space: nowrap;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.14);
+}
+
+/* --- Karta lokalu -------------------------------------------------------------------------------------- */
+
+.tt-lotcard {
+  padding: 8px 0 0;
+  border-top: 2px solid var(--tt-orange);
+  touch-action: pan-y;
+}
+
+.tt-lotcard-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tt-lotcard-title h3 {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: 15px;
+  color: var(--tt-green-dark);
+}
+
+.tt-lotcard-sub {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  margin: 4px 0 2px;
+}
+
+.tt-lotnav {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+}
+
+.tt-lotnav .tt-iconbtn {
+  min-width: 36px;
+  min-height: 32px;
+  font-size: 20px;
+  line-height: 1;
+}
+
+.tt-lotprice {
+  margin: 10px 0 4px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(29, 107, 58, 0.08);
+}
+
+.tt-lotprice h4 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--tt-green-dark);
+}
+
+.tt-lotpay {
+  flex-direction: column;
+}
+
+.tt-lotpay .tt-btn {
+  text-align: left;
+  line-height: 1.25;
+}
+
+/* „Biorę lokal” i powód odmowy stoją pod pakietem otwarcia: przycisk jest po cenie, a nie nad nią */
+.tt-lotact {
+  padding: 6px 0 4px;
+}
+
+.tt-lotact .tt-btn.big {
+  margin-top: 0;
+}
+
+.tt-lockmsg {
+  margin: 6px 0 0;
+  color: #7a5a12;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+/* po wyborze lokalu lista ustępuje karcie (‹ › i ✕ prowadzą dalej); na telefonie także pasek, żeby karta miała miejsce */
+.tt-city.has-card .tt-lotlist {
+  display: none;
+}
+
+@media (max-width: 899px) {
+  .tt-city.has-card .tt-citybar {
+    display: none;
+  }
+
+  .tt-city.has-card {
+    padding-top: 0;
+  }
+
+  /* kartki na mapie telefonu mniejsze: miasto zajmuje kilkaset pikseli i kartki 64 px nachodziłyby na siebie */
+  .tt-cpin-art {
+    width: 46px !important;
+    height: auto !important;
+  }
+}

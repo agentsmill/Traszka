@@ -7,7 +7,7 @@ import { BLOCK_M } from '@/sim/city/districts';
 import { CITY_SIZE, type CityState, type LotState } from '@/sim/city/types';
 import { CameraRig, VIEW_SIZE_MAX } from '@/render/cameraRig';
 import { material } from '@/render/style';
-import { CITY_BOUNDS, CITY_UNIT_M, DISTRICT_COLOR, buildCity, cityToWorld, countDrawCalls } from './buildCity';
+import { CITY_BOUNDS, CITY_UNIT_M, DISTRICT_COLOR, buildCity, cityFitViewSize, cityToWorld, countDrawCalls } from './buildCity';
 
 /** Dziesięć seedów z testów generatora miasta. */
 const SEEDS = ['kiełbasa-42', 'kiełbasa-12', 'a', 'b', 'traszka-1', 'traszka-2', 'miasto-1', 'miasto-2', 'miasto-3', 'miasto-4'];
@@ -347,6 +347,41 @@ describe('buildCity: kadr kamery', () => {
         }
       }
     }
+  });
+
+  it('cityFitViewSize: całe miasto mieści się w danym prostokącie ekranu, także na telefonie w pionie (390×844) i w oknie z panelem', () => {
+    const cases: { w: number; h: number; visW: number; visH: number }[] = [
+      { w: 1280, h: 800, visW: 1280, visH: 800 },
+      { w: 390, h: 844, visW: 390, visH: 844 },
+      { w: 390, h: 844, visW: 390, visH: 284 },    // telefon: mapa nad arkuszem
+      { w: 1280, h: 800, visW: 878, visH: 628 },   // komputer: mapa obok panelu
+      { w: 844, h: 390, visW: 844, visH: 330 },    // telefon poziomo
+    ];
+    for (const { w, h, visW, visH } of cases) {
+      const rig = new CameraRig(w / h);
+      const size = cityFitViewSize(visW, visH, h);
+      rig.setViewMax(Math.max(VIEW_SIZE_MAX, size));
+      rig.zoomBy(rig.viewSize / size);
+      expect(rig.viewSize).toBeCloseTo(size, 6);
+      for (const yaw of [0, 1, 2, 3] as const) {
+        rig.yawIndex = yaw;
+        for (const x of [CITY_BOUNDS.minX, CITY_BOUNDS.maxX]) {
+          for (const z of [CITY_BOUNDS.minZ, CITY_BOUNDS.maxZ]) {
+            for (const y of [0, 0.6]) {
+              const p = new Vector3(x, y, z).project(rig.camera);
+              // piksele widocznego prostokąta (wyśrodkowanego w oknie) liczymy z NDC: pół okna to 1
+              expect(Math.abs(p.x) * (w / 2), `${w}×${h} yaw ${yaw}`).toBeLessThanOrEqual(visW / 2 + 1e-6);
+              expect(Math.abs(p.y) * (h / 2), `${w}×${h} yaw ${yaw}`).toBeLessThanOrEqual(visH / 2 + 1e-6);
+            }
+          }
+        }
+      }
+    }
+  });
+
+  it('cityFitViewSize: ekran poziomy mieści się w VIEW_SIZE_MAX, telefon w pionie wymaga więcej', () => {
+    expect(cityFitViewSize(1280, 800, 800)).toBeLessThanOrEqual(VIEW_SIZE_MAX);
+    expect(cityFitViewSize(390, 844, 844)).toBeGreaterThan(VIEW_SIZE_MAX);
   });
 
   it('granice są symetryczne wokół (0, 0), więc kamera celuje w środek miasta', () => {

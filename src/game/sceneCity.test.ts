@@ -1,7 +1,7 @@
-import { Scene, type Mesh } from 'three';
+import { Scene, Vector3, type Mesh } from 'three';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CameraRig, VIEW_SIZE_DEFAULT, VIEW_SIZE_MAX } from '@/render/cameraRig';
-import { CITY_BOUNDS } from '@/render/city/buildCity';
+import { CITY_BOUNDS, cityFitViewSize } from '@/render/city/buildCity';
 import type { QualityPresetId } from '@/render/quality';
 import type { RenderContext } from '@/render/renderer';
 import { generateCity } from '@/sim/city/generateCity';
@@ -22,12 +22,12 @@ vi.mock('@/render/assets', async (original) => ({
 const CITY = generateCity('kiełbasa-42');
 const STATES: Record<number, LotState> = Object.fromEntries(CITY.lots.map((l) => [l.id, l.state]));
 
-function fakeContext(preset: QualityPresetId): RenderContext {
+function fakeContext(preset: QualityPresetId, aspect = 1.6): RenderContext {
   let current = preset;
   return {
     renderer: {} as RenderContext['renderer'],
     scene: new Scene(),
-    rig: new CameraRig(1.6),
+    rig: new CameraRig(aspect),
     get preset() { return current; },
     setPreset(id: QualityPresetId) { current = id; },
     setTimeOfDay: vi.fn(),
@@ -36,8 +36,8 @@ function fakeContext(preset: QualityPresetId): RenderContext {
   } as RenderContext;
 }
 
-function hostOn(preset: QualityPresetId): { host: SceneHost; ctx: RenderContext } {
-  const ctx = fakeContext(preset);
+function hostOn(preset: QualityPresetId, aspect = 1.6): { host: SceneHost; ctx: RenderContext } {
+  const ctx = fakeContext(preset, aspect);
   const host = createSceneHost({ ctx, cashierLook: { kind: 'default' } as never, forcedNight: false, exterior: false, zoomPinned: false, overlay: null });
   return { host, ctx };
 }
@@ -75,7 +75,7 @@ describe('showCity / hideCity', () => {
     expect(loaded.view.root.visible).toBe(false);
     expect(loaded.street!.root.visible).toBe(false);
     expect(host.crowdRoot.visible).toBe(false);
-    expect(ctx.rig.viewSize).toBe(VIEW_SIZE_MAX);
+    expect(ctx.rig.viewSize).toBeCloseTo(cityFitViewSize(1280, 800, 800), 6);   // bez prostokąta całe okno
     expect(ctx.rig.bounds).toEqual(CITY_BOUNDS);
     expect(ctx.rig.target.x).toBeCloseTo(0, 10);
     expect(ctx.rig.target.z).toBeCloseTo(0, 10);
@@ -173,7 +173,7 @@ describe('showCity / hideCity', () => {
     expect(host.cityShown).toBe(true);
     expect(host.loaded!.view.root.visible).toBe(false);
     expect(host.loaded!.street!.root.visible).toBe(false);
-    expect(ctx.rig.viewSize).toBe(VIEW_SIZE_MAX);
+    expect(ctx.rig.viewSize).toBeCloseTo(cityFitViewSize(1280, 800, 800), 6);
     expect(ctx.rig.bounds).toEqual(CITY_BOUNDS);
 
     host.hideCity();
@@ -194,6 +194,116 @@ describe('showCity / hideCity', () => {
     expect(ctx.rig.bounds).toBeNull();
     ctx.rig.panBy(500, 500);   // bez granic pan nie jest ucinany do miasta
     expect(ctx.rig.target.x).toBeCloseTo(500, 6);
+  });
+
+  describe('kadr kamery miasta', () => {
+    /**
+     * Narożniki miasta (z najwyższym budynkiem) w pikselach okna `w` × `h` przy kamerze `rig`. `allYaws`: każdy obrót kamery (tylko gdy cel
+     * stoi w środku miasta; po przesunięciu kadru obrót wokół celu przestawia miasto, więc liczy się obecny obrót).
+     */
+    function cornersPx(rig: CameraRig, w: number, h: number, allYaws = false): { x: number; y: number }[] {
+      const out: { x: number; y: number }[] = [];
+      const yaws = allYaws ? ([0, 1, 2, 3] as const) : ([rig.yawIndex] as const);
+      const before = rig.yawIndex;
+      for (const yaw of yaws) {
+        rig.yawIndex = yaw;
+        for (const x of [CITY_BOUNDS.minX, CITY_BOUNDS.maxX]) {
+          for (const z of [CITY_BOUNDS.minZ, CITY_BOUNDS.maxZ]) {
+            for (const y of [0, 0.6]) {
+              const p = new Vector3(x, y, z).project(rig.camera);
+              out.push({ x: (p.x * 0.5 + 0.5) * w, y: (-p.y * 0.5 + 0.5) * h });
+            }
+          }
+        }
+      }
+      rig.yawIndex = before;
+      return out;
+    }
+
+    it('telefon w pionie (390×844): całe miasto widać na starcie, więc limit zoomu rośnie ponad VIEW_SIZE_MAX, a hideCity go przywraca', async () => {
+      vi.stubGlobal('window', { innerWidth: 390, innerHeight: 844 });
+      const { host, ctx } = hostOn('niska', 390 / 844);
+      await withStore(host);
+      ctx.rig.zoomBy(1.2);
+      const zoom = ctx.rig.viewSize;
+      host.showCity(CITY, STATES, 'ruch');
+      expect(ctx.rig.viewSize).toBeGreaterThan(VIEW_SIZE_MAX);
+      expect(ctx.rig.viewMax).toBeGreaterThanOrEqual(ctx.rig.viewSize);
+      for (const p of cornersPx(ctx.rig, 390, 844, true)) {
+        expect(p.x).toBeGreaterThanOrEqual(0);
+        expect(p.x).toBeLessThanOrEqual(390);
+        expect(p.y).toBeGreaterThanOrEqual(0);
+        expect(p.y).toBeLessThanOrEqual(844);
+      }
+      host.hideCity();
+      expect(ctx.rig.viewMax).toBe(VIEW_SIZE_MAX);
+      expect(ctx.rig.viewSize).toBeCloseTo(zoom, 6);
+      ctx.rig.zoomBy(0.0001);
+      expect(ctx.rig.viewSize).toBe(VIEW_SIZE_MAX);   // zwykły sklep znów nie oddali się dalej
+    });
+
+    it('prostokąt widoczny spod interfejsu: miasto mieści się w nim i stoi w jego środku (telefon: nad arkuszem, komputer: obok kolumny)', () => {
+      const cases: { w: number; h: number; area: { left: number; top: number; right: number; bottom: number } }[] = [
+        { w: 390, h: 844, area: { left: 0, top: 112, right: 390, bottom: 430 } },
+        { w: 1280, h: 800, area: { left: 0, top: 52, right: 866, bottom: 740 } },
+      ];
+      for (const { w, h, area } of cases) {
+        vi.stubGlobal('window', { innerWidth: w, innerHeight: h });
+        const { host, ctx } = hostOn('srednia', w / h);
+        host.showCity(CITY, STATES, 'ruch', area);
+        const px = cornersPx(ctx.rig, w, h);
+        const xs = px.map((p) => p.x);
+        const ys = px.map((p) => p.y);
+        const eps = 2;
+        expect(Math.min(...xs), `${w}×${h}`).toBeGreaterThanOrEqual(area.left - eps);
+        expect(Math.max(...xs), `${w}×${h}`).toBeLessThanOrEqual(area.right + eps);
+        expect(Math.min(...ys), `${w}×${h}`).toBeGreaterThanOrEqual(area.top - eps);
+        expect(Math.max(...ys), `${w}×${h}`).toBeLessThanOrEqual(area.bottom + eps);
+        // środek miasta (podłoga) stoi w środku prostokąta, o ile kamera mogła się tam przesunąć w granicach miasta
+        const c = new Vector3(0, 0, 0).project(ctx.rig.camera);
+        const cx = (c.x * 0.5 + 0.5) * w;
+        const cy = (-c.y * 0.5 + 0.5) * h;
+        expect(Math.abs(cx - (area.left + area.right) / 2), `${w}×${h} x`).toBeLessThan(w * 0.06);
+        expect(Math.abs(cy - (area.top + area.bottom) / 2), `${w}×${h} y`).toBeLessThan(h * 0.06);
+      }
+    });
+
+    it('przełączenie sklepu pod miastem zostawia ten sam kadr miasta (prostokąt pamiętany do hideCity)', async () => {
+      vi.stubGlobal('window', { innerWidth: 390, innerHeight: 844 });
+      const { host, ctx } = hostOn('srednia', 390 / 844);
+      await withStore(host);
+      const area = { left: 0, top: 112, right: 390, bottom: 430 };
+      host.showCity(CITY, STATES, 'ruch', area);
+      const size = ctx.rig.viewSize;
+      const x = ctx.rig.target.x;
+      const z = ctx.rig.target.z;
+      await withStore(host, 'traszka-2');
+      expect(ctx.rig.viewSize).toBeCloseTo(size, 6);
+      expect(ctx.rig.target.x).toBeCloseTo(x, 6);
+      expect(ctx.rig.target.z).toBeCloseTo(z, 6);
+    });
+  });
+
+  describe('pickCityLot', () => {
+    it('poza ekranem Miasta zawsze null; na mapie zwraca lokal pod punktem ekranu, a puste miejsce null', async () => {
+      const { host, ctx } = hostOn('srednia');
+      await withStore(host);
+      expect(host.pickCityLot(640, 400)).toBeNull();
+      host.showCity(CITY, STATES, 'ruch');
+      ctx.rig.camera.updateMatrixWorld();
+      const anchors = host.cityView!.pinAnchors();
+      expect(anchors.length).toBeGreaterThan(5);
+      const picked = anchors.map((a) => {
+        const p = a.world.clone().project(ctx.rig.camera);
+        return host.pickCityLot((p.x * 0.5 + 0.5) * 1280, (-p.y * 0.5 + 0.5) * 800);
+      });
+      // promień przez kotwicę trafia w budynek (sąsiad bliżej kamery może go przesłonić, ale zawsze coś stoi na drodze)
+      expect(picked.every((id) => id !== null)).toBe(true);
+      expect(picked.filter((id, i) => id === anchors[i]!.lotId).length).toBeGreaterThan(anchors.length / 2);
+      expect(host.pickCityLot(2, 2)).toBeNull();   // róg okna leży poza rombem miasta
+      host.hideCity();
+      expect(host.pickCityLot(640, 400)).toBeNull();
+    });
   });
 
   it('hideCity bez showCity nic nie robi', async () => {

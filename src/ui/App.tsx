@@ -21,6 +21,7 @@ import { TutorialHost } from './tutorial/Tutorial';
 import { floatText } from './worldOverlay';
 import type { Controls, GameActions } from './state';
 import './ui.css';
+import './city/city.css';
 
 /** Kolory marki jako zmienne CSS, żeby arkusz i TypeScript nie rozjechały się co do palety. */
 const brandVars = {

@@ -171,7 +171,7 @@ describe('nazwy z interfejsu w treści zgadzają się z interfejsem', () => {
 
   it('zakładki: każda „zakładka X” z treści to nazwa z paska zakładek', () => {
     const tabNames = walk(TabBar()).filter((v) => v.props.class === 'tt-tab-label').map((v) => textOf(v));
-    expect(tabNames).toEqual(['Sklep', 'Palety', 'Ludzie', 'Ulepszenia', 'Cele']);
+    expect(tabNames).toEqual(['Sklep', 'Palety', 'Ludzie', 'Ulepszenia', 'Cele', 'Miasto']);   // treść „Jak grać” o Mieście dopisze Zadanie 15
     const mentioned = [...all().matchAll(/zakład(?:k[aięą]|ce) ([A-ZŁŚŻŹĆ]\p{L}+)/gu)].map((m) => m[1]!);
     expect(new Set(mentioned)).toEqual(new Set(['Cele', 'Palety', 'Ludzie', 'Ulepszenia', 'Sklep']));   // wszystkie zakładki, o których mówi treść
     for (const name of mentioned) expect(tabNames, name).toContain(name);

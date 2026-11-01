@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { CameraRig, ISO_PITCH_DEG, computeFrustum } from './cameraRig';
+import { CameraRig, ISO_PITCH_DEG, VIEW_SIZE_MAX, VIEW_SIZE_MIN, computeFrustum } from './cameraRig';
 
 describe('computeFrustum', () => {
   it('viewSize to wysokość widoku w metrach, szerokość wynika z proporcji', () => {
@@ -79,6 +79,36 @@ describe('CameraRig', () => {
     expect(rig.viewSize).toBe(6);
     rig.zoomBy(0.0001);
     expect(rig.viewSize).toBe(30);
+  });
+
+  it('setViewMax podnosi górną granicę zoomu (miasto na telefonie w pionie), a powrót do VIEW_SIZE_MAX skraca widok', () => {
+    const rig = new CameraRig(0.46);
+    expect(rig.viewMax).toBe(VIEW_SIZE_MAX);
+    rig.setViewMax(70);
+    expect(rig.viewMax).toBe(70);
+    rig.zoomBy(0.0001);
+    expect(rig.viewSize).toBe(70);
+    expect(rig.camera.top).toBeCloseTo(35, 9);
+    rig.setViewMax(VIEW_SIZE_MAX);   // widok większy od nowej granicy wraca do niej
+    expect(rig.viewSize).toBe(VIEW_SIZE_MAX);
+    expect(rig.camera.top).toBeCloseTo(15, 9);
+    rig.zoomBy(0.0001);
+    expect(rig.viewSize).toBe(VIEW_SIZE_MAX);
+  });
+
+  it('setViewMax powiadamia nasłuchujących tylko wtedy, gdy coś się zmieniło, i nie schodzi poniżej VIEW_SIZE_MIN', () => {
+    const rig = new CameraRig(1);
+    const cb = vi.fn();
+    rig.onChange(cb);
+    rig.setViewMax(VIEW_SIZE_MAX);
+    expect(cb).not.toHaveBeenCalled();
+    rig.setViewMax(50);
+    expect(cb).toHaveBeenCalledTimes(1);
+    rig.setViewMax(50);
+    expect(cb).toHaveBeenCalledTimes(1);
+    rig.setViewMax(1);
+    expect(rig.viewMax).toBe(VIEW_SIZE_MIN);
+    expect(rig.viewSize).toBe(VIEW_SIZE_MIN);
   });
 
   it('zoom i resize przestawiają frustum kamery', () => {

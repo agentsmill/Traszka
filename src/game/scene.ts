@@ -8,13 +8,13 @@ import { BEVEL, PALETTE, material } from '@/render/style';
 import { cellToWorld } from '@/render/coords';
 import { attachCharacters, loadStore, unloadStore, type Loaded } from '@/render/game/loadedStore';
 import { buildStreet } from '@/render/street/buildStreet';
-import { CITY_BOUNDS, buildCity, type CityLayer, type CityView } from '@/render/city/buildCity';
+import { CITY_BOUNDS, buildCity, cityFitViewSize, type CityLayer, type CityView } from '@/render/city/buildCity';
 import type { CharacterFactory } from '@/render/characters/characterFactory';
 import { ANIM_SPEED_CAP } from '@/render/crowdView';
 import { createBlobShadows } from '@/render/characters/blobShadows';
 import { cashierCues, type CashierLook } from './cashier';
 import { CrowdMirror } from './crowdMirror';
-import { bindControls } from './controls';
+import { bindControls, dragPan } from './controls';
 import { advanceClock, clockAlpha } from './loop';
 import type { GameSession } from './session';
 import { crowdObstaclesOf, palletMarkersOf, palletRefsOf } from './palletRefs';
@@ -211,14 +211,22 @@ export interface SceneHost {
    * pokazanym mieście odświeża tylko stany lokali i warstwę. Czas gry płynie dalej, scena sklepu nadal żyje pod spodem.
    * To samo miasto to ten sam obiekt `CityState` (porównanie po tożsamości, nie po seedzie ani zawartości): wołający trzyma jedną
    * instancję na grę, a inny obiekt (nawet o tym samym seedzie) wymienia scenę miasta na nową.
+   * `area`: prostokąt okna (px), który nie jest przykryty przez interfejs (pasek u góry, zakładki, arkusz miasta). Kamera ustawia w nim
+   * całe miasto, także na telefonie w pionie, gdzie do tego trzeba oddalić ją poza `VIEW_SIZE_MAX` (limit zoomu rośnie na czas miasta).
+   * Bez `area` to całe okno. Obowiązuje do `hideCity`.
    */
-  showCity(city: CityState, states: Record<number, LotState>, layer: CityLayer): void;
+  showCity(city: CityState, states: Record<number, LotState>, layer: CityLayer, area?: ScreenArea): void;
   /** Wraca do sklepu: pokazuje go i oddaje kamerze granice, przesunięcie i zoom sprzed `showCity`. Na presecie `niska` zwalnia scenę miasta. */
   hideCity(): void;
   readonly cityShown: boolean;
   /** Widok miasta, gdy jest pokazany (kotwice pinezek, wybór lokalu, stany lokali); inaczej null. */
   readonly cityView: CityView | null;
+  /** Lokal miasta pod punktem ekranu (px) albo null; poza ekranem Miasta zawsze null. */
+  pickCityLot(x: number, y: number): number | null;
 }
+
+/** Prostokąt okna w px (początek w lewym górnym rogu). */
+export interface ScreenArea { left: number; top: number; right: number; bottom: number }
 
 /**
  * Scena gry nad kontekstem renderera `deps.ctx`: grupa tłumu z plamami cienia już w scenie, pora dnia z `?night=1`, kamera
@@ -253,6 +261,7 @@ export function createSceneHost(deps: SceneDeps): SceneHost {
   let city: CityView | null = null;
   let cityFrom: CityState | null = null; // miasto, z którego zbudowano `city`: to samo miasto nie buduje się drugi raz
   let cityOn = false;
+  let cityArea: ScreenArea | null = null;   // gdzie na ekranie ma stać miasto (poza przykryciem interfejsu); null: całe okno
   let storeCamera: CameraFrame | null = null;
   let crowdWasVisible = true;            // benchmark chowa tłum sam, więc po powrocie oddajemy to, co było
 
@@ -284,12 +293,22 @@ export function createSceneHost(deps: SceneDeps): SceneHost {
     ctx.rig.zoomBy(ctx.rig.viewSize / frame.viewSize);
   }
 
-  /** Kamera na środku miasta, oddalona do końca (całe miasto mieści się w `VIEW_SIZE_MAX`), przesuwanie tylko po mieście. */
+  /**
+   * Kamera na środku miasta, oddalona tak, żeby całe miasto mieściło się w `cityArea` (domyślnie całe okno), a środek miasta stał w środku
+   * tego prostokąta. Na ekranie poziomym wystarcza `VIEW_SIZE_MAX`; telefon w pionie potrzebuje ok. dwa razy więcej, więc limit zoomu
+   * rośnie na czas miasta (`hideCity` go przywraca). Przesuwanie tylko po mieście.
+   */
   function frameCity(): void {
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    const area = cityArea ?? { left: 0, top: 0, right: w, bottom: h };
+    const size = cityFitViewSize(area.right - area.left, area.bottom - area.top, h);
     const b = CITY_BOUNDS;
+    ctx.rig.setViewMax(Math.max(VIEW_SIZE_MAX, size));
     ctx.rig.setBounds(b.minX, b.minZ, b.maxX, b.maxZ);
     ctx.rig.panBy(-ctx.rig.target.x, -ctx.rig.target.z);
-    ctx.rig.zoomBy(ctx.rig.viewSize / VIEW_SIZE_MAX);
+    ctx.rig.zoomBy(ctx.rig.viewSize / size);
+    dragPan(ctx, (area.left + area.right) / 2 - w / 2, (area.top + area.bottom) / 2 - h / 2);   // środek miasta w środek widocznego prostokąta
   }
 
   /** Sklep, jego ulica i tłum widoczne albo ukryte (ekran Miasta zasłania je w całości). */
@@ -557,7 +576,7 @@ export function createSceneHost(deps: SceneDeps): SceneHost {
       if (loaded) attachCharacters(loaded, { factory: created, crowdParent: crowdRoot, blobs, cashierLook });   // tłum i kasjer
     },
 
-    showCity(cityState, states, layer) {
+    showCity(cityState, states, layer, area) {
       if (city && cityFrom !== cityState) dropCity();   // inne miasto (inny seed): stary widok precz
       if (!city) {
         city = buildCity(cityState, states);
@@ -570,6 +589,7 @@ export function createSceneHost(deps: SceneDeps): SceneHost {
       city.setLayer(layer);
       if (cityOn) return;
       cityOn = true;
+      cityArea = area ?? null;
       storeCamera = captureCamera();
       crowdWasVisible = crowdRoot.visible;
       setStoreVisible(false);
@@ -581,8 +601,10 @@ export function createSceneHost(deps: SceneDeps): SceneHost {
     hideCity() {
       if (!cityOn) return;
       cityOn = false;
+      cityArea = null;
       if (storeCamera) restoreCamera(storeCamera);
       storeCamera = null;
+      ctx.rig.setViewMax(VIEW_SIZE_MAX);   // zwykły limit zoomu sklepu wraca razem z jego kadrem
       setStoreVisible(true);
       if (city) {
         if (ctx.preset === 'niska') dropCity();   // telefon i słaby sprzęt: scena miasta nie zajmuje pamięci poza zakładką
@@ -592,5 +614,11 @@ export function createSceneHost(deps: SceneDeps): SceneHost {
 
     get cityShown() { return cityOn; },
     get cityView() { return cityOn ? city : null; },
+
+    pickCityLot(x, y) {
+      if (!cityOn || !city) return null;
+      raycaster.setFromCamera(new Vector2((x / window.innerWidth) * 2 - 1, -(y / window.innerHeight) * 2 + 1), ctx.rig.camera);
+      return city.pickLot(raycaster);
+    },
   };
 }

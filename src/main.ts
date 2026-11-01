@@ -9,6 +9,7 @@ import { lastSavedSeed } from '@/game/session';
 import { createShell, dropUnsentRun } from '@/game/actions';
 import { bootImport, openAtBoot } from '@/game/boot';
 import { bootMeta } from '@/game/bootMeta';
+import { browserCityScreen } from '@/game/cityScreen';
 import { bindControls } from '@/game/controls';
 import { advanceSession, debugHandleEnabled, debugHandleOf, installDebugHandle, isModalOpen, isSceneHeld } from '@/game/frame';
 import { loadMeta, needsStartScreen, saveMeta } from '@/game/meta';
@@ -121,6 +122,9 @@ function startGame(
     },
   });
 
+  // Ekran Miasta: zakładka zapala mapę, pinezki i stuknięcie w lokal (przełączenie własnego sklepu, wybór wolnego); benchmark go nie ma
+  const cityScreen = benchMode ? null : browserCityScreen(ctx, scene, shell.game, document.body);
+
   // Okno końca sezonu rankingowego i ponownej wysyłki wyniku: wysyła bieg z szuflady (albo z pamięci karty), a po przyjęciu go kasuje
   // (`dropUnsentRun`). Model odświeża się przy każdym otwarciu okna (`ui.finish`), także gdy sezon skończył się zaraz po rozruchu.
   const finishModel = createFinishModel({
@@ -171,7 +175,10 @@ function startGame(
     // Sterowanie tylko w zwykłej grze: w benchmarku nic nie rusza kamerą ani presetem, wynik zależy tylko od biegu.
     bindControls(ctx, {
       setPreset: (id) => controls.setPreset(id),
-      onTap: (x, y) => { if (shell.session && scene.loaded) shell.tap(scene.pick(x, y), x, y); },
+      onTap: (x, y) => {
+        if (scene.cityShown) cityScreen?.tap(scene.pickCityLot(x, y));   // pod mapą miasta sklep stoi ukryty: stuknięcie wybiera lokal
+        else if (shell.session && scene.loaded) shell.tap(scene.pick(x, y), x, y);
+      },
       blocked: () => !!ui.start.value || tourActive(),   // w czasie przelotu samouczka skróty gry milkną (Esc to „Pomiń”)
       extra: {
         x: () => scene.toggleExterior(),
@@ -224,6 +231,7 @@ function startGame(
     bench?.beforeRender();
     if (!ui.start.value) ctx.render();   // ekran „Nowy sklep” zasłania scenę: nie rysujemy jej pod nim (podgląd ma własny renderer, a telefon ma dość roboty)
     overlay?.update(ctx.rig.camera);
+    cityScreen?.update(ctx.rig.camera);
     const { calls, triangles } = ctx.renderer.info.render;
     const sample = meter.tick(now, calls, triangles);
     if (sample) ui.perf.value = sample;

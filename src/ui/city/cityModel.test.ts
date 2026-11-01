@@ -1,0 +1,239 @@
+import { afterEach, describe, expect, it } from 'vitest';
+import { lang } from '@/i18n';
+import { partnerSession } from '../../../tests/firmKit';
+import { createSession, firmOf } from '@/game/session';
+import { DISTRICTS } from '@/sim/city/districts';
+import { lotById } from '@/sim/city/generateCity';
+import { lotEstimate, rivalsNear } from '@/sim/city/traffic';
+import type { StoreDistrict } from '@/sim/city/types';
+import { MINUTES_PER_DAY } from '@/sim/economy/catalog';
+import { CELL_SIZE_M } from '@/sim/grid';
+import { planFor } from '@/sim/economy/franchisee';
+import { applyFirmCommand, lotState } from '@/sim/firm/commands';
+import { emptyStepOut, syncWallet } from '@/sim/firm/firm';
+import type { FirmState } from '@/sim/firm/types';
+import {
+  SWIPE_MIN_PX, basketLevel, cityLotStates, cityPinSpecs, expectationsLevel, freeLotRows, lotCardModel, neighbourLot, swipeDirection, theftLevel,
+  type LotRow,
+} from './cityModel';
+
+/*
+ * Model ekranu Miasta (spec §9.3): lista wolnych lokali, karta lokalu, poziomy słowami, nawigacja po lokalach i pinezki. Czyste funkcje
+ * firmy i miasta, bez interfejsu; tekst składa `cityText.ts`.
+ */
+
+afterEach(() => { lang.value = 'pl'; });
+
+const SEED = 'kiełbasa-42';
+const partnerFirm = (seed = SEED, wallet = 200_000): FirmState => firmOf(partnerSession(seed, wallet));
+const rowOf = (rows: LotRow[], district: StoreDistrict): LotRow => rows.find((r) => r.district === district)!;
+
+describe('freeLotRows: lista wolnych lokali', () => {
+  it('tylko lokale w stanie „wolny”, rosnąco po numerze, z numerem, adresem, dzielnicą, formatem, metrażem, widełkami i pakietem', () => {
+    const f = partnerFirm();
+    const rows = freeLotRows(SEED, f);
+    const free = f.city.lots.filter((l) => lotState(f, l.id) === 'wolny');
+    expect(rows.map((r) => r.lotId)).toEqual(free.map((l) => l.id));
+    expect(rows.length).toBeGreaterThanOrEqual(5);
+    expect(rows.map((r) => r.no)).toEqual(rows.map((_, i) => i + 1));
+    for (const r of rows) {
+      const lot = lotById(f.city, r.lotId);
+      const est = lotEstimate(SEED, f.city, r.lotId);
+      expect(r).toEqual({
+        lotId: lot.id, no: r.no, street: lot.street, number: lot.number, district: lot.district, kind: lot.spec.kind, corner: lot.spec.corner,
+        area: Math.round(lot.spec.interiorWidth * lot.spec.salesDepth * CELL_SIZE_M * CELL_SIZE_M), lo: est.lo, hi: est.hi, price: lot.package,
+      });
+      expect(r.lo).toBeLessThan(r.hi);
+      expect(r.area).toBeGreaterThan(20);
+    }
+  });
+
+  it('wynajęty lokal znika z listy, a numery pozostałych zostają (numer to miejsce w mieście, nie w kolejce)', () => {
+    const f = partnerFirm();
+    const before = freeLotRows(SEED, f);
+    const taken = before[1]!;
+    expect(applyFirmCommand(f, { type: 'rentLot', lotId: taken.lotId, pay: 'raty' }, emptyStepOut())).toEqual({ ok: true });
+    const after = freeLotRows(SEED, f);
+    expect(after.map((r) => r.lotId)).toEqual(before.filter((r) => r.lotId !== taken.lotId).map((r) => r.lotId));
+    expect(after.map((r) => r.no)).toEqual(before.filter((r) => r.lotId !== taken.lotId).map((r) => r.no));
+  });
+
+  it('estymaty liczy się raz na miasto: drugie wywołanie oddaje te same widełki bez nowych obliczeń', () => {
+    const f = partnerFirm();
+    const a = freeLotRows(SEED, f);
+    const b = freeLotRows(SEED, f);
+    expect(b).toEqual(a);
+    // widełki z modelu to widełki z symulacji (cache nie zmienia liczb)
+    expect(b.map((r) => [r.lo, r.hi])).toEqual(b.map((r) => { const e = lotEstimate(SEED, f.city, r.lotId); return [e.lo, e.hi]; }));
+  });
+});
+
+describe('poziomy słowami (progi z planu)', () => {
+  it('koszyk: ≤ 0,9 niskie, ≥ 1,2 wysokie, pomiędzy średnie', () => {
+    expect([0.8, 0.9].map(basketLevel)).toEqual(['niskie', 'niskie']);
+    expect([0.91, 1, 1.1, 1.19].map(basketLevel)).toEqual(['srednie', 'srednie', 'srednie', 'srednie']);
+    expect([1.2, 1.35].map(basketLevel)).toEqual(['wysokie', 'wysokie']);
+  });
+
+  it('oczekiwania: wysokie przy patience < 0 albo repPenalty > 1, niskie przy patience > 0', () => {
+    expect(expectationsLevel(-2, 1.5)).toBe('wysokie');
+    expect(expectationsLevel(-1, 1)).toBe('wysokie');
+    expect(expectationsLevel(0, 1.2)).toBe('wysokie');
+    expect(expectationsLevel(1, 1)).toBe('niskie');
+    expect(expectationsLevel(0, 1)).toBe('srednie');
+    expect(expectationsLevel(1, 1.5)).toBe('wysokie');   // wymagający klienci wygrywają z cierpliwością
+  });
+
+  it('kradzieże: ≥ 1,3 wysokie, ≤ 0,7 niskie, pomiędzy średnie', () => {
+    expect([1.3, 1.8].map(theftLevel)).toEqual(['wysokie', 'wysokie']);
+    expect([0.6, 0.7].map(theftLevel)).toEqual(['niskie', 'niskie']);
+    expect([0.8, 1, 1.29].map(theftLevel)).toEqual(['srednie', 'srednie', 'srednie']);
+  });
+});
+
+describe('lotCardModel: karta lokalu', () => {
+  it('liczby z miasta i dzielnicy: poziomy z mnożników dzielnicy, konkurencja z marką i odległością, pakiet z planem 12 rat', () => {
+    const f = partnerFirm();
+    for (const row of freeLotRows(SEED, f)) {
+      const card = lotCardModel(SEED, f, row.lotId, 'raty');
+      const lot = lotById(f.city, row.lotId);
+      const d = DISTRICTS[lot.district];
+      expect(card.row).toEqual(row);
+      expect(card.who).toEqual(lotEstimate(SEED, f.city, row.lotId).who);
+      expect(card.basket).toBe(basketLevel(d.basket));
+      expect(card.expectations).toBe(expectationsLevel(d.patience, d.repPenalty));
+      expect(card.theft).toBe(theftLevel(d.theft));
+      expect(card.price).toBe(lot.package);
+      expect(card.plan).toEqual(planFor(lot.package));
+      expect(card.plan.months).toBe(12);
+      expect(card.buildDays).toBe(lot.buildDays);
+      expect(card.rivals).toEqual(rivalsNear(f.city, row.lotId).map((r) => ({ brand: r.lot.brand, meters: Math.round(r.meters) })));
+    }
+  });
+
+  it('dzielnice mają swoje poziomy: Dworzec tani i złodziejski, Śródmieście drogie i wymagające, Osiedle średnie', () => {
+    const f = partnerFirm();
+    const rows = freeLotRows(SEED, f);
+    const dworzec = lotCardModel(SEED, f, rowOf(rows, 'dworzec').lotId, 'raty');
+    expect([dworzec.basket, dworzec.expectations, dworzec.theft]).toEqual(['niskie', 'niskie', 'wysokie']);
+    const centrum = lotCardModel(SEED, f, rowOf(rows, 'srodmiescie').lotId, 'raty');
+    expect([centrum.basket, centrum.expectations, centrum.theft]).toEqual(['wysokie', 'wysokie', 'niskie']);
+    const osiedle = lotCardModel(SEED, f, rowOf(rows, 'osiedle').lotId, 'raty');
+    expect([osiedle.basket, osiedle.expectations, osiedle.theft]).toEqual(['srednie', 'srednie', 'srednie']);
+  });
+
+  it('przycisk: z gotówką i statusem działa, a bez statusu, w rankingu, przy limicie i bez pieniędzy ma powód odmowy', () => {
+    const lotId = freeLotRows(SEED, partnerFirm())[0]!.lotId;
+    expect(lotCardModel(SEED, partnerFirm(), lotId, 'gotowka').action).toEqual({ enabled: true });
+    expect(lotCardModel(SEED, partnerFirm(), lotId, 'raty').action).toEqual({ enabled: true });
+
+    const noStatus = firmOf(createSession(SEED, true));
+    expect(lotCardModel(SEED, noStatus, lotId, 'raty').action).toEqual({ enabled: false, reason: 'status' });
+
+    const ranked = partnerFirm();
+    ranked.ranked = true;
+    expect(lotCardModel(SEED, ranked, lotId, 'gotowka').action).toEqual({ enabled: false, reason: 'ranked' });
+
+    const poor = partnerFirm(SEED, 1_000);
+    expect(lotCardModel(SEED, poor, lotId, 'gotowka').action).toEqual({ enabled: false, reason: 'gotowka' });
+    expect(lotCardModel(SEED, poor, lotId, 'raty').action).toEqual({ enabled: true });   // raty nie ruszają gotówki
+
+    const full = partnerFirm();
+    const [first, second] = freeLotRows(SEED, full);
+    expect(applyFirmCommand(full, { type: 'rentLot', lotId: first!.lotId, pay: 'raty' }, emptyStepOut())).toEqual({ ok: true });
+    expect(lotCardModel(SEED, full, second!.lotId, 'raty').action).toEqual({ enabled: false, reason: 'limit' });   // budowa liczy się do limitu
+  });
+
+  it('rata ponad limit nowego sklepu: powód „raty”', () => {
+    const f = partnerFirm();
+    const row = freeLotRows(SEED, f)[0]!;
+    lotById(f.city, row.lotId).package = 150_000;   // 150 tys. zł w 12 ratach z opłatą 15% to ok. 14,4 tys. zł miesięcznie
+    expect(lotCardModel(SEED, f, row.lotId, 'raty').action).toEqual({ enabled: false, reason: 'raty' });
+  });
+});
+
+describe('nawigacja po wolnych lokalach', () => {
+  const rows = [{ lotId: 10 }, { lotId: 20 }, { lotId: 30 }] as LotRow[];
+
+  it('‹ › idą po liście w kółko', () => {
+    expect(neighbourLot(rows, 10, 1)).toBe(20);
+    expect(neighbourLot(rows, 30, 1)).toBe(10);
+    expect(neighbourLot(rows, 20, -1)).toBe(10);
+    expect(neighbourLot(rows, 10, -1)).toBe(30);
+  });
+
+  it('bez wyboru (albo przy lokalu spoza listy) strzałka wchodzi na początek albo koniec listy; pusta lista daje null', () => {
+    expect(neighbourLot(rows, null, 1)).toBe(10);
+    expect(neighbourLot(rows, null, -1)).toBe(30);
+    expect(neighbourLot(rows, 99, 1)).toBe(10);
+    expect(neighbourLot([], null, 1)).toBeNull();
+    expect(neighbourLot([rows[0]!], 10, 1)).toBe(10);
+  });
+
+  it('przesunięcie palcem w lewo to następny lokal, w prawo poprzedni; krótkie albo pionowe nie liczy się', () => {
+    expect(swipeDirection(-SWIPE_MIN_PX, 0)).toBe(1);
+    expect(swipeDirection(SWIPE_MIN_PX, 4)).toBe(-1);
+    expect(swipeDirection(-SWIPE_MIN_PX + 1, 0)).toBeNull();
+    expect(swipeDirection(-120, 100)).toBeNull();   // to przewijanie karty, nie przesunięcie
+    expect(swipeDirection(0, 0)).toBeNull();
+  });
+});
+
+describe('stany lokali i pinezki dla sceny miasta', () => {
+  it('cityLotStates zna stan każdego lokalu, także tego, który generator oznaczył inaczej', () => {
+    const f = partnerFirm();
+    const states = cityLotStates(f);
+    expect(Object.keys(states)).toHaveLength(f.city.lots.length);
+    for (const l of f.city.lots) expect(states[l.id]).toBe(lotState(f, l.id));
+    expect(states[f.city.startLotId]).toBe('twoj');
+  });
+
+  it('wolny lokal ma pinezkę-kartkę z numerem, a wybrany dopisuje adres', () => {
+    const f = partnerFirm();
+    const rows = freeLotRows(SEED, f);
+    const pins = cityPinSpecs(SEED, f, null);
+    for (const r of rows) expect(pins.find((p) => p.lotId === r.lotId)).toEqual({ lotId: r.lotId, kind: 'wolny', label: String(r.no) });
+    const chosen = rows[2]!;
+    expect(cityPinSpecs(SEED, f, chosen.lotId).find((p) => p.lotId === chosen.lotId)!.label).toBe(`${chosen.no} · ul. ${chosen.street} ${chosen.number}`);
+  });
+
+  it('własny sklep jest zielony z numerem, konkurencja ma markę, lokal obok kartkę, a zwykły zajęty nie ma pinezki', () => {
+    const f = partnerFirm();
+    const pins = cityPinSpecs(SEED, f, null);
+    expect(pins.find((p) => p.lotId === f.city.startLotId)).toEqual({ lotId: f.city.startLotId, kind: 'twoj', label: 'Traszka #1' });
+    for (const l of f.city.lots.filter((x) => x.state === 'konkurencja')) {
+      expect(pins.find((p) => p.lotId === l.id)).toEqual({ lotId: l.id, kind: l.brand, label: l.brand === 'kawka' ? 'Kawka Express' : 'Szop 24h' });
+    }
+    const next = f.city.neighbourLotId;
+    if (next !== null) expect(pins.find((p) => p.lotId === next)).toMatchObject({ kind: 'wolny', label: 'lokal obok' });
+    const plain = f.city.lots.find((l) => lotState(f, l.id) === 'zajety')!;
+    expect(pins.some((p) => p.lotId === plain.id)).toBe(false);
+    // pinezki są dokładnie tam, gdzie scena ma kotwice: każdy lokal poza zwykłym zajętym
+    expect(pins.map((p) => p.lotId).sort((a, b) => a - b)).toEqual(f.city.lots.filter((l) => lotState(f, l.id) !== 'zajety').map((l) => l.id));
+  });
+
+  it('budowa ma licznik dni z odmianą', () => {
+    const f = partnerFirm();
+    const row = freeLotRows(SEED, f)[0]!;
+    syncWallet(f);
+    expect(applyFirmCommand(f, { type: 'rentLot', lotId: row.lotId, pay: 'raty' }, emptyStepOut())).toEqual({ ok: true });
+    const build = f.builds[0]!;
+    const label = (): string => cityPinSpecs(SEED, f, null).find((p) => p.lotId === row.lotId)!.label;
+    expect(cityPinSpecs(SEED, f, null).find((p) => p.lotId === row.lotId)!.kind).toBe('budowa');
+    const left = build.readyDay - Math.floor(f.stores[0]!.econ.minute / MINUTES_PER_DAY);
+    expect(label()).toBe(`za ${left} ${left === 1 ? 'dzień' : 'dni'}`);
+    build.readyDay = Math.floor(f.stores[0]!.econ.minute / MINUTES_PER_DAY) + 1;
+    expect(label()).toBe('za 1 dzień');
+    build.readyDay = Math.floor(f.stores[0]!.econ.minute / MINUTES_PER_DAY);
+    expect(label()).toBe('otwarcie dziś');
+  });
+
+  it('lokal po zamkniętym sklepie ma kartkę z dopiskiem „po Traszce” w tekście, bo napis na samej kartce jest za mały', () => {
+    const f = partnerFirm();
+    f.stores[0]!.closed = true;
+    const pin = cityPinSpecs(SEED, f, null).find((p) => p.lotId === f.city.startLotId)!;
+    expect(pin).toEqual({ lotId: f.city.startLotId, kind: 'po-traszce', label: 'po Traszce' });
+    lang.value = 'en';
+    expect(cityPinSpecs(SEED, f, null).find((p) => p.lotId === f.city.startLotId)!.label).toBe('ex-Traszka');
+  });
+});

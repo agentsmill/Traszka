@@ -24,6 +24,7 @@ import {
 } from '@/sim/economy/upgrades';
 import { nextRankAt, xpToNext } from '@/sim/economy/progress';
 import { networkIncomeOf, prestigePoints, prestigeReady } from '@/game/meta';
+import { CityPanel } from '../city/CityPanel';
 import { econ, metaView, openMonthPreview, ranked, selection, showPrestige, tab, type GameActions, type TabId } from '../state';
 import { duration, int, money, minusZl, pct, people, percentOf, plural, signedZl, zl } from './format';
 import { SpendNote, buyButtons, buyNotes, spendRisk } from './spend';
@@ -54,6 +55,7 @@ const TABS: { id: TabId; icon: string; label: string }[] = [
   { id: 'ludzie', icon: '👥', label: 'Ludzie' },
   { id: 'ulepszenia', icon: '🛠️', label: 'Ulepszenia' },
   { id: 'cele', icon: '🎯', label: 'Cele' },
+  { id: 'miasto', icon: '🗺️', label: 'Miasto' },
 ];
 
 /** Dolny pasek zakładek. Drugie stuknięcie w otwartą zakładkę ją zamyka. */
@@ -88,7 +90,7 @@ export function Sheet({ game }: { game: GameActions }) {
   if (!view || !open) return null;
   const title = tr(TABS.find((x) => x.id === open)!.label);
   return (
-    <aside class="tt-sheet" data-tut="sheet" aria-label={title}>
+    <aside class={`tt-sheet${open === 'miasto' ? ' tt-sheet-city' : ''}`} data-tut="sheet" aria-label={title}>
       <div class="tt-sheet-head">
         <h2>{title}</h2>
         <button type="button" class="tt-iconbtn" aria-label={t`Zamknij`} onClick={() => { tab.value = null; }}>✕</button>
@@ -101,6 +103,7 @@ export function Sheet({ game }: { game: GameActions }) {
         {open === 'ludzie' && <PeoplePanel s={view.s} info={view.info} game={game} v={view.v} />}
         {open === 'ulepszenia' && <ShopPanel s={view.s} info={view.info} game={game} v={view.v} />}
         {open === 'cele' && <GoalsPanel s={view.s} info={view.info} game={game} v={view.v} />}
+        {open === 'miasto' && <CityPanel game={game} />}
       </div>
     </aside>
   );

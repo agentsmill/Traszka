@@ -46,6 +46,7 @@ export class CameraRig {
 
   private _yawIndex: YawIndex = 0;
   private _viewSize = VIEW_SIZE_DEFAULT;
+  private _viewMax = VIEW_SIZE_MAX;
   private aspect: number;
   private _bounds: { minX: number; minZ: number; maxX: number; maxZ: number } | null = null;
   private readonly listeners = new Set<() => void>();
@@ -65,8 +66,11 @@ export class CameraRig {
     this.emit();
   }
 
-  /** Wysokość widoku w metrach, w [6, 30]. */
+  /** Wysokość widoku w metrach, w [6, `viewMax`] (domyślnie [6, 30]). */
   get viewSize(): number { return this._viewSize; }
+
+  /** Największa wysokość widoku, do której zoom oddala kamerę: `VIEW_SIZE_MAX`, chyba że ekran Miasta ją podniósł (`setViewMax`). */
+  get viewMax(): number { return this._viewMax; }
 
   /** Granice podane w `setBounds` (bez marginesu) albo null, gdy nie ustawiono. */
   get bounds(): Readonly<{ minX: number; minZ: number; maxX: number; maxZ: number }> | null { return this._bounds; }
@@ -76,12 +80,28 @@ export class CameraRig {
     this.yawIndex = ((this._yawIndex + dir + 4) % 4) as YawIndex;
   }
 
-  /** `factor` > 1 przybliża (widok się zmniejsza), < 1 oddala. Wynik zostaje w [6, 30]. */
+  /** `factor` > 1 przybliża (widok się zmniejsza), < 1 oddala. Wynik zostaje w [6, `viewMax`]. */
   zoomBy(factor: number): void {
-    const next = MathUtils.clamp(this._viewSize / factor, VIEW_SIZE_MIN, VIEW_SIZE_MAX);
+    const next = MathUtils.clamp(this._viewSize / factor, VIEW_SIZE_MIN, this._viewMax);
     if (next === this._viewSize) return;
     this._viewSize = next;
     this.applyFrustum();
+    this.emit();
+  }
+
+  /**
+   * Zmienia największy dozwolony widok (nie mniej niż `VIEW_SIZE_MIN`). Ekran Miasta podnosi go na telefonie w pionie, gdzie całe miasto
+   * nie mieści się przy 30 m; `VIEW_SIZE_MAX` przywraca zwykły limit. Widok większy od nowej granicy wraca do niej. Bez zmiany nic się
+   * nie dzieje (bez powiadomienia).
+   */
+  setViewMax(max: number): void {
+    const next = Math.max(VIEW_SIZE_MIN, max);
+    if (next === this._viewMax) return;
+    this._viewMax = next;
+    if (this._viewSize > next) {
+      this._viewSize = next;
+      this.applyFrustum();
+    }
     this.emit();
   }
 

@@ -10,6 +10,7 @@ import type { Command } from '@/sim/economy/commands';
 import type { CommandResult, EconEventKind, EconomyState, MonthReport } from '@/sim/economy/economy';
 import type { RemanentProtocol } from '@/sim/economy/franchisee';
 import type { MonthPreview } from '@/sim/economy/monthPreview';
+import type { CityLayer } from '@/render/city/buildCity';
 import type { StoreInfo } from '@/sim/economy/storeInfo';
 import type { FirmCommand, FirmCommandResult } from '@/sim/firm/commands';
 import type { FirmState, NetworkSummary } from '@/sim/firm/types';
@@ -63,8 +64,16 @@ export const firm: Signal<FirmView | null> = signal<FirmView | null>(null);
 export type Selection = { kind: 'pallet'; id: number } | { kind: 'slot'; slotId: string } | { kind: 'till' };
 export const selection: Signal<Selection | null> = signal<Selection | null>(null);
 
-export type TabId = 'sklep' | 'palety' | 'ludzie' | 'ulepszenia' | 'cele';
+export type TabId = 'sklep' | 'palety' | 'ludzie' | 'ulepszenia' | 'cele' | 'miasto';
 export const tab: Signal<TabId | null> = signal<TabId | null>(null);
+
+/**
+ * Ekran Miasta (zakładka `miasto`, `ui/city/CityPanel.tsx`): warstwa mapy, wybrany lokal (id lokalu miasta albo null) i sposób zapłaty za pakiet
+ * otwarcia na jego karcie. Zakładka zapala mapę (`game/cityScreen.ts` słucha `tab`, `cityLayer` i `selectedLot`). Nie są częścią zapisu.
+ */
+export const cityLayer: Signal<CityLayer> = signal<CityLayer>('ruch');
+export const selectedLot: Signal<number | null> = signal<number | null>(null);
+export const lotPay: Signal<'gotowka' | 'raty'> = signal<'gotowka' | 'raty'>('gotowka');
 
 export type ToastKind = EconEventKind | 'ok' | 'error';
 export interface Toast { id: number; text: string; kind: ToastKind }
