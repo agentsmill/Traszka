@@ -228,7 +228,7 @@ export const EN_CARDS: Record<string, EnCard> = {
     title: 'Last train cancelled',
     text: 'The last train has been cancelled, and {n} people who missed their connection have walked into the shop. Head Office’s procedure “Customer Who Is Not a Customer” runs to 14 pages and not a single radiator.',
     answers: [
-      { label: 'Let them in to warm up', result: 'People warmed up, phones charged, and the chocolate bars on the shelf seem to have thinned out. Shrinkage doesn’t ask questions; it just counts.' },
+      { label: 'Let them in to warm up', result: 'People warmed up, phones charged. The procedure doesn’t say who counts the chocolate bars by the radiator, so shrinkage will count them itself.' },
       { label: 'Half-price coffee out of my margin', result: 'The half-price coffee was gone within a quarter of an hour. “Thank you, Traszka” appeared on the Traszkapp, and Head Office asked who had approved the promotion.' },
       {
         label: 'Head Office regulations: no purchase, no loitering',

@@ -342,15 +342,20 @@ describe('podgląd końca miesiąca dla sieci: koniec gry', () => {
     const f = twoStores('raty');
     f.person.wallet = DEBT_LIMIT + 1;   // pierwszy wydatek z gotówki (mandat, koszt z karty) przekracza granicę
     syncWallet(f);
-    // wydatek ma być pewny, a nie z losowania talii (sklep #2 stoi w lokalu, którego dzielnica zmienia talię, 4a.2): mandat z karty na biurku
+    // wydatek ma być pewny, a nie z losowania talii (sklep #2 stoi w lokalu, którego dzielnica zmienia talię, 4a.2): mandat z karty, która
+    // pokaże się za 3 doby. Do tego czasu sklepy zarabiają, więc mandat jest większy od dochodu z tych dób (mniejszy by się w nim rozpłynął)
     const first = activeStore(f).econ;
     const free = { delta: {}, mods: [], risk: null };
+    const showAt = first.minute + 3 * DAY;
     first.tycoon.cards.pending.push({
-      seq: 900, id: 'wiek', day: Math.floor(first.minute / DAY), showAt: first.minute, params: {}, defaultAnswer: 1,
-      answers: [free, { delta: { fine: -500 }, mods: [], risk: null }, free],
+      seq: 900, id: 'wiek', day: Math.floor(showAt / DAY), showAt, params: {}, defaultAnswer: 1,
+      answers: [free, { delta: { fine: -5000 }, mods: [], risk: null }, free],
     });
-    const preview = runPreview(f)!;
+    const job = startFirmMonthPreview(f);
+    while (!job.step(100_000)) { /* do końca */ }
+    const preview = job.result()!;
     expect(preview).not.toBeNull();
+    expect(job.progress().day).toBeGreaterThanOrEqual(4);   // podgląd przeliczył co najmniej 3 doby z naliczeniami, zanim padł debet
     expect(preview.endedEarly).toBe(true);
     expect(preview.gameOver).toBe('debt');
     expect(preview.label).toBe('');
