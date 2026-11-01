@@ -3,7 +3,7 @@ import { createRng, subSeed, type Rng } from '@/sim/rng';
 import { REMONTS } from '@/sim/economy/upgrades';
 import { pickLot } from '@/sim/store/lots';
 import { cornerSide, takeoverSide } from '@/sim/store/takeover';
-import { FRONT_WALL_Y, type LotKind, type StoreLayout } from '@/sim/store/types';
+import { FRONT_WALL_Y, type LotKind, type LotSpec, type StoreLayout } from '@/sim/store/types';
 import { CELL_SIZE_M } from '@/sim/grid';
 import { PALETTE } from '@/render/style';
 import { roundedBoxGeometry } from '@/render/store/parts';
@@ -480,12 +480,13 @@ function pickColors(style: LotKind, rng: Rng, taken: string[]): [string, string]
 }
 
 /**
- * O ile metrów remonty poszerzyły sklep względem układu z poziomu 0 (lokal sąsiada, który sklep zajął). Układ bazowy to
- * `pickLot(seed)`, a `layoutFor` dokłada do jego `interiorWidth` kratki remontu, więc różnica szerokości obrysu
- * (`storeOuter`) to dokładnie różnica kratek razy `CELL_SIZE_M`. Na poziomie 0 jest 0.
+ * O ile metrów remonty poszerzyły sklep względem układu z poziomu 0 (lokal sąsiada, który sklep zajął). Układ bazowy to lokal
+ * `baseLot` (sklep w lokalu miasta ma go w `StoreInfo.site.lot`) albo, bez niego, `pickLot(seed)`, a `layoutFor` dokłada do jego
+ * `interiorWidth` kratki remontu, więc różnica szerokości obrysu (`storeOuter`) to dokładnie różnica kratek razy `CELL_SIZE_M`.
+ * Na poziomie 0 jest 0. Sklep w lokalu miasta musi podać lokal: jego `pickLot` ma inną szerokość niż lokal, w którym stoi.
  */
-export function grownWidth(layout: Pick<StoreLayout, 'width'>, seed: string): number {
-  return Math.max(0, layout.width - (pickLot(seed).interiorWidth + 2)) * CELL_SIZE_M;
+export function grownWidth(layout: Pick<StoreLayout, 'width'>, seed: string, baseLot?: LotSpec): number {
+  return Math.max(0, layout.width - ((baseLot ?? pickLot(seed)).interiorWidth + 2)) * CELL_SIZE_M;
 }
 
 /**
@@ -495,8 +496,9 @@ export function grownWidth(layout: Pick<StoreLayout, 'width'>, seed: string): nu
  * Sklep poszerzony remontem zajmuje lokal sąsiada po stronie przejęcia (`takeoverSide`): ten sąsiad ma wylosowaną szerokość
  * pomniejszoną o przyrost sklepu (nie mniej niż `MIN_TAKEN_NEIGHBOUR_W`), reszta losowań jest jak bez remontu. Dopóki
  * zostaje jeszcze następny remont (`remontLevel` < liczba remontów), w jego witrynie przy sklepie wisi kartka „DO WYNAJĘCIA”.
+ * `baseLot` to lokal, z którego sklep wyrósł (patrz `grownWidth`); bez niego `pickLot(seed)`, czyli sklep startowy.
  */
-export function planRow(layout: StoreLayout, seed: string, remontLevel = 0): { own: VolumeSpec[]; neighbours: VolumeSpec[] } {
+export function planRow(layout: StoreLayout, seed: string, remontLevel = 0, baseLot?: LotSpec): { own: VolumeSpec[]; neighbours: VolumeSpec[] } {
   const rng = createRng(subSeed(subSeed(seed, 'street'), 'budynki'));
   const o = storeOuter(layout);
   const kind = layout.lot.kind;
@@ -528,7 +530,7 @@ export function planRow(layout: StoreLayout, seed: string, remontLevel = 0): { o
   }
 
   const takeover = takeoverSide(layout, seed);
-  const grown = grownWidth(layout, seed);
+  const grown = grownWidth(layout, seed, baseLot);
   const neighbours: VolumeSpec[] = [];
   for (const side of ['minX', 'maxX'] as const) {
     const gap = corner === side ? SIDE_STREET.total : 0;

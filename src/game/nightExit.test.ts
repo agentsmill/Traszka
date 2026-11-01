@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { StaffCrew } from '@/render/staff/crew';
 import { MINUTES_PER_DAY, OPEN_FROM, OPEN_TO } from '@/sim/economy/catalog';
 import { staffOnShift } from '@/sim/economy/tycoon/shift';
+import { emptyStepOut } from '@/sim/firm/firm';
 import { advanceSession } from './frame';
 import { MemoryStorage } from './memoryStorage';
 import { palletRefsOf } from './palletRefs';
@@ -28,7 +29,7 @@ function night(speed: number): { emptyAfter: number | null; night: number; atClo
   const dt = 1 / 60;
   let real = 0, sinceSync = 0, closedAt: number | null = null, emptyAt: number | null = null, atClose = 0;
   while (s.minute < reopen && real < 600) {
-    advanceSession(session, dt, speed, false, []);
+    advanceSession(session, dt, speed, false, emptyStepOut());
     s.tycoon.cards.pending = s.tycoon.cards.pending.filter((c) => c.showAt > s.minute);
     real += dt;
     sinceSync += dt;

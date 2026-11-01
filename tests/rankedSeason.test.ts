@@ -1,9 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { MINUTES_PER_DAY } from '@/sim/economy/catalog';
 import { COMMAND_TYPES, type Command } from '@/sim/economy/commands';
-import { awaitingDecision, type EconEvent, type EconomyState } from '@/sim/economy/economy';
+import { awaitingDecision, type EconomyState } from '@/sim/economy/economy';
 import { BOT_VALUATION } from '@/sim/economy/tycoon/bots';
 import { bestAnswer, visibleCards } from '@/sim/economy/tycoon/cards';
+import { emptyStepOut } from '@/sim/firm/firm';
 import { RANKED_SEASON_END_MINUTE, RANKED_SEASON_MONTHS, seasonBankrupt, seasonScore } from '@/sim/ranked';
 import { replayRun, type LogEntry, type RunRecord } from '@/sim/run';
 import { SIM_VERSION } from '@/sim/simVersion';
@@ -189,7 +190,7 @@ interface Season {
 
 function playSeason(storage: MemoryStorage): Season {
   const script = buildScript();
-  const events: EconEvent[] = [];
+  const events = emptyStepOut();
   const accepted = new Map<number, boolean>();
   const cards: Season['cards'] = [];
   const reloads: Reload[] = [];
@@ -257,7 +258,7 @@ function playSeason(storage: MemoryStorage): Season {
 
     reloadIfDue(false);
 
-    events.length = 0;
+    events.active.length = events.background.length = events.firm.length = 0;
     advanceSession(session, FRAME_DT, SPEED, false, events);
   }
   return { session, reloads, accepted, cards, frames };

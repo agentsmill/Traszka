@@ -17,7 +17,7 @@ import { clearSeedFromUrl, createSceneHost, startTestScene, writeSeedToUrl } fro
 import { initialStartForm, type StartChoice } from '@/game/start';
 import { play, buzz, setSound, setVibration } from '@/ui/sfx';
 import { confetti } from '@/ui/fx';
-import type { EconEvent } from '@/sim/economy/economy';
+import { emptyStepOut } from '@/sim/firm/firm';
 import { renderUi } from '@/ui/App';
 import { listenForNotices, postNotice } from '@/ui/Notice';
 import { createRankingClient } from '@/ui/ranking/client';
@@ -210,9 +210,9 @@ function startGame(
     const modal = isModalOpen(session);
     const held = isSceneHeld(session, modal);   // okno albo karta decyzji: ekonomia stoi, więc i scena (tłum, ludzie, dymki)
     if (session && loaded) {
-      const events: EconEvent[] = [];
-      advanceSession(session, realDt, loaded.world.speed, modal, events);
-      shell.handleEvents(events);   // układ zmienia tylko polecenie (`dispatchCommand`), więc tu sceny nie przebudowujemy
+      const out = emptyStepOut();
+      advanceSession(session, realDt, loaded.world.speed, modal, out);
+      shell.handleFirmEvents(out);   // aktywny sklep jak dotąd, sklepy w tle i firma wg tabeli tras; scenę przebudowuje tylko polecenie (remont, przełączenie) i zamknięcie aktywnego sklepu
     }
     scene.syncVisuals(session);
     if (session && now - lastPublish > 200) { lastPublish = now; shell.publish(); }

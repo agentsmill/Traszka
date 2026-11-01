@@ -223,10 +223,14 @@ export function offlineEarnings(s: EconomyState, hours: number): number {
 /** Okno „Witaj z powrotem”: zarobek pod nieobecność i premia za serię dni. */
 export interface WelcomeOffer { hours: number; offline: number; streak: number | null; daily: { cash: number; ogonki: number } | null }
 
-/** Co gracz ma do odebrania po powrocie do istniejącej gry (null: nic). Nie zmienia mety; odbiór to `claimDaily` i `grantOffline`. */
-export function welcomeOffer(meta: Meta, s: EconomyState, now: Date): WelcomeOffer | null {
+/**
+ * Co gracz ma do odebrania po powrocie do istniejącej gry (null: nic). Nie zmienia mety; odbiór to `claimDaily` i `grantOffline`.
+ * `others` to pozostałe otwarte sklepy firmy: zarobek za nieobecność to suma po wszystkich otwartych sklepach (każdy z własnego ostatniego
+ * miesiąca), a premia dzienna jest jedna na osobę. Gotówka jest wspólna, więc wypłata idzie do portfela raz (`grantToFirm`).
+ */
+export function welcomeOffer(meta: Meta, s: EconomyState, now: Date, others: readonly EconomyState[] = []): WelcomeOffer | null {
   const hours = meta.lastSeen > 0 ? (now.getTime() - meta.lastSeen) / 3_600_000 : 0;
-  const offline = offlineEarnings(s, hours);
+  const offline = [s, ...others].reduce((sum, store) => sum + offlineEarnings(store, hours), 0);
   const streak = pendingDaily(meta, now);
   const daily = streak !== null ? dailyReward(streak) : null;
   return offline > 0 || daily ? { hours, offline, streak, daily } : null;
@@ -248,11 +252,14 @@ export interface StartupWindow { intro: boolean; welcome: WelcomeOffer | null }
  * ma co oddać. Nic nie dostaje: koniec gry (wstaje okno wypowiedzenia umowy), sklep tymczasowy (to nie pierwsza gra
  * gracza, a nagrody miałyby wylądować w sklepie, którego nikt nie zapisze) i gra z metą z nowszej wersji (seria dni
  * i czas wyjścia są domyślne, więc nagroda wracałaby przy każdym odświeżeniu). Bieg rankingowy (`mode`) też nic nie dostaje: nagroda
- * za nieobecność i premia dzienna zmieniają stan poza dziennikiem poleceń, a serwer takiego biegu nie odtworzy.
+ * za nieobecność i premia dzienna zmieniają stan poza dziennikiem poleceń, a serwer takiego biegu nie odtworzy. `others` to pozostałe
+ * otwarte sklepy firmy (zarobek za nieobecność liczy się po wszystkich, patrz `welcomeOffer`).
  */
-export function startupWindow(meta: Meta, s: EconomyState, ephemeral: boolean, now: Date, mode: 'casual' | 'ranked' = 'casual'): StartupWindow {
+export function startupWindow(
+  meta: Meta, s: EconomyState, ephemeral: boolean, now: Date, mode: 'casual' | 'ranked' = 'casual', others: readonly EconomyState[] = [],
+): StartupWindow {
   const none = { intro: false, welcome: null };
   if (ephemeral || s.gameOver || mode === 'ranked') return none;
   if (s.minute === OPEN_FROM && s.total.customers === 0) return { intro: true, welcome: null };
-  return meta.readOnly ? none : { intro: false, welcome: welcomeOffer(meta, s, now) };
+  return meta.readOnly ? none : { intro: false, welcome: welcomeOffer(meta, s, now, others) };
 }

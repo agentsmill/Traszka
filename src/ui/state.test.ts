@@ -7,8 +7,9 @@ import { computeStoreInfo } from '@/sim/economy/storeInfo';
 import { visibleCards } from '@/sim/economy/tycoon/cards';
 import { MemoryStorage } from '@/game/memoryStorage';
 import {
-  closeFinish, closeHowTo, closePanel, dismissStory, econ, finish, howTo, isWindowOpen, offerTutorial, openHowTo, openPanel, openRanking,
-  panel, pushStory, pushToast, ranked, report, showPrestige, start, story, toasts, tutorialOffer, welcome, type GameActions,
+  closeFinish, closeHowTo, closeNetworkReport, closePanel, closeRemanent, dismissStory, econ, finish, firm, howTo, isWindowOpen, networkReport,
+  offerTutorial, openHowTo, openPanel, openRanking, panel, pushStory, pushToast, ranked, remanent, report, showPrestige, start, story, toasts,
+  tutorialOffer, welcome, type FirmView, type GameActions, type NetworkReportView, type RemanentView,
 } from './state';
 import { setTour } from './tutorial/memory';
 
@@ -25,6 +26,9 @@ const clearWindows = (): void => {
   ranked.value = null;
   panel.value = null;
   tutorialOffer.value = false;
+  networkReport.value = null;
+  remanent.value = null;
+  firm.value = null;
 };
 
 beforeEach(() => {
@@ -162,6 +166,8 @@ describe('isWindowOpen: każde okno z sygnałem zatrzymuje grę, karta decyzji i
     ['okno powitalne', () => { welcome.value = { hours: 2, offline: 0, streak: 1, daily: { cash: 0, ogonki: 2 } }; }],
     ['prestiż', () => { showPrestige.value = true; }],
     ['okno końca sezonu', () => { finish.value = { open: true }; }],
+    ['podsumowanie sieci i wyciągi sklepów (okno miesiąca przy kilku sklepach)', () => { networkReport.value = {} as NetworkReportView; }],
+    ['protokół remanentu', () => { remanent.value = {} as RemanentView; }],
     ['ekran „Nowy sklep”', () => { start.value = {} as NonNullable<typeof start.value>; }],
     ['„Jak grać”', () => openHowTo()],
   ];
@@ -268,5 +274,33 @@ describe('panele rankingu: sygnał panel', () => {
     ranked.value = null;
     openRanking();
     expect(panel.value).toEqual({ id: 'ranking', tab: 'global' });
+  });
+});
+
+describe('firma i podsumowanie sieci w stanie interfejsu', () => {
+  it('firm startuje pusta, a FirmView niesie firmę i wersję publikacji (jak EconView)', () => {
+    expect(firm.value).toBeNull();
+    const view: FirmView = { f: {} as FirmView['f'], v: 3 };
+    firm.value = view;
+    expect(firm.value).toBe(view);
+    expect(isWindowOpen()).toBe(false);   // firma to dane, a nie okno
+  });
+
+  it('networkReport otwiera okno (gra stoi), closeNetworkReport je zamyka', () => {
+    expect(networkReport.value).toBeNull();
+    networkReport.value = { summary: { label: 'wrzesień 2026', wallet: 1000, stores: [{ id: 1, profit: 10, net: 20 }, { id: 2, profit: -5, net: -7 }], invest: 0, total: 13 }, reports: [] };
+    expect(isWindowOpen()).toBe(true);
+    closeNetworkReport();
+    expect(networkReport.value).toBeNull();
+    expect(isWindowOpen()).toBe(false);
+  });
+
+  it('protokoły remanentu kilku sklepów to jedno okno: closeRemanent zdejmuje je razem', () => {
+    const protocol = { day: 90 } as RemanentView['protocol'];
+    remanent.value = { protocol, text: 'a', stores: [{ storeId: 1, protocol, text: 'a' }, { storeId: 2, protocol, text: 'b' }] };
+    expect(isWindowOpen()).toBe(true);
+    closeRemanent();
+    expect(remanent.value).toBeNull();
+    expect(isWindowOpen()).toBe(false);
   });
 });

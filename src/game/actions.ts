@@ -1,11 +1,16 @@
+import { tr } from '@/i18n';
 import type { CharacterFactory } from '@/render/characters/characterFactory';
-import { applyCommand, type Command } from '@/sim/economy/commands';
+import type { Command } from '@/sim/economy/commands';
 import {
-  awaitingDecision, grantDaily, grantOffline, processLevels, stepMinute, tapCombo, type CommandResult, type EconEvent, type EconEventKind,
+  awaitingDecision, grantDaily, grantOffline, processLevels, tapCombo, type CommandResult, type EconEvent, type EconEventKind, type MonthReport,
 } from '@/sim/economy/economy';
 import { rankFor } from '@/sim/economy/progress';
 import { noticeLevel } from '@/sim/economy/tycoon/notices';
+import { applyFirmCommand, type FirmCommand, type FirmCommandResult } from '@/sim/firm/commands';
+import { activeStore, applyStoreCommand, emptyStepOut, grantToFirm, openStores, stepFirmMinute } from '@/sim/firm/firm';
+import type { FirmStepOut } from '@/sim/firm/types';
 import { seasonBankrupt } from '@/sim/ranked';
+import { firmEventText, refusalText, storeName } from '@/ui/city/firmText';
 import type { Sfx } from '@/ui/sfx';
 import * as ui from '@/ui/state';
 import { bootMeta } from './bootMeta';
@@ -19,14 +24,15 @@ import {
 import type { ScenePick } from './scene';
 import { chooseStore, freeSeed } from './seeds';
 import {
-  NEWER_SAVE_NOTICE, RANKED_TAP_LOG_MAX, RUN_LOG_MAX, UNBUILDABLE_SAVE_NOTICE, createSession, discardSave, hasStoredSave, lastSavedSeed, retireSession, reviveSession,
-  saveSession, type GameSession,
+  NEWER_SAVE_NOTICE, RANKED_TAP_LOG_MAX, RUN_LOG_MAX, UNBUILDABLE_SAVE_NOTICE, createSession, discardSave, firmOf, hasStoredSave, lastSavedSeed, pointAtActive,
+  retireSession, reviveSession, saveSession, type GameSession,
 } from './session';
 import { initialStartForm, noticeAfterOpen, openChosen, openRequestFor, type StartChoice, type StartForm, type StoreSwitch } from './start';
 
 /**
- * Warstwa gry nad `applyCommand`: każde polecenie gracza przechodzi tędy. Dyspozytor stosuje je do stanu (czysta symulacja),
- * dopisuje do dziennika sesji (`session.run`, z którego `replayRun` odtwarza bieg co do bajtu) i uruchamia kroki po poleceniu:
+ * Warstwa gry nad `applyCommand`: każde polecenie gracza przechodzi tędy. Dyspozytor stosuje je do stanu (czysta symulacja, przez firmę:
+ * polecenie idzie do aktywnego sklepu na wspólnej gotówce), dopisuje do dziennika sesji (`session.run`, z którego `replayRun` odtwarza bieg
+ * co do bajtu, a od ekspansji `session.firmRun` dla `replayFirm`) i uruchamia kroki po poleceniu:
  * dźwięk, wibrację, komunikaty, zdarzenia, zapis i przebudowę sceny po remoncie. Same efekty wstrzykuje wołający (`CommandEffects`),
  * więc moduł nie dotyka ani przeglądarki, ani sceny i da się go sprawdzić w node; z `@/ui/*` bierze sygnały stanu (`state.ts`)
  * i typy, a dźwięk, konfetti, komunikaty i scenę dostaje od wołającego.
@@ -42,9 +48,11 @@ export interface CommandEffects {
   /** `fx` i `fy` to ułamki szerokości i wysokości okna (wołający przelicza je na piksele). */
   confetti(fx: number, fy: number, count: number): void;
   handleEvents(events: EconEvent[]): void;
+  /** Zdarzenia firmy z polecenia firmy (budowa, wypowiedzenie). Bez tego efektu (testy poleceń sklepu) zdarzenia firmy nie mają dokąd iść. */
+  handleFirmEvents?(out: FirmStepOut): void;
   persist(): void;
   clearSelection(): void;
-  /** Buduje scenę od nowa z układu `session.layout` (po remoncie). Może rzucić: `dispatchCommand` to łapie. */
+  /** Buduje scenę od nowa z układu `session.layout` (po remoncie i po zmianie aktywnego sklepu). Może rzucić: `dispatchCommand` i `dispatchFirm` to łapią. */
   rebuildScene(): void;
   /** Komunikat u góry ekranu, który zostaje dłużej niż toast (błąd, który wymaga reakcji gracza). */
   notice(text: string): void;
@@ -93,11 +101,12 @@ const REBUILD_FAILED = 'Nie udało się przebudować sklepu po remoncie. Postęp
 const REBUILD_FAILED_EPHEMERAL = 'Nie udało się przebudować sklepu po remoncie. Ten sklep jest tymczasowy — odśwież stronę, żeby wrócić do swojego.';
 
 /**
- * Wyłącza dziennik sesji: stan zmienił się poza poleceniami (nagroda powitalna za nieobecność, `skip`), więc odtworzenie
+ * Wyłącza dzienniki sesji (`run` i `firmRun`): stan zmienił się poza poleceniami (nagroda powitalna za nieobecność, `skip`), więc odtworzenie
  * z dziennika już by go nie dało. Gra toczy się dalej bez dziennika.
  */
 export function markOffLog(session: GameSession): void {
   session.run = null;
+  session.firmRun = null;
 }
 
 const SEASON_OVER_TEXT = 'Sezon dobiegł końca.';
@@ -134,11 +143,11 @@ function refuse(text: string, fx: CommandEffects): CommandResult {
 /**
  * Polecenie gracza: kroki po kolei, jak w dawnym `act` + `afterAction` z main.ts.
  * 1. zaznaczenie zdjęte przed poleceniem (`clearSelection: 'before'`);
- * 2. wpis do dziennika, także polecenia, które się nie uda (serwer odtwarzający robi to samo);
- * 3. `applyCommand`;
+ * 2. wpis do dziennika (i do dziennika firmy z numerem aktywnego sklepu), także polecenia, które się nie uda (serwer odtwarzający robi to samo);
+ * 3. `applyStoreCommand`: polecenie w aktywnym sklepie na portfelu osoby (debet od dwóch sklepów sprawdza firma);
  * 4. wynik: błąd to toast i dźwięk błędu, sukces to toast (gdy `okToast` i jest tekst), dźwięk, wibracja i konfetti;
  * 5. zdarzenia (poziom, złota paleta…);
- * 6. po remoncie: nowy układ w sesji, zapis i przebudowa sceny, której błąd nie przerywa polecenia;
+ * 6. po remoncie: nowy układ w sesji (`pointAtActive`), zapis i przebudowa sceny, której błąd nie przerywa polecenia;
  * 7. zapis po udanym poleceniu, o ile nie zapisano go już w kroku 6;
  * 8. zaznaczenie zdjęte po poleceniu (`clearSelection: 'after'`);
  * 9. odświeżenie sceny i interfejsu.
@@ -164,13 +173,19 @@ export function dispatchCommand(session: GameSession, cmd: Command, fx: CommandE
 
   if (after.clearSelection === 'before') fx.clearSelection();
 
+  const f = firmOf(session);
   const run = session.run;
   if (run) {
     if (run.record.log.length >= RUN_LOG_MAX) markOffLog(session);   // ten wpis przekroczyłby limit: dziennika już nie prowadzimy
     else run.record.log.push({ minute: session.econ.minute, seq: run.seq++, cmd: command });
   }
+  const firmRun = session.firmRun;   // po `markOffLog` powyżej: ten sam limit i te same warunki null co dziennik biegu
+  if (firmRun) {
+    if (firmRun.record.log.length >= RUN_LOG_MAX) session.firmRun = null;
+    else firmRun.record.log.push({ minute: session.econ.minute, seq: firmRun.seq++, store: f.activeId, cmd: command });
+  }
 
-  const outcome = applyCommand(session.econ, session.info, command);
+  const outcome = applyStoreCommand(f, command);
   const { result } = outcome;
   if (!result.ok) {
     fx.toast(result.text, 'error');
@@ -186,9 +201,7 @@ export function dispatchCommand(session: GameSession, cmd: Command, fx: CommandE
 
   let persisted = false;
   if (outcome.layoutChanged && outcome.layout && outcome.info) {
-    session.layout = outcome.layout;
-    session.info = outcome.info;
-    session.layoutLevel = session.econ.remontLevel;
+    pointAtActive(session);   // `applyStoreCommand` wpisał nowy układ i opis do aktywnego sklepu, a sesja wskazuje ten sklep
     fx.persist();   // zapis przed przebudową: gdy scena się nie zbuduje, postęp i tak jest bezpieczny
     persisted = true;
     try {
@@ -201,6 +214,55 @@ export function dispatchCommand(session: GameSession, cmd: Command, fx: CommandE
 
   if (after.persist && result.ok && !persisted) fx.persist();
   if (after.clearSelection === 'after') fx.clearSelection();
+  fx.refresh();
+  return result;
+}
+
+/**
+ * Polecenie firmy (wynajem lokalu, przełączenie sklepu, wypowiedzenie umowy): `applyFirmCommand` na firmie sesji. Kroki po kolei:
+ * 1. bieg zwykły: `run` przestaje opisywać stan (jeden sklep w `RunRecord` nie opisze dwóch), a polecenie idzie do dziennika firmy;
+ *    bieg rankingowy nie zmienia żadnego dziennika, a wynajem odmawia z `ranked`;
+ * 2. odmowa nie rusza stanu: toast z tekstem Centrali (`refusalText`) i dźwięk błędu;
+ * 3. po przełączeniu sesja wskazuje nowy aktywny sklep (`pointAtActive`), zaznaczenie schodzi, a scena buduje się od nowa z jego seedem
+ *    (ta sama droga i ten sam komunikat porażki co po remoncie; porażka nie cofa przełączenia);
+ * 4. zdarzenia firmy (budowa, wypowiedzenie) idą do powłoki, zapis i odświeżenie.
+ * Przełączenie nie zależy od zegara ani od okien: działa w pauzie, przy karcie i przy otwartym oknie miesiąca. Karta aktywnego sklepu, który
+ * gracz porzucił, czeka na zastępcę (następna minuta firmy), a karta, która pokazała się w nowym aktywnym sklepie, czeka na gracza.
+ */
+export function dispatchFirm(session: GameSession, cmd: FirmCommand, fx: CommandEffects): FirmCommandResult {
+  const command = (typeof cmd === 'object' && cmd !== null && !Array.isArray(cmd) ? { ...cmd } : cmd) as FirmCommand;
+  const f = firmOf(session);
+  if (session.mode !== 'ranked') {
+    session.run = null;
+    const firmRun = session.firmRun;
+    if (firmRun) {
+      if (firmRun.record.log.length >= RUN_LOG_MAX) session.firmRun = null;
+      else firmRun.record.log.push({ minute: session.econ.minute, seq: firmRun.seq++, firm: command });
+    }
+  }
+
+  const out = emptyStepOut();
+  const result = applyFirmCommand(f, command, out);
+  if (!result.ok) {
+    fx.toast(refusalText(result.reason), 'error');
+    fx.play('error');
+    fx.refresh();
+    return result;
+  }
+
+  if (session.econ !== activeStore(f).econ) {
+    pointAtActive(session);
+    fx.clearSelection();
+    try {
+      fx.rebuildScene();
+    } catch (error) {
+      console.error('Przebudowa sklepu po przełączeniu nie powiodła się.', error);
+      fx.notice(session.ephemeral ? REBUILD_FAILED_EPHEMERAL : REBUILD_FAILED);
+    }
+  }
+  if (command.type === 'rentLot') fx.play('coins');
+  fx.handleFirmEvents?.(out);
+  fx.persist();
   fx.refresh();
   return result;
 }
@@ -290,6 +352,15 @@ export interface GameShell {
    * końca sezonu `ui.finish`).
    */
   handleEvents(events: EconEvent[]): void;
+  /**
+   * Zdarzenia jednej klatki firmy (`FirmStepOut` z `advanceSession`): `out.active` idzie dzisiejszym `handleEvents`, a reszta według tabeli
+   * tras. Sklepy w tle: wyciąg (`month`) do okna sieci, remanent do okna protokołów (`RemanentView.stores`), nowy próg zaufania i koniec
+   * współpracy do okna „OK” z nazwą sklepu, drobiazgi pomijane. Firma: status, otwarcie, wypowiedzenie, rozliczenie końcowe, zamknięcie,
+   * debet i koniec do okien „OK” (`firmText.ts`), raport sieci do `ui.networkReport`, zastępca i budowa jako toast z odświeżeniem. Gdy
+   * minuta zamknęła aktywny sklep, scena ładuje się od nowa na pozostałym, a wyciąg zamkniętego trafia do okna sieci, nie do okna
+   * aktywnego. Pętla klatek woła to co klatkę, także z pustym `out` (zamyka sezon rankingowy jak `handleEvents`).
+   */
+  handleFirmEvents(out: FirmStepOut): void;
   /** Stuknięcie w scenę (`hit` z `SceneHost.pick`, `x`, `y` to punkt ekranu w px): rozładunek, obsługa klienta, karta zakupu albo zdjęcie zaznaczenia. */
   tap(hit: ScenePick | null, x: number, y: number): void;
   /** Sklep z tekstu wpisanego w ⚙: te same zasady co na ekranie startowym. */
@@ -464,7 +535,9 @@ export function createShell(deps: ShellDeps): GameShell {
   function publish(): void {
     const { session } = shell;
     if (!session) return;
-    ui.econ.value = { s: session.econ, info: session.info, v: ++econVersion };
+    const v = ++econVersion;
+    ui.econ.value = { s: session.econ, info: session.info, v };
+    ui.firm.value = { f: firmOf(session), v };
     ui.ephemeral.value = session.ephemeral;
     setRankedView(rankedViewOf(session));
   }
@@ -498,6 +571,85 @@ export function createShell(deps: ShellDeps): GameShell {
       ui.pushToast(e.text, e.kind);
     }
     concludeSeason();   // na końcu, bo pętla klatek woła to co klatkę (także z pustą listą): zapis dnia i raport miesiąca z tej samej klatki są już za nami
+  }
+
+  /**
+   * Zdarzenia jednej klatki firmy według tabeli tras (`GameShell.handleFirmEvents`). Zdarzenia aktywnego sklepu idą `handleEvents` jak
+   * dotąd, z jednym wyjątkiem: gdy minuta zamknęła miesiąc w kilku sklepach (firma wysłała raport sieci), wyciąg aktywnego nie otwiera
+   * własnego okna, tylko trafia do okna sieci razem z wyciągami sklepów w tle. Numer sklepu aktywnego wychodzi z raportu sieci (jedyny
+   * sklep bez wyciągu w tle), bo aktywny mógł zostać zamknięty tą samą minutą i `activeId` wskazuje już inny; remanent aktywnego bierze numer
+   * sklepu, który stał w scenie przed klatką. Kolejne minuty tej samej klatki po zamknięciu aktywnego niosą już zdarzenia nowego aktywnego,
+   * ale to drobiazgi bez numeru sklepu (dzień, dostawa): wyciąg i remanent zamykają się w jednej minucie dla wszystkich sklepów.
+   */
+  function handleFirmEvents(out: FirmStepOut): void {
+    const { session } = shell;
+    if (!session) {
+      handleEvents(out.active);
+      return;
+    }
+    const f = firmOf(session);
+    const wasShown = (scene.seed === null ? undefined : f.stores.find((st) => st.econ.seed === scene.seed))?.id ?? f.activeId;
+    const summary = [...out.firm].reverse().find((e) => e.kind === 'network-report' && e.summary)?.summary;
+
+    // wyciągi: przy raporcie sieci jedno okno z wyciągiem każdego sklepu, inaczej okno jednego sklepu jak dotąd
+    const reports = new Map<number, MonthReport>();
+    let active = out.active;
+    if (summary) {
+      const background = new Set<number>();
+      for (const b of out.background) {
+        if (b.event.kind !== 'month' || b.event.report?.label !== summary.label) continue;
+        reports.set(b.storeId, b.event.report);
+        background.add(b.storeId);
+      }
+      const mine = [...out.active].reverse().find((e) => e.kind === 'month' && e.report?.label === summary.label)?.report;
+      const mineId = summary.stores.map((x) => x.id).find((id) => !background.has(id));
+      if (mine && mineId !== undefined) reports.set(mineId, mine);
+      active = out.active.filter((e) => !(e.kind === 'month' && e.report));
+    }
+    handleEvents(active);
+
+    // sklepy w tle: tylko ważne zdarzenia, resztę widać na chipie
+    const remanents = out.background.filter((b) => b.important && b.event.kind === 'remanent' && b.event.remanent);
+    if (remanents.length > 0) {
+      const mine = [...out.active].reverse().find((e) => e.kind === 'remanent' && e.remanent);
+      const rows = [
+        ...(mine?.remanent ? [{ storeId: wasShown, protocol: mine.remanent, text: mine.text }] : []),
+        ...remanents.map((b) => ({ storeId: b.storeId, protocol: b.event.remanent!, text: b.event.text })),
+      ].sort((a, b) => a.storeId - b.storeId);
+      const main = mine?.remanent ? { protocol: mine.remanent, text: mine.text } : { protocol: rows[0]!.protocol, text: rows[0]!.text };
+      ui.remanent.value = { ...main, stores: rows };
+      if (!mine) fx.play('pop');
+    }
+    for (const b of out.background) {
+      if (!b.important || (b.event.kind !== 'trust-tier' && b.event.kind !== 'gameover')) continue;
+      const title = b.event.kind === 'gameover' ? tr('Koniec współpracy') : tr(STORY_TITLE[b.event.kind] ?? STORY_FALLBACK_TITLE);
+      ui.pushStory(`${storeName(f, b.storeId)}: ${title}`, b.event.text);   // tekst Centrali z symulacji tłumaczy okno przy rysowaniu
+    }
+
+    // firma: ważne zdarzenia czekają na „OK”, zastępca i budowa to toast z odświeżeniem
+    let refresh = false;
+    for (const e of out.firm) {
+      switch (e.kind) {
+        case 'deputy':
+        case 'build':
+          ui.pushToast(firmEventText(f, e).text, 'info');
+          refresh = true;
+          break;
+        case 'network-report':
+          break;   // okno sieci składamy niżej z raportem i wyciągami
+        default: {
+          const { title, text } = firmEventText(f, e);
+          ui.pushStory(title, text);
+        }
+      }
+    }
+    if (summary) ui.networkReport.value = { summary, reports: [...reports].sort(([a], [b]) => a - b).map(([storeId, report]) => ({ storeId, report })) };
+
+    // aktywny sklep mógł się zmienić: scena na pozostały, a interfejs od razu czyta nowy (nie zamknięty sklep z `gameOver`)
+    if (sceneFollowsActive(session) || refresh) {
+      scene.syncVisuals(session, true);
+      publish();
+    }
   }
 
   /**
@@ -571,16 +723,32 @@ export function createShell(deps: ShellDeps): GameShell {
     const { session } = shell;
     if (!session) return;
     const events: EconEvent[] = [];
-    processLevels(session.econ, events);
+    grantToFirm(firmOf(session), (s) => processLevels(s, events));   // nagroda za poziom to pieniądze spoza polecenia: do wspólnej gotówki raz
     handleEvents(events);
     scene.syncVisuals(session, true);
     publish();
   }
 
+  /**
+   * Scena ma stać na aktywnym sklepie: minuta firmy mogła zamknąć aktywny sklep (zaufanie 0, koniec wypowiedzenia) i przepiąć sesję na
+   * pozostały (`advanceSession`, `skip`). Pusta scena (poprzednia budowa się nie udała) zostaje pusta: nic nie idzie dalej, a gracz już dostał
+   * komunikat. Zwraca, czy scena została przeładowana.
+   */
+  function sceneFollowsActive(session: GameSession): boolean {
+    if (scene.seed === null || scene.seed === session.econ.seed) return false;
+    try {
+      scene.load(session.econ.seed, session);
+    } catch (error) {
+      console.error('Przebudowa sklepu po zmianie aktywnego sklepu nie powiodła się.', error);
+      fx.notice(session.ephemeral ? REBUILD_FAILED_EPHEMERAL : REBUILD_FAILED);
+    }
+    return true;
+  }
+
   /** Odbudowuje scenę poprzedniego sklepu po nieudanym przejściu (jego sesja stoi w `shell.session`); błąd tylko trafia do konsoli. */
   function restoreScene(previous: GameSession | null, previousSeed: string): void {
     try {
-      scene.load(previous ? previous.seed : previousSeed, previous);
+      scene.load(previous ? previous.econ.seed : previousSeed, previous);
     } catch (again) {
       console.error('Nie udało się odtworzyć poprzedniego sklepu.', again);
     }
@@ -615,7 +783,7 @@ export function createShell(deps: ShellDeps): GameShell {
       const next = make();
       shell.session = next;
       ui.selection.value = null;
-      scene.load(seed, next);
+      scene.load(next ? next.econ.seed : seed, next);   // sesja z zapisu może stać na drugim sklepie firmy: scena ładuje jego seed
     } catch (error) {
       console.error(`Nie udało się otworzyć sklepu „${seed}”.`, error);
       shell.session = previous;
@@ -635,6 +803,7 @@ export function createShell(deps: ShellDeps): GameShell {
     ui.seed.value = seed;
     ui.story.value = [];
     ui.remanent.value = null;
+    ui.networkReport.value = null;
     ui.picked.value = null;
     if (!closePanels) return;
     ui.tab.value = null;
@@ -763,10 +932,11 @@ export function createShell(deps: ShellDeps): GameShell {
     toast: (text, kind) => ui.pushToast(text, kind),
     confetti: (x, y, count) => fx.confetti(x, y, count),
     handleEvents,
+    handleFirmEvents: (out) => handleFirmEvents(out),
     persist,
     clearSelection: () => { ui.selection.value = null; },
-    // `load` rzuca przy błędzie; `dispatchCommand` to łapie i pokazuje komunikat
-    rebuildScene: () => { if (shell.session) scene.load(shell.session.seed, shell.session); },
+    // `load` rzuca przy błędzie; `dispatchCommand` i `dispatchFirm` to łapią i pokazują komunikat. Scena stoi na aktywnym sklepie sesji.
+    rebuildScene: () => { if (shell.session) scene.load(shell.session.econ.seed, shell.session); },
     notice: (text) => fx.notice(text),
     refresh: () => { scene.syncVisuals(shell.session, true); publish(); },
   };
@@ -825,16 +995,25 @@ export function createShell(deps: ShellDeps): GameShell {
 
   const game: ui.GameActions = {
     dispatch: (cmd) => (shell.session ? dispatchCommand(shell.session, cmd, commandEffects) : { ok: false, text: '' }),
+    firm: (cmd) => {
+      const { session } = shell;
+      if (!session) return { ok: false, reason: 'store' };
+      const before = session.econ;
+      const result = dispatchFirm(session, cmd, commandEffects);
+      if (session.econ !== before) ui.picked.value = null;   // numery kart zaczynają się w każdym sklepie od 1
+      return result;
+    },
     claimWelcome: () => {
       const w = ui.welcome.value;
       ui.welcome.value = null;
       const { session } = shell;
       if (!session || !w) return;
-      grantOffline(session.econ, w.offline);
-      if (w.daily && w.streak !== null) {
-        grantDaily(session.econ, w.daily.cash, w.daily.ogonki);
-        claimDaily(shell.meta, w.streak, new Date());   // seria przesuwa się dopiero po odebraniu premii
-      }
+      // zarobek i premia to pieniądze spoza poleceń: raz do wspólnej gotówki (przez aktywny sklep), nie do kasy każdego sklepu z osobna
+      grantToFirm(firmOf(session), (s) => {
+        grantOffline(s, w.offline);
+        if (w.daily && w.streak !== null) grantDaily(s, w.daily.cash, w.daily.ogonki);
+      });
+      if (w.daily && w.streak !== null) claimDaily(shell.meta, w.streak, new Date());   // seria przesuwa się dopiero po odebraniu premii
       markOffLog(session);   // nagroda poza poleceniami: dziennika już nie prowadzimy
       fx.play('coins');
       fx.confetti();
@@ -919,6 +1098,7 @@ export function createShell(deps: ShellDeps): GameShell {
     publish,
     setSeed,
     handleEvents,
+    handleFirmEvents,
     startRanked,
     resumeRanked,
     leaveRanked,
@@ -929,7 +1109,7 @@ export function createShell(deps: ShellDeps): GameShell {
       try {
         // Każda nieudana próba budowy sprząta po sobie scenę (loadStore), więc kolejna zaczyna od czystej; do kopii idzie tylko
         // zapis, którego nie da się przeczytać.
-        const build = (opening: GameSession): void => { shell.session = opening; scene.load(opening.seed, opening); };
+        const build = (opening: GameSession): void => { shell.session = opening; scene.load(opening.econ.seed, opening); };
         const partner = partnerOf(shell.meta);
         session = openStore(choice
           ? openRequestFor(choice, { partner, randomSeed: deps.randomSeed, build })   // ekran startowy: nigdy `fresh`
@@ -950,7 +1130,8 @@ export function createShell(deps: ShellDeps): GameShell {
       if (!session.ephemeral || session.seed === seed) deps.writeSeedToUrl(session.seed);
       publish();
       // nic się nie zapisuje, dopóki gracz nie kliknie „Odbierz!”; po wypowiedzeniu umowy wstaje samo okno końca gry
-      const start = startupWindow(shell.meta, session.econ, session.ephemeral, new Date(), session.mode);
+      const others = session.firm ? openStores(session.firm).map((st) => st.econ).filter((e) => e !== session.econ) : [];   // zarobek po wszystkich otwartych sklepach
+      const start = startupWindow(shell.meta, session.econ, session.ephemeral, new Date(), session.mode, others);
       ui.welcome.value = start.welcome;
       // zupełnie nowy sklep (także po przeładowaniu przy otwartym oknie wyboru): propozycja samouczka, o ile gracz jeszcze na nią nie
       // odpowiedział; przy `intro` okna powitalnego nie ma, więc nie stoją naraz
@@ -986,11 +1167,14 @@ export function createShell(deps: ShellDeps): GameShell {
     skip(minutes) {
       const { session } = shell;
       if (!session || session.mode === 'ranked') return;   // przewinięcie unieważniłoby bieg rankingowy (`markOffLog`)
-      const events: EconEvent[] = [];
-      // karta decyzji zatrzymuje także przewijanie: bez odpowiedzi gracza gra nie idzie dalej (jak pętla klatek)
-      for (let i = 0; i < minutes && !session.econ.gameOver && !awaitingDecision(session.econ); i++) stepMinute(session.econ, session.info, events);
-      handleEvents(events);
+      const f = firmOf(session);
+      const out = emptyStepOut();
+      // karta aktywnego sklepu zatrzymuje także przewijanie: bez odpowiedzi gracza gra nie idzie dalej (jak pętla klatek). Wszystkie otwarte
+      // sklepy idą o tyle samo minut; aktywny może się zmienić w trakcie (zamknięcie sklepu), więc czytamy go co minutę
+      for (let i = 0; i < minutes && f.over === null && !activeStore(f).econ.gameOver && !awaitingDecision(activeStore(f).econ); i++) stepFirmMinute(f, out);
+      pointAtActive(session);
       markOffLog(session);   // przewinięcie nie jest poleceniem: dziennik nie odtworzy takiego stanu
+      handleFirmEvents(out);
       settleOutsideCommand();
     },
 

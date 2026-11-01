@@ -2,9 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { QUALITY, type QualityPresetId } from '@/render/quality';
 import { HOUR_CURVE, MINUTES_PER_DAY, OPEN_FROM, OPEN_TO } from '@/sim/economy/catalog';
 import { expectedDailyCustomers, isOpenForCustomers, isStoreOpen } from '@/sim/economy/economy';
+import { openSecond, partnerSession } from '../../tests/firmKit';
 import { MemoryStorage } from './memoryStorage';
-import { CROWD_MAX, clearSeedFromUrl, crowdRateFor, timeOfDayAt, trafficPerHour } from './scene';
-import { createSession, type GameSession } from './session';
+import { CROWD_MAX, baseLotOf, clearSeedFromUrl, crowdRateFor, timeOfDayAt, trafficPerHour } from './scene';
+import { createSession, firmOf, pointAtActive, saveSession, type GameSession } from './session';
 
 /*
  * Część sceny, którą da się sprawdzić bez WebGL: tempo napływu klientów z ekonomii i pora dnia z zegara gry.
@@ -157,5 +158,34 @@ describe('clearSeedFromUrl: zdjęcie ?seed= z adresu', () => {
     vi.stubGlobal('location', { href: 'http://127.0.0.1:5173/?seed=a' });
     vi.stubGlobal('history', { replaceState: () => { throw new DOMException('zablokowane', 'SecurityError'); } });
     expect(() => clearSeedFromUrl()).not.toThrow();
+  });
+});
+
+describe('baseLotOf: lokal, od którego ulica liczy przyrost remontu', () => {
+  it('sklep startowy nie ma lokalu (pickLot z seeda), sklep w lokalu miasta ma lokal ze swojego opisu', () => {
+    const s = partnerSession();
+    expect(baseLotOf(s)).toBeUndefined();
+    const second = openSecond(s);
+    expect(baseLotOf(s)).toBeUndefined();   // aktywny nadal #1; #1 ma teraz flagi, ale jego `site.lot` jest puste
+    firmOf(s).activeId = 2;
+    pointAtActive(s);
+    expect(baseLotOf(s)).toEqual(second.info.site!.lot);
+    expect(baseLotOf(s)).not.toBeUndefined();
+    expect(baseLotOf(s)).toBe(firmOf(s).city.lots[second.lotId]!.spec);
+  });
+
+  it('sesja z zapisu z aktywnym #2 ładuje ulicę z lokalem miasta (site wraca do nowego StoreInfo)', () => {
+    const s = partnerSession();
+    const second = openSecond(s);
+    firmOf(s).activeId = 2;
+    pointAtActive(s);
+    saveSession(s);
+    const loaded = createSession(s.seed);
+    expect(loaded.econ.seed).toBe(second.econ.seed);
+    expect(baseLotOf(loaded)).toEqual(firmOf(s).city.lots[second.lotId]!.spec);
+  });
+
+  it('bez sesji (benchmark) nie ma lokalu', () => {
+    expect(baseLotOf(null)).toBeUndefined();
   });
 });

@@ -1,11 +1,12 @@
 import type { RenderContext } from '@/render/renderer';
-import { advanceEconomy } from '@/sim/economy/clock';
-import { awaitingDecision, type EconEvent } from '@/sim/economy/economy';
+import { awaitingDecision } from '@/sim/economy/economy';
+import { advanceFirm } from '@/sim/firm/firm';
+import type { FirmStepOut } from '@/sim/firm/types';
 import { RANKED_SEASON_END_MINUTE } from '@/sim/ranked';
 import * as ui from '@/ui/state';
 import type { GameShell } from './actions';
 import type { SceneHost } from './scene';
-import type { GameSession } from './session';
+import { firmOf, pointAtActive, type GameSession } from './session';
 
 /**
  * Logika pętli klatek, którą da się sprawdzić w node (bez `three` i renderera): kiedy gra stoi, ile minut ekonomii upływa
@@ -29,15 +30,21 @@ export const isSceneHeld = (session: Pick<GameSession, 'econ'> | null, modal: bo
   modal || (!!session && awaitingDecision(session.econ));
 
 /**
- * Przesuwa ekonomię sesji o czas klatki `realDt` (s) przy prędkości gry `speed`, a zdarzenia dopisuje do `out`.
- * Zwraca liczbę wykonanych minut gry. Przy pauzie (`speed <= 0`) i przy oknie na wierzchu (`modal`) nic się nie dzieje:
- * ani minuty, ani zegar `session.clock` się nie ruszają. Sesja rankingowa staje dokładnie na końcu sezonu
- * (`RANKED_SEASON_END_MINUTE`), zwykła nie ma końca.
+ * Przesuwa firmę sesji (wszystkie jej sklepy, w tej samej minucie) o czas klatki `realDt` (s) przy prędkości gry `speed`, a zdarzenia
+ * dopisuje do `out`: aktywnego sklepu do `out.active` (jak dotąd), sklepów w tle do `out.background`, firmy do `out.firm`. Zwraca liczbę
+ * wykonanych minut gry. Przy pauzie (`speed <= 0`) i przy oknie na wierzchu (`modal`) nic się nie dzieje: ani minuty, ani zegar
+ * `session.clock` się nie ruszają. Sesja rankingowa staje dokładnie na końcu sezonu (`RANKED_SEASON_END_MINUTE`), zwykła nie ma końca.
+ * Firma z jednym sklepem startowym liczy się jak sama ekonomia co do bitu. Karta aktywnego sklepu zatrzymuje grę, karta sklepu w tle nie
+ * (odpowiada na nią zastępca w następnej minucie). Po kroku sesja jest przepięta na aktywny sklep (`pointAtActive`): minuta mogła otworzyć
+ * budowę (`refreshSites` podmienia `info`) albo zamknąć aktywny sklep (wtedy `out.active` niesie jeszcze jego zdarzenia, a aktywny jest
+ * już inny).
  */
-export function advanceSession(session: GameSession, realDt: number, speed: number, modal: boolean, out: EconEvent[]): number {
+export function advanceSession(session: GameSession, realDt: number, speed: number, modal: boolean, out: FirmStepOut): number {
   if (!(speed > 0) || modal) return 0;
   const stopAt = session.mode === 'ranked' ? RANKED_SEASON_END_MINUTE : undefined;
-  return advanceEconomy(session.econ, session.info, session.clock, realDt * speed, out, stopAt);
+  const steps = advanceFirm(firmOf(session), session.clock, realDt * speed, out, stopAt);
+  pointAtActive(session);
+  return steps;
 }
 
 /**

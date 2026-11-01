@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { Mesh } from 'three';
+import { Box3, type Mesh } from 'three';
 import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { lang, tr } from '@/i18n';
+import { generateCity } from '@/sim/city/generateCity';
+import { storeSeedFor } from '@/sim/city/traffic';
 import { CELL_SIZE_M } from '@/sim/grid';
 import { REMONTS } from '@/sim/economy/upgrades';
 import { layoutFor } from '@/sim/store/layoutFor';
@@ -405,5 +407,102 @@ describe('przejęcie lokalu: takeoverSide z sim odtwarza planRow', () => {
         expect(takeoverSide(layout, seed), `${seed} poziom ${level} (brama)`).toBe(expectedTakenSide(seed, level));
       }
     }
+  });
+});
+
+describe('przejęcie lokalu: sklep w lokalu miasta (baseLot)', () => {
+  const failing = (): Promise<GLTF> => Promise.reject(new Error('brak sieci'));
+  const views: StreetView[] = [];
+  const atlases: ReturnType<typeof buildBuildings>[] = [];
+  afterEach(() => {
+    for (const v of views.splice(0)) v.dispose();
+    for (const b of atlases.splice(0)) b.dispose();
+    vi.restoreAllMocks();
+  });
+
+  const CITY_SEED = 'miasto-przejecie';
+  const city = generateCity(CITY_SEED);
+  /** Wolne lokale, w których `pickLot(seed sklepu)` daje inną szerokość niż lokal z miasta (domyślny punkt odniesienia byłby zły). */
+  const differing = city.lots.filter((l) => l.state === 'wolny' && pickLot(storeSeedFor(CITY_SEED, l.id)).interiorWidth !== l.spec.interiorWidth);
+
+  it('zestaw lokali ma takie, w których pickLot i lokal z miasta mają różne szerokości (inaczej test nic by nie rozróżniał)', () => {
+    expect(differing.length).toBeGreaterThan(5);
+  });
+
+  it('grownWidth(layout, seed, lot) to przyrost remontu względem lokalu z miasta, a z domyślnym pickLot wychodzi inaczej', () => {
+    let different = 0;
+    for (const lot of differing.slice(0, 12)) {
+      const seed = storeSeedFor(CITY_SEED, lot.id);
+      const base = storeOuter(layoutFor(seed, 0, lot.spec));
+      expect(grownWidth(layoutFor(seed, 0, lot.spec), seed, lot.spec), `lokal ${lot.id} poziom 0`).toBe(0);
+      for (const level of [1, 2, 3]) {
+        const layout = layoutFor(seed, level, lot.spec);
+        const o = storeOuter(layout);
+        const delta = grownWidth(layout, seed, lot.spec);
+        expect(delta, `lokal ${lot.id} poziom ${level}`).toBeCloseTo((layout.lot.interiorWidth - lot.spec.interiorWidth) * CELL_SIZE_M, 9);
+        expect(delta, `lokal ${lot.id} poziom ${level} to różnica obrysu`).toBeCloseTo(o.x1 - o.x0 - (base.x1 - base.x0), 9);
+        if (Math.abs(grownWidth(layout, seed) - delta) > 1e-9) different++;
+      }
+    }
+    expect(different, 'domyślny pickLot daje inny przyrost niż lokal z miasta').toBeGreaterThan(0);
+  });
+
+  it('planRow(…, lot): zjedzony sąsiad ma szerokość max(w0 − przyrost z lokalu miasta, 4), reszta jak na poziomie 0', () => {
+    let eatenShrunk = 0;
+    for (const lot of differing.slice(0, 12)) {
+      const seed = storeSeedFor(CITY_SEED, lot.id);
+      const plan0 = planRow(layoutFor(seed, 0, lot.spec), seed, 0, lot.spec);
+      for (const level of [1, 2]) {
+        const layout = layoutFor(seed, level, lot.spec);
+        const plan = planRow(layout, seed, level, lot.spec);
+        const delta = grownWidth(layout, seed, lot.spec);
+        const taken = takeoverSide(layout, seed);
+        plan.neighbours.forEach((n, i) => {
+          const eaten = side(i) === taken;
+          const expected = eaten ? Math.max(width(plan0.neighbours[i]!) - delta, MIN_TAKEN_NEIGHBOUR_W) : width(plan0.neighbours[i]!);
+          expect(width(n), `lokal ${lot.id} poziom ${level} sąsiad ${i}`).toBeCloseTo(expected, 6);
+          if (eaten && delta > 0) eatenShrunk++;
+        });
+        // bez lokalu (domyślny pickLot) wynik byłby inny, gdy przyrost się różni
+        const wrong = planRow(layout, seed, level);
+        if (taken !== null && Math.abs(grownWidth(layout, seed) - delta) > 1e-9) {
+          const i = taken === 'minX' ? 0 : 1;
+          const lotWidth = width(plan.neighbours[i]!);
+          const pickWidth = width(wrong.neighbours[i]!);
+          const clamped = width(plan0.neighbours[i]!) - Math.min(delta, grownWidth(layout, seed)) < MIN_TAKEN_NEIGHBOUR_W;
+          if (!clamped) expect(Math.abs(lotWidth - pickWidth), `lokal ${lot.id} poziom ${level}`).toBeGreaterThan(1e-6);
+        }
+      }
+    }
+    expect(eatenShrunk).toBeGreaterThan(0);
+  });
+
+  it('buildStreet(…, remontLevel, lot) buduje ulicę z planu z lokalu miasta: sąsiad po stronie przejęcia ma taki obrys jak w buildBuildings', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const extent = (mesh: Mesh): [number, number] => {
+      const box = new Box3().setFromObject(mesh);
+      return [box.min.x, box.max.x];
+    };
+    let checked = 0;
+    let discriminating = 0;
+    for (const lot of differing.slice(0, 12)) {
+      const seed = storeSeedFor(CITY_SEED, lot.id);
+      const layout = layoutFor(seed, 1, lot.spec);
+      const plan = planRow(layout, seed, 1, lot.spec);
+      const i = plan.neighbours.findIndex((n) => n.rentSign);
+      if (i < 0) continue;
+      if (Math.abs(width(plan.neighbours[i]!) - width(planRow(layout, seed, 1).neighbours[i]!)) > 1e-6) discriminating++;
+      const view = await buildStreet(layout, seed, failing, 1, lot.spec);
+      views.push(view);
+      const reference = buildBuildings(layout, seed, createFacadeAtlas(), plan);
+      atlases.push(reference);
+      const got = extent(view.root.getObjectByName(`neighbour:${i}:full`) as Mesh);
+      const want = extent(reference.root.getObjectByName(`neighbour:${i}:full`) as Mesh);
+      expect(got[0], `lokal ${lot.id} x0`).toBeCloseTo(want[0], 6);
+      expect(got[1], `lokal ${lot.id} x1`).toBeCloseTo(want[1], 6);
+      checked++;
+    }
+    expect(checked).toBeGreaterThan(0);
+    expect(discriminating, 'w co najmniej jednym lokalu domyślny pickLot dałby inną szerokość sąsiada').toBeGreaterThan(0);
   });
 });

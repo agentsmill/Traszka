@@ -1,4 +1,5 @@
 import { CORE_PLURALS, CORE_UI } from './ui/core';
+import { FIRM_PLURALS, FIRM_UI } from './ui/firm';
 import { GAME_PLURALS, GAME_UI } from './ui/game';
 import { HUD_PLURALS, HUD_UI } from './ui/hud';
 import { MONTH_PLURALS, MONTH_UI } from './ui/month';
@@ -21,8 +22,8 @@ export type Dict = Record<string, Entry>;
 /** Odmiana po angielsku do `plural` (ui/game/format.ts): klucz to trzy polskie formy „one|few|many”, wartość [liczba pojedyncza, mnoga]. */
 export type Plurals = Record<string, readonly [string, string]>;
 
-export const EN_UI: Dict = { ...CORE_UI, ...HUD_UI, ...MONTH_UI, ...GAME_UI, ...START_UI, ...RANKING_UI, ...TUTORIAL_UI };
+export const EN_UI: Dict = { ...CORE_UI, ...HUD_UI, ...MONTH_UI, ...GAME_UI, ...START_UI, ...RANKING_UI, ...TUTORIAL_UI, ...FIRM_UI };
 
 export const EN_PLURALS: Plurals = {
-  ...CORE_PLURALS, ...HUD_PLURALS, ...MONTH_PLURALS, ...GAME_PLURALS, ...START_PLURALS, ...RANKING_PLURALS, ...TUTORIAL_PLURALS,
+  ...CORE_PLURALS, ...HUD_PLURALS, ...MONTH_PLURALS, ...GAME_PLURALS, ...START_PLURALS, ...RANKING_PLURALS, ...TUTORIAL_PLURALS, ...FIRM_PLURALS,
 };

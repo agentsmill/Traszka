@@ -149,6 +149,31 @@ describe('seria dni', () => {
     }
   });
 
+  it('kilka sklepów: zarobek za nieobecność to suma po otwartych sklepach (każdy liczy się z własnego ostatniego miesiąca), premia dzienna jedna', () => {
+    const first = afterSeptember('sklep', 30_000);   // 1000 zł dziennie
+    const second = afterSeptember('sklep-2', 15_000);   // 500 zł dziennie
+    const meta = fresh();
+    meta.lastSeen = day1.getTime() - 3 * 3_600_000;
+    const alone = welcomeOffer(meta, first, day1)!;
+    const both = welcomeOffer(meta, first, day1, [second])!;
+    expect(alone.offline).toBe(Math.round(1000 * 0.25 * 3));
+    expect(both.offline).toBe(offlineEarnings(first, 3) + offlineEarnings(second, 3));
+    expect(both.offline).toBe(Math.round(1000 * 0.25 * 3) + Math.round(500 * 0.25 * 3));
+    expect(both.streak).toBe(alone.streak);
+    expect(both.daily).toEqual(alone.daily);   // premia dzienna jest jedna na osobę, nie na sklep
+    expect(welcomeOffer(meta, first, day1, [])).toEqual(alone);   // pusta lista to dotychczasowe wywołanie
+  });
+
+  it('zysk drugiego sklepu sam wystarcza do okna powitalnego, gdy pierwszy nic nie zarobił', () => {
+    const first = afterSeptember('sklep', 0);   // brak zysku w #1
+    const second = afterSeptember('sklep-2', 15_000);
+    const meta = fresh();
+    meta.lastSeen = day1.getTime() - 3 * 3_600_000;
+    meta.daily = { date: '2026-10-28', streak: 3 };   // dzisiejsza premia już odebrana
+    expect(welcomeOffer(meta, first, day1)).toBeNull();
+    expect(welcomeOffer(meta, first, day1, [second])!.offline).toBe(offlineEarnings(second, 3));
+  });
+
   describe('zarobek kierownika zmiany (offlineEarnings)', () => {
     it('ćwierć średniego dziennego wyniku ostatniego miesiąca na godzinę, najwyżej 8 godzin', () => {
       const s = afterSeptember('sklep', 30_000);   // wrzesień ma 30 dni
@@ -407,6 +432,15 @@ describe('okno po otwarciu sklepu (startupWindow)', () => {
     expect(startupWindow({ ...meta, readOnly: true }, played(), false, now)).toEqual(none);
     const fresh = createEconomy('nowy', computeStoreInfo(generateStore('nowy')));
     expect(startupWindow(meta, fresh, true, now)).toEqual(none);   // awaryjny świat nie jest pierwszą grą gracza
+  });
+
+  it('firma z kilkoma sklepami: okno „Witaj z powrotem” liczy zarobek po wszystkich otwartych sklepach', () => {
+    const meta = plainMeta();
+    meta.lastSeen = now.getTime() - 3 * 3_600_000;
+    const other = afterSeptember('sklep-2', 15_000);
+    const w = startupWindow(meta, played(), false, now, 'casual', [other]);
+    expect(w.welcome).toEqual(welcomeOffer(meta, played(), now, [other]));
+    expect(w.welcome!.offline).toBeGreaterThan(startupWindow(meta, played(), false, now).welcome!.offline);
   });
 
   it('bieg rankingowy nie dostaje ani ekranu powitalnego z nagrodą, ani okna „Witaj z powrotem”: reguła zależy od trybu, nie od wołającego', () => {

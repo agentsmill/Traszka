@@ -25,6 +25,7 @@ import { effects, expectedDailyCustomers, isClosedForRemont, isOpenForCustomers,
 import { slotUnits } from '@/sim/economy/slots';
 import { staffOnShift } from '@/sim/economy/tycoon/shift';
 import { generateStore } from '@/sim/store/generateStore';
+import type { LotSpec } from '@/sim/store/types';
 import { CELL_SIZE_M } from '@/sim/grid';
 import { LINES, missingLine, pick } from '@/ui/game/lines';
 import type { WorldOverlay } from '@/ui/worldOverlay';
@@ -134,6 +135,12 @@ export function crowdRateFor(session: Pick<GameSession, 'econ' | 'info'>, preset
   const perHour = trafficPerHour(session);
   return { targetCount: Math.max(4, Math.min(CROWD_MAX[preset], Math.round(perHour * 0.35))), spawnPerMinute: Math.max(3, Math.min(24, perHour * 0.3)) };
 }
+
+/**
+ * Lokal, od którego ulica liczy przyrost remontu (`buildStreet`, `grownWidth`): lokal miasta, z którego wyrósł aktywny sklep
+ * (`info.site.lot`, sesja z firmą zawsze wskazuje aktywny sklep), albo `undefined` dla sklepu startowego (jego lokal to `pickLot(seed)`).
+ */
+export const baseLotOf = (session: Pick<GameSession, 'info'> | null): LotSpec | undefined => session?.info.site?.lot ?? undefined;
 
 /** Pora dnia dla minuty gry (20:00–6:00 noc). */
 export function timeOfDayAt(minute: number): TimeOfDay {
@@ -355,8 +362,9 @@ export function createSceneHost(deps: SceneDeps): SceneHost {
     }
 
     // poziom remontu z ekonomii: od niego zależy kartka „DO WYNAJĘCIA” u sąsiada i to, ile lokalu obok sklep już zajął
-    // (po remoncie `load` buduje ulicę od nowa, a wczytany zapis z remontem dostaje właściwy stan od razu)
-    void buildStreet(layout, seed, undefined, session ? session.econ.remontLevel : 0).then((built) => {
+    // (po remoncie `load` buduje ulicę od nowa, a wczytany zapis z remontem dostaje właściwy stan od razu); sklep w lokalu miasta
+    // liczy przyrost od swojego lokalu, nie od `pickLot(seed)`
+    void buildStreet(layout, seed, undefined, session ? session.econ.remontLevel : 0, baseLotOf(session)).then((built) => {
       if (mine !== generation) { built.dispose(); return; }
       current.street = built;
       built.setBuildingCutaway(!exterior, ctx.rig.yawIndex);

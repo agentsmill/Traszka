@@ -5,7 +5,7 @@ import { GENERATOR_VERSION } from '@/sim/store/generateStore';
 import { MemoryStorage } from './memoryStorage';
 import { openStore, type OpenRequest } from './openStore';
 import {
-  BROKEN_SAVE_NOTICE, NEWER_SAVE_NOTICE, UNBUILDABLE_SAVE_NOTICE, createSession, lastSavedSeed, saveSession, type GameSession,
+  BROKEN_SAVE_NOTICE, NEWER_SAVE_NOTICE, UNBUILDABLE_SAVE_NOTICE, createSession, envelopeOf, lastSavedSeed, saveSession, type GameSession,
 } from './session';
 import { openRequestFor, submitStart } from './start';
 
@@ -43,7 +43,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-/** Zagrany sklep zapisany w kopercie v2; zwraca surowy zapis. */
+/** Zagrany sklep zapisany w kopercie v2 (jak sprzed firmy; `saveSession` ustawia też „ostatni sklep”); zwraca surowy zapis. */
 function savedGame(seed = BLOK): string {
   const s = createSession(seed, true);
   s.econ.cash = 250_000;
@@ -52,6 +52,7 @@ function savedGame(seed = BLOK): string {
   const events: EconEvent[] = [];
   for (let i = 0; i < 4 * MINUTES_PER_DAY; i++) stepMinute(s.econ, s.info, events);
   saveSession(s);
+  storage.setItem(key(seed), JSON.stringify(envelopeOf(s)));
   return storage.getItem(key(seed))!;
 }
 
@@ -118,7 +119,8 @@ describe('openStore: dobry zapis, którego świat się nie zbudował (nigdy do :
     // zapis (robi go persist() po otwarciu) zastępuje układ, który się nie budował
     expect(storage.getItem(key(BLOK))).toBe(marked);
     saveSession(s);
-    expect((JSON.parse(storage.getItem(key(BLOK))!) as { layout: { generatorVersion: number } }).layout.generatorVersion).toBe(GENERATOR_VERSION);
+    // zapis zwykłej gry to koperta firmy: wersja generatora przy sklepie, a układ z seeda nie leży w kopercie (odtwarza go odczyt)
+    expect((JSON.parse(storage.getItem(key(BLOK))!) as { stores: { generatorVersion: number }[] }).stores[0]!.generatorVersion).toBe(GENERATOR_VERSION);
   });
 
   it('nic z tego zapisu się nie buduje: sklep tymczasowy tego seeda z komunikatem, zapis bajt w bajt na miejscu', () => {

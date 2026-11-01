@@ -11,6 +11,8 @@ import type { CommandResult, EconEventKind, EconomyState, MonthReport } from '@/
 import type { RemanentProtocol } from '@/sim/economy/franchisee';
 import type { MonthPreview } from '@/sim/economy/monthPreview';
 import type { StoreInfo } from '@/sim/economy/storeInfo';
+import type { FirmCommand, FirmCommandResult } from '@/sim/firm/commands';
+import type { FirmState, NetworkSummary } from '@/sim/firm/types';
 import { readMs } from '@/sim/economy/tycoon/notices';
 import type { RankingTab } from './ranking/client';
 import { loadTutorial } from './tutorial/memory';
@@ -50,6 +52,14 @@ export interface Controls {
 export interface EconView { s: EconomyState; info: StoreInfo; v: number }
 export const econ: Signal<EconView | null> = signal<EconView | null>(null);
 
+/**
+ * Firma dla interfejsu (sklepy, osoba, budowy, skrzynka zastępcy, miasto): ta sama firma, na której stoi sesja (`session.econ` to jej aktywny
+ * sklep). `v` rośnie przy każdej publikacji razem z `EconView.v`, bo `f` to jeden zmienny obiekt i komponenty odświeżają się po wersji.
+ * Ustawia ją `publish` w game/actions.ts; null przed otwarciem sklepu. Nie jest częścią zapisu.
+ */
+export interface FirmView { f: FirmState; v: number }
+export const firm: Signal<FirmView | null> = signal<FirmView | null>(null);
+
 export type Selection = { kind: 'pallet'; id: number } | { kind: 'slot'; slotId: string } | { kind: 'till' };
 export const selection: Signal<Selection | null> = signal<Selection | null>(null);
 
@@ -67,10 +77,29 @@ export const showSettings: Signal<boolean> = signal(false);
  * `handleEvents` (game/actions.ts), zamyka `closeRemanent`. Nie jest częścią zapisu: ostatni protokół zostaje w stanie gry
  * (`franchisee.remanent.last`), a panel Sklep pokazuje go jako „Ostatni remanent”.
  */
-export interface RemanentView { protocol: RemanentProtocol; text: string }
+export interface RemanentView {
+  protocol: RemanentProtocol;
+  text: string;
+  /**
+   * Przy kilku sklepach: protokoły wszystkich sklepów, które liczyły remanent w tej chwili (rosnąco po numerze sklepu, razem z aktywnym,
+   * którego protokół jest też w `protocol` i `text`). Okno pokazuje je w zakładkach; brak pola to jeden sklep, jak dotąd.
+   */
+  stores?: { storeId: number; protocol: RemanentProtocol; text: string }[];
+}
 export const remanent: Signal<RemanentView | null> = signal<RemanentView | null>(null);
 export function closeRemanent(): void {
   remanent.value = null;
+}
+/**
+ * Okno końca miesiąca przy kilku sklepach: podsumowanie sieci (`summary`: „Zostaje Ci” każdego sklepu i razem, pakiety otwarcia, gotówka po
+ * zamknięciu) i wyciąg każdego sklepu (`reports`, rosnąco po numerze sklepu, także zamkniętego w tej minucie). Zastępuje `report`, który
+ * jest oknem jednego sklepu; dopóki jest otwarte, gra stoi (`isWindowOpen`). Ustawia je `handleFirmEvents` (game/actions.ts), zamyka
+ * `closeNetworkReport`. Nie jest częścią zapisu.
+ */
+export interface NetworkReportView { summary: NetworkSummary; reports: { storeId: number; report: MonthReport }[] }
+export const networkReport: Signal<NetworkReportView | null> = signal<NetworkReportView | null>(null);
+export function closeNetworkReport(): void {
+  networkReport.value = null;
 }
 /**
  * Okno „Jak grać” (`ui/howto/HowTo.tsx`): otwiera się z „?” w pasku i z ⚙, a dopóki jest otwarte, gra stoi (`isModalOpen`). Otwiera
@@ -289,6 +318,11 @@ export const confirmRankedStart: Signal<RankedStartRequest | null> = signal<Rank
 export interface GameActions {
   /** Polecenie gracza. Zawsze zwraca wynik; bez gry (sesji) to odmowa z pustym tekstem. */
   dispatch(cmd: Command): CommandResult;
+  /**
+   * Polecenie firmy: wynajem lokalu, przełączenie sklepu, wypowiedzenie umowy (`dispatchFirm` w game/actions.ts). Odmowa niesie identyfikator
+   * powodu (tekst składa interfejs); przełączenie działa też w pauzie i przy otwartym oknie. Bez gry (sesji) to odmowa `store`.
+   */
+  firm(cmd: FirmCommand): FirmCommandResult;
   /** Odbiera nagrodę za nieobecność i premię dzienną z okna powitalnego (nie jest poleceniem: stan zmienia się poza dziennikiem). */
   claimWelcome(): void;
   /** Zamyka obecny sklep (dołącza do sieci) i otwiera nowy z premią. W biegu rankingowym nie ma sieci: komunikat i nic więcej. */
@@ -317,12 +351,12 @@ export interface GameActions {
 }
 
 /**
- * Czy otwarte jest okno, które zatrzymuje grę i ma swój sygnał: raport miesiąca, protokół remanentu, ważne zdarzenie czekające na „OK”, ekran startowy,
+ * Czy otwarte jest okno, które zatrzymuje grę i ma swój sygnał: raport miesiąca, podsumowanie sieci (`networkReport`), protokół remanentu, ważne zdarzenie czekające na „OK”, ekran startowy,
  * powitanie, prestiż, „Jak grać”, okno wyboru samouczka (`tutorialOffer`), wyciąg na koniec miesiąca (`monthPreview`), okno końca sezonu (`finish`) albo panel
  * rankingu i kodu odzyskiwania (`panel`). Czyta to `isModalOpen` (game/frame.ts: pętla klatek) i samouczek (przelot i dymki „pierwszy raz” czekają pod oknem).
  * Karta decyzji i koniec gry nie mają sygnału okna: wynikają ze stanu gry.
  */
 export const isWindowOpen = (): boolean =>
-  !!report.value || !!remanent.value || story.value.length > 0 || !!start.value || !!welcome.value || showPrestige.value || howTo.value || tutorialOffer.value
+  !!report.value || !!networkReport.value || !!remanent.value || story.value.length > 0 || !!start.value || !!welcome.value || showPrestige.value || howTo.value || tutorialOffer.value
   || !!monthPreview.value || !!finish.value || !!panel.value;
 

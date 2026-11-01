@@ -77,6 +77,15 @@ tych samych nazw.
 | Warsztat złotej rączki | Handyman’s Workshop | |
 | ranga: Drewniana Paleta … Legendarna Paleta | rank: Wooden Pallet … Legendary Pallet | *EURO Pallet, Shrink-Wrapped Pallet, Silver, Golden, Platinum, Diamond*. |
 | sieć Traszek, Punkty Partnera | Traszka network, Partner Points | |
+| placówka | branch | Słowo Centrali dla sklepu w sieci, gdy mówi o umowach: *your other branches*. |
+| lokal (w mieście) | unit, premises | Adres: *3 Lipowa St.* (numer przed ulicą, ulica zostaje po polsku). Wolny lokal z kartką: *TO LET*. |
+| Partner Strategiczny | Strategic Partner | Status z miasta, nadany z niechęcią: *After careful analysis, and with some reluctance…* |
+| pakiet otwarcia | opening package | Urządzenie lokalu: za gotówkę albo na raty (*in instalments*). |
+| zastępca | deputy | Rozstrzyga karty sklepu w tle odpowiedzią zaznaczoną z góry: *the deputy chose*. |
+| wypowiedzenie umowy | notice of termination | Okres wypowiedzenia: *notice period*. |
+| rozliczenie końcowe | final settlement | |
+| lokal „po Traszce” | “ex-Traszka” unit | Zamknięty sklep, wyposażenie zostaje. |
+| podsumowanie sieci | network summary | Okno końca miesiąca przy kilku sklepach. |
 | ranking, bieg rankingowy, start rankingowy | leaderboard, ranked run, ranked start | |
 | samouczek | tutorial | Okno wyboru: *Your first day at Traszka*, przyciski *Tutorial (about 3 min)* i *Skip, I know the game*. |
 | dymki „pierwszy raz”, podpowiedzi przy pierwszych zdarzeniach | tips, first-time tips | W ⚙: *Tips the first time things happen*. |

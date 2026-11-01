@@ -1,8 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CharacterFactory } from '@/render/characters/characterFactory';
-import { MINUTES_PER_DAY, MINUTES_PER_SECOND_OPEN, OPEN_FROM } from '@/sim/economy/catalog';
+import { DEBT_LIMIT, MINUTES_PER_DAY, MINUTES_PER_SECOND_OPEN, OPEN_FROM, OPEN_TO } from '@/sim/economy/catalog';
 import { applyCommand, COMMAND_TYPES, type Command } from '@/sim/economy/commands';
 import { awaitingDecision, stepMinute, type CommandResult, type EconEvent } from '@/sim/economy/economy';
+import type { RemanentProtocol } from '@/sim/economy/franchisee';
+import { defaultAnswer } from '@/sim/economy/monthPreview';
+import { levelReward } from '@/sim/economy/progress';
+import { emptyStepOut, syncWallet } from '@/sim/firm/firm';
+import { replayFirm } from '@/sim/firm/replay';
+import type { FirmEvent, FirmStepOut, NetworkSummary } from '@/sim/firm/types';
+import { firmEventText, storeName } from '@/ui/city/firmText';
+import { SEPT_CLOSE, answerActive, loseTrust, openSecond, partnerSession, playTo } from '../../tests/firmKit';
 import { cardDef, visibleCards } from '@/sim/economy/tycoon/cards';
 import { CIRCULARS, DECK } from '@/sim/economy/tycoon/deck';
 import { xpToNext } from '@/sim/economy/progress';
@@ -15,21 +23,23 @@ import * as generatorModule from '@/sim/store/generateStore';
 import { replayRun, type LogEntry } from '@/sim/run';
 import * as ui from '@/ui/state';
 import {
-  AFTER, createShell, dispatchCommand, dropUnsentRun, markOffLog, syncUnsent, type CommandEffects, type GameShell, type ShellEffects, type ShellScene,
+  AFTER, createShell, dispatchCommand, dispatchFirm, dropUnsentRun, markOffLog, syncUnsent, type CommandEffects, type GameShell, type ShellEffects, type ShellScene,
 } from './actions';
 import { openAtBoot } from './boot';
 import { DEFAULT_CASHIER_LOOK, type CashierLook } from './cashier';
 import { advanceSession, isModalOpen } from './frame';
 import { MemoryStorage } from './memoryStorage';
-import { loadMeta, type Meta } from './meta';
+import { loadMeta, offlineEarnings, type Meta } from './meta';
 import * as rankedRunModule from './rankedRun';
 import {
   clearFinished, createRankedSession, getPlayMode, loadFinished, loadRanked, pendingFinished, saveFinished, saveRanked, setPlayMode, type FinishedRun,
 } from './rankedRun';
+import { baseLotOf } from './scene';
 import { entrySeed } from './seeds';
 import type { StartChoice } from './start';
 import {
-  NEWER_SAVE_NOTICE, RANKED_LOG_RESERVE, RANKED_TAP_LOG_MAX, RUN_LOG_MAX, createSession, hasStoredSave, lastSavedSeed, newRunLog, saveSession, withLayoutFromSeed, type GameSession,
+  NEWER_SAVE_NOTICE, RANKED_LOG_RESERVE, RANKED_TAP_LOG_MAX, RUN_LOG_MAX, createSession, firmOf, hasStoredSave, lastSavedSeed, newRunLog, pointAtActive, saveSession,
+  withLayoutFromSeed, type GameSession,
 } from './session';
 
 const SEED = 'traszka-1';
@@ -48,6 +58,7 @@ function recorder(over: Partial<CommandEffects> = {}): { fx: CommandEffects; cal
     toast: (text, kind) => { calls.push(['toast', text, kind]); },
     confetti: (x, y, count) => { calls.push(['confetti', x, y, count]); },
     handleEvents: (events) => { calls.push(['handleEvents', events]); },
+    handleFirmEvents: (out) => { calls.push(['handleFirmEvents', out]); },
     persist: () => { calls.push(['persist']); },
     clearSelection: () => { calls.push(['clearSelection']); },
     rebuildScene: () => { calls.push(['rebuildScene']); },
@@ -1695,7 +1706,7 @@ describe('powłoka gry (createShell)', () => {
         expect(h.shell.startRanked('  Kielbasa   42 ')).toBe(true);
         expect(h.shell.session).toMatchObject({ seed: 'kielbasa 42', mode: 'ranked', fromSave: false });
         expect(h.shell.session!.econ.cash).not.toBe(777);
-        expect(JSON.parse(storage.getItem('traszka:save:kielbasa 42')!).econ.cash).toBe(777);
+        expect(JSON.parse(storage.getItem('traszka:save:kielbasa 42')!).stores[0].econ.cash).toBe(777);   // zwykły zapis to koperta firmy
 
         expect(h.shell.startRanked('', { replace: true })).toBe(true);
         expect(h.shell.session!.seed).toBe('losowy-1');
@@ -2236,7 +2247,7 @@ describe('powłoka gry (createShell)', () => {
         expect(h.shell.resumeRanked()).toBe(true);
 
         expect(h.shell.session).toMatchObject({ seed: RANKED_SEED, mode: 'ranked' });
-        expect(JSON.parse(storage.getItem('traszka:save:traszka-1')!).econ.cash).toBe(999);   // poprzedni sklep zapisany przed przejściem
+        expect(JSON.parse(storage.getItem('traszka:save:traszka-1')!).stores[0].econ.cash).toBe(999);   // poprzedni sklep zapisany przed przejściem
         expect(getPlayMode()).toBe('ranked');
         expect(h.urls).toEqual([]);
       });
@@ -2652,10 +2663,10 @@ describe('powłoka gry (createShell)', () => {
       }
       /** Jedna klatka pętli z main.ts: czas gry, potem zdarzenia do powłoki. */
       function frame(h: Harness, seconds = 10, speed = 8, modal = false): EconEvent[] {
-        const events: EconEvent[] = [];
-        advanceSession(h.shell.session!, seconds, speed, modal, events);
-        h.shell.handleEvents(events);
-        return events;
+        const out = emptyStepOut();
+        advanceSession(h.shell.session!, seconds, speed, modal, out);
+        h.shell.handleFirmEvents(out);
+        return out.active;
       }
       const snapshot = (): Record<string, string | null> => Object.fromEntries(storage.keys().map((k) => [k, storage.getItem(k)]));
       const drawerWrites = (spy: { mock: { calls: unknown[][] } }): number => spy.mock.calls.filter(([key]) => key === 'traszka:ranked:done').length;
@@ -3545,6 +3556,744 @@ describe('powłoka gry (createShell)', () => {
           expect(h.notices).toEqual([]);
         });
       });
+    });
+  });
+});
+
+// --- Gra prowadzi firmę (Zadanie 10): polecenia firmy, zdarzenia tła i firmy, pieniądze spoza poleceń ----------------------------
+
+/** Gra otwarta jak w rozruchu na gotowej sesji z firmą (sklep w scenie wg aktywnego sklepu), ślady zerowane. */
+function openFirm(h: Harness, session: GameSession): GameSession {
+  h.shell.session = session;
+  h.scene.load(session.econ.seed, session);
+  ui.seed.value = session.seed;
+  h.scene.loads.length = 0;
+  h.scene.syncs.length = 0;
+  h.calls.length = 0;
+  return session;
+}
+
+/**
+ * Jedna klatka pętli z main.ts: gracz zamyka okna z poprzedniej klatki (inaczej gra stoi), karty aktywnego dostają odpowiedź, czas gry,
+ * zdarzenia do powłoki. Okna z tej klatki zostają do sprawdzenia.
+ */
+function tickFrame(h: Harness, seconds = 10, speed = 8): FirmStepOut {
+  const s = h.shell.session!;
+  ui.story.value = [];
+  ui.report.value = null;
+  ui.remanent.value = null;
+  ui.networkReport.value = null;
+  ui.celebration.value = null;
+  answerActive(firmOf(s));
+  const out = emptyStepOut();
+  advanceSession(s, seconds, speed, isModalOpen(s), out);
+  h.shell.handleFirmEvents(out);
+  return out;
+}
+
+const storyTitles = (): string[] => ui.story.value.map((e) => e.title);
+const toastTexts = (): string[] => ui.toasts.value.map((x) => x.text);
+
+describe('dispatchFirm i polecenia firmy', () => {
+  beforeEach(() => { ui.report.value = null; ui.speed.value = 1; });
+  afterEach(() => { ui.report.value = null; ui.speed.value = 1; });
+
+  function withSecond(): { s: GameSession; second: ReturnType<typeof openSecond> } {
+    const s = partnerSession(SEED);
+    const second = openSecond(s);
+    return { s, second };
+  }
+
+  it('bieg rankingowy: rentLot daje ranked z tekstem Centrali, a dziennik RunRecord i firma zostają bez zmian', () => {
+    const s = createRankedSession(SEED);
+    const before = JSON.stringify(s.run);
+    const rec = recorder();
+    const f = firmOf(s);
+    expect(f.ranked).toBe(true);
+
+    const r = dispatchFirm(s, { type: 'rentLot', lotId: f.city.lots.find((l) => l.state === 'wolny')!.id, pay: 'raty' }, rec.fx);
+
+    expect(r).toEqual({ ok: false, reason: 'ranked' });
+    expect(rec.named('toast')).toEqual([['toast', 'W sezonie rankingowym Centrala ocenia jedną placówkę. Prosimy wrócić po sezonie.', 'error']]);
+    expect(rec.named('play')).toEqual([['play', 'error']]);
+    expect(JSON.stringify(s.run)).toBe(before);   // dziennik biegu rankingowego nie zmienił się ani o wpis
+    expect(s.firmRun ?? null).toBeNull();
+    expect(f.builds).toEqual([]);
+    expect(rec.names()).not.toContain('persist');
+    expect(rec.names()).not.toContain('rebuildScene');
+  });
+
+  it('odmowa nie rusza stanu: toast z tekstem odmowy i dźwięk błędu, bez zapisu i bez przebudowy sceny', () => {
+    const { s } = withSecond();
+    const rec = recorder();
+    const before = JSON.stringify(firmOf(s));
+    const r = dispatchFirm(s, { type: 'switchStore', storeId: 99 }, rec.fx);
+    expect(r).toEqual({ ok: false, reason: 'store' });
+    expect(rec.named('toast')).toEqual([['toast', 'Nie ma takiej placówki albo już nie działa.', 'error']]);
+    expect(rec.named('play')).toEqual([['play', 'error']]);
+    expect(rec.names()).not.toContain('persist');
+    expect(rec.names()).not.toContain('rebuildScene');
+    expect(JSON.stringify(firmOf(s))).toBe(before);
+    expect(s.econ).toBe(firmOf(s).stores[0]!.econ);
+  });
+
+  it('switchStore: sesja na drugim sklepie (econ, layout, info), scena przebudowana raz, zaznaczenie zdjęte, zapis i odświeżenie', () => {
+    const { s, second } = withSecond();
+    const f = firmOf(s);
+    const rec = recorder();
+    const r = dispatchFirm(s, { type: 'switchStore', storeId: 2 }, rec.fx);
+
+    expect(r).toEqual({ ok: true });
+    expect(f.activeId).toBe(2);
+    expect(s.econ).toBe(second.econ);
+    expect(s.layout).toBe(second.layout);
+    expect(s.info).toBe(second.info);
+    expect(s.layoutLevel).toBe(second.econ.remontLevel);
+    expect(rec.named('rebuildScene')).toHaveLength(1);
+    expect(rec.named('clearSelection')).toHaveLength(1);
+    expect(rec.names()).toContain('persist');
+    expect(rec.names().at(-1)).toBe('refresh');
+    expect(rec.named('notice')).toEqual([]);
+  });
+
+  it('switchStore działa w pauzie i przy otwartym oknie: ani zegar, ani okno nie odmawiają', () => {
+    const { s } = withSecond();
+    ui.speed.value = 0;
+    ui.report.value = {} as NonNullable<typeof ui.report.value>;
+    const rec = recorder();
+    expect(dispatchFirm(s, { type: 'switchStore', storeId: 2 }, rec.fx)).toEqual({ ok: true });
+    expect(firmOf(s).activeId).toBe(2);
+    expect(dispatchFirm(s, { type: 'switchStore', storeId: 1 }, rec.fx)).toEqual({ ok: true });
+    expect(firmOf(s).activeId).toBe(1);
+    expect(s.econ).toBe(firmOf(s).stores[0]!.econ);
+  });
+
+  it('switchStore na ten sam sklep nic nie przebudowuje', () => {
+    const { s } = withSecond();
+    const rec = recorder();
+    expect(dispatchFirm(s, { type: 'switchStore', storeId: 1 }, rec.fx)).toEqual({ ok: true });
+    expect(rec.named('rebuildScene')).toEqual([]);
+    expect(rec.named('clearSelection')).toEqual([]);
+  });
+
+  it('scena nie chce wstać na drugim sklepie: ten sam komunikat co po remoncie, a sesja i tak stoi na nowym sklepie', () => {
+    const { s, second } = withSecond();
+    const rec = recorder({ rebuildScene: () => { throw new Error('świat się nie zbudował'); } });
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    expect(dispatchFirm(s, { type: 'switchStore', storeId: 2 }, rec.fx)).toEqual({ ok: true });
+    expect(rec.named('notice')).toEqual([['notice', REBUILD_NOTICE]]);
+    expect(s.econ).toBe(second.econ);
+    s.ephemeral = true;
+    dispatchFirm(s, { type: 'switchStore', storeId: 1 }, rec.fx);
+    expect(rec.named('notice').at(-1)).toEqual(['notice', REBUILD_NOTICE_EPHEMERAL]);
+  });
+
+  it('polecenie sklepu po przełączeniu trafia do nowego aktywnego, a dziennik firmy zapisuje jego numer (store: 2)', () => {
+    const { s, second } = withSecond();
+    const first = firmOf(s).stores[0]!;
+    const order = first.econ.order.manual;
+    const rec = recorder();
+
+    expect(dispatchCommand(s, { type: 'setOrder', auto: false, manual: 5 }, rec.fx).ok).toBe(true);
+    expect(first.econ.order).toMatchObject({ auto: false, manual: 5 });
+    dispatchFirm(s, { type: 'switchStore', storeId: 2 }, rec.fx);
+    expect(dispatchCommand(s, { type: 'setOrder', auto: false, manual: 9 }, rec.fx).ok).toBe(true);
+
+    expect(second.econ.order).toMatchObject({ auto: false, manual: 9 });
+    expect(first.econ.order.manual).toBe(5);   // tamten sklep nie dostał drugiego polecenia
+    expect(order).not.toBe(9);
+    const log = s.firmRun!.record.log;
+    expect(log.map((e) => ('store' in e ? `sklep ${e.store}` : 'firma'))).toEqual(['sklep 1', 'firma', 'sklep 2']);
+    expect(log[2]).toMatchObject({ store: 2, cmd: { type: 'setOrder', manual: 9 } });
+    expect(log[1]).toMatchObject({ firm: { type: 'switchStore', storeId: 2 } });
+    expect(new Set(log.map((e) => e.seq)).size).toBe(3);
+    // wspólna gotówka: zakup w #2 widać w portfelu i w kasie #1
+    s.firm!.person.wallet = 100_000;
+    syncWallet(s.firm!);
+    const upgrade = UPGRADES[0]!.id;
+    expect(dispatchCommand(s, { type: 'buyUpgrade', id: upgrade }, rec.fx).ok).toBe(true);
+    expect(second.econ.cash).toBe(s.firm!.person.wallet);
+    expect(first.econ.cash).toBe(s.firm!.person.wallet);
+    expect(s.firm!.person.wallet).toBeLessThan(100_000);
+  });
+
+  it('pierwsze polecenie firmy wyłącza RunRecord (jeden sklep nie opisze dwóch), a dziennik firmy zapisuje je dalej', () => {
+    const s = createSession(SEED, true);
+    const rec = recorder();
+    dispatchCommand(s, { type: 'setOrder', auto: false, manual: 4 }, rec.fx);
+    expect(s.run!.record.log).toHaveLength(1);
+    expect(s.firmRun!.record.log).toHaveLength(1);
+    dispatchFirm(s, { type: 'switchStore', storeId: 1 }, rec.fx);
+    expect(s.run).toBeNull();
+    expect(s.firmRun!.record.log).toHaveLength(2);
+    dispatchCommand(s, { type: 'setOrder', auto: true }, rec.fx);
+    expect(s.run).toBeNull();
+    expect(s.firmRun!.record.log).toHaveLength(3);
+  });
+
+  it('dziennik firmy ma ten sam limit i te same warunki null co RunRecord: RUN_LOG_MAX, markOffLog', () => {
+    const rec = recorder();
+    const cmd: Command = { type: 'setOrder', auto: true };
+    const full = createSession(SEED, true);
+    for (let i = 0; i < RUN_LOG_MAX - 1; i++) full.firmRun!.record.log.push({ minute: OPEN_FROM, seq: i, store: 1, cmd });
+    full.firmRun!.seq = RUN_LOG_MAX - 1;
+    full.run = null;   // sam dziennik firmy dochodzi do limitu
+    dispatchCommand(full, cmd, rec.fx);
+    expect(full.firmRun!.record.log).toHaveLength(RUN_LOG_MAX);
+    expect(dispatchCommand(full, { type: 'setOrder', auto: false }, rec.fx).ok).toBe(true);
+    expect(full.firmRun).toBeNull();
+    expect(full.econ.order.auto).toBe(false);
+
+    const off = createSession(SEED, true);
+    markOffLog(off);
+    expect(off.run).toBeNull();
+    expect(off.firmRun).toBeNull();
+    expect(createSession(SEED, true, { points: 2, networkIncome: 10, stores: 1 }).firmRun ?? null).toBeNull();
+  });
+
+  it('rentLot za gotówkę: pakiet schodzi z portfela, zdarzenie build trafia do powłoki, budowa w firmie, dźwięk i zapis', () => {
+    const s = partnerSession(SEED, 150_000);
+    const f = firmOf(s);
+    const lot = f.city.lots.find((l) => l.state === 'wolny')!;
+    const rec = recorder();
+
+    expect(dispatchFirm(s, { type: 'rentLot', lotId: lot.id, pay: 'gotowka' }, rec.fx)).toEqual({ ok: true });
+
+    expect(f.person.wallet).toBe(150_000 - lot.package);
+    expect(s.econ.cash).toBe(f.person.wallet);   // kasa sklepu to portfel
+    expect(f.builds).toHaveLength(1);
+    const sent = rec.named('handleFirmEvents')[0]![1] as FirmStepOut;
+    expect(sent.firm).toEqual([{ kind: 'build', params: { lotId: lot.id, readyDay: f.builds[0]!.readyDay, price: lot.package, pay: 'gotowka' } }]);
+    expect(rec.named('play')).toEqual([['play', 'coins']]);
+    expect(rec.names()).toContain('persist');
+    expect(rec.names()).not.toContain('rebuildScene');   // sklep w budowie nie zmienia sceny
+    expect(s.run ?? null).toBeNull();
+  });
+
+  it('drugi wynajem w trakcie budowy dostaje tekst limitu z §10.2 (budowa liczy się do limitu dwóch sklepów)', () => {
+    const s = partnerSession(SEED, 300_000);
+    const f = firmOf(s);
+    const [first, other] = f.city.lots.filter((l) => l.state === 'wolny');
+    const rec = recorder();
+    expect(dispatchFirm(s, { type: 'rentLot', lotId: first!.id, pay: 'gotowka' }, rec.fx)).toEqual({ ok: true });
+    rec.calls.length = 0;
+
+    expect(dispatchFirm(s, { type: 'rentLot', lotId: other!.id, pay: 'gotowka' }, rec.fx)).toEqual({ ok: false, reason: 'limit' });
+    expect(rec.named('toast')).toEqual([['toast', 'Dwie placówki to na tym etapie partnerstwa wszystko, na co Centrala jest gotowa się zgodzić.', 'error']]);
+    expect(f.builds).toHaveLength(1);
+  });
+
+  it('polecenie firmy jest kopiowane na wejściu: późniejsza zmiana obiektu interfejsu nie zmienia dziennika', () => {
+    const s = createSession(SEED, true);
+    const cmd = { type: 'switchStore', storeId: 1 } as { type: 'switchStore'; storeId: number };
+    dispatchFirm(s, cmd, recorder().fx);
+    cmd.storeId = 99;
+    expect(s.firmRun!.record.log[0]).toMatchObject({ firm: { type: 'switchStore', storeId: 1 } });
+    expect((s.firmRun!.record.log[0] as { firm: object }).firm).not.toBe(cmd);
+  });
+
+  it('terminateStore: wypowiedzenie drugiego sklepu niesie zdarzenie notice, a sklep dostaje ostatni dzień umowy', () => {
+    const { s } = withSecond();
+    const rec = recorder();
+    expect(dispatchFirm(s, { type: 'terminateStore', storeId: 2 }, rec.fx)).toEqual({ ok: true });
+    expect(firmOf(s).stores[1]!.notice).not.toBeNull();
+    const sent = rec.named('handleFirmEvents')[0]![1] as FirmStepOut;
+    expect(sent.firm).toEqual([{ kind: 'notice', storeId: 2, params: { endDay: firmOf(s).stores[1]!.notice!.endDay } }]);
+    // okres wypowiedzenia: Centrala nie finansuje rat tego sklepu, także z powłoki
+    dispatchFirm(s, { type: 'switchStore', storeId: 2 }, rec.fx);
+    const refused = dispatchCommand(s, { type: 'buyUpgrade', id: UPGRADES[0]!.id, raty: true }, rec.fx);
+    expect(refused).toEqual({ ok: false, text: 'Centrala nie finansuje rat placówki w okresie wypowiedzenia.' });
+  });
+
+  it('dziennik firmy z prawdziwej gry odtwarza firmę co do znaku: wynajem, otwarcie, przełączenie i polecenia w drugim sklepie', () => {
+    // ziarno, dla którego status Partnera przychodzi sam po dwóch miesiącach (jak w replay.test.ts)
+    const s = createSession('c', true);
+    const rec = recorder();
+    const f = firmOf(s);
+    const answer = (): void => {
+      for (const card of visibleCards(s.econ.tycoon.cards, s.econ.minute)) {
+        expect(dispatchCommand(s, { type: 'answerCard', seq: card.seq, answer: defaultAnswer(card) }, rec.fx).ok).toBe(true);
+      }
+    };
+    const play = (until: () => boolean): void => {
+      for (let i = 0; i < 2000 && !until(); i++) {
+        answer();
+        advanceSession(s, 1000, 8, false, emptyStepOut());
+      }
+      expect(until()).toBe(true);
+    };
+
+    play(() => f.person.partner);
+    const lot = f.city.lots.find((l) => l.state === 'wolny')!;
+    expect(dispatchFirm(s, { type: 'rentLot', lotId: lot.id, pay: 'raty' }, rec.fx)).toEqual({ ok: true });
+    play(() => f.stores.length === 2);
+    expect(dispatchFirm(s, { type: 'switchStore', storeId: 2 }, rec.fx)).toEqual({ ok: true });
+    expect(dispatchCommand(s, { type: 'setOrder', auto: false, manual: 6 }, rec.fx).ok).toBe(true);
+    const after = s.econ.minute;
+    play(() => s.econ.minute >= after + 3 * MINUTES_PER_DAY);
+    answer();
+    expect(dispatchCommand(s, { type: 'hire' }, rec.fx).ok).toBe(true);
+    expect(dispatchFirm(s, { type: 'switchStore', storeId: 1 }, rec.fx)).toEqual({ ok: true });
+    expect(dispatchCommand(s, { type: 'setOrder', auto: true }, rec.fx).ok).toBe(true);
+
+    const log = s.firmRun!.record.log;
+    expect(log.some((e) => 'firm' in e && e.firm.type === 'rentLot')).toBe(true);
+    expect(log.some((e) => 'store' in e && e.store === 2)).toBe(true);
+    const replayed = replayFirm(s.firmRun!.record, s.econ.minute);
+    expect(replayed.stores).toHaveLength(2);
+    expect(JSON.stringify(replayed)).toBe(JSON.stringify(f));
+    expect(s.run).toBeNull();
+  }, 60_000);
+});
+
+describe('gra prowadzi firmę (powłoka)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ now: new Date(2026, 9, 28, 12, 0, 0) });
+    for (const sig of [ui.welcome, ui.report, ui.remanent, ui.celebration, ui.start, ui.selection, ui.tab, ui.picked, ui.econ, ui.firm, ui.networkReport, ui.ranked, ui.unsent, ui.confirmRankedStart, ui.finish]) {
+      (sig as { value: unknown }).value = null;
+    }
+    ui.showSettings.value = false;
+    ui.howTo.value = false;
+    ui.tutorialOffer.value = false;
+    ui.toasts.value = [];
+    ui.story.value = [];
+    ui.ephemeral.value = false;
+    ui.seed.value = '';
+    ui.speed.value = 1;
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    ui.story.value = [];
+    ui.networkReport.value = null;
+    ui.remanent.value = null;
+  });
+
+  /** Dwa sklepy na wspólnej gotówce, w scenie jest aktywny. */
+  function twoStores(h: Harness, seed = SEED): { s: GameSession; second: ReturnType<typeof openSecond>; f: ReturnType<typeof firmOf> } {
+    const s = partnerSession(seed);
+    const second = openSecond(s);
+    openFirm(h, s);
+    return { s, second, f: firmOf(s) };
+  }
+
+  describe('publish i game.firm', () => {
+    it('publish wystawia firmę interfejsowi z tą samą wersją co ui.econ; bez sesji nic', () => {
+      const h = harness();
+      h.shell.publish();
+      expect(ui.firm.value).toBeNull();
+      const s = open(h);
+      h.shell.publish();
+      expect(ui.firm.value!.f).toBe(firmOf(s));
+      expect(ui.firm.value!.v).toBe(ui.econ.value!.v);
+      h.shell.publish();
+      expect(ui.firm.value!.v).toBe(ui.econ.value!.v);
+    });
+
+    it('game.firm bez sesji to odmowa store; w biegu rankingowym wynajem daje ranked', () => {
+      const h = harness();
+      expect(h.shell.game.firm({ type: 'switchStore', storeId: 1 })).toEqual({ ok: false, reason: 'store' });
+      h.shell.startRanked('bieg-firma');
+      expect(h.shell.game.firm({ type: 'rentLot', lotId: 3, pay: 'gotowka' })).toEqual({ ok: false, reason: 'ranked' });
+      expect(h.shell.session!.firm!.ranked).toBe(true);
+    });
+
+    it('switchStore z powłoki: scena ładuje seed nowego sklepu, zaznaczenie i wybrana odpowiedź zdjęte, interfejs widzi nowy sklep', () => {
+      const h = harness();
+      const { s, second } = twoStores(h);
+      ui.selection.value = { kind: 'till' };
+      ui.picked.value = { seq: 3, answer: 1 };
+      ui.speed.value = 0;
+
+      expect(h.shell.game.firm({ type: 'switchStore', storeId: 2 })).toEqual({ ok: true });
+
+      expect(h.scene.loads).toEqual([{ seed: second.econ.seed, session: s }]);
+      expect(h.scene.seed).toBe(second.econ.seed);
+      expect(h.scene.seed).not.toBe(s.seed);
+      expect(ui.selection.value).toBeNull();
+      expect(ui.picked.value).toBeNull();
+      expect(ui.econ.value!.s).toBe(second.econ);
+      expect(ui.econ.value!.info).toBe(second.info);
+      expect(ui.firm.value!.f.activeId).toBe(2);
+      expect(ui.seed.value).toBe(s.seed);   // adres gry zostaje, seed sklepu w mieście jest sprawą sceny
+      expect(hasStoredSave(s.seed)).toBe(true);
+      expect((JSON.parse(storage.getItem(`traszka:save:${s.seed}`)!) as { firm: { activeId: number } }).firm.activeId).toBe(2);
+    });
+
+    it('remont w drugim sklepie przebudowuje scenę z seedem tego sklepu, a ulica dostaje jego lokal', () => {
+      const h = harness();
+      const { s, second } = twoStores(h);
+      h.shell.game.firm({ type: 'switchStore', storeId: 2 });
+      h.scene.loads.length = 0;
+      s.econ.cash = 1e6;
+      s.econ.level = 8;
+      expect(h.shell.game.dispatch({ type: 'startRemont' }).ok).toBe(true);
+      expect(h.scene.loads).toEqual([{ seed: second.econ.seed, session: s }]);
+      expect(s.layout).toBe(second.layout);
+      expect(s.layoutLevel).toBe(1);
+      expect(s.info.site?.lot).toBeTruthy();
+      expect(baseLotOf(s)).toEqual(firmOf(s).city.lots[second.lotId]!.spec);
+      expect(second.layout.lot.interiorWidth).toBeGreaterThan(firmOf(s).city.lots[second.lotId]!.spec.interiorWidth);
+    });
+
+    it('sesja z zapisu z aktywnym #2: rozruch ładuje scenę z seedem tego sklepu', () => {
+      const s = partnerSession();
+      const second = openSecond(s);
+      firmOf(s).activeId = 2;
+      pointAtActive(s);
+      saveSession(s);
+
+      const h = harness();
+      expect(h.shell.open({ seed: s.seed, fresh: false, choice: null })).toBe(true);
+      expect(h.shell.session!.firm!.activeId).toBe(2);
+      expect(h.scene.loads).toEqual([{ seed: second.econ.seed, session: h.shell.session }]);
+    });
+  });
+
+  describe('Review Focus 2: przełączenie w złym momencie', () => {
+    it('karta aktywnego, przełączenie, następna minuta: zastępca odpowiada w #1, jest toast i wpis w skrzynce, a gra nie stoi', () => {
+      const h = harness();
+      const { s, second, f } = twoStores(h);
+      let guard = 0;
+      while (!awaitingDecision(s.econ) && guard++ < 400) tickFrame(h);
+      expect(awaitingDecision(s.econ)).toBe(true);
+      second.econ.tycoon.cards.pending = [];
+      ui.toasts.value = [];
+      const minute = s.econ.minute;
+
+      expect(h.shell.game.firm({ type: 'switchStore', storeId: 2 })).toEqual({ ok: true });
+      const out = tickFrame(h);
+
+      expect(s.econ.minute).toBeGreaterThan(minute);
+      expect(out.firm.some((e) => e.kind === 'deputy' && e.storeId === 1)).toBe(true);
+      expect(f.inbox.at(-1)).toMatchObject({ storeId: 1 });
+      expect(awaitingDecision(f.stores[0]!.econ)).toBe(false);
+      const toast = toastTexts().find((t) => t.includes('zastępca wybrał'));
+      expect(toast).toBeDefined();
+      expect(toast).toContain(storeName(f, 1));
+      expect(ui.story.value).toEqual([]);   // wpis zastępcy to toast, nie okno „OK”
+    });
+
+    it('wpis zastępcy zostaje w skrzynce (inbox) po toaście, razem z numerem karty i odpowiedzią', () => {
+      const h = harness();
+      const { s, second, f } = twoStores(h);
+      for (let i = 0; i < 400 && !awaitingDecision(s.econ); i++) tickFrame(h);
+      expect(awaitingDecision(s.econ)).toBe(true);
+      second.econ.tycoon.cards.pending = [];
+      const card = visibleCards(s.econ.tycoon.cards, s.econ.minute)[0]!;
+      h.shell.game.firm({ type: 'switchStore', storeId: 2 });
+      tickFrame(h);
+      expect(f.inbox.at(-1)).toMatchObject({ storeId: 1, card: card.id, answer: defaultAnswer(card) });
+    });
+  });
+
+  describe('Review Focus 1: koniec sklepu albo gry wywołany nie przez aktywny sklep', () => {
+    it('zaufanie 0 w aktywnym #2: scena wraca na #1, nie ma ekranu końca gry, wyciągi obu sklepów są w jednym oknie sieci, rozliczenie w oknach „OK”', () => {
+      const h = harness();
+      const { s, second, f } = twoStores(h);
+      f.activeId = 2;
+      pointAtActive(s);
+      h.scene.load(second.econ.seed, s);
+      playTo(s, SEPT_CLOSE);
+      loseTrust(second.econ);
+      h.scene.loads.length = 0;
+
+      for (let i = 0; i < 20 && !second.closed; i++) tickFrame(h, 1, 8);
+
+      expect(second.closed).toBe(true);
+      expect(f.activeId).toBe(1);
+      expect(s.econ).toBe(f.stores[0]!.econ);
+      expect(s.econ.gameOver).toBe(false);
+      expect(h.scene.loads).toEqual([{ seed: s.seed, session: s }]);   // scena przeładowana na pozostały sklep, jeden raz
+      expect(h.scene.seed).toBe(s.seed);
+      expect(ui.econ.value!.s).toBe(s.econ);   // interfejs od razu widzi #1, a nie zamknięty sklep z gameOver
+      expect(ui.report.value).toBeNull();   // wyciąg zamkniętego sklepu nie wskakuje jako okno aktywnego
+      const net = ui.networkReport.value!;
+      expect(net.reports.map((r) => r.storeId)).toEqual([1, 2]);
+      expect(net.summary.stores.map((x) => x.id)).toEqual([1, 2]);
+      expect(net.reports[1]!.report.label).toBe(net.reports[0]!.report.label);
+      expect(ui.story.value.map((e) => e.title)).toEqual(expect.arrayContaining([
+        `Rozliczenie końcowe: ${storeName(f, 2)}`, `Umowa zakończona: ${storeName(f, 2)}`,
+      ]));
+      expect(ui.story.value.some((e) => e.title === 'Koniec współpracy')).toBe(false);
+      expect(f.over).toBeNull();
+    });
+
+    it('koniec wypowiedzenia w aktywnym #2: tak samo, scena na #1 i rozliczenie końcowe w oknach', () => {
+      const h = harness();
+      const { s, second, f } = twoStores(h);
+      expect(h.shell.game.firm({ type: 'terminateStore', storeId: 2 })).toEqual({ ok: true });
+      expect(h.shell.game.firm({ type: 'switchStore', storeId: 2 })).toEqual({ ok: true });
+      ui.story.value = [];
+      const endDay = second.notice!.endDay;
+      playTo(s, endDay * MINUTES_PER_DAY + OPEN_TO - 1);
+      h.scene.loads.length = 0;
+
+      for (let i = 0; i < 30 && !second.closed; i++) tickFrame(h, 1, 8);
+
+      expect(second.closed).toBe(true);
+      expect(s.econ).toBe(f.stores[0]!.econ);
+      expect(s.econ.gameOver).toBe(false);
+      expect(h.scene.loads).toEqual([{ seed: s.seed, session: s }]);
+      const closed = ui.story.value.find((e) => e.title.startsWith('Umowa zakończona'));
+      expect(closed?.text).toContain('wygasła');
+      expect(ui.story.value.some((e) => e.title === 'Koniec współpracy')).toBe(false);
+    });
+
+    it('debet wywołany przez firmę kończy grę widocznie na aktywnym sklepie (session.econ.gameOver), a okno „OK” mówi o gotówce', () => {
+      const h = harness();
+      const { s, f } = twoStores(h);
+      f.person.wallet = DEBT_LIMIT - 1;
+      syncWallet(f);
+      expect(s.econ.gameOver).toBe(false);
+
+      tickFrame(h, 1, 8);
+
+      expect(f.over).toBe('debt');
+      expect(s.econ.gameOver).toBe(true);
+      expect(isModalOpen(s)).toBe(true);
+      expect(f.stores.every((st) => st.econ.gameOver)).toBe(true);
+      const over = ui.story.value.find((e) => e.title === 'Koniec współpracy');
+      expect(over).toBeDefined();
+      expect(over!.text).toContain('granicy debetu');
+    });
+  });
+
+  describe('trasy zdarzeń (tabela z planu)', () => {
+    const bg = (storeId: number, event: EconEvent, important = true): FirmStepOut['background'][number] => ({ storeId, event, important });
+    const stepOut = (over: Partial<FirmStepOut>): FirmStepOut => ({ ...emptyStepOut(), ...over });
+
+    it('trust-tier z tła: ważne zdarzenie czeka na „OK” z nazwą sklepu w tytule, tekst Centrali bez zmian', () => {
+      const h = harness();
+      const { f } = twoStores(h);
+      const text = 'Zaufanie Centrali spadło do progu „Pod obserwacją”.';
+      h.shell.handleFirmEvents(stepOut({ background: [bg(2, { kind: 'trust-tier', text })] }));
+      expect(ui.story.value).toHaveLength(1);
+      expect(ui.story.value[0]!.title).toContain(storeName(f, 2));
+      expect(ui.story.value[0]!.title).toContain('Zaufanie Centrali');
+      expect(ui.story.value[0]!.text).toBe(text);
+    });
+
+    it('gameover z tła: okno „OK” z nazwą sklepu', () => {
+      const h = harness();
+      const { f } = twoStores(h);
+      h.shell.handleFirmEvents(stepOut({ background: [bg(2, { kind: 'gameover', text: 'Centrala wypowiada umowę franczyzową.' })] }));
+      expect(ui.story.value).toHaveLength(1);
+      expect(ui.story.value[0]!.title).toContain(storeName(f, 2));
+    });
+
+    it('drobne zdarzenia z tła są pomijane: ani toastu, ani okna, ani zapisu dnia', () => {
+      const h = harness();
+      twoStores(h);
+      const persists = (): number => storage.keys().length;
+      const before = persists();
+      h.shell.handleFirmEvents(stepOut({
+        background: [bg(2, { kind: 'delivery', text: 'Dostawa.' }, false), bg(2, { kind: 'day', text: 'Dzień' }, false), bg(2, { kind: 'levelup', text: 'Poziom 3!', level: 3 }, false)],
+      }));
+      expect(ui.story.value).toEqual([]);
+      expect(ui.toasts.value).toEqual([]);
+      expect(ui.celebration.value).toBeNull();
+      expect(h.calls).toEqual([]);
+      expect(persists()).toBe(before);
+    });
+
+    it('dwa wyciągi z jednej minuty to jedno okno sieci z dwoma raportami (nie ui.report), a rozliczenia nie ma', () => {
+      const h = harness();
+      const { s, f } = twoStores(h);
+      playTo(s, SEPT_CLOSE);
+      const out = tickFrame(h, 1, 8);
+      expect(out.active.filter((e) => e.kind === 'month')).toHaveLength(1);
+      expect(out.background.filter((b) => b.event.kind === 'month' && b.important)).toHaveLength(1);
+
+      expect(ui.report.value).toBeNull();
+      const net = ui.networkReport.value!;
+      expect(net).not.toBeNull();
+      expect(net.reports.map((r) => r.storeId)).toEqual([1, 2]);
+      expect(net.summary.stores.map((x) => x.id)).toEqual([1, 2]);
+      expect(net.reports.map((r) => r.report.profit)).toEqual(net.summary.stores.map((x) => x.profit));
+      expect(net.summary.wallet).toBe(f.person.wallet);
+      expect(ui.isWindowOpen()).toBe(true);
+    });
+
+    it('wyciąg jednego sklepu (bez raportu sieci) zostaje oknem raportu jak dotąd', () => {
+      const h = harness();
+      const s = open(h);
+      playTo(s, SEPT_CLOSE);
+      tickFrame(h, 1, 8);
+      expect(ui.report.value).not.toBeNull();
+      expect(ui.networkReport.value).toBeNull();
+    });
+
+    it('dwa remanenty to jedno okno z protokołami obu sklepów (RemanentView.stores), z protokołem aktywnego jako głównym', () => {
+      const h = harness();
+      const { f } = twoStores(h);
+      const mk = (day: number): RemanentProtocol => ({ day, fromDay: 0, revenue: 100_000, byReason: { termin: 1, kradziez: 2, pomylki: 3, karty: 0 }, total: 6, limit: 8000, charge: 0, first: true });
+      const active = mk(90);
+      const other = mk(91);
+      h.shell.handleFirmEvents(stepOut({
+        active: [{ kind: 'remanent', remanent: active, text: 'Remanent aktywnego.' }],
+        background: [bg(2, { kind: 'remanent', remanent: other, text: 'Remanent w tle.' })],
+      }));
+      expect(ui.remanent.value).toEqual({
+        protocol: active, text: 'Remanent aktywnego.',
+        stores: [{ storeId: 1, protocol: active, text: 'Remanent aktywnego.' }, { storeId: 2, protocol: other, text: 'Remanent w tle.' }],
+      });
+      expect(f.activeId).toBe(1);
+      expect(h.calls.filter((c) => c[0] === 'play')).toEqual([['play', 'pop']]);   // jeden dźwięk na okno
+    });
+
+    it('remanent tylko w tle też otwiera okno (protokół tła jako główny), a sam remanent aktywnego zostaje bez pola stores', () => {
+      const h = harness();
+      twoStores(h);
+      const mk = (day: number): RemanentProtocol => ({ day, fromDay: 0, revenue: 100_000, byReason: { termin: 1, kradziez: 2, pomylki: 3, karty: 0 }, total: 6, limit: 8000, charge: 0, first: false });
+      h.shell.handleFirmEvents(stepOut({ background: [bg(2, { kind: 'remanent', remanent: mk(91), text: 'W tle.' })] }));
+      expect(ui.remanent.value).toMatchObject({ text: 'W tle.', stores: [{ storeId: 2, text: 'W tle.' }] });
+      ui.remanent.value = null;
+      h.shell.handleFirmEvents(stepOut({ active: [{ kind: 'remanent', remanent: mk(90), text: 'Aktywny.' }] }));
+      expect(ui.remanent.value).toEqual({ protocol: mk(90), text: 'Aktywny.' });
+    });
+
+    it('zdarzenia firmy partner, opened, notice, settlement, closed, debt i gameover to okna „OK” z tekstem z firmText', () => {
+      const h = harness();
+      const { f } = twoStores(h);
+      const events: FirmEvent[] = [
+        { kind: 'partner' },
+        { kind: 'opened', storeId: 2, params: { lotId: f.stores[1]!.lotId } },
+        { kind: 'notice', storeId: 2, params: { endDay: 70 } },
+        { kind: 'settlement', storeId: 2, params: { installments: 100, pending: 0, shrinkage: 5, limit: 4, remanent: 1, total: 101 } },
+        { kind: 'closed', storeId: 2, params: { reason: 'trust' } },
+        { kind: 'debt', params: { cash: -60_000 } },
+        { kind: 'gameover', params: { reason: 'debt', cash: -120_000 } },
+      ];
+      h.shell.handleFirmEvents(stepOut({ firm: events }));
+      expect(ui.story.value.map((e) => ({ title: e.title, text: e.text }))).toEqual(events.map((e) => firmEventText(f, e)));
+      expect(ui.story.value[0]!.text).toContain('Po wnikliwej analizie i z pewnymi oporami nadajemy Panu/Pani status Partnera Strategicznego.');
+      expect(ui.toasts.value).toEqual([]);
+    });
+
+    it('raport sieci z firmy idzie do networkReport.summary, a bez wyciągów w tej klatce też otwiera okno', () => {
+      const h = harness();
+      twoStores(h);
+      const summary: NetworkSummary = { label: 'wrzesień 2026', wallet: 5000, stores: [{ id: 1, profit: 1, net: 2 }, { id: 2, profit: 3, net: 4 }], invest: 0, total: 6 };
+      h.shell.handleFirmEvents(stepOut({ firm: [{ kind: 'network-report', summary }] }));
+      expect(ui.networkReport.value).toEqual({ summary, reports: [] });
+      expect(ui.story.value).toEqual([]);
+    });
+
+    it('deputy i build to toast i odświeżenie, bez okna „OK”', () => {
+      const h = harness();
+      const { f } = twoStores(h);
+      const card = DECK[0]!;
+      h.shell.handleFirmEvents(stepOut({
+        firm: [
+          { kind: 'deputy', storeId: 2, params: { card: card.id, answer: 0 } },
+          { kind: 'build', params: { lotId: f.stores[1]!.lotId, readyDay: 40, price: 50_000, pay: 'raty' } },
+        ],
+      }));
+      expect(ui.story.value).toEqual([]);
+      expect(toastTexts()).toEqual([
+        firmEventText(f, { kind: 'deputy', storeId: 2, params: { card: card.id, answer: 0 } }).text,
+        firmEventText(f, { kind: 'build', params: { lotId: f.stores[1]!.lotId, readyDay: 40, price: 50_000, pay: 'raty' } }).text,
+      ]);
+      expect(h.scene.syncs).toEqual([true]);   // odświeżenie sceny i interfejsu raz
+    });
+
+    it('puste zdarzenia nic nie robią, ale pętla klatek może wołać je co klatkę (zamyka tylko sezon rankingowy)', () => {
+      const h = harness();
+      open(h);
+      h.shell.handleFirmEvents(emptyStepOut());
+      expect(h.calls).toEqual([]);
+      expect(ui.story.value).toEqual([]);
+      expect(h.scene.syncs).toEqual([]);
+    });
+  });
+
+  describe('pieniądze spoza poleceń (Review Focus 4)', () => {
+    it('premia dzienna i zarobek offline przy dwóch sklepach wpadają do portfela raz, a kasy obu sklepów zostają równe', () => {
+      const h = harness();
+      const { s, f } = twoStores(h);
+      const before = f.person.wallet;
+      const ogonki = f.person.ogonki;
+      ui.welcome.value = { hours: 3, offline: 1234, streak: 4, daily: { cash: 500, ogonki: 7 } };
+
+      h.shell.game.claimWelcome();
+
+      expect(f.person.wallet).toBe(before + 1234 + 500);
+      expect(f.person.ogonki).toBe(ogonki + 7);
+      for (const st of f.stores) {
+        expect(st.econ.cash, `kasa sklepu ${st.id}`).toBe(f.person.wallet);
+        expect(st.econ.ogonki, `Ogonki sklepu ${st.id}`).toBe(f.person.ogonki);
+      }
+      expect(s.econ.cash).toBe(f.person.wallet);
+      expect(s.run).toBeNull();
+      expect(s.firmRun ?? null).toBeNull();
+      expect(h.shell.meta.daily).toEqual({ date: '2026-10-28', streak: 4 });
+    });
+
+    it('zarobek za nieobecność przy otwarciu zapisu z dwoma sklepami to suma po otwartych sklepach', () => {
+      const s = partnerSession();
+      const second = openSecond(s);
+      const f = firmOf(s);
+      for (const [st, profit] of [[f.stores[0]!, 30_000], [second, 15_000]] as const) {
+        st.econ.history = [{ label: 'wrzesień 2026', profit, revenue: 150_000 }];
+        st.econ.minute = 35 * MINUTES_PER_DAY + OPEN_FROM;
+        st.econ.total.customers = 800;
+      }
+      saveSession(s);
+      const meta: Meta = { ...loadMeta(), lastSeen: Date.now() - 3 * 3_600_000, daily: { date: '2026-10-28', streak: 2 } };
+      const h = harness({ meta });
+      expect(h.shell.open({ seed: s.seed, fresh: false, choice: null })).toBe(true);
+      const loaded = h.shell.session!.firm!;
+      expect(ui.welcome.value!.offline).toBe(offlineEarnings(loaded.stores[0]!.econ, 3) + offlineEarnings(loaded.stores[1]!.econ, 3));
+      expect(ui.welcome.value!.offline).toBeGreaterThan(offlineEarnings(loaded.stores[0]!.econ, 3));
+    });
+
+    it('nagroda za poziom po odbiorze wpada do portfela raz (settleOutsideCommand przez firmę)', () => {
+      const h = harness();
+      const { s, f } = twoStores(h);
+      const wallet = f.person.wallet;
+      s.econ.xp = xpToNext(s.econ.level);
+      const reward = levelReward(s.econ.level + 1);
+      ui.welcome.value = { hours: 1, offline: 50, streak: null, daily: null };
+
+      h.shell.game.claimWelcome();
+
+      expect(f.person.wallet).toBe(wallet + 50 + reward.cash);
+      for (const st of f.stores) expect(st.econ.cash).toBe(f.person.wallet);
+    });
+  });
+
+  describe('skip', () => {
+    it('przesuwa oba sklepy o tyle samo minut, wyłącza oba dzienniki i obsługuje zdarzenia', () => {
+      const h = harness();
+      const { s, second, f } = twoStores(h);
+      second.econ.tycoon.cards.pending = [];
+      f.stores[0]!.econ.tycoon.cards.pending = [];
+      const a = f.stores[0]!.econ.minute;
+      const b = second.econ.minute;
+      expect(b).toBe(a);
+
+      h.shell.skip(120);
+
+      expect(f.stores[0]!.econ.minute).toBe(a + 120);
+      expect(second.econ.minute).toBe(b + 120);
+      expect(s.run ?? null).toBeNull();
+      expect(s.firmRun ?? null).toBeNull();
+      expect(h.scene.syncs).toContain(true);
+    });
+
+    it('karta aktywnego zatrzymuje przewijanie obu sklepów, a karta sklepu w tle nie', () => {
+      const h = harness();
+      const { s, second, f } = twoStores(h);
+      s.econ.tycoon.cards.pending = [];
+      second.econ.tycoon.cards.pending = [];
+      const cardDay = f.stores[0]!.econ.minute + 60;
+      // karta aktywnego #1 za 60 minut
+      const probe = createSession('probe-karta', true);
+      const card = structuredClone(probe.econ.tycoon.cards.pending[0]!);
+      s.econ.tycoon.cards.pending = [{ ...card, seq: 77, showAt: cardDay }];
+      h.shell.skip(500);
+      expect(s.econ.minute).toBe(cardDay);
+      expect(second.econ.minute).toBe(cardDay);   // sklepy stoją w tej samej minucie
     });
   });
 });

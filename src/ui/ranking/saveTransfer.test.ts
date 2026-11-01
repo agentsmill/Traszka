@@ -53,7 +53,7 @@ describe('przeniesienie zapisu: wszystko, czego gra potrzebuje do wczytania', ()
     const s = deviceA();
     const bundle = JSON.parse(exportTransfer()!) as Record<string, unknown>;
     expect(bundle).toMatchObject({ format: 'traszka-przeniesienie', version: 1, seed: 'pierogi-731', meta: { ...meta(), player: playerWithoutKey } });
-    expect((bundle.save as { econ: { cash: number } }).econ.cash).toBe(s.econ.cash);
+    expect((bundle.save as { stores: { econ: { cash: number } }[] }).stores[0]!.econ.cash).toBe(s.econ.cash);   // zapis zwykłej gry to koperta firmy
   });
 
   it('klucza gracza w paczce nie ma (paczka leży na serwerze, a serwer kluczy nie przechowuje)', () => {

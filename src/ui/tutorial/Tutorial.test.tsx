@@ -28,6 +28,7 @@ const game: GameActions = {
   claimWelcome: () => {}, openNextStore: () => {}, setSound: () => {}, setVibration: () => {}, restart: () => {}, newStore: () => {},
   startRanked: () => false, resumeRanked: () => false, leaveRanked: () => {}, abandonRanked: () => {},
   openFinish: () => {}, rememberNick: () => {},
+  firm: () => ({ ok: false, reason: 'store' }),
 };
 const controls: Controls = {
   setSpeed: (v) => { speed.value = v; }, rotate: () => {}, setTimeOfDay: () => {}, setPreset: () => {}, generate: () => {}, randomize: () => {},

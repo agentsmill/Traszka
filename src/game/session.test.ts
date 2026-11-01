@@ -16,11 +16,17 @@ import { REMONTS } from '@/sim/economy/upgrades';
 import { SIM_VERSION } from '@/sim/simVersion';
 import { GENERATOR_VERSION, generateStore } from '@/sim/store/generateStore';
 import { layoutFor } from '@/sim/store/layoutFor';
+import { CITY_GENERATOR_VERSION } from '@/sim/city/types';
+import { applyFirmCommand } from '@/sim/firm/commands';
+import { activeStore, emptyStepOut } from '@/sim/firm/firm';
+import { openSecond, partnerSession } from '../../tests/firmKit';
 import { dispatchCommand, type CommandEffects } from './actions';
+import { FIRM_SAVE_SCHEMA } from './firmSave';
 import { MemoryStorage } from './memoryStorage';
+import { createRankedSession } from './rankedRun';
 import {
-  BROKEN_SAVE_NOTICE, NEWER_SAVE_NOTICE, SAVE_SCHEMA, UNBUILDABLE_SAVE_NOTICE, createSession, deleteSave, discardSave, hasStoredSave,
-  lastSavedSeed, newRunLog, retireSession, reviveSession, saveSession, withLayoutFromSeed, type GameSession, type SaveEnvelope,
+  BROKEN_SAVE_NOTICE, NEWER_SAVE_NOTICE, SAVE_SCHEMA, UNBUILDABLE_SAVE_NOTICE, createSession, deleteSave, discardSave, envelopeOf, firmOf, hasStoredSave,
+  lastSavedSeed, newFirmRunLog, newRunLog, pointAtActive, retireSession, reviveSession, saveSession, withLayoutFromSeed, type GameSession, type SaveEnvelope,
 } from './session';
 
 /** Efekty poleceń bez skutków: remont w tych testach ma tylko zmienić sesję (stan i układ), bez dźwięku, sceny i zapisu. */
@@ -165,10 +171,17 @@ function playedSession(seed: string): GameSession {
   return s;
 }
 
-describe('koperta zapisu v2', () => {
-  it('zapis ma schemat, wersję gry i generatora, seed, układ sklepu i stan ekonomii', () => {
+/** Gra jak `playedSession`, ale zapisana w kopercie schematu 2 (ręcznie): tak wyglądają zapisy sprzed firmy i tak zapisuje się bieg rankingowy. */
+function playedV2(seed: string): GameSession {
+  const s = playedSession(seed);
+  storage.setItem(key(seed), JSON.stringify(envelopeOf(s)));
+  return s;
+}
+
+describe('koperta zapisu', () => {
+  it('koperta sklepu w schemacie 2 (używa jej bieg rankingowy) ma schemat, wersję gry i generatora, seed, układ sklepu i stan ekonomii', () => {
     const s = playedSession(BLOK);
-    const saved = JSON.parse(storage.getItem(key(BLOK))!) as Record<string, unknown>;
+    const saved = JSON.parse(JSON.stringify(envelopeOf(s))) as Record<string, unknown>;
     expect(Object.keys(saved).sort()).toEqual(['econ', 'gameVersion', 'generatorVersion', 'layout', 'schema', 'seed']);
     expect(saved.schema).toBe(SAVE_SCHEMA);
     expect(SAVE_SCHEMA).toBe(2);
@@ -182,7 +195,7 @@ describe('koperta zapisu v2', () => {
 
   it('zapis nie niesie zleceń Centrali, a KPI tygodnia przechodzi przez zapis bez zmian', () => {
     const s = playedSession(BLOK);
-    const saved = JSON.parse(storage.getItem(key(BLOK))!) as { econ: Record<string, unknown> };
+    const saved = (JSON.parse(storage.getItem(key(BLOK))!) as { stores: { econ: Record<string, unknown> }[] }).stores[0]!;
     for (const k of ['quests', 'questSeq', 'cleanDays']) expect(k in saved.econ, k).toBe(false);
     expect(JSON.stringify(saved.econ)).not.toMatch(/quest|"title"/);
 
@@ -213,7 +226,7 @@ describe('koperta zapisu v2', () => {
   });
 
   it('wczytany zostaje zapisany układ, nawet gdy generator dałby dziś inny (spec §14.1: zapis nie zależy od generatora)', () => {
-    const s = playedSession(BLOK);
+    const s = playedV2(BLOK);
     const stored = JSON.parse(storage.getItem(key(BLOK))!) as { layout: Record<string, unknown>; generatorVersion: number };
     const other = JSON.parse(JSON.stringify(generateStore('zupełnie-inny-sklep'))) as Record<string, unknown>;
     other.seed = BLOK;
@@ -232,12 +245,11 @@ describe('koperta zapisu v2', () => {
     s.econ.cash = 1e6;
     s.econ.level = 8;
     saveSession(s);
-    const small = (JSON.parse(storage.getItem(key(PAWILON))!) as { layout: { width: number } }).layout.width;
+    const small = createSession(PAWILON).layout.width;
     expect(remont(s).ok).toBe(true);
     expect(s.layoutLevel).toBe(1);
     saveSession(s);
-    const after = JSON.parse(storage.getItem(key(PAWILON))!) as { layout: { width: number } };
-    expect(after.layout.width).toBeGreaterThan(small);
+    expect(createSession(PAWILON).layout.width).toBeGreaterThan(small);
     const loaded = createSession(PAWILON);
     expect(loaded.layout).toEqual(s.layout);
     expect(loaded.layout).toEqual(layoutFor(PAWILON, 1));
@@ -277,7 +289,7 @@ describe('migracja zapisu v1 (sam stan ekonomii, bez układu)', () => {
   ];
 
   for (const { file, seed, remont } of cases) {
-    it(`${file}: stan zostaje, układ powstaje jak dotąd (layoutFor), zapis zmienia się w v2`, () => {
+    it(`${file}: stan zostaje, układ powstaje jak dotąd (layoutFor), zapis zmienia się w kopertę firmy (schemat 3)`, () => {
       const v1 = JSON.parse(text(file)) as EconomyState;
       expect(v1.remontLevel).toBe(remont);
       storage.setItem(key(seed), text(file));
@@ -294,14 +306,14 @@ describe('migracja zapisu v1 (sam stan ekonomii, bez układu)', () => {
       for (const e of s.econ.equipment) expect(s.info.slots.some((x) => x.id === e.slot), String(e.slot)).toBe(true);
       expect(s.econ.pallets.length).toBeGreaterThan(0);
 
-      // samo wczytanie niczego nie zapisuje (zapis dobry zostaje, jakim był, dopóki świat nie stanie); pierwszy zapis robi v2
+      // samo wczytanie niczego nie zapisuje (zapis dobry zostaje, jakim był, dopóki świat nie stanie); pierwszy zapis robi schemat 3
       expect(storage.getItem(key(seed))).toBe(text(file));
       saveSession(s);
-      const saved = JSON.parse(storage.getItem(key(seed))!) as { schema: number; seed: string; layout: unknown; econ: unknown };
-      expect(saved.schema).toBe(2);
+      const saved = JSON.parse(storage.getItem(key(seed))!) as { schema: number; seed: string; stores: { econ: unknown }[] };
+      expect(saved.schema).toBe(FIRM_SAVE_SCHEMA);
       expect(saved.seed).toBe(seed);
-      expect(saved.layout).toEqual(JSON.parse(JSON.stringify(s.layout)));
-      expect(saved.econ).toEqual(JSON.parse(JSON.stringify(s.econ)));
+      expect(saved.stores).toHaveLength(1);
+      expect(saved.stores[0]!.econ).toEqual(JSON.parse(JSON.stringify(s.econ)));
       expect(storage.getItem(`${key(seed)}:broken`)).toBeNull();
 
       const again = createSession(seed);
@@ -410,22 +422,22 @@ describe('zapisy v2 z produkcji', () => {
         expect(errorLog).not.toHaveBeenCalled();
       });
 
-      it('zapis po wczytaniu daje kopertę v2 z tym samym układem i stanem', () => {
+      it('zapis po wczytaniu daje kopertę firmy (schemat 3) z jednym sklepem, tym samym układem i stanem', () => {
         const f = fixture();
         storage.setItem(key(seed), text(file));
         const s = createSession(seed, false, partner);
         saveSession(s);
 
-        const saved = JSON.parse(storage.getItem(key(seed))!) as SaveEnvelope;
-        expect(Object.keys(saved).sort()).toEqual(['econ', 'gameVersion', 'generatorVersion', 'layout', 'schema', 'seed']);
-        expect(saved.schema).toBe(2);
+        const saved = JSON.parse(storage.getItem(key(seed))!) as { schema: number; seed: string; gameVersion: string; stores: { id: number; generatorVersion: number; econ: EconomyState }[] };
+        expect(saved.schema).toBe(FIRM_SAVE_SCHEMA);
         expect(saved.seed).toBe(seed);
         expect(saved.gameVersion).toBe(gameVersion);
-        expect(saved.generatorVersion).toBe(GENERATOR_VERSION);
-        expect(saved.layout).toEqual(f.layout);
+        expect(saved.stores).toHaveLength(1);
+        expect(saved.stores[0]!.id).toBe(1);
+        expect(saved.stores[0]!.generatorVersion).toBe(GENERATOR_VERSION);
         // w kopercie nie ma już zleceń (ani ich liczników); reszta stanu jest tym, co dała migracja
-        expect(saved.econ).toEqual({ ...asLoaded(f.econ), tycoon: s.econ.tycoon });
-        expect(JSON.stringify(saved.econ)).not.toMatch(/quest|"title"/);
+        expect(saved.stores[0]!.econ).toEqual({ ...asLoaded(f.econ), tycoon: s.econ.tycoon });
+        expect(JSON.stringify(saved.stores[0]!.econ)).not.toMatch(/quest|"title"/);
         expect(storage.getItem(`${key(seed)}:broken`)).toBeNull();
 
         const again = createSession(seed, false, partner);
@@ -671,7 +683,7 @@ describe('uszkodzone zapisy', () => {
     s.econ.reputation = Number.NaN;
     s.econ.shelf.napoje = Number.NaN;
     saveSession(s);
-    expect((JSON.parse(storage.getItem(key(BLOK))!) as { econ: { cash: unknown } }).econ.cash).toBeNull();
+    expect((JSON.parse(storage.getItem(key(BLOK))!) as { stores: { econ: { cash: unknown } }[] }).stores[0]!.econ.cash).toBeNull();
     const loaded = createSession(BLOK);
     expect(loaded.loadNotice).toBeNull();
     expectPlayable(loaded);
@@ -978,14 +990,14 @@ describe('zapis z nowszej wersji gry (schemat wyższy niż obsługiwany)', () =>
 });
 
 describe('zapis, który przeszedł walidację, ale z którego nie da się zbudować świata, nigdy nie idzie do :broken', () => {
-  /** Zagrany sklep na poziomie remontu 1, zapisany w kopercie v2; zwraca surowy zapis. */
+  /** Zagrany sklep na poziomie remontu 1, zapisany w kopercie schematu 2 (ręcznie, jak sprzed firmy); zwraca surowy zapis. */
   const savedRemont = (): { raw: string; session: GameSession } => {
     const s = createSession(BLOK, true);
     s.econ.cash = 400_000;
     s.econ.level = 12;
     expect(remont(s).ok).toBe(true);
     play(s, 5);
-    saveSession(s);
+    storage.setItem(key(BLOK), JSON.stringify(envelopeOf(s)));
     return { raw: storage.getItem(key(BLOK))!, session: s };
   };
   /** Ten sam zapis z oznaczonym układem (generatorVersion 777), który mock `computeStoreInfo` potrafi odrzucić. */
@@ -1014,7 +1026,7 @@ describe('zapis, który przeszedł walidację, ale z którego nie da się zbudow
     // układ z seeda zastępuje w zapisie ten, który się nie budował, ale dopiero przy pierwszym zapisie (po zbudowaniu świata)
     expect((JSON.parse(storage.getItem(key(BLOK))!) as { layout: { generatorVersion: number } }).layout.generatorVersion).toBe(777);
     saveSession(s);
-    expect((JSON.parse(storage.getItem(key(BLOK))!) as { layout: { generatorVersion: number } }).layout.generatorVersion).toBe(GENERATOR_VERSION);
+    expect((JSON.parse(storage.getItem(key(BLOK))!) as { schema: number; stores: { generatorVersion: number }[] }).stores[0]!.generatorVersion).toBe(GENERATOR_VERSION);
     expectPlayable(s);
   });
 
@@ -1177,7 +1189,7 @@ describe('dziennik poleceń sesji (run)', () => {
 
 describe('stan z zapisu pasuje do układu sklepu (palety, sprzęt i zapasy po ręcznej zmianie)', () => {
   it('paleta w miejscu, którego nie ma, sprzęt w nieistniejącym slocie i zapas ponad pojemność: gra naprawia je przy wczytaniu', () => {
-    const played = playedSession(BLOK);
+    const played = playedV2(BLOK);
     const blob = JSON.parse(storage.getItem(key(BLOK))!) as { econ: EconomyState };
     blob.econ.pallets[0] = { ...blob.econ.pallets[0]!, loc: 'sidewalk', spot: 40 };
     blob.econ.equipment.push({ id: 'bankomat', slot: 'nie-ma-takiego-slotu' });
@@ -1196,7 +1208,7 @@ describe('stan z zapisu pasuje do układu sklepu (palety, sprzęt i zapasy po r�
 
   it('paleta w przejściu pasuje do układu przy dowolnym numerze miejsca (piętra stosu), a numer poza zwykłą listą nie pasuje', () => {
     for (const seed of [BLOK, PAWILON]) {
-      const played = playedSession(seed);
+      const played = playedV2(seed);
       const aisle = played.info.spots.aisle.length;
       expect(aisle, seed).toBeGreaterThan(0);
       const stacked = { loc: 'aisle' as const, spot: aisle * 3 + 1 };   // trzecie piętro stosu na drugim kwadracie
@@ -1225,10 +1237,165 @@ describe('stan z zapisu pasuje do układu sklepu (palety, sprzęt i zapasy po r�
 
   it('prawdziwy zapis jest w porządku sam z siebie: wczytanie niczego nie przestawia (zapis i wczytanie dają ten sam stan)', () => {
     for (const seed of [BLOK, PAWILON]) {
-      const s = playedSession(seed);
+      const s = playedV2(seed);
       s.econ.cash += 1;   // coś zmienionego po zapisie nie ma znaczenia, liczy się zapisane
       const savedEcon = JSON.parse(storage.getItem(key(seed))!).econ as EconomyState;
       expect(JSON.stringify(createSession(seed).econ)).toBe(JSON.stringify(savedEcon));
     }
+  });
+});
+
+// --- Sesja na firmie (Zadanie 10) -------------------------------------------------------------------------------------------
+
+describe('sesja na firmie: firmOf, pointAtActive i zapis schematu 3', () => {
+  it('nowa gra zwykła: firma powstaje przy pierwszym użyciu i ma jeden sklep, na którym stoi sesja (to samo econ, layout i info)', () => {
+    const s = createSession(BLOK, true);
+    expect(s.firm).toBeUndefined();
+    const before = JSON.stringify(s.econ);
+    const f = firmOf(s);
+    expect(s.firm).toBe(f);
+    expect(firmOf(s)).toBe(f);
+    expect(f.stores).toHaveLength(1);
+    expect(f.activeId).toBe(1);
+    expect(f.ranked).toBe(false);
+    expect(s.econ).toBe(f.stores[0]!.econ);
+    expect(s.layout).toBe(f.stores[0]!.layout);
+    expect(s.info).toBe(f.stores[0]!.info);
+    expect(f.person.wallet).toBe(s.econ.cash);
+    expect(JSON.stringify(s.econ)).toBe(before);   // sama firma niczego w sklepie nie zmienia
+  });
+
+  it('bieg rankingowy: firm.ranked ustawia się przy każdym użyciu z trybu sesji (rankedRun.ts zostaje bez zmian)', () => {
+    const ranked = createRankedSession(BLOK);
+    expect(firmOf(ranked).ranked).toBe(true);
+    expect(firmOf(ranked).stores).toHaveLength(1);
+    expect(ranked.econ).toBe(firmOf(ranked).stores[0]!.econ);
+    const casual = createSession(BLOK, true);
+    expect(firmOf(casual).ranked).toBe(false);
+    casual.mode = 'ranked';
+    expect(firmOf(casual).ranked).toBe(true);
+  });
+
+  it('gotówka zmieniona poza firmą (konsola, test) wraca do portfela: sklep aktywny jest tym, co widzi gracz', () => {
+    const s = createSession(BLOK, true);
+    const f = firmOf(s);
+    s.econ.cash = 123_456;
+    s.econ.ogonki = 77;
+    expect(firmOf(s)).toBe(f);
+    expect(f.person.wallet).toBe(123_456);
+    expect(f.person.ogonki).toBe(77);
+  });
+
+  it('pointAtActive: po przełączeniu sesja wskazuje econ, layout i info nowego aktywnego; drugie wołanie nic nie zmienia', () => {
+    const s = partnerSession();
+    const second = openSecond(s);
+    const f = firmOf(s);
+    expect(s.econ).toBe(f.stores[0]!.econ);   // #1 nadal aktywny
+    expect(applyFirmCommand(f, { type: 'switchStore', storeId: 2 }, emptyStepOut())).toEqual({ ok: true });
+    expect(s.econ).toBe(f.stores[0]!.econ);   // dopóki nikt nie przepnie, sesja stoi na #1
+    expect(pointAtActive(s)).toBe(true);
+    expect(s.econ).toBe(second.econ);
+    expect(s.layout).toBe(second.layout);
+    expect(s.info).toBe(second.info);
+    expect(s.layoutLevel).toBe(second.econ.remontLevel);
+    expect(s.econ.seed).not.toBe(s.seed);   // sklep w lokalu miasta ma własny seed
+    expect(pointAtActive(s)).toBe(false);
+  });
+
+  it('pointAtActive po zmianie składu: refreshSites podmienia info, więc sesja przepina info także bez przełączenia', () => {
+    const s = partnerSession();
+    const before = s.info;
+    expect(before.site).toBeUndefined();
+    openSecond(s);
+    const f = firmOf(s);
+    expect(f.stores[0]!.info).not.toBe(before);   // przy dwóch sklepach #1 dostaje flagi (ZUS, debet firmy)
+    expect(s.info).toBe(f.stores[0]!.info);
+    expect(s.info.site).toMatchObject({ ownCosts: true, firmDebt: true });
+  });
+
+  it('zapis zwykłej gry to koperta schematu 3 także przy jednym sklepie, a wczytanie daje firmę z tym samym sklepem', () => {
+    const s = playedSession(BLOK);
+    const saved = JSON.parse(storage.getItem(key(BLOK))!) as { schema: number; seed: string; firm: unknown; stores: { id: number; econ: unknown }[] };
+    expect(saved.schema).toBe(FIRM_SAVE_SCHEMA);
+    expect(saved.seed).toBe(BLOK);
+    expect(saved.stores).toHaveLength(1);
+    expect(saved.stores[0]!.econ).toEqual(JSON.parse(JSON.stringify(s.econ)));
+    expect(s.firm).toBeDefined();   // zapis założył firmę
+
+    const loaded = createSession(BLOK);
+    expect(loaded.fromSave).toBe(true);
+    expect(loaded.firm).toBeDefined();
+    expect(loaded.econ).toBe(loaded.firm!.stores[0]!.econ);
+    expect(JSON.stringify(loaded.econ)).toBe(JSON.stringify(s.econ));
+    const again = storage.getItem(key(BLOK));
+    saveSession(loaded);
+    expect(storage.getItem(key(BLOK))).toBe(again);   // koperta zapisu i odczytu jest stabilna
+  });
+
+  it('zapis ze starego schematu 2 wczytuje się jako firma z jednym sklepem, a pierwszy zapis ma schemat 3', () => {
+    const origin = playedSession(BLOK);
+    storage.setItem(key(BLOK), JSON.stringify(envelopeOf(origin)));   // tak zapisywały grę wersje sprzed firmy
+    expect((JSON.parse(storage.getItem(key(BLOK))!) as { schema: number }).schema).toBe(SAVE_SCHEMA);
+    const s = createSession(BLOK);
+    expect(s.fromSave).toBe(true);
+    expect(s.loadNotice).toBeNull();
+    expect(s.firm).toBeUndefined();   // firma powstaje przy pierwszym użyciu: tu przy zapisie
+    expect(firmOf(s).stores).toHaveLength(1);
+    expect(s.econ).toBe(firmOf(s).stores[0]!.econ);
+    expect(JSON.stringify(s.econ)).toBe(JSON.stringify(origin.econ));
+    saveSession(s);
+    expect((JSON.parse(storage.getItem(key(BLOK))!) as { schema: number }).schema).toBe(FIRM_SAVE_SCHEMA);
+  });
+
+  it('zapis z aktywnym drugim sklepem: sesja wraca na #2 (seed, układ z lokalu i info z dzielnicą), nie na sklep startowy', () => {
+    const s = partnerSession();
+    const second = openSecond(s);
+    const f = firmOf(s);
+    expect(applyFirmCommand(f, { type: 'switchStore', storeId: 2 }, emptyStepOut())).toEqual({ ok: true });
+    pointAtActive(s);
+    saveSession(s);
+
+    const loaded = createSession(BLOK);
+    expect(loaded.firm!.activeId).toBe(2);
+    expect(loaded.econ).toBe(loaded.firm!.stores[1]!.econ);
+    expect(loaded.econ.seed).toBe(second.econ.seed);
+    expect(loaded.info.site?.lot).toEqual(second.info.site?.lot);   // `site` wraca do nowego StoreInfo
+    expect(loaded.info.site?.lot).not.toBeNull();
+    expect(JSON.stringify(loaded.layout)).toBe(JSON.stringify(second.layout));
+    expect(loaded.layoutLevel).toBe(second.econ.remontLevel);
+  });
+
+  it('withLayoutFromSeed z firmą: układ aktywnego #2 z lokalu miasta, firma sklonowana i zgodna z sesją, oryginał nietknięty', () => {
+    const s = partnerSession();
+    const second = openSecond(s);
+    const f = firmOf(s);
+    applyFirmCommand(f, { type: 'switchStore', storeId: 2 }, emptyStepOut());
+    pointAtActive(s);
+    const firmBefore = JSON.stringify(f);
+
+    const again = withLayoutFromSeed(s);
+    expect(JSON.stringify(f)).toBe(firmBefore);
+    expect(again.firm).toBeDefined();
+    expect(again.firm).not.toBe(f);
+    expect(again.econ).toBe(activeStore(again.firm!).econ);
+    expect(again.layout).toBe(activeStore(again.firm!).layout);
+    expect(again.info).toBe(activeStore(again.firm!).info);
+    expect(again.econ.seed).toBe(second.econ.seed);
+    expect(JSON.stringify(again.layout)).toBe(JSON.stringify(layoutFor(second.econ.seed, second.econ.remontLevel, second.info.site!.lot!)));
+    expect(again.info.site).toEqual(second.info.site);
+    expect(again.firm!.stores[0]!.econ.seed).toBe(s.seed);
+    expect(again.run).toBeNull();
+    expect(again.firmRun ?? null).toBeNull();
+  });
+
+  it('firmRun: nowa gra bez premii ma pusty dziennik firmy z wersją miasta, a z premią sieci, z zapisu i po withLayoutFromSeed go nie ma', () => {
+    const s = createSession(BLOK, true);
+    expect(s.firmRun).toEqual({ seq: 0, record: { seed: BLOK, gameVersion, cityGeneratorVersion: CITY_GENERATOR_VERSION, log: [] } });
+    expect(newFirmRunLog(BLOK)).toEqual(s.firmRun);
+    expect(createSession(BLOK, true, { points: 3, networkIncome: 100, stores: 1 }).firmRun ?? null).toBeNull();
+    saveSession(s);
+    expect(createSession(BLOK).firmRun ?? null).toBeNull();
+    expect(withLayoutFromSeed(s).firmRun ?? null).toBeNull();
+    expect(s.firmRun).not.toBeNull();   // oryginał zachowuje dziennik
   });
 });

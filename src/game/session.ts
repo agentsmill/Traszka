@@ -4,7 +4,9 @@ import { sanitizeEconomy } from '@/sim/economy/sanitize';
 import { computeStoreInfo, palletPlace, type StoreInfo } from '@/sim/economy/storeInfo';
 import { REMONTS } from '@/sim/economy/upgrades';
 import type { EconClock } from '@/sim/economy/clock';
-import { activeStore } from '@/sim/firm/firm';
+import { CITY_GENERATOR_VERSION } from '@/sim/city/types';
+import { activeStore, createFirm, syncWallet } from '@/sim/firm/firm';
+import type { FirmRecord } from '@/sim/firm/replay';
 import type { FirmState } from '@/sim/firm/types';
 import { isRec, whole } from '@/sim/guards';
 import type { RunRecord } from '@/sim/run';
@@ -13,7 +15,7 @@ import { GENERATOR_VERSION } from '@/sim/store/generateStore';
 import { layoutFor } from '@/sim/store/layoutFor';
 import { sanitizeLayout } from '@/sim/store/sanitize';
 import type { StoreLayout } from '@/sim/store/types';
-import { FIRM_SAVE_SCHEMA, isNewerSave, restoreFirmFrom } from './firmSave';
+import { FIRM_SAVE_SCHEMA, firmEnvelopeOf, isNewerSave, restoreFirmFrom } from './firmSave';
 import { GAME_VERSION } from './version';
 
 /**
@@ -25,6 +27,17 @@ import { GAME_VERSION } from './version';
  */
 export interface RunLog {
   record: RunRecord;
+  seq: number;
+}
+
+/**
+ * Dziennik poleceń firmy: `FirmRecord` z wpisami `{minute, seq, store, cmd}` (polecenie sklepu niesie numer sklepu, w którym je wydano) albo
+ * `{minute, seq, firm}` (polecenie firmy) i numer następnego wpisu. `replayFirm(record, minute)` odtwarza z niego firmę. Działa jak `RunLog`:
+ * ten sam `RUN_LOG_MAX` i te same warunki `null` (patrz `GameSession.firmRun`), a w przeciwieństwie do `RunLog` przeżywa polecenia firmy,
+ * bo `RunRecord` ma jeden sklep i nie umie ich zapisać.
+ */
+export interface FirmRunLog {
+  record: FirmRecord;
   seq: number;
 }
 
@@ -77,10 +90,18 @@ export interface GameSession {
    */
   run: RunLog | null;
   /**
-   * Firma odtworzona z zapisu schematu 3 (`firmSave.ts`): wszystkie sklepy, osoba, budowy i skrzynka. Wtedy `econ`, `layout` i `info`
-   * sesji to ten sam obiekt co w aktywnym sklepie firmy. Sesja ze schematu 1 i 2 oraz nowa gra firmy tu jeszcze nie mają.
+   * Firma gracza: wszystkie sklepy, osoba, budowy i skrzynka. Powstaje leniwie przy pierwszym użyciu (krok, polecenie, zapis) z bieżącego
+   * `econ`, `layout` i `info` (`firmOf`); odczyt zapisu schematu 3 (`firmSave.ts`) ustawia ją od razu. **Niezmiennik:** `econ`, `layout` i
+   * `info` sesji to ten sam obiekt co w aktywnym sklepie firmy (`pointAtActive`), więc cały interfejs i scena czytają sesję jak dotąd.
    */
   firm?: FirmState;
+  /**
+   * Dziennik poleceń firmy (zapisuje go `dispatchCommand` i `dispatchFirm`) albo null/brak, gdy nie da się go prowadzić wiernie. Te same
+   * warunki `null` co `run` (sesja z zapisu, premia sieci, `withLayoutFromSeed`, `markOffLog`, `RUN_LOG_MAX`; `replayFirm` startuje od
+   * `freshRun` bez premii, jak `replayRun`). Brak dziennika ma też bieg rankingowy: jego bieg to `run`. Pierwsze polecenie firmy wyłącza
+   * `run` (jeden sklep w `RunRecord` nie opisze dwóch), a `firmRun` dalej je zapisuje.
+   */
+  firmRun?: FirmRunLog | null;
 }
 
 /**
@@ -101,6 +122,12 @@ export const newRunLog = (seed: string, mode: RunRecord['mode'] = 'casual'): Run
   seq: 0,
 });
 
+/** Pusty dziennik firmy nowej gry z wersjami gry i generatora miasta, z którymi go prowadzimy (inne miasto to inna gra). */
+export const newFirmRunLog = (seed: string): FirmRunLog => ({
+  record: { seed, gameVersion: GAME_VERSION, cityGeneratorVersion: CITY_GENERATOR_VERSION, log: [] },
+  seq: 0,
+});
+
 // --- Zapis w przeglądarce ----------------------------------------------------------------------------------------
 
 const SAVE_PREFIX = 'traszka:save:';
@@ -108,9 +135,10 @@ const LAST_KEY = 'traszka:last';
 const BROKEN_SUFFIX = ':broken';
 
 /**
- * Koperta zapisu (spec §14.1: seed + wersja gry + pełny stan, łącznie z wygenerowanym światem). Układ sklepu jest w
+ * Koperta zapisu jednego sklepu (spec §14.1: seed + wersja gry + pełny stan, łącznie z wygenerowanym światem). Układ sklepu jest w
  * zapisie, więc zmiana generatora nie podmienia graczowi sklepu pod postępem; po remoncie nowy układ zastępuje stary.
- * Schemat 1 to sam `EconomyState` (bez koperty): wczytujemy go i przy pierwszym zapisie zamieniamy na schemat 2.
+ * Schemat 1 to sam `EconomyState` (bez koperty): wczytujemy go i przy pierwszym zapisie zamieniamy na schemat 3. Schemat 2 pisze od
+ * Zadania 10 tylko zapis biegu rankingowego (`rankedRun.ts`); zwykła gra pisze kopertę firmy (`FIRM_SAVE_SCHEMA` w `firmSave.ts`).
  */
 export const SAVE_SCHEMA = 2;
 export interface SaveEnvelope {
@@ -127,19 +155,20 @@ export const BROKEN_SAVE_NOTICE_NO_COPY = 'Zapis sklepu był uszkodzony — zacz
 export const NEWER_SAVE_NOTICE = 'Zapis pochodzi z nowszej wersji gry — odśwież stronę';
 export const UNBUILDABLE_SAVE_NOTICE = 'Nie udało się zbudować Twojego sklepu — zapis jest bezpieczny, spróbuj odświeżyć stronę';
 
-/** Koperta zapisu sesji: seed, wersje gry i generatora, układ i pełny stan. Tę samą kopertę ma zapis biegu rankingowego (`rankedRun.ts`). */
+/** Koperta zapisu sklepu (schemat 2): seed, wersje gry i generatora, układ i pełny stan. Używa jej zapis biegu rankingowego (`rankedRun.ts`). */
 export const envelopeOf = (s: GameSession): SaveEnvelope => ({
   schema: SAVE_SCHEMA, gameVersion: GAME_VERSION, generatorVersion: GENERATOR_VERSION, seed: s.seed, layout: s.layout, econ: s.econ,
 });
 
 /**
- * Zapis w przeglądarce (localStorage). Błędy (tryb prywatny, brak miejsca) są ciche: gra działa dalej bez zapisu. Sesja rankingowa
- * (`mode: 'ranked'`) nie ma tu zapisu: jej bieg żyje pod własnym kluczem (`saveRanked` w `rankedRun.ts`), a zwykły sklep o tym samym
- * seedzie i `traszka:last` zostają, jak były.
+ * Zapis w przeglądarce (localStorage): koperta firmy w schemacie 3 pod `traszka:save:<seed>`, także przy jednym sklepie (firma powstaje
+ * tu, jeśli jeszcze jej nie ma). Błędy (tryb prywatny, brak miejsca) są ciche: gra działa dalej bez zapisu. Sesja rankingowa
+ * (`mode: 'ranked'`) nie ma tu zapisu: jej bieg żyje pod własnym kluczem (`saveRanked` w `rankedRun.ts`, schemat 2), a zwykły sklep o tym
+ * samym seedzie i `traszka:last` zostają, jak były.
  */
 export function saveSession(s: GameSession): void {
   if (s.retired || s.ephemeral || s.mode === 'ranked') return;
-  const envelope = envelopeOf(s);
+  const envelope = firmEnvelopeOf(firmOf(s));
   try {
     localStorage.setItem(SAVE_PREFIX + s.seed, JSON.stringify(envelope));
     localStorage.setItem(LAST_KEY, s.seed);
@@ -185,6 +214,46 @@ export function discardSave(s: GameSession): void {
 export function reviveSession(s: GameSession): void {
   s.retired = false;
   saveSession(s);
+}
+
+/**
+ * Firma sesji. Pierwsze wołanie zakłada ją z bieżącego sklepu (jedyny sklep, w lokalu startowym miasta z seeda gry), kolejne oddają tę samą.
+ * Przy każdym użyciu ustawia `ranked` z trybu sesji, więc `rankedRun.ts` niczego o firmie nie wie, a bieg rankingowy zostaje przy jednym
+ * sklepie bez statusu. Gotówka i Ogonki aktywnego sklepu, zmienione poza firmą (konsola, test), przechodzą do portfela: wszystkie funkcje
+ * firmy kończą się `syncWallet`, więc w spoczynku sklep jest równy portfelowi, a rozjazd może pochodzić tylko z zewnątrz.
+ */
+export function firmOf(session: GameSession): FirmState {
+  let f = session.firm;
+  if (!f) {
+    f = createFirm(session.seed, { econ: session.econ, layout: session.layout, info: session.info }, { ranked: session.mode === 'ranked' });
+    session.firm = f;
+    pointAtActive(session);   // `createFirm` zdejmuje `site` ze sklepu startowego bez rodzeństwa, czyli podmienia `info`
+  }
+  f.ranked = session.mode === 'ranked';
+  const { econ } = activeStore(f);
+  if (econ.cash !== f.person.wallet || econ.ogonki !== f.person.ogonki) {
+    f.person.wallet = econ.cash;
+    f.person.ogonki = econ.ogonki;
+    syncWallet(f);
+  }
+  return f;
+}
+
+/**
+ * Przepina sesję na aktywny sklep firmy (`econ`, `layout`, `info`, `layoutLevel`). Wołać po każdej zmianie, która mogła zmienić aktywny
+ * sklep albo jego opis: przełączenie, zamknięcie sklepu, otwarcie budowy (`refreshSites` podmienia `info` wszystkich sklepów, nie tylko
+ * nowego). Zwraca, czy coś się zmieniło. Sesja bez firmy nie ma co przepinać.
+ */
+export function pointAtActive(session: GameSession): boolean {
+  const f = session.firm;
+  if (!f) return false;
+  const st = activeStore(f);
+  const changed = session.econ !== st.econ || session.layout !== st.layout || session.info !== st.info;
+  session.econ = st.econ;
+  session.layout = st.layout;
+  session.info = st.info;
+  session.layoutLevel = st.econ.remontLevel;
+  return changed;
 }
 
 /** Przenosi zapis, którego nie da się użyć, do kopii `<klucz>:broken` i zwalnia jego miejsce. Zwraca, czy kopia powstała. */
@@ -370,19 +439,29 @@ export function createSession(seed: string, fresh = false, partner?: EconomyStat
   return {
     seed, mode: 'casual', econ, layout, info, clock: { acc: 0 }, layoutLevel: 0, fromSave: false, loadNotice, retired: false, ephemeral,
     run: noPartner(partner) ? newRunLog(seed) : null,   // `replayRun` startuje bez premii sieci: z nią dziennik nie byłby odtwarzalny
+    firmRun: noPartner(partner) ? newFirmRunLog(seed) : null,   // `replayFirm` tak samo
   };
 }
 
 /**
  * Ta sama gra na układzie zrobionym od nowa z seeda i poziomu remontu. Druga próba, gdy zapisany układ nie dał się zbudować w
  * scenie: układ da się wyliczyć z seeda, a stan gry (pieniądze, zapasy, ulepszenia) zostaje. Co nie pasuje do nowego układu
- * (palety, sprzęt, zapasy), ustawia `relayout`, więc dziennik poleceń nie opisuje już tego stanu (`run` = null). Nie zmienia `s`; rzuca,
- * gdy generator nie da układu.
+ * (palety, sprzęt, zapasy), ustawia `relayout`, więc dziennik poleceń nie opisuje już tego stanu (`run` i `firmRun` = null). Nie zmienia `s`;
+ * rzuca, gdy generator nie da układu. Sesja z firmą dostaje jej kopię, w której przestawiony jest aktywny sklep (układ z jego lokalu
+ * miasta, a nie z seeda gry: sklep #2 ma inny seed i `site.lot`), więc niezmiennik sesji z firmą zostaje.
  */
 export function withLayoutFromSeed(s: GameSession): GameSession {
-  const layout = layoutFor(s.seed, s.econ.remontLevel);
+  const firm = s.firm ? structuredClone(s.firm) : undefined;
+  const store = firm ? activeStore(firm) : undefined;
+  const econ = store ? store.econ : structuredClone(s.econ);
+  const site = store?.info.site;
+  const layout = layoutFor(econ.seed, econ.remontLevel, site?.lot ?? undefined);
   const info = computeStoreInfo(layout);
-  const econ = structuredClone(s.econ);
+  if (site) info.site = site;
   if (!fitsStore(econ, info)) relayout(econ, info);
-  return { ...s, econ, layout, info, layoutLevel: econ.remontLevel, clock: { acc: 0 }, run: null };   // układ z seeda i ewentualny `relayout` są poza dziennikiem
+  if (store) {
+    store.layout = layout;
+    store.info = info;
+  }
+  return { ...s, econ, layout, info, layoutLevel: econ.remontLevel, clock: { acc: 0 }, run: null, firmRun: null, ...(firm ? { firm } : {}) };   // układ z seeda i ewentualny `relayout` są poza dziennikiem
 }

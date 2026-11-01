@@ -189,7 +189,7 @@ describe('createRankingServices: zapis gry (exportSave)', () => {
     session.econ.cash = 1_000;
     saveSession(session);   // zapis z końca poprzedniego dnia
     session.econ.cash = 4_321;   // dalsza gra w pamięci, jeszcze niezapisana
-    const cashIn = (bundle: string): number => (JSON.parse(bundle) as { save: { econ: { cash: number } } }).save.econ.cash;
+    const cashIn = (bundle: string): number => (JSON.parse(bundle) as { save: { stores: { econ: { cash: number } }[] } }).save.stores[0]!.econ.cash;
     expect(cashIn(exportTransfer()!)).toBe(1_000);   // sam eksport z przeglądarki byłby o dzień wstecz
     const client = fakeClient();
     const services = create({ shell, client });
