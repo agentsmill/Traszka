@@ -21,7 +21,7 @@ gry i w ⚙. Pierwsze dymki „pierwszy raz” (miasto, karta lokalu, dwa sklepy
 lokalu: widełki klientów dziennie, kto przychodzi, konkurencja obok, czas budowy i pakiet otwarcia. Lokal wynajmiesz dopiero ze statusem
 Partnera Strategicznego, który Centrala nadaje, gdy sklep startowy ma zysk dwa miesiące z rzędu, a zaufanie przy zamknięciu miesiąca
 wynosi co najmniej 75. Pakiet otwarcia płacisz od razu z gotówki albo w 12 ratach z przelewów nowego sklepu; po budowie (5–8 dni) sklep
-otwiera się sam, a nowy sklep nie ma gwarancji 25 tys. zł. Najwyżej dwa sklepy, wliczając budowę. Chip w pasku przełącza sklepy: sklep
+otwiera się sam, a nowy sklep nie ma gwarancji 25 tys. zł. Do trzech sklepów naraz, wliczając budowę. Chip w pasku przełącza sklepy: sklep
 w tle pracuje sam, a jego karty rozstrzyga zastępca (odpowiedzią zaznaczoną z góry, wpisy trafiają do skrzynki). Gotówka jest jedna,
 a koniec miesiąca daje wyciąg każdego sklepu i podsumowanie sieci. Sklep można wypowiedzieć (miesiąc wypowiedzenia i rozliczenie
 końcowe). W sezonie rankingowym miasto tylko oglądasz: gra zostaje na jednym sklepie.

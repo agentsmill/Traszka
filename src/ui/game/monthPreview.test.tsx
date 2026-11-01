@@ -11,7 +11,7 @@ import { firmOf } from '@/game/session';
 import { startMonthPreview } from '@/sim/economy/monthPreview';
 import { forecastFirm } from '@/sim/firm/forecast';
 import { startFirmMonthPreview, type FirmPreview } from '@/sim/firm/preview';
-import { openSecond, partnerSession } from '../../../tests/firmKit';
+import { openSecond, openThird, partnerSession } from '../../../tests/firmKit';
 import { storeName } from '../city/firmText';
 import { forecastNow, shortStoreName } from '../city/storeSwitcherModel';
 import { closeMonthPreview, econ, firm, isWindowOpen, monthPreview, openMonthPreview } from '../state';
@@ -293,9 +293,11 @@ describe('previewWarning: czerwone ostrzeżenie z progów gry', () => {
 
 describe('podgląd końca miesiąca przy firmie', () => {
   const plain = (x: string): string => x.replace(/[\s\u00a0\u202f]/g, ' ');
-  function networkWorld() {
+  /** Sieć z dwoma albo, od limitu 4a.2, trzema otwartymi sklepami. */
+  function networkWorld(count = 2) {
     const session = partnerSession();
     openSecond(session);
+    if (count === 3) openThird(session);
     const f = firmOf(session);
     firm.value = { f, v: 1 };
     const view = { s: session.econ, info: session.info, v: 1 };
@@ -498,5 +500,59 @@ describe('podgląd końca miesiąca przy firmie', () => {
     const alert = walk(shown()).find((v) => v.props.role === 'alert')!;
     expect(String(alert.props.class)).toContain('danger');
     expect(plain(textOf(alert))).toContain('Centrala wypowie umowę');
+  });
+
+  it('trzy sklepy: podgląd ma część na każdy z trzech, zgodną z silnikiem co do złotówki, a okno cztery zakładki', () => {
+    vi.useFakeTimers();
+    const { f, view } = networkWorld(3);
+    const expected = direct(f);
+    const before = JSON.stringify({ ...f, city: undefined });
+    openMonthPreview();
+    const deps = fakeDeps(0);
+    runMonthPreview(view, deps);
+    deps.flush();
+    const got = doneFirm();
+    expect(got.stores.map((x) => x.id)).toEqual([1, 2, 3]);
+    expect(got.cashAfter).toBe(expected.cashAfter);
+    expect(got.stores.map((x) => x.preview.statement.net)).toEqual(expected.stores.map((x) => x.preview.statement.net));
+    expect(JSON.stringify({ ...f, city: undefined })).toBe(before);   // prawdziwa firma nietknięta
+
+    const tree = shown();
+    expect(buttonsOf(tree).map(textOf)).toEqual(['Sieć', shortStoreName(f, 1), shortStoreName(f, 2), shortStoreName(f, 3), 'Zamknij']);
+    const text = plain(textOf(tree));
+    for (const x of got.stores) expect(text).toContain(plain(`${storeName(f, x.id)}${signedZl(x.preview.statement.net)}`));
+    expect(text).toContain(plain(`Razem${signedZl(got.stores.reduce((n, x) => n + x.preview.statement.net, 0))}`));
+    expect(text).toContain(plain(`Gotówka po zamknięciu${money(got.cashAfter)}`));
+  });
+
+  it('trzy sklepy: każda zakładka pokazuje wyciąg swojego sklepu z podglądu, a #2 i #3 mają tekst o braku gwarancji', () => {
+    vi.useFakeTimers();
+    const { f } = networkWorld(3);
+    openMonthPreview();
+    click(buttonLabelled(MonthPreviewModal() as Vnode, 'Koniec miesiąca: policz podgląd'));
+    vi.runAllTimers();
+    const got = doneFirm();
+    for (const id of [1, 2, 3]) {
+      click(buttonsOf(shown()).find((b) => textOf(b) === shortStoreName(f, id))!);
+      const text = plain(textOf(shown()));
+      const part = got.stores.find((x) => x.id === id)!.preview;
+      expect(text).toContain('Przelew od Centrali');
+      expect(text).toContain(plain(`Zostaje Ci${signedZl(part.statement.net)}`));
+      expect(text).toContain(plain(`Obrót${zl(part.revenue)}`));
+      expect(text.includes('Gwarancja przysługuje nowym partnerom.'), `sklep ${id}`).toBe(id !== 1);
+    }
+  });
+
+  it('trzy sklepy, „Na dziś”: suma trzech „Zostaje Ci” i wiersz każdego sklepu', () => {
+    const { f, view } = networkWorld(3);
+    openMonthPreview();
+    const all = forecastNow(view, firm.value);
+    const text = plain(textOf(shown()));
+    const parts = forecastFirm(f).stores;
+    expect(all).toEqual(forecastFirm(f));
+    expect(parts.map((x) => x.id)).toEqual([1, 2, 3]);
+    expect(all.net).toBeCloseTo(parts.reduce((n, x) => n + x.f.net, 0), 5);
+    expect(text).toContain(plain(`Zostaje Ci po zamknięciu (sieć)${signedZl(all.net)}`));
+    for (const x of parts) expect(text).toContain(plain(`${storeName(f, x.id)}${signedZl(x.f.net)}`));
   });
 });

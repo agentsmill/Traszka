@@ -9,8 +9,8 @@ import type { StoreLayout } from '@/sim/store/types';
  * odbiciem portfela osoby: firma zapisuje je do sklepu przed jego krokiem albo poleceniem i odbiera po nim.
  */
 
-/** Najwyżej tyle sklepów naraz, wliczając budowę (4a.1, §10.2; 4a.2: 3). */
-export const MAX_STORES = 2;
+/** Najwyżej tyle sklepów naraz, wliczając budowę (§10.2; w 4a.1 były dwa, od 4a.2 trzy). */
+export const MAX_STORES = 3;
 /** Tyle wpisów trzyma skrzynka zastępcy; starsze odpadają. */
 export const INBOX_MAX = 30;
 

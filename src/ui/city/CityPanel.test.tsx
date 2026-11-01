@@ -273,15 +273,17 @@ describe('karta lokalu', () => {
       expect(lockText(tree)).toBe(refusalText(reason));
     });
 
-    it('limit: dwa sklepy wliczając budowę dają zdanie o dwóch placówkach', () => {
+    it('limit: trzy placówki wliczając budowy dają zdanie o trzech placówkach, a przy dwóch lokal jest jeszcze do wzięcia', () => {
       const f = partnerFirm();
-      const [first, second] = rowsOf(f);
-      expect(applyFirmCommand(f, { type: 'rentLot', lotId: first!.lotId, pay: 'raty' }, emptyStepOut())).toEqual({ ok: true });
-      expect(f.builds).toHaveLength(1);
-      lotPay.value = 'raty';
-      const tree = card(f, second!.lotId);
+      const [first, second, third] = rowsOf(f);
+      lotPay.value = 'gotowka';
+      expect(applyFirmCommand(f, { type: 'rentLot', lotId: first!.lotId, pay: 'gotowka' }, emptyStepOut())).toEqual({ ok: true });
+      expect(buttonLabelled(card(f, second!.lotId), 'Biorę lokal').props.disabled).toBeFalsy();   // dwie placówki to jeszcze nie komplet
+      expect(applyFirmCommand(f, { type: 'rentLot', lotId: second!.lotId, pay: 'gotowka' }, emptyStepOut())).toEqual({ ok: true });
+      expect(f.builds).toHaveLength(2);
+      const tree = card(f, third!.lotId);
       expect(buttonLabelled(tree, 'Biorę lokal').props.disabled).toBe(true);
-      expect(lockText(tree)).toBe('Dwie placówki to na tym etapie partnerstwa wszystko, na co Centrala jest gotowa się zgodzić.');
+      expect(lockText(tree)).toBe('Trzy placówki to na tym etapie partnerstwa wszystko, na co Centrala jest gotowa się zgodzić.');
     });
 
     it('raty ponad limit nowego sklepu: zdanie o limicie rat', () => {

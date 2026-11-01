@@ -77,6 +77,16 @@ function twoStoreFirm(seed = SEED, day = 10): FirmState {
   return f;
 }
 
+/** Firma z trzema otwartymi sklepami (limit 4a.2) o 6:00 dnia `day`: #2 i #3 w dwóch pierwszych wolnych lokalach miasta. */
+function threeStoreFirm(seed = SEED, day = 10): FirmState {
+  const f = newFirm(seed);
+  playTo(f, day * DAY + OPEN_FROM);
+  const [a, b] = f.city.lots.filter((l) => l.state === 'wolny');
+  openStoreAt(f, a!.id, clockOf(f));
+  openStoreAt(f, b!.id, clockOf(f));
+  return f;
+}
+
 /** Wyciągi miesiąca z zebranych zdarzeń: sklep aktywny z `out.active`, pozostałe z `out.background`. */
 function reportsOf(f: FirmState, out: FirmStepOut): Map<number, MonthReport> {
   const m = new Map<number, MonthReport>();
@@ -715,5 +725,115 @@ describe('wspólne i osobne', () => {
     playTo(y, 6 * DAY);
     expect(x.stores.map((s) => hashOf(s.econ))).toEqual(y.stores.map((s) => hashOf(s.econ)));
     expect(hashOf(x.stores[0]!.econ)).not.toBe(hashOf(x.stores[1]!.econ));
+  });
+});
+
+// --- Trzy sklepy (limit 4a.2): to samo co przy dwóch, tylko dla każdego z trzech -------------------------------------------
+
+describe('trzy sklepy w firmie', () => {
+  it('flagi: ZUS i księgowa tylko w #1, debet firmy i pogoda miasta w #2 i #3; po zamknięciu #1 ZUS idzie do #2, a nie do #3', () => {
+    const f = threeStoreFirm(SEED, 2);
+    const [a, b, c] = f.stores;
+    expect(f.stores.map((s) => s.id)).toEqual([1, 2, 3]);
+    expect(a!.info.site).toMatchObject({ extra: false, ownCosts: true, firmDebt: true, weatherHash: null });
+    for (const st of [b!, c!]) expect(st.info.site).toMatchObject({ extra: true, ownCosts: false, firmDebt: true, weatherHash: f.weatherHash });
+    expect(c!.lotId).not.toBe(b!.lotId);
+
+    a!.closed = true;
+    refreshSites(f);
+    expect(b!.info.site).toMatchObject({ ownCosts: true, firmDebt: true });
+    expect(c!.info.site).toMatchObject({ ownCosts: false, firmDebt: true });
+
+    b!.closed = true;
+    refreshSites(f);
+    expect(c!.info.site).toMatchObject({ extra: true, ownCosts: true, firmDebt: false });   // jedyny otwarty sklep sam sprawdza swój debet
+  });
+
+  it('ZUS i księgowa raz w miesiącu: płaci je #1, a #2 i #3 mają 0, więc w całej sieci raz, nie trzy razy', () => {
+    const f = threeStoreFirm(SEED, 25);
+    const out = closeSeptember(f, 100_000, {});
+    const reports = reportsOf(f, out);
+    expect([...reports.keys()].sort()).toEqual([1, 2, 3]);
+    expect(reports.get(1)!.statement).toMatchObject({ zus: OWN_COSTS.zus, accounting: OWN_COSTS.accounting });
+    expect(reports.get(2)!.statement).toMatchObject({ zus: 0, accounting: 0 });
+    expect(reports.get(3)!.statement).toMatchObject({ zus: 0, accounting: 0 });
+    const all = [...reports.values()].map((r) => r.statement!);
+    expect(all.reduce((n, st) => n + st.zus, 0)).toBe(OWN_COSTS.zus);
+    expect(all.reduce((n, st) => n + st.accounting, 0)).toBe(OWN_COSTS.accounting);
+  });
+
+  it('dochód z sieci 300 zł wpływa raz dziennie, tylko przez #1: #2 i #3 liczą się jak bez niego', () => {
+    const run = (income: number): { f: FirmState; out: FirmStepOut } => {
+      const f = threeStoreFirm(SEED, 18);
+      if (income > 0) setPartner(f, { points: 0, networkIncome: income, stores: 0 });
+      return { f, out: playTo(f, 31 * DAY + OPEN_FROM + 1) };
+    };
+    const withIncome = run(300);
+    const without = run(0);
+    expect(withIncome.f.stores).toHaveLength(3);
+    const days = ofKind(withIncome.out.active, 'day').length;
+    expect(days).toBeGreaterThanOrEqual(12);
+    expect(withIncome.f.person.wallet - without.f.person.wallet).toBeCloseTo(300 * days, 5);
+    expect(withIncome.f.stores[0]!.econ.total.other - without.f.stores[0]!.econ.total.other).toBeCloseTo(300 * days, 5);
+    for (const i of [1, 2]) expect(withIncome.f.stores[i]!.econ.total.other).toBe(without.f.stores[i]!.econ.total.other);
+    expect(withIncome.f.stores.map((s) => s.econ.partner.networkIncome)).toEqual([300, 0, 0]);
+  });
+
+  it('debet sprawdza firma raz po wyciągach wszystkich trzech sklepów, a nie sklep po swoim kroku', () => {
+    const f = threeStoreFirm(SEED, 25);
+    // #1 i #2 zjadają gotówkę wyciągiem, #3 ją oddaje; kolejność kroków (#1, #2, #3) nie może decydować o końcu gry
+    const out = closeSeptember(f, -30_000, { 1: { wages: 40_000 }, 2: { wages: 40_000 }, 3: { margin: 60_000 } });
+    const reports = reportsOf(f, out);
+    const n = [1, 2, 3].map((id) => reports.get(id)!.statement!.net);
+    expect(-30_000 + n[0]!).toBeGreaterThan(DEBT_LIMIT);
+    expect(-30_000 + n[0]! + n[1]!).toBeLessThan(DEBT_LIMIT);   // po drugim sklepie gotówka jest pod granicą
+    expect(-30_000 + n[0]! + n[1]! + n[2]!).toBeGreaterThan(DEBT_LIMIT);   // po trzecim już nad nią, ale wciąż pod progiem ostrzeżenia
+    expect(f.person.wallet).toBeCloseTo(-30_000 + n[0]! + n[1]! + n[2]!, 5);
+    expect(f.person.wallet).toBeLessThan(DEBT_WARN);
+    expect(f.over).toBeNull();
+    expect(f.stores.some((s) => s.econ.gameOver)).toBe(false);
+    expect(ofKind(out.firm, 'gameover')).toEqual([]);
+    expect(ofKind(out.firm, 'debt')).toEqual([{ kind: 'debt', params: { cash: f.person.wallet } }]);
+  });
+
+  it('debet ze sklepu w tle kończy grę we wszystkich trzech sklepach i jest jedno zdarzenie gameover', () => {
+    const f = threeStoreFirm(SEED, 25);
+    const out = closeSeptember(f, 0, { 3: { wages: 150_000 } });
+    expect(f.person.wallet).toBeLessThan(DEBT_LIMIT);
+    expect(f.over).toBe('debt');
+    expect(f.stores.map((s) => s.econ.gameOver)).toEqual([true, true, true]);
+    const gameovers = [
+      ...ofKind(out.active, 'gameover'), ...out.background.filter((b) => b.event.kind === 'gameover'), ...ofKind(out.firm, 'gameover'),
+    ];
+    expect(gameovers).toHaveLength(1);
+  });
+
+  it('network-report: trzy sklepy z profit i net, a total to suma trzech net; invest zerowany, raz w miesiącu', () => {
+    const f = threeStoreFirm(SEED, 24);
+    f.monthInvest = 9_200;   // pakiety dwóch sklepów zapłacone gotówką w tym miesiącu
+    f.person.wallet += 50_000;
+    syncWallet(f);
+    const out = playTo(f, SEPT_CLOSE + 1);
+    const reports = ofKind(out.firm, 'network-report');
+    expect(reports).toHaveLength(1);
+    const sum = reports[0]!.summary!;
+    const rep = reportsOf(f, out);
+    expect(sum.label).toBe(rep.get(1)!.label);
+    expect(sum.stores).toEqual([1, 2, 3].map((id) => ({ id, profit: rep.get(id)!.profit, net: rep.get(id)!.statement!.net })));
+    expect(sum.invest).toBe(9_200);
+    expect(sum.settlement).toBe(0);
+    expect(sum.total).toBeCloseTo(sum.stores.reduce((n, s) => n + s.net, 0), 5);
+    expect(sum.wallet).toBe(f.person.wallet);
+    expect(f.monthInvest).toBe(0);
+    expect(playTo(f, SEPT_CLOSE + 2 * DAY).firm.filter((e) => e.kind === 'network-report')).toEqual([]);
+  });
+
+  it('ten sam seed i te same kroki dają ten sam stan trzech sklepów, a sklepy różnią się między sobą', () => {
+    const [x, y] = [threeStoreFirm(SEED, 4), threeStoreFirm(SEED, 4)];
+    playTo(x, 6 * DAY);
+    playTo(y, 6 * DAY);
+    const hashes = x.stores.map((s) => hashOf(s.econ));
+    expect(hashes).toEqual(y.stores.map((s) => hashOf(s.econ)));
+    expect(new Set(hashes).size).toBe(3);
   });
 });

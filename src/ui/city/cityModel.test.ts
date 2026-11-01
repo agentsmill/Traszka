@@ -168,9 +168,11 @@ describe('lotCardModel: karta lokalu', () => {
     expect(lotCardModel(SEED, poor, lotId, 'raty').action).toEqual({ enabled: true });   // raty nie ruszają gotówki
 
     const full = partnerFirm();
-    const [first, second] = freeLotRows(SEED, full);
+    const [first, second, third] = freeLotRows(SEED, full);
     expect(applyFirmCommand(full, { type: 'rentLot', lotId: first!.lotId, pay: 'raty' }, emptyStepOut())).toEqual({ ok: true });
-    expect(lotCardModel(SEED, full, second!.lotId, 'raty').action).toEqual({ enabled: false, reason: 'limit' });   // budowa liczy się do limitu
+    expect(lotCardModel(SEED, full, second!.lotId, 'raty').action).toEqual({ enabled: true });   // sklep i budowa to jeszcze nie komplet trzech
+    expect(applyFirmCommand(full, { type: 'rentLot', lotId: second!.lotId, pay: 'raty' }, emptyStepOut())).toEqual({ ok: true });
+    expect(lotCardModel(SEED, full, third!.lotId, 'raty').action).toEqual({ enabled: false, reason: 'limit' });   // budowy liczą się do limitu
   });
 
   it('rata ponad limit nowego sklepu: powód „raty”', () => {

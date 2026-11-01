@@ -61,8 +61,8 @@ export const FIRM_UI: Dict = {
     'During a ranked season Head Office reviews a single branch. Please come back after the season.',
   'Centrala rozważy kolejną placówkę, gdy nada Panu/Pani status Partnera Strategicznego.':
     'Head Office will consider another branch once it has granted you Strategic Partner status.',
-  'Dwie placówki to na tym etapie partnerstwa wszystko, na co Centrala jest gotowa się zgodzić.':
-    'Two branches is, at this stage of the partnership, all Head Office is prepared to agree to.',
+  'Trzy placówki to na tym etapie partnerstwa wszystko, na co Centrala jest gotowa się zgodzić.':
+    'Three branches is, at this stage of the partnership, all Head Office is prepared to agree to.',
   'Ten lokal nie jest do wzięcia.': 'This unit is not available.',
   'Po zapłaceniu pakietu gotówka musi zostać nie mniejsza od zera: Centrala nie finansuje budów na debecie.':
     'After you pay the package your cash must not drop below zero: Head Office does not finance fit-outs on overdraft.',

@@ -168,7 +168,7 @@ describe('refusalText', () => {
   it('każda odmowa ma tekst, ranking i limit dosłownie z §10', () => {
     for (const r of reasons) expect(refusalText(r).length, r).toBeGreaterThan(0);
     expect(refusalText('ranked')).toBe('W sezonie rankingowym Centrala ocenia jedną placówkę. Prosimy wrócić po sezonie.');
-    expect(refusalText('limit')).toBe('Dwie placówki to na tym etapie partnerstwa wszystko, na co Centrala jest gotowa się zgodzić.');
+    expect(refusalText('limit')).toBe('Trzy placówki to na tym etapie partnerstwa wszystko, na co Centrala jest gotowa się zgodzić.');
   });
 
   it('po angielsku każda odmowa jest po angielsku', () => {

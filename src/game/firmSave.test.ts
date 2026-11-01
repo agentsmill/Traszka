@@ -850,27 +850,46 @@ function twoOpenStores(seed = SEED, lot: (f: FirmState) => number = freeLot): Fi
 }
 
 /**
+ * Gra do minuty `minute` z krokami firmy. Karty zaznaczone z góry potrafią wyzerować zaufanie sklepu w ciągu roku i Centrala zamyka go
+ * (§13.1), a te testy chcą sklepów, które przetrwają: o północy zaufanie nie spada poniżej 70.
+ */
+function playHoldingTrust(f: FirmState, minute: number): void {
+  while (clockOf(f) < minute && f.over === null && !activeStore(f).econ.gameOver) {
+    if (clockOf(f) % DAY === 0) for (const st of openStores(f)) st.econ.tycoon.trust.value = Math.max(st.econ.tycoon.trust.value, 70);
+    tick(f);
+  }
+}
+
+/**
  * Najgorszy przypadek 4a.1: dwa sklepy, każdy po trzech remontach (wszystkie poziomy `REMONTS`), drugi w największym wolnym lokalu,
  * koniec drugiego roku (731 dni prawdziwych kroków: 2028 jest przestępny). Oba sklepy z historią dwudziestu czterech miesięcy, ratą pakietu, pełną skrzynką
  * zastępcy.
  */
 function playWorstCase(seed: string): FirmState {
   const f = twoOpenStores(seed, largestFreeLot);
-  // karty zaznaczone z góry potrafią wyzerować zaufanie sklepu w ciągu dwóch lat i Centrala zamyka go (§13.1): tu sklepy mają przetrwać,
-  // więc o północy zaufanie nie spada poniżej 70
-  const play = (minute: number): void => {
-    while (clockOf(f) < minute && f.over === null && !activeStore(f).econ.gameOver) {
-      if (clockOf(f) % DAY === 0) for (const st of openStores(f)) st.econ.tycoon.trust.value = Math.max(st.econ.tycoon.trust.value, 70);
-      tick(f);
-    }
-  };
   remontEach(f, [1, 2], 8);
-  play(20 * DAY + OPEN_FROM);
+  playHoldingTrust(f, 20 * DAY + OPEN_FROM);
   remontEach(f, [1, 2], 14);
-  play(30 * DAY + OPEN_FROM);
+  playHoldingTrust(f, 30 * DAY + OPEN_FROM);
   remontEach(f, [1, 2], 20);
   expect(f.stores.map((s) => s.econ.remontLevel)).toEqual([3, 3]);
-  play(731 * DAY + OPEN_FROM);
+  playHoldingTrust(f, 731 * DAY + OPEN_FROM);
+  return f;
+}
+
+/**
+ * Najgorszy przypadek 4a.2 (limit trzech sklepów): trzy otwarte sklepy w największych wolnych lokalach, każdy po dwóch remontach
+ * (poziom 8, potem 14), koniec roku (365 dni prawdziwych kroków). Trzeci sklep powstaje prawdziwym wynajmem i budową.
+ */
+function playThreeOpenStores(): FirmState {
+  const f = twoOpenStores(SEED, largestFreeLot);
+  expect(command(f, { type: 'rentLot', lotId: largestFreeLot(f), pay: 'raty' })).toEqual({ ok: true });
+  playHoldingTrust(f, f.builds[0]!.readyDay * DAY + OPEN_FROM + 1);
+  expect(openStores(f)).toHaveLength(3);
+  remontEach(f, [1, 2, 3], 8);
+  playHoldingTrust(f, clockOf(f) + 10 * DAY);
+  remontEach(f, [1, 2, 3], 14);
+  playHoldingTrust(f, 365 * DAY + OPEN_FROM);
   return f;
 }
 
@@ -955,4 +974,20 @@ describe('rozmiar paczki „Wyślij zapis”', () => {
     expect(back.stores[0]!.econ.equipment).toEqual(f.stores[0]!.econ.equipment);
     expect(JSON.stringify(firmEnvelopeOf(back))).toBe(JSON.stringify(firmEnvelopeOf(f)));
   }, 60_000);
+
+  it('trzy otwarte sklepy, każdy po dwóch remontach, koniec roku: paczka mieści się w 64 KB i wraca z tą samą kopertą', () => {
+    const f = playThreeOpenStores();
+    expect(f.over).toBeNull();
+    expect(f.stores.map((s) => [s.id, s.closed, s.econ.remontLevel])).toEqual([[1, false, 2], [2, false, 2], [3, false, 2]]);
+    expect(f.stores.map((s) => s.econ.history.length)).toEqual([12, 12, 12]);   // przeszedł cały rok: dwanaście zamkniętych miesięcy w każdym
+    const total = transferSize('Zapis schematu 3, trzy otwarte sklepy po dwóch remontach, 365 dni', f);
+    expect(total).toBeLessThanOrEqual(SAVE_TRANSFER_MAX_BYTES);
+    expect(firmEnvelopeOf(f).stores.map((s) => 'layout' in s)).toEqual([false, false, false]);   // układy są odtwarzalne, więc zapis ich nie niesie
+
+    // zwarta koperta wraca do tych samych trzech sklepów i jest idempotentna
+    const back = opened(viaJson(f));
+    expect(back.stores.map((s) => [s.id, s.closed, s.econ.remontLevel])).toEqual([[1, false, 2], [2, false, 2], [3, false, 2]]);
+    expect(back.stores.map((s) => s.layout)).toEqual(f.stores.map((s) => s.layout));
+    expect(JSON.stringify(firmEnvelopeOf(back))).toBe(JSON.stringify(firmEnvelopeOf(f)));
+  }, 180_000);
 });

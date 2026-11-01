@@ -153,7 +153,7 @@ export function refusalText(reason: FirmRefusal): string {
   switch (reason) {
     case 'ranked': return t`W sezonie rankingowym Centrala ocenia jedną placówkę. Prosimy wrócić po sezonie.`;
     case 'status': return t`Centrala rozważy kolejną placówkę, gdy nada Panu/Pani status Partnera Strategicznego.`;
-    case 'limit': return t`Dwie placówki to na tym etapie partnerstwa wszystko, na co Centrala jest gotowa się zgodzić.`;
+    case 'limit': return t`Trzy placówki to na tym etapie partnerstwa wszystko, na co Centrala jest gotowa się zgodzić.`;
     case 'lot': return t`Ten lokal nie jest do wzięcia.`;
     case 'gotowka': return t`Po zapłaceniu pakietu gotówka musi zostać nie mniejsza od zera: Centrala nie finansuje budów na debecie.`;
     case 'raty': return t`Rata pakietu przekracza limit rat nowej placówki. Prosimy o gotówkę albo o tańszy lokal.`;

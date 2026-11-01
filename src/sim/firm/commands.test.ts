@@ -48,6 +48,8 @@ function partnerFirm(seed = SEED, wallet = WALLET): FirmState {
 }
 const freeLots = (f: FirmState): number[] => f.city.lots.filter((l) => l.state === 'wolny').map((l) => l.id);
 const freeLot = (f: FirmState): number => freeLots(f)[0]!;
+/** Lokale, które wynajem dziś przyjmuje (po `lotState`: bez własnych, budów i lokali po Traszce). */
+const rentable = (f: FirmState): number[] => freeLots(f).filter((id) => lotState(f, id) === 'wolny');
 const clockOf = (f: FirmState): number => activeStore(f).econ.minute;
 const ofKind = <T extends { kind: string }>(events: readonly T[], kind: string): T[] => events.filter((e) => e.kind === kind);
 const digest = (f: FirmState): string => JSON.stringify(f);
@@ -288,17 +290,40 @@ describe('rentRefusal i applyFirmCommand rentLot: każdy powód osobno, stan bez
     refused(f, rentCmd(f), 'status');
   });
 
-  it('limit: dwa otwarte sklepy albo sklep i budowa to komplet', () => {
-    const open = partnerFirm();
-    openStoreAt(open, freeLot(open), clockOf(open));
-    const other = freeLots(open)[1]!;
-    refused(open, { type: 'rentLot', lotId: other, pay: 'gotowka' }, 'limit');
+  it('limit: dwa otwarte sklepy bez budowy to jeszcze nie komplet, wynajem przechodzi', () => {
+    const f = partnerFirm();
+    openStoreAt(f, freeLot(f), clockOf(f));
+    expect(openStores(f)).toHaveLength(2);
+    expect(f.builds).toEqual([]);
+    expect(rentRefusal(f, rentable(f)[0]!, 'gotowka')).toBeNull();
+    expect(rentRefusal(f, rentable(f)[0]!, 'raty')).toBeNull();
+  });
 
-    const building = partnerFirm();
-    rent(building, freeLot(building));
-    const second = freeLots(building)[1]!;
-    refused(building, { type: 'rentLot', lotId: second, pay: 'raty' }, 'limit');
-    expect(openStores(building).length + building.builds.length).toBe(MAX_STORES);
+  it('limit: dwa otwarte sklepy i budowa to komplet (budowa liczy się do trzech)', () => {
+    const f = partnerFirm();
+    openStoreAt(f, freeLot(f), clockOf(f));
+    rent(f, rentable(f)[0]!);
+    refused(f, { type: 'rentLot', lotId: rentable(f)[0]!, pay: 'raty' }, 'limit');
+    refused(f, { type: 'rentLot', lotId: rentable(f)[0]!, pay: 'gotowka' }, 'limit');
+    expect(openStores(f).length + f.builds.length).toBe(MAX_STORES);
+  });
+
+  it('limit: trzy otwarte sklepy to komplet, także bez budowy', () => {
+    const f = partnerFirm();
+    openStoreAt(f, freeLot(f), clockOf(f));
+    openStoreAt(f, rentable(f)[0]!, clockOf(f));
+    expect(openStores(f)).toHaveLength(MAX_STORES);
+    expect(f.builds).toEqual([]);
+    refused(f, { type: 'rentLot', lotId: rentable(f)[0]!, pay: 'gotowka' }, 'limit');
+    refused(f, { type: 'rentLot', lotId: rentable(f)[0]!, pay: 'raty' }, 'limit');
+  });
+
+  it('limit: zamknięty sklep nie liczy się do trzech, więc po zamknięciu jednego z trzech wynajem znów przechodzi', () => {
+    const f = partnerFirm();
+    openStoreAt(f, freeLot(f), clockOf(f));
+    openStoreAt(f, rentable(f)[0]!, clockOf(f)).closed = true;
+    syncWallet(f);
+    expect(rentRefusal(f, rentable(f)[0]!, 'gotowka')).toBeNull();
   });
 
   it('lot: zajęty, konkurencja, własny, obok, po Traszce i nieistniejący nie są do wynajęcia', () => {
@@ -350,17 +375,19 @@ describe('rentRefusal i applyFirmCommand rentLot: każdy powód osobno, stan bez
     expect(rentRefusal(f, taken, 'gotowka')).toBe('status');
     f.person.partner = true;
     openStoreAt(f, freeLot(f), clockOf(f));
+    expect(rentRefusal(f, taken, 'gotowka')).toBe('lot');   // dwa otwarte sklepy to jeszcze nie komplet
+    openStoreAt(f, rentable(f)[0]!, clockOf(f));
     expect(rentRefusal(f, taken, 'gotowka')).toBe('limit');
     f.stores[1]!.closed = true;
     expect(rentRefusal(f, taken, 'gotowka')).toBe('lot');
-    expect(rentRefusal(f, freeLots(f).find((id) => id !== f.stores[1]!.lotId)!, 'gotowka')).toBe('gotowka');
+    expect(rentRefusal(f, rentable(f)[0]!, 'gotowka')).toBe('gotowka');
   });
 });
 
 // --- Wynajem, budowa i otwarcie ---------------------------------------------------------------------------------------
 
 describe('wynajem i budowa', () => {
-  it('Review Focus 4: gotówka równa cenie przechodzi i zostawia 0 zł, a drugi wynajem w trakcie budowy dostaje limit', () => {
+  it('Review Focus 4: gotówka równa cenie przechodzi i zostawia 0 zł, a trzeci wynajem w trakcie dwóch budów dostaje limit', () => {
     const f = partnerFirm();
     const lot = lotById(f.city, freeLot(f));
     f.person.wallet = lot.package;
@@ -369,8 +396,9 @@ describe('wynajem i budowa', () => {
     expect(f.person.wallet).toBe(0);
     expect(f.stores[0]!.econ.cash).toBe(0);
     expect(f.monthInvest).toBe(lot.package);
-    refused(f, { type: 'rentLot', lotId: freeLots(f)[1]!, pay: 'raty' }, 'limit');
-    refused(f, { type: 'rentLot', lotId: freeLots(f)[1]!, pay: 'gotowka' }, 'limit');
+    rent(f, freeLots(f)[1]!, 'raty');   // druga budowa: raty nie ruszają gotówki, a limit trzech jeszcze nie zapełniony
+    refused(f, { type: 'rentLot', lotId: freeLots(f)[2]!, pay: 'raty' }, 'limit');
+    refused(f, { type: 'rentLot', lotId: freeLots(f)[2]!, pay: 'gotowka' }, 'limit');
   });
 
   it('za gotówkę: wallet spada od razu, monthInvest rośnie, budowa i zdarzenie build; sklep nie istnieje do dnia otwarcia', () => {
