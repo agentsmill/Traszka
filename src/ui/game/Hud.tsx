@@ -2,11 +2,13 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import type { Speed } from '@/game/loop';
 import { dayOf, formatClock } from '@/sim/economy/calendar';
 import { DEBT_WARN, debtWarningText, isClosedForRemont } from '@/sim/economy/economy';
-import { forecastMonth, spendCheck, type MonthForecast } from '@/sim/economy/forecast';
+import { spendCheck, type MonthForecast } from '@/sim/economy/forecast';
 import { xpToNext } from '@/sim/economy/progress';
 import { trustTier } from '@/sim/economy/tycoon/trust';
 import { dateText, rankText, t, tr } from '@/i18n';
-import { econ, openHowTo, openMonthPreview, openRanking, showSettings, speed, tab, type Controls } from '../state';
+import { StoreSwitcher } from '../city/StoreSwitcher';
+import { forecastNow, isNetwork } from '../city/storeSwitcherModel';
+import { econ, firm, openHowTo, openMonthPreview, openRanking, showSettings, speed, tab, type Controls, type EconView, type FirmView, type GameActions } from '../state';
 import { forecastLabel, forecastTitle } from './forecastText';
 import { int, plural, signedZl, zl } from './format';
 
@@ -91,14 +93,18 @@ export function RankingButton() {
  * okno z prognozowanym wyciągiem i podglądem końca miesiąca (`MonthPreviewModal`). Na wąskim ekranie etykiety są krótkie („Saldo”,
  * „Raty”, „Zostanie”), na szerokim pełne (`tt-due-pre` pojawia się od 640 px). Kolor prognozy mówi o debecie gotówki po zamknięciu:
  * poniżej zera ostrzegawczy, poniżej progu ostrzeżenia (`DEBT_WARN`) czerwony, poniżej granicy gry (`DEBT_LIMIT`) czerwony z wykrzyknikiem.
- * Zwykła funkcja bez haków (testy wołają ją bez renderu); klasy `tt-due*` zostały z dawnego rachunku „Do oddania Centrali”.
+ * `network`: liczby są sumą sieci (od dwóch otwartych sklepów, spec §11.3), co mówi dopisek „sieć”; kolor liczy się wtedy z sumy, bo debet
+ * dotyczy wspólnej gotówki. Zwykła funkcja bez haków (testy wołają ją bez renderu); klasy `tt-due*` zostały z dawnego rachunku „Do oddania Centrali”.
  */
-export function ForecastChip({ f, cash }: { f: MonthForecast; cash: number }) {
+export function ForecastChip({ f, cash, network = false }: { f: MonthForecast; cash: number; network?: boolean }) {
   const check = spendCheck(f, 0);
   const level = check.level;
   const tone = level === 'danger' || level === 'warn' ? level : f.cashAfter < 0 ? 'neg' : '';
+  const title = forecastTitle(f, cash, check);
   return (
-    <button type="button" class={`tt-due${tone ? ` ${tone}` : ''}`} title={forecastTitle(f, cash, check)} aria-label={forecastLabel(f)} onClick={openMonthPreview}>
+    <button type="button" class={`tt-due${tone ? ` ${tone}` : ''}`} title={network ? `${t`Prognoza całej sieci: liczą się wszystkie sklepy, bo gotówka jest wspólna.`} ${title}` : title}
+      aria-label={network ? t`Sieć: ${forecastLabel(f)}` : forecastLabel(f)} onClick={openMonthPreview}>
+      {network && <span class="tt-due-net">{t`sieć`}</span>}
       <span class="tt-due-part" data-tut="saldo"><span class="tt-due-label">{t`Saldo`}<span class="tt-due-pre">{t` u Centrali`}</span></span> <b>{zl(f.saldo)}</b></span>
       <span class="tt-due-part"><span class="tt-due-label">{t`Raty`}</span> <b>{zl(f.installments)}</b></span>
       <span class="tt-due-part">
@@ -109,11 +115,21 @@ export function ForecastChip({ f, cash }: { f: MonthForecast; cash: number }) {
   );
 }
 
+/** Drugi wiersz paska: pasek prognozy z `forecastNow` (od dwóch otwartych sklepów suma sieci z dopiskiem „sieć”). */
+export function ForecastRow({ view, firmView }: { view: EconView; firmView: FirmView | null }) {
+  return (
+    <div class="tt-hud-row tt-hud-due" data-tut="due">
+      <ForecastChip f={forecastNow(view, firmView)} cash={view.s.cash} network={!!firmView && isNetwork(firmView.f)} />
+    </div>
+  );
+}
+
 /**
- * Górny pasek: poziom z pierścieniem XP, gotówka, reputacja, Ogonki, zaufanie Centrali, trzy kieszenie (saldo, raty, prognoza), data
- * i godzina, prędkość czasu, ranking i ustawienia. `ranking`: czy gra ma panele rankingu (bez nich przycisku „🏆” nie ma, bo nie miałby czego otworzyć).
+ * Górny pasek: poziom z pierścieniem XP, gotówka, reputacja, Ogonki, zaufanie Centrali, trzy kieszenie (saldo, raty, prognoza), przy dwóch
+ * sklepach chip z listą sklepów (`StoreSwitcher`), data i godzina, prędkość czasu, ranking i ustawienia. `ranking`: czy gra ma panele rankingu
+ * (bez nich przycisku „🏆” nie ma, bo nie miałby czego otworzyć). `game`: chip przełącza sklepy poleceniem firmy.
  */
-export function Hud({ controls, ranking = false }: { controls: Controls; ranking?: boolean }) {
+export function Hud({ controls, game, ranking = false }: { controls: Controls; game: GameActions; ranking?: boolean }) {
   const view = econ.value;
   const [cash, rising] = useTweened(view?.s.cash ?? 0);
   if (!view) return null;
@@ -139,9 +155,8 @@ export function Hud({ controls, ranking = false }: { controls: Controls; ranking
           <button type="button" class="tt-iconbtn tt-gear" aria-label={t`Ustawienia`} onClick={() => { showSettings.value = true; }}>⚙</button>
         </span>
       </div>
-      <div class="tt-hud-row tt-hud-due" data-tut="due">
-        <ForecastChip f={forecastMonth(s, view.info)} cash={s.cash} />
-      </div>
+      <ForecastRow view={view} firmView={firm.value} />
+      <StoreSwitcher game={game} />
       <div class="tt-hud-row">
         <span class="tt-clock">
           {dateText(dayOf(s.minute))} · <b>{formatClock(s.minute)}</b>{closed ? t` · remont` : ''}

@@ -2,11 +2,17 @@ import type { Dict, Plurals } from '../ui';
 
 /*
  * Teksty firmy po angielsku (`ui/city/firmText.ts`): adres lokalu, nazwy zdarzeń Centrali (status Partnera, budowa, otwarcie, zastępca,
- * wypowiedzenie, rozliczenie końcowe, zamknięcie, debet, koniec współpracy) i odmowy poleceń firmy. Symulacja nie zna tych zdań:
+ * wypowiedzenie, rozliczenie końcowe, zamknięcie, debet, koniec współpracy) i odmowy poleceń firmy; do tego chip sklepów z listą i skrzynką
+ * zastępcy (`StoreSwitcher.tsx`) oraz okno końca miesiąca w kilku sklepach (`NetworkReport.tsx`). Symulacja nie zna tych zdań:
  * niesie identyfikatory i parametry (spec §18). Ton jak w `docs/i18n/glossary-en.md`: Head Office, „branch” dla placówki.
  */
 
 export const FIRM_UI: Dict = {
+  // stan sklepu na liście (`storeStateText`) i w sieci w Celach
+  'zamknięta': 'closed',
+  'umowa wygasa {0}': 'agreement ends {0}',
+  'aktywna': 'active',
+  'w tle': 'in the background',
   // adres: numer przed ulicą i „St.”; ulica to nazwa własna i zostaje po polsku
   'ul. {0} {1}': (street: string, n: number) => `${n} ${street} St.`,
   // status Partnera Strategicznego (§10.1)
@@ -67,6 +73,25 @@ export const FIRM_UI: Dict = {
     'Head Office will not accept a notice if no other branch is left trading.',
   'Gra skończona: Centrala wypowiedziała umowę.': 'Game over: Head Office has terminated your agreement.',
   'Centrala odmawia.': 'Head Office declines.',
+  // chip sklepów w pasku, lista sklepów i skrzynka zastępcy (`ui/city/StoreSwitcher.tsx`)
+  'Przełącz sklep': 'Switch shop',
+  'Sklep w tle wymaga uwagi': 'A shop in the background needs attention',
+  'Sklepy': 'Shops',
+  'Dziś {0}': 'Today {0}',
+  'Zostanie {0}': 'You’ll keep {0}',
+  'paleta w przejściu': 'pallet in the aisle',
+  'pusta półka': 'empty shelf',
+  'zastępca odpowiedział na kartę': 'the deputy answered a card',
+  'Skrzynka zastępcy': 'Deputy’s inbox',
+  'Zastępca jeszcze niczego nie rozstrzygał.': 'The deputy has not settled anything yet.',
+  // okno końca miesiąca w kilku sklepach i wiersz sieci z poprzednich gier (`NetworkReport.tsx`, `storeSwitcherModel.ts`)
+  'Sieć': 'Network',
+  'Pakiety otwarcia za gotówkę': 'Opening packages paid in cash',
+  'Z poprzednich gier: {0} {1}, {2} dziennie, {3} {4}': (n: number, shops: string, income: string, p: number, points: string) =>
+    `From previous games: ${n} ${shops}, ${income} a day, ${p} ${points}`,
 };
 
-export const FIRM_PLURALS: Plurals = {};
+export const FIRM_PLURALS: Plurals = {
+  'sklep|sklepy|sklepów': ['shop', 'shops'],
+  'Punkt Partnera|Punkty Partnera|Punktów Partnera': ['Partner Point', 'Partner Points'],
+};

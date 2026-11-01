@@ -7,7 +7,14 @@ import { buildStatement } from '@/sim/economy/franchisee';
 import type { MonthPreview } from '@/sim/economy/monthPreview';
 import { computeStoreInfo, type StoreInfo } from '@/sim/economy/storeInfo';
 import { layoutFor } from '@/sim/store/layoutFor';
-import { closeMonthPreview, econ, isWindowOpen, monthPreview, openMonthPreview } from '../state';
+import { firmOf } from '@/game/session';
+import { startMonthPreview } from '@/sim/economy/monthPreview';
+import { forecastFirm } from '@/sim/firm/forecast';
+import { startFirmMonthPreview, type FirmPreview } from '@/sim/firm/preview';
+import { openSecond, partnerSession } from '../../../tests/firmKit';
+import { storeName } from '../city/firmText';
+import { forecastNow, shortStoreName } from '../city/storeSwitcherModel';
+import { closeMonthPreview, econ, firm, isWindowOpen, monthPreview, openMonthPreview } from '../state';
 import { MonthPreviewModal, PREVIEW_ASSUMPTION, previewWarning } from './monthPreview';
 import { BUDGET_MS, CHUNK_MINUTES, runMonthPreview, type RunDeps } from './monthPreviewRun';
 import { minusZl, money, signedZl, zl } from './format';
@@ -41,8 +48,8 @@ function expand(node: ComponentChild): ComponentChild {
 }
 const shown = (): Vnode => expand(MonthPreviewModal()) as Vnode;
 
-beforeEach(() => { monthPreview.value = null; econ.value = null; });
-afterEach(() => { monthPreview.value = null; econ.value = null; vi.useRealTimers(); });
+beforeEach(() => { monthPreview.value = null; econ.value = null; firm.value = null; });
+afterEach(() => { monthPreview.value = null; econ.value = null; firm.value = null; vi.useRealTimers(); });
 
 describe('okno rachunku: otwieranie i zatrzymywanie gry', () => {
   it('open/close przełączają sygnał, a otwarte okno zatrzymuje grę (isWindowOpen)', () => {
@@ -279,5 +286,147 @@ describe('previewWarning: czerwone ostrzeżenie z progów gry', () => {
     const text = textOf(shown());
     expect(text).toContain('To naliczenia do chwili końca gry');
     expect(text).toContain('Jeśli nic nie zrobisz');
+  });
+});
+
+// --- Podgląd przy firmie (spec §11.3): startFirmMonthPreview, część na każdy sklep -------------------------------------------------
+
+describe('podgląd końca miesiąca przy firmie', () => {
+  const plain = (x: string): string => x.replace(/[\s\u00a0\u202f]/g, ' ');
+  function networkWorld() {
+    const session = partnerSession();
+    openSecond(session);
+    const f = firmOf(session);
+    firm.value = { f, v: 1 };
+    const view = { s: session.econ, info: session.info, v: 1 };
+    econ.value = view;
+    return { session, f, view };
+  }
+  /** Wynik liczony wprost przez silnik firmy, bez interfejsu. */
+  const direct = (f: ReturnType<typeof firmOf>): FirmPreview => {
+    const job = startFirmMonthPreview(f);
+    while (!job.step(1e6)) { /* do końca */ }
+    return job.result()!;
+  };
+  const doneFirm = (): FirmPreview => {
+    const v = monthPreview.value;
+    if (v?.phase !== 'done' || !v.firm) throw new Error('podgląd sieci niegotowy');
+    return v.firm;
+  };
+
+  it('przy firmie z dwoma sklepami liczy startFirmMonthPreview: wynik sieci zgadza się z silnikiem co do złotówki', () => {
+    const { f, view } = networkWorld();
+    const expected = direct(f);
+    const before = JSON.stringify({ ...f, city: undefined });
+    const deps = fakeDeps(0);
+    runMonthPreview(view, deps);
+    deps.flush();
+    expect(monthPreview.value?.phase).toBe('done');
+    const got = doneFirm();
+    expect(got.stores.map((x) => x.id)).toEqual([1, 2]);
+    expect(got.cashAfter).toBe(expected.cashAfter);
+    expect(got.lowestCash).toBe(expected.lowestCash);
+    expect(got.stores.map((x) => x.preview.statement.net)).toEqual(expected.stores.map((x) => x.preview.statement.net));
+    expect(JSON.stringify({ ...f, city: undefined })).toBe(before);   // prawdziwa firma nietknięta
+  });
+
+  it('jawny argument firmy wygrywa z sygnałem; bez niego podgląd to dotychczasowy podgląd jednego sklepu', () => {
+    const { view, f } = networkWorld();
+    firm.value = null;
+    const deps = fakeDeps(0);
+    runMonthPreview(view, deps);
+    deps.flush();
+    const v = monthPreview.value;
+    expect(v?.phase).toBe('done');
+    expect(v?.phase === 'done' && v.firm).toBeFalsy();
+    runMonthPreview(view, deps, { f, v: 1 });
+    deps.flush();
+    expect(doneFirm().stores).toHaveLength(2);
+  });
+
+  it('firma z jednym sklepem: wynik sklepu jest ten sam co w podglądzie sklepu, a okno nie dostaje części sieci', () => {
+    const session = partnerSession();
+    const f = firmOf(session);
+    firm.value = { f, v: 1 };
+    const view = { s: session.econ, info: session.info, v: 1 };
+    const job = startMonthPreview(session.econ, session.info);
+    while (!job.step(1e6)) { /* do końca */ }
+    const alone = job.result()!;
+    const deps = fakeDeps(0);
+    runMonthPreview(view, deps);
+    deps.flush();
+    const v = monthPreview.value;
+    if (v?.phase !== 'done') throw new Error('niegotowy');
+    expect(v.firm).toBeUndefined();
+    expect(v.result.statement).toEqual(alone.statement);
+    expect(v.result.cashAfter).toBe(alone.cashAfter);
+  });
+
+  it('okno: „Na dziś” liczy sieć (suma „Zostaje Ci” i gotówka z forecastNow), a każdy sklep ma swój wiersz', () => {
+    const { f, view } = networkWorld();
+    openMonthPreview();
+    const all = forecastNow(view, firm.value);
+    const text = plain(textOf(shown()));
+    expect(all).toEqual(forecastFirm(f));
+    expect(text).toContain(plain(`Zostaje Ci po zamknięciu (sieć)${signedZl(all.net)}`));
+    expect(text).toContain(plain(`Gotówka po zamknięciu${money(all.cashAfter)}`));
+    for (const x of forecastFirm(f).stores) expect(text).toContain(plain(`${storeName(f, x.id)}${signedZl(x.f.net)}`));
+  });
+
+  it('okno po obliczeniu: zakładki „Sieć” i sklepów; sieć pokazuje „Zostaje Ci” sklepów, razem i gotówkę po zamknięciu', () => {
+    vi.useFakeTimers();
+    const { f } = networkWorld();
+    openMonthPreview();
+    click(buttonLabelled(MonthPreviewModal() as Vnode, 'Koniec miesiąca: policz podgląd'));
+    vi.runAllTimers();
+    const got = doneFirm();
+    const tree = shown();
+    expect(buttonsOf(tree).map(textOf)).toEqual(['Sieć', shortStoreName(f, 1), shortStoreName(f, 2), 'Zamknij']);
+    const text = plain(textOf(tree));
+    expect(text).toContain('Jeśli nic nie zrobisz');
+    for (const x of got.stores) expect(text).toContain(plain(`${storeName(f, x.id)}${signedZl(x.preview.statement.net)}`));
+    const total = got.stores.reduce((n, x) => n + x.preview.statement.net, 0);
+    expect(text).toContain(plain(`Razem${signedZl(total)}`));
+    expect(text).toContain(plain(`Gotówka po zamknięciu${money(got.cashAfter)}`));
+    if (got.invest > 0) expect(text).toContain('Pakiety otwarcia za gotówkę');
+    expect(walk(tree).some((v) => v.props['data-tut'] === 'network-summary')).toBe(false);   // to okno podglądu, nie okno końca miesiąca
+  });
+
+  it('zakładka sklepu pokazuje wyciąg tego sklepu z podglądu', () => {
+    vi.useFakeTimers();
+    const { f } = networkWorld();
+    openMonthPreview();
+    click(buttonLabelled(MonthPreviewModal() as Vnode, 'Koniec miesiąca: policz podgląd'));
+    vi.runAllTimers();
+    const got = doneFirm();
+    click(buttonsOf(shown()).find((b) => textOf(b) === shortStoreName(f, 2))!);
+    const text = plain(textOf(shown()));
+    const two = got.stores.find((x) => x.id === 2)!.preview;
+    expect(text).toContain('Przelew od Centrali');
+    expect(text).toContain(plain(`Zostaje Ci${signedZl(two.statement.net)}`));
+    expect(text).toContain(plain(`Obrót${zl(two.revenue)}`));
+  });
+
+  it('ostrzeżenie sieci: koniec po wypowiedzeniu ostatniej placówki, debet i dołek w trakcie miesiąca', () => {
+    const base = { endedEarly: false, gameOver: null as FirmPreview['gameOver'], cashAfter: 5_000, lowestCash: 5_000 };
+    expect(previewWarning(base)).toBeNull();
+    const notice = previewWarning({ ...base, gameOver: 'notice' })!;
+    expect(notice.level).toBe('danger');
+    expect(notice.text).toContain('wypowiedzenia');
+    expect(previewWarning({ ...base, gameOver: 'debt', cashAfter: DEBT_LIMIT - 1 })!.text).toContain(signedZl(DEBT_LIMIT));
+    expect(previewWarning({ ...base, gameOver: 'trust' })!.text).toContain('zaufanie');
+  });
+
+  it('ostrzeżenie jest widoczne w oknie sieci (role=alert) i na zakładce Sieć', () => {
+    const { f, view } = networkWorld();
+    f.stores[1]!.econ.franchisee.month.pallets += 4 * Math.abs(DEBT_LIMIT);   // drugi sklep topi wspólną gotówkę (200 tys. z portfela + minus 400 tys.)
+    const deps = fakeDeps(0);
+    runMonthPreview(view, deps);
+    deps.flush();
+    const got = doneFirm();
+    expect(got.gameOver).toBe('debt');
+    const alert = walk(shown()).find((v) => v.props.role === 'alert')!;
+    expect(String(alert.props.class)).toContain('danger');
+    expect(plain(textOf(alert))).toContain('Centrala wypowie umowę');
   });
 });

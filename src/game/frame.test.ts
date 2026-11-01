@@ -324,7 +324,6 @@ describe('isModalOpen', () => {
     ui.report.value = null;
     ui.start.value = null;
     ui.welcome.value = null;
-    ui.showPrestige.value = false;
     ui.howTo.value = false;
     ui.story.value = [];
   });
@@ -335,7 +334,7 @@ describe('isModalOpen', () => {
     expect(isModalOpen(fresh())).toBe(false);
   });
 
-  it('raport miesiąca, ekran startowy, powitanie i prestiż zatrzymują grę', () => {
+  it('raport miesiąca, ekran startowy i powitanie zatrzymują grę', () => {
     ui.report.value = {} as MonthReport;
     expect(isModalOpen()).toBe(true);
     ui.report.value = null;
@@ -347,10 +346,6 @@ describe('isModalOpen', () => {
     ui.welcome.value = {} as NonNullable<typeof ui.welcome.value>;
     expect(isModalOpen()).toBe(true);
     ui.welcome.value = null;
-
-    ui.showPrestige.value = true;
-    expect(isModalOpen()).toBe(true);
-    ui.showPrestige.value = false;
 
     expect(isModalOpen()).toBe(false);
   });

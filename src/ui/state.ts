@@ -13,6 +13,7 @@ import type { MonthPreview } from '@/sim/economy/monthPreview';
 import type { CityLayer } from '@/render/city/buildCity';
 import type { StoreInfo } from '@/sim/economy/storeInfo';
 import type { FirmCommand, FirmCommandResult } from '@/sim/firm/commands';
+import type { FirmPreview } from '@/sim/firm/preview';
 import type { FirmState, NetworkSummary } from '@/sim/firm/types';
 import { readMs } from '@/sim/economy/tycoon/notices';
 import type { RankingTab } from './ranking/client';
@@ -129,12 +130,13 @@ export function offerTutorial(): void {
  * Okno wyciągu na koniec miesiąca (`ui/game/monthPreview.tsx`): prognoza na dziś i podgląd wyciągu od Centrali za cały miesiąc, jeśli gracz nic nie
  * zrobi. Podgląd liczy się na kopii stanu (`monthPreviewRun.ts`), więc ten sygnał to jedyne, co się zmienia, a dopóki okno jest otwarte,
  * gra stoi (`isWindowOpen`). `null`: okno zamknięte. Faza: `idle` (czeka na przycisk), `running` (porcje liczą kopię; `run` odróżnia
- * to liczenie od porzuconego), `done` (sumy), `none` (nie było czego policzyć). Nie jest częścią zapisu.
+ * to liczenie od porzuconego), `done` (sumy; `result` to podgląd aktywnego sklepu, a `firm` część na każdy sklep, tylko gdy po drodze
+ * działają co najmniej dwa), `none` (nie było czego policzyć). Nie jest częścią zapisu.
  */
 export type MonthPreviewView =
   | { phase: 'idle' }
   | { phase: 'running'; run: number; day: number; days: number }
-  | { phase: 'done'; result: MonthPreview; ms: number }
+  | { phase: 'done'; result: MonthPreview; ms: number; firm?: FirmPreview }
   | { phase: 'none' };
 export const monthPreview: Signal<MonthPreviewView | null> = signal<MonthPreviewView | null>(null);
 /** Otwiera okno wyciągu (podgląd czeka na przycisk). */
@@ -254,7 +256,6 @@ export const welcome: Signal<Welcome | null> = signal<Welcome | null>(null);
 /** Sieć sklepów i ustawienia z mety (meta.ts) dla interfejsu. */
 export interface MetaView { points: number; stores: number; networkIncome: number; /** Seedy sklepów już w sieci. */ network: string[]; sound: boolean; vibration: boolean }
 export const metaView: Signal<MetaView> = signal<MetaView>({ points: 0, stores: 0, networkIncome: 0, network: [], sound: true, vibration: true });
-export const showPrestige: Signal<boolean> = signal(false);
 
 // --- Tryb rankingowy (spec §14.7) -----------------------------------------------------------------------------------
 
@@ -334,8 +335,6 @@ export interface GameActions {
   firm(cmd: FirmCommand): FirmCommandResult;
   /** Odbiera nagrodę za nieobecność i premię dzienną z okna powitalnego (nie jest poleceniem: stan zmienia się poza dziennikiem). */
   claimWelcome(): void;
-  /** Zamyka obecny sklep (dołącza do sieci) i otwiera nowy z premią. W biegu rankingowym nie ma sieci: komunikat i nic więcej. */
-  openNextStore(): void;
   setSound(on: boolean): void;
   setVibration(on: boolean): void;
   /** Zaczyna od nowa w tym samym sklepie (kasuje zapis). W biegu rankingowym odmawia z komunikatem: bieg porzuca się osobno (`abandonRanked`). */
@@ -361,11 +360,11 @@ export interface GameActions {
 
 /**
  * Czy otwarte jest okno, które zatrzymuje grę i ma swój sygnał: raport miesiąca, podsumowanie sieci (`networkReport`), protokół remanentu, ważne zdarzenie czekające na „OK”, ekran startowy,
- * powitanie, prestiż, „Jak grać”, okno wyboru samouczka (`tutorialOffer`), wyciąg na koniec miesiąca (`monthPreview`), okno końca sezonu (`finish`) albo panel
+ * powitanie, „Jak grać”, okno wyboru samouczka (`tutorialOffer`), wyciąg na koniec miesiąca (`monthPreview`), okno końca sezonu (`finish`) albo panel
  * rankingu i kodu odzyskiwania (`panel`). Czyta to `isModalOpen` (game/frame.ts: pętla klatek) i samouczek (przelot i dymki „pierwszy raz” czekają pod oknem).
  * Karta decyzji i koniec gry nie mają sygnału okna: wynikają ze stanu gry.
  */
 export const isWindowOpen = (): boolean =>
-  !!report.value || !!networkReport.value || !!remanent.value || story.value.length > 0 || !!start.value || !!welcome.value || showPrestige.value || howTo.value || tutorialOffer.value
+  !!report.value || !!networkReport.value || !!remanent.value || story.value.length > 0 || !!start.value || !!welcome.value || howTo.value || tutorialOffer.value
   || !!monthPreview.value || !!finish.value || !!panel.value;
 

@@ -2,7 +2,8 @@ import type { Dict, Plurals } from '../ui';
 
 /*
  * Okno rozliczenia miesiąca: wyciąg od Centrali (`ui/game/statement.tsx`), raport miesiąca, koniec współpracy i protokół remanentu
- * (`ReportBody`, `ReportModal`, `RemanentModal` w `ui/game/overlays.tsx`) oraz podgląd końca miesiąca (`ui/game/monthPreview.tsx`).
+ * (`ReportBody`, `ReportModal`, `RemanentModal` w `ui/game/overlays.tsx`), okno sieci przy kilku sklepach (`ui/city/NetworkReport.tsx`) oraz podgląd
+ * końca miesiąca (`ui/game/monthPreview.tsx`).
  */
 
 export const MONTH_UI: Dict = {
@@ -61,8 +62,10 @@ export const MONTH_UI: Dict = {
   'Powód: za duży debet. Gotówka spadła do {0}, poniżej granicy {1}, a wtedy Centrala od razu kończy współpracę.':
     'Reason: too much debt. Your cash fell to {0}, below the limit of {1}, and at that point Head Office ends the partnership on the spot.',
   'Powód: zaufanie Centrali spadło do zera.': 'Reason: Head Office’s trust fell to zero.',
+  'Powód: umowa ostatniej placówki wygasła po wypowiedzeniu.': 'Reason: the agreement for your last branch expired after notice.',
   'Koniec współpracy': 'End of the partnership',
   'Wyciąg od Centrali: {0}': 'Head Office statement: {0}',
+  'Wyciągi od Centrali: {0}': 'Head Office statements: {0}',
   'Raport: {0}': 'Report: {0}',
   'Dalej: wynik sezonu': 'Next: season result',
   'Wróć do zwykłej gry': 'Back to the regular game',
@@ -86,6 +89,10 @@ export const MONTH_UI: Dict = {
   'Centrala wypowie umowę: po zamknięciu miesiąca gotówka wyniesie {0}, poniżej granicy debetu ({1}).':
     'Head Office will terminate your agreement: after the month closes your cash will be {0}, below the debt limit ({1}).',
   'Centrala wypowie umowę: zaufanie spadnie do zera.': 'Head Office will terminate your agreement: trust will fall to zero.',
+  'Gra skończy się po zamknięciu miesiąca: wygasa umowa ostatniej placówki po okresie wypowiedzenia.':
+    'The game ends when the month closes: the agreement for your last branch runs out at the end of its notice period.',
+  'Centrala wypowie umowę tej placówce: zaufanie spadnie do zera. Pozostałe działają dalej.':
+    'Head Office will terminate the agreement for this branch: trust will fall to zero. Your other branches carry on.',
   'W trakcie miesiąca gotówka spadnie do {0}, poniżej progu ostrzeżenia ({1}).': 'During the month your cash will drop to {0}, below the warning threshold ({1}).',
   'Wynik podglądu': 'Preview result',
   'Jeśli nic nie zrobisz': 'If you do nothing',
@@ -100,6 +107,7 @@ export const MONTH_UI: Dict = {
   'Saldo u Centrali': 'Head Office balance',
   'Raty w tym przelewie': 'Instalments in this transfer',
   'Zostaje Ci po zamknięciu (prognoza)': 'You keep after closing (forecast)',
+  'Zostaje Ci po zamknięciu (sieć)': 'You keep after closing (network)',
   'Saldo to marża i premie z tego miesiąca. Centrala przeleje je przy zamknięciu, potrąci raty i palety, a Ty zapłacisz pensje, media, ZUS, VAT i księgową. Prognoza liczy resztę miesiąca z dotychczasowego obrotu.':
     'The balance is this month’s margin and bonuses. Head Office transfers it when the month closes and deducts instalments and pallets, and you pay wages, utilities, ZUS (social security), VAT and your accountant. The forecast projects the rest of the month from turnover so far.',
   'Koniec miesiąca: policz podgląd': 'End of month: run the preview',

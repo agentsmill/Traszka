@@ -81,26 +81,13 @@ export const GAME_UI: Dict = {
     'Keys: Q/E rotate, +/− zoom, arrow keys pan, Space pause, X outside view.',
   'Wszystkie firmy, postacie i zdarzenia są fikcyjne.': 'All companies, characters and events are fictional.',
   'Gra jest satyrą i nie ma związku z żadną prawdziwą siecią sklepów.': 'The game is a satire and has no connection with any real chain of shops.',
-  // overlays.tsx: powitanie, sieć sklepów, combo
+  // overlays.tsx: powitanie, combo
   'Witaj z powrotem': 'Welcome back',
   'Witaj z powrotem! 👋': 'Welcome back! 👋',
   'Przez {0} Twojej nieobecności kierownik zmiany zarobił': 'While you were away for {0}, your shift manager earned',
   'Premia Centrali za {0}. dzień z rzędu:': (n) => `Head Office bonus for day ${n} in a row:`,
   'Wróć jutro: premia rośnie do 7. dnia.': 'Come back tomorrow: the bonus keeps growing until day 7.',
   'Odbierz!': 'Claim!',
-  'Otwórz kolejną Traszkę': 'Open another Traszka',
-  'Otwórz kolejną Traszkę 🏪': 'Open another Traszka 🏪',
-  'Ten sklep zostaje w Twojej sieci i od jutra zarabia na Ciebie': 'This shop stays in your network and from tomorrow earns you',
-  '{0} dziennie': '{0} a day',
-  'w każdej kolejnej grze.': 'in every future game.',
-  'Dostajesz': 'You get',
-  '+{0} Punktów Partnera': '+{0} Partner Points',
-  '(razem {0}): każdy to trwale +4% marży i +3% klientów.': '({0} in total): each one is a permanent +4% margin and +3% customers.',
-  'Nowy lokal startuje od zera: poziom 1, 2000 zł, nowe miasto z seeda. Tym razem pójdzie szybciej.':
-    'The new unit starts from scratch: level 1, 2,000 zł, a new town from the seed. It’ll go faster this time.',
-  'Centrala z wyraźną niechęcią nadaje Ci status Partnera Strategicznego.': 'Head Office, with visible reluctance, grants you Strategic Partner status.',
-  'Otwieramy!': 'Let’s open!',
-  'Jeszcze nie': 'Not yet',
   '{0} stuknięć': '{0} taps',
   // panels.tsx: zakładki i sekcje (tytuły sekcji i etykiety wierszy przez `tr`)
   'Sklep': 'Shop',
@@ -238,19 +225,24 @@ export const GAME_UI: Dict = {
   'Następna ranga ({0}) na {1}. poziomie. Każdy poziom to nagroda, a niektóre coś odblokowują.':
     'Next rank ({0}) at level {1}. Every level brings a reward, and some unlock something.',
   'Twoja sieć Traszek': 'Your Traszka network',
-  'Sklepy w sieci': 'Shops in the network',
-  'Dochód z sieci': 'Network income',
-  'Punkty Partnera': 'Partner Points',
-  '{0} (+{1}% marży, +{2}% ruchu)': '{0} (+{1}% margin, +{2}% footfall)',
+  // panels.tsx: lista sklepów w mieście (zamiast prestiżu, spec §15), prognoza sieci w „Ten miesiąc” i umowa sklepu (§13.2)
+  'W budowie: {0}': 'Under construction: {0}',
+  'otwarcie {0}': 'opening {0}',
+  'Kolejną placówkę wynajmiesz w zakładce Miasto, gdy Centrala nada Ci status Partnera Strategicznego.':
+    'You can rent another branch in the City tab once Head Office grants you Strategic Partner status.',
+  'Zostanie Ci po zamknięciu (ten sklep)': 'You keep after closing (this shop)',
+  'Zostanie Ci po zamknięciu (sieć)': 'You keep after closing (network)',
+  'Umowa': 'Agreement',
+  'Umowa wygasa': 'Agreement ends',
+  'Do tego dnia sklep działa normalnie, ale Centrala nie finansuje w nim nowych rat. Potem następuje rozliczenie końcowe.':
+    'Until then the shop runs as usual, but Head Office will not finance new instalments there. A final settlement follows.',
+  'Wypowiedz umowę': 'Terminate agreement',
+  'Sklep działa normalnie do końca następnego miesiąca. Potem Centrala robi rozliczenie końcowe, a w okresie wypowiedzenia nie finansuje w nim nowych rat.':
+    'The shop runs as usual until the end of next month. Then Head Office does a final settlement, and during the notice period it will not finance new instalments there.',
+  'Wypowiedzieć umowę: {0}? Sklep działa do {1}, potem Centrala robi rozliczenie końcowe: ubytki ponad limit i niespłacone raty zejdą z gotówki. Tego nie da się cofnąć.':
+    'Terminate the agreement for {0}? The shop runs until {1}, then Head Office does a final settlement: shrinkage over the limit and unpaid instalments come out of your cash. This cannot be undone.',
   'W biegu rankingowym nie ma sieci sklepów: ten sklep nie dostaje premii z sieci i do niej nie dołączy.':
     'There’s no shop network in a ranked run: this shop gets no network bonus and won’t join the network.',
-  'Ten lokal już jest w Twojej sieci, więc drugi raz nie da Punktów Partnera ani dochodu. Otwórz sklep z innym seedem (Ustawienia), żeby sieć rosła.':
-    'This unit is already in your network, so it won’t give Partner Points or income a second time. Open a shop with a different seed (Settings) to grow your network.',
-  'Ten sklep jest gotowy, by dołączyć do sieci: da': 'This shop is ready to join your network: it will give',
-  'i': 'and',
-  'dziennie w każdej kolejnej grze.': 'a day in every future game.',
-  'Po drugim remoncie albo na 20. poziomie otworzysz kolejną Traszkę. Ten sklep dołączy do sieci i będzie zarabiał na każdą następną.':
-    'After your second refit or at level 20 you can open another Traszka. This shop will join the network and earn for every one after it.',
   'Kamienie milowe': 'Milestones',
   '🎁 Do odebrania': '🎁 To claim',
   'Odbierz: {0}': 'Claim: {0}',

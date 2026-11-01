@@ -26,7 +26,7 @@ vi.mock('preact/hooks', async (importOriginal) => ({
 
 const game: GameActions = {
   dispatch: (_cmd: Command): CommandResult => ({ ok: true }),
-  claimWelcome: () => {}, openNextStore: () => {}, setSound: () => {}, setVibration: () => {}, restart: () => {}, newStore: () => {},
+  claimWelcome: () => {}, setSound: () => {}, setVibration: () => {}, restart: () => {}, newStore: () => {},
   startRanked: () => false, resumeRanked: () => false, leaveRanked: () => {}, abandonRanked: () => {},
   openFinish: () => {}, rememberNick: () => {},
   firm: () => ({ ok: false, reason: 'store' }),
@@ -116,7 +116,7 @@ describe('„?” w pasku gry (HUD)', () => {
   const hud = (): ReturnType<typeof Hud> => {
     const info = computeStoreInfo(layoutFor('instrukcja', 0));
     econ.value = { s: createEconomy('instrukcja', info), info, v: 1 };
-    return Hud({ controls });
+    return Hud({ controls, game });
   };
 
   it('stały przycisk „?” z aria-label „Jak grać” na klasie tt-iconbtn, w tym samym wierszu co ⚙', () => {

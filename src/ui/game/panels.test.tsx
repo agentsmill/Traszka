@@ -2,9 +2,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DEBT_LIMIT, REMANENT, WAGE_PER_DAY } from '@/sim/economy/catalog';
 import { DEBT_WARN, LOC_LABEL, createEconomy, debtWarningText, freeSpots, kpiScaleOf, nextRemont, upgradeBlocker, type CommandResult, type EconomyState, type MonthReport } from '@/sim/economy/economy';
 import type { Command } from '@/sim/economy/commands';
-import { forecastMonth } from '@/sim/economy/forecast';
+import { forecastMonth, spendCheck } from '@/sim/economy/forecast';
+import { forecastFirm } from '@/sim/firm/forecast';
 import { dueOf, planFor, type Installment } from '@/sim/economy/franchisee';
-import { formatClock, formatDate } from '@/sim/economy/calendar';
+import { dayOf, formatClock, formatDate } from '@/sim/economy/calendar';
 import { KPI, KPI_FLAVOR, kpiTitle } from '@/sim/economy/tycoon/kpi';
 import { dayOfMinute, roundNice } from '@/sim/economy/tycoon/time';
 import { MILESTONES } from '@/sim/economy/milestones';
@@ -16,7 +17,15 @@ import { WEATHER_LABEL } from '@/sim/economy/tycoon/cleanliness';
 import { computeStoreInfo, type PalletLoc, type StoreInfo } from '@/sim/economy/storeInfo';
 import { EQUIPMENT, UPGRADES } from '@/sim/economy/upgrades';
 import { layoutFor } from '@/sim/store/layoutFor';
-import { econ, metaView, monthPreview, ranked, speed, tab, type GameActions } from '../state';
+import { lang } from '@/i18n';
+import { noticeEndDay } from '@/sim/firm/closure';
+import { econ, firm, metaView, monthPreview, ranked, speed, tab, type GameActions } from '../state';
+import { firmOf } from '@/game/session';
+import { applyFirmCommand } from '@/sim/firm/commands';
+import { emptyStepOut } from '@/sim/firm/firm';
+import { lotAddress, storeName } from '../city/firmText';
+import { networkRow } from '../city/storeSwitcherModel';
+import { openSecond, partnerSession } from '../../../tests/firmKit';
 import { CityPanel } from '../city/CityPanel';
 import { Bar, GoalsPanel, PalletItem, PalletsPanel, PeoplePanel, Sheet, ShopPanel, StorePanel, TabBar } from './panels';
 import { minusZl, money, percentOf, plural, signedZl, zl } from './format';
@@ -26,7 +35,7 @@ import { buttonAria, buttonLabelled, buttonsOf, click, labels, sectionTitled, te
 function fakeGame(): GameActions & { dispatch: ReturnType<typeof vi.fn<(cmd: Command) => CommandResult>> } {
   return {
     dispatch: vi.fn<(cmd: Command) => CommandResult>(() => ({ ok: true })),
-    claimWelcome: vi.fn(), openNextStore: vi.fn(), setSound: vi.fn(), setVibration: vi.fn(), restart: vi.fn(), newStore: vi.fn(),
+    claimWelcome: vi.fn(), setSound: vi.fn(), setVibration: vi.fn(), restart: vi.fn(), newStore: vi.fn(),
     startRanked: vi.fn(() => false), resumeRanked: vi.fn(() => false), leaveRanked: vi.fn(), abandonRanked: vi.fn(),
     openFinish: vi.fn(), rememberNick: vi.fn(),
     firm: vi.fn(() => ({ ok: false as const, reason: 'store' as const })),
@@ -45,6 +54,7 @@ function rich(): { s: EconomyState; info: StoreInfo } {
 
 afterEach(() => {
   econ.value = null;
+  firm.value = null;
   tab.value = null;
   metaView.value = { points: 0, stores: 0, networkIncome: 0, network: [], sound: true, vibration: true };
   speed.value = 1;
@@ -497,6 +507,35 @@ describe('panele wysyłają polecenia przez game.dispatch, a nie wołają symula
       expect(s.cash).toBe(1e7);
     });
 
+    it('przy dwóch sklepach: „Zostanie Ci” i gotówka po zamknięciu liczą całą sieć, a własna prognoza sklepu ma osobny wiersz', () => {
+      const session = partnerSession();
+      openSecond(session);
+      const f = firmOf(session);
+      f.stores[1]!.econ.franchisee.month.pallets += 30_000;   // drugi sklep zjada część plusa pierwszego
+      firm.value = { f, v: 1 };
+      const s = session.econ;
+      const info = session.info;
+      const own = forecastMonth(s, info);
+      const all = forecastFirm(f);
+      expect(all.net).not.toBeCloseTo(own.net, 0);
+      const sec = sectionTitled(GoalsPanel({ s, info, game: fakeGame(), v: 1 }), 'Ten miesiąc');
+      const value = (label: string): string => plain(textOf(walk(sec).find((v) => v.props.label === label)!));
+      expect(value('Zostanie Ci po zamknięciu (ten sklep)')).toBe(plain(signedZl(own.net)));
+      expect(value('Zostanie Ci po zamknięciu (sieć)')).toBe(plain(signedZl(all.net)));
+      expect(value('Gotówka po zamknięciu')).toBe(plain(money(all.cashAfter)));
+      const cash = walk(sec).find((v) => String(v.props.class ?? '').startsWith('tt-free'))!;
+      expect(String(cash.props.class)).toBe(`tt-free ${spendCheck(all, 0).level}`);
+    });
+
+    it('przy jednym sklepie wiersze zostają jak dotąd (bez dopisków o sieci)', () => {
+      const session = partnerSession();
+      firm.value = { f: firmOf(session), v: 1 };
+      const sec = sectionTitled(GoalsPanel({ s: session.econ, info: session.info, game: fakeGame(), v: 1 }), 'Ten miesiąc');
+      const labelsOf = walk(sec).map((v) => v.props.label);
+      expect(labelsOf).toContain('Zostanie Ci po zamknięciu');
+      expect(labelsOf).not.toContain('Zostanie Ci po zamknięciu (sieć)');
+    });
+
     it('nie ma opłaty franczyzowej, miesięcznych ubytków ani dawnych wierszy „do oddania” i „wolne środki”', () => {
       const { text } = month();
       expect(text).not.toMatch(/Opłata franczyzowa|Ubytki ponad limit|Do oddania|Wolne środki|Wynik po opłacie|Logistyka/);
@@ -583,36 +622,175 @@ describe('panele wysyłają polecenia przez game.dispatch, a nie wołają symula
   });
 });
 
-describe('panel Cele: sieć Traszek a bieg rankingowy', () => {
+describe('panel Cele: sieć Traszek (spec §15: lista sklepów w mieście zamiast prestiżu)', () => {
   const PRESTIGE = 'Otwórz kolejną Traszkę';
   const readyShop = (): { s: EconomyState; info: StoreInfo } => {
     const r = rich();
-    r.s.remontLevel = 2;   // prestiż gotowy (prestigeReady)
+    r.s.remontLevel = 2;   // dawniej: prestiż gotowy (prestigeReady); teraz nic z tego nie wynika
     return r;
   };
+  const section = (s: EconomyState, info: StoreInfo): Vnode => sectionTitled(GoalsPanel({ s, info, game: fakeGame(), v: 1 }), 'Twoja sieć Traszek');
+  const plain = (x: string): string => x.replace(/[\s\u00a0\u202f]/g, ' ');
 
-  it('zwykły sklep gotowy do prestiżu ma przycisk „Otwórz kolejną Traszkę”', () => {
+  it('zwykły sklep, który dawniej był gotowy do prestiżu, nie ma przycisku „Otwórz kolejną Traszkę” ani żadnego przycisku w tej sekcji', () => {
     const { s, info } = readyShop();
-    const section = sectionTitled(GoalsPanel({ s, info, game: fakeGame(), v: 1 }), 'Twoja sieć Traszek');
-    expect(labels(section)).toEqual([PRESTIGE]);
+    expect(labels(section(s, info))).toEqual([]);
+    expect(textOf(section(s, info))).not.toContain(PRESTIGE);
+    expect(textOf(GoalsPanel({ s, info, game: fakeGame(), v: 1 }))).not.toContain(PRESTIGE);
   });
 
   it('w biegu rankingowym przycisku prestiżu nie ma, a podpowiedź mówi, że sieci w tym biegu nie ma', () => {
     const { s, info } = readyShop();
     ranked.value = { seed: s.seed, day: 12, days: 91, phase: 'playing' };
-    const section = sectionTitled(GoalsPanel({ s, info, game: fakeGame(), v: 1 }), 'Twoja sieć Traszek');
-    expect(labels(section)).toEqual([]);
-    expect(textOf(section)).toContain('W biegu rankingowym nie ma sieci sklepów');
-    expect(textOf(section)).not.toContain('Po drugim remoncie');
+    expect(labels(section(s, info))).toEqual([]);
+    expect(textOf(section(s, info))).toContain('W biegu rankingowym nie ma sieci sklepów');
+    expect(textOf(section(s, info))).not.toContain('Po drugim remoncie');
   });
 
   it('w biegu rankingowym także sklep, który „już jest w sieci”, nie podsuwa otwierania innego seeda', () => {
     const { s, info } = readyShop();
     metaView.value = { ...metaView.value, network: [s.seed] };
     ranked.value = { seed: s.seed, day: 3, days: 91, phase: 'playing' };
-    const text = textOf(sectionTitled(GoalsPanel({ s, info, game: fakeGame(), v: 1 }), 'Twoja sieć Traszek'));
+    const text = textOf(section(s, info));
     expect(text).toContain('W biegu rankingowym nie ma sieci sklepów');
     expect(text).not.toContain('Otwórz sklep z innym seedem');
+  });
+
+  it('listuje sklepy tego miasta: nazwa, adres i stan (aktywny, w tle, wypowiedziany, zamknięty)', () => {
+    const session = partnerSession();
+    openSecond(session);
+    const f = firmOf(session);
+    firm.value = { f, v: 1 };
+    const rows = (): [string, string][] => walk(section(session.econ, session.info)).filter((v) => typeof v.props.label === 'string' && String(v.props.label).startsWith('Traszka #'))
+      .map((v) => [String(v.props.label), plain(textOf(v))]);
+    const [one, two] = f.stores;
+    expect(rows()).toEqual([
+      [storeName(f, 1), plain(`${lotAddress(f, one!.lotId)} · aktywna`)],
+      [storeName(f, 2), plain(`${lotAddress(f, two!.lotId)} · w tle`)],
+    ]);
+    two!.notice = { endDay: 120 };
+    expect(rows()[1]![1]).toContain(plain(`umowa wygasa ${formatDate(120)}`));
+    two!.closed = true;
+    expect(rows()[1]![1]).toContain('zamknięta');
+  });
+
+  it('sklep w budowie też jest na liście, z dniem otwarcia', () => {
+    const session = partnerSession();
+    const f = firmOf(session);
+    firm.value = { f, v: 1 };
+    const lotId = f.city.lots.find((l) => l.state === 'wolny')!.id;
+    applyFirmCommand(f, { type: 'rentLot', lotId, pay: 'raty' }, emptyStepOut());
+    const row = walk(section(session.econ, session.info)).find((v) => String(v.props.label ?? '').startsWith('W budowie'))!;
+    expect(row.props.label).toBe(`W budowie: ${lotAddress(f, lotId)}`);
+    expect(plain(textOf(row))).toContain(`otwarcie ${formatDate(f.builds[0]!.readyDay)}`);
+  });
+
+  it('pod listą wiersz „Z poprzednich gier”, tylko gdy gracz ma sklepy z sieci', () => {
+    const { s, info } = rich();
+    expect(textOf(section(s, info))).not.toContain('Z poprzednich gier');
+    metaView.value = { ...metaView.value, stores: 2, networkIncome: 12_000, points: 3 };
+    const text = plain(textOf(section(s, info)));
+    expect(text).toContain(plain(networkRow(metaView.value)!));
+    expect(text).toContain('Z poprzednich gier: 2 sklepy');
+    expect(text).toContain('3 Punkty Partnera');
+    // starych wierszy z liczbami sieci osobno już nie ma
+    const labelsOf = walk(section(s, info)).map((v) => v.props.label);
+    expect(labelsOf).not.toContain('Sklepy w sieci');
+    expect(labelsOf).not.toContain('Dochód z sieci');
+    expect(labelsOf).not.toContain('Punkty Partnera');
+  });
+
+  it('bez statusu Partnera podpowiada, gdzie wziąć kolejną placówkę (zakładka Miasto)', () => {
+    const session = partnerSession();
+    const f = firmOf(session);
+    firm.value = { f, v: 1 };
+    f.person.partner = false;
+    expect(textOf(section(session.econ, session.info))).toContain('zakładce Miasto');
+  });
+});
+
+describe('panel Sklep: wypowiedzenie umowy (spec §13.2)', () => {
+  const plain = (x: string): string => x.replace(/[\s\u00a0\u202f]/g, ' ');
+  const BUTTON = 'Wypowiedz umowę';
+  function twoStores() {
+    const session = partnerSession();
+    openSecond(session);
+    const f = firmOf(session);
+    firm.value = { f, v: 1 };
+    return { session, f };
+  }
+  const panel = (session: { econ: EconomyState; info: StoreInfo }, game: GameActions = fakeGame()): Vnode =>
+    StorePanel({ s: session.econ, info: session.info, game, v: 1 }) as Vnode;
+  afterEach(() => { vi.unstubAllGlobals(); lang.value = 'pl'; });
+
+  it('jeden sklep: ani przycisku, ani sekcji o umowie', () => {
+    const session = partnerSession();
+    firm.value = { f: firmOf(session), v: 1 };
+    expect(labels(panel(session))).not.toContain(BUTTON);
+    expect(walk(panel(session)).filter((v) => v.props.title === 'Umowa')).toHaveLength(0);
+    firm.value = null;
+    expect(labels(panel(session))).not.toContain(BUTTON);
+  });
+
+  it('dwa sklepy: w sekcji „Umowa” jest przycisk „Wypowiedz umowę”, a potwierdzenie wysyła terminateStore z id tego sklepu', () => {
+    const { session, f } = twoStores();
+    const confirmSpy = vi.fn(() => true);
+    vi.stubGlobal('confirm', confirmSpy);
+    const game = fakeGame();
+    const tree = panel(session, game);
+    expect(labels(sectionTitled(tree, 'Umowa'))).toEqual([BUTTON]);
+    click(buttonLabelled(tree, BUTTON));
+    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    const question = String((confirmSpy.mock.calls[0] as unknown[])[0]);
+    expect(question).toContain(storeName(f, 1));
+    expect(question).toContain(formatDate(noticeEndDay(dayOf(session.econ.minute))));   // pytanie mówi, do kiedy sklep działa
+    expect(game.firm).toHaveBeenCalledTimes(1);
+    expect(game.firm).toHaveBeenCalledWith({ type: 'terminateStore', storeId: 1 });
+  });
+
+  it('odmowa w potwierdzeniu: nic nie jest wysyłane', () => {
+    const { session } = twoStores();
+    vi.stubGlobal('confirm', vi.fn(() => false));
+    const game = fakeGame();
+    click(buttonLabelled(panel(session, game), BUTTON));
+    expect(game.firm).not.toHaveBeenCalled();
+  });
+
+  it('po wypowiedzeniu jest wiersz „Umowa wygasa {data}” zamiast przycisku', () => {
+    const { session, f } = twoStores();
+    f.stores[0]!.notice = { endDay: 120 };
+    const tree = panel(session);
+    expect(labels(tree)).not.toContain(BUTTON);
+    const section = sectionTitled(tree, 'Umowa');
+    const row = walk(section).find((v) => v.props.label === 'Umowa wygasa');
+    expect(plain(textOf(row!))).toBe(plain(formatDate(120)));
+    expect(plain(textOf(section))).toContain('Centrala nie finansuje w nim nowych rat');
+  });
+
+  it('wypowiedzenie przechodzi na stronie sklepu, który jest aktywny; drugi sklep z wypowiedzeniem blokuje przycisk (sim odmówiłby: single)', () => {
+    const { session, f } = twoStores();
+    f.stores[1]!.notice = { endDay: 120 };
+    expect(labels(panel(session))).not.toContain(BUTTON);   // jedyny inny otwarty sklep już jest wypowiedziany
+    f.stores[1]!.notice = null;
+    expect(labels(panel(session))).toContain(BUTTON);
+    f.stores[1]!.closed = true;   // drugi zamknięty: zostaje jeden otwarty sklep
+    expect(labels(panel(session))).not.toContain(BUTTON);
+  });
+
+  it('po końcu gry przycisku nie ma', () => {
+    const { session, f } = twoStores();
+    f.over = 'debt';
+    expect(labels(panel(session))).not.toContain(BUTTON);
+  });
+
+  it('po angielsku: „Terminate agreement” i pytanie z nazwą sklepu', () => {
+    const { session, f } = twoStores();
+    lang.value = 'en';
+    const confirmSpy = vi.fn(() => false);
+    vi.stubGlobal('confirm', confirmSpy);
+    click(buttonLabelled(panel(session), 'Terminate agreement'));
+    expect(String((confirmSpy.mock.calls[0] as unknown[])[0])).toContain(storeName(f, 1));
+    expect(String((confirmSpy.mock.calls[0] as unknown[])[0])).toMatch(/Terminate the agreement for/);
   });
 });
 
@@ -771,20 +949,20 @@ describe('panel Sklep: zaufanie Centrali, remanent i czystość sali', () => {
   it('zaufanie pokazuje próg (nazwę) i jego opis', () => {
     const { s, info } = rich();
     s.tycoon.trust.value = 45;
-    const tree = StorePanel({ s, info, v: 1 });
+    const tree = StorePanel({ s, info, game: fakeGame(), v: 1 });
     const tier = trustTier(45);
     const section = sectionTitled(tree, 'Opinia');
     expect(textOf(section)).toContain('45');
     expect(textOf(section)).toContain(tier.label);
     expect(textOf(section)).toContain(tier.flavor);
     s.tycoon.trust.value = 92;
-    expect(textOf(sectionTitled(StorePanel({ s, info, v: 1 }), 'Opinia'))).toContain(trustTier(92).flavor);
+    expect(textOf(sectionTitled(StorePanel({ s, info, game: fakeGame(), v: 1 }), 'Opinia'))).toContain(trustTier(92).flavor);
   });
 
   it('Remanent przed pierwszym: limit ubytków pozostaje tajemnicą Centrali, a data następnego remanentu jest podana', () => {
     const { s, info } = rich();
     expect(s.franchisee.remanent.known).toBe(false);
-    const section = sectionTitled(StorePanel({ s, info, v: 1 }), 'Remanent');
+    const section = sectionTitled(StorePanel({ s, info, game: fakeGame(), v: 1 }), 'Remanent');
     expect(row(section, 'Limit ubytków')).toBe('Centrala poda przy remanencie');
     expect(row(section, 'Ostatni remanent')).toBeUndefined();
     expect(row(section, 'Następny remanent')).toBe(formatDate(s.franchisee.remanent.nextDay));
@@ -795,7 +973,7 @@ describe('panel Sklep: zaufanie Centrali, remanent i czystość sali', () => {
     const { s, info } = rich();
     s.month.revenue = 50_000;
     Object.assign(s.tycoon.wut.month, { kradziez: 7_321, termin: 4_567, pomylki: 2_345, karty: 1_111 });
-    const tree = StorePanel({ s, info, v: 1 });
+    const tree = StorePanel({ s, info, game: fakeGame(), v: 1 });
     expect(walk(tree).filter((v) => v.props?.title === 'Ubytki w tym miesiącu')).toHaveLength(0);
     const text = plain(textOf(tree));
     for (const n of [7_321, 4_567, 2_345, 1_111, 15_344]) expect(text, `${n}`).not.toContain(plain(zl(n)));
@@ -810,7 +988,7 @@ describe('panel Sklep: zaufanie Centrali, remanent i czystość sali', () => {
     r.known = true;
     r.nextDay = 180;
     r.last = { day: 89, fromDay: 0, revenue: 1_200_000, byReason: { termin: 6_000, kradziez: 4_000, pomylki: 2_500, karty: 0 }, total: 12_500, limit: 14_400, charge: 2_300, first: true };
-    const section = sectionTitled(StorePanel({ s, info, v: 1 }), 'Remanent');
+    const section = sectionTitled(StorePanel({ s, info, game: fakeGame(), v: 1 }), 'Remanent');
     expect(row(section, 'Limit ubytków')).toBe(`${percentOf(WUT.threshold)} obrotu od ostatniego remanentu`);
     expect(row(section, 'Limit ubytków')).toContain('1,2%');
     expect(row(section, 'Ostatni remanent')).toBe(plain(`${formatDate(89)}, nadwyżka ${zl(2_300)}`));
@@ -822,12 +1000,12 @@ describe('panel Sklep: zaufanie Centrali, remanent i czystość sali', () => {
     const r = s.franchisee.remanent;
     r.known = true;
     r.last = { day: 89, fromDay: 0, revenue: 1_200_000, byReason: { termin: 1, kradziez: 1, pomylki: 1, karty: 0 }, total: 3, limit: 14_400, charge: 0, first: true };
-    expect(row(sectionTitled(StorePanel({ s, info, v: 1 }), 'Remanent'), 'Ostatni remanent')).toBe(plain(`${formatDate(89)}, w limicie`));
+    expect(row(sectionTitled(StorePanel({ s, info, game: fakeGame(), v: 1 }), 'Remanent'), 'Ostatni remanent')).toBe(plain(`${formatDate(89)}, w limicie`));
   });
 
   it('podpowiedź podaje porę i częstość remanentu ze stałych', () => {
     const { s, info } = rich();
-    const hint = textOf(sectionTitled(StorePanel({ s, info, v: 1 }), 'Remanent'));
+    const hint = textOf(sectionTitled(StorePanel({ s, info, game: fakeGame(), v: 1 }), 'Remanent'));
     expect(hint).toContain(`o ${formatClock(REMANENT.at)} ostatniego dnia co ${REMANENT.everyMonths} miesiące`);
     expect(hint).toContain('Nadwyżkę ponad limit Centrali potrąca z przelewu tego samego dnia');
   });
@@ -836,13 +1014,13 @@ describe('panel Sklep: zaufanie Centrali, remanent i czystość sali', () => {
     const { s, info } = rich();
     s.tycoon.hall.cleanliness = 63.6;
     s.tycoon.hall.weather = 'deszcz';
-    const section = sectionTitled(StorePanel({ s, info, v: 1 }), 'Czystość sali');
+    const section = sectionTitled(StorePanel({ s, info, game: fakeGame(), v: 1 }), 'Czystość sali');
     expect(textOf(section)).toContain('64%');
     expect(textOf(section)).toContain(WEATHER_LABEL.deszcz);
     expect(walk(section).find((v) => v.type === Bar)!.props.warn).toBe(false);
     s.tycoon.hall.cleanliness = 22;
     s.tycoon.hall.weather = 'snieg';
-    const dirty = sectionTitled(StorePanel({ s, info, v: 1 }), 'Czystość sali');
+    const dirty = sectionTitled(StorePanel({ s, info, game: fakeGame(), v: 1 }), 'Czystość sali');
     expect(textOf(dirty)).toContain('22%');
     expect(textOf(dirty)).toContain(WEATHER_LABEL.snieg);
     expect(walk(dirty).find((v) => v.type === Bar)!.props.warn).toBe(true);

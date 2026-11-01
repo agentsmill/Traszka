@@ -3,7 +3,7 @@ import { lotById } from '@/sim/city/generateCity';
 import { DEBT_LIMIT } from '@/sim/economy/catalog';
 import { debtWarningText } from '@/sim/economy/economy';
 import { cardDef } from '@/sim/economy/tycoon/cards';
-import type { FirmEvent, FirmRefusal, FirmState } from '@/sim/firm/types';
+import type { FirmEvent, FirmRefusal, FirmState, FirmStore } from '@/sim/firm/types';
 import { money, zl } from '../game/format';
 
 /*
@@ -26,6 +26,13 @@ export function lotAddress(f: FirmState, lotId: number): string {
 export function storeName(f: FirmState, id: number): string {
   const st = f.stores.find((s) => s.id === id);
   return st ? `Traszka #${id}, ${lotById(f.city, st.lotId).street}` : `Traszka #${id}`;
+}
+
+/** Stan sklepu słowami: aktywny, w tle, z wypowiedzeniem (do kiedy działa umowa) albo zamknięty. */
+export function storeStateText(f: FirmState, st: FirmStore): string {
+  if (st.closed) return t`zamknięta`;
+  if (st.notice) return t`umowa wygasa ${dateText(st.notice.endDay)}`;
+  return st.id === f.activeId ? t`aktywna` : t`w tle`;
 }
 
 const num = (e: FirmEvent, key: string): number => {

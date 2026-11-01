@@ -25,7 +25,7 @@ vi.mock('preact/hooks', async (importOriginal) => ({
 
 const game: GameActions = {
   dispatch: (_cmd: Command): CommandResult => ({ ok: true }),
-  claimWelcome: () => {}, openNextStore: () => {}, setSound: () => {}, setVibration: () => {}, restart: () => {}, newStore: () => {},
+  claimWelcome: () => {}, setSound: () => {}, setVibration: () => {}, restart: () => {}, newStore: () => {},
   startRanked: () => false, resumeRanked: () => false, leaveRanked: () => {}, abandonRanked: () => {},
   openFinish: () => {}, rememberNick: () => {},
   firm: () => ({ ok: false, reason: 'store' }),

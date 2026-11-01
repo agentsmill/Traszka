@@ -34,12 +34,8 @@ export const CORE_UI: Dict = {
     'Your browser has no room to save the result. Send it now, before you close the tab.',
   'Nie udało się podliczyć wyniku biegu. Zapis biegu zostaje w przeglądarce, odśwież stronę.':
     'Couldn’t tally the run’s result. The run’s save stays in the browser; refresh the page.',
-  'W biegu rankingowym nie ma sieci sklepów.': 'There’s no shop network in a ranked run.',
   'W biegu rankingowym nie zaczyna się od nowa. Porzuć bieg w ustawieniach.': 'You can’t start over in a ranked run. Abandon the run in Settings.',
   'Bieg przyjęty do rankingu.': 'Run accepted onto the leaderboard.',
-  'Kolejną Traszkę otworzysz po odświeżeniu strony: ta karta nie może teraz zapisać sieci sklepów.':
-    'You can open your next Traszka after refreshing the page: this tab can’t save the shop network right now.',
-  'NOWA TRASZKA!': 'NEW TRASZKA!',
   // src/game/session.ts, boot.ts, seeds.ts, rankedRun.ts
   'Zapis sklepu był uszkodzony — zaczynamy od nowa. Kopia została w przeglądarce.': 'The shop’s save was damaged — starting over. A copy has been kept in the browser.',
   'Zapis sklepu był uszkodzony — zaczynamy od nowa.': 'The shop’s save was damaged — starting over.',

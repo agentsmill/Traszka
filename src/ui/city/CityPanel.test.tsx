@@ -30,7 +30,7 @@ const SEED = 'kiełbasa-42';
 function fakeGame(result: FirmCommandResult = { ok: true }): GameActions & { firm: ReturnType<typeof vi.fn<(cmd: FirmCommand) => FirmCommandResult>> } {
   return {
     dispatch: vi.fn(() => ({ ok: true })),
-    claimWelcome: vi.fn(), openNextStore: vi.fn(), setSound: vi.fn(), setVibration: vi.fn(), restart: vi.fn(), newStore: vi.fn(),
+    claimWelcome: vi.fn(), setSound: vi.fn(), setVibration: vi.fn(), restart: vi.fn(), newStore: vi.fn(),
     startRanked: vi.fn(() => false), resumeRanked: vi.fn(() => false), leaveRanked: vi.fn(), abandonRanked: vi.fn(),
     openFinish: vi.fn(), rememberNick: vi.fn(),
     firm: vi.fn<(cmd: FirmCommand) => FirmCommandResult>(() => result),

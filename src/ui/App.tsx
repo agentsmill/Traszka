@@ -5,7 +5,7 @@ import { CardDesk } from './game/cards';
 import { Hud } from './game/Hud';
 import { MonthPreviewModal } from './game/monthPreview';
 import {
-  CelebrationBanner, ClickerBar, ComboChip, PrestigeModal, RemanentModal, ReportModal, RotateButtons, SelectionCard, Settings,
+  CelebrationBanner, ClickerBar, ComboChip, RemanentModal, ReportModal, RotateButtons, SelectionCard, Settings,
   StoreBadge, StoryModal, Toasts, WelcomeModal,
 } from './game/overlays';
 import { Sheet, TabBar } from './game/panels';
@@ -35,7 +35,7 @@ const brandVars = {
  * Cała nakładka. Bez `controls` (renderer nie wstał, benchmark albo gra jeszcze nie ruszyła) zostaje komunikat, wyniki benchmarku
  * i ekran startowy „Twój kasjer”, który otwiera się przy pierwszym wejściu, zanim powstanie gra. W grze: górny pasek, zakładki
  * z arkuszami, karta zaznaczenia, przyciski klikera, komunikaty, okna i samouczek. Kolejność okien to ich
- * warstwy: karta decyzji leży nad panelami, a pod raportem miesiąca, protokołem remanentu, „Jak grać”, powitaniem i ustawieniami. Panele rankingu i kodu
+ * warstwy: karta decyzji leży nad panelami, a pod raportem miesiąca (też sieci), protokołem remanentu, „Jak grać”, powitaniem i ustawieniami. Panele rankingu i kodu
  * odzyskiwania (`PanelHost`, otwierane z HUD-u i ⚙) leżą nad kartą decyzji i wpisami „OK”, pod ustawieniami i oknem końca sezonu.
  * Okno końca sezonu rankingowego leży nad wszystkimi: karta decyzji na minutę końca sezonu trzyma grę i nie może go zasłonić.
  * `services`: modele paneli rankingu (null w benchmarku i bez powłoki gry: przyciski „🏆” i paneli wtedy nie ma).
@@ -46,7 +46,7 @@ export function App(
 ) {
   return (
     <div class="tt-ui" style={brandVars}>
-      {controls && game && <Hud controls={controls} ranking={!!services} />}
+      {controls && game && <Hud controls={controls} game={game} ranking={!!services} />}
       <Notice />
       <BenchOverlay />
       {controls && game && (
@@ -68,7 +68,6 @@ export function App(
           <HowTo />
           <MonthPreviewModal />
           <WelcomeModal game={game} />
-          <PrestigeModal game={game} />
           <CelebrationBanner />
           <PanelHost game={game} services={services} />
           <Settings controls={controls} game={game} panels={!!services} />

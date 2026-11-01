@@ -15,20 +15,27 @@ import { hintText, reportCommentText, type TycoonMonthReport } from '@/sim/econo
 import { trustTier } from '@/sim/economy/tycoon/trust';
 import { MemoryStorage } from '@/game/memoryStorage';
 import { RANKED_BANKRUPT_TEXT, RANKED_KEYS, createRankedSession, saveFinished, saveRanked, clearFinished, type FinishedRun } from '@/game/rankedRun';
-import { newRunLog } from '@/game/session';
+import { firmOf, newRunLog } from '@/game/session';
+import * as overlayExports from './overlays';
+import * as stateExports from '../state';
 import {
-  econ, ephemeral, isWindowOpen, panel, pushStory, ranked, remanent, report, selection, showSettings, speed, start, story, tab, unsent, welcome,
-  type Controls, type GameActions,
+  econ, ephemeral, firm, isWindowOpen, networkReport, panel, pushStory, ranked, remanent, report, selection, showSettings, speed, start, story, tab, unsent, welcome,
+  type Controls, type GameActions, type NetworkReportView, type RemanentView,
 } from '../state';
+import { openSecond, partnerSession } from '../../../tests/firmKit';
+import { NetworkReportBody } from '../city/NetworkReport';
+import { shortStoreName } from '../city/storeSwitcherModel';
+import { storeName } from '../city/firmText';
 import { App } from '../App';
-import { ClaimChip, RankingButton, TrustChip } from './Hud';
+import { lang } from '@/i18n';
+import { ClaimChip, Hud, RankingButton, TrustChip } from './Hud';
 import { int, minusZl, money, percentOf, signedZl, zl } from './format';
 import { Bar, PalletItem } from './panels';
 import { ENERGY_TITLE } from './tapBlock';
 import {
   ClickerBar, ComboChip, EPHEMERAL_BADGE, EPHEMERAL_NOTE, RANKED_NOTE, RESTART_CONFIRM, RankingSettings, ReportBody,
   RemanentModal, ReportModal, STORY_GRACE_MS, SelectionCard, StoreActions, StoreBadge, StoryModal, WelcomeModal, abandonQuestion, refreshStoredRun, storedRun,
-  storedRunNow, terminationReason,
+  storedRunNow, terminationReason, windowBlocksBanner,
 } from './overlays';
 import { buttonLabelled, buttonsOf, click, labels, textOf, walk, type Vnode } from './vnodeTree';
 
@@ -40,6 +47,8 @@ const resetSignals = (): void => {
   selection.value = null;
   tab.value = null;
   report.value = null;
+  networkReport.value = null;
+  firm.value = null;
   remanent.value = null;
   welcome.value = null;
   start.value = null;
@@ -165,7 +174,7 @@ const publishState = (s: EconomyState, info: StoreInfo): void => { econ.value = 
 function fakeGame(result: CommandResult = { ok: true }): GameActions & { dispatch: ReturnType<typeof vi.fn<(cmd: Command) => CommandResult>> } {
   return {
     dispatch: vi.fn<(cmd: Command) => CommandResult>(() => result),
-    claimWelcome: vi.fn(), openNextStore: vi.fn(), setSound: vi.fn(), setVibration: vi.fn(), restart: vi.fn(), newStore: vi.fn(),
+    claimWelcome: vi.fn(), setSound: vi.fn(), setVibration: vi.fn(), restart: vi.fn(), newStore: vi.fn(),
     startRanked: vi.fn(() => false), resumeRanked: vi.fn(() => false), leaveRanked: vi.fn(), abandonRanked: vi.fn(),
     openFinish: vi.fn(), rememberNick: vi.fn(),
     firm: vi.fn(() => ({ ok: false as const, reason: 'store' as const })),
@@ -1563,5 +1572,252 @@ describe('HUD: przycisk 🏆', () => {
     ranked.value = { seed: 'kielbasa-42', day: 3, days: 91, phase: 'playing' };
     click(trophy);
     expect(panel.value).toEqual({ id: 'ranking', tab: 'seed' });
+  });
+});
+
+// --- Kilka sklepów: okno końca miesiąca, protokoły remanentu, koniec po wypowiedzeniu, prestiż ------------------------------------
+
+/** Firma z dwoma sklepami i widok `firm`, jak publikuje go powłoka gry; `econ` wskazuje aktywny sklep. */
+function twoStoreWorld() {
+  const session = partnerSession();
+  openSecond(session);
+  const f = firmOf(session);
+  firm.value = { f, v: 1 };
+  econ.value = { s: session.econ, info: session.info, v: 1 };
+  return { session, f };
+}
+
+/** Widok okna sieci z dwoma wyciągami (sklep #1 na plusie, #2 na minusie). */
+function networkView(): NetworkReportView {
+  const statementFor = (margin: number, wages: number): Statement => buildStatement({
+    month: { margin, bonus: 0, pallets: 0, wages, media: 0 }, guarantee: 0, installments: 0, remanent: 0, spent: 0, fines: 0, other: 0, cashBefore: 10_000, partial: false,
+  });
+  const one = statementFor(30_000, 8_000);
+  const two = statementFor(2_000, 9_000);
+  const mk = (st: Statement): MonthReport => monthReport(null, { statement: st, profit: st.result, cash: st.cashAfter });
+  return {
+    summary: { label: 'wrzesień 2026', wallet: 50_000, invest: 40_000, total: one.net + two.net, stores: [{ id: 1, profit: one.result, net: one.net }, { id: 2, profit: two.result, net: two.net }] },
+    reports: [{ storeId: 1, report: mk(one) }, { storeId: 2, report: mk(two) }],
+  };
+}
+
+describe('okno końca miesiąca przy kilku sklepach (ReportModal z networkReport)', () => {
+  /** Drzewo okna z rozwiniętym ciałem sieci (komponent w drzewie nie jest wołany, więc wołamy go z jego propsami). */
+  const withBody = (tree: Vnode): { text: string; body: Vnode } => {
+    const node = walk(tree).find((v) => v.type === NetworkReportBody)!;
+    const body = NetworkReportBody(node.props as never) as Vnode;
+    return { text: plain(textOf(tree) + textOf(body)), body };
+  };
+
+  it('okno wstaje samo z sygnału networkReport (bez report) i trzyma grę', () => {
+    twoStoreWorld();
+    expect(ReportModal({ game: fakeGame() })).toBeNull();
+    networkReport.value = networkView();
+    const tree = ReportModal({ game: fakeGame() }) as Vnode;
+    expect(tree).not.toBeNull();
+    expect(isWindowOpen()).toBe(true);
+    const dialog = walk(tree).find((v) => v.props.role === 'dialog')!;
+    expect(dialog.props['aria-label']).toBe('Wyciągi od Centrali: wrzesień 2026');
+    expect(walk(tree).some((v) => v.type === NetworkReportBody)).toBe(true);
+  });
+
+  it('ciało: zakładki „Sieć” i sklepów, podsumowanie z data-tut="network-summary"', () => {
+    const { f } = twoStoreWorld();
+    networkReport.value = networkView();
+    const { body } = withBody(ReportModal({ game: fakeGame() }) as Vnode);
+    expect(labels(body).slice(0, 3)).toEqual(['Sieć', shortStoreName(f, 1), shortStoreName(f, 2)]);
+    expect(walk(body).filter((v) => v.props['data-tut'] === 'network-summary')).toHaveLength(1);
+  });
+
+  it('wyciągi sklepów nie otwierają osobnych okien: samo okno sieci, jedno „Dalej”', () => {
+    twoStoreWorld();
+    networkReport.value = networkView();
+    const tree = ReportModal({ game: fakeGame() }) as Vnode;
+    expect(labels(tree)).toEqual(['Dalej']);
+  });
+
+  it('„Dalej” zamyka okno sieci i oddaje grę', () => {
+    twoStoreWorld();
+    networkReport.value = networkView();
+    click(buttonsOf(ReportModal({ game: fakeGame() }) as Vnode)[0]!);
+    expect(networkReport.value).toBeNull();
+    expect(report.value).toBeNull();
+    expect(isWindowOpen()).toBe(false);
+    expect(ReportModal({ game: fakeGame() })).toBeNull();
+  });
+
+  it('koniec gry z oknem sieci (debet w miesiącu zamknięcia): koniec współpracy z powodem i „Zacznij od nowa”, ciało sieci zostaje', () => {
+    const { f } = twoStoreWorld();
+    networkReport.value = networkView();
+    for (const st of f.stores) { st.econ.gameOver = true; st.econ.cash = DEBT_LIMIT - 10; }
+    f.over = 'debt';
+    const game = fakeGame();
+    const tree = ReportModal({ game }) as Vnode;
+    const { text } = withBody(tree);
+    expect(text).toContain('Koniec współpracy');
+    expect(text).toContain('Powód: za duży debet');
+    expect(walk(tree).some((v) => v.type === NetworkReportBody)).toBe(true);
+    expect(labels(tree)).toEqual(['Zacznij od nowa']);
+    click(buttonsOf(tree)[0]!);
+    expect(game.restart).toHaveBeenCalledTimes(1);
+  });
+
+  it('wpisy „OK” i baner nagrody czekają za oknem sieci', () => {
+    twoStoreWorld();
+    pushStory('Zaufanie Centrali', 'Tekst.');
+    expect(StoryModal()).not.toBeNull();
+    networkReport.value = networkView();
+    expect(StoryModal()).toBeNull();
+    expect(windowBlocksBanner()).toBe(true);
+    networkReport.value = null;
+    expect(StoryModal()).not.toBeNull();
+    expect(windowBlocksBanner()).toBe(true);   // wpis „OK” też zasłania baner
+  });
+
+  it('zwykły raport jednego sklepu działa jak dotąd, także gdy firma ma dwa sklepy', () => {
+    twoStoreWorld();
+    report.value = monthReport(detailed());
+    const tree = ReportModal({ game: fakeGame() }) as Vnode;
+    expect(textOf(tree)).toContain('Raport: wrzesień 2026');
+    expect(walk(tree).some((v) => v.type === NetworkReportBody)).toBe(false);
+  });
+});
+
+describe('protokoły remanentu w zakładkach sklepów', () => {
+  beforeEach(() => { vi.useFakeTimers(); });
+  const protocol = (over: Partial<RemanentProtocol> = {}): RemanentProtocol => ({
+    day: 89, fromDay: 0, revenue: 1_200_000, byReason: { termin: 6_000, kradziez: 4_000, pomylki: 2_500, karty: 500 }, total: 13_000, limit: 14_400, charge: 0,
+    first: true, ...over,
+  });
+  const text1 = 'Remanent #1. Towar nie ginie, tylko zmienia właściciela.';
+  const text2 = 'Remanent #2. Ubytki to też dane.';
+  const open = (): { f: ReturnType<typeof twoStoreWorld>['f']; view: RemanentView } => {
+    const { f } = twoStoreWorld();
+    const p1 = protocol();
+    const p2 = protocol({ revenue: 400_000, total: 9_000, limit: 4_800, charge: 4_200, first: false });
+    const view: RemanentView = { protocol: p1, text: text1, stores: [{ storeId: 1, protocol: p1, text: text1 }, { storeId: 2, protocol: p2, text: text2 }] };
+    remanent.value = view;
+    return { f, view };
+  };
+
+  it('dwa protokoły: jedno okno z zakładkami sklepów, domyślnie protokół aktywnego sklepu', () => {
+    const { f } = open();
+    const tree = RemanentModal() as Vnode;
+    expect(labels(tree)).toEqual([shortStoreName(f, 1), shortStoreName(f, 2), 'OK']);
+    expect(buttonsOf(tree).map((b) => b.props['aria-selected'])).toEqual([true, false, undefined]);
+    expect(plain(textOf(tree))).toContain(z(1_200_000));
+    expect(plain(textOf(tree))).toContain(text1);
+    expect(plain(textOf(tree))).toContain('Ubytki mieszczą się w limicie.');
+    expect(walk(tree).filter((v) => v.type === 'h2').map((v) => textOf(v))).toEqual(['Protokół remanentu']);
+  });
+
+  it('zakładka drugiego sklepu pokazuje jego protokół i komentarz Centrali', () => {
+    const { f } = open();
+    click(buttonsOf(RemanentModal() as Vnode).find((b) => textOf(b) === shortStoreName(f, 2))!);
+    const text = plain(textOf(RemanentModal() as Vnode));
+    expect(text).toContain(z(400_000));
+    expect(text).toContain(z(4_200));
+    expect(text).toContain('Nadwyżka');
+    expect(text).toContain(text2);
+    expect(text).not.toContain(text1);
+    expect(text).not.toContain('Limit poznajesz dopiero teraz');   // drugi protokół nie jest pierwszym
+  });
+
+  it('jedno „OK” zamyka okno dla wszystkich sklepów (po karencji)', () => {
+    open();
+    const tree = RemanentModal() as Vnode;
+    vi.advanceTimersByTime(STORY_GRACE_MS);
+    click(buttonLabelled(tree, 'OK'));
+    expect(remanent.value).toBeNull();
+    expect(isWindowOpen()).toBe(false);
+  });
+
+  it('nowe okno remanentu zaczyna od zakładki aktywnego sklepu, nie od wybranej poprzednio', () => {
+    const { f, view } = open();
+    click(buttonsOf(RemanentModal() as Vnode).find((b) => textOf(b) === shortStoreName(f, 2))!);
+    remanent.value = { ...view, stores: [...view.stores!] };
+    expect(buttonsOf(RemanentModal() as Vnode).map((b) => b.props['aria-selected'])).toEqual([true, false, undefined]);
+  });
+
+  it('protokół jednego sklepu z tła (aktywny nie liczył remanentu) niesie nazwę sklepu', () => {
+    const { f } = twoStoreWorld();
+    const p2 = protocol({ total: 2_000 });
+    remanent.value = { protocol: p2, text: text2, stores: [{ storeId: 2, protocol: p2, text: text2 }] };
+    const text = plain(textOf(RemanentModal() as Vnode));
+    expect(text).toContain(storeName(f, 2));
+    expect(labels(RemanentModal() as Vnode)).toEqual(['OK']);   // jedna zakładka to nie przełącznik
+  });
+
+  it('bez `stores` (jeden sklep) okno jest takie jak dotąd: bez zakładek i bez nazwy sklepu', () => {
+    twoStoreWorld();
+    remanent.value = { protocol: protocol(), text: text1 };
+    expect(labels(RemanentModal() as Vnode)).toEqual(['OK']);
+    expect(plain(textOf(RemanentModal() as Vnode))).not.toContain('Traszka #');
+  });
+});
+
+describe('koniec współpracy po wypowiedzeniu i debecie sieci (terminationReason z firmą)', () => {
+  const plainText = (text: string): string => text.replace(/[\s\u00a0\u202f]/g, ' ');
+
+  it('koniec okresu wypowiedzenia ostatniej placówki: powód ze stanu sklepu, bez debetu i bez zera zaufania', () => {
+    const { f } = twoStoreWorld();
+    const st = f.stores[0]!;
+    st.notice = { endDay: 120 };
+    st.econ.gameOver = true;
+    f.over = 'closed';
+    expect(terminationReason(st.econ)).toBeNull();   // sama ekonomia nie zna wypowiedzenia
+    expect(terminationReason(st.econ, f)).toBe('Powód: umowa ostatniej placówki wygasła po wypowiedzeniu.');
+    econ.value = { s: st.econ, info: st.info, v: 1 };
+    st.econ.lastReport = null;
+    const text = plainText(textOf(ReportModal({ game: fakeGame() })));
+    expect(text).toContain('Powód: umowa ostatniej placówki wygasła po wypowiedzeniu.');
+  });
+
+  it('sklep bez wypowiedzenia nie dostaje tego powodu; debet i zaufanie mają pierwszeństwo przed wypowiedzeniem', () => {
+    const { f } = twoStoreWorld();
+    const st = f.stores[0]!;
+    st.econ.gameOver = true;
+    expect(terminationReason(st.econ, f)).toBeNull();
+    st.notice = { endDay: 120 };
+    st.econ.cash = DEBT_LIMIT - 1;
+    expect(terminationReason(st.econ, f)).toContain('za duży debet');
+    st.econ.cash = 1000;
+    st.econ.tycoon.trust.value = 0;
+    expect(terminationReason(st.econ, f)).toBe('Powód: zaufanie Centrali spadło do zera.');
+  });
+
+  it('debet całej gotówki firmy: wszystkie sklepy kończą grę, a aktywny podaje powód z gotówki', () => {
+    const { f } = twoStoreWorld();
+    for (const st of f.stores) { st.econ.gameOver = true; st.econ.cash = DEBT_LIMIT - 2500; }
+    f.over = 'debt';
+    expect(terminationReason(f.stores[0]!.econ, f)).toContain('Powód: za duży debet');
+  });
+
+  it('po angielsku powód wypowiedzenia też jest przetłumaczony', () => {
+    const { f } = twoStoreWorld();
+    const st = f.stores[0]!;
+    st.notice = { endDay: 120 };
+    st.econ.gameOver = true;
+    lang.value = 'en';
+    try {
+      expect(terminationReason(st.econ, f)).toBe('Reason: the agreement for your last branch expired after notice.');
+    } finally {
+      lang.value = 'pl';
+    }
+  });
+});
+
+describe('prestiż zniknął (spec §15): ani okna, ani sygnału, ani przycisku w grze', () => {
+  it('nie ma PrestigeModal ani showPrestige', () => {
+    expect('PrestigeModal' in overlayExports).toBe(false);
+    expect('showPrestige' in stateExports).toBe(false);
+  });
+
+  it('App nie montuje okna prestiżu, a pasek dostaje grę (chip sklepu przełącza przez game.firm)', () => {
+    const controls = { setSpeed: vi.fn(), rotate: vi.fn(), setTimeOfDay: vi.fn(), setPreset: vi.fn(), generate: vi.fn(), randomize: vi.fn() } satisfies Controls;
+    const game = fakeGame();
+    const nodes = walk(App({ controls, game }));
+    expect(nodes.map((v) => (v.type as { name?: string }).name)).not.toContain('PrestigeModal');
+    expect(nodes.find((v) => v.type === Hud)!.props.game).toBe(game);
   });
 });

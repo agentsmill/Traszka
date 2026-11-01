@@ -8,8 +8,13 @@ import { computeStoreInfo, type StoreInfo } from '@/sim/economy/storeInfo';
 import type { AnswerInstance } from '@/sim/economy/tycoon/cards';
 import { EQUIPMENT, UPGRADES, equipmentCost, upgradeCost } from '@/sim/economy/upgrades';
 import { layoutFor } from '@/sim/store/layoutFor';
-import { econ, monthPreview, ranked, selection, speed, tab, type GameActions } from '../state';
-import { ForecastChip } from './Hud';
+import { lang } from '@/i18n';
+import { firmOf } from '@/game/session';
+import { forecastFirm } from '@/sim/firm/forecast';
+import { openSecond, partnerSession } from '../../../tests/firmKit';
+import { forecastNow } from '../city/storeSwitcherModel';
+import { econ, firm, monthPreview, ranked, selection, speed, tab, type GameActions } from '../state';
+import { ForecastChip, ForecastRow } from './Hud';
 import { forecastLabel } from './forecastText';
 import { SelectionCard } from './overlays';
 import { PeoplePanel, ShopPanel } from './panels';
@@ -20,7 +25,7 @@ import { buttonsOf, click, textOf, walk, type Vnode } from './vnodeTree';
 function fakeGame(): GameActions & { dispatch: ReturnType<typeof vi.fn<(cmd: Command) => CommandResult>> } {
   return {
     dispatch: vi.fn<(cmd: Command) => CommandResult>(() => ({ ok: true })),
-    claimWelcome: vi.fn(), openNextStore: vi.fn(), setSound: vi.fn(), setVibration: vi.fn(), restart: vi.fn(), newStore: vi.fn(),
+    claimWelcome: vi.fn(), setSound: vi.fn(), setVibration: vi.fn(), restart: vi.fn(), newStore: vi.fn(),
     startRanked: vi.fn(() => false), resumeRanked: vi.fn(() => false), leaveRanked: vi.fn(), abandonRanked: vi.fn(),
     openFinish: vi.fn(), rememberNick: vi.fn(),
     firm: vi.fn(() => ({ ok: false as const, reason: 'store' as const })),
@@ -44,6 +49,8 @@ function shop(cash: number, net?: number): { s: EconomyState; info: StoreInfo } 
 }
 
 afterEach(() => {
+  firm.value = null;
+  lang.value = 'pl';
   tab.value = null;
   monthPreview.value = null;
   econ.value = null;
@@ -426,5 +433,115 @@ describe('zakupy nie zmieniają stanu', () => {
     PeoplePanel({ s, info, game: fakeGame(), v: 1 });
     ForecastChip({ f: forecastMonth(s, info), cash: s.cash });
     expect(JSON.stringify(s)).toBe(before);
+  });
+});
+
+// --- Sieć: pasek i ostrzeżenia przy zakupach liczą prognozę całej sieci (spec §11.3) ---------------------------------------------
+
+describe('prognoza sieci w pasku i przy zakupach', () => {
+  /**
+   * Firma z dwoma sklepami i portfelem 200 tys. zł. Drugi sklep ma do potrącenia 400 tys. zł za palety, więc jego „Zostaje Ci” jest głęboko
+   * na minusie: sam pierwszy sklep wygląda bezpiecznie, ale wspólna gotówka po zamknięciu schodzi poniżej granicy debetu.
+   */
+  function network() {
+    const session = partnerSession();
+    openSecond(session);
+    const f = firmOf(session);
+    f.stores[1]!.econ.franchisee.month.pallets += 400_000;
+    firm.value = { f, v: 1 };
+    const view = { s: session.econ, info: session.info, v: 1 };
+    econ.value = view;
+    return { session, f, view, s: session.econ, info: session.info };
+  }
+
+  it('spendCheck z forecastNow widzi minus drugiego sklepu, którego sam pierwszy sklep nie pokazuje', () => {
+    const { f, view, s, info } = network();
+    expect(spendCheck(forecastMonth(s, info), 0).level).not.toBe('danger');
+    const all = forecastNow(view, firm.value);
+    expect(all).toEqual(forecastFirm(f));
+    expect(spendCheck(all, 0).level).toBe('danger');
+    expect(spendCheck(all, 0).cashAfter).toBe(all.cashAfter);
+  });
+
+  it('spendLevel, SpendNote i spendRisk oceniają zakup na tle sieci: ostrzeżenie „danger” zamiast „ok”', () => {
+    const { s, info } = network();
+    expect(spendLevel(s, info, 1_000)).toBe('danger');
+    expect(spendRisk(s, info, 1_000)).toBe('danger');
+    const note = SpendNote({ s, info, price: 1_000 }) as unknown as Vnode;
+    expect(String(note.props.class)).toBe('tt-spend danger');
+    expect(textOf(note)).toContain('Centrala wypowie umowę');
+    firm.value = null;   // bez firmy ten sam zakup jest bezpieczny
+    expect(spendLevel(s, info, 1_000)).not.toBe('danger');
+    expect(SpendNote({ s, info, price: 1_000 })).toBeNull();
+  });
+
+  it('przyciski zakupu w panelu Ulepszenia dostają kolor ostrzeżenia od prognozy sieci', () => {
+    const { s, info } = network();
+    s.level = 30;
+    const risks = buy(ShopPanel({ s, info, game: fakeGame(), v: 1 })).map((b) => b.props['data-risk']);
+    expect(risks.filter((r) => r === 'danger').length).toBeGreaterThan(0);
+    expect(risks.every((r) => r === 'danger' || r === undefined)).toBe(true);   // cena ponad gotówką nie dostaje ostrzeżenia (i tak nie do kupienia)
+    firm.value = null;
+    expect(buy(ShopPanel({ s, info, game: fakeGame(), v: 1 })).map((b) => b.props['data-risk'])).not.toContain('danger');
+  });
+
+  it('sklep, który nie jest aktywny w firmie (obcy `s`), oceniany jest po swojemu', () => {
+    const { s, info } = network();
+    const other = shop(200_000, 10_000);
+    expect(spendLevel(other.s, other.info, 1_000)).toBe('ok');
+    expect(spendLevel(s, info, 1_000)).toBe('danger');
+  });
+
+  it('jeden otwarty sklep w firmie: ocena jak dotąd, prognoza sklepu', () => {
+    const session = partnerSession();
+    firm.value = { f: firmOf(session), v: 1 };
+    const s = session.econ;
+    const info = session.info;
+    expect(spendLevel(s, info, 1_000)).toBe('ok');
+    expect(forecastNow({ s, info, v: 1 }, firm.value)).toEqual(forecastMonth(s, info));
+  });
+
+  it('pasek (ForecastChip z `network`): suma sieci, dopisek „sieć”, kolor od sumy', () => {
+    const { f, view } = network();
+    const all = forecastNow(view, firm.value);
+    const el = ForecastChip({ f: all, cash: f.person.wallet, network: true }) as unknown as Vnode;
+    const text = textOf(el);
+    expect(text).toContain(signedZl(all.net));
+    expect(text).toContain(zl(all.saldo));
+    expect(String(el.props.class)).toBe('tt-due danger');
+    const tag = walk(el).filter((v) => v.props.class === 'tt-due-net');
+    expect(tag.map((v) => textOf(v))).toEqual(['sieć']);
+    expect(String(el.props['aria-label'])).toBe(`Sieć: ${forecastLabel(all)}`);
+    expect(String(el.props.title)).toContain('wszystkie sklepy');
+    // bez `network` pasek jest taki jak dotąd
+    const plain = ForecastChip({ f: all, cash: f.person.wallet }) as unknown as Vnode;
+    expect(walk(plain).some((v) => v.props.class === 'tt-due-net')).toBe(false);
+    expect(plain.props['aria-label']).toBe(forecastLabel(all));
+  });
+
+  it('pasek po angielsku: dopisek „network”', () => {
+    const { f, view } = network();
+    lang.value = 'en';
+    const el = ForecastChip({ f: forecastNow(view, firm.value), cash: f.person.wallet, network: true }) as unknown as Vnode;
+    expect(walk(el).filter((v) => v.props.class === 'tt-due-net').map((v) => textOf(v))).toEqual(['network']);
+    expect(String(el.props['aria-label'])).toMatch(/^Network: /);
+  });
+
+  it('ForecastRow (drugi wiersz paska) składa pasek z forecastNow: przy dwóch sklepach suma i „sieć”, przy jednym zwykła prognoza', () => {
+    const { f, view } = network();
+    const chipOf = (row: Vnode): Vnode => walk(row).find((v) => v.type === ForecastChip)!;
+    const row = ForecastRow({ view, firmView: firm.value }) as unknown as Vnode;
+    expect(row.props['data-tut']).toBe('due');
+    expect(chipOf(row).props.network).toBe(true);
+    expect(chipOf(row).props.f).toEqual(forecastFirm(f));
+    expect(chipOf(row).props.cash).toBe(view.s.cash);
+
+    const solo = partnerSession();
+    const soloView = { s: solo.econ, info: solo.info, v: 1 };
+    const one = ForecastRow({ view: soloView, firmView: { f: firmOf(solo), v: 1 } }) as unknown as Vnode;
+    expect(chipOf(one).props.network).toBe(false);
+    expect(chipOf(one).props.f).toEqual(forecastMonth(solo.econ, solo.info));
+    const none = ForecastRow({ view: soloView, firmView: null }) as unknown as Vnode;
+    expect(chipOf(none).props.network).toBe(false);
   });
 });

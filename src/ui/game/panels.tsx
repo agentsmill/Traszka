@@ -2,13 +2,15 @@ import type { ComponentChildren } from 'preact';
 import {
   CATS, CAT_INFO, HIRE_COST, HOUR_CURVE, ORDER_DEADLINE, REMANENT, RESTOCK_RATE, SCO_RATE, STAFF_MAX, TILL_RATE, UNLOAD_RATE, WAGE_PER_DAY,
 } from '@/sim/economy/catalog';
-import { formatClock, minuteOfDay } from '@/sim/economy/calendar';
+import { dayOf, formatClock, minuteOfDay } from '@/sim/economy/calendar';
 import { dateText, kpiTitleText, rankText, t, tr } from '@/i18n';
 import {
   DEBT_WARN, LOC_LABEL, aislePallets, assistantSuggestion, debtWarningText, effects, expectedDailyCustomers, freeSpots, isClosedForRemont, kpiMetricsOf, kpiScaleOf, level, nextRemont,
   robotFleet, slotFree, slotUsage, upgradeBlocker, workshopUnlocked, type EconomyState,
 } from '@/sim/economy/economy';
 import { forecastMonth, spendCheck } from '@/sim/economy/forecast';
+import { noticeEndDay } from '@/sim/firm/closure';
+import { openStores } from '@/sim/firm/firm';
 import { dueOf } from '@/sim/economy/franchisee';
 import { MILESTONES } from '@/sim/economy/milestones';
 import { KPI, KPI_FLAVOR, kpiProgress } from '@/sim/economy/tycoon/kpi';
@@ -23,9 +25,10 @@ import {
   EQUIPMENT, GROUP_LABEL, UPGRADES, WORKSHOP_LEVEL, equipmentCost, upgradeCost, type UpgradeGroup,
 } from '@/sim/economy/upgrades';
 import { nextRankAt, xpToNext } from '@/sim/economy/progress';
-import { networkIncomeOf, prestigePoints, prestigeReady } from '@/game/meta';
 import { CityPanel } from '../city/CityPanel';
-import { econ, metaView, openMonthPreview, ranked, selection, showPrestige, tab, type GameActions, type TabId } from '../state';
+import { lotAddress, storeName, storeStateText } from '../city/firmText';
+import { forecastNow, isNetwork, networkRow } from '../city/storeSwitcherModel';
+import { econ, firm, metaView, openMonthPreview, ranked, selection, tab, type GameActions, type TabId } from '../state';
 import { duration, int, money, minusZl, pct, people, percentOf, plural, signedZl, zl } from './format';
 import { SpendNote, buyButtons, buyNotes, spendRisk } from './spend';
 import { tapBlock } from './tapBlock';
@@ -98,7 +101,7 @@ export function Sheet({ game }: { game: GameActions }) {
       <div class="tt-sheet-body">
         {/* `v` (wersja stanu) jest w propsach celowo: stan ekonomii zmienia się w miejscu, a @preact/signals pomija
             render komponentu, którego propsy są płytko równe. Bez `v` panel po „Odbierz!” albo zakupie zostawał nieaktualny. */}
-        {open === 'sklep' && <StorePanel s={view.s} info={view.info} v={view.v} />}
+        {open === 'sklep' && <StorePanel s={view.s} info={view.info} game={game} v={view.v} />}
         {open === 'palety' && <PalletsPanel s={view.s} info={view.info} game={game} v={view.v} />}
         {open === 'ludzie' && <PeoplePanel s={view.s} info={view.info} game={game} v={view.v} />}
         {open === 'ulepszenia' && <ShopPanel s={view.s} info={view.info} game={game} v={view.v} />}
@@ -119,7 +122,11 @@ function capacityPerHour(s: EconomyState, info: StoreInfo): { now: number; max: 
   return { now: s.lastCashiers * till + sco, max: Math.min(s.staff, fx.tills) * till + sco };
 }
 
-export function StorePanel({ s, info }: { s: EconomyState; info: StoreInfo; v: number }) {
+/** Pytanie przed wypowiedzeniem umowy sklepu (jak `RESTART_CONFIRM`, dwa kroki zamiast jednego kliknięcia): nazwa sklepu i dzień końca umowy. */
+export const terminateConfirm = (name: string, endDay: number): string =>
+  t`Wypowiedzieć umowę: ${name}? Sklep działa do ${dateText(endDay)}, potem Centrala robi rozliczenie końcowe: ubytki ponad limit i niespłacone raty zejdą z gotówki. Tego nie da się cofnąć.`;
+
+export function StorePanel({ s, info, game }: { s: EconomyState; info: StoreInfo; game: GameActions; v: number }) {
   const fx = effects(s, info);
   const cap = capacityPerHour(s, info);
   const hour = Math.floor(minuteOfDay(s.minute) / 60);
@@ -132,6 +139,12 @@ export function StorePanel({ s, info }: { s: EconomyState; info: StoreInfo; v: n
   const rem = s.franchisee.remanent;
   const hall = s.tycoon.hall;
   const dirty = hall.cleanliness < 50;
+  // umowa tego sklepu (§13.2): wypowiedzieć można, gdy zostaje inny otwarty sklep bez wypowiedzenia (inaczej sim odmawia: `single`)
+  const f = firm.value?.f;
+  const own = f?.stores.find((x) => x.econ === s);
+  const canTerminate = !!f && !!own && !own.closed && own.notice === null && f.over === null && !s.gameOver
+    && openStores(f).some((x) => x.id !== own.id && x.notice === null);
+  const endDay = noticeEndDay(dayOf(s.minute));
   return (
     <>
       <Section title="Kasa i kolejka">
@@ -185,6 +198,23 @@ export function StorePanel({ s, info }: { s: EconomyState; info: StoreInfo; v: n
           );
         })}
       </Section>
+      {f && own && (own.notice !== null || canTerminate) && (
+        <Section title="Umowa">
+          {own.notice !== null
+            ? (
+              <>
+                <Row label="Umowa wygasa">{dateText(own.notice.endDay)}</Row>
+                <p class="tt-hint">{t`Do tego dnia sklep działa normalnie, ale Centrala nie finansuje w nim nowych rat. Potem następuje rozliczenie końcowe.`}</p>
+              </>
+            )
+            : (
+              <>
+                <button type="button" class="tt-btn" onClick={() => { if (confirm(terminateConfirm(storeName(f, own.id), endDay))) game.firm({ type: 'terminateStore', storeId: own.id }); }}>{t`Wypowiedz umowę`}</button>
+                <p class="tt-hint">{t`Sklep działa normalnie do końca następnego miesiąca. Potem Centrala robi rozliczenie końcowe, a w okresie wypowiedzenia nie finansuje w nim nowych rat.`}</p>
+              </>
+            )}
+        </Section>
+      )}
     </>
   );
 }
@@ -447,10 +477,13 @@ export function GoalsPanel({ s, info, game }: { s: EconomyState; info: StoreInfo
   const ready = MILESTONES.filter((x) => s.milestonesReady.includes(x.id) && !s.milestones.includes(x.id));
   const goals = MILESTONES.filter((x) => !s.milestones.includes(x.id) && !s.milestonesReady.includes(x.id)).slice(0, 3);
   const best = Math.max(1, ...s.history.map((h) => Math.abs(h.profit)));
-  const forecast = forecastMonth(s, info);   // prognoza wyciągu na koniec miesiąca (ta sama co w pasku): saldo, raty, „Zostaje Ci”
+  const forecast = forecastMonth(s, info);   // prognoza wyciągu tego sklepu na koniec miesiąca: saldo, raty, „Zostaje Ci”
+  const fv = firm.value;
+  const network = !!fv && isNetwork(fv.f);
+  const all = network ? forecastNow({ s, info, v: 0 }, fv) : forecast;   // przy dwóch sklepach gotówka po zamknięciu liczy całą sieć (jak pasek)
   const settle = s.franchisee;
   const nextRank = nextRankAt(s.level);
-  const meta = metaView.value;
+  const previous = networkRow(metaView.value);
   return (
     <>
       <Section title="KPI tygodnia">
@@ -469,21 +502,12 @@ export function GoalsPanel({ s, info, game }: { s: EconomyState; info: StoreInfo
         {nextRank && <p class="tt-hint">{t`Następna ranga (${rankText(nextRank)}) na ${nextRank}. poziomie. Każdy poziom to nagroda, a niektóre coś odblokowują.`}</p>}
       </Section>
       <Section title="Twoja sieć Traszek">
-        <Row label="Sklepy w sieci">{meta.stores}</Row>
-        <Row label="Dochód z sieci">{t`${zl(meta.networkIncome)} / dzień`}</Row>
-        <Row label="Punkty Partnera">{t`${meta.points} (+${4 * meta.points}% marży, +${3 * meta.points}% ruchu)`}</Row>
+        {fv && fv.f.stores.map((st) => <Row key={st.id} label={storeName(fv.f, st.id)}>{`${lotAddress(fv.f, st.lotId)} · ${storeStateText(fv.f, st)}`}</Row>)}
+        {fv && fv.f.builds.map((b) => <Row key={b.lotId} label={t`W budowie: ${lotAddress(fv.f, b.lotId)}`}>{t`otwarcie ${dateText(b.readyDay)}`}</Row>)}
+        {previous && <p class="tt-hint">{previous}</p>}
         {ranked.value
           ? <p class="tt-hint">{t`W biegu rankingowym nie ma sieci sklepów: ten sklep nie dostaje premii z sieci i do niej nie dołączy.`}</p>
-          : meta.network.includes(s.seed)
-          ? <p class="tt-hint">{t`Ten lokal już jest w Twojej sieci, więc drugi raz nie da Punktów Partnera ani dochodu. Otwórz sklep z innym seedem (Ustawienia), żeby sieć rosła.`}</p>
-          : prestigeReady(s)
-          ? (
-            <>
-              <p class="tt-hint">{t`Ten sklep jest gotowy, by dołączyć do sieci: da `}<b>{t`+${prestigePoints(s)} Punktów Partnera`}</b>{t` i `}<b>{zl(networkIncomeOf(s))}</b>{t` dziennie w każdej kolejnej grze.`}</p>
-              <button type="button" class="tt-btn tt-primary big" onClick={() => { showPrestige.value = true; }}>{t`Otwórz kolejną Traszkę`}</button>
-            </>
-          )
-          : <p class="tt-hint">{t`Po drugim remoncie albo na 20. poziomie otworzysz kolejną Traszkę. Ten sklep dołączy do sieci i będzie zarabiał na każdą następną.`}</p>}
+          : fv && !fv.f.person.partner && <p class="tt-hint">{t`Kolejną placówkę wynajmiesz w zakładce Miasto, gdy Centrala nada Ci status Partnera Strategicznego.`}</p>}
       </Section>
       <Section title="Kamienie milowe">
         {ready.map((g) => (
@@ -520,8 +544,15 @@ export function GoalsPanel({ s, info, game }: { s: EconomyState; info: StoreInfo
         ))}
         <Row label="Mandaty (z gotówki)">{minusZl(m.fines)}</Row>
         <Row label="Zakupy za gotówkę">{minusZl(m.investments)}</Row>
-        <Row label="Zostanie Ci po zamknięciu"><b>{signedZl(forecast.net)}</b></Row>
-        <Row label="Gotówka po zamknięciu"><b class={`tt-free ${spendCheck(forecast, 0).level}`}>{money(forecast.cashAfter)}</b></Row>
+        {network
+          ? (
+            <>
+              <Row label="Zostanie Ci po zamknięciu (ten sklep)"><b>{signedZl(forecast.net)}</b></Row>
+              <Row label="Zostanie Ci po zamknięciu (sieć)"><b>{signedZl(all.net)}</b></Row>
+            </>
+          )
+          : <Row label="Zostanie Ci po zamknięciu"><b>{signedZl(forecast.net)}</b></Row>}
+        <Row label="Gotówka po zamknięciu"><b class={`tt-free ${spendCheck(all, 0).level}`}>{money(all.cashAfter)}</b></Row>
         <p class="tt-hint">{t`Marża i premie wpadają na saldo, a gotówka rusza się przy zamknięciu miesiąca: Centrala robi przelew, potrąca raty i palety, a Ty płacisz pensje, media, ZUS, VAT i księgową.`}</p>
         <p class="tt-hint">{t`To szybki szacunek: resztę miesiąca liczy z dotychczasowego obrotu. Dokładny wyciąg daje podgląd.`}</p>
         <button type="button" class="tt-btn" onClick={openMonthPreview}>{t`Koniec miesiąca: wyciąg i podgląd`}</button>

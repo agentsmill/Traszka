@@ -15,7 +15,7 @@ import type { Sfx } from '@/ui/sfx';
 import * as ui from '@/ui/state';
 import { bootMeta } from './bootMeta';
 import type { CashierLook } from './cashier';
-import { addToNetwork, claimDaily, partnerOf, saveMeta, startupWindow, type Meta } from './meta';
+import { claimDaily, partnerOf, saveMeta, startupWindow, type Meta } from './meta';
 import { openStore } from './openStore';
 import {
   RANKED_BANKRUPT_TEXT, RANKED_DAYS, clearFinished, createRankedSession, discardRanked, finishRun, getPlayMode, holdFinished, loadRanked, pendingFinished,
@@ -25,7 +25,7 @@ import type { ScenePick } from './scene';
 import { chooseStore, freeSeed } from './seeds';
 import {
   NEWER_SAVE_NOTICE, RANKED_TAP_LOG_MAX, RUN_LOG_MAX, UNBUILDABLE_SAVE_NOTICE, createSession, discardSave, firmOf, hasStoredSave, lastSavedSeed, pointAtActive,
-  retireSession, reviveSession, saveSession, type GameSession,
+  saveSession, type GameSession,
 } from './session';
 import { initialStartForm, noticeAfterOpen, openChosen, openRequestFor, type StartChoice, type StartForm, type StoreSwitch } from './start';
 
@@ -427,7 +427,6 @@ export const RANKED_RESUME_FAILED_NOTICE = 'Nie udało się wznowić biegu ranki
 export const RANKED_NOT_COUNTED_NOTICE = 'Ten bieg nie liczy się do rankingu.';
 export const RANKED_RESULT_NOT_SAVED_NOTICE = 'Przeglądarka nie ma miejsca na zapis wyniku. Wyślij go teraz, zanim zamkniesz kartę.';
 export const RANKED_FINISH_FAILED_NOTICE = 'Nie udało się podliczyć wyniku biegu. Zapis biegu zostaje w przeglądarce, odśwież stronę.';
-export const RANKED_NO_NETWORK_NOTICE = 'W biegu rankingowym nie ma sieci sklepów.';
 export const RANKED_NO_RESTART_NOTICE = 'W biegu rankingowym nie zaczyna się od nowa. Porzuć bieg w ustawieniach.';
 const rankedStartFailed = (seed: string): string => `Nie udało się zacząć biegu rankingowego „${seed}”.`;
 
@@ -1022,41 +1021,6 @@ export function createShell(deps: ShellDeps): GameShell {
       fx.confetti();
       settleOutsideCommand();
       persist();
-    },
-    openNextStore: () => {
-      const closed = shell.session;
-      if (!closed) return;
-      if (closed.mode === 'ranked') {   // bieg rankingowy nie ma sieci sklepów (serwer odtwarza go bez premii z sieci)
-        fx.notice(RANKED_NO_NETWORK_NOTICE);
-        return;
-      }
-      if (closed.ephemeral || shell.meta.readOnly) {   // sieć sklepów trzeba zapisać, a ta karta nie może: sklep zniknąłby bez śladu
-        fx.notice('Kolejną Traszkę otworzysz po odświeżeniu strony: ta karta nie może teraz zapisać sieci sklepów.');
-        return;
-      }
-      const before = shell.meta;
-      // nowa gra nie czyta zapisu, więc seed musi być wolny (inaczej pierwszy zapis zjadłby cudzą grę); losujemy przed
-      // zamknięciem, kiedy zapis zamykanego sklepu jeszcze leży, więc i jego seed nie wróci; seed z sieci też jest zajęty,
-      // bo addToNetwork przyjmuje każdy seed raz i drugi sklep pod nim nie dałby premii
-      const next = freeSeed(deps.randomSeed, (s) => hasStoredSave(s) || shell.meta.network.some((n) => n.seed === s));
-      shell.meta = addToNetwork(shell.meta, closed.econ);   // nowy sklep dostaje już premię z tego; ten sam seed drugi raz niczego nie daje
-      retireSession(closed);                                // zapis znika i nie wróci: setSeed zaraz zapisuje „bieżący” sklep
-      if (!setSeed(next, true)) {                           // nowy sklep się nie otworzył: wszystko wraca na miejsce
-        shell.meta = before;
-        reviveSession(closed);
-        persist();
-        return;
-      }
-      publishMeta();
-      ui.tab.value = null;
-      const { meta } = shell;
-      ui.celebration.value = {
-        title: 'NOWA TRASZKA!',
-        subtitle: `Sieć: ${meta.network.length} ${meta.network.length === 1 ? 'sklep' : 'sklepy'} · ${meta.partnerPoints} Punktów Partnera`,
-        lines: [`Dochód z sieci: ${partnerOf(meta).networkIncome.toLocaleString('pl-PL')} zł dziennie`],
-      };
-      fx.play('levelup');
-      fx.confetti();
     },
     setSound: (on) => { shell.meta.sound = on; fx.setSound(on); saveMeta(shell.meta); publishMeta(); },
     setVibration: (on) => { shell.meta.vibration = on; fx.setVibration(on); saveMeta(shell.meta); publishMeta(); },

@@ -1,9 +1,12 @@
 import type { EconomyState } from '@/sim/economy/economy';
 import { installmentRoom } from '@/sim/economy/economy';
-import { forecastMonth, spendCheck, type SpendLevel } from '@/sim/economy/forecast';
+import { forecastMonth, spendCheck, type MonthForecast, type SpendLevel } from '@/sim/economy/forecast';
 import { planFor, type InstallmentPlan } from '@/sim/economy/franchisee';
 import type { StoreInfo } from '@/sim/economy/storeInfo';
 import type { AnswerInstance } from '@/sim/economy/tycoon/cards';
+import { activeStore } from '@/sim/firm/firm';
+import { forecastNow } from '../city/storeSwitcherModel';
+import { firm } from '../state';
 import { spendWarningText } from './forecastText';
 import { t, tr } from '@/i18n';
 import { int, percentOf, zl } from './format';
@@ -13,7 +16,19 @@ import { int, percentOf, zl } from './format';
  * przycisk zakupu zostaje włączony, bo decyzja jest jego. Gdy zakupu za gotówkę i tak nie da się zrobić (`price` ponad gotówką),
  * nie dokładamy drugiego komunikatu do „za mało gotówki”. Zakup na raty ma własny wariant (`rata`): kwota to pierwsza rata,
  * a gotówka nie jest potrzebna.
+ *
+ * Od dwóch otwartych sklepów ocena liczy prognozę całej sieci (spec §11.3), bo debet dotyczy wspólnej gotówki: zakup w jednym sklepie
+ * jest groźny, gdy drugi sklep zjada gotówkę po zamknięciu miesiąca.
  */
+
+/**
+ * Prognoza, na tle której ocenia się wydatek w sklepie `s`: sieć (`forecastNow`), gdy `s` jest aktywnym sklepem firmy z co najmniej dwoma
+ * otwartymi sklepami, inaczej sam sklep. Obcy stan (nie aktywny sklep firmy) oceniany jest po swojemu.
+ */
+function forecastOf(s: EconomyState, info: StoreInfo): MonthForecast {
+  const view = firm.value;
+  return view && activeStore(view.f).econ === s ? forecastNow({ s, info, v: 0 }, view) : forecastMonth(s, info);
+}
 
 /**
  * Ile gotówki od razu zabierze odpowiedź na kartę (zł, dodatnie to koszt; 0, gdy zyskuje albo nic nie kosztuje): suma pewnych
@@ -32,7 +47,7 @@ const assessable = (s: EconomyState, price: number, always: boolean, rata: boole
 
 /** Poziom wydatku `price` na tle prognozy; `ok` dla zakupu poza zasięgiem gotówki albo bez ceny. */
 export function spendLevel(s: EconomyState, info: StoreInfo, price: number, always = false, rata = false): SpendLevel {
-  return assessable(s, price, always, rata) ? spendCheck(forecastMonth(s, info), price).level : 'ok';
+  return assessable(s, price, always, rata) ? spendCheck(forecastOf(s, info), price).level : 'ok';
 }
 
 /** Atrybut `data-risk` przycisku zakupu: `warn` i `danger` zmieniają jego kolor (CSS), `ok` i `tight` zostawiają zwykły. */
@@ -48,7 +63,7 @@ export const spendRisk = (s: EconomyState, info: StoreInfo, price: number, rata 
  */
 export function SpendNote({ s, info, price, always = false, rata = false }: { s: EconomyState; info: StoreInfo; price: number; always?: boolean; rata?: boolean }) {
   if (!assessable(s, price, always, rata)) return null;
-  const check = spendCheck(forecastMonth(s, info), price);
+  const check = spendCheck(forecastOf(s, info), price);
   const text = spendWarningText(check, rata);
   return text ? <span class={`tt-spend ${check.level}`} role="note">{text}</span> : null;
 }

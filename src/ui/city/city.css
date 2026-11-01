@@ -297,3 +297,252 @@
     height: auto !important;
   }
 }
+
+/* --- Przełącznik sklepów w pasku (`StoreSwitcher.tsx`, spec §9.4) ---------------------------------------- */
+
+/*
+ * Przy dwóch otwartych sklepach pasek ma czwarty wiersz z chipem aktywnego sklepu (na telefonie nie mieści się w żadnym z trzech
+ * dotychczasowych); okna i komunikaty pod paskiem przesuwają się o jego wysokość (`--hud-h`). Od 820 px pasek jest jednym rzędem
+ * bez miejsca na chip, więc ten wisi pod paskiem po lewej, na pełnym tle (nad sceną), i `--hud-h` zostaje bez zmian.
+ */
+.tt-hud-stores {
+  position: relative;
+  z-index: 6;
+}
+
+@media (max-width: 819px) {
+  .tt-ui:has(.tt-hud-stores) { --hud-h: 146px; }
+}
+
+@media (min-width: 820px) {
+  /*
+   * Pasek w jednym rzędzie: przy sieci liczby w kieszeniach są dłuższe, a zegar z prędkością nie może wypaść poza ekran, więc to
+   * prognoza (jej etykiety skracają się wielokropkiem) bierze resztę miejsca, a zegar zostaje przy swojej szerokości.
+   */
+  .tt-hud-due { flex: 1 1 0; min-width: 0; }
+  .tt-hud-row:last-child { flex: 0 0 auto; }
+
+  .tt-hud-stores {
+    position: absolute;
+    top: calc(var(--hud-h) + 6px);
+    left: 14px;
+  }
+
+  .tt-hud-stores .tt-stores-chip,
+  .tt-hud-stores .tt-stores-chip.open {
+    background: var(--tt-green-dark);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+  }
+
+  .tt-hud-stores .tt-stores-chip.open {
+    box-shadow: inset 0 0 0 2px var(--tt-orange), 0 2px 8px rgba(0, 0, 0, 0.25);
+  }
+}
+
+.tt-stores-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 4px 10px;
+  border: 0;
+  border-radius: 10px;
+  background: rgba(255, 243, 223, 0.14);
+  color: inherit;
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.tt-stores-chip.open {
+  background: rgba(255, 243, 223, 0.28);
+}
+
+.tt-stores-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tt-stores-alert {
+  flex: none;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #c2410c;
+  color: #fff;
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.tt-stores-caret {
+  flex: none;
+  opacity: 0.8;
+}
+
+.tt-stores-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  pointer-events: auto;
+}
+
+.tt-stores-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 2;
+  box-sizing: border-box;
+  width: min(380px, calc(100vw - 20px));
+  max-height: min(68vh, calc(100vh - var(--hud-h) - var(--tabs-h) - 16px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 6px 8px 10px;
+  border-radius: 14px;
+  background: var(--tt-cream);
+  color: #22302a;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.35;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+  pointer-events: auto;
+}
+
+.tt-store-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  width: 100%;
+  margin: 0;
+  padding: 8px 8px;
+  border: 0;
+  border-bottom: 1px solid rgba(29, 107, 58, 0.14);
+  border-radius: 8px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tt-store-row.on {
+  background: rgba(240, 138, 36, 0.16);
+  box-shadow: inset 3px 0 var(--tt-orange);
+}
+
+.tt-store-row:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.tt-store-name {
+  display: flex;
+  flex: 1 1 100%;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+  color: var(--tt-green-dark);
+}
+
+.tt-store-stats {
+  flex: 1 1 100%;
+  font-variant-numeric: tabular-nums;
+}
+
+.tt-store-warn {
+  flex: none;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: #c2410c;
+  color: #fff;
+  font-size: 11.5px;
+  font-weight: 700;
+}
+
+.tt-inbox h3 {
+  margin: 10px 0 4px;
+  font-size: 13px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--tt-green-dark);
+}
+
+.tt-inbox-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 8px;
+  padding: 3px 0;
+  font-size: 12.5px;
+}
+
+/* przy sieci etykiety kieszeni są krótkie na każdym ekranie („Saldo”, „Raty”, „Zostanie”): sumy sieci są dłuższe, pełny opis jest w podpowiedzi */
+.tt-due:has(.tt-due-net) .tt-due-pre {
+  display: none;
+}
+
+.tt-due:has(.tt-due-net) .tt-due-word {
+  text-transform: capitalize;
+}
+
+/*
+ * „sieć” przy prognozie w pasku: suma wszystkich sklepów, nie jednego. Etykieta wisi na lewym brzegu paska i nie zajmuje miejsca w rzędzie,
+ * bo trzy kieszenie ledwo mieszczą się na 390 px (po angielsku „Instalments” jest długie), a liczby nie mogą się skurczyć.
+ */
+.tt-due {
+  position: relative;
+}
+
+.tt-due-net {
+  position: absolute;
+  top: -7px;
+  left: 10px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--tt-orange);
+  color: #1a1a1a;
+  font-size: 9.5px;
+  font-weight: 800;
+  line-height: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  pointer-events: none;
+}
+
+/* --- Okno kilku sklepów: zakładki, podsumowanie sieci i wyciągi (`NetworkReport.tsx`) ------------------ */
+
+.tt-storetabs {
+  gap: 4px;
+  margin: 6px 0 8px;
+}
+
+.tt-storetabs .tt-btn {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 6px 6px;
+  font-size: 12.5px;
+}
+
+.tt-storetitle {
+  margin: 4px 0 6px;
+  font-size: 14px;
+  font-weight: 800;
+  color: var(--tt-green-dark);
+}
+
+.tt-netsum h3 {
+  margin: 10px 0 4px;
+  font-size: 13px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--tt-green-dark);
+}
+
+.tt-remanent-store {
+  margin: 2px 0 6px;
+  font-weight: 800;
+}

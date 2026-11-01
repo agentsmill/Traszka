@@ -8,7 +8,7 @@ import { visibleCards } from '@/sim/economy/tycoon/cards';
 import { MemoryStorage } from '@/game/memoryStorage';
 import {
   closeFinish, closeHowTo, closeNetworkReport, closePanel, closeRemanent, dismissStory, econ, finish, firm, howTo, isWindowOpen, networkReport,
-  offerTutorial, openHowTo, openPanel, openRanking, panel, pushStory, pushToast, ranked, remanent, report, showPrestige, start, story, toasts,
+  offerTutorial, openHowTo, openPanel, openRanking, panel, pushStory, pushToast, ranked, remanent, report, start, story, toasts,
   tutorialOffer, welcome, type FirmView, type GameActions, type NetworkReportView, type RemanentView,
 } from './state';
 import { setTour } from './tutorial/memory';
@@ -18,7 +18,6 @@ const clearWindows = (): void => {
   howTo.value = false;
   report.value = null;
   welcome.value = null;
-  showPrestige.value = false;
   start.value = null;
   econ.value = null;
   story.value = [];
@@ -164,7 +163,6 @@ describe('isWindowOpen: każde okno z sygnałem zatrzymuje grę, karta decyzji i
     ['raport miesiąca', () => { report.value = rep; }],
     ['ważne zdarzenie czekające na „OK”', () => pushStory('Remont zakończony', 'Sklep otwarty.')],
     ['okno powitalne', () => { welcome.value = { hours: 2, offline: 0, streak: 1, daily: { cash: 0, ogonki: 2 } }; }],
-    ['prestiż', () => { showPrestige.value = true; }],
     ['okno końca sezonu', () => { finish.value = { open: true }; }],
     ['podsumowanie sieci i wyciągi sklepów (okno miesiąca przy kilku sklepach)', () => { networkReport.value = {} as NetworkReportView; }],
     ['protokół remanentu', () => { remanent.value = {} as RemanentView; }],

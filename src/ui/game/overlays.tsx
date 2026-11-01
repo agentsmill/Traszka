@@ -12,18 +12,19 @@ import { TRUST_REASON_LABEL, trustTerminates } from '@/sim/economy/tycoon/trust'
 import { WUT, WUT_LABEL, WUT_REASONS } from '@/sim/economy/tycoon/wut';
 import { EQUIPMENT, EQUIPMENT_BY_ID, equipmentCost } from '@/sim/economy/upgrades';
 import type { QualityPresetId } from '@/render/quality';
-import { networkIncomeOf, prestigePoints } from '@/game/meta';
 import { seasonBankrupt } from '@/sim/ranked';
+import type { FirmState } from '@/sim/firm/types';
 import { RANKED_BANKRUPT_TEXT, RANKED_DAYS, loadRanked, rankedDayOf, storedRankedBlock } from '@/game/rankedRun';
 import {
-  celebration, dismissStory, ephemeral, econ, howTo, metaView, openHowTo, openPanel, openRanking, preset, ranked, report, selection,
-  seed, showPerf, showPrestige, showSettings, story, tab, toasts, unsent, welcome, closeRemanent, remanent, type Controls, type GameActions, type RankedView, type RemanentView,
+  celebration, closeNetworkReport, dismissStory, ephemeral, econ, firm, howTo, metaView, networkReport, openHowTo, openPanel, openRanking, preset, ranked, report, selection,
+  seed, showPerf, showSettings, story, tab, toasts, unsent, welcome, closeRemanent, remanent, type Controls, type GameActions, type RankedView, type RemanentView,
 } from '../state';
 import { int, people, percentOf, signedPts, signedZl, zl } from './format';
 import { Bar, PalletItem } from './panels';
 import { LanguageSwitch, setLangAndReload } from '../LanguageSwitch';
 import { buyButtons, buyNotes } from './spend';
 import { statementView } from './statement';
+import { NetworkReportBody, StoreTabs, nameOf, tabLabel, tabState, type StoreTabDef } from '../city/NetworkReport';
 import { loadTutorial, setTips } from '../tutorial/memory';
 import { requestTour } from '../tutorial/tour';
 import { ENERGY_TITLE, NO_ENERGY_TITLE, tapBlock, tillReason } from './tapBlock';
@@ -256,16 +257,19 @@ const TERMINATION = 'Centrala dziękuje za współpracę. Rozliczenie końcowe: 
 
 /**
  * Dlaczego Centrala wypowiedziała umowę, odczytane ze stanu (okno wraca po przeładowaniu, a toast z powodem nie): za duży debet,
- * czyli gotówka poniżej `DEBT_LIMIT` (gra staje w tej minucie, więc gotówka w stanie to ta z chwili końca), albo zaufanie zero.
- * Gdy zachodzi jedno i drugie, nie zgadujemy, które rozstrzygnęło: tekst mówi o obu. Bez żadnego z nich (stary zapis) null.
+ * czyli gotówka poniżej `DEBT_LIMIT` (gra staje w tej minucie, więc gotówka w stanie to ta z chwili końca; w firmie to wspólna gotówka),
+ * zaufanie zero albo koniec okresu wypowiedzenia ostatniej placówki (`f`: firma; sklep `s` ma wtedy wypowiedzenie, a gra jest skończona).
+ * Gdy zachodzi debet i zaufanie zero, nie zgadujemy, które rozstrzygnęło: tekst mówi o obu; wypowiedzenie ustępuje obu, bo to
+ * one kończą grę wcześniej. Bez żadnego z nich (stary zapis) null.
  */
-export function terminationReason(s: EconomyState): string | null {
+export function terminationReason(s: EconomyState, f?: FirmState | null): string | null {
   const debt = s.cash < DEBT_LIMIT;
   const distrust = trustTerminates(s.tycoon.trust.value);
   const floor = signedZl(DEBT_LIMIT);
   if (debt && distrust) return t`Powód: zaufanie Centrali spadło do zera, a gotówka spadła poniżej granicy debetu ${floor}.`;
   if (debt) return t`Powód: za duży debet. Gotówka spadła do ${signedZl(s.cash)}, poniżej granicy ${floor}, a wtedy Centrala od razu kończy współpracę.`;
   if (distrust) return t`Powód: zaufanie Centrali spadło do zera.`;
+  if (s.gameOver && f?.stores.some((st) => st.econ === s && st.notice !== null)) return t`Powód: umowa ostatniej placówki wygasła po wypowiedzeniu.`;
   return null;
 }
 
@@ -275,37 +279,41 @@ export function terminationReason(s: EconomyState): string | null {
  * nie trafia do rankingu ani do szuflady niewysłanych, o czym mówi akapit pod powodem). Wyjątek: wypowiedzenie przy ostatnim zamknięciu
  * (trzy raporty, `seasonBankrupt` fałsz) kończy sezon doigrany, więc bieg ma wynik i „Dalej: wynik sezonu” otwiera okno z nim. Okno końca gry wynika ze stanu
  * (`gameOver` i ostatni raport w zapisie), więc wraca po przeładowaniu strony; zapis sprzed tej poprawki nie ma raportu
- * i pokazuje samo wypowiedzenie.
+ * i pokazuje samo wypowiedzenie. Koniec miesiąca w kilku sklepach (`networkReport`) to jedno okno z zakładkami: podsumowanie sieci
+ * i wyciąg każdego sklepu (`NetworkReportBody`); to samo okno niesie koniec gry, gdy zamknięcie miesiąca ją kończy (debet sieci).
  */
 export function ReportModal({ game }: { game: GameActions }) {
   const view = econ.value;
   const over = !!view?.s.gameOver;
-  const r = report.value ?? (over ? view?.s.lastReport ?? null : null);
-  if (!r && !over) return null;
-  const title = over ? t`Koniec współpracy` : r!.statement ? t`Wyciąg od Centrali: ${tr(r!.label)}` : t`Raport: ${tr(r!.label)}`;
-  const reason = over && view ? terminationReason(view.s) : null;
+  const net = networkReport.value;   // koniec miesiąca w kilku sklepach: jedno okno z podsumowaniem sieci i wyciągiem każdego sklepu
+  const r = net ? null : report.value ?? (over ? view?.s.lastReport ?? null : null);
+  if (!r && !net && !over) return null;
+  const title = over ? t`Koniec współpracy` : net ? t`Wyciągi od Centrali: ${tr(net.summary.label)}` : r!.statement ? t`Wyciąg od Centrali: ${tr(r!.label)}` : t`Raport: ${tr(r!.label)}`;
+  const reason = over && view ? terminationReason(view.s, firm.value?.f) : null;
   const bankrupt = over && !!view && seasonBankrupt(view.s);   // koniec gry przed ostatnim raportem: poza rankingiem
   const seasonEnd = ranked.value?.phase === 'over' && !bankrupt;   // sezon doigrany (też z debetem z ostatniego zamknięcia): za raportem czeka okno z wynikiem
+  const dismiss = (): void => { report.value = null; closeNetworkReport(); };
   return (
     <div class="tt-modal-wrap">
       <div class="tt-modal" role="dialog" aria-modal="true" aria-label={title}>
         <h2 data-tut="report">{title}</h2>
         {reason && <p class="tt-end-reason" role="note"><b>{reason}</b></p>}
         {bankrupt && ranked.value && <p class="tt-end-reason" role="note">{tr(RANKED_BANKRUPT_TEXT)}</p>}
-        {r ? <ReportBody r={r} closing={over ? TERMINATION : undefined} /> : centralaQuote(TERMINATION)}
+        {net ? <NetworkReportBody view={net} /> : r ? <ReportBody r={r} closing={over ? TERMINATION : undefined} /> : centralaQuote(TERMINATION)}
+        {net && over && centralaQuote(TERMINATION)}
         <div class="tt-modal-foot">
           {over
             ? ranked.value
               // bieg rankingowy nie zaczyna się od nowa (`restart` odmawia): wyjście do zwykłej gry. Bankrut nie ma czego wysyłać; sezon doigrany
               // z debetem z ostatniego zamknięcia ma wynik w szufladzie, więc najpierw okno z wynikiem
               ? seasonEnd && unsent.value
-                ? <button type="button" class="tt-btn tt-primary big" onClick={() => { report.value = null; game.openFinish(); }}>{t`Dalej: wynik sezonu`}</button>
+                ? <button type="button" class="tt-btn tt-primary big" onClick={() => { dismiss(); game.openFinish(); }}>{t`Dalej: wynik sezonu`}</button>
                 : <button type="button" class="tt-btn tt-primary big" onClick={() => game.leaveRanked()}>{t`Wróć do zwykłej gry`}</button>
               : <button type="button" class="tt-btn tt-primary big" onClick={() => game.restart()}>{t`Zacznij od nowa`}</button>
             : seasonEnd
               // raport za listopad zamyka sezon: „Dalej” zdejmuje raport i otwiera okno z wynikiem (`concludeSeason` nie otwiera go nad raportem)
-              ? <button type="button" class="tt-btn tt-primary big" onClick={() => { report.value = null; game.openFinish(); }}>{unsent.value ? t`Dalej: wynik sezonu` : t`Dalej`}</button>
-              : <button type="button" class="tt-btn tt-primary big" onClick={() => { report.value = null; }}>{t`Dalej`}</button>}
+              ? <button type="button" class="tt-btn tt-primary big" onClick={() => { dismiss(); game.openFinish(); }}>{unsent.value ? t`Dalej: wynik sezonu` : t`Dalej`}</button>
+              : <button type="button" class="tt-btn tt-primary big" onClick={dismiss}>{t`Dalej`}</button>}
         </div>
       </div>
     </div>
@@ -319,14 +327,14 @@ let storyShown = { id: 0, at: 0 };
 
 /**
  * Ważne zdarzenie, które czeka na „OK” (nowy próg zaufania, koniec remontu, poziom z odblokowaniami): pokazuje pierwszy wpis
- * kolejki `story`, a dopóki kolejka nie jest pusta, gra stoi (`isModalOpen`). Raport miesiąca, protokół remanentu i koniec gry mają
+ * kolejki `story`, a dopóki kolejka nie jest pusta, gra stoi (`isModalOpen`). Raport miesiąca (też sieci), protokół remanentu i koniec gry mają
  * pierwszeństwo (własne okna), wpis czeka za nimi. Tekst może mieć kilka wierszy (lista odblokowań). Każdy wpis to osobne okno (`key`), a „OK”
  * w pierwszych `STORY_GRACE_MS` po jego pojawieniu się (także po zamknięciu raportu, który go zasłaniał) nic nie robi: drugie
  * stuknięcie w „Dalej” albo „OK” nie może od razu odrzucić wpisu, którego nikt nie zdążył zobaczyć.
  */
 export function StoryModal() {
   const entry = story.value[0];
-  if (!entry || report.value || remanent.value || econ.value?.s.gameOver) {
+  if (!entry || report.value || networkReport.value || remanent.value || econ.value?.s.gameOver) {
     storyShown = { id: 0, at: 0 };   // ukryte okno pokaże się potem od nowa, z własnym czasem karencji
     return null;
   }
@@ -350,12 +358,16 @@ export function StoryModal() {
 /** Który protokół remanentu jest na ekranie i od kiedy (czas rzeczywisty, jak `storyShown`): „OK” w karencji nic nie robi. `null` to „żaden”. */
 let remanentShown: { view: RemanentView | null; at: number } = { view: null, at: 0 };
 
+const pickedRemanent = tabState<RemanentView>();
+
 /**
  * Protokół remanentu (spec SIM 6, §7): okno wstaje o 5:00 ostatniego dnia co trzeciego miesiąca i trzyma grę, aż gracz kliknie „OK”.
  * Okres, obrót, ubytki według przyczyn i razem, limit Centrali (przy pierwszym remanencie gracz poznaje go dopiero tu), nadwyżka
  * do potrącenia z dzisiejszego przelewu i komentarz Centrali z zdarzenia (`text`). Ma pierwszeństwo przed wpisami „OK” (`StoryModal`)
  * i kartą decyzji; po końcu gry nie rysuje się. „OK” w pierwszych `STORY_GRACE_MS` po pojawieniu się okna nic nie robi: stuknięcie
- * w kliker w chwili remanentu nie może zamknąć protokołu, zanim ktokolwiek go zobaczył.
+ * w kliker w chwili remanentu nie może zamknąć protokołu, zanim ktokolwiek go zobaczył. Remanent wypada w całej sieci tego samego dnia
+ * (spec §11.5): przy kilku protokołach (`RemanentView.stores`) to jedno okno z zakładkami sklepów, otwarte na protokole aktywnego sklepu,
+ * a jedno „OK” zamyka je dla wszystkich. Jeden protokół ze sklepu w tle niesie nazwę tego sklepu.
  */
 export function RemanentModal() {
   const view = remanent.value;
@@ -363,7 +375,12 @@ export function RemanentModal() {
     remanentShown = { view: null, at: 0 };   // ukryte okno pokaże się potem od nowa, z własnym czasem karencji
     return null;
   }
-  const p = view.protocol;
+  const f = firm.value?.f ?? null;
+  const rows = view.stores ?? [];
+  const mine = rows.find((r) => r.protocol === view.protocol)?.storeId ?? rows[0]?.storeId;
+  const row = rows.find((r) => r.storeId === pickedRemanent.get(view, mine ?? 'siec')) ?? rows.find((r) => r.storeId === mine);
+  const p = row ? row.protocol : view.protocol;
+  const tabs: StoreTabDef[] = rows.map((r) => ({ id: r.storeId, label: tabLabel(f, r.storeId) }));
   if (remanentShown.view !== view) remanentShown = { view, at: Date.now() };
   const ok = (): void => {
     if (remanent.value !== view) return;   // spóźnione stuknięcie w okno poprzedniego protokołu
@@ -374,6 +391,9 @@ export function RemanentModal() {
     <div class="tt-modal-wrap">
       <div class="tt-modal tt-remanent" role="dialog" aria-modal="true" aria-label={t`Protokół remanentu`}>
         <h2>{t`Protokół remanentu`}</h2>
+        {tabs.length >= 2
+          ? StoreTabs({ tabs, active: row!.storeId, onPick: (id) => pickedRemanent.set(view, id) })
+          : row && <p class="tt-muted tt-remanent-store">{nameOf(f, row.storeId)}</p>}
         <p class="tt-muted">{t`Okres: ${dateText(p.fromDay)} – ${dateText(p.day)}`}</p>
         <div class="tt-row"><span>{t`Obrót w okresie`}</span><span>{zl(p.revenue)}</span></div>
         <h3>{t`Ubytki`}</h3>
@@ -386,7 +406,7 @@ export function RemanentModal() {
         <p class={`tt-remanent-verdict${p.charge > 0 ? ' over' : ''}`} data-tut="remanent-verdict">
           {p.charge > 0 ? t`Nadwyżka ${zl(p.charge)} zejdzie z dzisiejszego przelewu.` : t`Ubytki mieszczą się w limicie.`}
         </p>
-        {centralaQuote(view.text)}
+        {centralaQuote(row ? row.text : view.text)}
         <button type="button" class="tt-btn tt-primary big" onClick={ok}>OK</button>
       </div>
     </div>
@@ -619,7 +639,7 @@ export function Settings({ controls, game, panels = true }: { controls: Controls
  */
 export function windowBlocksBanner(): boolean {
   const view = econ.value;
-  return !!report.value || story.value.length > 0 || !!remanent.value || !!welcome.value || howTo.value || !!view?.s.gameOver
+  return !!report.value || !!networkReport.value || story.value.length > 0 || !!remanent.value || !!welcome.value || howTo.value || !!view?.s.gameOver
     || (!!view && visibleCards(view.s.tycoon.cards, view.s.minute).length > 0);
 }
 
@@ -667,28 +687,6 @@ export function WelcomeModal({ game }: { game: GameActions }) {
           </>
         )}
         <button type="button" class="tt-btn tt-primary big" onClick={() => game.claimWelcome()}>{t`Odbierz!`}</button>
-      </div>
-    </div>
-  );
-}
-
-/** Potwierdzenie: obecny sklep dołącza do sieci, zaczynasz nowy z premią. */
-export function PrestigeModal({ game }: { game: GameActions }) {
-  const view = econ.value;
-  if (!showPrestige.value || !view) return null;
-  const { s } = view;
-  const meta = metaView.value;
-  const points = meta.points + prestigePoints(s);
-  return (
-    <div class="tt-modal-wrap">
-      <div class="tt-modal" role="dialog" aria-label={t`Otwórz kolejną Traszkę`}>
-        <h2>{t`Otwórz kolejną Traszkę 🏪`}</h2>
-        <p>{t`Ten sklep zostaje w Twojej sieci i od jutra zarabia na Ciebie `}<b>{t`${zl(networkIncomeOf(s))} dziennie`}</b>{t` w każdej kolejnej grze.`}</p>
-        <p>{t`Dostajesz `}<b>{t`+${prestigePoints(s)} Punktów Partnera`}</b>{t` (razem ${points}): każdy to trwale +4% marży i +3% klientów.`}</p>
-        <p>{t`Nowy lokal startuje od zera: poziom 1, 2000 zł, nowe miasto z seeda. Tym razem pójdzie szybciej.`}</p>
-        <p class="tt-hint">{t`Centrala z wyraźną niechęcią nadaje Ci status Partnera Strategicznego.`}</p>
-        <button type="button" class="tt-btn tt-primary big" onClick={() => { showPrestige.value = false; game.openNextStore(); }}>{t`Otwieramy!`}</button>
-        <button type="button" class="tt-btn big" onClick={() => { showPrestige.value = false; }}>{t`Jeszcze nie`}</button>
       </div>
     </div>
   );

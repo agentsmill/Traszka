@@ -961,95 +961,24 @@ describe('powłoka gry (createShell)', () => {
     });
   });
 
-  describe('openNextStore (kolejna Traszka)', () => {
-    /** Sklep z zarobkiem, który po zamknięciu da 2 Punkty Partnera i 500 zł dochodu z sieci. */
-    function profitable(h: Harness): GameSession {
+  describe('prestiż zniknął (spec §15): ekspansja jest w mieście, nie w "Otwórz kolejną Traszkę"', () => {
+    it('GameActions nie ma openNextStore, a sklep z zarobkiem, który dawniej był gotowy do prestiżu, nie zamyka się w sieci', () => {
+      const h = harness({ seeds: ['nowy-1'] });
       const s = open(h, 'traszka-1');
       s.econ.total.margin = 80_000;
       s.econ.bestDayProfit = 5000;
-      saveSession(s);
-      return s;
-    }
-
-    it('zamyka sklep w sieci i otwiera nowy z premią, z zapisem sieci i nowego sklepu', () => {
-      const h = harness({ seeds: ['nowy-1'] });
-      const closed = profitable(h);
-      h.shell.game.openNextStore();
-
-      expect(h.shell.meta.network).toEqual([{ seed: 'traszka-1', income: 500, level: closed.econ.level, margin: 80_000 }]);
-      expect(h.shell.meta.partnerPoints).toBe(2);
-      expect(closed.retired).toBe(true);
-      expect(hasStoredSave('traszka-1')).toBe(false);   // zamknięty sklep nie wróci z zapisu
-      expect(h.shell.session!.seed).toBe('nowy-1');
-      expect(h.shell.session).not.toBe(closed);
-      expect(h.shell.session!.econ.partner).toEqual({ points: 2, networkIncome: 500, stores: 1 });
-      expect(h.scene.loads).toEqual([{ seed: 'nowy-1', session: h.shell.session }]);
-      expect(h.urls).toEqual(['nowy-1']);
-      expect(hasStoredSave('nowy-1')).toBe(true);
-      expect(savedMeta().network.map((n) => n.seed)).toEqual(['traszka-1']);   // sieć zapisana w pamięci przeglądarki
-      expect(savedMeta().partnerPoints).toBe(2);
-      expect(ui.metaView.value).toMatchObject({ points: 2, stores: 1, networkIncome: 500, network: ['traszka-1'] });
-      expect(ui.celebration.value).toEqual({
-        title: 'NOWA TRASZKA!',
-        subtitle: 'Sieć: 1 sklep · 2 Punktów Partnera',
-        lines: [`Dochód z sieci: ${(500).toLocaleString('pl-PL')} zł dziennie`],
-      });
-      expect(h.calls).toEqual([['play', 'levelup'], ['confetti', undefined, undefined, undefined]]);
-      expect(ui.tab.value).toBeNull();
-    });
-
-    it('seed nowego sklepu jest wolny: pomija zapisy i sklepy z sieci', () => {
-      const h = harness({ seeds: ['traszka-2', 'traszka-1', 'wolny'] });
-      h.shell.meta.network.push({ seed: 'traszka-2', income: 200, level: 3, margin: 1 });
-      saveSession(createSession('traszka-3', true));
-      profitable(h);
-      h.shell.game.openNextStore();
-      expect(h.shell.session!.seed).toBe('wolny');   // 'traszka-2' jest w sieci, 'traszka-1' ma zapis (zamykanego sklepu)
-    });
-
-    it('nowy sklep się nie otwiera: sieć, zapis i sesja wracają na miejsce, bez fety', () => {
-      const h = harness({ seeds: ['nowy-1'] });
-      const closed = profitable(h);
-      const before = h.shell.meta;
-      vi.spyOn(console, 'error').mockImplementation(() => {});
-      h.scene.failing.add('nowy-1');
-
-      h.shell.game.openNextStore();
-
-      expect(h.shell.meta).toBe(before);
+      expect('openNextStore' in h.shell.game).toBe(false);
       expect(h.shell.meta.network).toEqual([]);
-      expect(h.shell.meta.partnerPoints).toBe(0);
-      expect(closed.retired).toBe(false);
-      expect(h.shell.session).toBe(closed);
-      expect(hasStoredSave('traszka-1')).toBe(true);   // zapis przywrócony (`reviveSession`)
-      expect(ui.celebration.value).toBeNull();
-      expect(h.urls).toEqual([]);
-      expect(h.notices).toEqual(['Nie udało się otworzyć sklepu „nowy-1”. Zostajesz w poprzednim.']);
-      expect(h.scene.seed).toBe('traszka-1');
-    });
-
-    it('sklep tymczasowy albo meta tylko do odczytu: komunikat zamiast zamykania sklepu', () => {
-      const h = harness();
-      const s = profitable(h);
-      s.ephemeral = true;
-      h.shell.game.openNextStore();
       expect(h.shell.session).toBe(s);
-      expect(h.shell.meta.network).toEqual([]);
-      expect(s.retired).toBe(false);
-      expect(h.notices).toEqual(['Kolejną Traszkę otworzysz po odświeżeniu strony: ta karta nie może teraz zapisać sieci sklepów.']);
-
-      const readOnly = harness({ meta: { ...loadMeta(), readOnly: true } });
-      const t = open(readOnly, 'traszka-4');
-      readOnly.shell.game.openNextStore();
-      expect(readOnly.shell.session).toBe(t);
-      expect(readOnly.notices).toHaveLength(2);   // komunikat o nowszej mecie z rozruchu i ten o sieci
+      expect('showPrestige' in ui).toBe(false);
     });
 
-    it('bez sesji nic się nie dzieje', () => {
-      const h = harness();
-      h.shell.game.openNextStore();
-      expect(h.shell.session).toBeNull();
-      expect(h.calls).toEqual([]);
+    it('sieć z poprzednich gier (meta) zostaje: punkty i dochód są w widoku, a meta nie jest ruszana', () => {
+      const meta: Meta = { ...loadMeta(), partnerPoints: 2, network: [{ seed: 'dawny-1', income: 500, level: 4, margin: 80_000 }] };
+      const h = harness({ meta });
+      open(h, 'traszka-1');
+      expect(ui.metaView.value).toMatchObject({ points: 2, stores: 1, networkIncome: 500, network: ['dawny-1'] });
+      expect(h.shell.meta).toBe(meta);
     });
   });
 
@@ -2589,17 +2518,6 @@ describe('powłoka gry (createShell)', () => {
         expect(getPlayMode()).toBe('casual');
       });
 
-      it('openNextStore ze zwykłego sklepu przy trybie ranked też ustawia tryb casual', () => {
-        setPlayMode('ranked');
-        const h = harness({ seeds: ['nowy-1'] });
-        const s = open(h, 'traszka-1');
-        s.econ.total.margin = 80_000;
-        s.econ.bestDayProfit = 5000;
-        saveSession(s);
-        h.shell.game.openNextStore();
-        expect(h.shell.session!.seed).toBe('nowy-1');
-        expect(getPlayMode()).toBe('casual');
-      });
     });
 
     describe('widok dla interfejsu: ranked i unsent', () => {
@@ -2649,7 +2567,6 @@ describe('powłoka gry (createShell)', () => {
       const NOT_COUNTED_NOTICE = 'Ten bieg nie liczy się do rankingu.';
       const BANKRUPT_NOTICE = 'Ten bieg nie trafi do rankingu: Centrala wypowiedziała umowę przed ostatnim raportem sezonu.';
       const RESULT_NOT_SAVED_NOTICE = 'Przeglądarka nie ma miejsca na zapis wyniku. Wyślij go teraz, zanim zamkniesz kartę.';
-      const NO_NETWORK_NOTICE = 'W biegu rankingowym nie ma sieci sklepów.';
       const NO_RESTART_NOTICE = 'W biegu rankingowym nie zaczyna się od nowa. Porzuć bieg w ustawieniach.';
       const FULL_SEASON_MS = 60_000;   // pełne odtworzenie sezonu w `finishRun` trwa około sekundy, a pod obciążeniem dłużej
 
@@ -3493,30 +3410,6 @@ describe('powłoka gry (createShell)', () => {
           expect(h.scene.syncs).toEqual([]);
         });
 
-        it('openNextStore odmawia z komunikatem i niczego nie zmienia: sesja, sieć w mecie, zapisy', () => {
-          const h = harness({ seeds: ['nowy-1'] });
-          casualOpen(h, 'traszka-1');
-          h.shell.startRanked(RANKED_SEED);
-          const s = h.shell.session!;
-          s.econ.total.margin = 80_000;   // prestiż byłby gotowy
-          s.econ.bestDayProfit = 5000;
-          const keys = snapshot();
-          const meta = h.shell.meta;
-          const network = [...meta.network];
-          h.scene.loads.length = 0;
-
-          h.shell.game.openNextStore();
-
-          expect(h.notices).toEqual([NO_NETWORK_NOTICE]);
-          expect(h.shell.session).toBe(s);
-          expect(h.shell.meta).toBe(meta);
-          expect(meta.network).toEqual(network);
-          expect(snapshot()).toEqual(keys);
-          expect(h.scene.loads).toEqual([]);
-          expect(ui.celebration.value).toBeNull();
-          expect(hasStoredSave('traszka-1')).toBe(true);
-        });
-
         it('restart odmawia z komunikatem: nie kasuje zwykłego zapisu ani biegu, nie otwiera nowego świata, nie zamyka raportu', () => {
           const h = harness();
           casualOpen(h, 'traszka-1');
@@ -3545,7 +3438,7 @@ describe('powłoka gry (createShell)', () => {
           expect(h.shell.session!.run).not.toBeNull();
         });
 
-        it('zwykłe skip, restart i openNextStore działają jak dotąd', () => {
+        it('zwykłe skip i restart działają jak dotąd', () => {
           const h = harness({ seeds: ['nowy-1'] });
           const s = open(h, 'traszka-1');
           h.shell.skip(10);

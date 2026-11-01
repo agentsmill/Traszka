@@ -11,7 +11,7 @@ import { CardDesk, picked, selectedAnswer } from './cards';
 import { deltaLines } from './cardText';
 import { SpendNote } from './spend';
 import { int, people } from './format';
-import { PrestigeModal, ReportModal, Settings, StoryModal, WelcomeModal } from './overlays';
+import { ReportModal, Settings, StoryModal, WelcomeModal } from './overlays';
 import { Sheet, TabBar } from './panels';
 import { buttonLabelled, buttonsOf, click, labels, textOf, walk, type Vnode } from './vnodeTree';
 
@@ -21,7 +21,7 @@ const nbsp = (n: number): string => n.toLocaleString('pl-PL');
 function fakeGame(result: CommandResult = { ok: true }): GameActions & { dispatch: ReturnType<typeof vi.fn<(cmd: Command) => CommandResult>> } {
   return {
     dispatch: vi.fn<(cmd: Command) => CommandResult>(() => result),
-    claimWelcome: vi.fn(), openNextStore: vi.fn(), setSound: vi.fn(), setVibration: vi.fn(), restart: vi.fn(), newStore: vi.fn(),
+    claimWelcome: vi.fn(), setSound: vi.fn(), setVibration: vi.fn(), restart: vi.fn(), newStore: vi.fn(),
     startRanked: vi.fn(() => false), resumeRanked: vi.fn(() => false), leaveRanked: vi.fn(), abandonRanked: vi.fn(),
     openFinish: vi.fn(), rememberNick: vi.fn(),
     firm: vi.fn(() => ({ ok: false as const, reason: 'store' as const })),
@@ -446,17 +446,16 @@ describe('okno karty dnia: prawdziwe karty z talii', () => {
 });
 
 describe('okno karty dnia w układzie nakładek', () => {
-  it('leży nad panelami i zakładkami, a pod raportem miesiąca, powitaniem, prestiżem i ustawieniami (kolejność w DOM to warstwy)', () => {
+  it('leży nad panelami i zakładkami, a pod raportem miesiąca, powitaniem i ustawieniami (kolejność w DOM to warstwy)', () => {
     const order = walk(App({ controls: {} as Controls, game: fakeGame() })).map((v) => v.type);
     const at = (c: unknown): number => order.indexOf(c as never);
-    for (const c of [CardDesk, StoryModal, Sheet, TabBar, ReportModal, WelcomeModal, PrestigeModal, Settings]) expect(at(c), String(c)).toBeGreaterThanOrEqual(0);
+    for (const c of [CardDesk, StoryModal, Sheet, TabBar, ReportModal, WelcomeModal, Settings]) expect(at(c), String(c)).toBeGreaterThanOrEqual(0);
     expect(at(CardDesk)).toBeGreaterThan(at(Sheet));
     expect(at(CardDesk)).toBeGreaterThan(at(TabBar));
     expect(at(StoryModal)).toBeGreaterThan(at(CardDesk));   // raport > ważne zdarzenie > karta decyzji > reszta
     expect(at(StoryModal)).toBeLessThan(at(ReportModal));
     expect(at(CardDesk)).toBeLessThan(at(ReportModal));
     expect(at(CardDesk)).toBeLessThan(at(WelcomeModal));
-    expect(at(CardDesk)).toBeLessThan(at(PrestigeModal));
     expect(at(CardDesk)).toBeLessThan(at(Settings));
   });
 });
