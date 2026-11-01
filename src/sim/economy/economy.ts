@@ -452,7 +452,7 @@ export function stepMinute(s: EconomyState, info: StoreInfo, out: EconEvent[]): 
 /**
  * Oczekiwani klienci w tej minucie (lambda przed losowaniem): krzywa godzin, reputacja, marketing i remont, paczka „szał
  * zakupów”, przeszkody w sali (palety w sali i w przejściach oraz worki śmieci, `CLUTTER`), niedziela, kiedy duże sklepy stoją zamknięte (tycoon/sunday.ts), oraz
- * ruch z efektów kart (np. +30% przez dwie godziny).
+ * ruch z efektów kart (np. +30% przez dwie godziny). Dzielnica z profilem dnia (`SiteMods.hours`) podmienia tylko krzywą godzin.
  * Jedyne miejsce, gdzie liczy się ten wzór: korzysta z niego `stepMinute`, a testy i karty pytają o to samo.
  */
 export function arrivalRate(s: EconomyState, info: StoreInfo, fx: Effects = effects(s, info)): number {
@@ -460,7 +460,9 @@ export function arrivalRate(s: EconomyState, info: StoreInfo, fx: Effects = effe
   const boost = s.minute < s.boostUntil ? 1.3 : 1;
   const clutter = Math.max(CLUTTER.trafficFloor, 1 - CLUTTER.trafficPerPallet * (hallPallets(s) + hallObstacle(s.tycoon.waste)));
   const day = dayOf(s.minute);
-  return (baseTraffic(info) * (HOUR_CURVE[hour] ?? 0) / 60) * reputationFactor(s.reputation)
+  const hours = fx.site?.hours;   // profil dnia dzielnicy (site.ts); bez niego krzywa to dzisiejsze `HOUR_CURVE[hour] ?? 0`
+  const curve = hours ? (hours[hour] ?? 0) : (HOUR_CURVE[hour] ?? 0);
+  return (baseTraffic(info) * curve / 60) * reputationFactor(s.reputation)
     * fx.traffic * boost * clutter * (fx.site ? siteDayTraffic(fx.site, day) : dayTrafficMult(day))
     * cardModifiers(s.tycoon.cards, s.minute).traffic;
 }

@@ -4,7 +4,7 @@ import { NEUTRAL_SITE } from '@/sim/economy/site';
 import { computeStoreInfo } from '@/sim/economy/storeInfo';
 import { subSeed } from '@/sim/rng';
 import { layoutFor } from '@/sim/store/layoutFor';
-import { DISTRICTS } from './districts';
+import { DISTRICTS, siteHours } from './districts';
 import { generateCity, lotById } from './generateCity';
 import {
   ESTIMATE_SHIFT, ESTIMATE_SPREAD, LOCAL_RANGE, RIVAL_FACTOR, RIVAL_RADIUS_M, lotEstimate, lotLocalFactor, lotTrafficMult,
@@ -258,6 +258,7 @@ describe('storeSeedFor i siteFor', () => {
       expect(site.patience).toBe(d.patience);
       expect(site.repPenalty).toBe(d.repPenalty);
       expect(site.weekendTraffic).toBeNull();
+      expect(site.hours).toBe(siteHours('dworzec'));
       expect(site.lot).toBe(lot.spec);
       expect(site.traffic).toBe(lotTrafficMult(c, lot.id));
       expect([site.extra, site.ownCosts, site.firmDebt, site.weatherHash]).toEqual([true, false, true, 12345]);
@@ -269,6 +270,7 @@ describe('storeSeedFor i siteFor', () => {
     for (const l of nonStart(c).filter((x) => x.district === 'biurowce')) {
       const site = siteFor(c, l.id, FLAGS);
       expect(site.weekendTraffic).toBeCloseTo(site.traffic * (DISTRICTS.biurowce.weekendTraffic! / DISTRICTS.biurowce.traffic), 12);
+      expect(site.hours).toBe(siteHours('biurowce'));
     }
     const mid = siteFor(c, nonStart(c).find((l) => l.district === 'srodmiescie')!.id, FLAGS);
     const d = DISTRICTS.srodmiescie;
@@ -293,6 +295,7 @@ describe('storeSeedFor i siteFor', () => {
     expect(site.lot).toBe(lot.spec);
     expect(site.district).toBe('osiedle');
     expect(site.traffic).toBe(lotTrafficMult(c, lot.id));
+    expect(site.hours, 'Osiedle gra rozkład godzin jak dziś').toBeNull();
   });
 });
 

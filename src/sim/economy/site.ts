@@ -31,6 +31,11 @@ export interface SiteMods {
   lot: LotSpec | null;
   /** Pogoda miasta (`seedHash` sklepu #1); null = własny `seedHash`. */
   weatherHash: number | null;
+  /**
+   * Profil dnia (§8.1): natężenie ruchu w godzinach 0–23 zamiast `HOUR_CURVE`, 24 liczby o tej samej sumie godzin 6–22 co ona, więc zmienia
+   * się rozkład klientów, a nie doba. Liczy go `siteHours` (miasto); null = `HOUR_CURVE`, jak dziś.
+   */
+  hours: readonly number[] | null;
   /** Dodatkowy sklep: bez gwarancji (§11.2). */
   extra: boolean;
   /** Ten sklep płaci ZUS i księgową (§11.2). */
@@ -42,19 +47,23 @@ export interface SiteMods {
 /** Osiedle bez żadnego modyfikatora: gra jak dziś. */
 export const NEUTRAL_SITE: SiteMods = {
   district: 'osiedle', traffic: 1, weekendTraffic: null, basket: 1, patience: 0, repPenalty: 1, theft: 1, lot: null, weatherHash: null,
-  extra: false, ownCosts: true, firmDebt: false,
+  hours: null, extra: false, ownCosts: true, firmDebt: false,
 };
 
+/** Czy pola dzielnicy (bez flag) są wszystkie neutralne. Każdy nowy modyfikator dzielnicy w `SiteMods` dopisuje się tutaj, w jednym miejscu. */
+function districtNeutral(s: SiteMods): boolean {
+  return s.traffic === 1 && s.weekendTraffic === null && s.basket === 1 && s.patience === 0 && s.repPenalty === 1
+    && s.theft === 1 && s.lot === null && s.weatherHash === null && s.hours === null;
+}
+
 /**
- * Dzielnica sklepu, o ile zmienia on ekonomię: null przy braku `site` i przy polach dzielnicy, `lot` i `weatherHash` neutralnych
- * (same flagi nie włączają gałęzi dzielnicy). Wszystkie modyfikatory dzielnicy w `economy.ts` stoją za tym wynikiem.
+ * Dzielnica sklepu, o ile zmienia on ekonomię: null przy braku `site` i przy polach dzielnicy, `lot`, `weatherHash` i `hours`
+ * neutralnych (same flagi nie włączają gałęzi dzielnicy). Wszystkie modyfikatory dzielnicy w `economy.ts` stoją za tym wynikiem.
  */
 export function activeSite(info: StoreInfo): SiteMods | null {
   const s = info.site;
   if (!s) return null;
-  const neutral = s.traffic === 1 && s.weekendTraffic === null && s.basket === 1 && s.patience === 0 && s.repPenalty === 1
-    && s.theft === 1 && s.lot === null && s.weatherHash === null;
-  return neutral ? null : s;
+  return districtNeutral(s) ? null : s;
 }
 
 /**

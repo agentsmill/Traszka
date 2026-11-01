@@ -3,14 +3,15 @@ import { NEUTRAL_SITE, type SiteMods } from '@/sim/economy/site';
 import { computeStoreInfo, type StoreInfo } from '@/sim/economy/storeInfo';
 import { createRng, subSeed } from '@/sim/rng';
 import { layoutFor } from '@/sim/store/layoutFor';
-import { DISTRICTS } from './districts';
+import { DISTRICTS, siteHours } from './districts';
 import type { CityLot, CityState, SourceKind, StoreDistrict, StreetSegment, TrafficSource } from './types';
 
 /*
  * Ruch w mieście (spec §7.3). Punkty ruchu (`CityState.sources`) mają profil godzinowy i tygodniowy; natężenie odcinka ulicy to suma
  * ich wpływów malejących z odległością. Mnożnik ruchu lokalu to iloczyn trzech czynników i mnoży `baseTraffic(info)` (rodzaj i
  * wielkość lokalu już tam siedzą): dzielnica, natężenie przy wejściu względem średniej dzielnicy i konkurencja w promieniu.
- * `siteFor` składa z tego `SiteMods` sklepu w lokalu, a `lotEstimate` widełki klientów na karcie lokalu.
+ * `siteFor` składa z tego `SiteMods` sklepu w lokalu, a `lotEstimate` widełki klientów na karcie lokalu. Profil dnia dzielnicy (`hours`)
+ * nie wchodzi do mnożnika ruchu: zmienia rozkład klientów w dobie, nie ich liczbę, więc widełki i skala sklepu go nie widzą.
  *
  * Moduł nie importuje `generateCity.ts` (generator woła `streetIntensity`), więc lokal po id szuka sam. Arytmetyka tylko z
  * działań IEEE (+, −, ·, /, sqrt), bez `Math.hypot` i `**`: wynik wchodzi do ekonomii, a serwer i przeglądarka muszą liczyć to samo.
@@ -195,8 +196,8 @@ export type SiteDistrictMatchesStoreDistrict = AssertTrue<Equal<SiteMods['distri
 export type SiteFlags = Pick<SiteMods, 'extra' | 'ownCosts' | 'firmDebt' | 'weatherHash'>;
 
 /**
- * `SiteMods` sklepu w lokalu miasta: charakter dzielnicy z `DISTRICTS`, ruch z `lotTrafficMult` (w weekend Biurowców ruch
- * weekendowy dzielnicy z tym samym natężeniem lokalnym i konkurencją), układ z lokalu i flagi od firmy. Lokal startowy to
+ * `SiteMods` sklepu w lokalu miasta: charakter dzielnicy z `DISTRICTS` (z profilem dnia), ruch z `lotTrafficMult` (w weekend Biurowców
+ * ruch weekendowy dzielnicy z tym samym natężeniem lokalnym i konkurencją), układ z lokalu i flagi od firmy. Lokal startowy to
  * `NEUTRAL_SITE` z flagami: sklep startowy gra jak dziś.
  */
 export function siteFor(city: CityState, lotId: number, flags: SiteFlags): SiteMods {
@@ -209,7 +210,7 @@ export function siteFor(city: CityState, lotId: number, flags: SiteFlags): SiteM
     traffic: d.traffic * factor,
     weekendTraffic: d.weekendTraffic === null ? null : d.weekendTraffic * factor,
     basket: d.basket, patience: d.patience, repPenalty: d.repPenalty, theft: d.theft,
-    lot: lot.spec,
+    lot: lot.spec, hours: siteHours(lot.district),
     ...flags,
   };
 }

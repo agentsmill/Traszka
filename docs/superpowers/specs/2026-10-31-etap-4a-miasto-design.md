@@ -254,11 +254,11 @@ Dlaczego taki podział **[C]**:
 | Oczekiwania | 1 | wysokie: cierpliwość −4 osoby, kary reputacji za pustą półkę, brud i kolejkę ×1,5 | niskie: cierpliwość +1 | średnie |
 | Kradzieże | 1 | ok. 0,6 | ok. 2 | ok. 0,8 |
 | Pakiet otwarcia (§10.3) | średni | wysoki | niski | średni |
-| Profil dnia (4a.2) | jak dziś | mocniejszy wieczór | płaski | szczyty 7–9 i 12–14, pusto po 18 |
+| Profil dnia (4a.2) | jak dziś | mocniejszy wieczór: 0,3 0,8 1 0,8 0,7 0,8 1 1 0,8 0,9 1,1 1,4 1,6 1,6 1,4 1,1 0,8 | płaski: 17 × 1 | szczyty 7–9 i 12–14, pusto po 18: 0,45 1,45 1,75 1,45 0,9 0,95 1,55 1,55 1,2 0,9 0,85 0,8 0,4 0,15 0,1 0,1 0,1 |
 | Trudni klienci (4a.2) | 1 | rzadziej | częściej, plus 2–3 karty tylko dla Dworca | rzadziej |
 
 - **Kradzieże** działają przez ukryty licznik ubytków, więc wychodzą przy remanencie. To zamierzone: tania dzielnica kusi ruchem, a rachunek przychodzi po kwartale. Mnożnik Dworca jest niższy niż w starym projekcie (2,5 → ok. 2; przegląd balansu podniósł 1,8 do 2, żeby remanent biernego sklepu bez kas samoobsługowych wychodził na kilka tysięcy złotych). Przy remanencie z SIM 6 kasy bez kamer w takim lokalu kosztowałyby inaczej 50–100 tys. zł na kwartał. Karta lokalu ostrzega: „kradzieże: wysokie, zobaczysz je przy remanencie”.
-- **Godziny otwarcia** wszędzie te same (6:00–23:00). Profil dnia zmienia tylko rozkład klientów.
+- **Godziny otwarcia** wszędzie te same (6:00–23:00). Profil dnia zmienia tylko rozkład klientów: liczby w tabeli to kształt godzin 6, 7, …, 22 (`DistrictDef.hours`, ten sam w każdym dniu), przeskalowany do sumy `HOUR_CURVE` (15,6), więc doba ma tyle samo klientów co bez profilu.
 - **„Kto przychodzi”** na karcie lokalu to opis z punktów ruchu, a nie nowe archetypy w symulacji.
 - **Niedziela** (`tycoon/sunday.ts`, więcej klientów) w Biurowcach ustępuje mnożnikowi weekendu.
 
