@@ -1,20 +1,20 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { lang } from '@/i18n';
-import { partnerSession } from '../../../tests/firmKit';
+import { closeFirstStore, openSecond, partnerSession } from '../../../tests/firmKit';
 import { createSession, firmOf } from '@/game/session';
 import { DISTRICTS } from '@/sim/city/districts';
 import { lotById } from '@/sim/city/generateCity';
 import { lotEstimate, rivalsNear } from '@/sim/city/traffic';
 import type { StoreDistrict } from '@/sim/city/types';
-import { MINUTES_PER_DAY } from '@/sim/economy/catalog';
+import { HOUR_CURVE, MINUTES_PER_DAY } from '@/sim/economy/catalog';
 import { CELL_SIZE_M } from '@/sim/grid';
 import { planFor } from '@/sim/economy/franchisee';
-import { applyFirmCommand, lotState } from '@/sim/firm/commands';
+import { RELET_BUILD_DAYS, RELET_SHARE, applyFirmCommand, lotRentable, lotState, rentBuildDays, rentPrice } from '@/sim/firm/commands';
 import { emptyStepOut, syncWallet } from '@/sim/firm/firm';
 import type { FirmState } from '@/sim/firm/types';
 import {
-  SWIPE_MIN_PX, basketLevel, cityLotStates, cityPinSpecs, expectationsLevel, freeLotRows, lotCardModel, neighbourLot, swipeDirection, theftLevel,
-  validLot, type LotRow,
+  SWIPE_MIN_PX, basketLevel, cityLotStates, cityPinSpecs, expectationsLevel, freeLotRows, lotCardModel, lotHours, neighbourLot, swipeDirection,
+  theftLevel, validLot, type LotRow,
 } from './cityModel';
 
 // licznik wywołań `lotEstimate` (ta sama funkcja co zawsze, tylko policzona): przypina pamięć podręczną widełek
@@ -33,6 +33,12 @@ afterEach(() => { lang.value = 'pl'; });
 const SEED = 'kiełbasa-42';
 const partnerFirm = (seed = SEED, wallet = 200_000): FirmState => firmOf(partnerSession(seed, wallet));
 const rowOf = (rows: LotRow[], district: StoreDistrict): LotRow => rows.find((r) => r.district === district)!;
+/** Firma po zamknięciu sklepu #1 przy działającym #2: lokal startowy jest „po Traszce” (wyposażenie: remont 1, sprzęt 2 szt., ulepszenia 3 + 1). */
+function reletFirm(seed = SEED): FirmState {
+  const s = partnerSession(seed);
+  openSecond(s, 'raty');
+  return closeFirstStore(s);
+}
 
 describe('freeLotRows: lista wolnych lokali', () => {
   it('tylko lokale w stanie „wolny”, rosnąco po numerze, z numerem, adresem, dzielnicą, formatem, metrażem, widełkami i pakietem', () => {
@@ -80,6 +86,93 @@ describe('freeLotRows: lista wolnych lokali', () => {
     expect(lotEstimate).toHaveBeenCalledTimes(2 * free);
     // widełki z modelu to widełki z symulacji (cache nie zmienia liczb)
     expect(b.map((r) => [r.lo, r.hi])).toEqual(b.map((r) => { const e = lotEstimate(SEED, f.city, r.lotId); return [e.lo, e.hi]; }));
+  });
+});
+
+describe('freeLotRows: lokal „po Traszce” (4a.2)', () => {
+  it('lokal po zamkniętym sklepie jest na liście z ceną rentPrice (30% pakietu co 100 zł), a lista to dokładnie lokale, które przyjmują wynajem', () => {
+    const f = reletFirm();
+    const id = f.city.startLotId;
+    expect(lotState(f, id)).toBe('po-traszce');
+    const rows = freeLotRows(SEED, f);
+    const relet = rows.find((r) => r.lotId === id)!;
+    expect(relet).toBeDefined();
+    expect(relet.price).toBe(rentPrice(f, id));
+    expect(relet.price).toBe(Math.round(lotById(f.city, id).package * RELET_SHARE / 100) * 100);
+    expect(relet.price).toBeLessThan(lotById(f.city, id).package);
+    expect(relet.relet).toBe(true);
+    expect(rows.filter((r) => r.lotId !== id).every((r) => r.relet === undefined)).toBe(true);   // zwykły wolny lokal nie ma znacznika
+    expect(rows.map((r) => r.lotId)).toEqual(f.city.lots.filter((l) => lotRentable(f, l.id)).map((l) => l.id));
+    // widełki lokalu „po Traszce” to te same, które liczy symulacja dla lokalu
+    const est = lotEstimate(SEED, f.city, id);
+    expect([relet.lo, relet.hi]).toEqual([est.lo, est.hi]);
+  });
+
+  it('lokal startowy „po Traszce” nie ma numeru kartki (numer miała tylko kartka „DO WYNAJĘCIA” z generatora), a numery pozostałych zostają', () => {
+    const f = reletFirm();
+    const rows = freeLotRows(SEED, f);
+    expect(rows.find((r) => r.lotId === f.city.startLotId)!.no).toBe(0);
+    const numbered = rows.filter((r) => r.lotId !== f.city.startLotId);
+    const generated = f.city.lots.filter((l) => l.state === 'wolny').map((l) => l.id);   // kolejność kartek z generatora
+    expect(numbered.length).toBeGreaterThanOrEqual(3);
+    expect(numbered.map((r) => r.no)).toEqual(numbered.map((r) => generated.indexOf(r.lotId) + 1));
+    expect(numbered.every((r) => r.no > 0)).toBe(true);
+  });
+
+  it('lokal, który wziąłeś znów (budowa), znika z listy', () => {
+    const f = reletFirm();
+    const id = f.city.startLotId;
+    expect(applyFirmCommand(f, { type: 'rentLot', lotId: id, pay: 'gotowka' }, emptyStepOut())).toEqual({ ok: true });
+    expect(lotState(f, id)).toBe('budowa');
+    expect(freeLotRows(SEED, f).some((r) => r.lotId === id)).toBe(false);
+  });
+});
+
+describe('lotHours: profil godzinowy karty lokalu (§8.1, 4a.2)', () => {
+  const f = partnerFirm();
+  const rows = freeLotRows(SEED, f);
+  const total = (a: readonly number[]): number => a.reduce((n, v) => n + v, 0);
+  const hoursOf = (district: StoreDistrict): ReturnType<typeof lotHours> => lotHours(SEED, f, rowOf(rows, district).lotId);
+
+  it('17 godzin (6–22), a suma doby to środek widełek z karty (±1%) w każdym wolnym lokalu', () => {
+    expect(rows.length).toBeGreaterThanOrEqual(5);
+    for (const r of rows) {
+      const { weekday } = lotHours(SEED, f, r.lotId);
+      expect(weekday, `lokal ${r.no}`).toHaveLength(17);
+      expect(weekday.every((v) => v > 0), `lokal ${r.no}`).toBe(true);
+      const mid = (r.lo + r.hi) / 2;
+      expect(Math.abs(total(weekday) - mid) / mid, `lokal ${r.no}`).toBeLessThan(0.01);
+    }
+  });
+
+  it('weekend jest tylko tam, gdzie dzielnica ma ruch weekendowy (Biurowce): ten sam kształt razy weekendTraffic / traffic', () => {
+    const d = DISTRICTS.biurowce;
+    const { weekday, weekend } = hoursOf('biurowce');
+    expect(weekend).not.toBeNull();
+    expect(weekend).toHaveLength(17);
+    weekend!.forEach((v, i) => expect(v).toBeCloseTo(weekday[i]! * d.weekendTraffic! / d.traffic, 9));
+    expect(total(weekend!)).toBeLessThan(total(weekday));
+    for (const district of ['osiedle', 'srodmiescie', 'dworzec'] as const) expect(hoursOf(district).weekend, district).toBeNull();
+  });
+
+  it('Biurowce: wieczór (od 19:00) to mniej niż 5% doby, a rano (godzina 8) tłoczniej niż o 14', () => {
+    const { weekday } = hoursOf('biurowce');
+    expect(total(weekday.slice(19 - 6)) / total(weekday)).toBeLessThan(0.05);
+    expect(weekday[8 - 6]!).toBeGreaterThan(weekday[14 - 6]!);
+  });
+
+  it('Dworzec jest płaski, a Osiedle ma kształt HOUR_CURVE', () => {
+    const flat = hoursOf('dworzec').weekday;
+    for (const v of flat) expect(v).toBeCloseTo(flat[0]!, 9);
+    const { weekday } = hoursOf('osiedle');
+    const curve = Array.from({ length: 17 }, (_, i) => HOUR_CURVE[6 + i]!);
+    weekday.forEach((v, i) => expect(v / total(weekday)).toBeCloseTo(curve[i]! / total(curve), 9));
+  });
+
+  it('godziny liczą się z widełek raz na miasto: żadnego nowego wywołania lotEstimate', () => {
+    vi.mocked(lotEstimate).mockClear();
+    for (const r of rows) lotHours(SEED, f, r.lotId);
+    expect(lotEstimate).not.toHaveBeenCalled();   // widełki tego miasta już policzyła lista (pamięć podręczna)
   });
 });
 
@@ -180,6 +273,43 @@ describe('lotCardModel: karta lokalu', () => {
     const row = freeLotRows(SEED, f)[0]!;
     lotById(f.city, row.lotId).package = 150_000;   // 150 tys. zł w 12 ratach z opłatą 15% to ok. 14,4 tys. zł miesięcznie
     expect(lotCardModel(SEED, f, row.lotId, 'raty').action).toEqual({ enabled: false, reason: 'raty' });
+  });
+});
+
+describe('lotCardModel: profil godzinowy i lokal „po Traszce” (4a.2)', () => {
+  it('karta wolnego lokalu niesie godziny tego lokalu, a bloku wyposażenia nie ma', () => {
+    const f = partnerFirm();
+    for (const row of freeLotRows(SEED, f)) {
+      const card = lotCardModel(SEED, f, row.lotId, 'raty');
+      expect(card.hours).toEqual(lotHours(SEED, f, row.lotId));
+      expect(card.relet).toBeNull();
+    }
+  });
+
+  it('lokal „po Traszce”: cena i dni budowy z reguł wynajmu, raty z planFor ceny (6 rat, nie 12), wyposażenie z zamkniętego sklepu', () => {
+    const f = reletFirm();
+    const id = f.city.startLotId;
+    const lot = lotById(f.city, id);
+    const card = lotCardModel(SEED, f, id, 'raty');
+    expect(card.price).toBe(rentPrice(f, id));
+    expect(card.price).not.toBe(lot.package);
+    expect(card.plan).toEqual(planFor(card.price));
+    expect(card.plan.months).toBe(6);
+    expect(card.buildDays).toBe(rentBuildDays(f, id));
+    expect(card.buildDays).toBe(RELET_BUILD_DAYS);
+    expect(card.relet).toEqual({ remontLevel: 1, equipment: 2, upgrades: 4 });
+    expect(card.row.price).toBe(card.price);
+    expect(card.action).toEqual({ enabled: true });
+  });
+
+  it('lokal „po Traszce” i gotówka: powód odmowy liczy się od ceny po rabacie', () => {
+    const f = reletFirm();
+    const id = f.city.startLotId;
+    const price = rentPrice(f, id);
+    f.person.wallet = price;   // po zapłacie dokładnie zero: wystarcza tylko przy cenie ze zniżką
+    expect(lotCardModel(SEED, f, id, 'gotowka').action).toEqual({ enabled: true });
+    f.person.wallet = price - 100;
+    expect(lotCardModel(SEED, f, id, 'gotowka').action).toEqual({ enabled: false, reason: 'gotowka' });
   });
 });
 

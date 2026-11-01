@@ -7,7 +7,7 @@ import { cityLayer, firm, selectedLot, type GameActions } from '../state';
 import { zl } from '../game/format';
 import { LotCard } from './LotCard';
 import { freeLotRows, validLot } from './cityModel';
-import { districtName, lotKindName, progressText } from './cityText';
+import { districtName, lotKindName, lotStateName, progressText } from './cityText';
 import { addressText } from './firmText';
 
 /*
@@ -63,7 +63,10 @@ export function CityBar({ f }: { f: FirmState; v: number }) {
   );
 }
 
-/** Lista wolnych lokali: numer z kartki, adres, dzielnica, format i metraż, widełki klientów dziennie i pakiet otwarcia. */
+/**
+ * Lista lokali do wzięcia: numer z kartki, adres, dzielnica, format i metraż, widełki klientów dziennie i pakiet otwarcia. Lokal „po Traszce”
+ * (4a.2) stoi na liście z dopiskiem, ceną po zniżce i bez numeru (pusty znacznik trzyma kolumnę siatki).
+ */
 export function LotList({ f }: { f: FirmState; v: number }) {
   const rows = freeLotRows(f.seed, f);
   const chosen = validLot(f, selectedLot.value);
@@ -74,8 +77,9 @@ export function LotList({ f }: { f: FirmState; v: number }) {
       {rows.map((r) => (
         <button key={r.lotId} type="button" class={`tt-lotrow${chosen === r.lotId ? ' sel' : ''}`} data-lot={r.lotId} aria-pressed={chosen === r.lotId}
           onClick={() => { selectedLot.value = r.lotId; }}>
-          <span class="tt-lotno">{r.no}</span>
-          <span class="tt-lotaddr">{addressText(r.street, r.number)} <span class="tt-dz" style={{ background: DISTRICT_COLOR[r.district] }}>{districtName(r.district)}</span></span>
+          {r.no > 0 ? <span class="tt-lotno">{r.no}</span> : <span class="tt-lotno none" aria-hidden="true" />}
+          <span class="tt-lotaddr">{addressText(r.street, r.number)} <span class="tt-dz" style={{ background: DISTRICT_COLOR[r.district] }}>{districtName(r.district)}</span>
+            {r.relet && <span class="tt-dz relet">{lotStateName('po-traszce')}</span>}</span>
           <span class="tt-lotrange"><b>{`${r.lo}–${r.hi}`}</b></span>
           <span class="tt-lotsub">{`${lotKindName(r.kind, r.corner, r.district)}, ${r.area} m²`}</span>
           <span class="tt-lotprice-sm">{zl(r.price)}</span>

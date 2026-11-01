@@ -30,6 +30,10 @@ export const FIRM_UI: Dict = {
   'Traszka #{0} otwarta': 'Traszka #{0} is open',
   '{0} przyjmuje pierwszych klientów ({1}). Przełączysz się na nią w górnym pasku. Sklep w tle pracuje sam, a jego karty rozstrzyga zastępca.':
     '{0} is serving its first customers ({1}). Switch to it in the top bar. A shop in the background runs on its own, and your deputy settles its cards.',
+  // ponowne otwarcie lokalu „po Traszce” (§13.3, 4a.2): wyposażenie zostało, Centrala zaczyna znajomość od nowa
+  'Traszka #{0} znów otwarta': 'Traszka #{0} is open again',
+  '{0} znów przyjmuje klientów ({1}). Wyposażenie zostało, ale Centrala zaczyna znajomość od nowa: poziom 1, zaufanie {2}.':
+    '{0} is serving customers again ({1}). The fittings stayed, but Head Office is starting the relationship afresh: level 1, trust {2}.',
   // zastępca (§12)
   'Zastępca': 'Deputy',
   '{0}: zastępca wybrał: {1}': '{0}: the deputy chose: {1}',

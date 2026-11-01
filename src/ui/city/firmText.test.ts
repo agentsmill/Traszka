@@ -7,6 +7,7 @@ import { firmOf } from '@/game/session';
 import { lotById } from '@/sim/city/generateCity';
 import { DEBT_LIMIT } from '@/sim/economy/catalog';
 import { CARDS } from '@/sim/economy/tycoon/cards';
+import { TRUST } from '@/sim/economy/tycoon/trust';
 import { DECK, DWORZEC_CARD_IDS } from '@/sim/economy/tycoon/deck';
 import type { FirmEvent, FirmRefusal, FirmState } from '@/sim/firm/types';
 import { addressText, firmEventText, lotAddress, refusalText, storeName } from './firmText';
@@ -63,6 +64,7 @@ describe('firmEventText', () => {
     { kind: 'build', params: { lotId: f.stores[1]!.lotId, readyDay: 40, price: 52_000, pay: 'raty' } },
     { kind: 'build', params: { lotId: f.stores[1]!.lotId, readyDay: 40, price: 52_000, pay: 'gotowka' } },
     { kind: 'opened', storeId: 2, params: { lotId: f.stores[1]!.lotId } },
+    { kind: 'opened', storeId: 2, params: { lotId: f.stores[1]!.lotId, reopened: 1 } },
     { kind: 'deputy', storeId: 2, params: { card: DECK[0]!.id, answer: 1 } },
     { kind: 'notice', storeId: 2, params: { endDay: 70 } },
     { kind: 'settlement', storeId: 2, params: { installments: 3_000, pending: 250, shrinkage: 9_000, limit: 7_000, remanent: 2_000, total: 5_250 } },
@@ -115,6 +117,23 @@ describe('firmEventText', () => {
     const ended = firmEventText(f, { kind: 'closed', storeId: 2, params: { reason: 'notice' } });
     expect(trust.text).toContain(name2);
     expect(trust.text).not.toBe(ended.text);
+  });
+
+  it('ponowne otwarcie lokalu „po Traszce” (opened z reopened): „znów otwarta”, wyposażenie zostało, Centrala zaczyna od nowa: poziom 1 i zaufanie z TRUST.start', () => {
+    const e: FirmEvent = { kind: 'opened', storeId: 2, params: { lotId: f.stores[1]!.lotId, reopened: 1 } };
+    const pl = firmEventText(f, e);
+    expect(pl.title).toBe('Traszka #2 znów otwarta');
+    expect(pl.text).toBe(`${name2} znów przyjmuje klientów (${address2}). Wyposażenie zostało, ale Centrala zaczyna znajomość od nowa: poziom 1, zaufanie ${TRUST.start}.`);
+    expect(TRUST.start).toBe(65);
+    // zwykłe otwarcie (bez reopened) zostaje, jakie było
+    const first = firmEventText(f, { kind: 'opened', storeId: 2, params: { lotId: f.stores[1]!.lotId } });
+    expect(first.title).toBe('Traszka #2 otwarta');
+    expect(first.text).toContain('przyjmuje pierwszych klientów');
+    lang.value = 'en';
+    const en = firmEventText(f, e);
+    expect(en.title).toBe('Traszka #2 is open again');
+    expect(en.text).toBe(`${name2} is serving customers again (${lotAddress(f, f.stores[1]!.lotId)}). The fittings stayed, but Head Office is starting the relationship afresh: level 1, trust ${TRUST.start}.`);
+    expect(en.text).not.toBe(firmEventText(f, { kind: 'opened', storeId: 2, params: { lotId: f.stores[1]!.lotId } }).text);
   });
 
   it('zastępca: nazwa sklepu i polska etykieta odpowiedzi z karty, po angielsku angielska', () => {

@@ -1,15 +1,16 @@
 import { t } from '@/i18n';
 import type { CityPinKind } from '@/render/city/cityPins';
-import { DISTRICTS } from '@/sim/city/districts';
+import { DISTRICTS, siteHours } from '@/sim/city/districts';
 import { lotById } from '@/sim/city/generateCity';
 import { lotEstimate, rivalsNear, type LotEstimate } from '@/sim/city/traffic';
 import type { CityLot, CityState, LotState, RivalBrand, SourceKind, StoreDistrict } from '@/sim/city/types';
 import { dayOf } from '@/sim/economy/calendar';
+import { HOUR_CURVE } from '@/sim/economy/catalog';
 import { planFor, type InstallmentPlan } from '@/sim/economy/franchisee';
 import { CELL_SIZE_M } from '@/sim/grid';
-import { lotState, rentRefusal } from '@/sim/firm/commands';
+import { lotRentable, lotState, rentBuildDays, rentPrice, rentRefusal } from '@/sim/firm/commands';
 import { activeStore } from '@/sim/firm/firm';
-import type { FirmRefusal, FirmState } from '@/sim/firm/types';
+import type { FirmRefusal, FirmState, FirmStore } from '@/sim/firm/types';
 import type { LotKind } from '@/sim/store/types';
 import { plural } from '../game/format';
 import { brandName } from './cityText';
@@ -23,12 +24,14 @@ import { addressText } from './firmText';
 export type Level = 'niskie' | 'srednie' | 'wysokie';
 
 /**
- * Wiersz listy wolnych lokali. `no` to numer lokalu na kartce i na liście: miejsce wśród wolnych lokali z generatora (od 1), więc po
- * wynajęciu jednego numery pozostałych zostają. `area` to sala sprzedaży w m² (`interiorWidth × salesDepth` kratek).
+ * Wiersz listy lokali do wzięcia. `no` to numer lokalu na kartce i na liście: miejsce wśród wolnych lokali z generatora (od 1), więc po
+ * wynajęciu jednego numery pozostałych zostają; lokal startowy „po Traszce” nie miał kartki, więc ma 0 (bez numeru). `area` to sala
+ * sprzedaży w m² (`interiorWidth × salesDepth` kratek). `price` to pakiet otwarcia z reguły wynajmu (`rentPrice`: lokal „po Traszce”
+ * ma zniżkę), a `relet` jest ustawione tylko dla lokalu „po Traszce” (zwykły wolny lokal nie ma tego klucza).
  */
 export interface LotRow {
   lotId: number; no: number; street: string; number: number; district: StoreDistrict; kind: LotKind; corner: boolean;
-  area: number; lo: number; hi: number; price: number;
+  area: number; lo: number; hi: number; price: number; relet?: true;
 }
 
 // --- Poziomy słowami (§9.3) -----------------------------------------------------------------------------------------
@@ -70,18 +73,48 @@ function numberOf(city: CityState, lotId: number): number {
   return byLot.get(lotId) ?? 0;
 }
 
-function rowOf(seed: string, city: CityState, lot: CityLot): LotRow {
-  const est = estimateOf(seed, city, lot.id);
-  return {
-    lotId: lot.id, no: numberOf(city, lot.id), street: lot.street, number: lot.number, district: lot.district, kind: lot.spec.kind,
+/** Zamknięty sklep w lokalu: jego wyposażenie zostało i to jego lokal jest „po Traszce” (ten sam warunek co w `rentPrice`). */
+const closedStoreAt = (f: FirmState, lotId: number): FirmStore | undefined => f.stores.find((s) => s.lotId === lotId && s.closed);
+
+function rowOf(seed: string, f: FirmState, lot: CityLot): LotRow {
+  const est = estimateOf(seed, f.city, lot.id);
+  const row: LotRow = {
+    lotId: lot.id, no: numberOf(f.city, lot.id), street: lot.street, number: lot.number, district: lot.district, kind: lot.spec.kind,
     corner: lot.spec.corner, area: Math.round(lot.spec.interiorWidth * lot.spec.salesDepth * CELL_SIZE_M * CELL_SIZE_M),
-    lo: est.lo, hi: est.hi, price: lot.package,
+    lo: est.lo, hi: est.hi, price: rentPrice(f, lot.id),
   };
+  if (closedStoreAt(f, lot.id)) row.relet = true;
+  return row;
 }
 
-/** Wolne lokale miasta (stan w grze `wolny`), rosnąco po numerze. Widełki w pamięci podręcznej miasta. */
+/** Lokale do wzięcia, rosnąco po `id` lokalu: wolne i „po Traszce” (`lotRentable`; jedna reguła wynajmu z firmą). Widełki w pamięci podręcznej miasta. */
 export function freeLotRows(seed: string, f: FirmState): LotRow[] {
-  return f.city.lots.filter((l) => lotState(f, l.id) === 'wolny').map((l) => rowOf(seed, f.city, l));
+  return f.city.lots.filter((l) => lotRentable(f, l.id)).map((l) => rowOf(seed, f, l));
+}
+
+// --- Profil godzinowy -----------------------------------------------------------------------------------------------
+
+/** Pierwsza i liczba godzin profilu: sklep sprzedaje 6:00–22:00 (ostatnia godzina to 22:00), czyli 17 słupków. */
+const FIRST_HOUR = 6;
+const HOUR_COUNT = 17;
+
+/** Klienci na godzinę (od 6 do 22, 17 liczb) w dzień roboczy i, gdy dzielnica ma osobny ruch weekendowy, w weekend (inaczej `null`). */
+export interface HourBars { weekday: number[]; weekend: number[] | null }
+
+/**
+ * Profil godzinowy lokalu przy środku widełek z karty: kształt dnia dzielnicy (`siteHours`, a bez niego `HOUR_CURVE`, jak w grze) rozłożony
+ * tak, żeby suma godzin dawała środek widełek, więc profil mówi, kiedy klienci przyjdą, a nie ilu ich jest. Weekend to ten sam kształt razy
+ * `weekendTraffic / traffic` (Biurowce); dzielnica bez ruchu weekendowego ma `weekend: null`.
+ */
+export function lotHours(seed: string, f: FirmState, lotId: number): HourBars {
+  const lot = lotById(f.city, lotId);
+  const d = DISTRICTS[lot.district];
+  const est = estimateOf(seed, f.city, lotId);
+  const profile = siteHours(lot.district);
+  const shape = Array.from({ length: HOUR_COUNT }, (_, i) => (profile ? profile[FIRST_HOUR + i] : HOUR_CURVE[FIRST_HOUR + i]) ?? 0);
+  const sum = shape.reduce((n, v) => n + v, 0);
+  const weekday = shape.map((v) => (est.lo + est.hi) / 2 * v / sum);
+  return { weekday, weekend: d.weekendTraffic === null ? null : weekday.map((v) => v * d.weekendTraffic! / d.traffic) };
 }
 
 // --- Karta lokalu ---------------------------------------------------------------------------------------------------
@@ -93,7 +126,12 @@ export interface LotCardModel {
   basket: Level; expectations: Level; theft: Level;
   /** Konkurencja bliżej niż `RIVAL_RADIUS_M`, od najbliższej; odległość w pełnych metrach. */
   rivals: { brand: RivalBrand; meters: number }[];
+  /** Pakiet otwarcia (`rentPrice`), plan rat z tej ceny (6 albo 12 rat) i dni budowy (`rentBuildDays`). */
   price: number; plan: InstallmentPlan; buildDays: number;
+  /** Klienci na godzinę przy środku widełek (`lotHours`). */
+  hours: HourBars;
+  /** Wyposażenie, które zostało po zamkniętym sklepie (lokal „po Traszce”): poziom remontu, sztuki sprzętu i suma poziomów ulepszeń; wolny lokal ma null. */
+  relet: { remontLevel: number; equipment: number; upgrades: number } | null;
   /** Czy „Biorę lokal” działa przy wybranym sposobie zapłaty; jeśli nie, powód odmowy Centrali. */
   action: { enabled: true } | { enabled: false; reason: FirmRefusal };
 }
@@ -103,16 +141,22 @@ export function lotCardModel(seed: string, f: FirmState, lotId: number, pay: 'go
   const lot = lotById(f.city, lotId);
   const d = DISTRICTS[lot.district];
   const reason = rentRefusal(f, lotId, pay);
+  const price = rentPrice(f, lotId);
+  const closed = closedStoreAt(f, lotId);
   return {
-    row: rowOf(seed, f.city, lot),
+    row: rowOf(seed, f, lot),
     who: estimateOf(seed, f.city, lotId).who,
     basket: basketLevel(d.basket),
     expectations: expectationsLevel(d.patience, d.repPenalty),
     theft: theftLevel(d.theft),
     rivals: rivalsNear(f.city, lotId).flatMap((r) => (r.lot.brand ? [{ brand: r.lot.brand, meters: Math.round(r.meters) }] : [])),
-    price: lot.package,
-    plan: planFor(lot.package),
-    buildDays: lot.buildDays,
+    price,
+    plan: planFor(price),
+    buildDays: rentBuildDays(f, lotId),
+    hours: lotHours(seed, f, lotId),
+    relet: closed
+      ? { remontLevel: closed.econ.remontLevel, equipment: closed.econ.equipment.length, upgrades: Object.values(closed.econ.upgrades).reduce((n, v) => n + (v ?? 0), 0) }
+      : null,
     action: reason === null ? { enabled: true } : { enabled: false, reason },
   };
 }

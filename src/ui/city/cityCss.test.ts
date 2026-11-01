@@ -20,4 +20,12 @@ describe('city.css: karta lokalu na 390 px', () => {
     const ui = readFileSync(new URL('../ui.css', import.meta.url), 'utf8');
     expect(ui).toMatch(/\.tt-btn \{[^}]*white-space:\s*nowrap/);   // powód, dla którego reguła jest potrzebna
   });
+
+  it('profil godzinowy jest płynny (width: 100%, height: auto), a nagłówek z legendą i blok „po Traszce” łamią wiersz', () => {
+    expect(rule('.tt-hours-svg')).toMatch(/width:\s*100%/);
+    expect(rule('.tt-hours-svg')).toMatch(/height:\s*auto/);
+    expect(rule('.tt-hours-head')).toMatch(/flex-wrap:\s*wrap/);
+    expect(rule('.tt-hours-legend')).toMatch(/flex-wrap:\s*wrap/);
+    expect(rule('.tt-relet')).toMatch(/overflow-wrap:\s*anywhere/);
+  });
 });

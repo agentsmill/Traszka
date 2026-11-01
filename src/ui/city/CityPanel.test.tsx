@@ -2,21 +2,22 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { lang } from '@/i18n';
 import { EN_REMONTS } from '@/i18n/en/content';
 import { PL_CHARS } from '../../../tests/i18nScan';
-import { partnerSession } from '../../../tests/firmKit';
+import { closeFirstStore, openSecond, partnerSession } from '../../../tests/firmKit';
 import { createSession, firmOf } from '@/game/session';
 import { RIVAL_RADIUS_M } from '@/sim/city/traffic';
 import { lotById } from '@/sim/city/generateCity';
 import { planFor } from '@/sim/economy/franchisee';
-import { applyFirmCommand, partnerProgress } from '@/sim/firm/commands';
+import { RELET_SHARE, applyFirmCommand, lotState, partnerProgress, rentPrice } from '@/sim/firm/commands';
 import { emptyStepOut } from '@/sim/firm/firm';
 import type { FirmCommand, FirmCommandResult } from '@/sim/firm/commands';
 import { MAX_STORES, type FirmRefusal, type FirmState } from '@/sim/firm/types';
 import { cityLayer, firm, lotPay, selectedLot, tab, toasts, type GameActions } from '../state';
-import { zl } from '../game/format';
+import { percentOf, zl } from '../game/format';
 import { buttonAria, buttonLabelled, buttonsOf, click, labels, textOf, walk, type Vnode } from '../game/vnodeTree';
 import { CityBar, CityPanel, LotList } from './CityPanel';
+import { HourChart } from './HourChart';
 import { LotCard } from './LotCard';
-import { SWIPE_MIN_PX, freeLotRows, lotCardModel } from './cityModel';
+import { SWIPE_MIN_PX, freeLotRows, lotCardModel, lotHours } from './cityModel';
 import { brandName, districtName, levelText, lotKindName, lotStateName, progressText, refusalText, sourceText } from './cityText';
 import { addressText } from './firmText';
 
@@ -49,6 +50,20 @@ const byTut = (tree: Vnode, tut: string): Vnode => {
   return found[0]!;
 };
 const rowFor = (f: FirmState, district: string) => rowsOf(f).find((r) => r.district === district)!;
+/** Firma po zamknięciu sklepu #1 przy działającym #2: lokal startowy jest „po Traszce” (wyposażenie: remont 1, sprzęt 2 szt., ulepszenia 3 + 1). */
+function reletFirm(seed = SEED): FirmState {
+  const s = partnerSession(seed);
+  openSecond(s, 'raty');
+  return closeFirstStore(s);
+}
+/** Wykres godzin z karty: węzeł `HourChart` z drzewa karty, rozwinięty (komponenty w drzewie nie są wołane przez `walk`). */
+function chartOf(tree: Vnode): Vnode {
+  const node = walk(tree).find((v) => v.type === HourChart);
+  if (!node) throw new Error('karta nie ma wykresu godzin');
+  return HourChart(node.props as unknown as Parameters<typeof HourChart>[0]) as Vnode;
+}
+const hasClass = (v: Vnode, name: string): boolean => String(v.props.class ?? '').split(' ').includes(name);
+const barsOf = (chart: Vnode, kind: 'day' | 'end'): Vnode[] => walk(chart).filter((v) => v.type === 'rect' && hasClass(v, 'tt-hbar') && hasClass(v, kind));
 
 function resetSignals(): void {
   cityLayer.value = 'ruch';
@@ -158,6 +173,25 @@ describe('lista wolnych lokali', () => {
     expect(buttonsOf(list(f))[1]!.props['aria-pressed']).toBe(false);
   });
 
+  it('lokal „po Traszce” jest na liście bez numeru kartki, z dopiskiem i ceną po zniżce; stuknięcie wybiera go jak każdy inny', () => {
+    const f = reletFirm();
+    const id = f.city.startLotId;
+    const tree = list(f);
+    const buttons = buttonsOf(tree);
+    expect(buttons.map((b) => b.props['data-lot'])).toEqual(rowsOf(f).map((r) => r.lotId));
+    const relet = buttons.find((b) => b.props['data-lot'] === id)!;
+    const text = textOf(relet);
+    expect(text).toContain(lotStateName('po-traszce'));
+    expect(text).toContain(zl(rentPrice(f, id)));
+    expect(text).not.toContain(zl(lotById(f.city, id).package));
+    const number = walk(relet).find((v) => hasClass(v, 'tt-lotno'))!;   // miejsce na numer zostaje (siatka), ale bez cyfry
+    expect(textOf(number)).toBe('');
+    expect(hasClass(number, 'none')).toBe(true);
+    click(relet);
+    expect(selectedLot.value).toBe(id);
+    for (const b of buttons.filter((x) => x !== relet)) expect(textOf(walk(b).find((v) => hasClass(v, 'tt-lotno'))!)).toMatch(/^\d+$/);
+  });
+
   it('bez wolnych lokali mówi to wprost', () => {
     const f = partnerFirm();
     for (const l of f.city.lots) if (l.state === 'wolny') l.state = 'zajety';
@@ -189,6 +223,141 @@ describe('karta lokalu', () => {
     expect(textOf(price)).toContain(`za gotówkę ${zl(row.price)}`);
     expect(textOf(price)).toContain(`na raty ${zl(plan.monthly)} × 12 z przelewów tego sklepu`);
     expect(textOf(price)).toContain(zl(plan.total));   // razem z opłatą
+  });
+
+  it('rata pokazuje liczbę rat z planu pakietu (plan.months), a nie stałe 12: wolny lokal 12, lokal „po Traszce” 6', () => {
+    const f = reletFirm();
+    const free = rowsOf(f).find((r) => !r.relet)!;
+    const relet = rowsOf(f).find((r) => r.relet)!;
+    for (const [row, months] of [[free, 12], [relet, 6]] as const) {
+      const model = lotCardModel(SEED, f, row.lotId, 'raty');
+      expect(model.plan.months).toBe(months);
+      const price = textOf(byTut(card(f, row.lotId), 'lot-price'));
+      expect(price).toContain(`na raty ${zl(model.plan.monthly)} × ${model.plan.months} z przelewów tego sklepu`);
+      expect(price).toContain(`za gotówkę ${zl(model.price)}`);
+    }
+  });
+
+  describe('profil godzinowy', () => {
+    it('karta ma wykres z 17 słupkami dnia roboczego (godziny 6–22), nagłówkiem, legendą i podpisami 6, 12, 18, 22 bez innych liczb', () => {
+      const f = partnerFirm();
+      const row = rowFor(f, 'osiedle');
+      const tree = card(f, row.lotId);
+      const node = walk(tree).find((v) => v.type === HourChart)!;
+      expect(node.props.hours).toEqual(lotHours(SEED, f, row.lotId));
+      const chart = chartOf(tree);
+      expect(barsOf(chart, 'day')).toHaveLength(17);
+      expect(barsOf(chart, 'end')).toHaveLength(0);   // Osiedle nie ma osobnego ruchu weekendowego
+      const text = textOf(chart);
+      expect(text).toContain('Ruch w ciągu dnia');
+      expect(text).toContain('dzień roboczy');
+      expect(text).not.toContain('weekend');
+      const ticks = walk(chart).filter((v) => v.type === 'text').map((v) => textOf(v));
+      expect(ticks).toEqual(['6', '12', '18', '22']);
+    });
+
+    it('Biurowce mają obrys weekendu obok każdego słupka i legendę „weekend”', () => {
+      const f = partnerFirm();
+      const chart = chartOf(card(f, rowFor(f, 'biurowce').lotId));
+      expect(barsOf(chart, 'day')).toHaveLength(17);
+      expect(barsOf(chart, 'end')).toHaveLength(17);
+      expect(textOf(chart)).toContain('weekend');
+      // obrys stoi obok słupka dnia roboczego tej samej godziny, a nie na nim
+      const [day, end] = [barsOf(chart, 'day')[2]!, barsOf(chart, 'end')[2]!];
+      expect(Number(end.props.x)).toBeGreaterThanOrEqual(Number(day.props.x) + Number(day.props.width));
+      // wysokość słupka to udział w najwyższym słupku wykresu: ten sam kształt razy 5/12 jest niższy
+      expect(Number(end.props.height)).toBeLessThan(Number(day.props.height));
+    });
+
+    it('opis dla czytników: „Szczyt około {h}:00” z najgęstszej godziny dnia roboczego, a płaski Dworzec nie udaje szczytu', () => {
+      const f = partnerFirm();
+      for (const district of ['osiedle', 'srodmiescie', 'biurowce'] as const) {
+        const { weekday } = lotHours(SEED, f, rowFor(f, district).lotId);
+        const peak = 6 + weekday.indexOf(Math.max(...weekday));
+        const svg = walk(chartOf(card(f, rowFor(f, district).lotId))).find((v) => v.type === 'svg')!;
+        expect(svg.props.role, district).toBe('img');
+        expect(svg.props['aria-label'], district).toBe(`Szczyt około ${peak}:00`);
+      }
+      expect(walk(chartOf(card(f, rowFor(f, 'srodmiescie').lotId))).find((v) => v.type === 'svg')!.props['aria-label']).toBe('Szczyt około 18:00');
+      const flat = walk(chartOf(card(f, rowFor(f, 'dworzec').lotId))).find((v) => v.type === 'svg')!;
+      expect(flat.props['aria-label']).toBe('Ruch równy przez cały dzień');
+    });
+
+    it('wykres jest płynny: SVG z viewBox i bez stałej szerokości, żeby na 390 px nie wylewał się poza kartę', () => {
+      const f = partnerFirm();
+      const svg = walk(chartOf(card(f, rowsOf(f)[0]!.lotId))).find((v) => v.type === 'svg')!;
+      expect(String(svg.props.viewBox)).toMatch(/^0 0 \d+ \d+$/);
+      expect(svg.props.width).toBeUndefined();
+      expect(svg.props.height).toBeUndefined();
+    });
+  });
+
+  describe('lokal „po Traszce”', () => {
+    const wants = 'Wyposażenie zostało: remont 1, sprzęt 2 szt., ulepszenia 4';
+
+    it('to ta sama karta wynajmu: blok wyposażenia, podpis pakietu „po Traszce: 30% ceny”, cena po zniżce, 2 dni budowy, wykres i ‹ ›', () => {
+      const f = reletFirm();
+      const id = f.city.startLotId;
+      const tree = card(f, id);
+      const text = textOf(tree);
+      expect(text).toContain(wants);
+      expect(text).toContain(`po Traszce: ${percentOf(RELET_SHARE)} ceny`);
+      expect(text).toContain('po Traszce: 30% ceny');
+      expect(textOf(byTut(tree, 'lot-price'))).toContain(`za gotówkę ${zl(rentPrice(f, id))}`);
+      expect(text).toContain('2 dni');
+      expect(walk(tree).some((v) => v.type === HourChart)).toBe(true);
+      expect(walk(tree).some((v) => hasClass(v, 'tt-lotno'))).toBe(false);   // lokal startowy nie ma numeru kartki
+      expect(textOf(buttonLabelled(tree, 'Biorę lokal'))).toBe('Biorę lokal');
+      expect(buttonAria(tree, 'Następny lokal')).toBeDefined();   // lokal jest na liście, więc strzałki prowadzą po niej
+    });
+
+    it('zwykły wolny lokal nie ma bloku wyposażenia ani podpisu „po Traszce”', () => {
+      const f = reletFirm();
+      const free = rowsOf(f).find((r) => !r.relet)!;
+      const text = textOf(card(f, free.lotId));
+      expect(text).not.toContain('Wyposażenie zostało');
+      expect(text).not.toContain('po Traszce: ');
+    });
+
+    it('„Biorę lokal” wysyła rentLot z lokalem „po Traszce” i wybranym sposobem zapłaty, a po sukcesie karta się zamyka', () => {
+      const f = reletFirm();
+      const id = f.city.startLotId;
+      selectedLot.value = id;
+      lotPay.value = 'raty';
+      const game = fakeGame();
+      const button = buttonLabelled(card(f, id, game), 'Biorę lokal');
+      expect(button.props.disabled).toBe(false);
+      click(button);
+      expect(game.firm).toHaveBeenCalledWith({ type: 'rentLot', lotId: id, pay: 'raty' });
+      expect(selectedLot.value).toBeNull();
+    });
+
+    it('prawdziwy wynajem: lokal przechodzi w budowę, a jego karta znów jest informacyjna (bez „Biorę lokal”)', () => {
+      const f = reletFirm();
+      const id = f.city.startLotId;
+      expect(applyFirmCommand(f, { type: 'rentLot', lotId: id, pay: 'raty' }, emptyStepOut())).toEqual({ ok: true });
+      expect(lotState(f, id)).toBe('budowa');
+      const tree = card(f, id);
+      expect(labels(tree)).not.toContain('Biorę lokal');
+      expect(walk(tree).some((v) => v.props['data-tut'] === 'lot-price')).toBe(false);
+      expect(textOf(tree)).toContain(lotStateName('budowa'));
+    });
+
+    it('po angielsku: blok wyposażenia, podpis pakietu i wykres bez polskich liter', () => {
+      lang.value = 'en';
+      const f = reletFirm();
+      const id = f.city.startLotId;
+      const tree = card(f, id);
+      const text = textOf(tree);
+      expect(text).toContain('Fittings kept: refit 1, equipment 2 pcs, upgrades 4');
+      expect(text).toContain('ex-Traszka: 30% of the price');
+      const chart = textOf(chartOf(tree));
+      expect(chart).toContain('Footfall through the day');
+      expect(chart).toContain('weekday');
+      expect(walk(chartOf(tree)).find((v) => v.type === 'svg')!.props['aria-label']).toMatch(/^Peak around \d+:00$/);
+      const all = `${text}${chart}`.replace(lotById(f.city, id).street, '').replace(/zł/g, '');
+      expect(all.match(PL_CHARS)).toBeNull();
+    });
   });
 
   it('wybór sposobu zapłaty: dwa przyciski ustawiają lotPay i przechodzą do polecenia', () => {

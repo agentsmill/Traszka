@@ -5,6 +5,7 @@ import { MINUTES_PER_DAY, OPEN_FROM, OPEN_TO } from '@/sim/economy/catalog';
 import { awaitingDecision, type EconomyState } from '@/sim/economy/economy';
 import { defaultAnswer } from '@/sim/economy/monthPreview';
 import { visibleCards } from '@/sim/economy/tycoon/cards';
+import { closeStore } from '@/sim/firm/closure';
 import { applyFirmCommand, lotState, rentRefusal } from '@/sim/firm/commands';
 import { activeStore, applyStoreCommand, emptyStepOut, stepFirmMinute, syncWallet } from '@/sim/firm/firm';
 import type { FirmState, FirmStepOut, FirmStore } from '@/sim/firm/types';
@@ -82,6 +83,21 @@ export const openSecond = (s: GameSession, pay: 'gotowka' | 'raty' = 'raty'): Fi
 
 /** Sklep #3 (limit 4a.2) w pierwszym lokalu wolnym po otwarciu #2. */
 export const openThird = (s: GameSession, pay: 'gotowka' | 'raty' = 'raty'): FirmStore => openNext(s, pay, 3);
+
+/**
+ * Sklep #1 zamknięty przez Centralę (zaufanie 0, prawdziwe `closeStore`) przy działającym sklepie #2: lokal startowy to „po Traszce”.
+ * Sesja musi mieć już sklep #2 (`openSecond`); `fittings` to wyposażenie, które #1 zostawia w lokalu (domyślnie remont 1, dwie sztuki
+ * sprzętu i ulepszenia na poziomach 3 + 1).
+ */
+export function closeFirstStore(s: GameSession, fittings: Pick<EconomyState, 'upgrades' | 'equipment' | 'remontLevel'> = {
+  upgrades: { ulotki: 3, szkolenie: 1 }, equipment: [{ id: 'sco', slot: null }, { id: 'sco', slot: null }], remontLevel: 1,
+}): FirmState {
+  const f = firmOf(s);
+  Object.assign(f.stores[0]!.econ, structuredClone(fittings));
+  closeStore(f, 1, 'trust', emptyStepOut());
+  expect(f.stores[0]!.closed).toBe(true);
+  return f;
+}
 
 /** Sklep, któremu Centrala wypowie umowę przy najbliższym zamknięciu miesiąca: zaufanie przy zerze i strata miesiąca. */
 export function loseTrust(e: EconomyState): void {
