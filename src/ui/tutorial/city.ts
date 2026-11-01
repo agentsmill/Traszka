@@ -2,7 +2,7 @@ import { t } from '@/i18n';
 import { DISTRICTS } from '@/sim/city/districts';
 import { GUARANTEE } from '@/sim/economy/catalog';
 import { planFor, type InstallmentPlan } from '@/sim/economy/franchisee';
-import { lotRentable } from '@/sim/firm/commands';
+import { RELET_SHARE, lotRentable } from '@/sim/firm/commands';
 import { openStores } from '@/sim/firm/firm';
 import type { FirmState } from '@/sim/firm/types';
 import { validLot } from '../city/cityModel';
@@ -17,6 +17,14 @@ import type { TipCtx, TipDef } from './tips';
 /** Plan rat pakietu otwarcia. Najtańszy pakiet (Dworzec) leży już w ostatnim przedziale `INSTALLMENTS.plans`, więc ten plan mają wszystkie lokale. */
 export function openingPlan(): InstallmentPlan {
   return planFor(Math.min(...Object.values(DISTRICTS).map((d) => d.package[0])));
+}
+
+/**
+ * Plan rat pakietu lokalu „po Traszce” (`RELET_SHARE` ceny, zaokrąglone do 100 zł jak w `rentPrice`) przy najtańszym pakiecie. Prawie każdy taki
+ * lokal mieści się w tym samym przedziale (6 rat); tylko najdroższe lokale ze Śródmieścia po zniżce przekraczają przedział i dostają 12.
+ */
+export function reletPlan(): InstallmentPlan {
+  return planFor(Math.round(Math.min(...Object.values(DISTRICTS).map((d) => d.package[0])) * RELET_SHARE / 100) * 100);
 }
 
 /** Pola `TipCtx` o mieście i sklepach: składa je `cityFacts` z firmy i z sygnałów widoku. */

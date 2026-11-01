@@ -105,7 +105,7 @@ describe('okno „Jak grać”', () => {
       const terms = walk(block).filter((v) => v.type === 'dt').map((v) => textOf(v));
       expect(terms).toEqual(glossaryEn().map((e) => e.term));
       expect(terms).toHaveLength(glossary().length);
-      expect(terms.slice(-5)).toEqual(['Strategic Partner', 'Opening package', 'Deputy', 'District', 'Final settlement']);
+      expect(terms.slice(-6)).toEqual(['Strategic Partner', 'Opening package', 'Ex-Traszka unit', 'Deputy', 'District', 'Final settlement']);
     } finally {
       lang.value = 'pl';
     }
