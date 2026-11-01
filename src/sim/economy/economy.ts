@@ -13,7 +13,7 @@ import {
   type FranchiseeState, type RemanentProtocol, type Statement,
 } from './franchisee';
 import { rand01 } from './rand';
-import { activeSite, siteDayTraffic, type SiteMods } from './site';
+import { activeSite, hourCurveOf, siteDayTraffic, type SiteMods } from './site';
 import type { PalletLoc, StoreInfo } from './storeInfo';
 import {
   EQUIPMENT_BY_ID, REMONTS, UPGRADE_BY_ID, WORKSHOP_LEVEL, equipmentCost, upgradeCost,
@@ -316,12 +316,20 @@ export const kpiScaleOf = (s: EconomyState, info: StoreInfo): KpiScale => {
 // --- Tworzenie ---------------------------------------------------------------------------------------
 
 /**
+ * Wyposażenie, które lokal „po Traszce” zachowuje po zamknięciu sklepu (spec §13.3): ulepszenia, sprzęt i poziom remontu. Układ sklepu
+ * jest osobno (`info`), a reszta stanu (towar, ludzie, saldo, raty) zaczyna od nowa.
+ */
+export type StoreFittings = Pick<EconomyState, 'upgrades' | 'equipment' | 'remontLevel'>;
+
+/**
  * Nowa gra: sklep na kreskę (towar Centrali na półkach, 2 palety pod drzwiami), 1 września, 6:00. `startMinute` otwiera sklep w
  * środku gry (drugi sklep firmy): kalendarz, pogoda, tydzień KPI i termin remanentu liczą się wtedy od tej minuty, a stan
- * początkowy jest ten sam.
+ * początkowy jest ten sam. `fittings` (ponowny wynajem lokalu „po Traszce”) wchodzi kopią tuż po obiekcie bazowym, przed celem KPI
+ * i kartami dnia 0, więc skala sklepu liczy się z wyposażeniem od pierwszej minuty; bez niego stan jest co do bitu jak zawsze.
  */
 export function createEconomy(
   seed: string, info: StoreInfo, partner: EconomyState['partner'] = { points: 0, networkIncome: 0, stores: 0 }, startMinute: number = OPEN_FROM,
+  fittings?: StoreFittings,
 ): EconomyState {
   const backroomStart = info.backroomCap * 0.35;
   const seedHash = hashString(`${seed}:economy`);
@@ -371,6 +379,11 @@ export function createEconomy(
     tycoon: createTycoon({ day: 0, seedHash, trust: TRUST.start, metrics: NO_KPI_METRICS, scale: { dailyCustomers: 0, dailyMargin: 0 } }),
     franchisee: createFranchisee(startMinute),
   };
+  if (fittings) {
+    s.upgrades = { ...fittings.upgrades };
+    s.equipment = fittings.equipment.map((unit) => ({ ...unit }));
+    s.remontLevel = fittings.remontLevel;
+  }
   // Cel KPI pierwszego tygodnia zależy od skali sklepu i liczników (kpiScaleOf, kpiMetricsOf czytają gotowy stan), więc
   // właściwy tycoon powstaje po obiekcie bazowym; ten z literału jest tylko zaślepką z czystą salą.
   const day = dayOf(s.minute);
@@ -452,7 +465,7 @@ export function stepMinute(s: EconomyState, info: StoreInfo, out: EconEvent[]): 
 /**
  * Oczekiwani klienci w tej minucie (lambda przed losowaniem): krzywa godzin, reputacja, marketing i remont, paczka „szał
  * zakupów”, przeszkody w sali (palety w sali i w przejściach oraz worki śmieci, `CLUTTER`), niedziela, kiedy duże sklepy stoją zamknięte (tycoon/sunday.ts), oraz
- * ruch z efektów kart (np. +30% przez dwie godziny).
+ * ruch z efektów kart (np. +30% przez dwie godziny). Dzielnica z profilem dnia (`SiteMods.hours`) podmienia tylko krzywą godzin.
  * Jedyne miejsce, gdzie liczy się ten wzór: korzysta z niego `stepMinute`, a testy i karty pytają o to samo.
  */
 export function arrivalRate(s: EconomyState, info: StoreInfo, fx: Effects = effects(s, info)): number {
@@ -460,7 +473,9 @@ export function arrivalRate(s: EconomyState, info: StoreInfo, fx: Effects = effe
   const boost = s.minute < s.boostUntil ? 1.3 : 1;
   const clutter = Math.max(CLUTTER.trafficFloor, 1 - CLUTTER.trafficPerPallet * (hallPallets(s) + hallObstacle(s.tycoon.waste)));
   const day = dayOf(s.minute);
-  return (baseTraffic(info) * (HOUR_CURVE[hour] ?? 0) / 60) * reputationFactor(s.reputation)
+  const hours = fx.site?.hours;   // profil dnia dzielnicy (site.ts); bez niego krzywa to dzisiejsze `HOUR_CURVE[hour] ?? 0`
+  const curve = hours ? (hours[hour] ?? 0) : (HOUR_CURVE[hour] ?? 0);
+  return (baseTraffic(info) * curve / 60) * reputationFactor(s.reputation)
     * fx.traffic * boost * clutter * (fx.site ? siteDayTraffic(fx.site, day) : dayTrafficMult(day))
     * cardModifiers(s.tycoon.cards, s.minute).traffic;
 }
@@ -839,6 +854,22 @@ export function expectedDailyCustomers(s: EconomyState, info: StoreInfo): number
   const customers = baseTraffic(info) * curve * reputationFactor(s.reputation) * fx.traffic;
   // szacunek jest dla zwykłego dnia, bez premii niedzieli (cele KPI doliczają ją osobno), więc z dzielnicy bierze ruch roboczy
   return fx.site ? customers * fx.site.traffic : customers;
+}
+
+/**
+ * Klientów na godzinę gry w godzinie `hour` (0–23): dzień / 15,6 · krzywa sklepu (profil dnia dzielnicy albo `HOUR_CURVE`). 15,6 to suma obu
+ * krzywych, bo profil ma tę samą sumę godzin 6–22. Z tego liczą się podpowiedź w panelu Sklep i tempo napływu postaci w scenie.
+ */
+export function customersPerHour(s: EconomyState, info: StoreInfo, hour: number): number {
+  return expectedDailyCustomers(s, info) / 15.6 * (hourCurveOf(info)[hour] ?? 0);
+}
+
+/** Klientów na godzinę w najmocniejszej godzinie otwarcia (6–22); bez profilu dnia to godzina o natężeniu 1,3 z `HOUR_CURVE`. */
+export function peakCustomersPerHour(s: EconomyState, info: StoreInfo): number {
+  const curve = hourCurveOf(info);
+  let peak = 0;
+  for (let hour = OPEN_FROM / 60; hour < OPEN_TO / 60; hour++) peak = Math.max(peak, curve[hour] ?? 0);
+  return expectedDailyCustomers(s, info) / 15.6 * peak;
 }
 
 const stockItems = (s: EconomyState): number => sum(s.shelf) + sum(s.backroom) + s.pallets.reduce((n, p) => n + p.total, 0);
@@ -1540,13 +1571,14 @@ export const estimatedDailyRevenue = (s: EconomyState, info: StoreInfo): number 
 
 /**
  * Co karta wie o sklepie przy losowaniu (INTEGRATION.md, §5): dostawy w kolejce na dziś, personel, zaufanie, sala, pogoda i
- * skala sklepu (marża i obrót typowego dnia), z której karta liczy swoje kwoty.
+ * skala sklepu (marża i obrót typowego dnia), z której karta liczy swoje kwoty. Sklep z aktywną dzielnicą (`activeSite`) dopisuje jeszcze
+ * `district` i `difficult` (karta `wiek` i karty Dworca); bez niej kontekst ma dokładnie dzisiejsze klucze.
  */
 export function cardContext(s: EconomyState, info: StoreInfo): CardContext {
   const day = dayOf(s.minute);
   const dayStart = day * MINUTES_PER_DAY;
   const palletsToday = s.deliveries.filter((d) => d.at >= dayStart && d.at < dayStart + MINUTES_PER_DAY).reduce((n, d) => n + d.count, 0);
-  return {
+  const ctx: CardContext = {
     day,
     now: s.minute,
     weekday: weekdayOf(day),
@@ -1560,6 +1592,12 @@ export function cardContext(s: EconomyState, info: StoreInfo): CardContext {
     dailyMargin: estimatedDailyMargin(s, info),
     dailyRevenue: estimatedDailyRevenue(s, info),
   };
+  const site = activeSite(info);
+  if (site) {
+    ctx.district = site.district;
+    ctx.difficult = site.difficult;
+  }
+  return ctx;
 }
 
 /**

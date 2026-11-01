@@ -2,8 +2,9 @@ import type { Dict, Plurals } from '../ui';
 
 /*
  * Ekran Miasta po angielsku (`ui/city/cityText.ts`, `cityModel.ts`, `CityPanel.tsx`, `LotCard.tsx`): dzielnice, formaty i stany lokali, kto
- * przychodzi, poziomy słowami, postęp do statusu Partnera, lista i karta lokalu. Ulice, nazwa miasta i marki konkurencji (Szop 24h,
- * Kawka Express) to nazwy własne i zostają po polsku; adres składa `addressText` („3 Lipowa St.”). Odmowy Centrali są w `firm.ts`.
+ * przychodzi, poziomy słowami, postęp do statusu Partnera, lista i karta lokalu (z profilem godzinowym `HourChart.tsx` i lokalem „po Traszce”).
+ * Ulice, nazwa miasta i marki konkurencji (Szop 24h, Kawka Express) to nazwy własne i zostają po polsku; adres składa `addressText`
+ * („3 Lipowa St.”). Odmowy Centrali są w `firm.ts`.
  * Ton jak w `docs/i18n/glossary-en.md`: *unit* i *premises* dla lokalu, *opening package*, *in instalments*, *Head Office*.
  */
 
@@ -65,6 +66,12 @@ export const CITY_UI: Dict = {
   'lokal {0} z {1}': 'unit {0} of {1}',
   'Klienci dziennie': 'Customers per day',
   '(szacunek)': '(estimate)',
+  // profil godzinowy (4a.2): nagłówek, legenda i opis wykresu dla czytników ekranu
+  'Ruch w ciągu dnia': 'Footfall through the day',
+  'dzień roboczy': 'weekday',
+  'weekend': 'weekend',
+  'Szczyt około {0}:00': 'Peak around {0}:00',
+  'Ruch równy przez cały dzień': 'Footfall is even all day',
   'Kto przychodzi': 'Who comes in',
   'Koszyk': 'Basket',
   'Oczekiwania': 'Expectations',
@@ -74,6 +81,10 @@ export const CITY_UI: Dict = {
   'brak w promieniu {0} m': 'none within {0} m',
   'Budowa': 'Build time',
   'Pakiet otwarcia': 'Opening package',
+  // lokal „po Traszce” (4a.2): wyposażenie, które zostało, i zniżka pakietu
+  'Wyposażenie zostało: remont {0}, sprzęt {1} szt., ulepszenia {2}': (refit, equipment, upgrades) =>
+    `Fittings kept: refit ${refit}, equipment ${Number(String(equipment).replace(/,/g, '')) === 1 ? '1 item' : `${equipment} items`}, upgrades ${upgrades}`,
+  'po Traszce: {0} ceny': 'ex-Traszka: {0} of the price',
   'Sposób zapłaty': 'How to pay',
   'za gotówkę {0}': '{0} in cash',
   'na raty {0} × {1} z przelewów tego sklepu': 'in instalments: {0} × {1} from this shop’s transfers',

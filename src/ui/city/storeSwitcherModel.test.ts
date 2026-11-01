@@ -5,10 +5,11 @@ import { lotById } from '@/sim/city/generateCity';
 import { dayOf } from '@/sim/economy/calendar';
 import { CATS } from '@/sim/economy/catalog';
 import { forecastMonth } from '@/sim/economy/forecast';
+import { trustTier } from '@/sim/economy/tycoon/trust';
 import { forecastFirm } from '@/sim/firm/forecast';
 import { openSecond, partnerSession } from '../../../tests/firmKit';
 import { firm, type MetaView } from '../state';
-import { forecastNow, isNetwork, networkOn, networkRow, shortStoreName, storeMinis } from './storeSwitcherModel';
+import { BACKGROUND_TRUST_WARN_BELOW, forecastNow, isNetwork, networkOn, networkRow, shortStoreName, storeMinis } from './storeSwitcherModel';
 
 /*
  * Model przełącznika sklepów (spec §9.4, §11.3): mini-stan każdego sklepu na liście chipa, wiersz sieci z poprzednich gier i prognoza paska
@@ -94,6 +95,23 @@ describe('storeMinis: mini-stan sklepów', () => {
     second.econ.shelf[CATS[1]!] = 0;
     second.econ.pallets[0]!.loc = 'aisle';
     expect(storeMinis(f)[1]!.warnings).toEqual(['paleta', 'polka', 'zastepca']);
+  });
+
+  it('znak „zaufanie”: sklep w tle z zaufaniem poniżej 40 ma go, na 40 już nie; idzie ostatni, po zastępcy', () => {
+    const { f } = twoStores();
+    const second = f.stores[1]!;
+    expect(BACKGROUND_TRUST_WARN_BELOW).toBe(40);
+    // próg to dolna granica poziomu „Pod obserwacją” (`trust.ts`): niżej jest „Na cenzurowanym”
+    expect(trustTier(BACKGROUND_TRUST_WARN_BELOW).id).toBe('obserwacja');
+    expect(trustTier(BACKGROUND_TRUST_WARN_BELOW - 1).id).toBe('cenzura');
+    second.econ.tycoon.trust.value = 39;
+    expect(storeMinis(f)[1]!.warnings).toEqual(['zaufanie']);
+    second.econ.tycoon.trust.value = 40;
+    expect(storeMinis(f)[1]!.warnings).toEqual([]);
+    second.econ.tycoon.trust.value = 32;
+    second.econ.pallets[0]!.loc = 'aisle';
+    f.inbox.push({ day: dayOf(second.econ.minute), storeId: 2, card: 'x', answer: 0 });
+    expect(storeMinis(f)[1]!.warnings).toEqual(['paleta', 'zastepca', 'zaufanie']);
   });
 
   it('wypowiedziany i zamknięty sklep mają flagi; zamknięty zostaje na liście', () => {

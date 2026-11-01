@@ -1,26 +1,28 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { lang } from '@/i18n';
-import { partnerSession } from '../../../tests/firmKit';
+import { FITTINGS_LEFT, closeStoreFitted, openSecond, partnerSession, reletFirm, reopenLot } from '../../../tests/firmKit';
 import { createSession, firmOf } from '@/game/session';
 import { DISTRICTS } from '@/sim/city/districts';
 import { lotById } from '@/sim/city/generateCity';
-import { lotEstimate, rivalsNear } from '@/sim/city/traffic';
+import { lotEstimate, rivalsNear, siteFor } from '@/sim/city/traffic';
 import type { StoreDistrict } from '@/sim/city/types';
-import { MINUTES_PER_DAY } from '@/sim/economy/catalog';
+import { HOUR_CURVE, MINUTES_PER_DAY, OPEN_FROM, OPEN_TO } from '@/sim/economy/catalog';
+import { expectedDailyCustomers } from '@/sim/economy/economy';
 import { CELL_SIZE_M } from '@/sim/grid';
 import { planFor } from '@/sim/economy/franchisee';
-import { applyFirmCommand, lotState } from '@/sim/firm/commands';
+import { RELET_BUILD_DAYS, RELET_SHARE, applyFirmCommand, lotRentable, lotState, rentBuildDays, rentPrice } from '@/sim/firm/commands';
 import { emptyStepOut, syncWallet } from '@/sim/firm/firm';
 import type { FirmState } from '@/sim/firm/types';
 import {
-  SWIPE_MIN_PX, basketLevel, cityLotStates, cityPinSpecs, expectationsLevel, freeLotRows, lotCardModel, neighbourLot, swipeDirection, theftLevel,
-  validLot, type LotRow,
+  FIRST_HOUR, LAST_HOUR, SWIPE_MIN_PX, basketLevel, cityLotStates, cityPinSpecs, expectationsLevel, freeLotRows, lotCardModel, lotHours, neighbourLot, swipeDirection,
+  theftLevel, validLot, type LotRow,
 } from './cityModel';
 
-// licznik wywołań `lotEstimate` (ta sama funkcja co zawsze, tylko policzona): przypina pamięć podręczną widełek
+// licznik wywołań `lotEstimate` (ta sama funkcja co zawsze, tylko policzona): przypina pamięć podręczną widełek; `siteFor` też przez `vi.fn`,
+// żeby test krzywej dnia mógł podstawić profil lokalu
 vi.mock('@/sim/city/traffic', async (original) => {
   const real = await original<typeof import('@/sim/city/traffic')>();
-  return { ...real, lotEstimate: vi.fn(real.lotEstimate) };
+  return { ...real, lotEstimate: vi.fn(real.lotEstimate), siteFor: vi.fn(real.siteFor) };
 });
 
 /*
@@ -80,6 +82,200 @@ describe('freeLotRows: lista wolnych lokali', () => {
     expect(lotEstimate).toHaveBeenCalledTimes(2 * free);
     // widełki z modelu to widełki z symulacji (cache nie zmienia liczb)
     expect(b.map((r) => [r.lo, r.hi])).toEqual(b.map((r) => { const e = lotEstimate(SEED, f.city, r.lotId); return [e.lo, e.hi]; }));
+  });
+});
+
+describe('freeLotRows: lokal „po Traszce” (4a.2)', () => {
+  it('lokal po zamkniętym sklepie jest na liście z ceną rentPrice (30% pakietu co 100 zł), a lista to dokładnie lokale, które przyjmują wynajem', () => {
+    const f = reletFirm();
+    const id = f.city.startLotId;
+    expect(lotState(f, id)).toBe('po-traszce');
+    const rows = freeLotRows(SEED, f);
+    const relet = rows.find((r) => r.lotId === id)!;
+    expect(relet).toBeDefined();
+    expect(relet.price).toBe(rentPrice(f, id));
+    expect(relet.price).toBe(Math.round(lotById(f.city, id).package * RELET_SHARE / 100) * 100);
+    expect(relet.price).toBeLessThan(lotById(f.city, id).package);
+    expect(relet.relet).toBe(true);
+    expect(rows.filter((r) => r.lotId !== id).every((r) => r.relet === undefined)).toBe(true);   // zwykły wolny lokal nie ma znacznika
+    expect(rows.map((r) => r.lotId)).toEqual(f.city.lots.filter((l) => lotRentable(f, l.id)).map((l) => l.id));
+    // widełki lokalu „po Traszce” liczy symulacja z układu i wyposażenia zamkniętego sklepu, a nie z układu poziomu 0 wolnego lokalu
+    const closed = f.stores[0]!;
+    const { remontLevel, equipment, upgrades } = closed.econ;
+    const est = lotEstimate(SEED, f.city, id, { layout: closed.layout, fittings: { upgrades, equipment, remontLevel } });
+    expect([relet.lo, relet.hi]).toEqual([est.lo, est.hi]);
+    expect(relet.hi).toBeGreaterThan(lotEstimate(SEED, f.city, id).hi);
+  });
+
+  it('metraż lokalu „po Traszce” to sala zamkniętego sklepu po remoncie (jego układ), a nie sala lokalu z poziomu 0; karta niesie ten sam wiersz', () => {
+    const f = reletFirm(SEED, 1);
+    const id = f.city.startLotId;
+    const closed = f.stores.find((s) => s.lotId === id)!;
+    expect(closed.econ.remontLevel).toBe(1);
+    const grown = closed.layout.lot;
+    const level0 = lotById(f.city, id).spec;
+    expect(grown.interiorWidth * grown.salesDepth, 'remont naprawdę powiększył salę').toBeGreaterThan(level0.interiorWidth * level0.salesDepth);
+    const relet = freeLotRows(SEED, f).find((r) => r.lotId === id)!;
+    expect(relet.relet).toBe(true);
+    expect(relet.area).toBe(Math.round(grown.interiorWidth * grown.salesDepth * CELL_SIZE_M * CELL_SIZE_M));
+    expect(lotCardModel(SEED, f, id, 'raty').row.area).toBe(relet.area);
+    expect(relet.kind).toBe(grown.kind);
+    expect(relet.corner).toBe(grown.corner);
+  });
+
+  it('lokal startowy „po Traszce” nie ma numeru kartki (numer miała tylko kartka „DO WYNAJĘCIA” z generatora), a numery pozostałych zostają', () => {
+    const f = reletFirm();
+    const rows = freeLotRows(SEED, f);
+    expect(rows.find((r) => r.lotId === f.city.startLotId)!.no).toBe(0);
+    const numbered = rows.filter((r) => r.lotId !== f.city.startLotId);
+    const generated = f.city.lots.filter((l) => l.state === 'wolny').map((l) => l.id);   // kolejność kartek z generatora
+    expect(numbered.length).toBeGreaterThanOrEqual(3);
+    expect(numbered.map((r) => r.no)).toEqual(numbered.map((r) => generated.indexOf(r.lotId) + 1));
+    expect(numbered.every((r) => r.no > 0)).toBe(true);
+  });
+
+  it('lokal, który wziąłeś znów (budowa), znika z listy', () => {
+    const f = reletFirm();
+    const id = f.city.startLotId;
+    expect(applyFirmCommand(f, { type: 'rentLot', lotId: id, pay: 'gotowka' }, emptyStepOut())).toEqual({ ok: true });
+    expect(lotState(f, id)).toBe('budowa');
+    expect(freeLotRows(SEED, f).some((r) => r.lotId === id)).toBe(false);
+  });
+});
+
+describe('lokal „po Traszce”: widełki z układu i wyposażenia zamkniętego sklepu, nie z lokalu wolnego (4a.2)', () => {
+  /** Zamknięty, wyposażony sklep `id` (`remonts` remontów) i prawdziwy ponowny wynajem: widełki z karty przed wynajmem i ekonomia po otwarciu. */
+  function measure(seed: string, id: 1 | 2, remonts: number) {
+    const s = partnerSession(seed);
+    openSecond(s, 'raty');
+    const f = closeStoreFitted(s, id, remonts);
+    const lotId = f.stores.find((st) => st.id === id)!.lotId;
+    const card = lotCardModel(seed, f, lotId, 'gotowka');
+    const free = lotEstimate(seed, f.city, lotId);   // to, co karta pokazywałaby z układu poziomu 0 bez wyposażenia
+    const st = reopenLot(s, lotId);
+    return { f, lotId, card, free, real: expectedDailyCustomers(st.econ, st.info), st };
+  }
+
+  it.each([
+    ['kiełbasa-42', 1, 1], ['a', 2, 1], ['b', 2, 3], ['c', 1, 3], ['d', 2, 2],
+  ] as const)('seed %s, sklep #%i po %i remoncie(ach): prawdziwa liczba klientów otwartego znów sklepu mieści się w widełkach karty, a poziom 0 jej nie obejmuje', (seed, id, remonts) => {
+    const { card, free, real, st, f, lotId } = measure(seed, id, remonts);
+    expect(st.layout.lot.interiorWidth, 'układ naprawdę urósł').toBeGreaterThan(lotById(f.city, lotId).spec.interiorWidth);
+    expect(card.row.lo, `${card.row.lo}–${card.row.hi}, prawdziwa ${real}`).toBeLessThanOrEqual(real);
+    expect(card.row.hi).toBeGreaterThanOrEqual(real);
+    expect(free.hi, 'wolny lokal bez wyposażenia ma widełki wyraźnie za niskie').toBeLessThan(real);
+    // profil godzinowy idzie za widełkami: suma doby to ich środek, więc też mieści się w granicach prawdziwej liczby
+    const total = card.hours.weekday.reduce((n, v) => n + v, 0);
+    expect(total).toBeCloseTo((card.row.lo + card.row.hi) / 2, 6);
+    expect(total).toBeGreaterThan(free.hi);
+  });
+
+  it('widełki „po Traszce” nie biorą wpisu z czasów, gdy lokal był wolny (pamięć podręczna miasta nie zna zamkniętego sklepu)', () => {
+    const s = partnerSession(SEED);
+    const f = firmOf(s);
+    const before = freeLotRows(SEED, f);   // wypełnia pamięć widełek miasta dla wszystkich wolnych lokali
+    openSecond(s, 'raty');
+    closeStoreFitted(s, 2, 1);
+    const lotId = f.stores[1]!.lotId;
+    const was = before.find((r) => r.lotId === lotId)!;
+    expect(was).toBeDefined();
+    const now = freeLotRows(SEED, f).find((r) => r.lotId === lotId)!;
+    expect(now.relet).toBe(true);
+    expect(now.hi).toBeGreaterThan(was.hi);
+    expect(lotCardModel(SEED, f, lotId, 'raty').row).toEqual(now);
+  });
+
+  it('widełki „po Traszce” liczą się raz na układ i wyposażenie: lista i karta nie wołają lotEstimate drugi raz, a zmiana wyposażenia liczy od nowa', () => {
+    const f = reletFirm();
+    const id = f.city.startLotId;
+    const a = freeLotRows(SEED, f).find((r) => r.lotId === id)!;
+    vi.mocked(lotEstimate).mockClear();
+    const b = freeLotRows(SEED, f).find((r) => r.lotId === id)!;
+    lotCardModel(SEED, f, id, 'raty');
+    lotHours(SEED, f, id);
+    expect(lotEstimate).not.toHaveBeenCalled();
+    expect(b).toEqual(a);
+    // sklep, który zamknął się znów z inną zawartością (tu: pięć poziomów ulotek zamiast trzech), ma inne widełki
+    const closed = f.stores[0]!;
+    closed.econ.upgrades = { ...closed.econ.upgrades, ulotki: 5 };
+    const c = freeLotRows(SEED, f).find((r) => r.lotId === id)!;
+    expect(lotEstimate).toHaveBeenCalledTimes(1);
+    expect(c.hi).toBeGreaterThan(a.hi);
+  });
+});
+
+describe('lotHours: profil godzinowy karty lokalu (§8.1, 4a.2)', () => {
+  const f = partnerFirm();
+  const rows = freeLotRows(SEED, f);
+  const total = (a: readonly number[]): number => a.reduce((n, v) => n + v, 0);
+  const hoursOf = (district: StoreDistrict): ReturnType<typeof lotHours> => lotHours(SEED, f, rowOf(rows, district).lotId);
+
+  it('17 godzin (6–22), a suma doby to środek widełek z karty (±1%) w każdym wolnym lokalu', () => {
+    expect(rows.length).toBeGreaterThanOrEqual(5);
+    for (const r of rows) {
+      const { weekday } = lotHours(SEED, f, r.lotId);
+      expect(weekday, `lokal ${r.no}`).toHaveLength((OPEN_TO - OPEN_FROM) / 60);
+      expect(weekday.every((v) => v > 0), `lokal ${r.no}`).toBe(true);
+      const mid = (r.lo + r.hi) / 2;
+      expect(Math.abs(total(weekday) - mid) / mid, `lokal ${r.no}`).toBeLessThan(0.01);
+    }
+  });
+
+  it('weekend jest tylko tam, gdzie dzielnica ma ruch weekendowy (Biurowce): ten sam kształt razy weekendTraffic / traffic', () => {
+    const d = DISTRICTS.biurowce;
+    const { weekday, weekend } = hoursOf('biurowce');
+    expect(weekend).not.toBeNull();
+    expect(weekend).toHaveLength(17);
+    weekend!.forEach((v, i) => expect(v).toBeCloseTo(weekday[i]! * d.weekendTraffic! / d.traffic, 9));
+    expect(total(weekend!)).toBeLessThan(total(weekday));
+    for (const district of ['osiedle', 'srodmiescie', 'dworzec'] as const) expect(hoursOf(district).weekend, district).toBeNull();
+  });
+
+  it('Biurowce: wieczór (od 19:00) to mniej niż 5% doby, a rano (godzina 8) tłoczniej niż o 14', () => {
+    const { weekday } = hoursOf('biurowce');
+    expect(total(weekday.slice(19 - 6)) / total(weekday)).toBeLessThan(0.05);
+    expect(weekday[8 - 6]!).toBeGreaterThan(weekday[14 - 6]!);
+  });
+
+  it('Dworzec jest płaski, a Osiedle ma kształt HOUR_CURVE', () => {
+    const flat = hoursOf('dworzec').weekday;
+    for (const v of flat) expect(v).toBeCloseTo(flat[0]!, 9);
+    const { weekday } = hoursOf('osiedle');
+    const curve = Array.from({ length: 17 }, (_, i) => HOUR_CURVE[6 + i]!);
+    weekday.forEach((v, i) => expect(v / total(weekday)).toBeCloseTo(curve[i]! / total(curve), 9));
+  });
+
+  it('krzywa dnia idzie za SiteMods lokalu (`siteFor`), jak w symulacji: profil z lokalu wygrywa z nazwą dzielnicy, a brak profilu to HOUR_CURVE', async () => {
+    const real = await vi.importActual<typeof import('@/sim/city/traffic')>('@/sim/city/traffic');
+    const lotId = rowOf(rows, 'biurowce').lotId;
+    const shapeOf = (curve: Readonly<Record<number, number>>): number[] => Array.from({ length: (OPEN_TO - OPEN_FROM) / 60 }, (_, i) => curve[OPEN_FROM / 60 + i]!);
+    const share = (a: readonly number[]): number[] => a.map((v) => v / total(a));
+    const custom = Array.from({ length: 24 }, (_, h) => (h === 10 ? 9 : 1));
+    try {
+      vi.mocked(siteFor).mockImplementation((city, id, flags) => ({ ...real.siteFor(city, id, flags), hours: custom }));
+      share(lotHours(SEED, f, lotId).weekday).forEach((v, i) => expect(v).toBeCloseTo(share(shapeOf(custom))[i]!, 9));
+      vi.mocked(siteFor).mockImplementation((city, id, flags) => ({ ...real.siteFor(city, id, flags), hours: null }));
+      share(lotHours(SEED, f, lotId).weekday).forEach((v, i) => expect(v).toBeCloseTo(share(shapeOf(HOUR_CURVE))[i]!, 9));
+    } finally {
+      vi.mocked(siteFor).mockImplementation(real.siteFor);
+    }
+    // bez podmiany: Biurowce mają swój profil z `DISTRICTS`, czyli inny niż HOUR_CURVE
+    const own = share(lotHours(SEED, f, lotId).weekday);
+    expect(own.some((v, i) => Math.abs(v - share(shapeOf(HOUR_CURVE))[i]!) > 0.01)).toBe(true);
+  });
+
+  it('liczba godzin to godziny otwarcia z katalogu (OPEN_FROM–OPEN_TO), a nie liczba na sztywno', () => {
+    const { weekday, weekend } = lotHours(SEED, f, rowOf(rows, 'biurowce').lotId);
+    expect(weekday).toHaveLength((OPEN_TO - OPEN_FROM) / 60);
+    expect(weekend).toHaveLength((OPEN_TO - OPEN_FROM) / 60);
+    expect(FIRST_HOUR).toBe(OPEN_FROM / 60);
+    expect(LAST_HOUR).toBe(OPEN_TO / 60 - 1);
+  });
+
+  it('godziny liczą się z widełek raz na miasto: żadnego nowego wywołania lotEstimate', () => {
+    vi.mocked(lotEstimate).mockClear();
+    for (const r of rows) lotHours(SEED, f, r.lotId);
+    expect(lotEstimate).not.toHaveBeenCalled();   // widełki tego miasta już policzyła lista (pamięć podręczna)
   });
 });
 
@@ -168,9 +364,11 @@ describe('lotCardModel: karta lokalu', () => {
     expect(lotCardModel(SEED, poor, lotId, 'raty').action).toEqual({ enabled: true });   // raty nie ruszają gotówki
 
     const full = partnerFirm();
-    const [first, second] = freeLotRows(SEED, full);
+    const [first, second, third] = freeLotRows(SEED, full);
     expect(applyFirmCommand(full, { type: 'rentLot', lotId: first!.lotId, pay: 'raty' }, emptyStepOut())).toEqual({ ok: true });
-    expect(lotCardModel(SEED, full, second!.lotId, 'raty').action).toEqual({ enabled: false, reason: 'limit' });   // budowa liczy się do limitu
+    expect(lotCardModel(SEED, full, second!.lotId, 'raty').action).toEqual({ enabled: true });   // sklep i budowa to jeszcze nie komplet trzech
+    expect(applyFirmCommand(full, { type: 'rentLot', lotId: second!.lotId, pay: 'raty' }, emptyStepOut())).toEqual({ ok: true });
+    expect(lotCardModel(SEED, full, third!.lotId, 'raty').action).toEqual({ enabled: false, reason: 'limit' });   // budowy liczą się do limitu
   });
 
   it('rata ponad limit nowego sklepu: powód „raty”', () => {
@@ -178,6 +376,43 @@ describe('lotCardModel: karta lokalu', () => {
     const row = freeLotRows(SEED, f)[0]!;
     lotById(f.city, row.lotId).package = 150_000;   // 150 tys. zł w 12 ratach z opłatą 15% to ok. 14,4 tys. zł miesięcznie
     expect(lotCardModel(SEED, f, row.lotId, 'raty').action).toEqual({ enabled: false, reason: 'raty' });
+  });
+});
+
+describe('lotCardModel: profil godzinowy i lokal „po Traszce” (4a.2)', () => {
+  it('karta wolnego lokalu niesie godziny tego lokalu, a bloku wyposażenia nie ma', () => {
+    const f = partnerFirm();
+    for (const row of freeLotRows(SEED, f)) {
+      const card = lotCardModel(SEED, f, row.lotId, 'raty');
+      expect(card.hours).toEqual(lotHours(SEED, f, row.lotId));
+      expect(card.relet).toBeNull();
+    }
+  });
+
+  it('lokal „po Traszce”: cena i dni budowy z reguł wynajmu, raty z planFor ceny (6 rat, nie 12), wyposażenie z zamkniętego sklepu', () => {
+    const f = reletFirm();
+    const id = f.city.startLotId;
+    const lot = lotById(f.city, id);
+    const card = lotCardModel(SEED, f, id, 'raty');
+    expect(card.price).toBe(rentPrice(f, id));
+    expect(card.price).not.toBe(lot.package);
+    expect(card.plan).toEqual(planFor(card.price));
+    expect(card.plan.months).toBe(6);
+    expect(card.buildDays).toBe(rentBuildDays(f, id));
+    expect(card.buildDays).toBe(RELET_BUILD_DAYS);
+    expect(card.relet).toEqual(FITTINGS_LEFT);
+    expect(card.row.price).toBe(card.price);
+    expect(card.action).toEqual({ enabled: true });
+  });
+
+  it('lokal „po Traszce” i gotówka: powód odmowy liczy się od ceny po rabacie', () => {
+    const f = reletFirm();
+    const id = f.city.startLotId;
+    const price = rentPrice(f, id);
+    f.person.wallet = price;   // po zapłacie dokładnie zero: wystarcza tylko przy cenie ze zniżką
+    expect(lotCardModel(SEED, f, id, 'gotowka').action).toEqual({ enabled: true });
+    f.person.wallet = price - 100;
+    expect(lotCardModel(SEED, f, id, 'gotowka').action).toEqual({ enabled: false, reason: 'gotowka' });
   });
 });
 
@@ -226,7 +461,7 @@ describe('stany lokali i pinezki dla sceny miasta', () => {
     expect(cityPinSpecs(SEED, f, chosen.lotId).find((p) => p.lotId === chosen.lotId)!.label).toBe(`${chosen.no} · ul. ${chosen.street} ${chosen.number}`);
   });
 
-  it('własny sklep jest zielony z numerem, konkurencja ma markę, lokal obok kartkę, a zwykły zajęty nie ma pinezki', () => {
+  it('własny sklep jest zielony z numerem, konkurencja ma markę, lokal obok ma rodzaj obok, a zwykły zajęty nie ma pinezki', () => {
     const f = partnerFirm();
     const pins = cityPinSpecs(SEED, f, null);
     expect(pins.find((p) => p.lotId === f.city.startLotId)).toEqual({ lotId: f.city.startLotId, kind: 'twoj', label: 'Traszka #1' });
@@ -234,7 +469,8 @@ describe('stany lokali i pinezki dla sceny miasta', () => {
       expect(pins.find((p) => p.lotId === l.id)).toEqual({ lotId: l.id, kind: l.brand, label: l.brand === 'kawka' ? 'Kawka Express' : 'Szop 24h' });
     }
     const next = f.city.neighbourLotId;
-    if (next !== null) expect(pins.find((p) => p.lotId === next)).toMatchObject({ kind: 'wolny', label: 'lokal obok' });
+    expect(next).not.toBeNull();
+    expect(pins.find((p) => p.lotId === next)).toMatchObject({ kind: 'obok', label: 'lokal obok' });
     const plain = f.city.lots.find((l) => lotState(f, l.id) === 'zajety')!;
     expect(pins.some((p) => p.lotId === plain.id)).toBe(false);
     // pinezki są dokładnie tam, gdzie scena ma kotwice: każdy lokal poza zwykłym zajętym

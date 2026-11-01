@@ -1,11 +1,14 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { lang } from '@/i18n';
 import { glossaryEn } from '@/i18n/en/glossary';
+import { DISTRICTS } from '@/sim/city/districts';
 import { GUARANTEE, OWN_COSTS } from '@/sim/economy/catalog';
+import { planFor } from '@/sim/economy/franchisee';
 import { WUT } from '@/sim/economy/tycoon/wut';
-import { PARTNER_MONTHS, PARTNER_TRUST } from '@/sim/firm/commands';
+import { TRUST } from '@/sim/economy/tycoon/trust';
+import { PARTNER_MONTHS, PARTNER_TRUST, RELET_BUILD_DAYS, RELET_SHARE } from '@/sim/firm/commands';
 import { zl } from '../game/format';
-import { openingPlan } from '../tutorial/city';
+import { openingPlan, reletPlan } from '../tutorial/city';
 import { glossary } from './glossary';
 import { percent } from './howToText';
 
@@ -15,7 +18,7 @@ describe('słowniczek', () => {
   it('ma dokładnie hasła właściciela, w tej kolejności', () => {
     expect(glossary().map((e) => e.term)).toEqual([
       'Saldo u Centrali', 'Przelew', 'Wyciąg', 'Raty', 'Remanent', 'Ubytki', '„Zostaje Ci”', 'ZUS', 'Księgowa',
-      'Partner Strategiczny', 'Pakiet otwarcia', 'Zastępca', 'Dzielnica', 'Rozliczenie końcowe',
+      'Partner Strategiczny', 'Pakiet otwarcia', 'Lokal po Traszce', 'Zastępca', 'Dzielnica', 'Rozliczenie końcowe',
     ]);
   });
 
@@ -38,6 +41,33 @@ describe('słowniczek', () => {
     expect(text).toContain(`Nowy sklep nie ma gwarancji ${zl(GUARANTEE.income)}`);
   });
 
+  it('Pakiet otwarcia mówi o obu planach rat: nowy lokal w 12, lokal po Traszce zwykle w 6 (z planu ceny po zniżce)', () => {
+    const plan = reletPlan();
+    expect(plan.months).toBe(6);
+    expect(plan).toEqual(planFor(Math.round(Math.min(...Object.values(DISTRICTS).map((d) => d.package[0])) * RELET_SHARE / 100) * 100));
+    const text = entry('Pakiet otwarcia');
+    expect(text).toContain(`w ${openingPlan().months} ratach`);
+    expect(text).toContain(`zwykle ${plan.months} (opłata ${percent(plan.feeShare)})`);
+  });
+
+  it('Lokal po Traszce: ułamek pakietu, dni budowy i zaufanie ze stałych gry, wyposażenie zostaje, poziom i zaufanie od nowa', () => {
+    const text = entry('Lokal po Traszce');
+    expect(text).toContain(`${percent(RELET_SHARE)} ceny`);
+    expect(text).toContain(`${RELET_BUILD_DAYS} dni`);
+    expect(text).toContain('remont, sprzęt i ulepszenia');
+    expect(text).toContain('Poziom i zaufanie Centrali zaczynasz od nowa');
+    expect(text).toContain(`zaufanie ${TRUST.start}`);
+    expect(text).toContain(`nigdy nie ma gwarancji ${zl(GUARANTEE.income)}`);
+  });
+
+  it('Dzielnica: rytm dnia (Biurowce, Śródmieście, Dworzec) i trudni klienci obok ruchu, koszyka i ceny pakietu', () => {
+    const text = entry('Dzielnica');
+    expect(text).toContain('rytm dnia');
+    expect(text).toContain('a nie ilu ich jest');
+    expect(text).toContain('Trudni klienci');
+    expect(text).toContain('koszyk klienta');
+  });
+
   it('Zastępca, Dzielnica i Rozliczenie końcowe: pojęcia z ekranów Miasta i sklepu w tle', () => {
     expect(entry('Zastępca')).toContain('odpowiedź zaznaczoną z góry');
     for (const d of ['Osiedle', 'Śródmieście', 'Dworzec', 'Biurowce']) expect(entry('Dzielnica'), d).toContain(d);
@@ -48,12 +78,19 @@ describe('słowniczek', () => {
   it('po angielsku: te same hasła, w tej samej kolejności, w ustalonych terminach', () => {
     lang.value = 'en';
     expect(glossaryEn().length).toBe(glossary().length);
-    expect(glossaryEn().slice(-5).map((e) => e.term)).toEqual(['Strategic Partner', 'Opening package', 'Deputy', 'District', 'Final settlement']);
+    expect(glossaryEn().slice(-6).map((e) => e.term)).toEqual(['Strategic Partner', 'Opening package', 'Ex-Traszka unit', 'Deputy', 'District', 'Final settlement']);
     const en = (term: string): string => glossaryEn().find((e) => e.term === term)!.text;
     expect(en('Strategic Partner')).toContain(`${PARTNER_MONTHS} months in a row`);
     expect(en('Strategic Partner')).toContain(`at least ${PARTNER_TRUST}`);
     expect(en('Opening package')).toContain('12 instalments with a fee of 15%');
     expect(en('Opening package')).toContain('25,000 zł');
+    expect(en('Opening package')).toContain(`usually takes ${reletPlan().months} instalments (fee ${percent(reletPlan().feeShare)})`);
+    expect(en('Ex-Traszka unit')).toContain(`${percent(RELET_SHARE)} of the price`);
+    expect(en('Ex-Traszka unit')).toContain(`${RELET_BUILD_DAYS} days`);
+    expect(en('Ex-Traszka unit')).toContain('refit, equipment and upgrades');
+    expect(en('Ex-Traszka unit')).toContain(`trust ${TRUST.start}`);
+    expect(en('District')).toContain('daily rhythm');
+    expect(en('District')).toContain('Difficult customers');
   });
 
   it('ZUS zostaje skrótem, z rozwinięciem i kwotą ze stałej', () => {

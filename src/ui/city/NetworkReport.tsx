@@ -20,6 +20,12 @@ const row = (label: string, value: string, total = false) => (
   <div class={total ? 'tt-row total' : 'tt-row'}><span>{label}</span><span>{value}</span></div>
 );
 
+/** „zaufanie {n}” sklepu z bieżącego stanu firmy (zaokrąglone jak znaczek 🤝), pod jego wierszem „Zostaje Ci”; bez sklepu w firmie wiersza nie ma. */
+const trustLine = (f: FirmState | null, id: number) => {
+  const st = f?.stores.find((x) => x.id === id);
+  return st ? [row(t`zaufanie ${Math.round(st.econ.tycoon.trust.value)}`, '')] : [];
+};
+
 /**
  * Podsumowanie sieci: „Zostaje Ci” każdego sklepu i razem, pakiety otwarcia za gotówkę i rozliczenie końcowe zamkniętej placówki (gdy były:
  * gotówka po zamknięciu już je zawiera, więc liczby się zgadzają), gotówka po zamknięciu z tonem z progów debetu i wynik każdego sklepu. `tip`: czy blok ma być celem dymka „pierwszy raz” (podgląd końca miesiąca nim nie jest). Zwykła funkcja
@@ -29,7 +35,7 @@ export function NetworkSummaryView({ summary, f, tip = true }: { summary: Networ
   return (
     <section class="tt-netsum" data-tut={tip ? 'network-summary' : undefined} aria-label={t`Podsumowanie sieci`}>
       <h3>{t`Zostaje Ci`}</h3>
-      {summary.stores.map((s) => row(nameOf(f, s.id), signedZl(s.net)))}
+      {summary.stores.flatMap((s) => [row(nameOf(f, s.id), signedZl(s.net)), ...trustLine(f, s.id)])}
       {row(t`Razem`, signedZl(summary.total), true)}
       {summary.invest > 0 && row(t`Pakiety otwarcia za gotówkę`, minusZl(summary.invest))}
       {summary.settlement > 0 && row(t`Rozliczenie końcowe zamkniętej placówki`, minusZl(summary.settlement))}

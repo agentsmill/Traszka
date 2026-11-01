@@ -1,9 +1,10 @@
 import { GUARANTEE, INSTALLMENTS, OWN_COSTS, REMANENT } from '@/sim/economy/catalog';
-import { PARTNER_MONTHS, PARTNER_TRUST } from '@/sim/firm/commands';
+import { TRUST } from '@/sim/economy/tycoon/trust';
+import { PARTNER_MONTHS, PARTNER_TRUST, RELET_BUILD_DAYS, RELET_SHARE } from '@/sim/firm/commands';
 import { zl } from '@/ui/game/format';
 import type { GlossaryEntry } from '@/ui/howto/glossary';
 import { hourOf } from '@/ui/howto/howToText';
-import { openingPlan } from '@/ui/tutorial/city';
+import { openingPlan, reletPlan } from '@/ui/tutorial/city';
 import { enNum, enPlural } from '../num';
 
 /*
@@ -20,6 +21,7 @@ const either = (items: string[]): string => (items.length < 2 ? items.join('') :
 export function glossaryEn(): GlossaryEntry[] {
   const plans = INSTALLMENTS.plans;
   const opening = openingPlan();
+  const relet = reletPlan();
   return [
     {
       term: 'Head Office balance',
@@ -69,7 +71,14 @@ export function glossaryEn(): GlossaryEntry[] {
     {
       term: 'Opening package',
       text: `The price of fitting out a new unit, instead of rent. You pay at once from your cash (at least 0 zł must be left afterwards) or in ${opening.months} instalments `
-        + `with a fee of ${percent(opening.feeShare)} from the new shop’s transfers. The new shop gets no ${zl(GUARANTEE.income)} guarantee: it earns its own way.`,
+        + `with a fee of ${percent(opening.feeShare)} from the new shop’s transfers. An ex-Traszka unit has a cheaper package, so it usually takes ${relet.months} `
+        + `instalments (fee ${percent(relet.feeShare)}). The new shop gets no ${zl(GUARANTEE.income)} guarantee: it earns its own way.`,
+    },
+    {
+      term: 'Ex-Traszka unit',
+      text: `A unit left behind by a closed shop. The package costs ${percent(RELET_SHARE)} of the price and the build takes ${RELET_BUILD_DAYS} ${enPlural(RELET_BUILD_DAYS, 'day', 'days')}, `
+        + 'because the fit-out is still there. The fittings stay: refit, equipment and upgrades. Level and Head Office trust start from scratch '
+        + `(trust ${TRUST.start}). Such a shop never gets the ${zl(GUARANTEE.income)} guarantee.`,
     },
     {
       term: 'Deputy',
@@ -79,7 +88,9 @@ export function glossaryEn(): GlossaryEntry[] {
     {
       term: 'District',
       text: 'The part of town a unit is in: Estate, Town centre, Station or Office blocks. It sets footfall, the customers’ basket and expectations, theft '
-        + 'and the price of the opening package. The “Districts” layer colours the map.',
+        + 'and the price of the opening package. A district also has a daily rhythm: Office blocks are packed in the morning and at lunch and empty in the evening, '
+        + 'the Town centre is busiest in the evening, and the Station is steady all day. The rhythm changes when customers come, not how many. '
+        + 'Difficult customers (disputes at the till, age checks) turn up most at the Station. The “Districts” layer colours the map.',
     },
     {
       term: 'Final settlement',

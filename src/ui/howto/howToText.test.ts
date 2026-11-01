@@ -121,13 +121,14 @@ describe('treść okna „Jak grać”', () => {
     expect(n).toBeLessThanOrEqual(490);
   });
 
-  it('całe okno ze słowniczkiem (punkty, szczegóły i hasła) ma najwyżej ok. 900 słów', () => {
+  it('całe okno ze słowniczkiem (punkty, szczegóły i hasła) ma najwyżej ok. 1000 słów', () => {
     // Pierwszy limit liczy tylko punkty i szczegóły (484 słowa), a słowniczek, zwinięty i dlatego bez wpływu na pierwszy ekran, ma osobny rachunek:
     // 227 słów w dziewięciu hasłach z SIM 6, a pięć haseł miasta z 4a (Partner Strategiczny, Pakiet otwarcia, Zastępca, Dzielnica, Rozliczenie
-    // końcowe) dokłada 183, razem 410. Zmierzone: 484 + 410 = 894. Kto dopisuje treść do szczegółów (miasto w „Jak grać”), podnosi oba limity.
+    // końcowe) dokłada 183, razem 410. 4a.2 dokłada 102: hasło „Lokal po Traszce” (44), plan rat lokalu po Traszce w „Pakiecie otwarcia” i rytm
+    // dnia z trudnymi klientami w „Dzielnicy”. Zmierzone: 484 + 512 = 996. Kto dopisuje treść do szczegółów (miasto w „Jak grać”), podnosi oba limity.
     const glossaryWords = words(glossary().flatMap((e) => [e.term, e.text]).join('\n'));
     expect(glossaryWords).toBeGreaterThanOrEqual(300);
-    expect(words(text()) + glossaryWords).toBeLessThanOrEqual(900);
+    expect(words(text()) + glossaryWords).toBeLessThanOrEqual(1000);
   });
 
   it('żadnych śladów po szablonie, wykrzykników ani sklejonych spacji; każdy punkt i akapit kończy się kropką', () => {

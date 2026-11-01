@@ -3,19 +3,21 @@ import { t } from '@/i18n';
 import { DISTRICT_COLOR } from '@/render/city/buildCity';
 import { RIVAL_RADIUS_M } from '@/sim/city/traffic';
 import type { CityLot } from '@/sim/city/types';
-import { lotState } from '@/sim/firm/commands';
+import { RELET_SHARE, lotRentable, lotState } from '@/sim/firm/commands';
 import type { FirmState } from '@/sim/firm/types';
 import { lotPay, pushToast, selectedLot, tab, type GameActions } from '../state';
 import { percentOf, plural, zl } from '../game/format';
+import { HourChart } from './HourChart';
 import { freeLotRows, lotCardModel, neighbourLot, swipeDirection, type LotRow } from './cityModel';
 import { brandName, districtName, levelText, lotKindName, lotStateName, refusalText, sourceText } from './cityText';
 import { addressText } from './firmText';
 
 /*
- * Karta lokalu (spec §9.3): widełki klientów, kto przychodzi, koszyk, oczekiwania i kradzieże słowami, konkurencja obok, czas budowy
- * i pakiet otwarcia (za gotówkę albo na raty) z przyciskiem „Biorę lokal”, który mówi tekstem Centrali, dlaczego nie działa. Lokal
- * obok sklepu prowadzi do Ulepszeń (zajmuje go remont), reszta lokali ma kartę informacyjną. Liczby z `cityModel.ts`, teksty z
- * `cityText.ts`. Bez haków: przesunięcie palcem po karcie trzyma pamięć na poziomie modułu (jedna karta naraz).
+ * Karta lokalu (spec §9.3): widełki klientów z profilem godzinowym, kto przychodzi, koszyk, oczekiwania i kradzieże słowami, konkurencja
+ * obok, czas budowy i pakiet otwarcia (za gotówkę albo na raty) z przyciskiem „Biorę lokal”, który mówi tekstem Centrali, dlaczego nie
+ * działa. Tę kartę ma każdy lokal, który przyjmuje wynajem (`lotRentable`): wolny albo „po Traszce” (4a.2; z blokiem wyposażenia, które
+ * zostało, i podpisem zniżki pakietu). Lokal obok sklepu prowadzi do Ulepszeń (zajmuje go remont), reszta lokali ma kartę informacyjną.
+ * Liczby z `cityModel.ts`, teksty z `cityText.ts`. Bez haków: przesunięcie palcem po karcie trzyma pamięć na poziomie modułu (jedna karta naraz).
  */
 
 const row = (label: string, value: ComponentChildren) => <div class="tt-row"><span>{label}</span><span>{value}</span></div>;
@@ -50,7 +52,7 @@ function head(lot: CityLot, no: number, nav: { rows: readonly LotRow[]; lotId: n
   );
 }
 
-/** Karta wolnego lokalu: wszystko, co trzeba wiedzieć przed wynajmem, i przycisk „Biorę lokal”. */
+/** Karta lokalu do wynajęcia (wolnego albo „po Traszce”): wszystko, co trzeba wiedzieć przed wynajmem, i przycisk „Biorę lokal”. */
 function rentCard(f: FirmState, lot: CityLot, game: GameActions) {
   const lotId = lot.id;
   const pay = lotPay.value;
@@ -74,7 +76,11 @@ function rentCard(f: FirmState, lot: CityLot, game: GameActions) {
   return (
     <article class="tt-lotcard" onPointerDown={down} onPointerUp={up} onPointerCancel={() => { swipeFrom = null; }}>
       {head(lot, model.row.no, { rows, lotId })}
+      {model.relet && (
+        <p class="tt-relet">{t`Wyposażenie zostało: remont ${model.relet.remontLevel}, sprzęt ${model.relet.equipment} szt., ulepszenia ${model.relet.upgrades}`}</p>
+      )}
       {row(t`Klienci dziennie`, <><b>{`${model.row.lo}–${model.row.hi}`}</b> <span class="tt-muted">{t`(szacunek)`}</span></>)}
+      <HourChart hours={model.hours} />
       {row(t`Kto przychodzi`, model.who.map(sourceText).join(', '))}
       {row(t`Koszyk`, levelText(model.basket, true))}
       {row(t`Oczekiwania`, levelText(model.expectations))}
@@ -86,6 +92,7 @@ function rentCard(f: FirmState, lot: CityLot, game: GameActions) {
       {row(t`Budowa`, <>{model.buildDays} {plural(model.buildDays, 'dzień', 'dni', 'dni')}</>)}
       <div class="tt-lotprice" data-tut="lot-price">
         <h4>{t`Pakiet otwarcia`}</h4>
+        {model.relet && <p class="tt-hint tt-reletcap">{t`po Traszce: ${percentOf(RELET_SHARE)} ceny`}</p>}
         <div class="tt-seg wide tt-lotpay" role="group" aria-label={t`Sposób zapłaty`}>
           <button type="button" class={`tt-btn${pay === 'gotowka' ? ' on' : ''}`} aria-pressed={pay === 'gotowka'} onClick={() => { lotPay.value = 'gotowka'; }}>
             {t`za gotówkę ${zl(price)}`}
@@ -117,7 +124,7 @@ function nextDoorCard(lot: CityLot) {
   );
 }
 
-/** Pozostałe lokale (konkurencja, własne, w budowie, po Traszce): sam opis, bez zakupu. */
+/** Pozostałe lokale (konkurencja, własne, w budowie, „po Traszce” bez prawa do wynajmu): sam opis, bez zakupu. */
 function infoCard(f: FirmState, lot: CityLot) {
   const state = lotState(f, lot.id);
   return (
@@ -133,8 +140,7 @@ function infoCard(f: FirmState, lot: CityLot) {
 export function LotCard({ f, lotId, game }: { f: FirmState; lotId: number; game: GameActions; v: number }) {
   const lot = f.city.lots[lotId];
   if (!lot || lot.id !== lotId) return null;
-  const state = lotState(f, lotId);
-  if (state === 'wolny') return rentCard(f, lot, game);
-  if (state === 'obok') return nextDoorCard(lot);
+  if (lotRentable(f, lotId)) return rentCard(f, lot, game);   // jedna reguła wynajmu z firmą: wolny i „po Traszce”, nie sam stan lokalu
+  if (lotState(f, lotId) === 'obok') return nextDoorCard(lot);
   return infoCard(f, lot);
 }

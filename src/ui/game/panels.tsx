@@ -1,11 +1,11 @@
 import type { ComponentChildren } from 'preact';
 import {
-  CATS, CAT_INFO, HIRE_COST, HOUR_CURVE, ORDER_DEADLINE, REMANENT, RESTOCK_RATE, SCO_RATE, STAFF_MAX, TILL_RATE, UNLOAD_RATE, WAGE_PER_DAY,
+  CATS, CAT_INFO, HIRE_COST, ORDER_DEADLINE, REMANENT, RESTOCK_RATE, SCO_RATE, STAFF_MAX, TILL_RATE, UNLOAD_RATE, WAGE_PER_DAY,
 } from '@/sim/economy/catalog';
 import { dayOf, formatClock, minuteOfDay } from '@/sim/economy/calendar';
 import { dateText, kpiTitleText, rankText, t, tr } from '@/i18n';
 import {
-  DEBT_WARN, LOC_LABEL, aislePallets, assistantSuggestion, debtWarningText, effects, expectedDailyCustomers, freeSpots, isClosedForRemont, kpiMetricsOf, kpiScaleOf, level, nextRemont,
+  DEBT_WARN, LOC_LABEL, aislePallets, assistantSuggestion, customersPerHour, debtWarningText, effects, freeSpots, isClosedForRemont, kpiMetricsOf, kpiScaleOf, level, nextRemont, peakCustomersPerHour,
   robotFleet, slotFree, slotUsage, upgradeBlocker, workshopUnlocked, type EconomyState,
 } from '@/sim/economy/economy';
 import { forecastMonth, spendCheck } from '@/sim/economy/forecast';
@@ -130,8 +130,8 @@ export function StorePanel({ s, info, game }: { s: EconomyState; info: StoreInfo
   const fx = effects(s, info);
   const cap = capacityPerHour(s, info);
   const hour = Math.floor(minuteOfDay(s.minute) / 60);
-  const demand = expectedDailyCustomers(s, info) / 15.6 * (HOUR_CURVE[hour] ?? 0);
-  const peak = expectedDailyCustomers(s, info) / 15.6 * 1.3;
+  const demand = customersPerHour(s, info, hour);
+  const peak = peakCustomersPerHour(s, info);
   const backroom = CATS.reduce((n, c) => n + s.backroom[c], 0);
   const usage = slotUsage(s);
   const trust = s.tycoon.trust.value;

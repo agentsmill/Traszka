@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { QUALITY, type QualityPresetId } from '@/render/quality';
+import { districtSite, siteHours } from '@/sim/city/districts';
 import { HOUR_CURVE, MINUTES_PER_DAY, OPEN_FROM, OPEN_TO } from '@/sim/economy/catalog';
 import { expectedDailyCustomers, isOpenForCustomers, isStoreOpen } from '@/sim/economy/economy';
 import { openSecond, partnerSession } from '../../tests/firmKit';
@@ -119,6 +120,45 @@ describe('crowdRateFor: gęstość tłumu z ekonomii', () => {
     const before = JSON.stringify([s.econ, s.info]);
     crowdRateFor(s, 'niska');
     expect(JSON.stringify([s.econ, s.info])).toBe(before);
+  });
+});
+
+describe('trafficPerHour: krzywa godzin sklepu (profil dnia dzielnicy)', () => {
+  /** Ta sama gra o godzinie `hour`, ale sklep stoi w dzielnicy `id` (z profilem dnia albo bez niego). */
+  function inDistrict(id: 'biurowce' | 'dworzec', hour: number, profile: boolean): GameSession {
+    const s = atHour(hour);
+    const site = districtSite(id);
+    s.info = { ...s.info, site: profile ? site : { ...site, hours: null } };
+    return s;
+  }
+
+  it('sklep bez dzielnicy liczy jak dotąd: dzień / 15,6 · HOUR_CURVE', () => {
+    for (const hour of [6, 8, 12, 17, 20, 22]) {
+      const s = atHour(hour);
+      expect(trafficPerHour(s), `${hour}:00`).toBe(expectedDailyCustomers(s.econ, s.info) / 15.6 * HOUR_CURVE[hour]!);
+    }
+  });
+
+  it('Biurowce: o 8:00 gęściej i o 20:00 pusto wg profilu, a ten sam sklep bez profilu liczy z HOUR_CURVE', () => {
+    const h = siteHours('biurowce')!;
+    for (const hour of [8, 13, 20]) {
+      const s = inDistrict('biurowce', hour, true);
+      const perUnit = expectedDailyCustomers(s.econ, s.info) / 15.6;
+      expect(trafficPerHour(s), `${hour}:00`).toBeCloseTo(perUnit * h[hour]!, 12);
+      expect(trafficPerHour(inDistrict('biurowce', hour, false)), `${hour}:00 bez profilu`).toBe(perUnit * HOUR_CURVE[hour]!);
+    }
+    expect(trafficPerHour(inDistrict('biurowce', 8, true))).toBeGreaterThan(trafficPerHour(inDistrict('biurowce', 8, false)));
+    expect(trafficPerHour(inDistrict('biurowce', 20, true))).toBeLessThan(0.2 * trafficPerHour(inDistrict('biurowce', 20, false)));
+  });
+
+  it('Dworzec (płaski): o 17:00 poniżej godziny szczytu z HOUR_CURVE; napływ i tłum w scenie idą za profilem', () => {
+    expect(trafficPerHour(inDistrict('dworzec', 17, true))).toBeLessThan(trafficPerHour(inDistrict('dworzec', 17, false)));
+    // Biurowce o 20:00 dostają dolną granicę napływu (3 na minutę), sklep bez dzielnicy ma o tej porze więcej
+    expect(crowdRateFor(inDistrict('biurowce', 20, true), 'wysoka').spawnPerMinute).toBe(3);
+    expect(crowdRateFor(atHour(20), 'wysoka').spawnPerMinute).toBeGreaterThan(3);
+    // o 8:00 profil Biurowców zagęszcza napływ ponad ten sam sklep bez profilu
+    expect(crowdRateFor(inDistrict('biurowce', 8, true), 'wysoka').spawnPerMinute)
+      .toBeGreaterThan(crowdRateFor(inDistrict('biurowce', 8, false), 'wysoka').spawnPerMinute);
   });
 });
 

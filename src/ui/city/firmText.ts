@@ -4,6 +4,7 @@ import { DEBT_LIMIT, GUARANTEE } from '@/sim/economy/catalog';
 import { debtWarningText, type EconEvent } from '@/sim/economy/economy';
 import type { StoreInfo } from '@/sim/economy/storeInfo';
 import { cardDef } from '@/sim/economy/tycoon/cards';
+import { TRUST } from '@/sim/economy/tycoon/trust';
 import type { FirmEvent, FirmRefusal, FirmState, FirmStore } from '@/sim/firm/types';
 import { money, zl } from '../game/format';
 
@@ -82,8 +83,9 @@ function settlementText(e: FirmEvent): string {
 }
 
 /**
- * Tytuł i tekst zdarzenia firmy. `partner`, `opened`, `notice`, `settlement`, `closed`, `debt` i `gameover` czekają na „OK” (ważne zdarzenia),
- * `deputy` i `build` to krótkie toasty, a `network-report` nie ma własnego tekstu: jego okno składa się z liczb podsumowania.
+ * Tytuł i tekst zdarzenia firmy. `partner`, `opened` (też ponowne otwarcie lokalu „po Traszce”, `reopened`), `notice`, `settlement`, `closed`,
+ * `debt` i `gameover` czekają na „OK” (ważne zdarzenia), `deputy` i `build` to krótkie toasty, a `network-report` nie ma własnego tekstu:
+ * jego okno składa się z liczb podsumowania.
  */
 export function firmEventText(f: FirmState, e: FirmEvent): { title: string; text: string } {
   const id = e.storeId ?? 0;
@@ -109,6 +111,13 @@ export function firmEventText(f: FirmState, e: FirmEvent): { title: string; text
       };
     }
     case 'opened':
+      // ponowny wynajem lokalu „po Traszce” (`reopened`): ten sam sklep wraca z wyposażeniem, ale znajomość z Centralą zaczyna się od nowa
+      if (num(e, 'reopened') > 0) {
+        return {
+          title: t`Traszka #${id} znów otwarta`,
+          text: t`${name} znów przyjmuje klientów (${lotAddress(f, num(e, 'lotId'))}). Wyposażenie zostało, ale Centrala zaczyna znajomość od nowa: poziom 1, zaufanie ${TRUST.start}.`,
+        };
+      }
       return {
         title: t`Traszka #${id} otwarta`,
         text: t`${name} przyjmuje pierwszych klientów (${lotAddress(f, num(e, 'lotId'))}). Przełączysz się na nią w górnym pasku. Sklep w tle pracuje sam, a jego karty rozstrzyga zastępca.`,
@@ -153,7 +162,7 @@ export function refusalText(reason: FirmRefusal): string {
   switch (reason) {
     case 'ranked': return t`W sezonie rankingowym Centrala ocenia jedną placówkę. Prosimy wrócić po sezonie.`;
     case 'status': return t`Centrala rozważy kolejną placówkę, gdy nada Panu/Pani status Partnera Strategicznego.`;
-    case 'limit': return t`Dwie placówki to na tym etapie partnerstwa wszystko, na co Centrala jest gotowa się zgodzić.`;
+    case 'limit': return t`Trzy placówki to na tym etapie partnerstwa wszystko, na co Centrala jest gotowa się zgodzić.`;
     case 'lot': return t`Ten lokal nie jest do wzięcia.`;
     case 'gotowka': return t`Po zapłaceniu pakietu gotówka musi zostać nie mniejsza od zera: Centrala nie finansuje budów na debecie.`;
     case 'raty': return t`Rata pakietu przekracza limit rat nowej placówki. Prosimy o gotówkę albo o tańszy lokal.`;

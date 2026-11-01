@@ -17,11 +17,13 @@ miesiąca albo gotówka poniżej −100 000 zł. Zarobek idzie w ulepszenia, spr
 startowym gra proponuje krótki samouczek (ok. 3 min); pełna instrukcja, słowniczek pojęć i ponowny samouczek są pod „?” w pasku
 gry i w ⚙. Pierwsze dymki „pierwszy raz” (miasto, karta lokalu, dwa sklepy, podsumowanie sieci) wyskakują przy pierwszych zdarzeniach.
 
-**Miasto i drugi sklep.** Zakładka **Miasto** pokazuje mapę miasta (warstwy „Ruch” i „Dzielnice”), listę wolnych lokali i kartę
+**Miasto, do trzech sklepów i lokal po Traszce.** Zakładka **Miasto** pokazuje mapę miasta (warstwy „Ruch” i „Dzielnice”), listę wolnych lokali i kartę
 lokalu: widełki klientów dziennie, kto przychodzi, konkurencja obok, czas budowy i pakiet otwarcia. Lokal wynajmiesz dopiero ze statusem
 Partnera Strategicznego, który Centrala nadaje, gdy sklep startowy ma zysk dwa miesiące z rzędu, a zaufanie przy zamknięciu miesiąca
 wynosi co najmniej 75. Pakiet otwarcia płacisz od razu z gotówki albo w 12 ratach z przelewów nowego sklepu; po budowie (5–8 dni) sklep
-otwiera się sam, a nowy sklep nie ma gwarancji 25 tys. zł. Najwyżej dwa sklepy, wliczając budowę. Chip w pasku przełącza sklepy: sklep
+otwiera się sam, a nowy sklep nie ma gwarancji 25 tys. zł. Do trzech sklepów naraz, wliczając budowę. Lokal po zamkniętym sklepie („po Traszce”,
+włącznie ze startowym) wynajmiesz znów za 30% pakietu (zwykle w 6 ratach) i dwa dni budowy: wyposażenie, czyli remont, sprzęt i ulepszenia, zostaje, a poziom
+i zaufanie Centrali zaczynają od nowa, bez gwarancji. Dzielnice mają własny rytm dnia i własnych trudnych klientów. Chip w pasku przełącza sklepy: sklep
 w tle pracuje sam, a jego karty rozstrzyga zastępca (odpowiedzią zaznaczoną z góry, wpisy trafiają do skrzynki). Gotówka jest jedna,
 a koniec miesiąca daje wyciąg każdego sklepu i podsumowanie sieci. Sklep można wypowiedzieć (miesiąc wypowiedzenia i rozliczenie
 końcowe). W sezonie rankingowym miasto tylko oglądasz: gra zostaje na jednym sklepie.

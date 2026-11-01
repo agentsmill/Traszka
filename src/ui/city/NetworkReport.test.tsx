@@ -4,7 +4,7 @@ import { firmOf } from '@/game/session';
 import { DEBT_WARN, emptyCounters, type MonthReport } from '@/sim/economy/economy';
 import { buildStatement } from '@/sim/economy/franchisee';
 import type { NetworkSummary } from '@/sim/firm/types';
-import { openSecond, partnerSession } from '../../../tests/firmKit';
+import { openSecond, openThird, partnerSession } from '../../../tests/firmKit';
 import { firm, networkReport, type NetworkReportView } from '../state';
 import { minusZl, money, signedZl, zl } from '../game/format';
 import { buttonsOf, click, labels, textOf, walk, type Vnode } from '../game/vnodeTree';
@@ -44,6 +44,24 @@ function setup(over: Partial<NetworkSummary> = {}) {
   networkReport.value = view;
   return { f, view, one, two };
 }
+
+/** Trzy sklepy (limit 4a.2): okno z trzema wyciągami i podsumowaniem, które sumuje trzy „Zostaje Ci”. */
+function setupThree() {
+  const session = partnerSession();
+  openSecond(session);
+  openThird(session);
+  const f = firmOf(session);
+  firm.value = { f, v: 1 };
+  const reports = [reportOf('wrzesień 2026', 30_000, 8_000), reportOf('wrzesień 2026', 9_000, 12_000), reportOf('wrzesień 2026', 21_000, 10_000)];
+  const nets = reports.map((r) => r.statement!.net);
+  const summary: NetworkSummary = {
+    label: 'wrzesień 2026', wallet: 123_456, invest: 50_000, settlement: 0, total: nets[0]! + nets[1]! + nets[2]!,
+    stores: reports.map((r, i) => ({ id: i + 1, profit: r.profit, net: nets[i]! })),
+  };
+  const view: NetworkReportView = { summary, reports: reports.map((report, i) => ({ storeId: i + 1, report })) };
+  networkReport.value = view;
+  return { f, view, reports, nets };
+}
 const render = (view: NetworkReportView): Vnode => NetworkReportBody({ view }) as Vnode;
 const withTut = (tree: Vnode, tut: string): Vnode[] => walk(tree).filter((v) => v.props['data-tut'] === tut);
 const rowsOf = (tree: Vnode): [string, string][] => walk(tree).filter((v) => String(v.props.class).startsWith('tt-row'))
@@ -78,6 +96,23 @@ describe('podsumowanie sieci (zakładka „Sieć”)', () => {
     for (const s of view.summary.stores) expect(rows).toContainEqual([storeName(f, s.id), plain(signedZl(s.profit))]);
     const text = plain(textOf(render(view)));
     expect(text.indexOf('Wynik miesiąca')).toBeGreaterThan(-1);
+  });
+
+  it('przy każdym sklepie „zaufanie {n}” z bieżącego stanu sklepu, zaokrąglone jak znaczek 🤝, pod jego wierszem „Zostaje Ci”', () => {
+    const { f, view } = setup();
+    f.stores[0]!.econ.tycoon.trust.value = 71.4;
+    f.stores[1]!.econ.tycoon.trust.value = 32;
+    const labelsInOrder = rowsOf(withTut(render(view), 'network-summary')[0]!).map(([l]) => l);
+    const at = (l: string): number => labelsInOrder.indexOf(l);
+    expect(labelsInOrder[at(storeName(f, 1)) + 1]).toBe('zaufanie 71');
+    expect(labelsInOrder[at(storeName(f, 2)) + 1]).toBe('zaufanie 32');
+  });
+
+  it('po angielsku: zaufanie każdego sklepu', () => {
+    const { f, view } = setup();
+    f.stores[1]!.econ.tycoon.trust.value = 32;
+    lang.value = 'en';
+    expect(rowsOf(withTut(render(view), 'network-summary')[0]!)).toContainEqual(['trust 32', '']);
   });
 
   it('bez pakietów za gotówkę wiersza o nich nie ma', () => {
@@ -201,5 +236,60 @@ describe('zakładki sklepów', () => {
     const tree = StoreTabs({ tabs: [{ id: 'siec', label: 'Sieć' }, { id: 2, label: '#2 Lipowa' }], active: 'siec', onPick: (id) => picked.push(id) }) as Vnode;
     click(buttonsOf(tree)[1]!);
     expect(picked).toEqual([2]);
+  });
+});
+
+describe('trzy sklepy w oknie końca miesiąca', () => {
+  it('cztery zakładki: „Sieć” na wierzchu i po jednej na sklep, wszystkie z rolą tab', () => {
+    const { f, view } = setupThree();
+    const tree = render(view);
+    expect(labels(tree).slice(0, 4)).toEqual(['Sieć', shortStoreName(f, 1), shortStoreName(f, 2), shortStoreName(f, 3)]);
+    expect(buttonsOf(tree).map((b) => b.props['aria-selected'])).toEqual([true, false, false, false]);
+    const group = walk(tree).find((v) => v.props.role === 'tablist')!;
+    expect(buttonsOf(group)).toHaveLength(4);
+    expect(buttonsOf(group).every((b) => b.props.role === 'tab')).toBe(true);
+    expect(new Set(labels(tree).slice(0, 4)).size).toBe(4);   // zakładki da się odróżnić
+  });
+
+  it('„Zostaje Ci” trzech sklepów i razem: suma trzech, a wynik miesiąca ma trzy wiersze', () => {
+    const { f, view, nets } = setupThree();
+    const sum = withTut(render(view), 'network-summary')[0]!;
+    const rows = rowsOf(sum);
+    for (const id of [1, 2, 3]) expect(rows).toContainEqual([storeName(f, id), plain(signedZl(nets[id - 1]!))]);
+    expect(rows).toContainEqual(['Razem', plain(signedZl(nets[0]! + nets[1]! + nets[2]!))]);
+    expect(rows).toContainEqual(['Razem', plain(signedZl(view.summary.total))]);
+    expect(view.summary.total).toBe(nets[0]! + nets[1]! + nets[2]!);
+    expect(rows).toContainEqual(['Pakiety otwarcia za gotówkę', plain(minusZl(50_000))]);
+    expect(rows).toContainEqual(['Gotówka po zamknięciu', plain(money(123_456))]);
+    const names = [1, 2, 3].map((id) => storeName(f, id));
+    expect(rows.filter(([l]) => names.includes(l))).toHaveLength(6);   // trzy w „Zostaje Ci” i trzy w „Wyniku miesiąca”
+    expect(plain(textOf(sum)).indexOf('Wynik miesiąca')).toBeGreaterThan(-1);
+  });
+
+  it('każda zakładka pokazuje wyciąg swojego sklepu, a „Sieć” zostaje wyjściem z powrotem', () => {
+    const { f, view, nets } = setupThree();
+    for (const id of [1, 2, 3]) {
+      click(buttonsOf(render(view)).find((b) => textOf(b) === shortStoreName(f, id))!);
+      const tree = render(view);
+      expect(withTut(tree, 'network-summary')).toHaveLength(0);
+      expect(plain(textOf(tree))).toContain(storeName(f, id));
+      expect(plain(textOf(tree))).toContain(plain(`Zostaje Ci${signedZl(nets[id - 1]!)}`));
+      expect(buttonsOf(tree).map((b) => b.props['aria-selected'])).toEqual([false, id === 1, id === 2, id === 3]);
+    }
+    click(buttonsOf(render(view))[0]!);
+    expect(withTut(render(view), 'network-summary')).toHaveLength(1);
+  });
+
+  it('tekst o braku gwarancji stoi w wyciągach #2 i #3, a w sklepie startowym i w „Sieci” go nie ma', () => {
+    const { f, view } = setupThree();
+    expect(f.stores.map((st) => st.info.site?.extra)).toEqual([false, true, true]);
+    const tab = (id: number): string => {
+      click(buttonsOf(render(view)).find((b) => textOf(b) === shortStoreName(f, id))!);
+      return plain(textOf(render(view)));
+    };
+    expect(plain(textOf(render(view)))).not.toContain(NO_GUARANTEE);
+    expect(tab(1)).not.toContain(NO_GUARANTEE);
+    expect(tab(2)).toContain(NO_GUARANTEE);
+    expect(tab(3)).toContain(NO_GUARANTEE);
   });
 });

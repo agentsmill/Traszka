@@ -1,20 +1,20 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { DISTRICTS } from '@/sim/city/districts';
+import { DISTRICTS, siteHours } from '@/sim/city/districts';
 import type { StoreDistrict } from '@/sim/city/types';
 import { generateStore } from '@/sim/store/generateStore';
 import { layoutFor } from '@/sim/store/layoutFor';
 import { pickLot } from '@/sim/store/lots';
 import type { LotSpec } from '@/sim/store/types';
-import { DEBT_LIMIT, GUARANTEE, MINUTES_PER_DAY, OPEN_FROM, OPEN_TO, OWN_COSTS } from './catalog';
+import { DEBT_LIMIT, GUARANTEE, HOUR_CURVE, MINUTES_PER_DAY, OPEN_FROM, OPEN_TO, OWN_COSTS } from './catalog';
 import { applyCommand } from './commands';
 import {
-  arrivalRate, awaitingDecision, createEconomy, effects, expectedDailyCustomers, isClosedForRemont, kpiMetricsOf, kpiScaleOf, sell, stepMinute,
-  type EconEvent, type EconomyState,
+  arrivalRate, awaitingDecision, createEconomy, customersPerHour, effects, expectedDailyCustomers, isClosedForRemont, kpiMetricsOf, kpiScaleOf,
+  peakCustomersPerHour, sell, stepMinute, type EconEvent, type EconomyState,
 } from './economy';
 import { forecastMonth } from './forecast';
 import { buildStatement, emptySettleMonth } from './franchisee';
-import { NEUTRAL_SITE, activeSite, siteDayTraffic, type SiteMods } from './site';
+import { NEUTRAL_SITE, activeSite, hourCurveOf, siteDayTraffic, type SiteMods } from './site';
 import { computeStoreInfo, type StoreInfo } from './storeInfo';
 import { visibleCards } from './tycoon/cards';
 import { rollWeather } from './tycoon/cleanliness';
@@ -81,11 +81,11 @@ describe('SiteMods: neutralna dzielnica i aktywność', () => {
   it('NEUTRAL_SITE to osiedle bez żadnego modyfikatora, z kosztami własnymi i bez kontroli debetu przez firmę', () => {
     expect(NEUTRAL_SITE).toEqual({
       district: 'osiedle', traffic: 1, weekendTraffic: null, basket: 1, patience: 0, repPenalty: 1, theft: 1, lot: null, weatherHash: null,
-      extra: false, ownCosts: true, firmDebt: false,
+      hours: null, difficult: 1, extra: false, ownCosts: true, firmDebt: false,
     });
   });
 
-  it('activeSite: brak pola, pole neutralne i same flagi to null; każdy modyfikator dzielnicy, lokal i pogoda włączają gałąź', () => {
+  it('activeSite: brak pola, pole neutralne i same flagi to null; każdy modyfikator dzielnicy, profil dnia, trudni klienci, lokal i pogoda włączają gałąź', () => {
     const info = infoOf(SEED);
     expect(activeSite(info)).toBeNull();
     expect(activeSite({ ...info, site: NEUTRAL_SITE })).toBeNull();
@@ -96,6 +96,8 @@ describe('SiteMods: neutralna dzielnica i aktywność', () => {
       { traffic: D.srodmiescie.traffic }, { weekendTraffic: D.biurowce.weekendTraffic }, { basket: D.dworzec.basket }, { patience: D.srodmiescie.patience },
       { repPenalty: D.srodmiescie.repPenalty }, { theft: D.dworzec.theft }, { lot },
       { weatherHash: 0 },   // 0 to poprawny skrót, więc liczy się `!== null`, a nie prawda/fałsz
+      { hours: siteHours('srodmiescie') },
+      { difficult: D.dworzec.difficult },   // trudni klienci (4a.2): sam `difficult ≠ 1` włącza gałąź dzielnicy
     ];
     for (const over of active) {
       const site = { ...NEUTRAL_SITE, ...over };
@@ -314,6 +316,148 @@ describe('kierunki dzielnic (30 dni)', () => {
     // tylko kary: Osiedle i Osiedle z samym repPenalty mają tę samą kolejkę i ten sam ruch
     expect(afterMinute({ ...NEUTRAL_SITE, repPenalty: DISTRICTS.srodmiescie.repPenalty })).toBeLessThan(afterMinute());
     expect(afterMinute(siteOf('srodmiescie'))).toBeLessThan(afterMinute());
+  });
+});
+
+describe('profil dnia dzielnicy (spec §8.1, 4a.2): ten sam ruch doby w innym rozkładzie', () => {
+  const PROFILED = (Object.keys(DISTRICTS) as StoreDistrict[]).filter((d) => d !== 'osiedle');
+  const HOURS = Array.from({ length: 17 }, (_, i) => 6 + i);   // 6:00–22:00, godziny z HOUR_CURVE
+  const withProfile = (id: StoreDistrict): SiteMods => siteOf(id, { hours: siteHours(id) });
+
+  /** `arrivalRate` po godzinach 6–22 dnia `day` na jednym stanie: czysta funkcja stanu, więc wystarczy przestawić `minute`. */
+  const ratesOn = (s: EconomyState, info: StoreInfo, day: number): number[] => HOURS.map((h) => {
+    s.minute = day * DAY + h * 60;
+    return arrivalRate(s, info);
+  });
+  const sumOf = (xs: number[]): number => xs.reduce((n, v) => n + v, 0);
+
+  it('profil zmienia rozkład, nie dobę: suma arrivalRate po godzinach 6–22 dnia roboczego z profilem i bez (te same pozostałe pola site) jest równa', () => {
+    expect(weekdayOf(0), 'dzień 0 to dzień roboczy').toBe(2);
+    for (const id of PROFILED) {
+      const plain = infoOf(SEED, siteOf(id));
+      const profiled = infoOf(SEED, withProfile(id));
+      const s = createEconomy(SEED, plain);
+      const without = ratesOn(s, plain, 0);
+      const withHours = ratesOn(s, profiled, 0);
+      expect(sumOf(withHours), id).toBeCloseTo(sumOf(without), 9);
+      expect(withHours.some((v, i) => Math.abs(v - without[i]!) > 1e-6), `${id}: rozkład się zmienił`).toBe(true);
+      // godziny poza 6–22 zostają bez klientów: sklep jest wtedy zamknięty, a krzywa nie ma tam wartości
+      for (const hour of [0, 3, 5, 23]) {
+        s.minute = hour * 60;
+        expect(arrivalRate(s, profiled), `${id}: ${hour}:00`).toBe(0);
+        expect(arrivalRate(s, plain), `${id}: ${hour}:00 bez profilu`).toBe(0);
+      }
+    }
+    // Osiedle nie ma profilu: z siteHours (null) arrivalRate liczy się dokładnie jak bez niego
+    const osiedle = infoOf(SEED, siteOf('osiedle', { hours: siteHours('osiedle') }));
+    const s = createEconomy(SEED, osiedle);
+    expect(ratesOn(s, osiedle, 0)).toEqual(ratesOn(s, infoOf(SEED), 0));
+  });
+
+  it('profil nie dotyka pozostałych pól: klient o godzinie h przychodzi z krzywej dzielnicy zamiast HOUR_CURVE, reszta wzoru ta sama', () => {
+    for (const id of PROFILED) {
+      const plain = infoOf(SEED, siteOf(id));
+      const profiled = infoOf(SEED, withProfile(id));
+      const s = createEconomy(SEED, plain);
+      const without = ratesOn(s, plain, 0);
+      const withHours = ratesOn(s, profiled, 0);
+      const h = siteHours(id)!;
+      HOURS.forEach((hour, i) => expect(withHours[i]! / without[i]!, `${id}: ${hour}:00`).toBeCloseTo(h[hour]! / HOUR_CURVE[hour]!, 12));
+    }
+  });
+
+  it('kierunki §8.1: Śródmieście ma udział godzin 17–22 ≥ 1,15× udziału Osiedla; Dworzec max/min po godzinach 6–22 ≤ 1,05; Biurowce 19–22 ≤ 5% doby, a dwa najmocniejsze okna trzygodzinne to 7–9 i 12–14', () => {
+    const share = (h: (hour: number) => number, from: number, to: number): number => {
+      let part = 0;
+      let all = 0;
+      for (const hour of HOURS) { all += h(hour); if (hour >= from && hour <= to) part += h(hour); }
+      return part / all;
+    };
+    const curve = (hour: number): number => HOUR_CURVE[hour]!;
+    const hoursOf = (id: StoreDistrict): ((hour: number) => number) => { const h = siteHours(id)!; return (hour) => h[hour]!; };
+
+    expect(share(hoursOf('srodmiescie'), 17, 22)).toBeGreaterThanOrEqual(1.15 * share(curve, 17, 22));
+
+    const flat = HOURS.map((hour) => hoursOf('dworzec')(hour));
+    expect(Math.max(...flat) / Math.min(...flat)).toBeLessThanOrEqual(1.05);
+
+    const office = hoursOf('biurowce');
+    expect(share(office, 19, 22)).toBeLessThanOrEqual(0.05);
+    const windows = HOURS.slice(0, -2).map((from) => ({ from, sum: office(from) + office(from + 1) + office(from + 2) }));
+    windows.sort((a, b) => b.sum - a.sum || a.from - b.from);
+    expect(windows.slice(0, 2).map((w) => w.from).sort((a, b) => a - b)).toEqual([7, 12]);
+  });
+
+  it('krzywa dla podpowiedzi (panel Sklep, scena): profil dzielnicy, a bez niego HOUR_CURVE i dzisiejsze liczby co do bitu (szczyt 1,3)', () => {
+    // brak site, NEUTRAL_SITE, same flagi i dzielnica bez profilu: ten sam obiekt HOUR_CURVE
+    const plain = infoOf(SEED);
+    expect(hourCurveOf(plain)).toBe(HOUR_CURVE);
+    expect(hourCurveOf({ ...plain, site: NEUTRAL_SITE })).toBe(HOUR_CURVE);
+    expect(hourCurveOf(infoOf(SEED, { ...NEUTRAL_SITE, extra: true, ownCosts: false, firmDebt: true }))).toBe(HOUR_CURVE);
+    expect(hourCurveOf(infoOf(SEED, siteOf('osiedle', { hours: siteHours('osiedle') })))).toBe(HOUR_CURVE);
+    expect(hourCurveOf(infoOf(SEED, siteOf('biurowce')))).toBe(HOUR_CURVE);
+    for (const id of PROFILED) expect(hourCurveOf(infoOf(SEED, withProfile(id))), id).toBe(siteHours(id));
+
+    const s = createEconomy(SEED, plain);
+    const daily = expectedDailyCustomers(s, plain);
+    for (const hour of [0, 5, 6, 8, 12, 17, 18, 22, 23]) expect(customersPerHour(s, plain, hour), `${hour}:00`).toBe(daily / 15.6 * (HOUR_CURVE[hour] ?? 0));
+    expect(peakCustomersPerHour(s, plain)).toBe(daily / 15.6 * 1.3);
+    expect(Math.max(...HOURS.map((h) => HOUR_CURVE[h]!)), '1,3 to naprawdę szczyt HOUR_CURVE').toBe(1.3);
+  });
+
+  it('Biurowce i Dworzec: szczyt i popyt bieżącej godziny z profilu, nie z HOUR_CURVE; doba ta sama', () => {
+    for (const id of PROFILED) {
+      const info = infoOf(SEED, withProfile(id));
+      const s = createEconomy(SEED, info);
+      const h = siteHours(id)!;
+      const perUnit = expectedDailyCustomers(s, info) / 15.6;
+      expect(peakCustomersPerHour(s, info), id).toBeCloseTo(perUnit * Math.max(...h), 12);
+      HOURS.forEach((hour) => expect(customersPerHour(s, info, hour), `${id}: ${hour}:00`).toBeCloseTo(perUnit * h[hour]!, 12));
+      for (const hour of [0, 5, 23]) expect(customersPerHour(s, info, hour), `${id}: ${hour}:00`).toBe(0);
+      // podpowiedź godzinowa nie zmienia doby: suma po godzinach 6–22 to oczekiwani klienci dnia
+      expect(sumOf(HOURS.map((hour) => customersPerHour(s, info, hour))), id).toBeCloseTo(expectedDailyCustomers(s, info), 9);
+    }
+
+    const offices = infoOf(SEED, withProfile('biurowce'));
+    const so = createEconomy(SEED, offices);
+    const perUnitO = expectedDailyCustomers(so, offices) / 15.6;
+    expect(peakCustomersPerHour(so, offices) / perUnitO, 'szczyt Biurowców ok. 1,86 zamiast 1,3').toBeGreaterThan(1.7);
+    expect(customersPerHour(so, offices, 20) / perUnitO, 'o 20:00 w Biurowcach prawie pusto, a HOUR_CURVE daje 0,9').toBeLessThan(0.2);
+    expect(customersPerHour(so, offices, 8) / perUnitO).toBeGreaterThan(1.7);
+
+    const station = infoOf(SEED, withProfile('dworzec'));
+    const ss = createEconomy(SEED, station);
+    const perUnitD = expectedDailyCustomers(ss, station) / 15.6;
+    expect(peakCustomersPerHour(ss, station) / perUnitD, 'płaski Dworzec: szczyt poniżej 1,3').toBeLessThan(1);
+    expect(customersPerHour(ss, station, 17) / perUnitD, 'o 17:00 na Dworcu nie ma szczytu 1,3').toBeLessThan(1);
+  });
+
+  it('Review Focus 3: Biurowce w sobotę mają kształt dnia roboczego razy weekendTraffic / traffic; expectedDailyCustomers i cel KPI tygodnia (createEconomy) są jak bez profilu', () => {
+    const offices = DISTRICTS.biurowce;
+    const plain = infoOf(SEED, siteOf('biurowce'));
+    const profiled = infoOf(SEED, withProfile('biurowce'));
+    const s = createEconomy(SEED, profiled);
+    expect([weekdayOf(2), weekdayOf(4)], 'dzień 2 to dzień roboczy, dzień 4 sobota').toEqual([4, 6]);
+
+    const weekday = ratesOn(s, profiled, 2);
+    const saturday = ratesOn(s, profiled, 4);
+    weekday.forEach((rate, i) => expect(saturday[i]! / rate, `${HOURS[i]}:00`).toBeCloseTo(offices.weekendTraffic! / offices.traffic, 12));
+    // sobota bez profilu ma tę samą dobę, więc z profilem też
+    expect(sumOf(saturday)).toBeCloseTo(sumOf(ratesOn(s, plain, 4)), 9);
+    // niedziela to ten sam weekendTraffic, bez premii niedzieli
+    expect(sumOf(ratesOn(s, profiled, 5))).toBeCloseTo(sumOf(saturday), 12);
+
+    // skala sklepu, widełki i cel KPI nie widzą profilu: liczą dobę, nie jej rozkład
+    const base = createEconomy(SEED, plain);
+    expect(expectedDailyCustomers(createEconomy(SEED, profiled), profiled)).toBe(expectedDailyCustomers(base, plain));
+    expect(kpiScaleOf(createEconomy(SEED, profiled), profiled)).toEqual(kpiScaleOf(base, plain));
+    expect(createEconomy(SEED, profiled).tycoon.kpi).toEqual(base.tycoon.kpi);
+    expect(hashOf(createEconomy(SEED, profiled))).toBe(hashOf(base));
+    for (const id of PROFILED) {
+      const p = infoOf(SEED, withProfile(id));
+      const q = infoOf(SEED, siteOf(id));
+      expect(expectedDailyCustomers(createEconomy(SEED, p), p), id).toBe(expectedDailyCustomers(createEconomy(SEED, q), q));
+    }
   });
 });
 
