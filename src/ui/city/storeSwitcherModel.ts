@@ -19,7 +19,8 @@ import { plural, zl } from '../game/format';
 /** Znak ostrzegawczy przy sklepie: paleta w przejściu, pusta półka, karta rozstrzygnięta dziś przez zastępcę, niskie zaufanie (kolejność jest stała). */
 export type StoreWarning = 'paleta' | 'polka' | 'zastepca' | 'zaufanie';
 
-/** Zaufanie sklepu poniżej tej wartości daje znak „zaufanie”: sklep w tle może po cichu spaść do zera, a gracz nie zagląda do jego listy. */
+/** Zaufanie sklepu poniżej tej wartości daje znak „zaufanie”: sklep w tle może po cichu spaść do zera, a gracz nie zagląda do jego listy.
+ * Inny próg niż `TRUST_WARN_BELOW` w `Hud.tsx` (30, chip aktywnego sklepu): tu ostrzegamy wcześniej, bo sklepu w tle nikt nie ogląda. */
 export const TRUST_WARN_BELOW = 40;
 
 /** Mini-stan sklepu na liście chipa. `number` to numer budynku z adresu lokalu („ul. Lipowa 3”), nie numer sklepu (`id`). */
