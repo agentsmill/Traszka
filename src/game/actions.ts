@@ -250,8 +250,9 @@ export function dispatchFirm(session: GameSession, cmd: FirmCommand, fx: Command
     return result;
   }
 
-  if (session.econ !== activeStore(f).econ) {
-    pointAtActive(session);
+  const switched = session.econ !== activeStore(f).econ;
+  pointAtActive(session);   // także bez przełączenia: polecenie mogło zmienić skład sieci i podmienić `info` (refreshSites)
+  if (switched) {
     fx.clearSelection();
     try {
       fx.rebuildScene();
@@ -736,6 +737,8 @@ export function createShell(deps: ShellDeps): GameShell {
    */
   function sceneFollowsActive(session: GameSession): boolean {
     if (scene.seed === null || scene.seed === session.econ.seed) return false;
+    ui.selection.value = null;   // zaznaczenie i karta wskazywały zamknięty sklep
+    ui.picked.value = null;
     try {
       scene.load(session.econ.seed, session);
     } catch (error) {
