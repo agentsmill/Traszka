@@ -404,6 +404,11 @@
     width: 46px !important;
     height: auto !important;
   }
+
+  /* lokal obok na telefonie bez napisu: na 390 px napis zachodziłby na sąsiednie pinezki; kartę lokalu pokazuje stuknięcie */
+  .tt-cpin-obok .tt-cpin-label {
+    display: none;
+  }
 }
 
 /* --- Przełącznik sklepów w pasku (`StoreSwitcher.tsx`, spec §9.4) ---------------------------------------- */

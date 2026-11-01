@@ -29,3 +29,13 @@ describe('city.css: karta lokalu na 390 px', () => {
     expect(rule('.tt-relet')).toMatch(/overflow-wrap:\s*anywhere/);
   });
 });
+
+describe('city.css: pinezka lokalu obok na telefonie', () => {
+  it('do 899 px napis „lokal obok” znika, a kartka zostaje (napis zachodziłby na sąsiednie pinezki)', () => {
+    const at = css.indexOf('@media (max-width: 899px) {');
+    expect(at).toBeGreaterThan(-1);
+    const phone = css.slice(at, css.indexOf('\n}\n', at));   // treść bloku telefonu bez reguł poza nim
+    expect(phone).toMatch(/\.tt-cpin-obok \.tt-cpin-label \{\s*display:\s*none;?\s*\}/);
+    expect(phone).not.toMatch(/\.tt-cpin-obok \{[^}]*display:\s*none/);
+  });
+});

@@ -212,8 +212,9 @@ export interface PinSpec { lotId: number; kind: CityPinKind; label: string }
 
 /**
  * Pinezki mapy dla każdego lokalu poza zwykłym zajętym (tam, gdzie scena ma kotwice): własny sklep (zielony, z numerem), konkurencja z
- * marką, wolny lokal i lokal obok jako kartka z numerem (wybrany dopisuje adres), budowa z licznikiem dni, lokal po Traszce z dopiskiem
- * tekstem (na samej kartce jest za mały). Przedłużenie sklepu po remoncie ma pinezkę bez napisu. Napisy po stronie UI, scena ich nie zna.
+ * marką, wolny lokal jako kartka z numerem (wybrany dopisuje adres), lokal obok jako kartka z napisem „lokal obok” (rodzaj `obok`),
+ * budowa z licznikiem dni, lokal po Traszce z dopiskiem tekstem (na samej kartce jest za mały). Przedłużenie sklepu po remoncie ma
+ * pinezkę bez napisu. Napisy po stronie UI, scena ich nie zna.
  */
 export function cityPinSpecs(seed: string, f: FirmState, selected: number | null): PinSpec[] {
   const today = dayOf(activeStore(f).econ.minute);
@@ -239,7 +240,7 @@ export function cityPinSpecs(seed: string, f: FirmState, selected: number | null
         break;
       }
       case 'obok':
-        pins.push({ lotId: lot.id, kind: 'wolny', label: t`lokal obok` });
+        pins.push({ lotId: lot.id, kind: 'obok', label: t`lokal obok` });
         break;
       case 'budowa': {
         const left = (f.builds.find((b) => b.lotId === lot.id)?.readyDay ?? today) - today;

@@ -417,7 +417,7 @@ describe('stany lokali i pinezki dla sceny miasta', () => {
     expect(cityPinSpecs(SEED, f, chosen.lotId).find((p) => p.lotId === chosen.lotId)!.label).toBe(`${chosen.no} · ul. ${chosen.street} ${chosen.number}`);
   });
 
-  it('własny sklep jest zielony z numerem, konkurencja ma markę, lokal obok kartkę, a zwykły zajęty nie ma pinezki', () => {
+  it('własny sklep jest zielony z numerem, konkurencja ma markę, lokal obok ma rodzaj obok, a zwykły zajęty nie ma pinezki', () => {
     const f = partnerFirm();
     const pins = cityPinSpecs(SEED, f, null);
     expect(pins.find((p) => p.lotId === f.city.startLotId)).toEqual({ lotId: f.city.startLotId, kind: 'twoj', label: 'Traszka #1' });
@@ -425,7 +425,8 @@ describe('stany lokali i pinezki dla sceny miasta', () => {
       expect(pins.find((p) => p.lotId === l.id)).toEqual({ lotId: l.id, kind: l.brand, label: l.brand === 'kawka' ? 'Kawka Express' : 'Szop 24h' });
     }
     const next = f.city.neighbourLotId;
-    if (next !== null) expect(pins.find((p) => p.lotId === next)).toMatchObject({ kind: 'wolny', label: 'lokal obok' });
+    expect(next).not.toBeNull();
+    expect(pins.find((p) => p.lotId === next)).toMatchObject({ kind: 'obok', label: 'lokal obok' });
     const plain = f.city.lots.find((l) => lotState(f, l.id) === 'zajety')!;
     expect(pins.some((p) => p.lotId === plain.id)).toBe(false);
     // pinezki są dokładnie tam, gdzie scena ma kotwice: każdy lokal poza zwykłym zajętym
