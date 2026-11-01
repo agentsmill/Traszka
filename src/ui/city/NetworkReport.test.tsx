@@ -8,7 +8,8 @@ import { openSecond, partnerSession } from '../../../tests/firmKit';
 import { firm, networkReport, type NetworkReportView } from '../state';
 import { minusZl, money, signedZl, zl } from '../game/format';
 import { buttonsOf, click, labels, textOf, walk, type Vnode } from '../game/vnodeTree';
-import { NetworkReportBody, StoreTabs } from './NetworkReport';
+import { NetworkReportBody } from './NetworkReport';
+import { StoreTabs } from './StoreTabs';
 import { shortStoreName } from './storeSwitcherModel';
 import { storeName } from './firmText';
 

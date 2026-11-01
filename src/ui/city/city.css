@@ -301,9 +301,10 @@
 /* --- Przełącznik sklepów w pasku (`StoreSwitcher.tsx`, spec §9.4) ---------------------------------------- */
 
 /*
- * Przy dwóch otwartych sklepach pasek ma czwarty wiersz z chipem aktywnego sklepu (na telefonie nie mieści się w żadnym z trzech
- * dotychczasowych); okna i komunikaty pod paskiem przesuwają się o jego wysokość (`--hud-h`). Od 820 px pasek jest jednym rzędem
- * bez miejsca na chip, więc ten wisi pod paskiem po lewej, na pełnym tle (nad sceną), i `--hud-h` zostaje bez zmian.
+ * Przy dwóch otwartych sklepach `.tt-ui` dostaje klasę `tt-net` (App.tsx, `networkOn`) i tylko wtedy pasek wygląda inaczej; z jednym
+ * sklepem nic w tej sekcji go nie rusza. Na telefonie (< 820 px) pasek ma czwarty wiersz z chipem aktywnego sklepu, a okna i komunikaty
+ * pod paskiem przesuwają się o jego wysokość (`--hud-h`). Od 820 px pasek to dwie linie siatki: u góry gotówka i zegar, niżej chip
+ * i prognoza sieci, więc prognoza ma pełne etykiety (jeden rząd nie mieści trzech kieszeni z dłuższymi liczbami sieci).
  */
 .tt-hud-stores {
   position: relative;
@@ -311,32 +312,24 @@
 }
 
 @media (max-width: 819px) {
-  .tt-ui:has(.tt-hud-stores) { --hud-h: 146px; }
+  .tt-net { --hud-h: 146px; }
 }
 
 @media (min-width: 820px) {
-  /*
-   * Pasek w jednym rzędzie: przy sieci liczby w kieszeniach są dłuższe, a zegar z prędkością nie może wypaść poza ekran, więc to
-   * prognoza (jej etykiety skracają się wielokropkiem) bierze resztę miejsca, a zegar zostaje przy swojej szerokości.
-   */
-  .tt-hud-due { flex: 1 1 0; min-width: 0; }
-  .tt-hud-row:last-child { flex: 0 0 auto; }
+  .tt-net { --hud-h: 82px; }
 
-  .tt-hud-stores {
-    position: absolute;
-    top: calc(var(--hud-h) + 6px);
-    left: 14px;
+  .tt-net .tt-hud2 {
+    display: grid;
+    grid-template-columns: auto auto minmax(0, 1fr);
+    align-items: center;
+    gap: 6px 14px;
   }
 
-  .tt-hud-stores .tt-stores-chip,
-  .tt-hud-stores .tt-stores-chip.open {
-    background: var(--tt-green-dark);
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
-  }
-
-  .tt-hud-stores .tt-stores-chip.open {
-    box-shadow: inset 0 0 0 2px var(--tt-orange), 0 2px 8px rgba(0, 0, 0, 0.25);
-  }
+  .tt-net .tt-hud2 > .tt-hud-row:first-child { grid-area: 1 / 1 / 2 / 3; }
+  .tt-net .tt-hud2 > .tt-hud-row:last-child { grid-area: 1 / 3 / 2 / 4; }
+  .tt-net .tt-hud-stores { grid-area: 2 / 1 / 3 / 2; }
+  .tt-net .tt-hud-due { grid-area: 2 / 2 / 3 / 4; }
+  .tt-net .tt-hud-due .tt-due { max-width: 720px; }   /* na szerokim ekranie trzy kieszenie nie rozjeżdżają się po całym pasku */
 }
 
 .tt-stores-chip {
@@ -475,15 +468,6 @@
   gap: 0 8px;
   padding: 3px 0;
   font-size: 12.5px;
-}
-
-/* przy sieci etykiety kieszeni są krótkie na każdym ekranie („Saldo”, „Raty”, „Zostanie”): sumy sieci są dłuższe, pełny opis jest w podpowiedzi */
-.tt-due:has(.tt-due-net) .tt-due-pre {
-  display: none;
-}
-
-.tt-due:has(.tt-due-net) .tt-due-word {
-  text-transform: capitalize;
 }
 
 /*

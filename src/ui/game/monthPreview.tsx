@@ -6,7 +6,9 @@ import { forecastFirm } from '@/sim/firm/forecast';
 import type { FirmPreview } from '@/sim/firm/preview';
 import type { NetworkSummary } from '@/sim/firm/types';
 import { t, tr } from '@/i18n';
-import { NetworkSummaryView, StoreTabs, nameOf, tabLabel, tabState, type StoreTabDef } from '../city/NetworkReport';
+import { NetworkSummaryView } from '../city/NetworkReport';
+import { StoreTabs } from '../city/StoreTabs';
+import { nameOf, resolveTab, storeTabDefs, tabState } from '../city/tabState';
 import { forecastNow, isNetwork } from '../city/storeSwitcherModel';
 import { closeMonthPreview, econ, firm, monthPreview } from '../state';
 import { int, minusZl, money, pct, signedZl, zl } from './format';
@@ -87,10 +89,9 @@ const pickedPart = tabState<FirmPreview>();
  */
 function FirmPreviewResult({ p }: { p: FirmPreview }) {
   const f = firm.value?.f ?? null;
-  const tabs: StoreTabDef[] = [{ id: 'siec', label: t`Sieć` }, ...p.stores.map((x) => ({ id: x.id, label: tabLabel(f, x.id) }))];
-  const asked = pickedPart.get(p, 'siec');
-  const active = tabs.some((x) => x.id === asked) ? asked : 'siec';
-  const part = active === 'siec' ? null : p.stores.find((x) => x.id === active)!;
+  const tabs = storeTabDefs(f, p.stores.map((x) => x.id));
+  const active = resolveTab(pickedPart, p, tabs);
+  const part = p.stores.find((x) => x.id === active);
   const warning = previewWarning(p);
   const summary: NetworkSummary = {
     label: p.label, wallet: p.cashAfter, invest: p.invest, total: p.stores.reduce((n, x) => n + x.preview.statement.net, 0),
@@ -99,12 +100,12 @@ function FirmPreviewResult({ p }: { p: FirmPreview }) {
   return (
     <section class="tt-section tt-preview-result" aria-label={t`Wynik podglądu`}>
       <h3>{t`Jeśli nic nie zrobisz`}{p.label ? `: ${tr(p.label)}` : ''}</h3>
-      {p.endedEarly && <p class="tt-hint">{t`To naliczenia do chwili końca gry: bez rat, dopłaty z gwarancji i premii od obrotu.`}</p>}
       {StoreTabs({ tabs, active, onPick: (id) => pickedPart.set(p, id) })}
       {part
         ? (<><h3 class="tt-storetitle">{nameOf(f, part.id)}</h3>{previewRows(part.preview, storeWarning(part.preview))}</>)
         : (
           <>
+            {p.endedEarly && <p class="tt-hint">{t`To naliczenia do chwili końca gry: bez rat, dopłaty z gwarancji i premii od obrotu.`}</p>}
             <Row label={t`Gotówka teraz`}>{money(p.cashNow)}</Row>
             {NetworkSummaryView({ summary, f, tip: false })}
             {warning && <p class={`tt-hint warn tt-preview-warn ${warning.level}`} role="alert">{warning.text}</p>}

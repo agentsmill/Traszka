@@ -14,7 +14,7 @@ import {
   pendingFinished, rankedDayOf, rankedRunStale, saveFinished, saveRanked, seasonOver, setPlayMode, storedRankedBlock, type FinishedRun,
 } from './rankedRun';
 import { GAME_VERSION } from './version';
-import { SAVE_SCHEMA, createSession, deleteSave, discardSave, newRunLog, retireSession, reviveSession, saveSession, type GameSession } from './session';
+import { SAVE_SCHEMA, createSession, deleteSave, discardSave, newRunLog, saveSession, type GameSession } from './session';
 
 /** Sklep, w którym bierny bieg przeżywa sezon (np. w kiełbasa-42 gotówka spada poniżej granicy debetu w ostatniej minucie): tylko taki bieg `finishRun` oddaje do wysłania. */
 const SEED = 'szarlotka-380';
@@ -73,7 +73,6 @@ describe('createRankedSession', () => {
     expect(s.layoutLevel).toBe(0);
     expect(s.fromSave).toBe(false);
     expect(s.ephemeral).toBe(false);
-    expect(s.retired).toBe(false);
     expect(s.loadNotice).toBeNull();
     expect(s.run!.record.mode).toBe('ranked');
     expect(s.run).toEqual(newRunLog(SEED, 'ranked'));
@@ -110,7 +109,6 @@ describe('zapis i wznawianie biegu', () => {
     expect(r.mode).toBe('ranked');
     expect(r.fromSave).toBe(true);
     expect(r.ephemeral).toBe(false);
-    expect(r.retired).toBe(false);
     expect(r.seed).toBe(SEED);
     expect(r.econ.minute).toBe(s.econ.minute);
     expect(r.econ).toEqual(s.econ);
@@ -464,7 +462,7 @@ describe('bieg zapisany w innej wersji gry', () => {
 });
 
 describe('sesja rankingowa a zapisy zwykłego sklepu', () => {
-  it('saveSession, discardSave, retireSession i reviveSession na prawdziwej sesji rankingowej nie ruszają traszka:save:<seed> ani traszka:last', () => {
+  it('saveSession i discardSave na prawdziwej sesji rankingowej nie ruszają traszka:save:<seed> ani traszka:last', () => {
     const casual = createSession(SEED, true);
     saveSession(casual);
     storage.setItem('traszka:last', 'inny-sklep');
@@ -474,8 +472,6 @@ describe('sesja rankingowa a zapisy zwykłego sklepu', () => {
     play(ranked, 100);
     saveSession(ranked);
     discardSave(ranked);
-    retireSession(ranked);
-    reviveSession(ranked);
     expect(storage.getItem(`traszka:save:${SEED}`)).toBe(casualRaw);
     expect(storage.getItem('traszka:last')).toBe('inny-sklep');
     expect(storage.keys().sort()).toEqual(['traszka:last', `traszka:save:${SEED}`].sort());

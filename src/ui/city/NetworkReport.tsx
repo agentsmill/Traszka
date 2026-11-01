@@ -1,52 +1,19 @@
-import { signal } from '@preact/signals';
 import { t, tr } from '@/i18n';
 import { DEBT_WARN, debtWarningText } from '@/sim/economy/economy';
 import type { FirmState, NetworkSummary } from '@/sim/firm/types';
 import { firm, type NetworkReportView } from '../state';
 import { minusZl, money, signedZl } from '../game/format';
-import { ReportBody } from '../game/overlays';
+import { ReportBody } from '../game/reportBody';
 import { cashTone } from '../game/statement';
-import { storeName } from './firmText';
-import { shortStoreName } from './storeSwitcherModel';
+import { StoreTabs } from './StoreTabs';
+import { nameOf, resolveTab, storeTabDefs, tabState } from './tabState';
 
 /*
  * Okno końca miesiąca przy kilku sklepach (spec §11.5): przełącznik segmentowy „Sieć / #1 Ogrodowa / #2 Lipowa”. „Sieć” to podsumowanie
  * (`data-tut="network-summary"`): „Zostaje Ci” każdego sklepu i razem, pakiety otwarcia zapłacone gotówką, gotówka po zamknięciu i wynik
  * każdego sklepu. Dalej wyciąg każdego sklepu (ten sam widok co raport jednego sklepu). Te same zakładki ma protokół remanentu
- * (`RemanentModal`) i podgląd końca miesiąca (`MonthPreviewModal`). Komponenty bez haków: zakładkę trzyma sygnał przypięty do widoku okna.
+ * (`RemanentModal`) i podgląd końca miesiąca (`MonthPreviewModal`); przełącznik (`StoreTabs.tsx`) i wybór zakładki (`tabState.ts`) są osobno.
  */
-
-/** Zakładka okna kilku sklepów: podsumowanie sieci (`siec`) albo sklep o danym `id`. */
-export type StoreTab = 'siec' | number;
-export interface StoreTabDef { id: StoreTab; label: string }
-
-/**
- * Wybór zakładki przypięty do widoku okna (obiektu, który okno pokazuje): nowy widok, np. kolejny koniec miesiąca, zaczyna od zakładki
- * domyślnej, a nie od tej, którą gracz wybrał w poprzednim oknie. Zapisuje tylko kliknięcie, więc rysowanie niczego nie zmienia.
- */
-export function tabState<V extends object>() {
-  const picked = signal<{ view: V; tab: StoreTab } | null>(null);
-  return {
-    get: (view: V, fallback: StoreTab): StoreTab => (picked.value?.view === view ? picked.value.tab : fallback),
-    set: (view: V, tab: StoreTab): void => { picked.value = { view, tab }; },
-  };
-}
-
-/** Przełącznik segmentowy zakładek; aktywna ma `aria-selected`. Zwykła funkcja, nie komponent: testy `vnodeTree` widzą wtedy jego przyciski w drzewie okna. */
-export function StoreTabs({ tabs, active, onPick }: { tabs: StoreTabDef[]; active: StoreTab; onPick(id: StoreTab): void }) {
-  return (
-    <div class="tt-seg tt-storetabs" role="tablist" aria-label={t`Sklepy`}>
-      {tabs.map((x) => (
-        <button key={String(x.id)} type="button" role="tab" class={`tt-btn${x.id === active ? ' on' : ''}`} aria-selected={x.id === active} onClick={() => onPick(x.id)}>{x.label}</button>
-      ))}
-    </div>
-  );
-}
-
-/** Nazwa sklepu w oknie: „Traszka #2, Lipowa”; bez firmy (okno bez gry) samo „Traszka #2”. */
-export const nameOf = (f: FirmState | null, id: number): string => (f ? storeName(f, id) : `Traszka #${id}`);
-/** Napis zakładki sklepu: „#2 Lipowa”. */
-export const tabLabel = (f: FirmState | null, id: number): string => (f ? shortStoreName(f, id) : `#${id}`);
 
 const row = (label: string, value: string, total = false) => (
   <div class={total ? 'tt-row total' : 'tt-row'}><span>{label}</span><span>{value}</span></div>
@@ -80,10 +47,9 @@ const picked = tabState<NetworkReportView>();
  */
 export function NetworkReportBody({ view }: { view: NetworkReportView }) {
   const f = firm.value?.f ?? null;
-  const tabs: StoreTabDef[] = [{ id: 'siec', label: t`Sieć` }, ...view.reports.map((r) => ({ id: r.storeId, label: tabLabel(f, r.storeId) }))];
-  const asked = picked.get(view, 'siec');
-  const active = tabs.some((x) => x.id === asked) ? asked : 'siec';
-  const shown = active === 'siec' ? null : view.reports.find((r) => r.storeId === active)!;
+  const tabs = storeTabDefs(f, view.reports.map((r) => r.storeId));
+  const active = resolveTab(picked, view, tabs);
+  const shown = view.reports.find((r) => r.storeId === active);
   return (
     <>
       {StoreTabs({ tabs, active, onPick: (id) => picked.set(view, id) })}

@@ -10,6 +10,7 @@ import {
 } from './game/overlays';
 import { Sheet, TabBar } from './game/panels';
 import { HowTo } from './howto/HowTo';
+import { networkOn } from './city/storeSwitcherModel';
 import { Notice } from './Notice';
 import { PerfOverlay } from './PerfOverlay';
 import type { FinishModel } from './ranking/finishModel';
@@ -32,7 +33,7 @@ const brandVars = {
 } as Record<string, string>;
 
 /**
- * Cała nakładka. Bez `controls` (renderer nie wstał, benchmark albo gra jeszcze nie ruszyła) zostaje komunikat, wyniki benchmarku
+ * Cała nakładka (`tt-net` na korzeniu, gdy gra ma sieć: od niego zależy układ paska, zob. city.css). Bez `controls` (renderer nie wstał, benchmark albo gra jeszcze nie ruszyła) zostaje komunikat, wyniki benchmarku
  * i ekran startowy „Twój kasjer”, który otwiera się przy pierwszym wejściu, zanim powstanie gra. W grze: górny pasek, zakładki
  * z arkuszami, karta zaznaczenia, przyciski klikera, komunikaty, okna i samouczek. Kolejność okien to ich
  * warstwy: karta decyzji leży nad panelami, a pod raportem miesiąca (też sieci), protokołem remanentu, „Jak grać”, powitaniem i ustawieniami. Panele rankingu i kodu
@@ -45,7 +46,7 @@ export function App(
   { controls: Controls | null; game: GameActions | null; finishModel?: FinishModel | null; services?: RankingServices | null },
 ) {
   return (
-    <div class="tt-ui" style={brandVars}>
+    <div class={`tt-ui${networkOn.value ? ' tt-net' : ''}`} style={brandVars}>
       {controls && game && <Hud controls={controls} game={game} ranking={!!services} />}
       <Notice />
       <BenchOverlay />

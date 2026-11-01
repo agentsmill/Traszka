@@ -26,7 +26,7 @@ import { MemoryStorage } from './memoryStorage';
 import { createRankedSession } from './rankedRun';
 import {
   BROKEN_SAVE_NOTICE, NEWER_SAVE_NOTICE, SAVE_SCHEMA, UNBUILDABLE_SAVE_NOTICE, createSession, deleteSave, discardSave, envelopeOf, firmOf, hasStoredSave,
-  lastSavedSeed, newFirmRunLog, newRunLog, pointAtActive, retireSession, reviveSession, saveSession, withLayoutFromSeed, type GameSession, type SaveEnvelope,
+  lastSavedSeed, newFirmRunLog, newRunLog, pointAtActive, saveSession, withLayoutFromSeed, type GameSession, type SaveEnvelope,
 } from './session';
 
 /** Efekty poleceń bez skutków: remont w tych testach ma tylko zmienić sesję (stan i układ), bez dźwięku, sceny i zapisu. */
@@ -394,7 +394,6 @@ describe('zapisy v2 z produkcji', () => {
         expect(s.fromSave).toBe(true);
         expect(s.loadNotice).toBeNull();
         expect(s.ephemeral).toBe(false);
-        expect(s.retired).toBe(false);
         expect(s.layout).toEqual(f.layout);
         expect(withoutTycoon(s.econ)).toEqual(asLoaded(f.econ));
         expect(s.econ.tycoon.trust.value).toBe(legacyTrust(f.econ));
@@ -697,35 +696,11 @@ describe('uszkodzone zapisy', () => {
   });
 });
 
-describe('zamknięty sklep nie wraca do zapisów (otwarcie kolejnej Traszki)', () => {
-  it('retireSession kasuje zapis i blokuje każdy następny zapis tej sesji, także ten z setSeed', () => {
-    const old = playedSession(BLOK);
-    expect(storage.getItem(key(BLOK))).not.toBeNull();
-    retireSession(old);
-    expect(storage.getItem(key(BLOK))).toBeNull();
-    saveSession(old);   // setSeed woła persist() zamykanego sklepu zaraz po jego wycofaniu
-    saveSession(old);
-    expect(storage.getItem(key(BLOK))).toBeNull();
-    expect(createSession(BLOK).fromSave).toBe(false);
-  });
-
-  it('reviveSession (nowy sklep się nie otworzył) przywraca zapis i dalsze zapisy', () => {
-    const old = playedSession(BLOK);
-    retireSession(old);
-    reviveSession(old);
-    expect(storage.getItem(key(BLOK))).not.toBeNull();
-    expect(createSession(BLOK).econ).toEqual(old.econ);
-    play(old, 1);
-    saveSession(old);
-    expect(createSession(BLOK).econ).toEqual(old.econ);
-  });
-});
-
 describe('sesja rankingowa (mode ranked) nie rusza zapisów zwykłego sklepu', () => {
   /** Sesja rankingowa o tym samym seedzie co zwykły sklep; ma `ephemeral: false`, więc o zapisach decyduje wyłącznie `mode`. */
   const ranked = (seed: string): GameSession => ({ ...createSession(seed, true), mode: 'ranked' });
 
-  it('saveSession, discardSave, retireSession i reviveSession zostawiają traszka:save:<seed> i traszka:last tak, jak były', () => {
+  it('saveSession i discardSave zostawiają traszka:save:<seed> i traszka:last tak, jak były', () => {
     const casual = playedSession(BLOK);
     storage.setItem('traszka:last', 'inny-sklep');
     const saved = storage.getItem(key(BLOK));
@@ -738,12 +713,6 @@ describe('sesja rankingowa (mode ranked) nie rusza zapisów zwykłego sklepu', (
     expect(lastSavedSeed()).toBe('inny-sklep');
     discardSave(r);
     expect(storage.getItem(key(BLOK))).toBe(saved);
-    retireSession(r);
-    expect(r.retired).toBe(true);
-    expect(storage.getItem(key(BLOK))).toBe(saved);
-    reviveSession(r);
-    expect(r.retired).toBe(false);
-    expect(storage.getItem(key(BLOK))).toBe(saved);
     expect(lastSavedSeed()).toBe('inny-sklep');
     expect(storage.keys().sort()).toEqual([key(BLOK), 'traszka:last'].sort());
     expect(createSession(BLOK).econ).toEqual(casual.econ);   // zwykły sklep wraca z zapisu bez zmian
@@ -752,13 +721,11 @@ describe('sesja rankingowa (mode ranked) nie rusza zapisów zwykłego sklepu', (
   it('bez zwykłego zapisu sesja rankingowa niczego nie tworzy w pamięci', () => {
     const r = ranked(BLOK);
     saveSession(r);
-    reviveSession(r);
-    retireSession(r);
     discardSave(r);
     expect(storage.keys()).toEqual([]);
   });
 
-  it('zwykła sesja zachowuje się jak dawniej: zapisuje, ustawia „ostatni sklep”, kasuje i przywraca', () => {
+  it('zwykła sesja zachowuje się jak dawniej: zapisuje, ustawia „ostatni sklep” i kasuje', () => {
     const s = createSession(BLOK, true);
     saveSession(s);
     expect(storage.getItem(key(BLOK))).not.toBeNull();
@@ -766,9 +733,6 @@ describe('sesja rankingowa (mode ranked) nie rusza zapisów zwykłego sklepu', (
     discardSave(s);
     expect(storage.getItem(key(BLOK))).toBeNull();
     saveSession(s);
-    retireSession(s);
-    expect(storage.getItem(key(BLOK))).toBeNull();
-    reviveSession(s);
     expect(storage.getItem(key(BLOK))).not.toBeNull();
   });
 });
@@ -940,12 +904,10 @@ describe('zapis z nowszej wersji gry (schemat wyższy niż obsługiwany)', () =>
       expect(storage.getItem(`${key(BLOK)}:broken`)).toBeNull();
       expectPlayable(s);
 
-      // nic, co tab robi w trakcie gry, nie rusza cudzego zapisu: zapis, zamknięcie w sieci, odświeżenie, wczytanie
+      // nic, co tab robi w trakcie gry, nie rusza cudzego zapisu: zapis, odświeżenie, wczytanie
       saveSession(s);
       play(s, 2);
       saveSession(s);
-      retireSession(s);
-      reviveSession(s);
       discardSave(s);
       expect(storage.getItem(key(BLOK))).toBe(raw);
       expect(lastSavedSeed()).toBe('inny-sklep');   // „ostatni sklep” też stoi tam, gdzie stał

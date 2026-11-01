@@ -7,15 +7,15 @@ import { CATS } from '@/sim/economy/catalog';
 import { forecastMonth } from '@/sim/economy/forecast';
 import { forecastFirm } from '@/sim/firm/forecast';
 import { openSecond, partnerSession } from '../../../tests/firmKit';
-import type { MetaView } from '../state';
-import { forecastNow, isNetwork, networkRow, shortStoreName, storeMinis } from './storeSwitcherModel';
+import { firm, type MetaView } from '../state';
+import { forecastNow, isNetwork, networkOn, networkRow, shortStoreName, storeMinis } from './storeSwitcherModel';
 
 /*
  * Model przełącznika sklepów (spec §9.4, §11.3): mini-stan każdego sklepu na liście chipa, wiersz sieci z poprzednich gier i prognoza paska
  * (cała sieć od dwóch otwartych sklepów). Czyste funkcje na prawdziwej firmie z kodu gry (`tests/firmKit.ts`).
  */
 
-afterEach(() => { lang.value = 'pl'; });
+afterEach(() => { lang.value = 'pl'; firm.value = null; });
 
 /** Firma z dwoma sklepami, otwartymi prawdziwymi poleceniami. */
 function twoStores() {
@@ -170,5 +170,20 @@ describe('forecastNow: prognoza paska', () => {
 
   it('isNetwork bez firmy to fałsz', () => {
     expect(isNetwork(null)).toBe(false);
+  });
+});
+
+describe('networkOn: sygnał sieci dla układu paska', () => {
+  it('fałsz bez firmy i z jednym sklepem, prawda od dwóch otwartych, a po zamknięciu drugiego znów fałsz', () => {
+    expect(networkOn.value).toBe(false);
+    const session = partnerSession();
+    firm.value = { f: firmOf(session), v: 1 };
+    expect(networkOn.value).toBe(false);
+    openSecond(session);
+    firm.value = { f: firmOf(session), v: 2 };
+    expect(networkOn.value).toBe(true);
+    firmOf(session).stores[1]!.closed = true;
+    firm.value = { f: firmOf(session), v: 3 };
+    expect(networkOn.value).toBe(false);
   });
 });

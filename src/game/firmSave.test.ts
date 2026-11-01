@@ -677,7 +677,7 @@ describe('sesja: odczyt zapisu schematu 3 (createSession)', () => {
   it('sesja to aktywny sklep (ten sam obiekt econ, układ i info), a cała firma leży w session.firm', () => {
     storage.setItem(key(SEED), text('save-v3-dwa-sklepy.json'));
     const s = createSession(SEED);
-    expect(s).toMatchObject({ seed: SEED, mode: 'casual', fromSave: true, loadNotice: null, retired: false, ephemeral: false, run: null, layoutLevel: 1 });
+    expect(s).toMatchObject({ seed: SEED, mode: 'casual', fromSave: true, loadNotice: null, ephemeral: false, run: null, layoutLevel: 1 });
     const f = s.firm!;
     expect(f).toBeDefined();
     expect(f.activeId).toBe(2);

@@ -9,7 +9,7 @@ import {
   addToNetwork, claimDaily, dailyReward, loadMeta, needsStartScreen, offlineEarnings, partnerOf, pendingDaily, prestigePoints, saveMeta,
   startupWindow, welcomeOffer, type Meta, type Player,
 } from './meta';
-import { createSession, retireSession, saveSession } from './session';
+import { createSession } from './session';
 
 let storage: MemoryStorage;
 beforeEach(() => {
@@ -67,34 +67,6 @@ describe('sieć sklepów', () => {
     addToNetwork(before, richStore('stary-sklep'));
     expect(before.network).toHaveLength(0);
     expect(before.partnerPoints).toBe(0);
-  });
-
-  it('otwarcie kolejnej Traszki (ta sama kolejność co w grze): zamknięty sklep nie wraca do zapisów i nie da się go zamknąć drugi raz', () => {
-    const old = createSession('stary-sklep', true);
-    old.econ.total.margin = 400_000;
-    old.econ.bestDayProfit = 9000;
-    saveSession(old);
-
-    let meta = fresh();
-    meta = addToNetwork(meta, old.econ);
-    retireSession(old);
-    const next = createSession('nowy-sklep', true, partnerOf(meta));
-    saveSession(old);        // setSeed zapisuje „bieżący” sklep, zanim przełączy świat
-    saveSession(next);
-    saveMeta(meta);
-
-    expect(storage.getItem('traszka:save:stary-sklep')).toBeNull();
-    expect(storage.getItem('traszka:save:nowy-sklep')).not.toBeNull();
-    expect(next.econ.partner.points).toBe(meta.partnerPoints);
-    expect(loadMeta().network.map((n) => n.seed)).toEqual(['stary-sklep']);
-
-    // gracz wpisuje stary seed: zaczyna czystą grę i nawet jeśli dojdzie do końca, sieć się nie powiększy
-    const again = createSession('stary-sklep', false, partnerOf(meta));
-    expect(again.fromSave).toBe(false);
-    again.econ.total.margin = 900_000;
-    const afterSecond = addToNetwork(meta, again.econ);
-    expect(afterSecond.network).toHaveLength(1);
-    expect(afterSecond.partnerPoints).toBe(meta.partnerPoints);
   });
 });
 

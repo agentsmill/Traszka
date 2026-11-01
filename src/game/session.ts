@@ -75,8 +75,6 @@ export interface GameSession {
   fromSave: boolean;
   /** Komunikat dla gracza po otwarciu sklepu (np. uszkodzony zapis poszedł do kopii) albo null. */
   loadNotice: string | null;
-  /** Sklep zamknięty w sieci: jego zapis skasowano i nic go już nie zapisze (patrz `retireSession`). */
-  retired: boolean;
   /**
    * Sklep tymczasowy: nic go nie zapisze ani nie skasuje zapisu pod jego seedem. Taką sesją gra otwiera się wtedy, gdy zapis
    * pod tym seedem jest cudzy (z nowszej wersji gry) i nie wolno go ruszyć, a gracz i tak ma dostać działającą grę.
@@ -167,7 +165,7 @@ export const envelopeOf = (s: GameSession): SaveEnvelope => ({
  * samym seedzie i `traszka:last` zostają, jak były.
  */
 export function saveSession(s: GameSession): void {
-  if (s.retired || s.ephemeral || s.mode === 'ranked') return;
+  if (s.ephemeral || s.mode === 'ranked') return;
   const envelope = firmEnvelopeOf(firmOf(s));
   try {
     localStorage.setItem(SAVE_PREFIX + s.seed, JSON.stringify(envelope));
@@ -194,26 +192,11 @@ export function deleteSave(seed: string): void {
 }
 
 /**
- * Zamknięcie sklepu w sieci (otwarcie kolejnej Traszki): zapis znika, a sesja nie zapisze się już nigdy, nawet jeśli ktoś
- * jeszcze zawoła `saveSession` (zmiana sklepu zapisuje „bieżący” sklep, zanim przełączy świat). `reviveSession` cofa to,
- * gdy nowy sklep się nie otworzył.
- */
-export function retireSession(s: GameSession): void {
-  s.retired = true;
-  discardSave(s);
-}
-
-/**
- * Kasuje zapis sklepu sesji („zacznij od nowa”, zamknięcie w sieci). Sklep tymczasowy nie ma własnego zapisu, więc cudzego nie rusza;
+ * Kasuje zapis sklepu sesji („zacznij od nowa”). Sklep tymczasowy nie ma własnego zapisu, więc cudzego nie rusza;
  * sesja rankingowa też nie (jej bieg kasuje `discardRanked`), więc zwykły sklep o tym samym seedzie zostaje.
  */
 export function discardSave(s: GameSession): void {
   if (!s.ephemeral && s.mode !== 'ranked') deleteSave(s.seed);
-}
-
-export function reviveSession(s: GameSession): void {
-  s.retired = false;
-  saveSession(s);
 }
 
 /**
@@ -290,7 +273,7 @@ function sessionOfFirm(f: FirmState): GameSession {
   const st = activeStore(f);
   return {
     seed: f.seed, mode: 'casual', econ: st.econ, layout: st.layout, info: st.info, clock: { acc: 0 }, layoutLevel: st.econ.remontLevel, fromSave: true,
-    loadNotice: null, retired: false, ephemeral: false, run: null, firm: f,
+    loadNotice: null, ephemeral: false, run: null, firm: f,
   };
 }
 
@@ -403,7 +386,7 @@ export function restoreSessionFrom(data: unknown, seed: string, partner?: Econom
     ok: true,
     session: {
       seed, mode: 'casual', econ, layout: world.layout, info: world.info, clock: { acc: 0 }, layoutLevel: econ.remontLevel, fromSave: true,
-      loadNotice: null, retired: false, ephemeral: false, run: null,   // stan z zapisu nie zaczyna się od świeżego sklepu
+      loadNotice: null, ephemeral: false, run: null,   // stan z zapisu nie zaczyna się od świeżego sklepu
     },
   };
 }
@@ -437,7 +420,7 @@ export function createSession(seed: string, fresh = false, partner?: EconomyStat
   const info = computeStoreInfo(layout);
   const econ = createEconomy(seed, info, partner);
   return {
-    seed, mode: 'casual', econ, layout, info, clock: { acc: 0 }, layoutLevel: 0, fromSave: false, loadNotice, retired: false, ephemeral,
+    seed, mode: 'casual', econ, layout, info, clock: { acc: 0 }, layoutLevel: 0, fromSave: false, loadNotice, ephemeral,
     run: noPartner(partner) ? newRunLog(seed) : null,   // `replayRun` startuje bez premii sieci: z nią dziennik nie byłby odtwarzalny
     firmRun: noPartner(partner) ? newFirmRunLog(seed) : null,   // `replayFirm` tak samo
   };

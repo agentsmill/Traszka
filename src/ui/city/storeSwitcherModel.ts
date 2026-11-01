@@ -1,3 +1,4 @@
+import { computed, type ReadonlySignal } from '@preact/signals';
 import { t } from '@/i18n';
 import { lotById } from '@/sim/city/generateCity';
 import { dayOf } from '@/sim/economy/calendar';
@@ -7,7 +8,7 @@ import { forecastMonth, type MonthForecast } from '@/sim/economy/forecast';
 import { forecastFirm } from '@/sim/firm/forecast';
 import { openStores } from '@/sim/firm/firm';
 import type { FirmState, FirmStore } from '@/sim/firm/types';
-import type { EconView, FirmView, MetaView } from '../state';
+import { firm, type EconView, type FirmView, type MetaView } from '../state';
 import { plural, zl } from '../game/format';
 
 /*
@@ -71,6 +72,12 @@ export function shortStoreName(f: FirmState, id: number): string {
 
 /** Czy firma ma sieć do pokazania: co najmniej dwa otwarte sklepy (jeden otwarty sklep nie ma dokąd się przełączać). */
 export const isNetwork = (f: FirmState | null | undefined): boolean => !!f && openStores(f).length >= 2;
+
+/**
+ * Czy gra ma teraz sieć (co najmniej dwa otwarte sklepy). Sygnał zmienia wartość tylko przy zmianie składu, więc `App` (klasa `tt-net`
+ * na `.tt-ui`, od której zależy układ paska i `--hud-h`) nie odświeża się przy każdej publikacji firmy.
+ */
+export const networkOn: ReadonlySignal<boolean> = computed(() => isNetwork(firm.value?.f));
 
 /** „Z poprzednich gier: 2 sklepy, 1 200 zł dziennie, 3 Punkty Partnera” albo null, gdy gracz nie ma sklepów z sieci (spec §15). */
 export function networkRow(meta: MetaView): string | null {

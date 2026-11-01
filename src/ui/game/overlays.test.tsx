@@ -1820,4 +1820,16 @@ describe('prestiż zniknął (spec §15): ani okna, ani sygnału, ani przycisku 
     expect(nodes.map((v) => (v.type as { name?: string }).name)).not.toContain('PrestigeModal');
     expect(nodes.find((v) => v.type === Hud)!.props.game).toBe(game);
   });
+
+  it('korzeń nakładki dostaje klasę tt-net tylko przy sieci (od niej zależy układ paska i --hud-h), a z jednym sklepem zostaje tt-ui', () => {
+    const controls = { setSpeed: vi.fn(), rotate: vi.fn(), setTimeOfDay: vi.fn(), setPreset: vi.fn(), generate: vi.fn(), randomize: vi.fn() } satisfies Controls;
+    const root = (): string => String((App({ controls, game: fakeGame() }) as Vnode).props.class);
+    expect(root()).toBe('tt-ui');
+    const session = partnerSession();
+    firm.value = { f: firmOf(session), v: 1 };
+    expect(root()).toBe('tt-ui');
+    openSecond(session);
+    firm.value = { f: firmOf(session), v: 2 };
+    expect(root()).toBe('tt-ui tt-net');
+  });
 });

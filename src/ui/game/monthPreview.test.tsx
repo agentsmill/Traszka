@@ -417,6 +417,22 @@ describe('podgląd końca miesiąca przy firmie', () => {
     expect(previewWarning({ ...base, gameOver: 'trust' })!.text).toContain('zaufanie');
   });
 
+  it('gra kończy się przed zamknięciem miesiąca: „To naliczenia do chwili końca gry” stoi raz na każdej zakładce', () => {
+    const { f } = networkWorld();
+    const statement = buildStatement({
+      month: { margin: 0, bonus: 0, pallets: 0, wages: 0, media: 0 }, guarantee: 0, installments: 0, remanent: 0, spent: 0, fines: 0, other: 0, cashBefore: 5_000, partial: false,
+    });
+    const part = (id: number): FirmPreview['stores'][number] => ({
+      id, preview: { label: '', cashNow: 5_000, cashAfter: -150_000, lowestCash: -150_000, revenue: 0, customers: 0, statement, profit: 0, gameOver: 'debt', endedEarly: true },
+    });
+    const early: FirmPreview = { label: '', cashNow: 5_000, cashAfter: -150_000, lowestCash: -150_000, stores: [part(1), part(2)], invest: 0, gameOver: 'debt', endedEarly: true };
+    monthPreview.value = { phase: 'done', result: early.stores[0]!.preview, ms: 1, firm: early };
+    const times = (): number => plain(textOf(shown())).split('To naliczenia do chwili końca gry').length - 1;
+    expect(times()).toBe(1);   // zakładka „Sieć”
+    click(buttonsOf(shown()).find((b) => textOf(b) === shortStoreName(f, 2))!);
+    expect(times()).toBe(1);   // zakładka sklepu: raz, nie dwa
+  });
+
   it('ostrzeżenie jest widoczne w oknie sieci (role=alert) i na zakładce Sieć', () => {
     const { f, view } = networkWorld();
     f.stores[1]!.econ.franchisee.month.pallets += 4 * Math.abs(DEBT_LIMIT);   // drugi sklep topi wspólną gotówkę (200 tys. z portfela + minus 400 tys.)
