@@ -16,8 +16,11 @@ import { plural, zl } from '../game/format';
  * która od dwóch otwartych sklepów liczy całą sieć. Czyste funkcje bez interfejsu, więc testuje się je bez DOM.
  */
 
-/** Znak ostrzegawczy przy sklepie: paleta w przejściu, pusta półka, karta rozstrzygnięta dziś przez zastępcę (kolejność jest stała). */
-export type StoreWarning = 'paleta' | 'polka' | 'zastepca';
+/** Znak ostrzegawczy przy sklepie: paleta w przejściu, pusta półka, karta rozstrzygnięta dziś przez zastępcę, niskie zaufanie (kolejność jest stała). */
+export type StoreWarning = 'paleta' | 'polka' | 'zastepca' | 'zaufanie';
+
+/** Zaufanie sklepu poniżej tej wartości daje znak „zaufanie”: sklep w tle może po cichu spaść do zera, a gracz nie zagląda do jego listy. */
+export const TRUST_WARN_BELOW = 40;
 
 /** Mini-stan sklepu na liście chipa. `number` to numer budynku z adresu lokalu („ul. Lipowa 3”), nie numer sklepu (`id`). */
 export interface StoreMini {
@@ -45,6 +48,7 @@ function warningsOf(f: FirmState, st: FirmStore): StoreWarning[] {
   if (CATS.some((c) => st.info.shelfCap[c] > 0 && st.econ.shelf[c] < SHELF_EMPTY_BELOW)) out.push('polka');
   const today = dayOf(st.econ.minute);
   if (f.inbox.some((n) => n.storeId === st.id && n.day === today)) out.push('zastepca');
+  if (st.econ.tycoon.trust.value < TRUST_WARN_BELOW) out.push('zaufanie');
   return out;
 }
 

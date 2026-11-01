@@ -89,6 +89,7 @@ export const FIRM_UI: Dict = {
   'paleta w przejściu': 'pallet in the aisle',
   'pusta półka': 'empty shelf',
   'zastępca odpowiedział na kartę': 'the deputy answered a card',
+  'zaufanie {0} ({1})': 'trust {0} ({1})',
   'Skrzynka zastępcy': 'Deputy’s inbox',
   'Zastępca jeszcze niczego nie rozstrzygał.': 'The deputy has not settled anything yet.',
   // okno końca miesiąca w kilku sklepach i wiersz sieci z poprzednich gier (`NetworkReport.tsx`, `storeSwitcherModel.ts`)

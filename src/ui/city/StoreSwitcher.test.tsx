@@ -152,6 +152,24 @@ describe('lista sklepów z mini-stanem', () => {
     expect(text).toContain('zastępca odpowiedział na kartę');
   });
 
+  it('zaufanie poniżej 40 w tle: chip świeci znakiem, a wiersz sklepu mówi, ile ma i jaki to próg', () => {
+    const { f } = setup();
+    f.stores[1]!.econ.tycoon.trust.value = 32;
+    expect(withClass(render()!, 'tt-stores-alert')).toHaveLength(1);
+    storeList.value = true;
+    const row2 = rows(render()!)[1]!;
+    expect(plain(textOf(row2))).toContain('⚠ zaufanie 32 (Na cenzurowanym)');
+    expect(walk(row2).filter((v) => v.props['data-warn'] === 'zaufanie')).toHaveLength(1);
+  });
+
+  it('po angielsku: ostrzeżenie o zaufaniu z tą samą etykietą progu co w grze', () => {
+    const { f } = setup();
+    f.stores[1]!.econ.tycoon.trust.value = 32;
+    lang.value = 'en';
+    storeList.value = true;
+    expect(plain(textOf(rows(render()!)[1]!))).toContain('⚠ trust 32 (In the Bad Books)');
+  });
+
   it('sklep z wypowiedzeniem mówi, do kiedy działa; zamknięty jest wyłączony i opisany', () => {
     const { f } = setup();
     f.stores[1]!.notice = { endDay: 120 };

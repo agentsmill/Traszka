@@ -98,6 +98,23 @@ describe('podsumowanie sieci (zakładka „Sieć”)', () => {
     expect(text.indexOf('Wynik miesiąca')).toBeGreaterThan(-1);
   });
 
+  it('przy każdym sklepie „zaufanie {n}” z bieżącego stanu sklepu, zaokrąglone jak znaczek 🤝, pod jego wierszem „Zostaje Ci”', () => {
+    const { f, view } = setup();
+    f.stores[0]!.econ.tycoon.trust.value = 71.4;
+    f.stores[1]!.econ.tycoon.trust.value = 32;
+    const labelsInOrder = rowsOf(withTut(render(view), 'network-summary')[0]!).map(([l]) => l);
+    const at = (l: string): number => labelsInOrder.indexOf(l);
+    expect(labelsInOrder[at(storeName(f, 1)) + 1]).toBe('zaufanie 71');
+    expect(labelsInOrder[at(storeName(f, 2)) + 1]).toBe('zaufanie 32');
+  });
+
+  it('po angielsku: zaufanie każdego sklepu', () => {
+    const { f, view } = setup();
+    f.stores[1]!.econ.tycoon.trust.value = 32;
+    lang.value = 'en';
+    expect(rowsOf(withTut(render(view), 'network-summary')[0]!)).toContainEqual(['trust 32', '']);
+  });
+
   it('bez pakietów za gotówkę wiersza o nich nie ma', () => {
     const { view } = setup({ invest: 0 });
     expect(rowsOf(render(view)).map(([l]) => l)).not.toContain('Pakiety otwarcia za gotówkę');
