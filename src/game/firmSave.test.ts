@@ -8,7 +8,9 @@ import { applyCommand } from '@/sim/economy/commands';
 import { awaitingDecision, stepMinute, type EconomyState } from '@/sim/economy/economy';
 import { defaultAnswer } from '@/sim/economy/monthPreview';
 import { LIMITS } from '@/sim/economy/sanitize';
+import { BOTS } from '@/sim/economy/tycoon/bots';
 import { visibleCards } from '@/sim/economy/tycoon/cards';
+import { economyView, toCommand } from '@/sim/economy/tycoon/economyEnv';
 import { storeSeedFor } from '@/sim/city/traffic';
 import { applyFirmCommand, lotState } from '@/sim/firm/commands';
 import {
@@ -152,6 +154,34 @@ function smallFirm(): FirmState {
 let smallMemo: string | null = null;
 /** Koperta małej firmy; każdy test dostaje własną, świeżo sparsowaną kopię. */
 const smallEnvelope = (): Record<string, any> => JSON.parse(smallMemo ??= JSON.stringify(firmEnvelopeOf(smallFirm()))) as Record<string, any>;
+
+// --- Bot „mistrz” przez firmę do statusu Partnera (fixture „przed statusem”) ----------------------------------------------------
+
+/** Seed fixture'a „przed statusem”: bez polskich znaków, żeby smoke mógł go wpisać w adres bez kodowania. */
+const STATUS_SEED = 'traszka-1';
+/** Za ile minut gry od zapisu przychodzi status: smoke przewija `skip(30)`, więc zapis musi leżeć tuż przed zamknięciem miesiąca. */
+const STATUS_LEAD_MINUTES = 20;
+
+/**
+ * Bot „mistrz” gra firmę minuta po minucie (polecenia bota, krok firmy), aż zamknięcie miesiąca da status Partnera. Zwraca minutę kroku,
+ * który go nadał (`statusMinute`), i, gdy `snapshotMinute` nie jest null, kopertę zapisu z tej minuty jako tekst JSON (po poleceniach bota, przed krokiem:
+ * wszystkie karty mają odpowiedź, więc `skip` po wczytaniu nie staje od razu).
+ */
+function mistrzToStatus(seed: string, snapshotMinute: number | null): { statusMinute: number; snapshot: string | null } {
+  const f = newFirm(seed);
+  let snapshot: string | null = null;
+  for (let guard = 0; guard < 120 * DAY && f.over === null; guard++) {
+    const st = activeStore(f);
+    for (const cmd of BOTS.mistrz.act(economyView(st.econ, st.info))) applyStoreCommand(f, toCommand(cmd));
+    if (awaitingDecision(st.econ)) throw new Error('bot „mistrz” zostawił kartę bez odpowiedzi');
+    const minute = clockOf(f);
+    if (minute === snapshotMinute) snapshot = JSON.stringify(firmEnvelopeOf(f));   // tekst od razu: koperta trzyma żywe obiekty sklepów
+    const out = emptyStepOut();
+    stepFirmMinute(f, out);
+    if (out.firm.some((e) => e.kind === 'partner')) return { statusMinute: minute, snapshot };
+  }
+  throw new Error(`bot „mistrz” nie dostał statusu w seedzie ${seed}`);
+}
 
 // --- Schemat 1 i 2: sklep z zapisu to sklep #1 ------------------------------------------------------------------------
 
@@ -466,6 +496,43 @@ describe('schemat 3: zapis i odczyt firmy', () => {
   it.runIf(Boolean(process.env.MAKE_FIXTURE))('fixture save-v3-dwa-sklepy.json: generator (MAKE_FIXTURE=1)', () => {
     writeFileSync(fixtureUrl('save-v3-dwa-sklepy.json'), JSON.stringify(firmEnvelopeOf(scenario())));
   }, 120_000);
+
+  // Fixture „przed statusem” dla smoke'a przeglądarkowego (scripts/city-smoke.mjs): bot „mistrz” gra firmę (jak w pomiarze ekspansji) do
+  // zamknięcia miesiąca, które nadaje status Partnera, a zapis powstaje `STATUS_LEAD_MINUTES` minut wcześniej. Dwa przebiegi z tego samego
+  // seeda dają ten sam stan, więc pierwszy podaje minutę statusu, a drugi robi zapis. Odtwarza go (tylko na wyraźną prośbę):
+  // MAKE_FIXTURE=1 npx vitest run src/game/firmSave.test.ts -t "przed-statusem"
+  it.runIf(Boolean(process.env.MAKE_FIXTURE))('fixture save-v3-przed-statusem.json: generator (MAKE_FIXTURE=1)', () => {
+    const { statusMinute } = mistrzToStatus(STATUS_SEED, null);
+    const { snapshot } = mistrzToStatus(STATUS_SEED, statusMinute - (STATUS_LEAD_MINUTES - 1));
+    writeFileSync(fixtureUrl('save-v3-przed-statusem.json'), snapshot!);
+  }, 120_000);
+
+  it('fixture save-v3-przed-statusem.json: schemat 3, jedna firma bez statusu, po 20 minutach gry jest Partner (smoke przeglądarkowy)', () => {
+    const raw = json('save-v3-przed-statusem.json');
+    expect(raw).toMatchObject({ schema: 3, seed: STATUS_SEED, cityGeneratorVersion: CITY_GENERATOR_VERSION });
+    const f = opened(restoreFirmFrom(raw, STATUS_SEED));
+    expect(f.stores).toHaveLength(1);
+    expect(f.builds).toHaveLength(0);
+    expect(f.person.partner).toBe(false);
+    expect(f.over).toBeNull();
+    const st = activeStore(f);
+    expect(st.econ.history).toHaveLength(1);   // wrzesień zamknięty z zyskiem; status przyjdzie z zamknięciem października
+    expect(st.econ.history[0]!.profit).toBeGreaterThan(0);
+    expect(st.econ.tycoon.trust.value).toBeGreaterThanOrEqual(75);
+    expect(awaitingDecision(st.econ)).toBe(false);   // `skip` w smoke nie staje od razu na karcie
+
+    // dopiero dwudziesta minuta daje status: smoke przewija 30 minut i musi trafić w zamknięcie miesiąca
+    const out = emptyStepOut();
+    for (let i = 0; i < STATUS_LEAD_MINUTES; i++) {
+      expect(f.person.partner, `po ${i} minutach`).toBe(false);
+      answerActive(f);
+      stepFirmMinute(f, out);
+    }
+    expect(f.person.partner).toBe(true);
+    expect(out.firm.filter((e) => e.kind === 'partner')).toHaveLength(1);
+    expect(activeStore(f).econ.history).toHaveLength(2);
+    expect(activeStore(f).econ.history[1]!.profit).toBeGreaterThan(0);
+  });
 
   it('fixture save-v3-dwa-sklepy.json: schemat 3, wczytuje się jako firma i dalej gra deterministycznie', () => {
     const raw = json('save-v3-dwa-sklepy.json');

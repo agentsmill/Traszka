@@ -4,6 +4,8 @@ assets-src
 .superpowers
 .DS_Store
 .playwright-mcp/
+# Zrzuty i wynik smoke'a miasta (scripts/city-smoke.mjs): wybrane zrzuty do raportu kopiuje się do docs/superpowers/reports/
+.smoke/
 .claude/launch.json
 .claude/worktrees/
 # Bundle sędziego rankingu: generowany przez `npm run build:judge` (scripts/build-judge.mjs), nie commitowany

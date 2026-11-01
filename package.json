@@ -9,6 +9,7 @@
     "audio": "node scripts/process-audio.mjs",
     "build:judge": "node scripts/build-judge.mjs",
     "ranking:smoke": "node scripts/ranking-smoke.mjs",
+    "city:smoke": "node scripts/city-smoke.mjs",
     "check:vercel-build": "node scripts/check-vercel-build.mjs",
     "build": "npm run build:judge && tsc --noEmit && vite build",
     "preview": "vite preview",
