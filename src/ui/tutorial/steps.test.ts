@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { applyCommand } from '@/sim/economy/commands';
 import { createEconomy, type EconomyState } from '@/sim/economy/economy';
+import { PARTNER_MONTHS, PARTNER_TRUST } from '@/sim/firm/commands';
 import { computeStoreInfo, type StoreInfo } from '@/sim/economy/storeInfo';
 import { layoutFor } from '@/sim/store/layoutFor';
 import { tapBlock } from '../game/tapBlock';
@@ -150,11 +151,24 @@ describe('teksty', () => {
     for (const word of ['Saldo u Centrali', 'raty', '„Zostaje Ci”', 'przelew', 'wyciąg', 'remanent']) expect(text, word).toContain(word);
   });
 
-  it('liczby ze stałych: najwyższa ranga, długość doby, próg kolejnej Traszki', () => {
+  it('liczby ze stałych: najwyższa ranga, długość doby, próg statusu Partnera', () => {
     const text = all();
     expect(text).toContain('Legendarna Paleta');
     expect(text).toContain('3 min 20 s');
-    expect(text).toContain('Po 2. remoncie albo na 20. poziomie');
+    expect(text).toContain('Gdy sklep ma zysk 2 miesiące z rzędu, a zaufanie Centrali wynosi co najmniej 75, dostajesz status Partnera Strategicznego');
+  });
+
+  it('krok o celach mówi o statusie Partnera i mieście, a nie o drugim remoncie ani „kolejnej Traszce” (prestiż zastąpiło miasto)', () => {
+    const cele = step(buildTour(ctxOf(game())), 'cele');
+    expect(cele.text).toContain('dostajesz status Partnera Strategicznego: w zakładce Miasto wynajmiesz wtedy drugi lokal.');
+    expect(all()).not.toContain('kolejną Traszkę');
+    expect(all()).not.toMatch(/remoncie albo na \d+\. poziomie/);
+  });
+
+  it('próg statusu w kroku to te same liczby co w grze (PARTNER_MONTHS, PARTNER_TRUST)', () => {
+    expect(PARTNER_MONTHS).toBe(2);
+    expect(PARTNER_TRUST).toBe(75);
+    expect(step(buildTour(ctxOf(game())), 'cele').text).toContain(`zysk ${PARTNER_MONTHS} miesiące z rzędu, a zaufanie Centrali wynosi co najmniej ${PARTNER_TRUST},`);
   });
 });
 

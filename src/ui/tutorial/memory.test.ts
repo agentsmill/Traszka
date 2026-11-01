@@ -82,6 +82,8 @@ describe('pamięć samouczka', () => {
   });
 
   it('lista dymków to dokładnie dymki ze specu', () => {
-    expect([...TIP_IDS]).toEqual(['tip-cel', 'tip-przejscia', 'tip-karta', 'tip-wyciag', 'tip-remanent']);
+    expect([...TIP_IDS]).toEqual([
+      'tip-cel', 'tip-przejscia', 'tip-karta', 'tip-wyciag', 'tip-remanent', 'tip-miasto', 'tip-lokal', 'tip-sklepy', 'tip-siec',
+    ]);
   });
 });

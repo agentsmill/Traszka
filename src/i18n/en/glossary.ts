@@ -1,12 +1,15 @@
 import { GUARANTEE, INSTALLMENTS, OWN_COSTS, REMANENT } from '@/sim/economy/catalog';
+import { PARTNER_MONTHS, PARTNER_TRUST } from '@/sim/firm/commands';
 import { zl } from '@/ui/game/format';
 import type { GlossaryEntry } from '@/ui/howto/glossary';
 import { hourOf } from '@/ui/howto/howToText';
+import { openingPlan } from '@/ui/tutorial/city';
 import { enNum, enPlural } from '../num';
 
 /*
  * Słowniczek „Jak grać” po angielsku: te same hasła w tej samej kolejności co `ui/howto/glossary.ts` i te same stałe gry, więc
- * liczby idą razem z balansem. Terminy jak w `docs/i18n/glossary-en.md`. Limitu ubytków też nie zdradza.
+ * liczby idą razem z balansem. Terminy jak w `docs/i18n/glossary-en.md` (Strategic Partner, opening package, deputy, final settlement).
+ * Limitu ubytków też nie zdradza.
  */
 
 const percent = (share: number): string => `${enNum(Math.round(share * 1000) / 10, 1)}%`;
@@ -16,6 +19,7 @@ const either = (items: string[]): string => (items.length < 2 ? items.join('') :
 
 export function glossaryEn(): GlossaryEntry[] {
   const plans = INSTALLMENTS.plans;
+  const opening = openingPlan();
   return [
     {
       term: 'Head Office balance',
@@ -56,6 +60,31 @@ export function glossaryEn(): GlossaryEntry[] {
     {
       term: 'Accountant',
       text: `Keeps your paperwork in order for ${zl(OWN_COSTS.accounting)} a month. Works out how much you owe everyone else.`,
+    },
+    {
+      term: 'Strategic Partner',
+      text: `Head Office status that lets you rent another unit in the City. It arrives when your first shop has been in profit for ${months(PARTNER_MONTHS)} in a row `
+        + `and trust is at least ${PARTNER_TRUST} when the month closes. Once granted it stays; it never arrives in a ranked season.`,
+    },
+    {
+      term: 'Opening package',
+      text: `The price of fitting out a new unit, instead of rent. You pay at once from your cash (at least 0 zł must be left afterwards) or in ${opening.months} instalments `
+        + `with a fee of ${percent(opening.feeShare)} from the new shop’s transfers. The new shop gets no ${zl(GUARANTEE.income)} guarantee: it earns its own way.`,
+    },
+    {
+      term: 'Deputy',
+      text: 'Settles the decision cards in a shop you’re not in, choosing the answer that is already selected. What they chose shows in the deputy’s inbox on the shop list. '
+        + 'You only have hands where you are.',
+    },
+    {
+      term: 'District',
+      text: 'The part of town a unit is in: Estate, Town centre, Station or Office blocks. It sets footfall, the customers’ basket and expectations, theft '
+        + 'and the price of the opening package. The “Districts” layer colours the map.',
+    },
+    {
+      term: 'Final settlement',
+      text: 'The bill when a shop closes, whether Head Office closes it or you give notice (the shop then keeps running for another month). Unpaid instalments on that agreement '
+        + 'and shrinkage since the last stocktake over the limit come out of your cash in one go, so closing a shop is no escape from instalments.',
     },
   ];
 }

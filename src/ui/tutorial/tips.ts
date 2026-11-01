@@ -3,6 +3,7 @@ import { t } from '@/i18n';
 import { awaitingDecision, type EconomyState, type MonthReport } from '@/sim/economy/economy';
 import { visibleCards } from '@/sim/economy/tycoon/cards';
 import type { TabId } from '../state';
+import { CITY_TIPS } from './city';
 import { TIP_IDS, markSeen, type TipId, type TutorialMemory } from './memory';
 import { MONEY_TIPS } from './money';
 
@@ -28,6 +29,18 @@ export interface TipCtx {
   offerOpen: boolean;
   /** Warstwa przelotu na ekranie (przelot wstrzymany oknem gry jej nie ma). */
   tourVisible: boolean;
+  /** Zakładka Miasto jest otwarta. */
+  cityOpen: boolean;
+  /** W Mieście stoi karta wolnego lokalu, ta z pakietem otwarcia (`cityFacts`). */
+  lotOpen: boolean;
+  /** Gracz ma status Partnera Strategicznego. */
+  partner: boolean;
+  /** Bieg rankingowy: miasto tylko do oglądania. */
+  ranked: boolean;
+  /** Liczba otwartych sklepów firmy (budowa i zamknięty sklep się nie liczą). */
+  stores: number;
+  /** Okno końca miesiąca z podsumowaniem sieci (`ui.networkReport`). */
+  networkOpen: boolean;
 }
 
 export interface TipDef {
@@ -71,7 +84,7 @@ export const TIPS: readonly TipDef[] = [
   },
 ];
 
-const ALL: readonly TipDef[] = [...TIPS, ...MONEY_TIPS].sort((a, b) => TIP_IDS.indexOf(a.id) - TIP_IDS.indexOf(b.id));
+const ALL: readonly TipDef[] = [...TIPS, ...MONEY_TIPS, ...CITY_TIPS].sort((a, b) => TIP_IDS.indexOf(a.id) - TIP_IDS.indexOf(b.id));
 
 /**
  * Dymki, które teraz mogą się pokazać, w kolejności z §5: bez wyłączonych podpowiedzi, bez tych, które już były, i nic pod oknem

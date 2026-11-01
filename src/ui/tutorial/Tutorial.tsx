@@ -1,7 +1,8 @@
 import type { Ref } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { t, tr } from '@/i18n';
-import { econ, remanent, report, showSettings, story, tab, tutorialOffer, isWindowOpen, type Controls } from '../state';
+import { econ, firm, networkReport, remanent, report, selectedLot, showSettings, story, tab, tutorialOffer, isWindowOpen, type Controls } from '../state';
+import { cityFacts } from './city';
 import { RING, blockersAround, clipRect, inflate, placeBubble, type Placement, type Rect, type Size } from './layout';
 import { loadTutorial, type TipId } from './memory';
 import { dismissTip, settleTips, showTip, shownTip, tipsFor, type TipCandidate, type TipCtx } from './tips';
@@ -255,6 +256,7 @@ function tipCtx(): TipCtx | null {
   return {
     s: view.s, tab: tab.value, report: report.value, remanentOpen: !!remanent.value, storyOpen: story.value.length > 0,
     windowOpen: isWindowOpen() || showSettings.value, offerOpen: tutorialOffer.value, tourVisible: tourVisible.value,
+    ...cityFacts(firm.value?.f ?? null, { cityTab: tab.value === 'miasto', selectedLot: selectedLot.value, networkOpen: !!networkReport.value }),
   };
 }
 

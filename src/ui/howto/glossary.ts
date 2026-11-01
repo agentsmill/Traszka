@@ -1,10 +1,13 @@
 import { GUARANTEE, INSTALLMENTS, OWN_COSTS, REMANENT } from '@/sim/economy/catalog';
+import { PARTNER_MONTHS, PARTNER_TRUST } from '@/sim/firm/commands';
 import { plural, zl } from '../game/format';
+import { openingPlan } from '../tutorial/city';
 import { hourOf, percent } from './howToText';
 
 /*
- * Słowniczek w oknie „Jak grać” (spec samouczka, §6): pojęcia pieniędzy z SIM 6 („trzy kieszenie”) jednym, dwoma zdaniami.
- * Liczby ze stałych gry. Limitu ubytków nie zdradza: gracz poznaje go dopiero przy pierwszym remanencie, jak w panelu Sklep.
+ * Słowniczek w oknie „Jak grać” (spec samouczka, §6): pojęcia pieniędzy z SIM 6 („trzy kieszenie”) i pojęcia miasta z 4a (spec §17)
+ * jednym, dwoma zdaniami. Liczby ze stałych gry. Limitu ubytków nie zdradza: gracz poznaje go dopiero przy pierwszym remanencie,
+ * jak w panelu Sklep.
  */
 
 export interface GlossaryEntry { term: string; text: string }
@@ -15,6 +18,7 @@ const either = (items: string[]): string => (items.length < 2 ? items.join('') :
 
 export function glossary(): GlossaryEntry[] {
   const plans = INSTALLMENTS.plans;
+  const opening = openingPlan();
   return [
     {
       term: 'Saldo u Centrali',
@@ -55,6 +59,31 @@ export function glossary(): GlossaryEntry[] {
     {
       term: 'Księgowa',
       text: `Prowadzi Twoje papiery za ${zl(OWN_COSTS.accounting)} miesięcznie. Liczy, ile jesteś winien wszystkim innym.`,
+    },
+    {
+      term: 'Partner Strategiczny',
+      text: `Status od Centrali, który pozwala wynająć kolejny lokal w Mieście. Przychodzi, gdy sklep startowy ma zysk ${months(PARTNER_MONTHS)} z rzędu, `
+        + `a zaufanie przy zamknięciu miesiąca wynosi co najmniej ${PARTNER_TRUST}. Raz nadany zostaje; w sezonie rankingowym nie przychodzi.`,
+    },
+    {
+      term: 'Pakiet otwarcia',
+      text: `Cena urządzenia nowego lokalu zamiast czynszu. Płacisz od razu z gotówki (po zapłacie musi zostać co najmniej 0 zł) albo w ${opening.months} ratach `
+        + `z opłatą ${percent(opening.feeShare)} z przelewów nowego sklepu. Nowy sklep nie ma gwarancji ${zl(GUARANTEE.income)}: na siebie zarabia sam.`,
+    },
+    {
+      term: 'Zastępca',
+      text: 'Rozstrzyga karty decyzji w sklepie, w którym Cię nie ma: wybiera odpowiedź zaznaczoną z góry. Co wybrał, widać w skrzynce zastępcy na liście sklepów. '
+        + 'Ręce masz tylko tam, gdzie jesteś.',
+    },
+    {
+      term: 'Dzielnica',
+      text: 'Część miasta, w której leży lokal: Osiedle, Śródmieście, Dworzec albo Biurowce. Od niej zależą ruch, koszyk klienta, oczekiwania, kradzieże '
+        + 'i cena pakietu otwarcia. Warstwa „Dzielnice” koloruje mapę.',
+    },
+    {
+      term: 'Rozliczenie końcowe',
+      text: 'Rachunek przy zamknięciu sklepu: przez Centralę albo po Twoim wypowiedzeniu (sklep pracuje wtedy jeszcze miesiąc). Niespłacone raty tej umowy '
+        + 'i ubytki od ostatniego remanentu ponad limit schodzą z gotówki jednym ruchem, więc zamknięcie sklepu nie jest ucieczką od rat.',
     },
   ];
 }

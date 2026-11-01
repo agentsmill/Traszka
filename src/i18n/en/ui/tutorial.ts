@@ -1,3 +1,4 @@
+import { enNum } from '../../num';
 import type { Dict, Plurals } from '../ui';
 
 /*
@@ -53,7 +54,8 @@ export const TUTORIAL_UI: Dict = {
   'Cele i rozwój': 'Goals and growth',
   'Cel tygodnia od Centrali daje XP, {0}. Poziomy odblokowują sprzęt i remonty. Kamienie milowe dają Ogonki 🦎: „Odbierz”.':
     'The weekly goal from Head Office gives XP, {0}. Levels unlock equipment and refits. Milestones give Ogonki 🦎: tap “Claim”.',
-  'Po {0}. remoncie albo na {1}. poziomie otworzysz kolejną Traszkę.': 'After refit no. {0} or at level {1} you can open another Traszka.',
+  'Gdy sklep ma zysk {0} {1} z rzędu, a zaufanie Centrali wynosi co najmniej {2}, dostajesz status Partnera Strategicznego: w zakładce Miasto wynajmiesz wtedy drugi lokal.':
+    'When your shop is in profit for {0} {1} in a row and Head Office’s trust is at least {2}, you get Strategic Partner status: you can then rent a second unit in the City tab.',
   'Karty decyzji': 'Decision cards',
   'Codziennie może przyjść karta: sprawa od Centrali albo od życia. Gra czeka, aż wybierzesz. Koszty i zyski są na przyciskach, a domyślna odpowiedź jest zaznaczona.':
     'Any day a card may turn up: something from Head Office, or from life itself. The game waits until you choose. Costs and gains are on the buttons, and the default answer is already selected.',
@@ -100,6 +102,20 @@ export const TUTORIAL_UI: Dict = {
     'Out of space: pallets are standing in the aisles and customers are tripping over them. Have a look at Pallets.',
   'Karta decyzji. Gra czeka, aż wybierzesz. Koszty i zyski są na przyciskach, a domyślna odpowiedź jest już zaznaczona.':
     'A decision card. The game waits until you choose. Costs and gains are on the buttons, and the default answer is already selected.',
+
+  // city.ts: dymki „pierwszy raz” miasta i drugiego sklepu (spec 4a, §17); kartka „DO WYNAJĘCIA” po angielsku to „TO LET”
+  'Mapa miasta. Kartka „DO WYNAJĘCIA” to wolny lokal. Weźmiesz go, gdy Centrala nada Ci status Partnera: pasek mówi, czego brakuje.':
+    'The city map. A “TO LET” notice marks a free unit. You can take one once Head Office grants you Strategic Partner status: the bar tells you what’s missing.',
+  'Masz status Partnera. Stuknij kartkę, żeby zobaczyć lokal. Liczby na karcie to widełki, nie obietnica.':
+    'You have Strategic Partner status. Tap a notice to see the unit. The figures on the card are ranges, not a promise.',
+  'W sezonie rankingowym miasto tylko oglądasz.': 'In a ranked season you can only look at the city.',
+  'Urządzenie lokalu płacisz od razu albo w {0} ratach z przelewów nowego sklepu.':
+    'You pay for fitting out the unit at once or in {0} instalments from the new shop’s transfers.',
+  'Nowy sklep nie ma gwarancji {0} tys. zł: na siebie zarabia sam.': (thousands: number) => `The new shop gets no ${enNum(thousands * 1000)} zł guarantee: it earns its own way.`,
+  'Tu przełączasz sklepy. Sklep w tle pracuje sam, a jego karty rozstrzyga zastępca: wybiera odpowiedź zaznaczoną z góry. Ręce masz tylko tam, gdzie jesteś.':
+    'This is where you switch shops. A shop in the background runs itself, and its cards are settled by your deputy, who picks the answer that is already selected. You only have hands where you are.',
+  'Każdy sklep ma swój wyciąg, ale gotówka jest jedna: minus w jednym sklepie zjada plus w drugim.':
+    'Each shop has its own statement, but there is only one pot of cash: a loss in one shop eats into the profit in the other.',
 };
 
 export const TUTORIAL_PLURALS: Plurals = {};

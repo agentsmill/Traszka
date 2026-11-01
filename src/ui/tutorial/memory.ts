@@ -7,8 +7,10 @@
 
 export const TUTORIAL_KEY = 'traszka:tutorial';
 
-/** Dymki „pierwszy raz” w kolejności, w jakiej warstwa je pokazuje (spec samouczka, §5). */
-export const TIP_IDS = ['tip-cel', 'tip-przejscia', 'tip-karta', 'tip-wyciag', 'tip-remanent'] as const;
+/** Dymki „pierwszy raz” w kolejności, w jakiej warstwa je pokazuje (spec samouczka, §5; dymki miasta i drugiego sklepu: spec 4a, §17). */
+export const TIP_IDS = [
+  'tip-cel', 'tip-przejscia', 'tip-karta', 'tip-wyciag', 'tip-remanent', 'tip-miasto', 'tip-lokal', 'tip-sklepy', 'tip-siec',
+] as const;
 export type TipId = (typeof TIP_IDS)[number];
 
 /** `null`: gracz nie odpowiedział jeszcze na okno wyboru; `started`: wybrał samouczek; `skipped`: pominął; `done`: przeszedł do końca. */

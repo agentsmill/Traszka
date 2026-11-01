@@ -52,9 +52,9 @@ const refuse = (reason: FirmRefusal): FirmCommandResult => ({ ok: false, reason 
 // --- Status Partnera Strategicznego (§10.1) ----------------------------------------------------------------------
 
 /** Tyle ostatnich zamkniętych miesięcy z rzędu musi mieć dodatni wynik w sklepie startowym. */
-const PARTNER_MONTHS = 2;
+export const PARTNER_MONTHS = 2;
 /** Zaufanie Centrali, które trzeba mieć przy zamknięciu miesiąca („Zaufany partner”). */
-const PARTNER_TRUST = 75;
+export const PARTNER_TRUST = 75;
 
 /** Sklep startowy: najniższe `id` (#1), nigdy nie znika z listy, nawet po zamknięciu. */
 const startStore = (f: FirmState): FirmStore => f.stores[0]!;

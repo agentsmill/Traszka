@@ -81,6 +81,7 @@ tych samych nazw.
 | lokal (w mieście) | unit, premises | Adres: *3 Lipowa St.* (numer przed ulicą, ulica zostaje po polsku). Wolny lokal z kartką: *TO LET*. |
 | Partner Strategiczny | Strategic Partner | Status z miasta, nadany z niechęcią: *After careful analysis, and with some reluctance…* |
 | pakiet otwarcia | opening package | Urządzenie lokalu: za gotówkę albo na raty (*in instalments*). |
+| dzielnica | district | Osiedle, Śródmieście, Dworzec, Biurowce: *Estate, Town centre, Station, Office blocks*. Warstwa mapy *Districts*. |
 | zastępca | deputy | Rozstrzyga karty sklepu w tle odpowiedzią zaznaczoną z góry: *the deputy chose*. |
 | wypowiedzenie umowy | notice of termination | Okres wypowiedzenia: *notice period*. |
 | rozliczenie końcowe | final settlement | |
@@ -89,7 +90,7 @@ tych samych nazw.
 | ranking, bieg rankingowy, start rankingowy | leaderboard, ranked run, ranked start | |
 | samouczek | tutorial | Okno wyboru: *Your first day at Traszka*, przyciski *Tutorial (about 3 min)* i *Skip, I know the game*. |
 | dymki „pierwszy raz”, podpowiedzi przy pierwszych zdarzeniach | tips, first-time tips | W ⚙: *Tips the first time things happen*. |
-| słowniczek (w „Jak grać”) | glossary | Hasła jak w tej tabeli: *Head Office balance, Transfer, Statement, Instalments, Stocktake, Shrinkage, “You keep”, ZUS, Accountant*. |
+| słowniczek (w „Jak grać”) | glossary | Hasła jak w tej tabeli: *Head Office balance, Transfer, Statement, Instalments, Stocktake, Shrinkage, “You keep”, ZUS, Accountant, Strategic Partner, Opening package, Deputy, District, Final settlement*. |
 | seed, seed tygodnia | seed, seed of the week | |
 | kod odzyskiwania | recovery code | |
 | szuflada (Centrali, niewysłany bieg) | drawer (Head Office’s drawer) | |

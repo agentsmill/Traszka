@@ -13,9 +13,20 @@ Prowadzisz franczyzę Traszki: zamawiasz i rozładowujesz palety, zanim przyjdzi
 i swoich sił, a każdego dnia odpowiadasz na karty decyzji od Centrali. Marża ze sprzedaży wpada na saldo u Centrali, a przy
 zamknięciu miesiąca Centrala robi przelew: po potrąceniu rat i palet oraz Twoich kosztów (pensje, media, ZUS, VAT, księgowa) reszta
 („Zostaje Ci”) trafia do gotówki. Co trzy miesiące remanent rozlicza ubytki. Umowę kończy zaufanie Centrali na zerze przy zamknięciu
-miesiąca albo gotówka poniżej −100 000 zł. Zarobek idzie w ulepszenia, sprzęt i remonty (za gotówkę albo na raty), a po drugim
-remoncie albo na 20. poziomie otworzysz kolejną Traszkę. Po ekranie startowym gra proponuje krótki samouczek (ok. 3 min); pełna
-instrukcja, słowniczek pojęć i ponowny samouczek są pod „?” w pasku gry i w ⚙.
+miesiąca albo gotówka poniżej −100 000 zł. Zarobek idzie w ulepszenia, sprzęt i remonty (za gotówkę albo na raty). Po ekranie
+startowym gra proponuje krótki samouczek (ok. 3 min); pełna instrukcja, słowniczek pojęć i ponowny samouczek są pod „?” w pasku
+gry i w ⚙. Pierwsze dymki „pierwszy raz” (miasto, karta lokalu, dwa sklepy, podsumowanie sieci) wyskakują przy pierwszych zdarzeniach.
+
+**Miasto i drugi sklep.** Zakładka **Miasto** pokazuje mapę miasta (warstwy „Ruch” i „Dzielnice”), listę wolnych lokali i kartę
+lokalu: widełki klientów dziennie, kto przychodzi, konkurencja obok, czas budowy i pakiet otwarcia. Lokal wynajmiesz dopiero ze statusem
+Partnera Strategicznego, który Centrala nadaje, gdy sklep startowy ma zysk dwa miesiące z rzędu, a zaufanie przy zamknięciu miesiąca
+wynosi co najmniej 75. Pakiet otwarcia płacisz od razu z gotówki albo w 12 ratach z przelewów nowego sklepu; po budowie (5–8 dni) sklep
+otwiera się sam, a nowy sklep nie ma gwarancji 25 tys. zł. Najwyżej dwa sklepy, wliczając budowę. Chip w pasku przełącza sklepy: sklep
+w tle pracuje sam, a jego karty rozstrzyga zastępca (odpowiedzią zaznaczoną z góry, wpisy trafiają do skrzynki). Gotówka jest jedna,
+a koniec miesiąca daje wyciąg każdego sklepu i podsumowanie sieci. Sklep można wypowiedzieć (miesiąc wypowiedzenia i rozliczenie
+końcowe). W sezonie rankingowym miasto tylko oglądasz: gra zostaje na jednym sklepie.
+
+Przycisk „Otwórz kolejną Traszkę” (po drugim remoncie albo na 20. poziomie) zastąpiło miasto. Punkty Partnera i dochód z sieci zostają.
 
 Sterowanie: przeciąganie przesuwa widok, szczypanie albo kółko myszy przybliża, ⟲ ⟳ albo Q/E obraca kamerę.
 Spacja pauzuje, F3 pokazuje licznik FPS. Model ekonomii i liczby: [docs/ekonomia.md](docs/ekonomia.md).

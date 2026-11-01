@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { lang } from '@/i18n';
+import { glossaryEn } from '@/i18n/en/glossary';
 import type { Command } from '@/sim/economy/commands';
 import { createEconomy, type CommandResult } from '@/sim/economy/economy';
 import { computeStoreInfo } from '@/sim/economy/storeInfo';
@@ -80,7 +82,7 @@ describe('okno „Jak grać”', () => {
     expect(order[0]!.type).toBe('ul');
   });
 
-  it('na końcu zwinięty „Słowniczek” z hasłami SIM 6 jako lista definicji', () => {
+  it('na końcu zwinięty „Słowniczek” z hasłami SIM 6 i miasta jako lista definicji', () => {
     howTo.value = true;
     const tree = HowTo()!;
     const block = walk(tree).find((v) => v.type === 'details' && v.props.class === 'tt-glossary')!;
@@ -88,8 +90,25 @@ describe('okno „Jak grać”', () => {
     expect(textOf(walk(block).find((v) => v.type === 'summary'))).toBe('Słowniczek');
     expect(walk(block).filter((v) => v.type === 'dt').map((v) => textOf(v))).toEqual(glossary().map((e) => e.term));
     expect(walk(block).filter((v) => v.type === 'dd').map((v) => textOf(v))).toEqual(glossary().map((e) => e.text));
+    for (const term of ['Partner Strategiczny', 'Pakiet otwarcia', 'Zastępca', 'Dzielnica', 'Rozliczenie końcowe']) {
+      expect(walk(block).filter((v) => v.type === 'dt').map((v) => textOf(v)), term).toContain(term);
+    }
     const all = walk(tree).filter((v) => v.type === 'details');
     expect(all.at(-1)).toBe(block);   // słowniczek pod szczegółami
+  });
+
+  it('po angielsku słowniczek ma te same hasła co po polsku, ale z angielskimi terminami', () => {
+    lang.value = 'en';
+    try {
+      howTo.value = true;
+      const block = walk(HowTo()!).find((v) => v.type === 'details' && v.props.class === 'tt-glossary')!;
+      const terms = walk(block).filter((v) => v.type === 'dt').map((v) => textOf(v));
+      expect(terms).toEqual(glossaryEn().map((e) => e.term));
+      expect(terms).toHaveLength(glossary().length);
+      expect(terms.slice(-5)).toEqual(['Strategic Partner', 'Opening package', 'Deputy', 'District', 'Final settlement']);
+    } finally {
+      lang.value = 'pl';
+    }
   });
 
   it('przyciski „Samouczek” i „Zaczynamy” (tt-btn tt-primary); „Zaczynamy” zamyka okno, a gra rusza', () => {

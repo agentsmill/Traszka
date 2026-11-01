@@ -2,7 +2,8 @@ import { rankText, t } from '@/i18n';
 import { awaitingDecision, type EconomyState } from '@/sim/economy/economy';
 import type { StoreInfo } from '@/sim/economy/storeInfo';
 import { tapCost } from '@/sim/economy/tycoon/fatigue';
-import { PRESTIGE_LEVEL, PRESTIGE_REMONT } from '@/game/meta';
+import { PARTNER_MONTHS, PARTNER_TRUST } from '@/sim/firm/commands';
+import { plural } from '../game/format';
 import { dayLengthText, finalRank } from '../howto/howToText';
 import type { TabId } from '../state';
 import { MONEY_NOTES, moneySteps } from './money';
@@ -117,7 +118,7 @@ const cele = (): TourStep => ({
   id: 'cele', target: 'sheet', tab: 'cele',
   title: t`Cele i rozwój`,
   text: t`Cel tygodnia od Centrali daje XP, ${MONEY_NOTES.kpi()}. Poziomy odblokowują sprzęt i remonty. Kamienie milowe dają Ogonki 🦎: „Odbierz”. `
-    + t`Po ${PRESTIGE_REMONT}. remoncie albo na ${PRESTIGE_LEVEL}. poziomie otworzysz kolejną Traszkę.`,
+    + t`Gdy sklep ma zysk ${PARTNER_MONTHS} ${plural(PARTNER_MONTHS, 'miesiąc', 'miesiące', 'miesięcy')} z rzędu, a zaufanie Centrali wynosi co najmniej ${PARTNER_TRUST}, dostajesz status Partnera Strategicznego: w zakładce Miasto wynajmiesz wtedy drugi lokal.`,
 });
 
 const karta = (): TourStep => ({
