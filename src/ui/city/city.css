@@ -614,8 +614,9 @@
   margin: 6px 0 8px;
 }
 
+/* Równe szerokości (podstawa 0): przy czterech zakładkach na 390 px ucina się ulica w „#3 Słoneczna”, a nie krótka „Sieć”. */
 .tt-storetabs .tt-btn {
-  flex: 1 1 auto;
+  flex: 1 1 0;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
