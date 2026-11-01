@@ -9,7 +9,7 @@ import type { LotSpec } from '@/sim/store/types';
 import { DEBT_LIMIT, GUARANTEE, MINUTES_PER_DAY, OPEN_FROM, OPEN_TO, OWN_COSTS } from './catalog';
 import { applyCommand } from './commands';
 import {
-  arrivalRate, awaitingDecision, createEconomy, effects, expectedDailyCustomers, isClosedForRemont, sell, stepMinute,
+  arrivalRate, awaitingDecision, createEconomy, effects, expectedDailyCustomers, isClosedForRemont, kpiMetricsOf, kpiScaleOf, sell, stepMinute,
   type EconEvent, type EconomyState,
 } from './economy';
 import { forecastMonth } from './forecast';
@@ -18,9 +18,9 @@ import { NEUTRAL_SITE, activeSite, siteDayTraffic, type SiteMods } from './site'
 import { computeStoreInfo, type StoreInfo } from './storeInfo';
 import { visibleCards } from './tycoon/cards';
 import { rollWeather } from './tycoon/cleanliness';
-import { weekEnd } from './tycoon/kpi';
+import { KPI, newKpiWeek, weekEnd } from './tycoon/kpi';
 import { SUNDAY_TRAFFIC } from './tycoon/sunday';
-import { dateOfGameDay, weekdayOf } from './tycoon/time';
+import { dateOfGameDay, roundNice, weekdayOf } from './tycoon/time';
 import { WUT, createWut, wutFromSales, wutFromSco } from './tycoon/wut';
 
 /*
@@ -91,8 +91,10 @@ describe('SiteMods: neutralna dzielnica i aktywność', () => {
     expect(activeSite({ ...info, site: NEUTRAL_SITE })).toBeNull();
     expect(activeSite({ ...info, site: { ...NEUTRAL_SITE, firmDebt: true, extra: true, ownCosts: false } })).toBeNull();
     const lot: LotSpec = { kind: 'kamienica', interiorWidth: 14, salesDepth: 13, backroomDepth: 3, corner: false };
+    const D = DISTRICTS;
     const active: Partial<SiteMods>[] = [
-      { traffic: 1.1 }, { weekendTraffic: 0.5 }, { basket: 0.8 }, { patience: -2 }, { repPenalty: 1.5 }, { theft: 1.8 }, { lot },
+      { traffic: D.srodmiescie.traffic }, { weekendTraffic: D.biurowce.weekendTraffic }, { basket: D.dworzec.basket }, { patience: D.srodmiescie.patience },
+      { repPenalty: D.srodmiescie.repPenalty }, { theft: D.dworzec.theft }, { lot },
       { weatherHash: 0 },   // 0 to poprawny skrót, więc liczy się `!== null`, a nie prawda/fałsz
     ];
     for (const over of active) {
@@ -109,7 +111,7 @@ describe('SiteMods: neutralna dzielnica i aktywność', () => {
     const site = siteOf('srodmiescie');
     const fx = effects(s, { ...info, site });
     expect(fx.site).toBe(site);
-    expect(fx.patience).toBe(effects(s, info).patience - 2);
+    expect(fx.patience).toBe(effects(s, info).patience + DISTRICTS.srodmiescie.patience);
   });
 
   it('siteDayTraffic: dni robocze to ruch dzielnicy, niedziela ma premię, weekend Biurowców zastępuje i ruch, i premię', () => {
@@ -117,14 +119,16 @@ describe('SiteMods: neutralna dzielnica i aktywność', () => {
     const offices = siteOf('biurowce');
     // dzień 0 to wtorek; 4 to sobota, 5 niedziela, 6 poniedziałek
     expect([0, 1, 2, 3, 6].map((d) => weekdayOf(d))).toEqual([2, 3, 4, 5, 1]);
+    const mid = DISTRICTS.srodmiescie.traffic;
+    const office = DISTRICTS.biurowce;
     for (const day of [0, 1, 2, 3, 6]) {
-      expect(siteDayTraffic(plain, day)).toBe(1.1);
-      expect(siteDayTraffic(offices, day)).toBe(1.2);
+      expect(siteDayTraffic(plain, day)).toBe(mid);
+      expect(siteDayTraffic(offices, day)).toBe(office.traffic);
     }
-    expect(siteDayTraffic(plain, 4)).toBe(1.1);                       // sobota bez weekendTraffic: dzień jak inne
-    expect(siteDayTraffic(plain, 5)).toBe(1.1 * SUNDAY_TRAFFIC);      // niedziela: premia
-    expect(siteDayTraffic(offices, 4)).toBe(0.5);
-    expect(siteDayTraffic(offices, 5)).toBe(0.5);                     // bez premii niedzieli
+    expect(siteDayTraffic(plain, 4)).toBe(mid);                       // sobota bez weekendTraffic: dzień jak inne
+    expect(siteDayTraffic(plain, 5)).toBe(mid * SUNDAY_TRAFFIC);      // niedziela: premia
+    expect(siteDayTraffic(offices, 4)).toBe(office.weekendTraffic);
+    expect(siteDayTraffic(offices, 5)).toBe(office.weekendTraffic);   // bez premii niedzieli
   });
 });
 
@@ -174,7 +178,7 @@ describe('kierunki dzielnic (30 dni)', () => {
       return playTo(p, DAYS * DAY).s;
     };
     const share = (s: EconomyState): number => s.tycoon.wut.month.kradziez / s.total.revenue;
-    expect(share(withSco(siteOf('dworzec')))).toBeGreaterThanOrEqual(1.5 * share(withSco()));
+    expect(share(withSco(siteOf('dworzec')))).toBeGreaterThanOrEqual(1.5 * share(withSco()));   // próg testu, nie liczba z tabeli: Dworzec ma co najmniej 1,5×
 
     // bez zgadywania z przebiegu: ta sama sprzedaż, cała przez SCO i cała przez kasę
     for (const scoShare of [0, 1]) {
@@ -184,7 +188,7 @@ describe('kierunki dzielnic (30 dni)', () => {
         sell(s, effects(s, info), 40, scoShare);
         return s;
       };
-      expect(share(sold(siteOf('dworzec')))).toBeCloseTo(1.8 * share(sold()), 9);
+      expect(share(sold(siteOf('dworzec')))).toBeCloseTo(DISTRICTS.dworzec.theft * share(sold()), 9);
     }
   });
 
@@ -214,8 +218,8 @@ describe('kierunki dzielnic (30 dni)', () => {
       s.minute = day * DAY + 12 * 60;
       return arrivalRate(s, inf);
     };
-    expect(rateAt(info, 6)).toBeCloseTo(1.2 * rateAt(plainInfo, 6), 12);          // poniedziałek
-    expect(rateAt(info, 5)).toBeCloseTo(0.5 * rateAt(plainInfo, 6), 12);          // niedziela: 0,5, a nie 0,5 × 1,35
+    expect(rateAt(info, 6)).toBeCloseTo(DISTRICTS.biurowce.traffic * rateAt(plainInfo, 6), 12);          // poniedziałek
+    expect(rateAt(info, 5)).toBeCloseTo(DISTRICTS.biurowce.weekendTraffic! * rateAt(plainInfo, 6), 12);  // niedziela: ruch weekendu, a nie razy 1,35
     expect(rateAt(plainInfo, 5)).toBeCloseTo(SUNDAY_TRAFFIC * rateAt(plainInfo, 6), 12);
   });
 
@@ -225,9 +229,36 @@ describe('kierunki dzielnic (30 dni)', () => {
     const base = expectedDailyCustomers(s, plain);
     const offices = { ...plain, site: siteOf('biurowce') };
     s.minute = 5 * DAY + 12 * 60;   // niedziela
-    expect(expectedDailyCustomers(s, offices)).toBeCloseTo(1.2 * base, 9);
+    expect(expectedDailyCustomers(s, offices)).toBeCloseTo(DISTRICTS.biurowce.traffic * base, 9);
     s.minute = 6 * DAY + 12 * 60;   // poniedziałek
-    expect(expectedDailyCustomers(s, offices)).toBeCloseTo(1.2 * base, 9);
+    expect(expectedDailyCustomers(s, offices)).toBeCloseTo(DISTRICTS.biurowce.traffic * base, 9);
+  });
+
+  it('cel KPI tygodnia w Biurowcach liczy weekend po swojemu: tyle, ile przyjdzie klientów, a nie tydzień dni roboczych (przegląd balansu)', () => {
+    const offices = siteOf('biurowce');
+    const info = infoOf(SEED, offices);
+    const s = createEconomy(SEED, info);
+    const scale = kpiScaleOf(s, info);
+    expect(scale.weekendRatio).toBeCloseTo(offices.weekendTraffic! / offices.traffic, 12);
+    // inne dzielnice i sklep bez dzielnicy nie mają tego pola: ich cel liczy się dokładnie jak dziś
+    expect('weekendRatio' in kpiScaleOf(s, infoOf(SEED))).toBe(false);
+    expect('weekendRatio' in kpiScaleOf(s, infoOf(SEED, siteOf('srodmiescie')))).toBe(false);
+    expect('weekendRatio' in kpiScaleOf(s, infoOf(SEED, { ...NEUTRAL_SITE, extra: true }))).toBe(false);
+
+    let seq = 1;
+    while (newKpiWeek(s.seedHash, seq, 0, kpiMetricsOf(s), scale).kind !== 'klienci') seq++;
+    // pełny tydzień od poniedziałku (dzień 6) do niedzieli (12), tydzień od soboty (dzień 4) i od wtorku (dzień 0)
+    for (const from of [6, 4, 0]) {
+      const week = newKpiWeek(s.seedHash, seq, from, kpiMetricsOf(s), scale);
+      // ruch dnia względem dnia roboczego, wprost z ekonomii sklepu: to samo, czego cel ma się spodziewać
+      let expected = 0;
+      for (let d = week.fromDay; d <= week.toDay; d++) expected += siteDayTraffic(offices, d) / offices.traffic;
+      expect(week.target, `tydzień od dnia ${from}`).toBe(Math.max(10, roundNice(KPI.customersStretch * scale.dailyCustomers * expected)));
+    }
+    // dawny cel (tydzień dni roboczych z premią niedzieli) był ok. 27% za wysoki dla pełnego tygodnia
+    const { weekendRatio: _drop, ...plainScale } = scale;
+    const full = newKpiWeek(s.seedHash, seq, 6, kpiMetricsOf(s), scale).target;
+    expect(newKpiWeek(s.seedHash, seq, 6, kpiMetricsOf(s), plainScale).target / full).toBeGreaterThan(1.2);
   });
 
   it('sell: koszyk mnoży obrót i marżę, ale nie zużycie towaru', () => {
@@ -242,9 +273,10 @@ describe('kierunki dzielnic (30 dni)', () => {
     expect(b.shelf).toEqual(a.shelf);
     expect(b.today.customers).toBe(a.today.customers);
     expect(b.today.hotSold).toBe(a.today.hotSold);
-    expect(b.today.revenue).toBeCloseTo(1.35 * a.today.revenue, 9);
-    expect(b.today.margin).toBeCloseTo(1.35 * a.today.margin, 9);
-    expect(b.franchisee.month.margin).toBeCloseTo(1.35 * a.franchisee.month.margin, 9);
+    const basket = DISTRICTS.srodmiescie.basket;
+    expect(b.today.revenue).toBeCloseTo(basket * a.today.revenue, 9);
+    expect(b.today.margin).toBeCloseTo(basket * a.today.margin, 9);
+    expect(b.franchisee.month.margin).toBeCloseTo(basket * a.franchisee.month.margin, 9);
   });
 
   it('reputacja: kara za puste półki, brud i kolejkę rośnie o repPenalty, nagroda za obsługę nie', () => {
@@ -256,16 +288,17 @@ describe('kierunki dzielnic (30 dni)', () => {
       sell(s, effects(s, info), 10, 0);
       return s.reputation - 50;
     };
-    const penalty = { ...NEUTRAL_SITE, repPenalty: 1.5 };
+    const mult = DISTRICTS.srodmiescie.repPenalty;
+    const penalty = { ...NEUTRAL_SITE, repPenalty: mult };
     const empty = (s: EconomyState): void => { for (const c of Object.keys(s.shelf) as (keyof typeof s.shelf)[]) s.shelf[c] = 0; };
     expect(rep(undefined, empty)).toBeCloseTo(-0.2, 12);
-    expect(rep(penalty, empty)).toBeCloseTo(-0.3, 12);
+    expect(rep(penalty, empty)).toBeCloseTo(-0.2 * mult, 12);
     const dirty = (s: EconomyState): void => { s.tycoon.hall.cleanliness = 0; };
     const gain = rep(undefined, () => {});
     expect(gain).toBeCloseTo(10 * 0.0025, 12);
     expect(rep(penalty, () => {})).toBeCloseTo(gain, 12);                       // pełne półki, czysta sala: bez kary
     expect(rep(undefined, dirty)).toBeCloseTo(10 * (0.0025 - 0.003), 12);
-    expect(rep(penalty, dirty)).toBeCloseTo(10 * (0.0025 - 0.003 * 1.5), 12);
+    expect(rep(penalty, dirty)).toBeCloseTo(10 * (0.0025 - 0.003 * mult), 12);
   });
 
   it('przy tej samej kolejce Śródmieście traci więcej reputacji niż Osiedle', () => {
@@ -279,7 +312,7 @@ describe('kierunki dzielnic (30 dni)', () => {
       return s.reputation;
     };
     // tylko kary: Osiedle i Osiedle z samym repPenalty mają tę samą kolejkę i ten sam ruch
-    expect(afterMinute({ ...NEUTRAL_SITE, repPenalty: 1.5 })).toBeLessThan(afterMinute());
+    expect(afterMinute({ ...NEUTRAL_SITE, repPenalty: DISTRICTS.srodmiescie.repPenalty })).toBeLessThan(afterMinute());
     expect(afterMinute(siteOf('srodmiescie'))).toBeLessThan(afterMinute());
   });
 });
@@ -289,17 +322,18 @@ describe('WUT: mnożnik kradzieży', () => {
     const base = createWut();
     wutFromSales(base, 1000);
     const theft = createWut();
-    wutFromSales(theft, 1000, 1.8);
-    expect(theft.month.kradziez).toBeCloseTo(1.8 * base.month.kradziez, 12);
+    const mult = DISTRICTS.dworzec.theft;
+    wutFromSales(theft, 1000, mult);
+    expect(theft.month.kradziez).toBeCloseTo(mult * base.month.kradziez, 12);
     expect(theft.month.termin).toBe(base.month.termin);
     expect(theft.month.pomylki).toBe(base.month.pomylki);
 
     const sco = createWut();
     wutFromSco(sco, 1000, 0.6);
     const scoTheft = createWut();
-    wutFromSco(scoTheft, 1000, 0.6, 1.8);
+    wutFromSco(scoTheft, 1000, 0.6, mult);
     expect(sco.month.kradziez).toBe(1000 * WUT.scoShrink * 0.6);
-    expect(scoTheft.month.kradziez).toBeCloseTo(1.8 * sco.month.kradziez, 12);
+    expect(scoTheft.month.kradziez).toBeCloseTo(mult * sco.month.kradziez, 12);
   });
 });
 

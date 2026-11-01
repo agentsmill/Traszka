@@ -165,17 +165,17 @@ describe('lotLocalFactor: natężenie przy wejściu względem średniej dzielnic
 });
 
 /**
- * Miasto z ręcznie wstawionymi lokalami: cel (0, Śródmieście) w (500, 500), rywale 200 m na wschód (1) i 200 m na północ (2),
- * 300 m na wschód (3), dokładnie 250 m na wschód (5), lokal startowy (4) w (60, 60) i jego sąsiad rywal (6) w 100 m.
+ * Miasto z ręcznie wstawionymi lokalami: cel (0, Śródmieście) w (500, 500), rywale 100 m na wschód (1) i 100 m na północ (2),
+ * 200 m na wschód (3), dokładnie `RIVAL_RADIUS_M` na wschód (5), lokal startowy (4) w (60, 60) i jego sąsiad rywal (6) w 100 m.
  * Punkty ruchu z prawdziwego miasta, więc natężenie lokalne jest prawdziwe, a różnice między wariantami robi tylko konkurencja.
  */
 const HAND: { id: number; x: number; y: number; district: StoreDistrict }[] = [
   { id: 0, x: 500, y: 500, district: 'srodmiescie' },
-  { id: 1, x: 700, y: 500, district: 'srodmiescie' },
-  { id: 2, x: 500, y: 300, district: 'srodmiescie' },
-  { id: 3, x: 800, y: 500, district: 'srodmiescie' },
+  { id: 1, x: 600, y: 500, district: 'srodmiescie' },
+  { id: 2, x: 500, y: 400, district: 'srodmiescie' },
+  { id: 3, x: 700, y: 500, district: 'srodmiescie' },
   { id: 4, x: 60, y: 60, district: 'osiedle' },
-  { id: 5, x: 750, y: 500, district: 'srodmiescie' },
+  { id: 5, x: 500 + RIVAL_RADIUS_M, y: 500, district: 'srodmiescie' },
   { id: 6, x: 160, y: 60, district: 'osiedle' },
 ];
 
@@ -191,12 +191,15 @@ function handCity(rivals: number[]): CityState {
 }
 
 describe('konkurencja w promieniu', () => {
-  it('stałe z projektu: promień 250 m, ×0,8 za rywala', () => {
-    expect(RIVAL_RADIUS_M).toBe(250);
+  it('stałe z przeglądu balansu: promień 150 m (wcześniej 250 m: rywal w 76% wolnych lokali), ×0,8 za rywala', () => {
+    expect(RIVAL_RADIUS_M).toBe(150);
     expect(RIVAL_FACTOR).toBe(0.8);
+    // ręczne miasto niżej zakłada rywali w 100 m (bliżej niż promień) i w 200 m (dalej)
+    expect(RIVAL_RADIUS_M).toBeGreaterThan(100);
+    expect(RIVAL_RADIUS_M).toBeLessThan(200);
   });
 
-  it('rywal w 200 m daje ×0,8, dwóch ×0,64, a rywal w 300 m (albo dokładnie w 250 m) nic nie zmienia', () => {
+  it('rywal w 100 m daje ×0,8, dwóch ×0,64, a rywal w 200 m (albo dokładnie w promieniu) nic nie zmienia', () => {
     const none = lotTrafficMult(handCity([]), 0);
     expect(lotTrafficMult(handCity([1]), 0) / none).toBeCloseTo(0.8, 12);
     expect(lotTrafficMult(handCity([1, 2]), 0) / none).toBeCloseTo(0.64, 12);
@@ -208,7 +211,7 @@ describe('konkurencja w promieniu', () => {
   it('rivalsNear: tylko konkurencja bliżej niż promień, z odległością w metrach, od najbliższej; lokal nie jest własnym rywalem', () => {
     expect(rivalsNear(handCity([]), 0)).toEqual([]);
     const near = rivalsNear(handCity([1, 2, 3, 5]), 0);
-    expect(near.map((r) => [r.lot.id, r.meters])).toEqual([[1, 200], [2, 200]]);
+    expect(near.map((r) => [r.lot.id, r.meters])).toEqual([[1, 100], [2, 100]]);
     expect(rivalsNear(handCity([0]), 0)).toEqual([]);
     expect(rivalsNear(handCity([6]), 4).map((r) => [r.lot.id, r.meters])).toEqual([[6, 100]]);
   });
@@ -220,14 +223,14 @@ describe('konkurencja w promieniu', () => {
 });
 
 describe('lotTrafficMult', () => {
-  it('to ruch dzielnicy × natężenie lokalne × 0,8^liczba rywali w 250 m', () => {
+  it('to ruch dzielnicy × natężenie lokalne × 0,8^liczba rywali w promieniu', () => {
     let withRivals = 0;
     for (const seed of SEEDS) {
       const c = cityOf(seed);
       for (const l of nonStart(c)) {
         const n = rivalsNear(c, l.id).length;
         if (n > 0) withRivals++;
-        expect(lotTrafficMult(c, l.id), `${seed} lokal ${l.id}`).toBeCloseTo(DISTRICTS[l.district].traffic * lotLocalFactor(c, l.id) * 0.8 ** n, 12);
+        expect(lotTrafficMult(c, l.id), `${seed} lokal ${l.id}`).toBeCloseTo(DISTRICTS[l.district].traffic * lotLocalFactor(c, l.id) * RIVAL_FACTOR ** n, 12);
       }
       expect(lotTrafficMult(c, c.startLotId), `${seed}: start`).toBe(1);
     }
@@ -243,16 +246,17 @@ describe('storeSeedFor i siteFor', () => {
     expect(storeSeedFor('abc', 7)).toBe('abc:store:7');
   });
 
-  it('lokal z Dworca: dzielnica, kradzieże 1,8, koszyk 0,8, lokal miasta i flagi przepisane', () => {
+  it('lokal z Dworca: dzielnica, kradzieże i koszyk z DISTRICTS, lokal miasta i flagi przepisane', () => {
     for (const seed of SEEDS.slice(0, 8)) {
       const c = cityOf(seed);
       const lot = c.lots.find((l) => l.district === 'dworzec')!;
       const site = siteFor(c, lot.id, FLAGS);
       expect(site.district).toBe('dworzec');
-      expect(site.theft).toBe(1.8);
-      expect(site.basket).toBe(0.8);
-      expect(site.patience).toBe(1);
-      expect(site.repPenalty).toBe(1);
+      const d = DISTRICTS.dworzec;
+      expect(site.theft).toBe(d.theft);
+      expect(site.basket).toBe(d.basket);
+      expect(site.patience).toBe(d.patience);
+      expect(site.repPenalty).toBe(d.repPenalty);
       expect(site.weekendTraffic).toBeNull();
       expect(site.lot).toBe(lot.spec);
       expect(site.traffic).toBe(lotTrafficMult(c, lot.id));
@@ -264,10 +268,13 @@ describe('storeSeedFor i siteFor', () => {
     const c = cityOf('kiełbasa-42');
     for (const l of nonStart(c).filter((x) => x.district === 'biurowce')) {
       const site = siteFor(c, l.id, FLAGS);
-      expect(site.weekendTraffic).toBeCloseTo(site.traffic * (0.5 / 1.2), 12);
+      expect(site.weekendTraffic).toBeCloseTo(site.traffic * (DISTRICTS.biurowce.weekendTraffic! / DISTRICTS.biurowce.traffic), 12);
     }
     const mid = siteFor(c, nonStart(c).find((l) => l.district === 'srodmiescie')!.id, FLAGS);
-    expect([mid.basket, mid.patience, mid.repPenalty, mid.theft]).toEqual([1.35, -2, 1.5, 0.6]);
+    const d = DISTRICTS.srodmiescie;
+    expect([mid.basket, mid.patience, mid.repPenalty, mid.theft]).toEqual([d.basket, d.patience, d.repPenalty, d.theft]);
+    expect(mid.patience).toBeLessThan(0);
+    expect(mid.repPenalty).toBeGreaterThan(1);
   });
 
   it('lokal startowy: NEUTRAL_SITE z flagami (sklep startowy gra jak dziś), także gdy rywal jest w pobliżu', () => {
@@ -306,8 +313,10 @@ describe('lotEstimate: widełki klientów na karcie lokalu', () => {
       expect(e.trueDaily).toBeLessThanOrEqual(e.hi);
       expect(e.lo % 10).toBe(0);
       expect(e.hi % 10).toBe(0);
-      expect(e.hi / e.lo, `${seed}: ${e.lo}–${e.hi}`).toBeGreaterThan(1.25 / 0.75 - 0.08);
-      expect(e.hi / e.lo).toBeLessThan(1.25 / 0.75 + 0.08);
+      // zaokrąglenie obu granic do dziesiątek psuje stosunek o ok. 10 / lo, więc przy kilkuset klientach to ±0,08, a w Śródmieściu (ruch 0,8) trochę więcej
+      const tolerance = Math.max(0.08, 10 / e.lo + 0.01);
+      expect(e.hi / e.lo, `${seed}: ${e.lo}–${e.hi}`).toBeGreaterThan(1.25 / 0.75 - tolerance);
+      expect(e.hi / e.lo).toBeLessThan(1.25 / 0.75 + tolerance);
       expect(e.who).toHaveLength(2);
       expect(new Set(e.who).size).toBe(2);
       for (const k of e.who) expect(KINDS).toContain(k);

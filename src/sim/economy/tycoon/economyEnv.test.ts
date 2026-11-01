@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { DISTRICTS, districtSite } from '@/sim/city/districts';
 import { freshRun } from '@/sim/run';
 import { MINUTES_PER_DAY, OPEN_FROM, PATIENCE } from '../catalog';
 import { awaitingDecision, type EconomyState } from '../economy';
@@ -228,6 +229,29 @@ describe('boty przechodzą dwa miesiące prawdziwej gry', () => {
     const b = playBot('mistrz', SEED, 6 * MINUTES_PER_DAY);
     expect(JSON.stringify(a.state)).toBe(JSON.stringify(b.state));
     expect(a.state.total.taps).toBeGreaterThan(0);
+  });
+
+  it('bez site playBot gra dokładnie freshRun (setup nie jest wołany bez potrzeby), z site sklep stoi w lokalu dzielnicy', () => {
+    const days = 4 * MINUTES_PER_DAY;
+    const plain = playBot('bierny', SEED, days);
+    const run = freshRun(SEED);
+    runBot(BOTS.bierny, economyEnv(run), days);
+    expect(JSON.stringify(plain.state)).toBe(JSON.stringify(run.state));
+
+    const mid = playBot('bierny', SEED, days, districtSite('srodmiescie')).state;
+    const perCustomer = (st: EconomyState): number => st.total.revenue / st.total.customers;
+    expect(perCustomer(mid) / perCustomer(plain.state)).toBeCloseTo(DISTRICTS.srodmiescie.basket, 1);   // koszyk dzielnicy
+    expect(JSON.stringify(mid)).not.toBe(JSON.stringify(plain.state));
+  });
+
+  it('setup rusza świeży bieg przed pierwszą minutą', () => {
+    let seen = -1;
+    const play = playBot('bierny', SEED, 5, undefined, (run) => {
+      seen = run.state.minute;
+      run.state.cash += 123;
+    });
+    expect(seen).toBe(OPEN_FROM);
+    expect(play.state.cash).toBeGreaterThanOrEqual(freshRun(SEED).state.cash + 123 - 1);
   });
 
   it('bot stukający zużywa siły i stuka, bierny nie rusza ani ich, ani kasy', () => {

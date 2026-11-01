@@ -1,11 +1,13 @@
 import { freshRun } from '@/sim/run';
+import { layoutFor } from '@/sim/store/layoutFor';
 import { MINUTES_PER_DAY } from '../catalog';
 import { applyCommand, type Command } from '../commands';
 import {
-  awaitingDecision, effects, estimatedDailyRevenue, freeSpots, isOpenForCustomers, patienceOf, stepMinute, type EconEvent,
+  awaitingDecision, createEconomy, effects, estimatedDailyRevenue, freeSpots, isOpenForCustomers, patienceOf, stepMinute, type EconEvent,
   type EconomyState, type MonthReport,
 } from '../economy';
-import type { StoreInfo } from '../storeInfo';
+import type { SiteMods } from '../site';
+import { computeStoreInfo, type StoreInfo } from '../storeInfo';
 import { BOTS, BOT_NAMES, runBot, type BotCommand, type BotEnv, type BotName, type BotView } from './bots';
 import { visibleCards } from './cards';
 import { tapCost } from './fatigue';
@@ -59,7 +61,7 @@ export function economyView(s: EconomyState, info: StoreInfo): BotView {
 }
 
 /** Polecenie bota jako polecenie gry. Combo z `BotCommand` pomijamy: ekonomia liczy je sama z serii stuknięć (`comboMult`). */
-function toCommand(cmd: BotCommand): Command {
+export function toCommand(cmd: BotCommand): Command {
   switch (cmd.type) {
     case 'card.answer': return { type: 'answerCard', seq: cmd.seq, answer: cmd.answer };
     case 'staff.profile': return { type: 'setStaffProfile', profile: cmd.profile };
@@ -104,9 +106,23 @@ export interface BotPlay {
   reports: MonthReport[];
 }
 
-/** Puszcza bota na `minutes` minut prawdziwej gry od `freshRun(seed)`. */
-export function playBot(name: BotName, seed: string, minutes: number): BotPlay {
-  const run = freshRun(seed);
+/**
+ * Świeża gra sklepu w dzielnicy: układ z lokalu `site.lot` (bez niego z seeda), `site` w `StoreInfo`, sklep od 1 września. Bez `site`
+ * to `freshRun(seed)`.
+ */
+function startRun(seed: string, site?: SiteMods): EconomyRun {
+  if (!site) return freshRun(seed);
+  const info: StoreInfo = { ...computeStoreInfo(layoutFor(seed, 0, site.lot ?? undefined)), site };
+  return { state: createEconomy(seed, info), info };
+}
+
+/**
+ * Puszcza bota na `minutes` minut prawdziwej gry od `freshRun(seed)`. Z `site` gra sklep w dzielnicy miasta (balans dzielnic,
+ * `districtSite`); bez niego dokładnie dzisiejsza gra. `setup` rusza świeży bieg przed pierwszą minutą (np. zakup kasy samoobsługowej).
+ */
+export function playBot(name: BotName, seed: string, minutes: number, site?: SiteMods, setup?: (run: EconomyRun) => void): BotPlay {
+  const run = startRun(seed, site);
+  setup?.(run);
   const reports: MonthReport[] = [];
   runBot(BOTS[name], economyEnv(run, (e) => { if (e.kind === 'month' && e.report) reports.push(e.report); }), minutes);
   return { state: run.state, reports };

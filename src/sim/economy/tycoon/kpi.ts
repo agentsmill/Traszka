@@ -39,8 +39,11 @@ export interface KpiState {
   month: { hit: number; miss: number };
 }
 
-/** Skala sklepu do celów i nagród; `level` to poziom gracza (XP za trafiony KPI, jak dawniej za zlecenie). */
-export interface KpiScale { dailyCustomers: number; dailyMargin: number; level?: number }
+/**
+ * Skala sklepu do celów i nagród; `level` to poziom gracza (XP za trafiony KPI, jak dawniej za zlecenie). `weekendRatio`: ruch soboty
+ * i niedzieli względem `dailyCustomers`, gdy sklep ma w weekend inny ruch niż w tygodniu (Biurowce, `site.ts`); brak = jak dziś.
+ */
+export interface KpiScale { dailyCustomers: number; dailyMargin: number; level?: number; weekendRatio?: number }
 
 export const KPI = {
   trustHit: 3,
@@ -68,9 +71,23 @@ function pickKind(seedHash: number, seq: number, previous: KpiKind | null): KpiK
   return pool[Math.floor(rand01(seedHash, seq, CH.kpiKind) * pool.length)];
 }
 
-function targetFor(kind: KpiKind, days: number, scale: KpiScale): number {
-  // tydzień zawsze kończy się w niedzielę, a w niedzielę przychodzi więcej ludzi (sunday.ts)
-  const customers = Math.max(1, scale.dailyCustomers) * (days + SUNDAY_TRAFFIC - 1);
+/**
+ * Ile „zwykłych dni” klientów przyjdzie od dnia `from` do niedzieli `to` włącznie. Tydzień zawsze kończy się w niedzielę, a w niedzielę
+ * przychodzi więcej ludzi (sunday.ts). Sklep z `weekendRatio` liczy sobotę i niedzielę po swojemu, bez premii niedzieli.
+ */
+function weekDays(from: number, to: number, scale: KpiScale): number {
+  const days = to - from + 1;
+  if (scale.weekendRatio === undefined) return days + SUNDAY_TRAFFIC - 1;
+  let n = 0;
+  for (let d = from; d <= to; d++) {
+    const weekday = weekdayOf(d);
+    n += weekday === 0 || weekday === 6 ? scale.weekendRatio : 1;
+  }
+  return n;
+}
+
+function targetFor(kind: KpiKind, from: number, to: number, scale: KpiScale): number {
+  const customers = Math.max(1, scale.dailyCustomers) * weekDays(from, to, scale);
   switch (kind) {
     case 'kawy': return Math.max(10, roundNice(KPI.hotStretch * HOT.chance * customers));
     case 'klienci': return Math.max(10, roundNice(KPI.customersStretch * customers));
@@ -85,7 +102,7 @@ export function newKpiWeek(seedHash: number, seq: number, day: number, now: KpiM
   month: KpiState['month'] = { hit: 0, miss: 0 }): KpiState {
   const kind = pickKind(seedHash, seq, previous);
   const toDay = weekEnd(day);
-  return { seq, kind, target: targetFor(kind, toDay - day + 1, scale), start: { ...now }, fromDay: day, toDay, month };
+  return { seq, kind, target: targetFor(kind, day, toDay, scale), start: { ...now }, fromDay: day, toDay, month };
 }
 
 /** Wartość mierzona od początku tygodnia. */

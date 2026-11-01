@@ -207,7 +207,7 @@ Dlaczego taki podział **[C]**:
   - w budowie;
   - po Traszce (wolny, z wyposażeniem, §13.3).
 - **Wolne lokale:** 5–8 na miasto, co najmniej jeden w każdej dzielnicy innej niż neutralna.
-- **Konkurencja:** 3–5 sklepów (Szop 24h, Kawka Express) w lokalach z dużym ruchem, żaden bliżej niż 2 kwartały od sklepu startowego.
+- **Konkurencja:** 3–5 sklepów (Szop 24h, Kawka Express) w dzielnicach z konkurencją (`DistrictDef.rivals`: Śródmieście, Dworzec i Biurowce, nie Osiedle), żaden bliżej niż 2 kwartały od sklepu startowego.
 
 ### 7.2 Lokal startowy i lokal obok **[C]**
 - Lokal startowy leży na Osiedlu i ma średni potencjał.
@@ -232,7 +232,7 @@ Dlaczego taki podział **[C]**:
 - **Mnożnik ruchu lokalu** to iloczyn trzech czynników i mnoży `baseTraffic(info)`, a nie go zastępuje:
   - mnożnik dzielnicy (§8.1);
   - lokalne natężenie względem średniej dzielnicy (0,85–1,15);
-  - konkurencja w promieniu (×0,8 za rywala bliżej niż 250 m).
+  - konkurencja w promieniu (×0,8 za rywala bliżej niż 150 m; przegląd balansu skrócił promień z 250 m, bo przy 250 m rywal stał w 76% wolnych lokali).
 
   Rodzaj i wielkość lokalu już siedzą w `baseTraffic` (`LOT_TRAFFIC`, półki), więc nie liczą się drugi raz.
 - **Skala liczb na karcie [R]:** sklep na start ma dziś ok. 300–350 klientów dziennie (komentarz przy `TRAFFIC_BASE`). Widełki na karcie są w tej skali: `expectedDailyCustomers` sklepu z tego lokalu z mnożnikiem.
@@ -249,15 +249,15 @@ Dlaczego taki podział **[C]**:
 
 | | Osiedle (neutralne) | Śródmieście (zamożne) | Dworzec (tani) | Biurowce |
 |---|---|---|---|---|
-| Ruch | 1 | ok. 1,1 | ok. 1,4 | ok. 1,2 w dni robocze, ok. 0,5 w weekend |
-| Koszyk (zł na klienta) | 1 | ok. 1,35 | ok. 0,8 | ok. 1,1 |
-| Oczekiwania | 1 | wysokie: cierpliwość −2 osoby, kary reputacji za pustą półkę, brud i kolejkę ×1,5 | niskie: cierpliwość +1 | średnie |
-| Kradzieże | 1 | ok. 0,6 | ok. 1,8 | ok. 0,8 |
+| Ruch | 1 | ok. 0,8 | ok. 1,4 | ok. 1,2 w dni robocze, ok. 0,5 w weekend |
+| Koszyk (zł na klienta) | 1 | ok. 1,3 | ok. 0,8 | ok. 1,1 |
+| Oczekiwania | 1 | wysokie: cierpliwość −4 osoby, kary reputacji za pustą półkę, brud i kolejkę ×1,5 | niskie: cierpliwość +1 | średnie |
+| Kradzieże | 1 | ok. 0,6 | ok. 2 | ok. 0,8 |
 | Pakiet otwarcia (§10.3) | średni | wysoki | niski | średni |
 | Profil dnia (4a.2) | jak dziś | mocniejszy wieczór | płaski | szczyty 7–9 i 12–14, pusto po 18 |
 | Trudni klienci (4a.2) | 1 | rzadziej | częściej, plus 2–3 karty tylko dla Dworca | rzadziej |
 
-- **Kradzieże** działają przez ukryty licznik ubytków, więc wychodzą przy remanencie. To zamierzone: tania dzielnica kusi ruchem, a rachunek przychodzi po kwartale. Mnożnik Dworca jest niższy niż w starym projekcie (2,5 → ok. 1,8). Przy remanencie z SIM 6 kasy bez kamer w takim lokalu kosztowałyby inaczej 50–100 tys. zł na kwartał. Karta lokalu ostrzega: „kradzieże: wysokie, zobaczysz je przy remanencie”.
+- **Kradzieże** działają przez ukryty licznik ubytków, więc wychodzą przy remanencie. To zamierzone: tania dzielnica kusi ruchem, a rachunek przychodzi po kwartale. Mnożnik Dworca jest niższy niż w starym projekcie (2,5 → ok. 2; przegląd balansu podniósł 1,8 do 2, żeby remanent biernego sklepu bez kas samoobsługowych wychodził na kilka tysięcy złotych). Przy remanencie z SIM 6 kasy bez kamer w takim lokalu kosztowałyby inaczej 50–100 tys. zł na kwartał. Karta lokalu ostrzega: „kradzieże: wysokie, zobaczysz je przy remanencie”.
 - **Godziny otwarcia** wszędzie te same (6:00–23:00). Profil dnia zmienia tylko rozkład klientów.
 - **„Kto przychodzi”** na karcie lokalu to opis z punktów ruchu, a nie nowe archetypy w symulacji.
 - **Niedziela** (`tycoon/sunday.ts`, więcej klientów) w Biurowcach ustępuje mnożnikowi weekendu.
@@ -282,6 +282,8 @@ Na botach z harnessu SIM 6 (`tests/measure/trzyKieszenie.measure.test.ts`, strat
 - dobry gracz w każdej dzielnicy zarabia na drugim sklepie podobnie (±30%), ale inaczej: w Śródmieściu z koszyka, na Dworcu z ruchu mimo remanentu;
 - bierny gracz traci w Śródmieściu więcej niż na Osiedlu (oczekiwania);
 - na Dworcu remanent biernego sklepu bez kas samoobsługowych to kilka tysięcy złotych na kwartał. Z kasami bez kamer bez porównania więcej, a karta lokalu o tym ostrzega.
+
+**Wynik przeglądu (Zadanie 15, 2026-10-31; raport: `docs/superpowers/reports/2026-10-31-miasto-4a1.md`).** Cele pilnuje `tests/districtBalance.test.ts` (8 seedów, 92 dni z remanentem 30 listopada, drugi sklep w środku widełek dzielnicy). Tabela §8.1 jest po strojeniu. Kierunek zmian: przy liczbach z pierwszego szkicu Śródmieście dawało mistrzowi 2,2× wyniku Osiedla, więc dostało mniejszy ruch (0,8) przy dużym koszyku (1,3), a oczekiwania wzrosły do cierpliwości −4, żeby przy mniejszym ruchu nadal coś kosztowały. Pakiety i dni budowy zostały bez zmian.
 
 ## 9. Ekran Miasta
 
@@ -347,7 +349,7 @@ Na botach z harnessu SIM 6 (`tests/measure/trzyKieszenie.measure.test.ts`, strat
   - **na raty:** 12 rat z opłatą 15% (plan `INSTALLMENTS` dla ceny ponad 25 tys. zł). Raty należą do **nowego sklepu**: lądują w jego bloku rozliczenia przy otwarciu i schodzą z jego przelewów.
 - **Wyciąg sam pokazuje, czy lokal był dobry.** Kiepski lokal ma ujemne „Zostaje Ci” i zjada gotówkę, a dobry spłaca się w rok.
 - **Ceny [C]:** od ok. 35 tys. zł (pawilon przy Dworcu) do ok. 85 tys. zł (narożnik kamienicy w Śródmieściu). Górna granica wynika z kodu **[R]**: nowy sklep bez historii ma limit rat 35% × 25 tys. × 1 = 8750 zł miesięcznie (`installmentLimit` przy zaufaniu 65), a 85 tys. zł w 12 ratach z opłatą 15% to ok. 8150 zł. Najdroższy lokal mieści się więc w limicie nowego sklepu, ale zajmuje go prawie całego na rok: ulepszenia drugiego sklepu w pierwszym roku idą za gotówkę. To świadoma presja.
-- Ceny stroi przegląd balansu (§8.4).
+- Ceny stroi przegląd balansu (§8.4). Zadanie 15 zostawiło widełki i dni budowy bez zmian: rata najdroższego lokalu to 8146 zł w limicie 8750 zł, a lokal ze środka widełek zostawia w pierwszym roku po racie 7–9 tys. zł miesięcznie biernemu i 13–15 tys. mistrzowi w każdej dzielnicy.
 - Koszt trafia do podsumowania sieci jako „Pakiet otwarcia: ul. …” (gotówka) albo jako rata w wyciągu nowego sklepu, z etykietą „Adaptacja lokalu: ul. …” (`Installment.label`).
 
 ### 10.4 Budowa i otwarcie **[C]** / **[R]**

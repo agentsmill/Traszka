@@ -16,7 +16,7 @@ import type { CityLot, CityState, SourceKind, StoreDistrict, StreetSegment, Traf
  * działań IEEE (+, −, ·, /, sqrt), bez `Math.hypot` i `**`: wynik wchodzi do ekonomii, a serwer i przeglądarka muszą liczyć to samo.
  */
 
-export const RIVAL_RADIUS_M = 250;
+export const RIVAL_RADIUS_M = 150;
 export const RIVAL_FACTOR = 0.8;
 export const LOCAL_RANGE = [0.85, 1.15] as const;
 export const ESTIMATE_SPREAD = 0.25;            // widełki ±25%

@@ -287,8 +287,8 @@ export function generateCity(seed: string): CityState {
   for (const d of rng.shuffle<StoreDistrict>(['srodmiescie', 'dworzec', 'biurowce'])) claimFree(lots.filter((l) => l.district === d));
   while (free.length < wanted) if (!claimFree(lots)) break;
 
-  // konkurencja: w dzielnicach o dużym ruchu, każda w innym kwartale, daleko od startu i nie w rzędzie obok wolnego ani startu
-  const rivalPool = lots.filter((l) => l.state === 'zajety' && DISTRICTS[l.district].traffic > 1 && !startNear.has(l)
+  // konkurencja: w dzielnicach z konkurencją (`rivals`), każda w innym kwartale, daleko od startu i nie w rzędzie obok wolnego ani startu
+  const rivalPool = lots.filter((l) => l.state === 'zajety' && DISTRICTS[l.district].rivals && !startNear.has(l)
     && Math.max(Math.abs(l.bx - start.bx), Math.abs(l.by - start.by)) >= RIVAL_MIN_BLOCKS
     && near(l).every((n) => n.state !== 'wolny' && n.state !== 'twoj'));
   const rivalBlocks = new Set<number>();

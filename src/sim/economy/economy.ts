@@ -258,7 +258,7 @@ export function effects(s: EconomyState, info: StoreInfo): Effects {
   const site = activeSite(info);
   if (site) {
     fx.site = site;
-    fx.patience += site.patience;   // Śródmieście: −2 osoby, Dworzec: +1
+    fx.patience += site.patience;   // Śródmieście: −4 osoby (liczby w `DISTRICTS`), Dworzec: +1
   }
   return fx;
 }
@@ -302,10 +302,16 @@ export const kpiMetrics = (total: Counters, hall: HallState): KpiMetrics => ({
 });
 export const kpiMetricsOf = (s: EconomyState): KpiMetrics => kpiMetrics(s.total, s.tycoon.hall);
 
-/** Skala sklepu do celów i nagród KPI: oczekiwany ruch, marża dnia i poziom gracza (XP za trafiony cel). */
-export const kpiScaleOf = (s: EconomyState, info: StoreInfo): KpiScale => ({
-  dailyCustomers: expectedDailyCustomers(s, info), dailyMargin: estimatedDailyMargin(s, info), level: s.level,
-});
+/**
+ * Skala sklepu do celów i nagród KPI: oczekiwany ruch, marża dnia i poziom gracza (XP za trafiony cel). Sklep z innym ruchem w weekend
+ * (Biurowce) dostaje jeszcze jego stosunek do dnia roboczego, bo oczekiwani klienci liczą się z ruchu dnia roboczego.
+ */
+export const kpiScaleOf = (s: EconomyState, info: StoreInfo): KpiScale => {
+  const scale: KpiScale = { dailyCustomers: expectedDailyCustomers(s, info), dailyMargin: estimatedDailyMargin(s, info), level: s.level };
+  const site = activeSite(info);
+  if (site && site.weekendTraffic !== null) scale.weekendRatio = site.weekendTraffic / site.traffic;
+  return scale;
+};
 
 // --- Tworzenie ---------------------------------------------------------------------------------------
 
