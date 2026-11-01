@@ -364,7 +364,8 @@ describe('ponowne otwarcie sklepu #2 po zamknięciu', () => {
     expect(st.econ.milestonesReady).not.toEqual(expect.arrayContaining(['sco1']));
     expect(st.econ.milestonesReady).not.toEqual(expect.arrayContaining(['remont1']));
     expect(st.econ.milestonesReady).not.toEqual(expect.arrayContaining(['upgrade1']));
-    expect(st.econ.milestones).not.toEqual(expect.arrayContaining(['pallet1', 'cust500']));
+    expect(st.econ.milestones).not.toContain('pallet1');
+    expect(st.econ.milestones).not.toContain('cust500');
     expect(st.econ.ogonki).toBeGreaterThanOrEqual(ogonki);
   }, 120_000);
 
