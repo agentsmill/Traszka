@@ -10,7 +10,15 @@
  *   5. `skip` do końca miesiąca: okno „Sieć” i dwa wyciągi;
  *   6. (komputer) „Wypowiedz umowę” na #2 i `skip` do końca następnego miesiąca: rozliczenie końcowe, jeden sklep;
  *   7. (telefon) brak poziomego przewijania na każdym ekranie, pasek zakładek bez ucinania, angielski w ⚙, FPS widoku warstw;
- *   8. konsola i `pageerror` bez błędów.
+ *   8. konsola i `pageerror` bez błędów (także z kroków 9–12).
+ * Plan 4a.2 (Zadanie 9) dokłada na fixture „po Traszce” (`save-v3-po-traszce.json`: #1 i #3 otwarte, #2 zamknięty z remontem 1 i kasą samoobsługową):
+ *   2. (dopisek, telefon) pinezka „lokal obok” nie zasłania innych pinezek i nie ma napisu (390 px, fixture „przed statusem”);
+ *   9. pinezka „po Traszce”, lista i karta z ceną `rentPrice`, blokiem wyposażenia i wykresem 17 słupków, ponowny wynajem (telefon na raty,
+ *      komputer gotówką), okno „Traszka #2 znów otwarta” z poziomem 1, zaufaniem 65 i wyposażeniem z fixture'a, chip z trzema sklepami;
+ *  10. karta innego wolnego lokalu: „Biorę lokal” zablokowany tekstem „Trzy placówki to …”;
+ *  11. koniec miesiąca: okno „Sieć” i trzy wyciągi (cztery zakładki), zaufanie przy każdym sklepie, ostrzeżenia zaufania na chipie;
+ *  12. (telefon) szerokość 390 px na nowych ekranach (karta z wykresem, karta „po Traszce”, lista chipa z trzema sklepami, okno sieci
+ *      z czterema zakładkami) po polsku i po angielsku (ponowny wynajem i miesiąc rozegrane od nowa w angielskim interfejsie).
  * Do tego jeden przebieg na telefonie z włączonymi dymkami (`tips: true`): `tip-miasto` i `tip-lokal` (Zadanie 14).
  *
  * Bezpieczeństwo: nic nie wychodzi poza `localhost` na porcie smoke'a. Zapytania do `/api/**` są przerywane (smoke niczego nie wysyła
@@ -50,26 +58,34 @@ export const VIEWPORTS = [
   { name: 'telefon', size: { width: 390, height: 844 }, mobile: true },
   { name: 'desktop', size: { width: 1280, height: 800 }, mobile: false },
 ];
-/** Fixtures z `src/game/fixtures/`: stary zapis schematu 2 (po dwóch remontach) i zapis schematu 3 tuż przed statusem Partnera. */
+/**
+ * Fixtures z `src/game/fixtures/`: stary zapis schematu 2 (po dwóch remontach), zapis schematu 3 tuż przed statusem Partnera i zapis schematu 3
+ * „po Traszce” (plan 4a.2: #1 i #3 otwarte, #2 zamknięty z remontem 1 i kasą samoobsługową, lokal #2 do wzięcia znów).
+ */
 export const FIXTURES = {
   stary: 'save-v2-remont2.json',
   przedStatusem: 'save-v3-przed-statusem.json',
+  poTraszce: 'save-v3-po-traszce.json',
 };
 /** Pamięć samouczka: przelot pominięty, dymki „pierwszy raz” wyłączone (albo włączone w przebiegu z dymkami). */
 export const tutorialMemory = (tips) => ({ v: 1, tour: 'skipped', seen: [], tips });
 /**
- * Kroki smoke'a (numeracja z Zadania 16) i rozmiary, na których biegną: 6 tylko na komputerze (wypowiedzenie), 7 tylko na telefonie
- * (poziome przewijanie, angielski, FPS). Na pozostałym rozmiarze krok jest „nie dotyczy” i nie liczy się jako porażka.
+ * Kroki smoke'a (numeracja z Zadania 16 i 9 planu 4a.2) i rozmiary, na których biegną: 6 tylko na komputerze (wypowiedzenie), 7 i 12 tylko na telefonie
+ * (poziome przewijanie, angielski, FPS, nowe ekrany). Na pozostałym rozmiarze krok jest „nie dotyczy” i nie liczy się jako porażka.
  */
 export const STEPS = [
   { id: 1, name: 'stary zapis: jeden sklep, mapa, karta, „Biorę lokal” zablokowany', sizes: ['telefon', 'desktop'] },
-  { id: 2, name: 'fixture przed statusem + skip(30): okno ze statusem Partnera', sizes: ['telefon', 'desktop'] },
+  { id: 2, name: 'fixture przed statusem + skip(30): okno ze statusem Partnera (390 px: pinezka „lokal obok” pod innymi)', sizes: ['telefon', 'desktop'] },
   { id: 3, name: 'wynajem, pinezka budowy z licznikiem, okno „Traszka #2 otwarta”', sizes: ['telefon', 'desktop'] },
   { id: 4, name: 'chip: przełączenie na #2 (inny seed sceny) i z powrotem', sizes: ['telefon', 'desktop'] },
   { id: 5, name: 'koniec miesiąca: okno „Sieć” i dwa wyciągi', sizes: ['telefon', 'desktop'] },
   { id: 6, name: 'wypowiedzenie #2: rozliczenie końcowe, jeden sklep', sizes: ['desktop'] },
   { id: 7, name: '390 px: bez poziomego przewijania, zakładki, angielski, FPS warstw', sizes: ['telefon'] },
   { id: 8, name: 'konsola i pageerror bez błędów', sizes: ['telefon', 'desktop'] },
+  { id: 9, name: 'fixture po Traszce: pinezka, lista i karta z wykresem, ponowny wynajem, okno „Traszka #2 znów otwarta”, trzy sklepy', sizes: ['telefon', 'desktop'] },
+  { id: 10, name: 'trzy placówki: „Biorę lokal” zablokowany tekstem Centrali', sizes: ['telefon', 'desktop'] },
+  { id: 11, name: 'koniec miesiąca przy trzech sklepach: „Sieć” i trzy wyciągi, zaufanie przy każdym', sizes: ['telefon', 'desktop'] },
+  { id: 12, name: '390 px: nowe ekrany bez poziomego przewijania, po polsku i po angielsku', sizes: ['telefon'] },
 ];
 /** Dodatkowy przebieg z dymkami miasta (Zadanie 14): tylko telefon. */
 export const TIPS_STEP = { id: 'T', name: 'dymki miasta (tip-miasto, tip-lokal) na 390 px', sizes: ['telefon'] };
@@ -262,6 +278,120 @@ export function widthProblems(m, limit = PHONE_WIDTH) {
   return out;
 }
 
+// ——— plan 4a.2 (Zadanie 9): stałe i czyste pomocniki kroku 2 (dopisek) i 9–12 (testy: tests/citySmoke.test.ts) ———
+
+/** Ile pakietu kosztuje ponowny wynajem lokalu „po Traszce” (`RELET_SHARE` w `src/sim/firm/commands.ts`; test pilnuje zgodności). */
+export const RELET_SHARE = 0.3;
+/** Cena ponownego wynajmu (`rentPrice` dla lokalu „po Traszce”): `round(pakiet × 0,3 / 100) × 100`, jak pakiet co 100 zł. */
+export const reletPrice = (pkg) => Math.round((pkg * RELET_SHARE) / 100) * 100;
+/** Słupki wykresu godzin na karcie lokalu: godziny otwarcia 6–22 (`HourChart.tsx`). */
+export const HOUR_BARS = 17;
+/** Próg ostrzeżenia o zaufaniu sklepu w tle na liście chipa (`TRUST_WARN_BELOW` w `storeSwitcherModel.ts`; test pilnuje zgodności). */
+export const TRUST_WARN_BELOW = 40;
+/** Zaufanie ponownie otwartego sklepu (`TRUST.start`): okno „znów otwarta” je podaje, a dane sklepu mają je potwierdzić. */
+export const RELET_TRUST = 65;
+/** Dosłowne teksty z planu: odmowa limitu, tytuł okna ponownego otwarcia i podpis zniżki na karcie lokalu po Traszce. */
+export const LIMIT_TEXT = 'Trzy placówki to na tym etapie partnerstwa wszystko, na co Centrala jest gotowa się zgodzić.';
+export const RELET_TITLE = 'Traszka #2 znów otwarta';
+export const RELET_CAPTION = 'po Traszce: 30% ceny';
+
+/** Minuta doby, o której otwiera się sklep z budowy (`OPEN_FROM` = 6:00; test pilnuje zgodności). */
+export const OPEN_MINUTE = 6 * 60;
+
+/** Same cyfry z napisu („11 250 zł” z twardą spacą → 11250). */
+export const digitsOf = (text) => Number(String(text).replace(/\D/g, ''));
+
+/**
+ * Wyposażenie zamkniętych sklepów z koperty zapisu (to, co zostaje w lokalu „po Traszce”): numer sklepu, lokal, poziom remontu, sprzęt i suma
+ * poziomów ulepszeń. Smoke porównuje z tym kartę i ponownie otwarty sklep, więc „remont z fixture'a” nie jest wpisany na sztywno.
+ */
+export function closedFittings(saveText) {
+  const env = JSON.parse(saveText);
+  return (env.stores ?? []).filter((st) => st.closed).map((st) => ({
+    id: st.id, lotId: st.lotId, remontLevel: st.econ.remontLevel, equipment: (st.econ.equipment ?? []).map((e) => e.id),
+    upgrades: Object.values(st.econ.upgrades ?? {}).reduce((n, v) => n + (typeof v === 'number' ? v : 0), 0),
+  }));
+}
+
+/** Blok „Wyposażenie zostało” na karcie lokalu po Traszce (polski tekst z `LotCard.tsx`). */
+export const reletBlockText = (fit) => `Wyposażenie zostało: remont ${fit.remontLevel}, sprzęt ${fit.equipment.length} szt., ulepszenia ${fit.upgrades}`;
+
+/** Rata i liczba rat z przycisku „na raty 1 077 zł × 12 z przelewów tego sklepu” (polska karta lokalu); null, gdy napis ma inny kształt. */
+export function parseInstallmentButton(text) {
+  const m = /na raty ([\d\s  ]+) zł × (\d+)/.exec(String(text));
+  return m ? { monthly: digitsOf(m[1]), months: Number(m[2]) } : null;
+}
+
+/** Zaufania z wierszy „zaufanie N” (po angielsku „trust N”) pod wierszami „Zostaje Ci” w oknie sieci; reszta wierszy jest pomijana. */
+export function trustRowValues(rows, word = 'zaufanie') {
+  const re = new RegExp(`^${word} (\\d+)$`);
+  return rows.flatMap((r) => {
+    const m = re.exec(String(r).trim());
+    return m ? [Number(m[1])] : [];
+  });
+}
+
+/** Pole przecięcia dwóch ramek `{l, t, r, b}` w px² (0, gdy się nie stykają albo tylko dotykają, z tolerancją na zaokrąglenia). */
+export function overlapArea(a, b) {
+  const w = Math.min(a.r, b.r) - Math.max(a.l, b.l);
+  const h = Math.min(a.b, b.b) - Math.max(a.t, b.t);
+  return w > 0.5 && h > 0.5 ? Math.round(w * h) : 0;
+}
+
+/**
+ * Wady pinezki „lokal obok” z pomiaru strony (`m.width`: szerokość okna, `m.pins`: pinezki z rodzajem, `z`-indexem, ramką (null, gdy ukryta),
+ * napisem z jego ramką i `display` oraz listą pinezek, które obok zasłania w punkcie ich środka). Lokal obok leży z założenia pod innymi
+ * pinezkami (zIndex 0) i na wąskim ekranie nie ma napisu (CSS ≤ 899 px), więc sprawdzamy to, co zgłosił przegląd: napis nie wchodzi na sąsiednie pinezki
+ * (ukryty na wąskim ekranie, a gdy ma ramkę, to bez przecięć), pinezka leży pod pozostałymi i niczego nie zasłania. Przecięcia samej kartki z ramkami
+ * innych pinezek nie są wadą (lokal obok sąsiaduje z Twoim sklepem, więc kartki z natury zachodzą na siebie, a tu leży ona pod spodem), tylko dowodem: zwraca je `overlaps`.
+ */
+export function pinProblems(m, narrow = 899) {
+  const problems = [];
+  const overlaps = [];
+  const obok = m.pins.filter((p) => p.kind === 'obok' && p.box);
+  const others = m.pins.filter((p) => p.kind !== 'obok' && p.box);
+  if (obok.length === 0) problems.push('brak pinezki „lokal obok” na ekranie');
+  const lowest = Math.min(...others.map((p) => p.z));
+  for (const o of obok) {
+    if (m.width <= narrow && o.label && o.label.display !== 'none') problems.push(`napis „${o.label.text}” pinezki obok (lokal ${o.lot}) widoczny na ${m.width} px (display ${o.label.display})`);
+    if (o.label?.box) {
+      for (const p of others) {
+        const area = overlapArea(o.label.box, p.box);
+        if (area > 0) problems.push(`napis pinezki obok (lokal ${o.lot}) przecina pinezkę ${p.kind} (lokal ${p.lot}): ${area} px²`);
+      }
+    }
+    if (others.length > 0 && !(o.z <= lowest)) problems.push(`pinezka obok (lokal ${o.lot}) ma z-index ${o.z}, a inna pinezka ${lowest}: nie leży pod spodem`);
+    if (o.covers.length > 0) problems.push(`pinezka obok (lokal ${o.lot}) zasłania pinezki: ${o.covers.join(', ')}`);
+    for (const p of others) {
+      const area = overlapArea(o.box, p.box);
+      if (area > 0) overlaps.push({ lot: o.lot, with: p.lot, kind: p.kind, area });
+    }
+  }
+  return { problems, overlaps };
+}
+
+/**
+ * Nowe ekrany kroku 12 i ile pomiarów szerokości każdy ma mieć (okno sieci to „Sieć” i trzy wyciągi). Etykieta pomiaru zaczyna się od nazwy ekranu,
+ * po angielsku od „angielski: ” i nazwy.
+ */
+export const NEW_SCREENS = [
+  { name: 'karta lokalu z wykresem', min: 1 },
+  { name: 'karta lokalu po Traszce', min: 1 },
+  { name: 'lista sklepów (trzy)', min: 1 },
+  { name: 'okno sieci (cztery zakładki)', min: 4 },
+];
+
+/** Wady pomiarów szerokości nowych ekranów (`widths`: wpisy `checkWidth`): ekran bez wystarczającej liczby pomiarów albo z wadą szerokości. */
+export function newScreenProblems(widths, prefix = '') {
+  const out = [];
+  for (const screen of NEW_SCREENS) {
+    const mine = widths.filter((w) => w.label.startsWith(`${prefix}${screen.name}`));
+    if (mine.length < screen.min) out.push(`${prefix}${screen.name}: zmierzono ${mine.length} z ${screen.min}`);
+    for (const w of mine.filter((x) => !x.ok)) out.push(`${w.label}: ${w.problems.join('; ')}`);
+  }
+  return out;
+}
+
 // ——— przeglądarka ———
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -292,6 +422,7 @@ function readGame(page) {
       stores: (f?.stores ?? [{ id: 1, lotId: -1, econ: s.econ, closed: false, notice: null }]).map((st) => ({
         id: st.id, lotId: st.lotId, seed: st.econ.seed, closed: st.closed, notice: st.notice, minute: st.econ.minute,
         trust: st.econ.tycoon.trust.value, gameOver: !!st.econ.gameOver, remont: st.econ.remontLevel,
+        level: st.econ.level, equipment: st.econ.equipment.map((e) => e.id), reopened: st.reopened === true,
         installments: st.econ.franchisee.installments.map((i) => ({
           label: i.label, price: i.price, fee: i.fee, total: i.total, monthly: i.monthly, months: i.months, paid: i.paid,
         })),
@@ -301,7 +432,7 @@ function readGame(page) {
   });
 }
 
-/** Rząd wolnych lokali z listy Miasta razem z danymi z miasta firmy (cena pakietu, dni budowy). */
+/** Rząd lokali do wzięcia z listy Miasta razem z danymi z miasta firmy (pakiet, dni budowy) i tym, co lista pokazuje (znacznik „po Traszce”, cena w wierszu). */
 function readLots(page) {
   return page.evaluate(() => {
     const f = window.traszkaGame.session.firm;
@@ -311,6 +442,7 @@ function readLots(page) {
       return {
         id, price: lot.package, buildDays: lot.buildDays, street: lot.street, number: lot.number, district: lot.district,
         addr: (r.querySelector('.tt-lotaddr')?.firstChild?.textContent ?? '').trim(),
+        relet: !!r.querySelector('.tt-dz.relet'), priceText: (r.querySelector('.tt-lotprice-sm')?.textContent ?? '').trim(),
       };
     });
   });
@@ -370,7 +502,7 @@ async function windowsOf(page) {
       const cls = m.classList;
       const kind = cls.contains('tt-deck') ? 'deck' : cls.contains('tt-story') ? 'story' : cls.contains('tt-remanent') ? 'remanent'
         : m.querySelector('h2[data-tut="report"]') ? 'report' : cls.contains('tt-tut-offer') ? 'offer' : cls.contains('tt-center') ? 'welcome' : 'other';
-      dialogs.push({ kind, label: m.getAttribute('aria-label') ?? m.querySelector('h2')?.textContent ?? '', text: m.textContent ?? '' });
+      dialogs.push({ kind, label: m.getAttribute('aria-label') ?? m.querySelector('h2')?.textContent ?? '', text: m.textContent ?? '', tabs: m.querySelectorAll('.tt-storetabs [role="tab"]').length });
     }
     return { tip, dialogs };
   });
@@ -539,6 +671,7 @@ async function main(argv) {
 
   const old = fixtureSave(FIXTURES.stary);
   const before = fixtureSave(FIXTURES.przedStatusem);
+  const after = fixtureSave(FIXTURES.poTraszce);
 
   const errors = [];
   const warnings = [];
@@ -663,12 +796,12 @@ async function main(argv) {
     await sleep(250);
   }
   /**
-   * Stuknięcie w kartkę lokalu na mapie, jeśli któryś punkt pinezki leży na wierzchu (etykiety konkurencji i inne pinezki bywają nad nią);
-   * false, gdy zasłania ją arkusz, pasek albo inne pinezki w całości.
+   * Stuknięcie w pinezkę lokalu na mapie (kartka wolnego lokalu, „po Traszce”), jeśli któryś punkt pinezki leży na wierzchu (etykiety konkurencji
+   * i inne pinezki bywają nad nią); false, gdy zasłania ją arkusz, pasek albo inne pinezki w całości.
    */
   async function tapPin(page, lotId) {
     const at = await page.evaluate((id) => {
-      const pin = document.querySelector(`.tt-cpin-wolny[data-lot="${id}"]`);
+      const pin = document.querySelector(`.tt-cpin[data-lot="${id}"]`);
       if (!pin) return null;
       const r = pin.getBoundingClientRect();
       if (r.width <= 0) return null;
@@ -686,6 +819,43 @@ async function main(argv) {
     if (!at) return false;
     await page.mouse.click(at.x, at.y);
     return true;
+  }
+
+  /**
+   * Krok 2 (dopisek, telefon): pinezka „lokal obok” (fixture „przed statusem”, sklep #1 jeszcze bez remontu, więc sąsiad czeka na remont) na 390 px.
+   * Mierzy ramki wszystkich pinezek (`getBoundingClientRect`) i sprawdza to, co zgłosił przegląd (`pinProblems`): napis ukryty, pinezka pod
+   * pozostałymi (z-index 0) i niczego nie zasłania w punkcie jego środka (`elementFromPoint`). Przecięcia samej kartki z innymi pinezkami idą do notatek jako dowód.
+   */
+  async function obokPinCheck(page, ev) {
+    await until(page, () => !!document.querySelector('.tt-cpin-obok'), null, 'pinezka „lokal obok” na mapie', 30_000);
+    await sleep(1500);   // kamera dosuwa mapę do widocznego obszaru, a pinezki ustawiają się co klatkę
+    const m = await page.evaluate(() => {
+      const rect = (el) => { const b = el.getBoundingClientRect(); return b.width > 0 && b.height > 0 ? { l: b.left, t: b.top, r: b.right, b: b.bottom } : null; };
+      const pins = [...document.querySelectorAll('.tt-cpin')].map((el) => {
+        const label = el.querySelector('.tt-cpin-label');
+        return {
+          lot: Number(el.dataset.lot), kind: [...el.classList].find((c) => c.startsWith('tt-cpin-'))?.slice('tt-cpin-'.length) ?? '', z: Number(el.style.zIndex || 0), box: rect(el),
+          label: label ? { text: label.textContent ?? '', box: rect(label), display: getComputedStyle(label).display } : null, covers: [],
+        };
+      });
+      // zasłonięcie: w punkcie środka innej pinezki na wierzchu leży element pinezki „obok”
+      for (const o of pins.filter((p) => p.kind === 'obok')) {
+        const own = document.querySelector(`.tt-cpin[data-lot="${o.lot}"]`);
+        o.covers = pins.filter((p) => p.kind !== 'obok' && p.box).filter((p) => {
+          const hit = document.elementFromPoint((p.box.l + p.box.r) / 2, (p.box.t + p.box.b) / 2);
+          return !!hit && !!own && own.contains(hit);
+        }).map((p) => p.lot);
+      }
+      return { width: window.innerWidth, pins };
+    });
+    const { problems, overlaps } = pinProblems(m);
+    ev.check(problems.length === 0, problems.join(' | ') || 'pinezka obok');
+    const o = m.pins.find((p) => p.kind === 'obok' && p.box);
+    const box = (b) => (b ? `${Math.round(b.l)}–${Math.round(b.r)} × ${Math.round(b.t)}–${Math.round(b.b)}` : 'brak');
+    ev.note(`pinezka „lokal obok” (lokal ${o?.lot}) na ${m.width} px: kartka ${box(o?.box)}, napis „${o?.label?.text}” display ${o?.label?.display} (ramka ${box(o?.label?.box)}), z-index ${o?.z}, pinezek na ekranie ${m.pins.filter((p) => p.box).length}`);
+    extras.obok = { width: m.width, lot: o?.lot, box: o?.box ?? null, overlaps };
+    ev.note(`kartka lokalu obok leży pod innymi i zachodzi na ${overlaps.length} z nich: ${overlaps.map((x) => `${x.kind} #${x.with} (${x.area} px²)`).join(', ') || 'żadną'}; zasłania: ${o?.covers.length ? o.covers.join(', ') : 'żadnej'}`);
+    await ev.shot('4a2-02b-pinezka-obok');
   }
 
   // ——————— scenariusze ———————
@@ -766,6 +936,7 @@ async function main(argv) {
         const bar = await textOf(page, '.tt-citystatus');
         ev.check(/jeszcze 1 miesiąc z zyskiem/.test(bar ?? ''), `pasek przed statusem: ${bar}`);
         ev.note(`pasek przed statusem: „${bar}”`);
+        if (phone) await obokPinCheck(page, ev);
         await closeTab(page, 'miasto');
         let found = null;
         for (let i = 0; i < 6 && !found; i++) {
@@ -1037,6 +1208,489 @@ async function main(argv) {
       (results[vp.name] ??= {})[step.id] = stepResult({ ok: false, failed: [`pominięty: ${why}`] });
       console.log(`  [${vp.name}] krok ${step.id}: FAIL (pominięty: ${why})`);
     }
+  }
+
+  // ——————— plan 4a.2, Zadanie 9: fixture „po Traszce” (kroki 9–12) ———————
+
+  /** Karta lokalu z DOM: nagłówek, blok wyposażenia, podpis zniżki, wykres godzin, wiersz „Budowa”, przyciski zapłaty i przycisk „Biorę lokal”. */
+  function readCard(page) {
+    return page.evaluate(() => {
+      const el = document.querySelector('.tt-lotcard');
+      if (!el) return null;
+      const c = el.getBoundingClientRect();
+      const svg = el.querySelector('.tt-hours-svg')?.getBoundingClientRect();
+      const bars = [...el.querySelectorAll('.tt-hours-svg .tt-hbar.day')];
+      const rowOf = (label) => [...el.querySelectorAll('.tt-row')].find((r) => r.firstElementChild?.textContent === label)?.lastElementChild?.textContent ?? null;
+      return {
+        head: el.querySelector('h3')?.textContent ?? '', relet: el.querySelector('.tt-relet')?.textContent ?? null, caption: el.querySelector('.tt-reletcap')?.textContent ?? null,
+        bars: bars.length, drawn: bars.every((b) => Number(b.getAttribute('height')) > 0), weekend: el.querySelectorAll('.tt-hours-svg .tt-hbar.end').length,
+        chart: svg ? { left: svg.left, right: svg.right, width: svg.width } : null, card: { left: c.left, right: c.right },
+        build: rowOf('Budowa'), pay: [...el.querySelectorAll('.tt-lotpay .tt-btn')].map((b) => b.textContent ?? ''),
+        disabled: el.querySelector('.tt-lotact .tt-primary')?.disabled ?? null, lock: el.querySelector('.tt-lockmsg')?.textContent ?? null,
+      };
+    });
+  }
+
+  /**
+   * Przewija do minuty tuż po otwarciu budowy (dzień odbioru `readyDay`, 6:00 plus minuta) i zwraca okno, którym gra zgłasza otwarcie sklepu (stoi
+   * otwarte). `skip` staje tylko na kartach decyzji, a nie na zdarzeniach, więc dokładna liczba minut daje dane nowego sklepu (poziom, zaufanie) z chwili
+   * otwarcia, a nie z końca kawałka przewinięcia.
+   */
+  async function skipToOpening(page, readyDay, stop) {
+    const target = readyDay * 1440 + OPEN_MINUTE + 1;
+    for (let i = 0; i < 40; i++) {
+      const g = await readGame(page);
+      if (g.minute >= target) return null;
+      await skip(page, Math.min(target - g.minute, 1440));
+      const r = await settle(page, { stop });
+      if (r.stopped) return r.stopped;
+    }
+    return null;
+  }
+
+  /** Wykres godzin na karcie: 17 narysowanych słupków dnia roboczego (weekend: brak albo 17) i rysunek mieści się w karcie. */
+  function chartChecks(ev, card, what) {
+    ev.check(card.bars === HOUR_BARS && card.drawn, `${what}: słupków dnia roboczego ${card.bars} (ma być ${HOUR_BARS}), wszystkie narysowane: ${card.drawn}`);
+    ev.check(card.weekend === 0 || card.weekend === HOUR_BARS, `${what}: słupków weekendu ${card.weekend}`);
+    ev.check(!!card.chart && card.chart.width > 100 && card.chart.left >= card.card.left - 0.5 && card.chart.right <= card.card.right + 0.5,
+      `${what}: wykres ${JSON.stringify(card.chart)} poza kartą ${JSON.stringify(card.card)}`);
+  }
+
+  /** Lista sklepów (chip): wiersze z tekstem, zamknięciem, aktywnością, ostrzeżeniami zaufania i znak ⚠ przy chipie; po odczycie zamyka listę stuknięciem w tło. */
+  async function readChipList(page, { close = true, before = null } = {}) {
+    await page.click('[data-tut="store-switch"]');
+    await page.waitForSelector('.tt-stores-pop', { timeout: 10_000 });
+    if (before) await before();
+    const info = await page.evaluate(() => ({
+      rows: [...document.querySelectorAll('.tt-store-row')].map((r) => ({
+        text: r.textContent ?? '', closed: r.classList.contains('closed'), on: r.getAttribute('aria-current') === 'true',
+        warns: [...r.querySelectorAll('.tt-store-warn')].map((w) => w.dataset.warn), shown: Number(/🤝 (\d+)/.exec(r.textContent ?? '')?.[1]),
+      })),
+      alert: !!document.querySelector('.tt-stores-alert') && document.querySelector('.tt-stores-alert').getBoundingClientRect().height > 0,
+    }));
+    if (close) {
+      await tapOutside(page, '.tt-stores-backdrop');
+      await page.waitForSelector('.tt-stores-pop', { state: 'detached', timeout: 5_000 });
+    }
+    return info;
+  }
+
+  /**
+   * Zamyka okna, które leżą na oknie miesiąca (protokół remanentu przychodzi w tej samej minucie co koniec kwartału, wpisy „OK”, karty decyzji), żeby jego przycisk
+   * dało się kliknąć; samo okno miesiąca zostaje. Protokół remanentu z trzema zakładkami sklepów mierzy się na telefonie w każdej zakładce (okno z kolejki gry
+   * `settle` mierzy tylko pierwszą), bo to jeden z nowych ekranów trzech sklepów.
+   */
+  async function closeWindowsAboveReport(page, ev, { phone, prefix }) {
+    for (let i = 0; i < 12; i++) {
+      const w = await windowsOf(page);
+      const d = w.dialogs.find((x) => x.kind !== 'report' && CLOSE[x.kind]);
+      if (!d) return;
+      if (d.kind === 'remanent') {
+        await sleep(450);
+        if (phone) {
+          const tabs = page.locator('.tt-remanent .tt-storetabs [role="tab"]');
+          const n = await tabs.count();
+          for (let k = 0; k < n; k++) {
+            await tabs.nth(k).click();
+            await sleep(200);
+            await checkWidth(page, `${prefix}protokół remanentu (${n} zakładki): #${k + 1}`);
+          }
+          ev.note(`protokół remanentu na oknie miesiąca: ${n} zakładki sklepów, każda zmierzona`);
+          if (!prefix) await ev.shot('4a2-11d-protokol-remanentu-trzy-sklepy');
+        }
+      }
+      if (d.kind === 'story') await sleep(450);
+      await dismiss(page, CLOSE[d.kind]);
+      await sleep(200);
+    }
+  }
+
+  /** Okno sieci przy trzech sklepach: cztery zakładki, „Sieć” z trzema wierszami zaufania i trzy wyciągi; na telefonie pomiar szerokości każdej zakładki. */
+  async function networkWindowChecks(page, ev, { phone, lang }) {
+    const net = lang === 'en' ? 'Network' : 'Sieć';
+    const trustWord = lang === 'en' ? 'trust' : 'zaufanie';
+    const prefix = lang === 'en' ? 'angielski: ' : '';
+    await sleep(400);
+    await closeWindowsAboveReport(page, ev, { phone, prefix });
+    const g = await readGame(page);
+    const tabs = await page.evaluate(() => [...document.querySelectorAll('.tt-storetabs [role="tab"]')].map((b) => ({ text: b.textContent ?? '', on: b.getAttribute('aria-selected') === 'true' })));
+    ev.check(tabs.length === 4 && tabs[0].text === net && tabs[0].on && [1, 2, 3].every((i) => new RegExp(`^#${i}\\b`).test(tabs[i]?.text ?? '')), `zakładki okna: ${JSON.stringify(tabs)}`);
+    const summary = await textOf(page, '.tt-netsum');
+    ev.check([1, 2, 3].every((n) => (summary ?? '').includes(`Traszka #${n}`)), `podsumowanie sieci bez trzech sklepów: ${summary?.slice(0, 200)}`);
+    const rows = await page.evaluate(() => [...document.querySelectorAll('.tt-netsum .tt-row > span:first-child')].map((e) => e.textContent ?? ''));
+    const trusts = trustRowValues(rows, trustWord);
+    const open = g.stores.filter((st) => !st.closed);
+    ev.check(trusts.length === 3 && trusts.every((v, i) => v === Math.round(open[i]?.trust)), `wiersze „${trustWord} N” w sieci: ${JSON.stringify(trusts)}, dane gry: ${JSON.stringify(open.map((st) => Math.round(st.trust)))}`);
+    // etykiety zakładek na 390 px skracają się wielokropkiem (CSS `.tt-storetabs .tt-btn`): to nie poziomy wylew, ale gracz je widzi, więc idą do notatek
+    const cut = await page.evaluate(() => [...document.querySelectorAll('.tt-storetabs [role="tab"]')].filter((b) => b.scrollWidth > b.clientWidth + 1).map((b) => `${b.textContent} (${b.clientWidth} px)`));
+    ev.note(`zakładki z uciętą etykietą (wielokropek): ${cut.length ? cut.join(', ') : 'brak'}`);
+    ev.note(`zakładki: ${tabs.map((t) => t.text).join(' | ')}; ${trustWord} przy sklepach: ${trusts.join(', ')}; podsumowanie: ${summary?.replace(/\s+/g, ' ').slice(0, 220)}`);
+    if (phone) await checkWidth(page, `${prefix}okno sieci (cztery zakładki): ${net}`);
+    await ev.shot(lang === 'en' ? '4a2-12c-angielski-wyciagi-siec' : '4a2-11-wyciagi-siec-trzy');
+    for (const n of [1, 2, 3]) {
+      await page.locator('.tt-storetabs [role="tab"]').nth(n).click();
+      await page.waitForSelector('.tt-storereport', { timeout: 10_000 });
+      const rep = await page.evaluate(() => ({ label: document.querySelector('.tt-storereport')?.getAttribute('aria-label'), len: document.querySelector('.tt-storereport')?.textContent?.length ?? 0 }));
+      ev.check(new RegExp(`^Traszka #${n}\\b`).test(rep.label ?? '') && rep.len > 200, `wyciąg #${n}: ${JSON.stringify(rep)}`);
+      if (phone) await checkWidth(page, `${prefix}okno sieci (cztery zakładki): wyciąg #${n}`);
+      if (n === 3 && lang !== 'en') await ev.shot('4a2-11b-wyciag-sklepu-3');
+    }
+    await page.locator('.tt-storetabs [role="tab"]').nth(0).click();
+    return g;
+  }
+
+  /**
+   * Gra kolejne miesiące (okno sieci zamykane po każdym), aż któryś otwarty sklep spadnie poniżej progu zaufania z listy chipa (`TRUST_WARN_BELOW`),
+   * najwyżej `maxMonths`. Sklep w tle traci zaufanie bez wizyt, więc zajmuje to kilka miesięcy (na fixture „po Traszce” pięć do sześciu); punkt przeglądu planu wymaga, by lista chipa z tym
+   * ostrzeżeniem mieściła się w 390 px, a bez sklepu poniżej progu nie ma jej jak zobaczyć. Zwraca ostatni odczyt gry i liczbę zagranych miesięcy.
+   */
+  async function playUntilTrustWarning(page, ev, { stop, prefix, phone, maxMonths = 8 }) {
+    let g = await readGame(page);
+    let months = 0;
+    while (months < maxMonths && !g.stores.some((st) => !st.closed && st.trust < TRUST_WARN_BELOW)) {
+      const { stopped } = await advance(page, { stop, maxDays: 40, chunk: 4320 });   // trzy doby naraz: okno miesiąca czeka na koniec kawałka, a po drodze `skip` staje na kartach
+      if (!ev.check(!!stopped, `miesiąc +${months + 1} nie przyniósł okna sieci`)) break;
+      months++;
+      await sleep(400);
+      await closeWindowsAboveReport(page, ev, { phone, prefix });
+      if (phone) await checkWidth(page, `${prefix}okno sieci (cztery zakładki): Sieć, miesiąc +${months}`);
+      await press(page, '.tt-modal:has(h2[data-tut="report"]) .tt-modal-foot .tt-primary');
+      await settle(page);
+      g = await readGame(page);
+      if (!ev.check(g.over === null && !g.gameOver && g.stores.every((st) => !st.closed), `miesiąc +${months}: koniec gry ${g.gameOver}/${g.over}, sklepy ${JSON.stringify(g.stores.map((st) => [st.id, st.closed, Math.round(st.trust)]))}`)) break;
+    }
+    return { g, months };
+  }
+
+  async function scenarioRelet(browser, vp) {
+    const { ctx, page } = await newPage(browser, vp, 'po-traszce', { fixture: after });
+    const phone = vp.mobile;
+    const fit = closedFittings(after.text).find((st) => st.id === 2);
+    const lot = { id: -1, street: '', number: 0, pkg: 0, price: 0 };
+    try {
+      let go = true;
+      await waitReady(page);
+      await pause(page);
+      await settle(page);
+      await pause(page);
+
+      // --- 9: pinezka, lista, karta, ponowny wynajem, okno, trzy sklepy ---
+      go = await runStep(vp, 9, page, async (ev) => {
+        const g0 = await readGame(page);
+        const shape = JSON.stringify(g0.stores.map((st) => [st.id, st.closed]));
+        ev.check(shape === '[[1,false],[2,true],[3,false]]', `sklepy w fixture: ${shape}`);
+        ev.check(g0.partner === true && g0.over === null && !g0.gameOver && g0.builds.length === 0, `firma: partner ${g0.partner}, koniec ${g0.over}, budowy ${g0.builds.length}`);
+        const s2 = g0.stores.find((st) => st.id === 2);
+        ev.check(!!fit && s2?.lotId === fit.lotId && s2.remont === fit.remontLevel && fit.equipment.includes('sco'), `sklep #2 w danych: ${JSON.stringify(s2 && { lotId: s2.lotId, remont: s2.remont })}, fixture: ${JSON.stringify(fit)}`);
+        lot.id = s2.lotId;
+        const mine = await page.evaluate((id) => { const l = window.traszkaGame.session.firm.city.lots[id]; return { pkg: l.package, street: l.street, number: l.number }; }, lot.id);
+        Object.assign(lot, mine, { price: reletPrice(mine.pkg) });
+        ev.check(lot.price < lot.pkg && g0.wallet >= lot.price, `cena po Traszce ${money(lot.price)} zł (pakiet ${money(lot.pkg)} zł), gotówka ${money(g0.wallet)} zł`);
+        ev.note(`fixture: dzień ${g0.day}, gotówka ${money(g0.wallet)} zł, sklepy ${g0.stores.map((st) => `#${st.id}${st.closed ? ' zamknięty' : ''} (zaufanie ${Math.round(st.trust)}, remont ${st.remont})`).join(', ')}; lokal #2: ul. ${lot.street} ${lot.number}, pakiet ${money(lot.pkg)} zł, po Traszce ${money(lot.price)} zł`);
+
+        await openTab(page, 'miasto');
+        await page.waitForSelector('.tt-city .tt-lotrow', { timeout: 30_000 });
+        // pinezka „po Traszce” na lokalu #2 (jedna) z napisem z kartki
+        await until(page, (id) => !!document.querySelector(`.tt-cpin-po-traszce[data-lot="${id}"]`), lot.id, 'pinezka „po Traszce” na lokalu #2');
+        const pins = await page.evaluate(() => ({
+          relet: document.querySelectorAll('.tt-cpin-po-traszce').length, own: document.querySelectorAll('.tt-cpin-twoj').length, free: document.querySelectorAll('.tt-cpin-wolny').length,
+          label: document.querySelector('.tt-cpin-po-traszce .tt-cpin-label')?.textContent ?? null,
+        }));
+        ev.check(pins.relet === 1 && pins.label === 'po Traszce' && pins.own === 2, `pinezki: ${JSON.stringify(pins)}`);
+        // lista: wiersz z dopiskiem i ceną po zniżce, reszta z pełnym pakietem
+        const rows = await readLots(page);
+        const row = rows.find((r) => r.id === lot.id);
+        if (!ev.check(!!row, `lokal #2 (${lot.id}) nie stoi na liście: ${rows.map((r) => r.id).join(', ')}`)) return;
+        ev.check(row.relet && digitsOf(row.priceText) === lot.price, `wiersz listy: znacznik ${row.relet}, cena „${row.priceText}” (rentPrice ${lot.price})`);
+        const others = rows.filter((r) => r.id !== lot.id);
+        ev.check(others.length > 0 && others.every((r) => !r.relet && digitsOf(r.priceText) === r.price), `pozostałe wiersze mają pełny pakiet: ${others.map((r) => `${r.id}:${r.priceText}/${r.price}`).join(' ')}`);
+        ev.note(`lista: ${rows.length} lokali do wzięcia (w tym 1 po Traszce za ${row.priceText}), pinezki: wolne ${pins.free}, własne ${pins.own}, po Traszce ${pins.relet}`);
+
+        // karta: stuknięcie w pinezkę (a gdy zasłania ją arkusz albo inna pinezka, wiersz listy)
+        const addr = `ul. ${lot.street} ${lot.number}`;
+        let via = 'pinezka na mapie';
+        if (await tapPin(page, lot.id)) {
+          await page.waitForSelector('.tt-lotcard', { timeout: 15_000 });
+          await sleep(250);
+          if ((await textOf(page, '.tt-lotcard h3')) !== addr) { await press(page, '.tt-lotcard-close'); await pickLot(page, lot.id); via = 'lista (pinezka otworzyła inny lokal)'; }
+        } else {
+          await pickLot(page, lot.id);
+          via = 'lista (pinezkę zasłania arkusz)';
+        }
+        const card = await readCard(page);
+        ev.check(card.head === addr, `adres na karcie: ${card.head}`);
+        ev.check(card.relet === reletBlockText(fit), `blok wyposażenia: „${card.relet}” (fixture: „${reletBlockText(fit)}”)`);
+        ev.check(card.caption === RELET_CAPTION, `podpis zniżki: „${card.caption}”`);
+        ev.check(/^2\s+dni$/.test(card.build ?? ''), `wiersz „Budowa”: „${card.build}”`);
+        ev.check(card.pay.length === 2 && digitsOf(card.pay[0]) === lot.price, `przycisk „za gotówkę”: „${card.pay[0]}” (rentPrice ${lot.price})`);
+        chartChecks(ev, card, 'wykres na karcie po Traszce');
+        const rata = parseInstallmentButton(card.pay[1]);
+        ev.check(!!rata, `przycisk „na raty”: „${card.pay[1]}”`);
+        ev.note(`karta przez: ${via}; blok „${card.relet}”, podpis „${card.caption}”, budowa „${card.build}”, wykres ${card.bars} słupków dnia${card.weekend ? ` i ${card.weekend} weekendu` : ''}, przyciski: ${card.pay.map((b) => `„${b.replace(/\s+/g, ' ').trim()}”`).join(' | ')}`);
+        if (phone) await checkWidth(page, 'karta lokalu po Traszce');
+        await page.evaluate(() => document.querySelector('.tt-relet')?.scrollIntoView({ block: 'nearest' }));
+        await sleep(250);
+        await ev.shot('4a2-09a-karta-po-traszce');
+        await page.evaluate(() => document.querySelector('.tt-hours')?.scrollIntoView({ block: 'center' }));
+        await sleep(250);
+        await ev.shot('4a2-09b-wykres-godzin');
+
+        // wynajem: telefon na raty, komputer gotówką
+        const pay = phone ? 'raty' : 'gotowka';
+        const payButton = page.locator('.tt-lotpay .tt-btn', { hasText: pay === 'raty' ? /raty/ : /gotówkę/ });
+        await payButton.click();
+        ev.check((await payButton.getAttribute('aria-pressed')) === 'true', `sposób zapłaty „${pay}” nie został wybrany`);
+        const rent = page.getByRole('button', { name: 'Biorę lokal', exact: true });
+        ev.check(await rent.isEnabled(), `„Biorę lokal” zablokowany: ${await textOf(page, '.tt-lockmsg')}`);
+        await page.evaluate(() => document.querySelector('[data-tut="lot-price"]')?.scrollIntoView({ block: 'nearest' }));
+        await sleep(250);
+        await ev.shot(`4a2-09c-karta-po-traszce-${pay}`);
+        const g1 = await readGame(page);
+        await rent.click();
+        await until(page, () => window.traszkaGame.session.firm.builds.length === 1, null, 'budowa w firmie po „Biorę lokal”');
+        const g2 = await readGame(page);
+        const spent = g1.wallet - g2.wallet;
+        if (pay === 'gotowka') ev.check(Math.abs(spent - lot.price) < 0.01, `gotówka zeszła o ${money(spent)} zł zamiast ${money(lot.price)} zł`);
+        else ev.check(Math.abs(spent) < 0.01, `rata: gotówka zmieniła się o ${money(spent)} zł przed otwarciem`);
+        const b = g2.builds[0];
+        ev.check(b.lotId === lot.id && b.pay === pay && b.price === lot.price, `budowa: ${JSON.stringify(b)} (cena po Traszce ${lot.price})`);
+        ev.check(b.readyDay - g2.day === 2, `dzień otwarcia ${b.readyDay}, dziś ${g2.day}: budowa ma trwać 2 dni`);
+        // lokal w budowie to już nie „po Traszce”: pinezka budowy z licznikiem
+        await until(page, (id) => !!document.querySelector(`.tt-cpin-budowa[data-lot="${id}"]`) && !document.querySelector(`.tt-cpin-po-traszce[data-lot="${id}"]`), lot.id, 'pinezka budowy zamiast „po Traszce”');
+        const count = await textOf(page, `.tt-cpin-budowa[data-lot="${lot.id}"] .tt-cpin-label`);
+        ev.check(/^za 2 dni$/.test(count ?? ''), `licznik na pinezce budowy: „${count}”`);
+        ev.note(`ponowny wynajem ${pay === 'raty' ? 'na raty' : 'gotówką'} w dniu ${g2.day}: cena ${money(lot.price)} zł, gotówka ${money(g1.wallet)} → ${money(g2.wallet)} zł, otwarcie w dniu ${b.readyDay}, pinezka „${count}”`);
+
+        // okno „Traszka #2 znów otwarta” w dniu otwarcia
+        const reopened = await skipToOpening(page, b.readyDay, new RegExp(`^${RELET_TITLE}$`));
+        if (!ev.check(!!reopened, `okno „${RELET_TITLE}” nie pojawiło się`)) return;
+        ev.check(/znów przyjmuje klientów/.test(reopened.text) && new RegExp(`poziom 1, zaufanie ${RELET_TRUST}`).test(reopened.text), `tekst okna: ${reopened.text.replace(/\s+/g, ' ').slice(0, 200)}`);
+        ev.note(`okno: „${reopened.label}” — ${reopened.text.replace(/\s+/g, ' ').slice(0, 220)}`);
+        await sleep(450);
+        if (phone) await checkWidth(page, `okno: ${RELET_TITLE}`);
+        await ev.shot('4a2-09d-traszka-2-znow-otwarta');
+        await press(page, '.tt-story .tt-primary');
+        await settle(page);
+        const g3 = await readGame(page);
+        const r2 = g3.stores.find((st) => st.id === 2);
+        ev.check(g3.stores.length === 3 && g3.stores.every((st) => !st.closed) && g3.builds.length === 0, `po otwarciu: sklepy ${JSON.stringify(g3.stores.map((st) => [st.id, st.closed]))}, budowy ${g3.builds.length}`);
+        ev.check(!!r2 && r2.level === 1 && Math.round(r2.trust) === RELET_TRUST && r2.remont === fit.remontLevel, `#2 po otwarciu: poziom ${r2?.level}, zaufanie ${r2 && Math.round(r2.trust)}, remont ${r2?.remont} (fixture: remont ${fit.remontLevel})`);
+        ev.check(!!r2 && r2.reopened && r2.lotId === lot.id && fit.equipment.every((id) => r2.equipment.includes(id)), `#2: reopened ${r2?.reopened}, lokal ${r2?.lotId}, sprzęt ${JSON.stringify(r2?.equipment)} (fixture ${JSON.stringify(fit.equipment)})`);
+        ev.check(g3.activeId === 1 && r2.minute >= b.readyDay * 1440 + 360, `aktywny #${g3.activeId}, #2 w minucie ${r2?.minute}, dzień odbioru ${b.readyDay}`);
+        if (pay === 'raty') {
+          const inst = r2?.installments.find((i) => /^Adaptacja lokalu: ul\. /.test(i.label));
+          if (ev.check(!!inst, `rata pakietu w #2: ${JSON.stringify(r2?.installments)}`)) {
+            ev.check(inst.price === lot.price && [6, 12].includes(inst.months), `rata: cena ${inst.price} (rentPrice ${lot.price}), rat ${inst.months}`);
+            ev.check(Math.abs(inst.total - (inst.price + inst.fee)) <= 1 && Math.abs(inst.monthly * inst.months - inst.total) <= inst.months, `rata ${inst.monthly} × ${inst.months} ≠ razem ${inst.total} (cena ${inst.price} + opłata ${inst.fee})`);
+            ev.check(!!rata && rata.monthly === inst.monthly && rata.months === inst.months, `rata z karty ${JSON.stringify(rata)} a z danych sklepu ${inst.monthly} × ${inst.months}`);
+            ev.note(`rata pakietu po Traszce: ${inst.months} rat po ${money(inst.monthly)} zł, razem ${money(inst.total)} zł z opłatą ${money(inst.fee)} zł (${Math.round((100 * inst.fee) / inst.price)}% z ${money(inst.price)} zł)`);
+          }
+        }
+        ev.note(`#2 po ponownym otwarciu: poziom ${r2?.level}, zaufanie ${Math.round(r2?.trust)}, remont ${r2?.remont}, sprzęt ${JSON.stringify(r2?.equipment)}, dzień ${Math.floor((r2?.minute ?? 0) / 1440)}, gotówka ${money(g3.wallet)} zł`);
+
+        // chip z trzema sklepami
+        await closeTab(page, 'miasto');
+        await page.waitForSelector('[data-tut="store-switch"]', { timeout: 15_000 });
+        const chip = await readChipList(page, { before: async () => { if (phone) await checkWidth(page, 'lista sklepów (trzy)'); await ev.shot('4a2-09e-lista-trzech-sklepow'); } });
+        ev.check(chip.rows.length === 3 && chip.rows.every((r) => !r.closed) && [1, 2, 3].every((n) => chip.rows.some((r) => r.text.includes(`Traszka #${n}`))) && chip.rows.filter((r) => r.on).length === 1,
+          `lista chipa: ${JSON.stringify(chip.rows.map((r) => [r.text.slice(0, 40), r.closed, r.on]))}`);
+        ev.note(`lista chipa: ${chip.rows.map((r) => r.text.replace(/\s+/g, ' ').trim()).join(' || ')}`);
+      });
+      if (!go) return failRelet(vp, 9, 'krok 9 nie przeszedł');
+
+      // --- 10: trzy placówki ---
+      go = await runStep(vp, 10, page, async (ev) => {
+        await openTab(page, 'miasto');
+        await page.waitForSelector('.tt-city .tt-lotrow', { timeout: 30_000 });
+        const bar = await textOf(page, '.tt-citytools');
+        ev.check(/placówki 3\/3/.test(bar ?? ''), `licznik placówek: ${bar}`);
+        const rows = await readLots(page);
+        ev.check(rows.length > 0 && rows.every((r) => r.id !== lot.id && !r.relet), `lista po ponownym wynajmie: ${rows.map((r) => `${r.id}${r.relet ? ' po Traszce' : ''}`).join(', ')}`);
+        const other = rows[0];
+        await pickLot(page, other.id);
+        const rent = page.getByRole('button', { name: 'Biorę lokal', exact: true });
+        const first = await readCard(page);
+        ev.check(await rent.isDisabled(), '„Biorę lokal” jest aktywny przy trzech placówkach');
+        ev.check(first.lock === LIMIT_TEXT, `tekst pod przyciskiem: „${first.lock}”`);
+        ev.check(first.relet === null && first.caption === null, `zwykły wolny lokal ma blok „po Traszce”: ${first.relet} / ${first.caption}`);
+        chartChecks(ev, first, 'wykres na karcie wolnego lokalu');
+        // drugi sposób zapłaty niczego nie odblokowuje
+        for (const n of [0, 1]) {
+          await page.locator('.tt-lotpay .tt-btn').nth(n).click();
+          ev.check((await rent.isDisabled()) && (await textOf(page, '.tt-lockmsg')) === LIMIT_TEXT, `sposób zapłaty ${n}: przycisk ${(await rent.isDisabled()) ? 'zablokowany' : 'aktywny'}, tekst „${await textOf(page, '.tt-lockmsg')}”`);
+        }
+        const g = await readGame(page);
+        ev.check(g.builds.length === 0 && g.stores.filter((st) => !st.closed).length === 3, `budowy ${g.builds.length}, otwarte sklepy ${g.stores.filter((st) => !st.closed).length}`);
+        ev.note(`karta lokalu ${other.id} (${other.addr}): „Biorę lokal” zablokowany, tekst: „${first.lock}”; wykres ${first.bars} słupków${first.weekend ? ` i ${first.weekend} weekendu` : ''}; pasek: „${bar?.replace(/\s+/g, ' ').trim()}”`);
+        if (phone) await checkWidth(page, 'karta lokalu z wykresem');
+        await page.evaluate(() => document.querySelector('.tt-lockmsg')?.scrollIntoView({ block: 'nearest' }));
+        await sleep(250);
+        await ev.shot('4a2-10-limit-trzy-placowki');
+        await press(page, '.tt-lotcard-close');
+        await closeTab(page, 'miasto');
+      });
+      if (!go) return failRelet(vp, 10, 'krok 10 nie przeszedł');
+
+      // --- 11: koniec miesiąca przy trzech sklepach ---
+      go = await runStep(vp, 11, page, async (ev) => {
+        const { stopped: net } = await advance(page, { stop: /^Wyciągi od Centrali/, maxDays: 40 });
+        if (!ev.check(!!net, 'okno z wyciągami sieci nie pojawiło się do końca miesiąca')) return;
+        ev.note(`okno: „${net.label}”`);
+        await networkWindowChecks(page, ev, { phone, lang: 'pl' });
+        await press(page, '.tt-modal:has(h2[data-tut="report"]) .tt-modal-foot .tt-primary');
+        await settle(page);
+        const g2 = await readGame(page);
+        const open = g2.stores.filter((st) => !st.closed);
+        ev.check(open.length === 3 && !g2.gameOver && g2.over === null, `po oknie: otwartych ${open.length}, koniec gry ${g2.gameOver}/${g2.over}`);
+        // chip: ostrzeżenie o zaufaniu dokładnie przy sklepach poniżej progu, a ⚠ przy chipie, gdy jakiś sklep w tle woła o uwagę. Gramy do pierwszego takiego sklepu
+        const { g: g3, months } = await playUntilTrustWarning(page, ev, { stop: /^Wyciągi od Centrali/, prefix: '', phone });
+        const open3 = g3.stores.filter((st) => !st.closed);
+        ev.check(open3.length === 3 && open3.some((st) => st.trust < TRUST_WARN_BELOW), `po ${months} kolejnych miesiącach żaden z trzech sklepów nie spadł poniżej ${TRUST_WARN_BELOW}: ${open3.map((st) => `#${st.id} ${Math.round(st.trust)}`).join(', ')}`);
+        const chip = await readChipList(page, { close: false });
+        const mismatch = chip.rows.flatMap((r, i) => {
+          const st = open3[i];
+          const want = st.trust < TRUST_WARN_BELOW;
+          return r.warns.includes('zaufanie') === want && r.shown === Math.round(st.trust) ? [] : [`#${st.id}: pokazuje ${r.shown}${r.warns.includes('zaufanie') ? ' z ostrzeżeniem' : ''}, zaufanie ${Math.round(st.trust)}`];
+        });
+        ev.check(chip.rows.length === 3 && mismatch.length === 0, `ostrzeżenia zaufania na chipie: ${mismatch.join('; ') || JSON.stringify(chip.rows.map((r) => r.warns))}`);
+        const backgroundWarned = chip.rows.some((r, i) => !r.on && r.warns.length > 0);
+        ev.check(chip.alert === backgroundWarned && chip.rows.some((r) => r.warns.includes('zaufanie')), `znak ⚠ przy chipie: ${chip.alert}, sklep w tle z ostrzeżeniem: ${backgroundWarned}`);
+        ev.note(`zaufanie po miesiącu +${months}: ${open3.map((st) => `#${st.id} ${Math.round(st.trust)}`).join(', ')}; ostrzeżenia na chipie: ${chip.rows.map((r, i) => `#${open3[i].id} [${r.warns.join(', ') || 'brak'}]`).join(' ')}; ⚠ przy chipie: ${chip.alert}; wiersz z ostrzeżeniem: „${chip.rows.find((r) => r.warns.includes('zaufanie'))?.text.replace(/\s+/g, ' ').trim()}”`);
+        if (phone) await checkWidth(page, 'lista sklepów (trzy) z ostrzeżeniem zaufania');
+        await ev.shot('4a2-11c-lista-sklepow-ostrzezenie');
+        await tapOutside(page, '.tt-stores-backdrop');
+        await page.waitForSelector('.tt-stores-pop', { state: 'detached', timeout: 5_000 });
+        ev.note(`gotówka po zamknięciu miesiąca ${money(g2.wallet)} zł (dzień ${g2.day}); po ${months} kolejnych miesiącach ${money(g3.wallet)} zł (dzień ${g3.day})`);
+      });
+      if (!go) return failRelet(vp, 11, 'krok 11 nie przeszedł');
+    } finally {
+      await ctx.close();
+    }
+
+    // --- 12 (telefon): nowe ekrany po polsku (pomiary z kroków 9–11) i po angielsku (ten sam przebieg od nowa w angielskim interfejsie) ---
+    if (phone) {
+      const en = await newPage(browser, vp, 'po-traszce-en', { fixture: after });
+      try {
+        await runStep(vp, 12, en.page, (ev) => englishChecks(en.page, ev, fit));
+      } finally {
+        await en.ctx.close();
+      }
+    }
+  }
+
+  /** Kroki 9–12 po porażce wcześniejszego z nich (te, które dotyczą tego rozmiaru): porażka z przyczyną, a nie milczenie. */
+  function failRelet(vp, afterId, why) {
+    for (const step of STEPS) {
+      if (typeof step.id !== 'number' || step.id <= afterId || step.id < 9 || !step.sizes.includes(vp.name)) continue;
+      (results[vp.name] ??= {})[step.id] = stepResult({ ok: false, failed: [`pominięty: ${why}`] });
+      console.log(`  [${vp.name}] krok ${step.id}: FAIL (pominięty: ${why})`);
+    }
+  }
+
+  /**
+   * Krok 12: pomiary szerokości nowych ekranów z kroków 9–11 (po polsku) muszą być kompletne i bez wylewu, a po angielsku ten sam przebieg gra się od nowa:
+   * język w ⚙ (przeładowanie, zapis zostaje), karta lokalu po Traszce, ponowny wynajem gotówką, okno otwarcia, lista chipa z trzema sklepami, karta
+   * wolnego lokalu z wykresem i tekstem Centrali oraz okno sieci z czterema zakładkami.
+   */
+  async function englishChecks(page, ev, fit) {
+    const pl = newScreenProblems(widths);
+    ev.check(pl.length === 0, `nowe ekrany po polsku: ${pl.join(' | ')}`);
+    ev.note(`po polsku zmierzono: ${NEW_SCREENS.map((sc) => `${sc.name} ×${widths.filter((w) => w.label.startsWith(sc.name)).length}`).join(', ')}`);
+
+    await waitReady(page);
+    await pause(page);
+    await settle(page);
+    await pause(page);
+    await press(page, '.tt-gear');
+    await page.waitForSelector('[role="dialog"][aria-label="Ustawienia"]');
+    await Promise.all([
+      page.waitForEvent('load', { timeout: 120_000 }),
+      page.locator('[aria-label="Ustawienia"]').getByRole('button', { name: 'English', exact: true }).click(),
+    ]);
+    await waitReady(page);
+    await pause(page);
+    await settle(page);
+    await pause(page);
+    const lang = await page.evaluate(() => localStorage.getItem('traszka:lang'));
+    ev.check(lang === 'en', `język w pamięci: ${lang}`);
+    const g0 = await readGame(page);
+    ev.check(JSON.stringify(g0.stores.map((st) => [st.id, st.closed])) === '[[1,false],[2,true],[3,false]]', `po przeładowaniu sklepy: ${JSON.stringify(g0.stores.map((st) => [st.id, st.closed]))}`);
+    const lotId = g0.stores.find((st) => st.id === 2).lotId;
+
+    // karta lokalu po Traszce po angielsku
+    await openTab(page, 'miasto');
+    await page.waitForSelector('.tt-city .tt-lotrow', { timeout: 30_000 });
+    await pickLot(page, lotId);
+    const card = await readCard(page);
+    ev.check(!!card.relet && card.relet.length > 10 && !!card.caption && card.caption !== RELET_CAPTION, `blok „${card.relet}”, podpis „${card.caption}”`);
+    chartChecks(ev, card, 'wykres po angielsku');
+    ev.note(`po angielsku: adres „${card.head}”, blok „${card.relet}”, podpis „${card.caption}”, przyciski ${card.pay.map((b) => `„${b.replace(/\s+/g, ' ').trim()}”`).join(' | ')}`);
+    await checkWidth(page, 'angielski: karta lokalu po Traszce');
+    await ev.shot('4a2-12a-angielski-karta-po-traszce');
+
+    // ponowny wynajem gotówką i otwarcie po angielsku
+    await page.locator('.tt-lotpay .tt-btn').nth(0).click();
+    const rent = page.locator('.tt-lotact .tt-primary');
+    ev.check(await rent.isEnabled(), `przycisk wynajmu zablokowany: ${await textOf(page, '.tt-lockmsg')}`);
+    await rent.click();
+    await until(page, () => window.traszkaGame.session.firm.builds.length === 1, null, 'budowa po wynajmie (angielski)');
+    const readyDay = (await readGame(page)).builds[0].readyDay;
+    const reopened = await skipToOpening(page, readyDay, /^Traszka #2 is open again$/);
+    if (ev.check(!!reopened, 'okno „Traszka #2 is open again” nie pojawiło się')) {
+      ev.note(`okno po angielsku: „${reopened.label}” — ${reopened.text.replace(/\s+/g, ' ').slice(0, 200)}`);
+      await sleep(450);
+      await checkWidth(page, `okno: ${reopened.label}`);
+      await press(page, '.tt-story .tt-primary');
+      await settle(page);
+    }
+    const g1 = await readGame(page);
+    const r2 = g1.stores.find((st) => st.id === 2);
+    ev.check(g1.stores.filter((st) => !st.closed).length === 3, `po otwarciu otwartych sklepów: ${g1.stores.filter((st) => !st.closed).length}`);
+    ev.check(!!r2 && r2.level === 1 && Math.round(r2.trust) === RELET_TRUST && r2.remont === fit.remontLevel, `#2 po otwarciu: poziom ${r2?.level}, zaufanie ${r2 && Math.round(r2.trust)}, remont ${r2?.remont}`);
+    ev.note(`po angielsku #2 otwarty w dniu ${Math.floor((r2?.minute ?? 0) / 1440)} (poziom ${r2?.level}, zaufanie ${r2 && Math.round(r2.trust)})`);
+
+    // lista chipa z trzema sklepami
+    await closeTab(page, 'miasto');
+    await page.waitForSelector('[data-tut="store-switch"]', { timeout: 15_000 });
+    const chip = await readChipList(page, { before: async () => { await checkWidth(page, 'angielski: lista sklepów (trzy)'); await ev.shot('4a2-12b-angielski-lista-trzech-sklepow'); } });
+    ev.check(chip.rows.length === 3 && chip.rows.every((r) => !r.closed), `lista chipa po angielsku: ${JSON.stringify(chip.rows.map((r) => [r.text.slice(0, 30), r.closed]))}`);
+
+    // karta wolnego lokalu z wykresem i tekstem limitu
+    await openTab(page, 'miasto');
+    await page.waitForSelector('.tt-city .tt-lotrow', { timeout: 30_000 });
+    const rows = await readLots(page);
+    await pickLot(page, rows[0].id);
+    const free = await readCard(page);
+    ev.check(free.disabled === true && !!free.lock && free.lock.length > 20 && free.relet === null, `karta wolnego lokalu po angielsku: przycisk zablokowany ${free.disabled}, tekst „${free.lock}”`);
+    chartChecks(ev, free, 'wykres wolnego lokalu po angielsku');
+    ev.note(`po angielsku, trzy placówki: „${free.lock}”`);
+    await checkWidth(page, 'angielski: karta lokalu z wykresem');
+    await page.evaluate(() => document.querySelector('.tt-lockmsg')?.scrollIntoView({ block: 'nearest' }));
+    await sleep(250);
+    await ev.shot('4a2-12d-angielski-limit');
+    await press(page, '.tt-lotcard-close');
+    await closeTab(page, 'miasto');
+
+    // okno sieci z czterema zakładkami
+    const { stopped: net } = await advance(page, { stop: /^Head Office statements/, maxDays: 40 });
+    if (ev.check(!!net, 'okno z wyciągami sieci po angielsku nie pojawiło się do końca miesiąca')) {
+      ev.note(`okno: „${net.label}”`);
+      await networkWindowChecks(page, ev, { phone: true, lang: 'en' });
+      await press(page, '.tt-modal:has(h2[data-tut="report"]) .tt-modal-foot .tt-primary');
+      await settle(page);
+      // lista chipa z ostrzeżeniem o zaufaniu po angielsku
+      const { g: gw, months } = await playUntilTrustWarning(page, ev, { stop: /^Head Office statements/, prefix: 'angielski: ', phone: true });
+      const openW = gw.stores.filter((st) => !st.closed);
+      ev.check(openW.length === 3 && openW.some((st) => st.trust < TRUST_WARN_BELOW), `po ${months} kolejnych miesiącach żaden sklep nie spadł poniżej ${TRUST_WARN_BELOW}: ${openW.map((st) => `#${st.id} ${Math.round(st.trust)}`).join(', ')}`);
+      const chipW = await readChipList(page, { before: async () => { await checkWidth(page, 'angielski: lista sklepów (trzy) z ostrzeżeniem zaufania'); await ev.shot('4a2-12e-angielski-lista-ostrzezenie'); } });
+      ev.check(chipW.rows.some((r) => r.warns.includes('zaufanie')), `lista chipa po angielsku bez ostrzeżenia zaufania: ${JSON.stringify(chipW.rows.map((r) => r.warns))}`);
+      ev.note(`po angielsku, po ${months} kolejnych miesiącach: zaufanie ${openW.map((st) => `#${st.id} ${Math.round(st.trust)}`).join(', ')}; wiersz z ostrzeżeniem: „${chipW.rows.find((r) => r.warns.includes('zaufanie'))?.text.replace(/\s+/g, ' ').trim()}”`);
+    }
+    const en = newScreenProblems(widths, 'angielski: ');
+    ev.check(en.length === 0, `nowe ekrany po angielsku: ${en.join(' | ')}`);
+    const bad = widths.filter((w) => !w.ok && (w.label.startsWith('angielski: ') || NEW_SCREENS.some((sc) => w.label.startsWith(sc.name))));
+    ev.check(bad.length === 0, `poziomy wylew: ${bad.map((w) => `${w.label}: ${w.problems.join('; ')}`).join(' | ')}`);
+    ev.note(`po angielsku zmierzono: ${NEW_SCREENS.map((sc) => `${sc.name} ×${widths.filter((w) => w.label.startsWith(`angielski: ${sc.name}`)).length}`).join(', ')}`);
   }
 
   // --- krok 7 (telefon) ---
@@ -1313,14 +1967,16 @@ async function main(argv) {
       const probed = new Set();
       const fallbacksBefore = hooks.fallbacks.length;
       hooks.onDialog = vp.mobile ? async (page, d) => {
-        const key = d.kind === 'deck' ? 'deck' : `${d.kind}:${d.label}`;
+        // okno z zakładkami sklepów (protokół remanentu, wyciągi) mierzy się osobno dla każdej liczby sklepów
+        const key = d.kind === 'deck' ? 'deck' : `${d.kind}:${d.label}:${d.tabs}`;
         if (probed.has(key)) return;
         probed.add(key);
-        await checkWidth(page, `okno: ${d.kind === 'deck' ? 'karta decyzji' : d.label}`);
+        await checkWidth(page, `okno: ${d.kind === 'deck' ? 'karta decyzji' : d.label}${d.tabs > 0 ? ` [${d.tabs} zakładki sklepów]` : ''}`);
       } : null;
       try {
         await scenarioOldSave(browser, vp);
         await scenarioFlow(browser, vp);
+        await scenarioRelet(browser, vp);
         if (vp.mobile) await tipsRun(browser, vp);
       } catch (error) {
         console.log(`  [${vp.name}] wyjątek poza krokiem: ${error instanceof Error ? error.stack : String(error)}`);
@@ -1357,6 +2013,7 @@ async function main(argv) {
   writeFileSync(join(out, 'smoke.json'), `${JSON.stringify(report, null, 2)}\n`);
   console.log('');
   for (const row of summary.rows) console.log(`${row.size.padEnd(8)} ${String(row.step).padEnd(2)} ${row.status.padEnd(5)} ${row.name}${row.detail ? `  <- ${row.detail}` : ''}`);
+  if (extras.obok) console.log(`\nuwaga (krok 2, ${extras.obok.width} px): kartka pinezki „lokal obok” leży pod innymi pinezkami i zachodzi na ${extras.obok.overlaps.length} z nich (${extras.obok.overlaps.map((x) => `${x.kind} #${x.with}: ${x.area} px²`).join(', ') || 'żadną'}), szczegóły w smoke.json`);
   console.log(`\nbłędy konsoli: ${errors.length}, zapytania poza localhost: ${external.length}, przerwane /api/**: ${apiBlocked.length}, ${seconds} s, wynik: ${out}/smoke.json`);
   return summary.ok ? 0 : 1;
 }

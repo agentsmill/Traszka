@@ -23,7 +23,7 @@ export type MakeRequire = (from: string) => (id: string) => unknown;
 export const DEFAULT_PLAYWRIGHT_ROOT: string;
 export const LAUNCH_ARGS: readonly string[];
 export const VIEWPORTS: readonly Viewport[];
-export const FIXTURES: { readonly stary: string; readonly przedStatusem: string };
+export const FIXTURES: { readonly stary: string; readonly przedStatusem: string; readonly poTraszce: string };
 export const STEPS: readonly StepDef[];
 export const TIPS_STEP: StepDef;
 export const PHONE_WIDTH: number;
@@ -45,3 +45,33 @@ export function summarize(results: Record<string, Record<string, StepResult>>, s
 export function parseArgs(argv: readonly string[]): SmokeArgs;
 export function previewReady(log: string, port: number | string): boolean;
 export function widthProblems(m: WidthMeasure, limit?: number): string[];
+
+// Plan 4a.2 (Zadanie 9): stałe i pomocniki kroków 2 (dopisek) i 9–12.
+/** Zamknięty sklep z koperty zapisu: to, co zostaje w lokalu „po Traszce”. */
+export interface ClosedFitting { id: number; lotId: number; remontLevel: number; equipment: string[]; upgrades: number }
+export interface PinBox { l: number; t: number; r: number; b: number }
+/** Pinezka z pomiaru strony: rodzaj z klasy `tt-cpin-<rodzaj>`, `z`-index, ramka (null, gdy ukryta), napis z ramką i `display`, pinezki zasłonięte w punkcie ich środka. */
+export interface PinMeasure {
+  lot: number; kind: string; z: number; box: PinBox | null;
+  label: { text: string; box: PinBox | null; display: string } | null; covers: number[];
+}
+export interface PinReport { problems: string[]; overlaps: { lot: number; with: number; kind: string; area: number }[] }
+export interface WidthEntry { label: string; scroll: number; boxes: number; problems: string[]; ok: boolean }
+export const RELET_SHARE: number;
+export const HOUR_BARS: number;
+export const TRUST_WARN_BELOW: number;
+export const RELET_TRUST: number;
+export const LIMIT_TEXT: string;
+export const RELET_TITLE: string;
+export const OPEN_MINUTE: number;
+export const RELET_CAPTION: string;
+export const NEW_SCREENS: readonly { name: string; min: number }[];
+export function reletPrice(pkg: number): number;
+export function digitsOf(text: string): number;
+export function closedFittings(saveText: string): ClosedFitting[];
+export function reletBlockText(fit: Pick<ClosedFitting, 'remontLevel' | 'equipment' | 'upgrades'>): string;
+export function parseInstallmentButton(text: string): { monthly: number; months: number } | null;
+export function trustRowValues(rows: readonly string[], word?: string): number[];
+export function overlapArea(a: PinBox, b: PinBox): number;
+export function pinProblems(m: { width: number; pins: readonly PinMeasure[] }, narrow?: number): PinReport;
+export function newScreenProblems(widths: readonly WidthEntry[], prefix?: string): string[];

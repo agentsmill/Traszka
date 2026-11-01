@@ -4,15 +4,23 @@ import { devNull } from 'node:os';
 import { resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  FIXTURES, LAUNCH_ARGS, PHONE_WIDTH, STEPS, TIPS_STEP, USAGE, VIEWPORTS, DEFAULT_PLAYWRIGHT_ROOT, chromiumCandidates, chromiumExecutable,
-  contextOptions, fixtureSave, loadPlaywright, median, metaFor, parseArgs, parsePerf, previewReady, requestVerdict, stepResult, storageEntries,
-  summarize, tutorialMemory, widthProblems,
+  FIXTURES, HOUR_BARS, LAUNCH_ARGS, LIMIT_TEXT, NEW_SCREENS, OPEN_MINUTE, PHONE_WIDTH, RELET_CAPTION, RELET_SHARE, RELET_TITLE, RELET_TRUST, STEPS, TIPS_STEP,
+  TRUST_WARN_BELOW, USAGE, VIEWPORTS, DEFAULT_PLAYWRIGHT_ROOT, chromiumCandidates, chromiumExecutable, closedFittings,
+  contextOptions, digitsOf, fixtureSave, loadPlaywright, median, metaFor, newScreenProblems, overlapArea, parseArgs, parseInstallmentButton, parsePerf,
+  pinProblems, previewReady, requestVerdict, reletBlockText, reletPrice, stepResult, storageEntries, summarize, trustRowValues, tutorialMemory,
+  widthProblems,
   type MakeRequire, type StepResult, type WidthBox,
 } from '../scripts/city-smoke.mjs';
 import { MemoryStorage } from '@/game/memoryStorage';
 import { loadMeta, needsStartScreen } from '@/game/meta';
 import { createSession, hasStoredSave } from '@/game/session';
-import { partnerProgress } from '@/sim/firm/commands';
+import { OPEN_FROM, OPEN_TO } from '@/sim/economy/catalog';
+import { TRUST } from '@/sim/economy/tycoon/trust';
+import { RELET_BUILD_DAYS, RELET_SHARE as SIM_RELET_SHARE, lotState, partnerProgress, rentPrice } from '@/sim/firm/commands';
+import { percentOf } from '@/ui/game/format';
+import { lotCardModel } from '@/ui/city/cityModel';
+import { firmEventText, refusalText } from '@/ui/city/firmText';
+import { TRUST_WARN_BELOW as SWITCHER_TRUST_WARN_BELOW } from '@/ui/city/storeSwitcherModel';
 
 /**
  * Pomocniki skryptu smoke'a miasta (scripts/city-smoke.mjs), tak jak `tests/rankingSmoke.test.ts` dla próby rankingu: sam bieg w
@@ -26,12 +34,13 @@ const ROOT = resolve(__dirname, '..');
 const SOURCE = readFileSync(resolve(ROOT, 'scripts/city-smoke.mjs'), 'utf8');
 
 describe('plan smoke\'a (Zadanie 16)', () => {
-  it('osiem kroków i przebieg z dymkami; 6 tylko na komputerze, 7 tylko na telefonie, reszta na obu', () => {
-    expect(STEPS.map((s) => s.id)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+  it('dwanaście kroków (1–8 z 4a.1, 9–12 z 4a.2) i przebieg z dymkami; 6 tylko na komputerze, 7 i 12 tylko na telefonie, reszta na obu', () => {
+    expect(STEPS.map((s) => s.id)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
     const sizes = (id: number | string): string[] => [...[...STEPS, TIPS_STEP].find((s) => s.id === id)!.sizes];
-    for (const id of [1, 2, 3, 4, 5, 8]) expect(sizes(id), `krok ${id}`).toEqual(['telefon', 'desktop']);
+    for (const id of [1, 2, 3, 4, 5, 8, 9, 10, 11]) expect(sizes(id), `krok ${id}`).toEqual(['telefon', 'desktop']);
     expect(sizes(6)).toEqual(['desktop']);
     expect(sizes(7)).toEqual(['telefon']);
+    expect(sizes(12)).toEqual(['telefon']);
     expect(sizes('T')).toEqual(['telefon']);
     for (const s of STEPS) expect(s.name.length).toBeGreaterThan(10);
   });
@@ -62,7 +71,7 @@ describe('zapis i meta wstawiane do localStorage', () => {
   });
   afterEach(() => vi.unstubAllGlobals());
 
-  const load = (file: string, tips = false): { seed: string } => {
+  const load = (file: string, tips = false): { seed: string; text: string } => {
     const save = fixtureSave(file);
     for (const [k, v] of Object.entries(storageEntries({ seed: save.seed, saveText: save.text, tips, now: Date.now() }))) storage.setItem(k, v);
     return save;
@@ -107,6 +116,32 @@ describe('zapis i meta wstawiane do localStorage', () => {
     expect(f.person.partner).toBe(false);
     const progress = partnerProgress(f);
     expect(progress).toMatchObject({ kind: 'missing', profitMonthsNeeded: 1 });
+  });
+
+  it('fixture „po Traszce”: schemat 3, #1 i #3 otwarte, #2 zamknięty z remontem 1 i kasą, Partner, lokal #2 „po Traszce” z ceną po zniżce', () => {
+    const save = load(FIXTURES.poTraszce);
+    expect(save.seed).toBe('traszka-1');
+    expect(JSON.parse(storage.getItem(`traszka:save:${save.seed}`)!)).toMatchObject({ schema: 3, seed: save.seed });
+    const session = createSession(save.seed);
+    expect(session.fromSave).toBe(true);
+    expect(session.loadNotice).toBeNull();
+    const f = session.firm!;
+    expect(f.stores.map((st) => [st.id, st.closed])).toEqual([[1, false], [2, true], [3, false]]);
+    expect(f.person.partner).toBe(true);
+    const fit = closedFittings(save.text);
+    expect(fit).toHaveLength(1);
+    expect(fit[0]).toMatchObject({ id: 2, remontLevel: 1, equipment: ['sco'], upgrades: 0 });
+    const lot = fit[0]!.lotId as number;
+    expect(f.stores[1]!.lotId).toBe(lot);
+    expect(lotState(f, lot)).toBe('po-traszce');
+    // cena z napisów smoke'a to dokładnie `rentPrice` gry, a blok wyposażenia to to, co niesie model karty
+    expect(reletPrice(f.city.lots[lot]!.package)).toBe(rentPrice(f, lot));
+    expect(f.person.wallet).toBeGreaterThanOrEqual(rentPrice(f, lot));
+    const model = lotCardModel(save.seed, f, lot, 'gotowka');
+    expect(model.price).toBe(rentPrice(f, lot));
+    expect(model.relet).toEqual({ remontLevel: fit[0]!.remontLevel, equipment: fit[0]!.equipment.length, upgrades: fit[0]!.upgrades });
+    expect(model.buildDays).toBe(RELET_BUILD_DAYS);
+    expect(session.firm!.stores[0]!.econ.remontLevel).toBe(0);   // #1 bez remontu: jego lokal obok czeka (pinezka „obok”)
   });
 
   it('fixtureSave bierze seed z koperty, a brak seeda to błąd', () => {
@@ -215,11 +250,11 @@ describe('licznik wydajności i tabela wyników', () => {
     return out;
   };
 
-  it('summarize: wiersz na krok i rozmiar, który go dotyczy (telefon 8, komputer 7), wszystko ok daje ok', () => {
+  it('summarize: wiersz na krok i rozmiar, który go dotyczy (telefon 12, komputer 10), wszystko ok daje ok', () => {
     const s = summarize(allOk());
     expect(s.ok).toBe(true);
-    expect(s.rows.filter((r) => r.size === 'telefon').map((r) => r.step)).toEqual([1, 2, 3, 4, 5, 7, 8, 'T']);
-    expect(s.rows.filter((r) => r.size === 'desktop').map((r) => r.step)).toEqual([1, 2, 3, 4, 5, 6, 8]);
+    expect(s.rows.filter((r) => r.size === 'telefon').map((r) => r.step)).toEqual([1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 12, 'T']);
+    expect(s.rows.filter((r) => r.size === 'desktop').map((r) => r.step)).toEqual([1, 2, 3, 4, 5, 6, 8, 9, 10, 11]);
     expect(s.rows.every((r) => r.status === 'ok')).toBe(true);
   });
 
@@ -351,5 +386,130 @@ describe('krok 3: rata pakietu z danych sklepu, nie z napisu', () => {
     expect(SOURCE).toMatch(/0\.15 \* rata\.price/);
     expect(SOURCE).toMatch(/1\.15 \* rata\.price/);
     expect(SOURCE).not.toMatch(/miesięcznie × 12/);
+  });
+});
+
+describe('plan 4a.2 (Zadanie 9): stałe smoke\'a są zgodne z grą', () => {
+  it('cena po Traszce, próg ostrzeżenia, zaufanie po ponownym otwarciu i liczba słupków wykresu', () => {
+    expect(RELET_SHARE).toBe(SIM_RELET_SHARE);
+    expect(reletPrice(37_500)).toBe(11_300);   // 37 500 × 0,3 = 11 250, zaokrąglone do pełnych setek jak pakiet
+    expect(reletPrice(54_800)).toBe(16_400);
+    expect(TRUST_WARN_BELOW).toBe(SWITCHER_TRUST_WARN_BELOW);
+    expect(RELET_TRUST).toBe(TRUST.start);
+    expect(HOUR_BARS).toBe((OPEN_TO - OPEN_FROM) / 60);
+    expect(OPEN_MINUTE).toBe(OPEN_FROM);   // sklep z budowy otwiera się o 6:00
+  });
+
+  it('teksty dosłowne: odmowa limitu, tytuł okna ponownego otwarcia i podpis zniżki to teksty gry', () => {
+    expect(LIMIT_TEXT).toBe(refusalText('limit'));
+    expect(RELET_CAPTION).toBe(`po Traszce: ${percentOf(SIM_RELET_SHARE)} ceny`);
+    const save = fixtureSave(FIXTURES.poTraszce);
+    const storage = new MemoryStorage();
+    vi.stubGlobal('localStorage', storage);
+    try {
+      for (const [k, v] of Object.entries(storageEntries({ seed: save.seed, saveText: save.text, tips: false, now: Date.now() }))) storage.setItem(k, v);
+      const firm = createSession(save.seed).firm!;
+      expect(firmEventText(firm, { kind: 'opened', storeId: 2, params: { lotId: firm.stores[1]!.lotId, reopened: 1 } }).title).toBe(RELET_TITLE);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('closedFittings czyta z koperty to, co zostaje w lokalu; reletBlockText składa polski blok karty', () => {
+    expect(closedFittings(JSON.stringify({ stores: [
+      { id: 1, lotId: 3, closed: false, econ: { remontLevel: 2 } },
+      { id: 2, lotId: 9, closed: true, econ: { remontLevel: 1, equipment: [{ id: 'sco' }, { id: 'sco' }, { id: 'piec' }], upgrades: { szkolenie: 1, ulotki: 3 } } },
+    ] }))).toEqual([{ id: 2, lotId: 9, remontLevel: 1, equipment: ['sco', 'sco', 'piec'], upgrades: 4 }]);
+    expect(reletBlockText({ remontLevel: 1, equipment: ['sco'], upgrades: 0 })).toBe('Wyposażenie zostało: remont 1, sprzęt 1 szt., ulepszenia 0');
+  });
+
+  it('digitsOf, parseInstallmentButton i trustRowValues czytają napisy z twardą spacą', () => {
+    expect(digitsOf('11\u00a0250 zł')).toBe(11_250);
+    expect(digitsOf('brak')).toBe(0);
+    expect(parseInstallmentButton('na raty 1\u00a0077 zł × 12 z przelewów tego sklepu')).toEqual({ monthly: 1077, months: 12 });
+    expect(parseInstallmentButton('za gotówkę 11 300 zł')).toBeNull();
+    expect(trustRowValues(['Traszka #1', 'zaufanie 100', 'Razem', 'zaufanie 65 ', 'zaufanie 7x'])).toEqual([100, 65]);
+    expect(trustRowValues(['trust 40', 'zaufanie 12'], 'trust')).toEqual([40]);
+  });
+});
+
+describe('plan 4a.2 (Zadanie 9): pomiar pinezki „lokal obok” na 390 px', () => {
+  type Pin = Parameters<typeof pinProblems>[0]['pins'][number];
+  const pin = (patch: Partial<Pin> & { lot: number; kind: string }): Pin => ({
+    z: 200, box: { l: 100, t: 100, r: 146, b: 156 }, label: null, covers: [], ...patch,
+  });
+  const obok = (patch: Partial<Pin> = {}): Pin => pin({
+    lot: 13, kind: 'obok', z: 0, box: { l: 156, t: 307, r: 202, b: 344 }, label: { text: 'lokal obok', box: null, display: 'none' }, ...patch,
+  });
+  const others: Pin[] = [
+    pin({ lot: 14, kind: 'twoj', z: 339, box: { l: 137, t: 291, r: 211, b: 339 } }),
+    pin({ lot: 7, kind: 'wolny', z: 353, box: { l: 171, t: 297, r: 217, b: 353 } }),
+    pin({ lot: 34, kind: 'szop', z: 298, box: { l: 32, t: 250, r: 100, b: 298 } }),
+  ];
+
+  it('przecięcie ramek w px²: rozłączne i stykające się dają 0, reszta pole (tolerancja 0,5 px)', () => {
+    expect(overlapArea({ l: 0, t: 0, r: 10, b: 10 }, { l: 20, t: 0, r: 30, b: 10 })).toBe(0);
+    expect(overlapArea({ l: 0, t: 0, r: 10, b: 10 }, { l: 10, t: 0, r: 20, b: 10 })).toBe(0);
+    expect(overlapArea({ l: 0, t: 0, r: 10, b: 10 }, { l: 5, t: 5, r: 20, b: 20 })).toBe(25);
+    expect(overlapArea({ l: 0, t: 0, r: 10, b: 10 }, { l: 9.8, t: 0, r: 20, b: 10 })).toBe(0);
+  });
+
+  it('telefon: napis ukryty, pinezka pod pozostałymi i niczego niezasłaniająca to brak wad, a zachodzenie samej kartki idzie do przecięć (dowód)', () => {
+    const r = pinProblems({ width: 390, pins: [obok(), ...others] });
+    expect(r.problems).toEqual([]);
+    expect(r.overlaps).toEqual([{ lot: 13, with: 14, kind: 'twoj', area: 1472 }, { lot: 13, with: 7, kind: 'wolny', area: 1147 }]);
+  });
+
+  it('wady: widoczny napis na wąskim ekranie, napis wchodzący na inną pinezkę, pinezka nie pod spodem, zasłonięta pinezka i brak pinezki obok', () => {
+    const shown = pinProblems({ width: 390, pins: [obok({ label: { text: 'lokal obok', box: { l: 150, t: 280, r: 210, b: 296 }, display: 'block' } }), ...others] });
+    expect(shown.problems.some((p) => /widoczny na 390 px/.test(p))).toBe(true);
+    expect(shown.problems.some((p) => /napis pinezki obok .* przecina pinezkę twoj/.test(p))).toBe(true);
+    const wide = pinProblems({ width: 1280, pins: [obok({ label: { text: 'lokal obok', box: { l: 150, t: 250, r: 210, b: 266 }, display: 'block' } }), ...others] });
+    expect(wide.problems).toEqual([]);   // na komputerze napis ma być widoczny, byle nie wchodził na inne pinezki
+    expect(pinProblems({ width: 390, pins: [obok({ z: 400 }), ...others] }).problems.join()).toMatch(/nie leży pod spodem/);
+    expect(pinProblems({ width: 390, pins: [obok({ covers: [7] }), ...others] }).problems.join()).toMatch(/zasłania pinezki: 7/);
+    expect(pinProblems({ width: 390, pins: [...others] }).problems).toEqual(['brak pinezki „lokal obok” na ekranie']);
+    expect(pinProblems({ width: 390, pins: [obok({ box: null }), ...others] }).problems).toEqual(['brak pinezki „lokal obok” na ekranie']);
+  });
+
+  it('źródło mierzy `.tt-cpin-obok` (nie `.tt-cpin-wolny`) przez `getBoundingClientRect` i `elementFromPoint`, tylko na telefonie w kroku 2', () => {
+    expect(SOURCE).toContain('.tt-cpin-obok');
+    expect(SOURCE).toMatch(/getBoundingClientRect/);
+    expect(SOURCE).toMatch(/elementFromPoint\(\(p\.box\.l \+ p\.box\.r\) \/ 2/);
+    expect(SOURCE).toMatch(/if \(phone\) await obokPinCheck\(page, ev\);/);
+  });
+});
+
+describe('plan 4a.2 (Zadanie 9): nowe ekrany na 390 px', () => {
+  const entry = (label: string, ok = true) => ({ label, scroll: 390, boxes: 1, problems: ok ? [] : ['dokument 400 px (limit 390)'], ok });
+  const complete = (prefix = '') => [
+    entry(`${prefix}karta lokalu z wykresem`), entry(`${prefix}karta lokalu po Traszce`), entry(`${prefix}lista sklepów (trzy)`),
+    ...['Sieć', 'wyciąg #1', 'wyciąg #2', 'wyciąg #3'].map((n) => entry(`${prefix}okno sieci (cztery zakładki): ${n}`)),
+  ];
+
+  it('komplet pomiarów bez wad daje pustą listę, osobno po polsku i po angielsku', () => {
+    expect(newScreenProblems(complete())).toEqual([]);
+    expect(newScreenProblems(complete('angielski: '), 'angielski: ')).toEqual([]);
+    expect(newScreenProblems(complete('angielski: '))).toHaveLength(NEW_SCREENS.length);   // angielskie etykiety nie liczą się jako polskie
+    expect(NEW_SCREENS.map((s) => s.name)).toEqual(['karta lokalu z wykresem', 'karta lokalu po Traszce', 'lista sklepów (trzy)', 'okno sieci (cztery zakładki)']);
+  });
+
+  it('brakujący ekran, za mało zakładek okna sieci i wylew to wady z nazwą ekranu', () => {
+    const missing = complete().filter((w) => !w.label.startsWith('lista sklepów'));
+    expect(newScreenProblems(missing)).toEqual(['lista sklepów (trzy): zmierzono 0 z 1']);
+    const tabs = complete().filter((w) => !w.label.endsWith('wyciąg #3'));
+    expect(newScreenProblems(tabs)).toEqual(['okno sieci (cztery zakładki): zmierzono 3 z 4']);
+    const wide = complete();
+    wide[1] = entry('karta lokalu po Traszce', false);
+    expect(newScreenProblems(wide)).toEqual(['karta lokalu po Traszce: dokument 400 px (limit 390)']);
+  });
+
+  it('źródło mierzy te cztery ekrany pod ich nazwami, po polsku w krokach 9–11 i po angielsku w kroku 12', () => {
+    for (const label of ["'karta lokalu po Traszce'", "'karta lokalu z wykresem'", "'lista sklepów (trzy)'", "'angielski: karta lokalu po Traszce'", "'angielski: karta lokalu z wykresem'", "'angielski: lista sklepów (trzy)'"]) {
+      expect(SOURCE, label).toContain(`checkWidth(page, ${label})`);
+    }
+    expect(SOURCE).toContain('okno sieci (cztery zakładki): ${net}');
+    expect(SOURCE).toContain('newScreenProblems(widths)');
+    expect(SOURCE).toContain("newScreenProblems(widths, 'angielski: ')");
   });
 });

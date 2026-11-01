@@ -5,7 +5,7 @@ import { generateCity, lotNeighbour } from '@/sim/city/generateCity';
 import { CITY_GENERATOR_VERSION } from '@/sim/city/types';
 import { MINUTES_PER_DAY, OPEN_FROM } from '@/sim/economy/catalog';
 import { applyCommand } from '@/sim/economy/commands';
-import { awaitingDecision, stepMinute, type EconomyState } from '@/sim/economy/economy';
+import { awaitingDecision, isClosedForRemont, stepMinute, type EconomyState } from '@/sim/economy/economy';
 import { defaultAnswer } from '@/sim/economy/monthPreview';
 import { LIMITS } from '@/sim/economy/sanitize';
 import { BOTS } from '@/sim/economy/tycoon/bots';
@@ -13,7 +13,7 @@ import { visibleCards } from '@/sim/economy/tycoon/cards';
 import { economyView, toCommand } from '@/sim/economy/tycoon/economyEnv';
 import { storeSeedFor } from '@/sim/city/traffic';
 import { closeStore } from '@/sim/firm/closure';
-import { RELET_BUILD_DAYS, RELET_SHARE, applyFirmCommand, lotState, rentPrice, rentRefusal } from '@/sim/firm/commands';
+import { RELET_BUILD_DAYS, RELET_SHARE, applyFirmCommand, lotState, openDueBuilds, rentPrice, rentRefusal } from '@/sim/firm/commands';
 import {
   activeStore, applyStoreCommand, createFirm, emptyStepOut, grantToFirm, openStoreAt, openStores, stepFirmMinute, syncWallet,
 } from '@/sim/firm/firm';
@@ -183,6 +183,100 @@ function mistrzToStatus(seed: string, snapshotMinute: number | null): { statusMi
     if (out.firm.some((e) => e.kind === 'partner')) return { statusMinute: minute, snapshot };
   }
   throw new Error(`bot „mistrz” nie dostał statusu w seedzie ${seed}`);
+}
+
+// --- Bot „mistrz” do lokalu „po Traszce” (fixture dla smoke'a 4a.2) -----------------------------------------------------------
+
+/** Najtańszy wolny lokal, który wynajem przyjmuje na raty (remis: niższy numer); null, gdy żaden. */
+function cheapestFreeLot(f: FirmState): number | null {
+  const free = f.city.lots.filter((l) => lotState(f, l.id) === 'wolny' && rentRefusal(f, l.id, 'raty') === null);
+  free.sort((a, b) => a.package - b.package || a.id - b.id);
+  return free[0]?.id ?? null;
+}
+
+/** Ile dni generator czeka, aż limit rat pozwoli sklepowi #2 na kasę samoobsługową i remont (potem test pada). */
+const FIT_PATIENCE_DAYS = 6 * 31;
+/** Za ile dni od otwarcia #3 najpóźniej generator szuka dnia, w którym portfel stać na ponowny wynajem #2 (pierwszy wybór to sam dzień otwarcia). */
+const WALLET_PATIENCE_DAYS = 40;
+
+interface PoTraszce { snapshot: string; lot2: number; lot3: number; openDay: number; rentedDays: { second: number; third: number }; fitDays: number }
+
+/**
+ * Bot „mistrz” gra firmę minuta po minucie (jak w `mistrzToStatus`) i, o 6:00 kolejnych dni, robi to, co robi gracz po statusie Partnera:
+ *   1. najtańszy wolny lokal na raty (sklep #2);
+ *   2. w #2 kasa samoobsługowa i remont 1 na raty (limit rat bywa za mały od razu: gra dalej, najwyżej `FIT_PATIENCE_DAYS`; poziom 8
+ *      pod remont to skrót jak `remont` wyżej, a gotówka z góry nie jest potrzebna, bo płacą raty);
+ *   3. `terminateStore(2)` i gra do rozliczenia końcowego (lokal #2 staje się „po Traszce”);
+ *   4. najtańszy wolny lokal na raty (sklep #3);
+ *   5. zapis o 6:00 dnia, w którym #3 jest otwarty (otwarcie budowy robi tu `openDueBuilds`, jak w kroku firmy tej minuty), a portfel
+ *      stać na `rentPrice` lokalu #2 (inaczej pierwszy kolejny dzień o 6:00, który to spełnia). Zapis idzie po poleceniach bota, przed krokiem.
+ * Sklep #2 kupuje jako aktywny; po zakupach aktywny wraca do #1, którym gra bot.
+ */
+function mistrzPoTraszce(): PoTraszce {
+  const f = newFirm(STATUS_SEED);
+  const dayOf = (): number => Math.floor(clockOf(f) / DAY);
+  let phase: 'status' | 'opening2' | 'fit' | 'notice' | 'settling' | 'opening3' = 'status';
+  let lot2 = -1;
+  let lot3 = -1;
+  let scoBought = false;
+  let remontBought = false;
+  let fitStart = 0;
+  let thirdReady = -1;
+  let thirdOpened = -1;
+  const rentedDays = { second: -1, third: -1 };
+  let fitDays = 0;
+  for (let guard = 0; guard < 400 * DAY && f.over === null; guard++) {
+    const st = activeStore(f);
+    for (const cmd of BOTS.mistrz.act(economyView(st.econ, st.info))) applyStoreCommand(f, toCommand(cmd));
+    if (awaitingDecision(st.econ)) throw new Error('bot „mistrz” zostawił kartę bez odpowiedzi');
+    const minute = clockOf(f);
+    if (minute % DAY === OPEN_FROM) {
+      if (phase === 'status' && f.person.partner) {
+        lot2 = cheapestFreeLot(f) ?? -1;
+        if (lot2 < 0) throw new Error('żaden wolny lokal nie przechodzi na raty');
+        expect(command(f, { type: 'rentLot', lotId: lot2, pay: 'raty' })).toEqual({ ok: true });
+        rentedDays.second = dayOf();
+        phase = 'opening2';
+      } else if (phase === 'opening2' && f.stores.length === 2) {
+        phase = 'fit';
+        fitStart = dayOf();
+      } else if (phase === 'fit') {
+        expect(command(f, { type: 'switchStore', storeId: 2 })).toEqual({ ok: true });
+        grantToFirm(f, (s) => { s.level = Math.max(s.level, 8); });   // remont 1 zaczyna się od 8. poziomu; raty to wszystko, co płaci Centrala
+        if (!scoBought) scoBought = applyStoreCommand(f, { type: 'buyEquipment', id: 'sco', raty: true }).result.ok;
+        if (!remontBought) remontBought = applyStoreCommand(f, { type: 'startRemont', raty: true }).result.ok;
+        expect(command(f, { type: 'switchStore', storeId: 1 })).toEqual({ ok: true });
+        if (scoBought && remontBought) {
+          fitDays = dayOf() - fitStart;
+          phase = 'notice';
+        } else if (dayOf() - fitStart > FIT_PATIENCE_DAYS) {
+          throw new Error(`limit rat nie pozwolił na kasę (${scoBought}) i remont (${remontBought}) w ${FIT_PATIENCE_DAYS} dni`);
+        }
+      } else if (phase === 'notice' && !isClosedForRemont(f.stores[1]!.econ)) {
+        expect(command(f, { type: 'terminateStore', storeId: 2 })).toEqual({ ok: true });
+        phase = 'settling';
+      } else if (phase === 'settling' && f.stores[1]!.closed) {
+        lot3 = cheapestFreeLot(f) ?? -1;
+        if (lot3 < 0) throw new Error('żaden wolny lokal nie przechodzi na raty po zamknięciu #2');
+        expect(lot3).not.toBe(lot2);
+        expect(command(f, { type: 'rentLot', lotId: lot3, pay: 'raty' })).toEqual({ ok: true });
+        thirdReady = f.builds[f.builds.length - 1]!.readyDay;
+        rentedDays.third = dayOf();
+        phase = 'opening3';
+      }
+    }
+    if (phase === 'opening3' && minute >= thirdReady * DAY + OPEN_FROM && minute % DAY === OPEN_FROM) {
+      openDueBuilds(f, emptyStepOut());   // to samo, co zrobi `stepFirmMinute` w tej minucie, tylko przed zapisem
+      expect(f.stores).toHaveLength(3);
+      if (thirdOpened < 0) thirdOpened = dayOf();
+      if (f.person.wallet >= rentPrice(f, lot2)) {
+        return { snapshot: JSON.stringify(firmEnvelopeOf(f)), lot2, lot3, openDay: dayOf(), rentedDays, fitDays };
+      }
+      if (dayOf() - thirdOpened > WALLET_PATIENCE_DAYS) throw new Error(`portfel ${Math.round(f.person.wallet)} zł nie dorósł do ceny lokalu #2 w ${WALLET_PATIENCE_DAYS} dni`);
+    }
+    stepFirmMinute(f, emptyStepOut());
+  }
+  throw new Error(`generator nie doszedł do zapisu (faza ${phase}, dzień ${dayOf()}, koniec gry ${f.over})`);
 }
 
 // --- Schemat 1 i 2: sklep z zapisu to sklep #1 ------------------------------------------------------------------------
@@ -509,6 +603,15 @@ describe('schemat 3: zapis i odczyt firmy', () => {
     writeFileSync(fixtureUrl('save-v3-przed-statusem.json'), snapshot!);
   }, 120_000);
 
+  // Fixture „po Traszce” dla smoke'a 4a.2 (scripts/city-smoke.mjs): bot „mistrz” gra firmę przez `mistrzPoTraszce`, a zapis leży o 6:00 dnia,
+  // w którym otwiera się sklep #3 (#1 otwarty, #2 zamknięty z remontem 1 i kasą samoobsługową, lokal #2 „po Traszce”). Odtwarza go (tylko
+  // na wyraźną prośbę): MAKE_FIXTURE=1 npx vitest run src/game/firmSave.test.ts -t "po-traszce"
+  it.runIf(Boolean(process.env.MAKE_FIXTURE))('fixture save-v3-po-traszce.json: generator (MAKE_FIXTURE=1)', () => {
+    const made = mistrzPoTraszce();
+    writeFileSync(fixtureUrl('save-v3-po-traszce.json'), made.snapshot);
+    console.log(`po-traszce: #2 lokal ${made.lot2} wynajęty w dniu ${made.rentedDays.second}, kasa i remont po ${made.fitDays} dniach, #3 lokal ${made.lot3} wynajęty w dniu ${made.rentedDays.third}, zapis w dniu ${made.openDay}`);
+  }, 300_000);
+
   it('fixture save-v3-przed-statusem.json: schemat 3, jedna firma bez statusu, po 20 minutach gry jest Partner (smoke przeglądarkowy)', () => {
     const raw = json('save-v3-przed-statusem.json');
     expect(raw).toMatchObject({ schema: 3, seed: STATUS_SEED, cityGeneratorVersion: CITY_GENERATOR_VERSION });
@@ -535,6 +638,51 @@ describe('schemat 3: zapis i odczyt firmy', () => {
     expect(activeStore(f).econ.history).toHaveLength(2);
     expect(activeStore(f).econ.history[1]!.profit).toBeGreaterThan(0);
   });
+
+  it('fixture save-v3-po-traszce.json: schemat 3, #1 i #3 otwarte, #2 zamknięty z remontem 1 i kasą samoobsługową, Partner, a portfel stać na lokal po Traszce (smoke 4a.2)', () => {
+    const raw = json('save-v3-po-traszce.json');
+    expect(raw).toMatchObject({ schema: 3, seed: STATUS_SEED, cityGeneratorVersion: CITY_GENERATOR_VERSION });
+    const f = opened(restoreFirmFrom(raw, STATUS_SEED));
+    expect(f.stores.map((s) => [s.id, s.closed])).toEqual([[1, false], [2, true], [3, false]]);
+    const [first, second, third] = f.stores;
+    expect(second!.econ.remontLevel).toBe(1);
+    expect(second!.econ.equipment.map((e) => e.id)).toContain('sco');
+    expect(f.person.partner).toBe(true);
+    expect(f.builds).toHaveLength(0);
+    expect(f.over).toBeNull();
+    expect(f.activeId).toBe(1);
+
+    // zapis o 6:00, wszystkie otwarte sklepy w tej samej minucie, karty bez czekających decyzji (`skip` w smoke nie staje od razu)
+    expect(clockOf(f) % DAY).toBe(OPEN_FROM);
+    expect(third!.econ.minute).toBe(first!.econ.minute);
+    expect(third!.econ.level).toBe(1);
+    for (const st of openStores(f)) expect(awaitingDecision(st.econ), `sklep #${st.id}`).toBe(false);
+
+    // lokal #2 jest „po Traszce” i da się wziąć znów: za gotówkę (portfel stać) i na raty
+    const lot = second!.lotId;
+    expect(lotState(f, lot)).toBe('po-traszce');
+    expect(f.person.wallet).toBeGreaterThanOrEqual(rentPrice(f, lot));
+    expect(rentPrice(f, lot)).toBe(Math.round(f.city.lots[lot]!.package * RELET_SHARE / 100) * 100);
+    expect(rentRefusal(f, lot, 'gotowka')).toBeNull();
+    expect(rentRefusal(f, lot, 'raty')).toBeNull();
+    const others = f.city.lots.filter((l) => lotState(f, l.id) === 'wolny');
+    expect(others.length).toBeGreaterThanOrEqual(2);   // smoke próbuje „innego wolnego lokalu” po ponownym otwarciu #2
+
+    // gra dalej: ponowny wynajem, dwa dni budowy, otwarcie z poziomem 1, zaufaniem 65 i wyposażeniem; trzy sklepy to limit
+    const before = clockOf(f);
+    const price = rentPrice(f, lot);
+    expect(command(f, { type: 'rentLot', lotId: lot, pay: 'raty' })).toEqual({ ok: true });
+    const { readyDay } = f.builds[0]!;
+    expect(readyDay).toBe(Math.floor(before / DAY) + RELET_BUILD_DAYS);
+    playTo(f, readyDay * DAY + OPEN_FROM + 1);
+    expect(f.stores.map((s) => [s.id, s.closed])).toEqual([[1, false], [2, false], [3, false]]);
+    expect(second!.reopened).toBe(true);
+    expect(second!.econ).toMatchObject({ level: 1, remontLevel: 1 });
+    expect(second!.econ.equipment.map((e) => e.id)).toContain('sco');
+    expect(second!.econ.tycoon.trust.value).toBeGreaterThanOrEqual(60);   // 65 przy otwarciu, minuta zaufania w tle może już nieco ruszyć
+    expect(second!.econ.franchisee.installments.some((i) => /^Adaptacja lokalu: ul\. /.test(i.label) && i.price === price)).toBe(true);
+    expect(rentRefusal(f, others[0]!.id, 'raty')).toBe('limit');
+  }, 60_000);
 
   it('fixture save-v3-dwa-sklepy.json: schemat 3, wczytuje się jako firma i dalej gra deterministycznie', () => {
     const raw = json('save-v3-dwa-sklepy.json');
