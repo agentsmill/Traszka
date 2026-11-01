@@ -1,8 +1,9 @@
 /*
  * Napisy w scenie 3D po angielsku: plakaty Centrali, mata przy wejściu, tabliczki, hasła na pasie marki, gazety, potykacz, szyldy
- * na fasadach i tabliczki przy meblach (`plateTexture`). Kluczem jest polski napis z `src/render`. Marka (TRASZKA, SZOP 24h, SCO,
- * ceny) zostaje bez zmian i nie ma tu wpisu. Potykacz ma kilka wierszy: klucz i wartość to wiersze sklejone znakiem `|`.
- * Napisy są na teksturach z płótna, więc wymiana języka w trakcie gry przeładowuje stronę (`setLanguage` w ⚙).
+ * na fasadach, tabliczki przy meblach (`plateTexture`) i kartka „DO WYNAJĘCIA” (też na pinezkach ekranu Miasta). Kluczem jest
+ * polski napis z `src/render`. Marka (TRASZKA, SZOP 24h, SCO, ceny) zostaje bez zmian i nie ma tu wpisu. Potykacz ma kilka
+ * wierszy: klucz i wartość to wiersze sklejone znakiem `|`. Napisy są na teksturach z płótna, więc wymiana języka w trakcie gry
+ * przeładowuje stronę (`setLanguage` w ⚙).
  */
 
 export const EN_RENDER: Record<string, string> = {
@@ -56,10 +57,13 @@ export const EN_RENDER: Record<string, string> = {
   'TRASZKA · ZAWSZE BLISKO': 'TRASZKA · ALWAYS NEARBY',
   'OTWARTE, GDY TRASZKA ŚPI': 'OPEN WHILE TRASZKA SLEEPS',
   '* Traszka nie śpi. Sprawdzaliśmy.': '* Traszka never sleeps. We checked.',
-  // kartka w witrynie lokalu do wynajęcia obok sklepu (facadeAtlas.ts: komórka 'witrynaWynajem'): „DO” nad „WYNAJĘCIA”, po angielsku „TO” nad „LET”
+  // kartka „DO WYNAJĘCIA” (rentPoster.ts): w witrynie lokalu obok sklepu (facadeAtlas.ts: komórka 'witrynaWynajem') i na pinezce wolnego
+  // lokalu w mieście; „DO” nad „WYNAJĘCIA”, po angielsku „TO” nad „LET”
   'DO': 'TO',
   'WYNAJĘCIA': 'LET',
   'pytać w Centrali': 'ask Head Office',
+  // dopisek na kartce lokalu po zamkniętym sklepie (city/cityPins.ts); słowniczek: lokal „po Traszce” to “ex-Traszka” unit
+  'po Traszce': 'ex-Traszka',
   // tabliczki przy meblach (plateTexture) i nadstawki kategorii (CATEGORY_LABEL)
   'SAMOOBSŁUGA': 'SELF-CHECKOUT',
   'TRASZDOG 4,99': 'TRASZDOG 4.99',

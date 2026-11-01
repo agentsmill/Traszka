@@ -1,5 +1,6 @@
 import type { Texture } from 'three';
 import { tr } from '@/i18n';
+import { drawRentPoster } from '@/render/rentPoster';
 import { PALETTE } from '@/render/style';
 import { cachedTexture, canvasTexture, font } from '@/render/store/parts';
 import { drawNewt } from '@/render/store/signTexture';
@@ -215,46 +216,19 @@ function drawShopWindowGlow(ctx: Ctx, w: number, h: number): void {
   rect(ctx, '#000000', w / 2 - 5, 54, 10, h - 80);
 }
 
-/** Napis ściśnięty w poziomie do szerokości ≤ `maxW`: wysokie, wąskie litery jak na plakacie, wyśrodkowane w (`x`, `y`). */
-function condensedText(ctx: Ctx, text: string, x: number, y: number, px: number, maxW: number, color: string): void {
-  ctx.font = font(px, '900');
-  const sx = Math.min(1, maxW / ctx.measureText(text).width);
-  ctx.save();
-  ctx.translate(x, y);
-  ctx.scale(sx, 1);
-  ctx.fillStyle = color;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(text, 0, 0);
-  ctx.restore();
-}
-
 /** Prostokąt kartki w szybie lokalu do wynajęcia (współrzędne komórki 256 × 256). */
 const RENT_POSTER = { x: 20, y: 62, w: 216, h: 160 } as const;
 
 /**
  * Witryna lokalu do wynajęcia (sąsiad, którego lokal Traszka przejmie przy następnym remoncie): ta sama witryna co
- * 'witryna', ale z kartką „DO WYNAJĘCIA” zasłaniającą większość szyby: żółty arkusz w czerwonej ramce, doklejony taśmą,
- * lekko krzywo. Litery „WYNAJĘCIA” są ściśnięte w poziomie, żeby miały wysokość czytelną z domyślnego zoomu (na telefonie
- * przęsło ma ok. 60 × 75 px), a pod spodem drobny żart o Centrali, czytelny dopiero z bliska.
+ * 'witryna', ale z kartką „DO WYNAJĘCIA” zasłaniającą większość szyby. Kartkę rysuje `drawRentPoster` (ta sama co na pinezce
+ * wolnego lokalu w mieście); litery są ściśnięte w poziomie, żeby miały wysokość czytelną z domyślnego zoomu (na telefonie
+ * przęsło ma ok. 60 × 75 px), a pod spodem jest drobny żart o Centrali, czytelny dopiero z bliska.
  */
 function drawRentWindow(ctx: Ctx, w: number, h: number): void {
   drawShopWindow(ctx, w, h);
   const { x, y, w: pw, h: ph } = RENT_POSTER;
-  const red = PALETTE.productCategory.napoje[0]!;
-  const yellow = PALETTE.productCategory.przekaski[0]!;
-  ctx.save();
-  ctx.translate(x + pw / 2, y + ph / 2);
-  ctx.rotate(-0.025);
-  ctx.translate(-(x + pw / 2), -(y + ph / 2));
-  rect(ctx, PALETTE.wall[4], x + 4, y + 6, pw, ph, 0.25);   // cień kartki na szybie
-  rect(ctx, red, x, y, pw, ph);
-  rect(ctx, yellow, x + 8, y + 8, pw - 16, ph - 16);
-  condensedText(ctx, tr('DO'), x + pw / 2, y + 36, 50, pw - 40, red);
-  condensedText(ctx, tr('WYNAJĘCIA'), x + pw / 2, y + 94, 70, pw - 30, red);
-  fitText(ctx, tr('pytać w Centrali'), x + pw / 2, y + ph - 26, 20, pw - 40, red);
-  for (const tx of [x + 10, x + pw - 38]) rect(ctx, FRAME, tx, y - 7, 28, 14, 0.85);   // taśma przy górnych rogach
-  ctx.restore();
+  drawRentPoster(ctx, x, y, pw, ph, tr('pytać w Centrali'));
 }
 
 /** Maska emissive lokalu do wynajęcia: pusty, więc szyba nie świeci, tylko kartka odbija światło latarni. */

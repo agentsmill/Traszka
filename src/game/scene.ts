@@ -1,12 +1,14 @@
 import { Group, Mesh, Raycaster, Vector2, Vector3, type BufferGeometry, type Material, type Object3D } from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { createRenderContext, type RenderContext } from '@/render/renderer';
+import { VIEW_SIZE_MAX } from '@/render/cameraRig';
 import { QUALITY, type QualityPresetId } from '@/render/quality';
 import type { TimeOfDay } from '@/render/lighting';
 import { BEVEL, PALETTE, material } from '@/render/style';
 import { cellToWorld } from '@/render/coords';
 import { attachCharacters, loadStore, unloadStore, type Loaded } from '@/render/game/loadedStore';
 import { buildStreet } from '@/render/street/buildStreet';
+import { CITY_BOUNDS, buildCity, type CityLayer, type CityView } from '@/render/city/buildCity';
 import type { CharacterFactory } from '@/render/characters/characterFactory';
 import { ANIM_SPEED_CAP } from '@/render/crowdView';
 import { createBlobShadows } from '@/render/characters/blobShadows';
@@ -25,6 +27,7 @@ import { effects, expectedDailyCustomers, isClosedForRemont, isOpenForCustomers,
 import { slotUnits } from '@/sim/economy/slots';
 import { staffOnShift } from '@/sim/economy/tycoon/shift';
 import { generateStore } from '@/sim/store/generateStore';
+import type { CityState, LotState } from '@/sim/city/types';
 import type { LotSpec } from '@/sim/store/types';
 import { CELL_SIZE_M } from '@/sim/grid';
 import { LINES, missingLine, pick } from '@/ui/game/lines';
@@ -151,6 +154,9 @@ export function timeOfDayAt(minute: number): TimeOfDay {
 /** Co jest pod punktem ekranu, o ile gra ma na to reakcję: paleta (rozładunek), kasa (obsługa klienta) albo slot (karta zakupu). */
 export type ScenePick = { kind: 'pallet'; id: number } | { kind: 'till' } | { kind: 'slot'; slotId: string };
 
+/** Kadr kamery do oddania po powrocie z ekranu Miasta: granice przesuwania (null, gdy nie ustawiono), zoom i cel. */
+interface CameraFrame { bounds: { minX: number; minZ: number; maxX: number; maxZ: number } | null; viewSize: number; x: number; z: number }
+
 /** Czego `createSceneHost` potrzebuje od gry. */
 export interface SceneDeps {
   ctx: RenderContext;
@@ -200,6 +206,16 @@ export interface SceneHost {
   setCashierLook(look: CashierLook): void;
   /** Fabryka postaci doszła: tłum i kasjer w sklepie, który już stoi, dostają postacie. */
   attachFactory(factory: CharacterFactory): void;
+  /**
+   * Pokazuje miasto (widok warstw) zamiast sklepu: sklep, ulica i tłum są ukryte, a kamera obejmuje całe miasto. Wywołane przy już
+   * pokazanym mieście odświeża tylko stany lokali i warstwę. Czas gry płynie dalej, scena sklepu nadal żyje pod spodem.
+   */
+  showCity(city: CityState, states: Record<number, LotState>, layer: CityLayer): void;
+  /** Wraca do sklepu: pokazuje go i oddaje kamerze granice, przesunięcie i zoom sprzed `showCity`. Na presecie `niska` zwalnia scenę miasta. */
+  hideCity(): void;
+  readonly cityShown: boolean;
+  /** Widok miasta, gdy jest pokazany (kotwice pinezek, wybór lokalu, stany lokali); inaczej null. */
+  readonly cityView: CityView | null;
 }
 
 /**
@@ -231,6 +247,12 @@ export function createSceneHost(deps: SceneDeps): SceneHost {
   let mirrored: GameSession | null = null;
   let staffSyncFailed = false;           // błąd synchronizacji załogi zgłaszamy raz, a nie co ~100 ms
   let robotsSyncFailed = false;          // tak samo robotów z warsztatu
+  // ekran Miasta: widok warstw zamiast sklepu (sklep, ulica i tłum tylko ukryte), z kadrem kamery do oddania po powrocie
+  let city: CityView | null = null;
+  let cityFrom: CityState | null = null; // miasto, z którego zbudowano `city`: to samo miasto nie buduje się drugi raz
+  let cityOn = false;
+  let storeCamera: CameraFrame | null = null;
+  let crowdWasVisible = true;            // benchmark chowa tłum sam, więc po powrocie oddajemy to, co było
 
   ctx.setTimeOfDay(tod);
   ui.timeOfDay.value = tod;
@@ -245,6 +267,41 @@ export function createSceneHost(deps: SceneDeps): SceneHost {
     const old = loaded;
     loaded = null;   // unloadStore sprząta do końca także wtedy, gdy rzuca: zwolnionego sklepu nie zwalniamy drugi raz
     unloadStore(old);
+  }
+
+  function captureCamera(): CameraFrame {
+    const b = ctx.rig.bounds;
+    return { bounds: b ? { ...b } : null, viewSize: ctx.rig.viewSize, x: ctx.rig.target.x, z: ctx.rig.target.z };
+  }
+
+  function restoreCamera(frame: CameraFrame): void {
+    const { bounds: b } = frame;
+    if (b) ctx.rig.setBounds(b.minX, b.minZ, b.maxX, b.maxZ);
+    ctx.rig.panBy(frame.x - ctx.rig.target.x, frame.z - ctx.rig.target.z);
+    ctx.rig.zoomBy(ctx.rig.viewSize / frame.viewSize);
+  }
+
+  /** Kamera na środku miasta, oddalona do końca (całe miasto mieści się w `VIEW_SIZE_MAX`), przesuwanie tylko po mieście. */
+  function frameCity(): void {
+    const b = CITY_BOUNDS;
+    ctx.rig.setBounds(b.minX, b.minZ, b.maxX, b.maxZ);
+    ctx.rig.panBy(-ctx.rig.target.x, -ctx.rig.target.z);
+    ctx.rig.zoomBy(ctx.rig.viewSize / VIEW_SIZE_MAX);
+  }
+
+  /** Sklep, jego ulica i tłum widoczne albo ukryte (ekran Miasta zasłania je w całości). */
+  function setStoreVisible(visible: boolean): void {
+    if (loaded) {
+      loaded.view.root.visible = visible;
+      if (loaded.street) loaded.street.root.visible = visible;
+    }
+    crowdRoot.visible = visible && crowdWasVisible;
+  }
+
+  function dropCity(): void {
+    city?.dispose();
+    city = null;
+    cityFrom = null;
   }
 
   function setTimeOfDay(next: TimeOfDay): void {
@@ -313,15 +370,16 @@ export function createSceneHost(deps: SceneDeps): SceneHost {
     }
     // znaczniki nad paletami: złota (premia), pod sklepem ponad godzinę (mandat) i w przejściach (zagracenie)
     const marks = palletMarkersOf(s, info, (id) => loaded?.pallets?.worldPosition(id) ?? null);
-    overlay?.setMarkers(marks);
+    overlay?.setMarkers(cityOn ? [] : marks);   // pod ekranem Miasta sklep jest ukryty, więc jego dymki też
     const open = isOpenForCustomers(s);
     const closed = isClosedForRemont(s) ? 'REMONT' : !open ? 'ZAMKNIĘTE' : null;
     const q = Math.round(s.queue);
-    overlay?.setTill(loaded.tillTop, closed ?? (q > 0 ? `👥 ${q}` : '🙂'), !closed && s.queue >= effects(s, info).patience);
+    overlay?.setTill(cityOn ? null : loaded.tillTop, closed ?? (q > 0 ? `👥 ${q}` : '🙂'), !closed && s.queue >= effects(s, info).patience);
   }
 
   function load(seed: string, session: GameSession | null): void {
     const speed = loaded?.world.speed ?? ui.speed.value;
+    if (cityOn && storeCamera) restoreCamera(storeCamera);   // pod miastem kamera obejmuje miasto: nowy sklep kadruje się od kadru sklepu (zoom zostaje taki, jak był)
     unload();
     const mine = generation;
 
@@ -356,6 +414,11 @@ export function createSceneHost(deps: SceneDeps): SceneHost {
       current.view.setExteriorMode(exterior);
       current.view.setTimeOfDay(tod);
       syncVisuals(session, true);
+      if (cityOn) {   // sklep wczytany pod ekranem Miasta (przełączenie sklepu z mapy): jego kadr czeka na powrót, miasto zostaje na wierzchu
+        storeCamera = captureCamera();
+        setStoreVisible(false);
+        frameCity();
+      }
     } catch (error) {
       unload();   // sklep jest już w `loaded`: zdejmujemy go ze sceny, żeby wyjątek nie zostawił pół-sklepu
       throw error;
@@ -367,6 +430,7 @@ export function createSceneHost(deps: SceneDeps): SceneHost {
     void buildStreet(layout, seed, undefined, session ? session.econ.remontLevel : 0, baseLotOf(session)).then((built) => {
       if (mine !== generation) { built.dispose(); return; }
       current.street = built;
+      built.root.visible = !cityOn;
       built.setBuildingCutaway(!exterior, ctx.rig.yawIndex);
       built.setTimeOfDay(tod);
       ctx.scene.add(built.root);
@@ -377,7 +441,7 @@ export function createSceneHost(deps: SceneDeps): SceneHost {
   function complain(id: number, why: 'queue' | 'shelf'): void {
     const current = loaded;
     const session = mirrored;
-    if (!current || !session) return;
+    if (!current || !session || cityOn) return;
     const s = session.econ;
     const empty = CATS.filter((c) => session.info.shelfCap[c] > 0 && s.shelf[c] / session.info.shelfCap[c] < 0.15);
     const text = why === 'shelf' && empty.length > 0 ? missingLine(pick(empty)) : pick(LINES.queue);
@@ -431,7 +495,7 @@ export function createSceneHost(deps: SceneDeps): SceneHost {
     },
 
     pick(x, y) {
-      if (!loaded) return null;
+      if (!loaded || cityOn) return null;   // promień nie sprawdza `visible`, więc ukryty sklep trzeba pominąć ręcznie
       const ndc = new Vector2((x / window.innerWidth) * 2 - 1, -(y / window.innerHeight) * 2 + 1);
       raycaster.setFromCamera(ndc, ctx.rig.camera);
       const targets: Object3D[] = [loaded.pallets?.root, loaded.equipment?.root, loaded.till, loaded.view.root.getObjectByName('fixtures')]
@@ -459,7 +523,7 @@ export function createSceneHost(deps: SceneDeps): SceneHost {
 
     speak(session) {
       const current = loaded;
-      if (!current) return;
+      if (!current || cityOn) return;
       const s = session.econ;
       if (!isOpenForCustomers(s)) return;
       const agents = current.world.crowd.agents.filter((a) => a.state === 'browsing' || a.state === 'queueing' || a.state === 'paying' || a.state === 'toQueue');
@@ -489,5 +553,41 @@ export function createSceneHost(deps: SceneDeps): SceneHost {
       factory = created;
       if (loaded) attachCharacters(loaded, { factory: created, crowdParent: crowdRoot, blobs, cashierLook });   // tłum i kasjer
     },
+
+    showCity(cityState, states, layer) {
+      if (city && cityFrom !== cityState) dropCity();   // inne miasto (inny seed): stary widok precz
+      if (!city) {
+        city = buildCity(cityState, states);
+        cityFrom = cityState;
+        ctx.scene.add(city.root);
+      } else {
+        city.setLots(states);
+      }
+      city.root.visible = true;
+      city.setLayer(layer);
+      if (cityOn) return;
+      cityOn = true;
+      storeCamera = captureCamera();
+      crowdWasVisible = crowdRoot.visible;
+      setStoreVisible(false);
+      overlay?.setMarkers([]);
+      overlay?.setTill(null, '', false);
+      frameCity();
+    },
+
+    hideCity() {
+      if (!cityOn) return;
+      cityOn = false;
+      if (storeCamera) restoreCamera(storeCamera);
+      storeCamera = null;
+      setStoreVisible(true);
+      if (city) {
+        if (ctx.preset === 'niska') dropCity();   // telefon i słaby sprzęt: scena miasta nie zajmuje pamięci poza zakładką
+        else city.root.visible = false;           // reszta zostawia ją na następne wejście
+      }
+    },
+
+    get cityShown() { return cityOn; },
+    get cityView() { return cityOn ? city : null; },
   };
 }
