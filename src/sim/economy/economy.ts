@@ -316,12 +316,20 @@ export const kpiScaleOf = (s: EconomyState, info: StoreInfo): KpiScale => {
 // --- Tworzenie ---------------------------------------------------------------------------------------
 
 /**
+ * Wyposażenie, które lokal „po Traszce” zachowuje po zamknięciu sklepu (spec §13.3): ulepszenia, sprzęt i poziom remontu. Układ sklepu
+ * jest osobno (`info`), a reszta stanu (towar, ludzie, saldo, raty) zaczyna od nowa.
+ */
+export type StoreFittings = Pick<EconomyState, 'upgrades' | 'equipment' | 'remontLevel'>;
+
+/**
  * Nowa gra: sklep na kreskę (towar Centrali na półkach, 2 palety pod drzwiami), 1 września, 6:00. `startMinute` otwiera sklep w
  * środku gry (drugi sklep firmy): kalendarz, pogoda, tydzień KPI i termin remanentu liczą się wtedy od tej minuty, a stan
- * początkowy jest ten sam.
+ * początkowy jest ten sam. `fittings` (ponowny wynajem lokalu „po Traszce”) wchodzi kopią tuż po obiekcie bazowym, przed celem KPI
+ * i kartami dnia 0, więc skala sklepu liczy się z wyposażeniem od pierwszej minuty; bez niego stan jest co do bitu jak zawsze.
  */
 export function createEconomy(
   seed: string, info: StoreInfo, partner: EconomyState['partner'] = { points: 0, networkIncome: 0, stores: 0 }, startMinute: number = OPEN_FROM,
+  fittings?: StoreFittings,
 ): EconomyState {
   const backroomStart = info.backroomCap * 0.35;
   const seedHash = hashString(`${seed}:economy`);
@@ -371,6 +379,11 @@ export function createEconomy(
     tycoon: createTycoon({ day: 0, seedHash, trust: TRUST.start, metrics: NO_KPI_METRICS, scale: { dailyCustomers: 0, dailyMargin: 0 } }),
     franchisee: createFranchisee(startMinute),
   };
+  if (fittings) {
+    s.upgrades = { ...fittings.upgrades };
+    s.equipment = fittings.equipment.map((unit) => ({ ...unit }));
+    s.remontLevel = fittings.remontLevel;
+  }
   // Cel KPI pierwszego tygodnia zależy od skali sklepu i liczników (kpiScaleOf, kpiMetricsOf czytają gotowy stan), więc
   // właściwy tycoon powstaje po obiekcie bazowym; ten z literału jest tylko zaślepką z czystą salą.
   const day = dayOf(s.minute);

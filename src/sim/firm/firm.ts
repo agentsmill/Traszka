@@ -1,5 +1,6 @@
 import { generateCity, lotById } from '@/sim/city/generateCity';
 import { siteFor, storeSeedFor } from '@/sim/city/traffic';
+import type { CityState } from '@/sim/city/types';
 import { dayOf } from '@/sim/economy/calendar';
 import { DEBT_LIMIT } from '@/sim/economy/catalog';
 import { MAX_MINUTES_PER_ADVANCE, gameMinutesPerSecond, type EconClock } from '@/sim/economy/clock';
@@ -81,20 +82,30 @@ export function grantToFirm(f: FirmState, grant: (s: EconomyState) => void): voi
 // --- Skład: flagi sklepów i premia sieci ------------------------------------------------------------------------
 
 /**
- * Dzielnica i flagi sklepu w mieście (§11.2, §11.4). `openIds` to otwarte sklepy (rosnąco) razem z tym: ZUS i księgową płaci
- * najniższe `id`, debet sprawdza firma od dwóch sklepów, pogodę miasta losuje sklep startowy.
+ * Seed sklepu w lokalu miasta: lokal startowy ma seed gry (jak `freshRun` i `pickLot`), pozostałe `storeSeedFor`. Dla sklepu po ponownym wynajmie
+ * to samo co przy pierwszym otwarciu, więc scena i układ się nie zmieniają.
  */
-function siteOf(f: FirmState, lotId: number, id: number, openIds: readonly number[]): SiteMods {
+export const storeSeedOf = (seed: string, city: CityState, lotId: number): string => (lotId === city.startLotId ? seed : storeSeedFor(seed, lotId));
+
+/**
+ * Dzielnica i flagi sklepu w mieście (§11.2, §11.4). `openIds` to otwarte sklepy (rosnąco) razem z tym: ZUS i księgową płaci
+ * najniższe `id`, debet sprawdza firma od dwóch sklepów, pogodę miasta losuje sklep startowy. `reopened`: sklep po ponownym wynajmie
+ * (§13.3) jest dodatkowy także w lokalu startowym, więc nie ma gwarancji.
+ */
+function siteOf(f: FirmState, lotId: number, id: number, openIds: readonly number[], reopened = false): SiteMods {
   const start = lotId === f.city.startLotId;
-  return siteFor(f.city, lotId, { extra: !start, ownCosts: id === openIds[0], firmDebt: openIds.length >= 2, weatherHash: start ? null : f.weatherHash });
+  return siteFor(f.city, lotId, { extra: !start || reopened, ownCosts: id === openIds[0], firmDebt: openIds.length >= 2, weatherHash: start ? null : f.weatherHash });
 }
 
-/** Flagi z §11.2 i §11.4 po każdej zmianie składu. Jeden sklep startowy to sklep jak dziś: bez `site`. */
+/**
+ * Flagi z §11.2 i §11.4 po każdej zmianie składu. Jeden sklep startowy to sklep jak dziś: bez `site`, chyba że został wynajęty ponownie
+ * (`reopened`): wtedy ma flagę dodatkowego sklepu (bez gwarancji) także sam.
+ */
 export function refreshSites(f: FirmState): void {
   const open = openStores(f);
   const ids = open.map((s) => s.id);
   for (const st of open) {
-    if (open.length === 1 && st.lotId === f.city.startLotId) {
+    if (open.length === 1 && st.lotId === f.city.startLotId && !st.reopened) {
       if (st.info.site) {
         const info = { ...st.info };
         delete info.site;
@@ -102,7 +113,7 @@ export function refreshSites(f: FirmState): void {
       }
       continue;
     }
-    st.info = { ...st.info, site: siteOf(f, st.lotId, st.id, ids) };
+    st.info = { ...st.info, site: siteOf(f, st.lotId, st.id, ids, st.reopened === true) };
   }
 }
 
@@ -131,6 +142,29 @@ export function openStoreAt(f: FirmState, lotId: number, minute: number): FirmSt
   const st: FirmStore = { id, lotId, econ, layout, info, closed: false, notice: null };
   f.stores.push(st);
   refreshSites(f);
+  return st;
+}
+
+/**
+ * Ponowny wynajem lokalu „po Traszce” w minucie `minute` (§13.3, plan 4a.2): ten sam wpis na liście (`id`, `lotId`, `layout`), więc gracz widzi
+ * znów „Traszka #2, Lipowa”. Wyposażenie (ulepszenia, sprzęt, poziom remontu) zostaje z zamkniętego sklepu, a Centrala zaczyna znajomość od nowa:
+ * ekonomia z `createEconomy` (poziom 1, reputacja 50, zaufanie 65, pusta historia), seed sceny jak przy pierwszym otwarciu (lokal startowy: seed gry).
+ * Gotówka i Ogonki to portfel osoby, a wiedza o limicie ubytków idzie z osoby. Sklep nigdy nie dostaje gwarancji (`reopened`, §11.2). Dochód
+ * z sieci idzie na najniższe otwarte `id`, więc wraca do #1, gdy to on jest ponownie otwierany.
+ */
+export function reopenStoreAt(f: FirmState, st: FirmStore, minute: number): FirmStore {
+  const partner = (openStores(f)[0] ?? f.stores[0]!).econ.partner;   // przed otwarciem: najniższy otwarty sklep niesie dochód z sieci
+  st.closed = false;
+  st.notice = null;
+  st.reopened = true;
+  st.info = computeStoreInfo(st.layout);
+  refreshSites(f);   // flagi i dzielnica od razu w `info`: pogoda i cel KPI liczą się z dzielnicy
+  const econ = createEconomy(storeSeedOf(f.seed, f.city, st.lotId), st.info, { ...partner, networkIncome: 0 }, minute, st.econ);
+  econ.cash = f.person.wallet;
+  econ.ogonki = f.person.ogonki;
+  econ.franchisee.remanent.known = f.person.remanentKnown;
+  st.econ = econ;
+  setPartner(f, partner);
   return st;
 }
 

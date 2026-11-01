@@ -8,12 +8,13 @@ import { TRUST } from '@/sim/economy/tycoon/trust';
 import { layoutFor } from '@/sim/store/layoutFor';
 import { takeoverSide } from '@/sim/store/takeover';
 import { noticeEndDay } from './closure';
-import { activeStore, openStoreAt, openStores, syncWallet } from './firm';
+import { activeStore, openStoreAt, openStores, reopenStoreAt, syncWallet } from './firm';
 import { MAX_STORES, type FirmRefusal, type FirmState, type FirmStepOut, type FirmStore } from './types';
 
 /*
- * Polecenia firmy (spec §10, §12, §13): status Partnera Strategicznego, wynajem lokalu z pakietem otwarcia (gotówka albo 12 rat), budowa,
- * otwarcie sklepu o `OPEN_FROM` w dniu odbioru, przełączanie aktywnego sklepu i wypowiedzenie umowy sklepu. To osobny typ od `Command`
+ * Polecenia firmy (spec §10, §12, §13): status Partnera Strategicznego, wynajem lokalu z pakietem otwarcia (gotówka albo raty z `planFor`;
+ * lokal „po Traszce” za ok. 30% pakietu), budowa, otwarcie sklepu o `OPEN_FROM` w dniu odbioru (zamknięty sklep wraca pod tym samym wpisem),
+ * przełączanie aktywnego sklepu i wypowiedzenie umowy sklepu. To osobny typ od `Command`
  * ze sklepu: `Command`, `COMMAND_TYPES` i `AFTER` się nie zmieniają, a pola zostają płaskie. Polskich zdań stąd nie ma: zdarzenia
  * i odmowy to identyfikatory i parametry, tekst składa interfejs (wyjątek: etykieta raty „Adaptacja lokalu: ul. …”, bo żyje
  * w `EconomyState` jak każda rata).
@@ -113,14 +114,14 @@ function neighbourOf(f: FirmState, st: FirmStore): number | null {
 }
 
 /**
- * Stan lokalu w grze: własny sklep `twoj` (zamknięty `po-traszce`), budowa `budowa`, lokal obok otwartego sklepu `obok` do pierwszego
- * remontu, a potem `twoj`; reszta ze stanu z generatora. Generator oznacza `obok` i `twoj` względem sklepu startowego, więc gdy
- * ten sklep jest zamknięty, jego sąsiad wraca do `zajety`.
+ * Stan lokalu w grze: budowa `budowa` (także w lokalu zamkniętego sklepu: ponowny wynajem „po Traszce” to budowa), własny sklep `twoj`
+ * (zamknięty `po-traszce`), lokal obok otwartego sklepu `obok` do pierwszego remontu, a potem `twoj`; reszta ze stanu z generatora. Generator
+ * oznacza `obok` i `twoj` względem sklepu startowego, więc gdy ten sklep jest zamknięty, jego sąsiad wraca do `zajety`.
  */
 export function lotState(f: FirmState, lotId: number): LotState {
+  if (f.builds.some((b) => b.lotId === lotId)) return 'budowa';
   const own = f.stores.find((s) => s.lotId === lotId);
   if (own) return own.closed ? 'po-traszce' : 'twoj';
-  if (f.builds.some((b) => b.lotId === lotId)) return 'budowa';
   for (const st of openStores(f)) {
     if (neighbourOf(f, st) === lotId) return st.econ.remontLevel < 1 ? 'obok' : 'twoj';
   }
@@ -130,9 +131,28 @@ export function lotState(f: FirmState, lotId: number): LotState {
 
 // --- Wynajem lokalu ----------------------------------------------------------------------------------------------
 
+/** Ile pakietu otwarcia kosztuje ponowny wynajem lokalu „po Traszce” (§13.3 [C]): urządzenie lokalu zostało, więc ok. 30% ceny. */
+export const RELET_SHARE = 0.3;
+/** Budowa w lokalu „po Traszce” trwa tyle dni, bo lokal jest już urządzony [C]. */
+export const RELET_BUILD_DAYS = 2;
+
+/** Zamknięty sklep w lokalu (lokal „po Traszce”), także gdy ktoś właśnie wziął go znów i trwa budowa. Lokal ma najwyżej jeden wpis sklepu. */
+const closedStoreAt = (f: FirmState, lotId: number): FirmStore | undefined => f.stores.find((s) => s.lotId === lotId && s.closed);
+
+/** Pakiet otwarcia lokalu: wolny kosztuje cały `package`, „po Traszce” `round(package × RELET_SHARE / 100) × 100` (co 100 zł jak pakiet). */
+export function rentPrice(f: FirmState, lotId: number): number {
+  const lot = lotById(f.city, lotId);
+  return closedStoreAt(f, lotId) ? Math.round(lot.package * RELET_SHARE / 100) * 100 : lot.package;
+}
+
+/** Dni budowy: wolny lokal ma własne `buildDays`, „po Traszce” `RELET_BUILD_DAYS`. */
+export function rentBuildDays(f: FirmState, lotId: number): number {
+  return closedStoreAt(f, lotId) ? RELET_BUILD_DAYS : lotById(f.city, lotId).buildDays;
+}
+
 /**
- * Powód odmowy wynajmu albo null, po kolei: koniec gry, ranked, brak statusu, limit sklepów (otwarte plus budowy), lokal niewolny,
- * gotówka (po zapłacie nie mniej niż zero), rata ponad limit nowego sklepu (bez historii, zaufanie startowe: 35% × 25 tys. zł).
+ * Powód odmowy wynajmu albo null, po kolei: koniec gry, ranked, brak statusu, limit sklepów (otwarte plus budowy), lokal ani wolny, ani „po Traszce”,
+ * gotówka (po zapłacie nie mniej niż zero), rata ponad limit nowego sklepu (bez historii, zaufanie startowe: 35% × 25 tys. zł). Cena to `rentPrice`.
  */
 export function rentRefusal(f: FirmState, lotId: number, pay: 'gotowka' | 'raty'): FirmRefusal | null {
   if (f.over !== null || activeStore(f).econ.gameOver) return 'over';
@@ -140,9 +160,12 @@ export function rentRefusal(f: FirmState, lotId: number, pay: 'gotowka' | 'raty'
   if (!f.person.partner) return 'status';
   if (openStores(f).length + f.builds.length >= MAX_STORES) return 'limit';
   const lot = f.city.lots[lotId];
-  if (!lot || lot.id !== lotId || lotState(f, lotId) !== 'wolny') return 'lot';
-  if (pay === 'gotowka' && f.person.wallet - lot.package < 0) return 'gotowka';
-  if (pay === 'raty' && planFor(lot.package).monthly > installmentLimit([], TRUST.start)) return 'raty';
+  if (!lot || lot.id !== lotId) return 'lot';
+  const state = lotState(f, lotId);
+  if (state !== 'wolny' && state !== 'po-traszce') return 'lot';
+  const price = rentPrice(f, lotId);
+  if (pay === 'gotowka' && f.person.wallet - price < 0) return 'gotowka';
+  if (pay === 'raty' && planFor(price).monthly > installmentLimit([], TRUST.start)) return 'raty';
   return null;
 }
 
@@ -150,21 +173,23 @@ export function rentRefusal(f: FirmState, lotId: number, pay: 'gotowka' | 'raty'
 function rentLot(f: FirmState, lotId: number, pay: 'gotowka' | 'raty', out: FirmStepOut): FirmCommandResult {
   const reason = rentRefusal(f, lotId, pay);
   if (reason !== null) return refuse(reason);
-  const lot = lotById(f.city, lotId);
-  const readyDay = dayOf(activeStore(f).econ.minute) + lot.buildDays;
+  const price = rentPrice(f, lotId);
+  const readyDay = dayOf(activeStore(f).econ.minute) + rentBuildDays(f, lotId);
   if (pay === 'gotowka') {
-    f.person.wallet -= lot.package;
-    f.monthInvest += lot.package;
+    f.person.wallet -= price;
+    f.monthInvest += price;
   }
-  f.builds.push({ lotId, readyDay, price: lot.package, pay });
-  out.firm.push({ kind: 'build', params: { lotId, readyDay, price: lot.package, pay } });
+  f.builds.push({ lotId, readyDay, price, pay });
+  out.firm.push({ kind: 'build', params: { lotId, readyDay, price, pay } });
   syncWallet(f);
   return { ok: true };
 }
 
 /**
  * Otwiera budowy, których dzień odbioru już wybił `OPEN_FROM` (hak na początku minuty firmy, przed krokiem sklepów, więc nowy sklep
- * liczy się od tej samej minuty co reszta). Rata pakietu ląduje w rozliczeniu nowego sklepu, jak każda rata w SIM 6.
+ * liczy się od tej samej minuty co reszta). Gdy w lokalu budowy stoi zamknięty sklep, wraca on pod tym samym wpisem (`reopenStoreAt`,
+ * zdarzenie z `reopened`), a w przeciwnym razie powstaje nowy (`openStoreAt`). Rata pakietu ląduje w rozliczeniu otwartego sklepu, jak
+ * każda rata w SIM 6.
  */
 export function openDueBuilds(f: FirmState, out: FirmStepOut): void {
   if (f.builds.length === 0) return;
@@ -173,7 +198,8 @@ export function openDueBuilds(f: FirmState, out: FirmStepOut): void {
   if (due.length === 0) return;
   f.builds = f.builds.filter((b) => !due.includes(b));
   for (const b of due) {
-    const st = openStoreAt(f, b.lotId, minute);
+    const closed = closedStoreAt(f, b.lotId);
+    const st = closed ? reopenStoreAt(f, closed, minute) : openStoreAt(f, b.lotId, minute);
     if (b.pay === 'raty') {
       const lot = lotById(f.city, b.lotId);
       const plan = planFor(b.price);
@@ -183,7 +209,7 @@ export function openDueBuilds(f: FirmState, out: FirmStepOut): void {
         total: plan.total, monthly: plan.monthly, paid: 0, months: plan.months,
       });
     }
-    out.firm.push({ kind: 'opened', storeId: st.id, params: { lotId: b.lotId } });
+    out.firm.push({ kind: 'opened', storeId: st.id, params: closed ? { lotId: b.lotId, reopened: 1 } : { lotId: b.lotId } });
   }
 }
 

@@ -14,7 +14,12 @@ export const MAX_STORES = 3;
 /** Tyle wpisów trzyma skrzynka zastępcy; starsze odpadają. */
 export const INBOX_MAX = 30;
 
-/** Sklep firmy. `id` rośnie od 1 (sklep startowy) i nie wraca po zamknięciu; `notice`: wypowiedzenie przez gracza (ostatni dzień umowy). */
+/**
+ * Sklep firmy. `id` rośnie od 1 (sklep startowy) i nie wraca po zamknięciu; `notice`: wypowiedzenie przez gracza (ostatni dzień umowy).
+ * `reopened`: sklep po ponownym wynajmie lokalu „po Traszce” (§13.3), ten sam wpis co przed zamknięciem. Taki sklep nigdy nie jest „sklepem jak
+ * dziś”: ma flagę `extra` (bez gwarancji, §11.2), także w lokalu startowym i jako jedyny otwarty. Flaga zostaje po zamknięciu, a kolejny
+ * ponowny wynajem ustawia ją znów; brak klucza to sklep, który nigdy nie był wynajęty ponownie (też w zapisie).
+ */
 export interface FirmStore {
   id: number;
   lotId: number;
@@ -23,6 +28,7 @@ export interface FirmStore {
   info: StoreInfo;
   closed: boolean;
   notice: { endDay: number } | null;
+  reopened?: true;
 }
 
 /** Budowa nowego sklepu: pakiet otwarcia zapłacony (`pay`), sklep otwiera się o `OPEN_FROM` w dniu `readyDay`. */

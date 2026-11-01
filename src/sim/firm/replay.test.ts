@@ -8,7 +8,7 @@ import { visibleCards } from '@/sim/economy/tycoon/cards';
 import { freshRun, replayRun, type LogEntry, type RunRecord } from '@/sim/run';
 import { SIM_VERSION } from '@/sim/simVersion';
 import { GENERATOR_VERSION } from '@/sim/store/generateStore';
-import { applyFirmCommand, type FirmCommand } from './commands';
+import { applyFirmCommand, lotState, type FirmCommand } from './commands';
 import { activeStore, applyStoreCommand, createFirm, emptyStepOut, stepFirmMinute } from './firm';
 import { replayFirm, type FirmLogEntry, type FirmRecord } from './replay';
 import type { FirmState } from './types';
@@ -113,6 +113,8 @@ function scenario(seed = SEED): { l: Live; marks: Mark[] } {
   expect(l.f.activeId).toBe(2);
   expect(store(l, { type: 'hire' })).toBe(true);
   expect(store(l, { type: 'setOrder', auto: true, manual: 2 })).toBe(true);
+  expect(store(l, { type: 'buyUpgrade', id: 'ulotki' })).toBe(true);   // wyposażenie zostaje w lokalu po zamknięciu sklepu #2 (ponowny wynajem niżej)
+  expect(store(l, { type: 'buyEquipment', id: 'sco' })).toBe(true);
   playTo(l, clockOf(l) + 2 * DAY);
   expect(store(l, { type: 'setStaffProfile', profile: 'dostawa' })).toBe(true);
   mark(l, 'aktywny #2', marks);
@@ -182,6 +184,62 @@ describe('replayFirm: żywa firma i odtworzenie z dziennika', () => {
     expect(digest(replayFirm(recordOf(l, [...l.log, extra(7)]), m.minute))).toBe(m.json);   // sklepu #7 nie ma: pominięte
     expect(digest(replayFirm(recordOf(l, [...l.log, extra(2)]), m.minute))).not.toBe(m.json);   // sklep #2 jest aktywny: zadziałało
   }, 120_000);
+});
+
+/**
+ * Ciąg dalszy scenariusza (ponowny wynajem lokalu „po Traszce”, plan 4a.2 Zadanie 4): zamknięty sklep #2 z wyposażeniem dostaje nową budowę
+ * na raty za 30% pakietu, dwa dni później otwiera się tym samym wpisem, a gracz przełącza się na niego i gra dalej. Zaczyna od stanu końca
+ * scenariusza (odtworzonego z dziennika, co pierwszy test pliku równa żywej firmie), żeby nie liczyć dwóch miesięcy drugi raz.
+ */
+function reletScenario(): { l: Live; marks: Mark[]; closed: string } {
+  const { l: base } = played();
+  const l: Live = { seed: base.seed, f: replayFirm(recordOf(base), clockOf(base)), log: [...base.log], seq: base.seq };
+  const marks: Mark[] = [];
+  tick(l);   // nowe polecenia w innej minucie niż punkt kontrolny scenariusza
+  const dead = l.f.stores[1]!;
+  expect(dead.closed).toBe(true);
+  const lotId = dead.lotId;
+  const closed = JSON.stringify([dead.econ.upgrades, dead.econ.equipment, dead.econ.remontLevel]);
+  expect(dead.econ.upgrades).toEqual({ ulotki: 1 });
+  expect(dead.econ.equipment.map((e) => e.id)).toEqual(['sco']);
+  expect(lotState(l.f, lotId)).toBe('po-traszce');
+
+  expect(firm(l, { type: 'rentLot', lotId, pay: 'raty' })).toBe(true);
+  const build = l.f.builds[0]!;
+  expect(build.lotId).toBe(lotId);
+  expect(lotState(l.f, lotId)).toBe('budowa');
+  mark(l, 'budowa w lokalu po Traszce', marks);
+  tick(l);
+  playTo(l, build.readyDay * DAY + OPEN_FROM);
+  mark(l, 'dzień odbioru, przed ponownym otwarciem', marks);
+  tick(l);   // w tym kroku sklep #2 otwiera się znów
+  expect(l.f.stores.map((s) => s.closed)).toEqual([false, false]);
+
+  expect(firm(l, { type: 'switchStore', storeId: 2 })).toBe(true);
+  expect(store(l, { type: 'setOrder', auto: true, manual: 5 })).toBe(true);
+  playTo(l, clockOf(l) + 3 * DAY);
+  mark(l, 'ponownie otwarty #2, aktywny', marks);
+  return { l, marks, closed };
+}
+let reletCached: ReturnType<typeof reletScenario> | undefined;
+const reletPlayed = (): ReturnType<typeof reletScenario> => (reletCached ??= reletScenario());
+
+describe('replayFirm: ponowny wynajem lokalu „po Traszce”', () => {
+  it('rentLot na lokal po Traszce, budowa 2 dni i otwarcie tym samym wpisem: odtworzenie równa się żywej firmie, także w punktach pośrednich', () => {
+    const { l, marks, closed } = reletPlayed();
+    const rec = recordOf(l);
+    expect(rec.log.filter((e) => 'firm' in e && e.firm.type === 'rentLot')).toHaveLength(2);
+    const st = l.f.stores[1]!;
+    expect(l.f.stores).toHaveLength(2);   // ten sam wpis, bez trzeciego sklepu
+    expect(st).toMatchObject({ id: 2, closed: false, notice: null, reopened: true });
+    expect(JSON.stringify([st.econ.upgrades, st.econ.equipment, st.econ.remontLevel])).toBe(closed);   // wyposażenie z lokalu
+    expect(st.econ.history).toEqual([]);
+    expect(l.f.activeId).toBe(2);
+    expect(l.f.over).toBeNull();
+
+    for (const m of marks) expect(digest(replayFirm(rec, m.minute)), m.name).toBe(m.json);
+    expect(marks[marks.length - 1]!.json).toBe(digest(l.f));
+  }, 300_000);
 });
 
 describe('replayFirm: sklep nr 1 jak replayRun', () => {

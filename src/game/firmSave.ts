@@ -1,13 +1,12 @@
 import { generateCity } from '@/sim/city/generateCity';
-import { storeSeedFor } from '@/sim/city/traffic';
 import { CITY_GENERATOR_VERSION, type CityState } from '@/sim/city/types';
 import { MINUTES_PER_DAY, OPEN_FROM } from '@/sim/economy/catalog';
 import { createEconomy, relayout, type EconomyState } from '@/sim/economy/economy';
 import { LIMITS, sanitizeEconomy } from '@/sim/economy/sanitize';
 import { computeStoreInfo, type StoreInfo } from '@/sim/economy/storeInfo';
 import { REMONTS } from '@/sim/economy/upgrades';
-import { lotState } from '@/sim/firm/commands';
-import { activeStore, createFirm, openStores, refreshSites, setPartner, syncWallet } from '@/sim/firm/firm';
+import { lotState, rentPrice } from '@/sim/firm/commands';
+import { activeStore, createFirm, openStores, refreshSites, setPartner, storeSeedOf, syncWallet } from '@/sim/firm/firm';
 import { INBOX_MAX, type FirmBuild, type FirmNote, type FirmState, type FirmStore } from '@/sim/firm/types';
 import { isNum, isRec, num, whole, type Rec } from '@/sim/guards';
 import { GENERATOR_VERSION } from '@/sim/store/generateStore';
@@ -40,6 +39,8 @@ interface SavedStoreBase {
   lotId: number;
   generatorVersion: number;
   notice: { endDay: number } | null;
+  /** Sklep po ponownym wynajmie lokalu „po Traszce” (`FirmStore.reopened`); klucz jest tylko przy `true`, więc stare koperty zostają co do znaku takie same. */
+  reopened?: true;
 }
 
 /**
@@ -73,9 +74,6 @@ export interface FirmSaveEnvelope {
 const fittingsOf = (e: EconomyState): ClosedFittings => ({
   version: e.version, seed: e.seed, minute: e.minute, upgrades: e.upgrades, equipment: e.equipment, remontLevel: e.remontLevel, gameOver: true,
 });
-
-/** Seed sklepu w lokalu miasta; sklep startowy ma seed gry (jak w `openStoreAt` i `lotEstimate`). */
-const storeSeedOf = (seed: string, city: CityState, lotId: number): string => (lotId === city.startLotId ? seed : storeSeedFor(seed, lotId));
 
 /**
  * Układ sklepu w lokalu miasta na poziomie remontu: czysta funkcja seeda, lokalu i poziomu. Sklep startowy ma układ z seeda gry
@@ -114,14 +112,15 @@ function layoutIsRegenerable(f: FirmState, st: FirmStore): boolean {
 
 /**
  * Koperta zapisu firmy: seed, wersje gry i miasta, osoba z budowami i skrzynką oraz sklepy (otwarte z ekonomią i, gdy nie da się go
- * odtworzyć, z układem; zamknięte z wyposażeniem).
+ * odtworzyć, z układem; zamknięte z wyposażeniem). Sklep po ponownym wynajmie lokalu „po Traszce” niesie `reopened: true`; sklep, który nigdy
+ * nie był wynajęty ponownie, nie ma tego klucza, więc koperty z przed 4a.2 zostają co do znaku takie same.
  */
 export function firmEnvelopeOf(f: FirmState): FirmSaveEnvelope {
   return {
     schema: FIRM_SAVE_SCHEMA, gameVersion: GAME_VERSION, cityGeneratorVersion: f.city.version, seed: f.seed,
     firm: { person: f.person, activeId: f.activeId, builds: f.builds, monthInvest: f.monthInvest, inbox: f.inbox, weatherHash: f.weatherHash, over: f.over },
     stores: f.stores.map((st): SavedStore => {
-      const base = { id: st.id, lotId: st.lotId, generatorVersion: st.layout.generatorVersion, notice: st.notice };
+      const base = { id: st.id, lotId: st.lotId, generatorVersion: st.layout.generatorVersion, notice: st.notice, ...(st.reopened === true ? { reopened: true as const } : {}) };
       if (st.closed) return { ...base, closed: true, econ: fittingsOf(st.econ) };
       return layoutIsRegenerable(f, st) ? { ...base, closed: false, econ: st.econ } : { ...base, closed: false, layout: st.layout, econ: st.econ };
     }),
@@ -197,18 +196,24 @@ function buildShell(seed: string, city: CityState, raw: Rec, id: number, lotId: 
     }
   }
   const notice = isRec(raw.notice) && isNum(raw.notice.endDay) ? { endDay: whole(raw.notice.endDay, 0, 0, LIMITS.minute / MINUTES_PER_DAY) } : null;
-  return { raw, storeSeed, minute, st: { id, lotId, econ: world.econ, layout: world.layout, info: world.info, closed, notice } };
+  const reopened = raw.reopened === true ? { reopened: true as const } : {};   // przed `refreshSites`: flaga decyduje o `site.extra` sklepu startowego
+  return { raw, storeSeed, minute, st: { id, lotId, econ: world.econ, layout: world.layout, info: world.info, closed, notice, ...reopened } };
 }
 
-/** Budowy tylko w wolnych lokalach miasta (te same reguły co wynajem): zajęte, własne, zdublowane i uszkodzone wypadają. */
+/**
+ * Budowy tylko w wolnych lokalach miasta i w lokalach „po Traszce” (te same reguły co wynajem): zajęte, własne, zdublowane i uszkodzone
+ * wypadają. Brakująca cena to `rentPrice` lokalu, liczona przed dopisaniem budowy.
+ */
 function addBuilds(f: FirmState, raw: unknown): void {
   if (!Array.isArray(raw)) return;
   for (const b of raw as unknown[]) {
     if (!isRec(b) || !Number.isInteger(b.lotId) || !isNum(b.readyDay) || (b.pay !== 'gotowka' && b.pay !== 'raty')) continue;
     const lot = f.city.lots[b.lotId as number];
-    if (!lot || lot.id !== b.lotId || lotState(f, lot.id) !== 'wolny') continue;   // wpis zajmuje lokal (`budowa`), więc dubel odpada
+    if (!lot || lot.id !== b.lotId) continue;
+    const state = lotState(f, lot.id);   // wpis zajmuje lokal (`budowa`), więc dubel odpada
+    if (state !== 'wolny' && state !== 'po-traszce') continue;
     f.builds.push({
-      lotId: lot.id, readyDay: whole(b.readyDay, 0, 0, LIMITS.minute / MINUTES_PER_DAY), price: num(b.price, lot.package, 0, LIMITS.money), pay: b.pay,
+      lotId: lot.id, readyDay: whole(b.readyDay, 0, 0, LIMITS.minute / MINUTES_PER_DAY), price: num(b.price, rentPrice(f, lot.id), 0, LIMITS.money), pay: b.pay,
     });
   }
 }

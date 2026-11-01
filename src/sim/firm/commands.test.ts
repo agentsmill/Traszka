@@ -326,7 +326,7 @@ describe('rentRefusal i applyFirmCommand rentLot: każdy powód osobno, stan bez
     expect(rentRefusal(f, rentable(f)[0]!, 'gotowka')).toBeNull();
   });
 
-  it('lot: zajęty, konkurencja, własny, obok, po Traszce i nieistniejący nie są do wynajęcia', () => {
+  it('lot: zajęty, konkurencja, własny, obok i nieistniejący nie są do wynajęcia; lokal po Traszce tak (cena i budowa: relet.test.ts)', () => {
     const seed = Array.from({ length: 10 }, (_, i) => `miasto-${i}`).find((s) => generateCity(s).neighbourLotId !== null)!;
     const f = partnerFirm(seed);
     const lots = f.city.lots;
@@ -335,12 +335,13 @@ describe('rentRefusal i applyFirmCommand rentLot: każdy powód osobno, stan bez
     for (const lotId of [taken, rival, f.city.startLotId, f.city.neighbourLotId!, -1, 1.5, lots.length, Number.NaN]) {
       refused(f, { type: 'rentLot', lotId, pay: 'gotowka' }, 'lot');
     }
-    // lokal po Traszce (zamknięty sklep) też nie jest wolny
+    // lokal po Traszce (zamknięty sklep) nie jest wolny, ale od 4a.2 wynajem go przyjmuje (ponowny wynajem z wyposażeniem)
     const gone = openStoreAt(f, freeLot(f), clockOf(f));
     gone.closed = true;
     syncWallet(f);
     expect(lotState(f, gone.lotId)).toBe('po-traszce');
-    refused(f, { type: 'rentLot', lotId: gone.lotId, pay: 'raty' }, 'lot');
+    expect(rentRefusal(f, gone.lotId, 'raty')).toBeNull();
+    expect(rentRefusal(f, gone.lotId, 'gotowka')).toBeNull();
   });
 
   it('gotowka: po zapłacie gotówka zeszłaby poniżej zera (nie budujesz na debecie)', () => {

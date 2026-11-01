@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { generateCity } from '@/sim/city/generateCity';
 import { CITY_GENERATOR_VERSION } from '@/sim/city/types';
@@ -12,7 +12,8 @@ import { BOTS } from '@/sim/economy/tycoon/bots';
 import { visibleCards } from '@/sim/economy/tycoon/cards';
 import { economyView, toCommand } from '@/sim/economy/tycoon/economyEnv';
 import { storeSeedFor } from '@/sim/city/traffic';
-import { applyFirmCommand, lotState } from '@/sim/firm/commands';
+import { closeStore } from '@/sim/firm/closure';
+import { RELET_BUILD_DAYS, RELET_SHARE, applyFirmCommand, lotState, rentPrice } from '@/sim/firm/commands';
 import {
   activeStore, applyStoreCommand, createFirm, emptyStepOut, grantToFirm, openStoreAt, openStores, stepFirmMinute,
 } from '@/sim/firm/firm';
@@ -29,7 +30,7 @@ import { MemoryStorage } from './memoryStorage';
 import type { Meta } from './meta';
 import { RANKED_KEYS, createRankedSession, loadRanked, saveRanked } from './rankedRun';
 import {
-  BROKEN_SAVE_NOTICE, NEWER_SAVE_NOTICE, SAVE_SCHEMA, createSession, hasStoredSave, restoreSessionFrom, type GameSession,
+  BROKEN_SAVE_NOTICE, NEWER_SAVE_NOTICE, SAVE_SCHEMA, createSession, fitsStore, hasStoredSave, restoreSessionFrom, type GameSession,
 } from './session';
 import { GAME_VERSION } from './version';
 
@@ -816,6 +817,141 @@ describe('sesja: odczyt zapisu schematu 3 (createSession)', () => {
     if (back.status === 'ok') {
       expect(back.session.econ).toEqual(s.econ);
       expect(back.session.firm).toBeUndefined();
+    }
+  });
+});
+
+// --- Ponowny wynajem lokalu „po Traszce” ----------------------------------------------------------------------------------
+
+/** Scenariusz bez własnej budowy: #1 zamknięty z wyposażeniem i remontem (lokal startowy „po Traszce”), aktywny #2, który już ma remont. */
+function reletFirm(): FirmState {
+  const f = structuredClone(scenario());
+  f.builds = [];
+  return f;
+}
+
+/** Wynajem lokalu startowego „po Traszce” na raty i gra do pierwszej minuty po otwarciu sklepu (`tick` w minucie odbioru otwiera budowę). */
+function reopenStart(f: FirmState): number {
+  const start = f.city.startLotId;
+  expect(lotState(f, start)).toBe('po-traszce');
+  expect(command(f, { type: 'rentLot', lotId: start, pay: 'raty' })).toEqual({ ok: true });
+  const ready = f.builds[0]!.readyDay * DAY + OPEN_FROM;
+  playTo(f, ready);
+  tick(f);
+  expect(f.builds).toEqual([]);
+  expect(f.stores[0]!.closed).toBe(false);
+  return ready;
+}
+
+describe('ponowny wynajem lokalu „po Traszce” a zapis', () => {
+  it('Review Focus 2: zapis z budową w lokalu „po Traszce” wraca z tą budową (stan budowa), a sklep otwiera się w jej dniu z tym samym wyposażeniem co bez zapisu', () => {
+    const a = reletFirm();
+    const start = a.city.startLotId;
+    const lot = a.city.lots[start]!;
+    const price = Math.round(lot.package * RELET_SHARE / 100) * 100;
+    expect(rentPrice(a, start)).toBe(price);
+    expect(command(a, { type: 'rentLot', lotId: start, pay: 'raty' })).toEqual({ ok: true });
+    const build = a.builds[0]!;
+    expect(build).toEqual({ lotId: start, readyDay: Math.floor(clockOf(a) / DAY) + RELET_BUILD_DAYS, price, pay: 'raty' });
+    expect(lotState(a, start)).toBe('budowa');
+
+    const raw = JSON.parse(JSON.stringify(firmEnvelopeOf(a))) as { firm: { builds: unknown[] } };
+    expect(raw.firm.builds).toEqual([build]);
+    const b = opened(restoreFirmFrom(raw, SEED));
+    expect(b.builds).toEqual([build]);
+    expect(lotState(b, start)).toBe('budowa');   // zamknięty sklep w lokalu nie przykrywa budowy
+    expect(b.stores[0]).toMatchObject({ id: 1, lotId: start, closed: true });
+    expect(b.stores[0]!.layout).toEqual(a.stores[0]!.layout);
+
+    const fittings = (f: FirmState): string => JSON.stringify([f.stores[0]!.econ.upgrades, f.stores[0]!.econ.equipment, f.stores[0]!.econ.remontLevel]);
+    const before = fittings(a);
+    expect(fittings(b)).toBe(before);   // `ClosedFittings` oddały to samo wyposażenie, co żywy zamknięty sklep
+    expect(a.stores[0]!.econ.equipment.map((e) => e.id)).toEqual(['sco', 'bankomat']);
+    expect(a.stores[0]!.econ.remontLevel).toBe(1);
+
+    const ready = build.readyDay * DAY + OPEN_FROM;
+    for (const f of [a, b]) {
+      playTo(f, ready - 1);
+      expect(f.stores[0]!.closed, 'dzień przed odbiorem').toBe(true);
+      playTo(f, ready);
+      tick(f);   // w minucie odbioru firma otwiera budowę przed krokiem sklepów
+      expect(f.stores[0]).toMatchObject({ id: 1, closed: false, notice: null, reopened: true });
+      expect(f.builds).toEqual([]);
+      expect(fittings(f)).toBe(before);   // ten sam sprzęt i ulepszenia, które sklep miał przed zamknięciem
+      expect(f.stores[0]!.econ.level).toBe(1);
+      expect(fitsStore(f.stores[0]!.econ, f.stores[0]!.info)).toBe(true);
+    }
+    expect(hashOf(b.stores[0]!.econ)).toBe(hashOf(a.stores[0]!.econ));   // z zapisem i bez niego ten sam sklep, minuta w minutę
+    for (let i = 0; i < 300; i++) {
+      tick(a);
+      tick(b);
+      if (i % 100 === 99) expect(hashOf(firmEnvelopeOf(b))).toBe(hashOf(firmEnvelopeOf(a)));
+    }
+    expect(hashOf(firmEnvelopeOf(b))).toBe(hashOf(firmEnvelopeOf(a)));
+  }, 120_000);
+
+  it('Review Focus 1: `reopened` przeżywa zapis, a #1 ponownie wynajęty (też jako jedyny sklep) ma po odczycie seed gry i `site.extra`', () => {
+    const a = reletFirm();
+    reopenStart(a);
+    const env = firmEnvelopeOf(a);
+    expect(env.stores.map((s) => ('reopened' in s ? s.reopened : null))).toEqual([true, null]);   // klucz tylko przy sklepie po ponownym wynajmie
+    const text = JSON.stringify(env);
+    expect((JSON.parse(text) as { stores: { reopened?: boolean }[] }).stores.map((s) => s.reopened)).toEqual([true, undefined]);
+
+    const back = opened(restoreFirmFrom(JSON.parse(text), SEED));
+    expect(back.stores.map((s) => ({ id: s.id, closed: s.closed, reopened: s.reopened }))).toEqual([
+      { id: 1, closed: false, reopened: true }, { id: 2, closed: false, reopened: undefined },
+    ]);
+    const st = back.stores[0]!;
+    expect(st.econ.seed).toBe(SEED);
+    expect(st.layout).toEqual(a.stores[0]!.layout);
+    expect(st.info).toEqual(a.stores[0]!.info);
+    expect(st.info.site).toMatchObject({ extra: true, ownCosts: true, firmDebt: true });
+    expect(st.econ).toEqual(a.stores[0]!.econ);
+    expect(JSON.parse(JSON.stringify(firmEnvelopeOf(back)))).toEqual(JSON.parse(text));   // save -> load -> save bez zmian
+
+    // po zamknięciu #2 sklep #1 jest jedynym otwartym i dalej ma `site` z flagą dodatkowego (nie „sklep jak dziś”): zapis tego nie zmienia
+    for (const f of [a, back]) {
+      closeStore(f, 2, 'trust', emptyStepOut());
+      expect(openStores(f).map((s) => s.id)).toEqual([1]);
+      expect(f.stores[0]!.info.site).toMatchObject({ extra: true, ownCosts: true, firmDebt: false });
+    }
+    const alone = opened(viaJson(back));
+    expect(alone.stores[0]!.reopened).toBe(true);
+    expect(alone.stores[0]!.info.site).toMatchObject({ extra: true, ownCosts: true, firmDebt: false });
+    expect(alone.stores[0]!.info).toEqual(back.stores[0]!.info);
+
+    // bez flagi ten sam jedyny sklep startowy wraca bez `site`
+    const plain = JSON.parse(JSON.stringify(firmEnvelopeOf(back))) as { stores: { reopened?: boolean }[] };
+    delete plain.stores[0]!.reopened;
+    expect(opened(restoreFirmFrom(plain, SEED)).stores[0]!.info.site).toBeUndefined();
+  }, 120_000);
+
+  it('budowy w zapisie: lokal „po Traszce” przyjmuje się jak wolny (dubel odpada), a brakująca cena to cena po Traszce', () => {
+    const env = JSON.parse(JSON.stringify(firmEnvelopeOf(reletFirm()))) as Record<string, any>;
+    const start = generateCity(SEED).startLotId;
+    const lot = generateCity(SEED).lots[start]!;
+    const price = Math.round(lot.package * RELET_SHARE / 100) * 100;
+    env.firm.builds = [{ lotId: start, readyDay: 90, pay: 'raty' }, { lotId: start, readyDay: 91, price: 1, pay: 'gotowka' }];
+    expect(opened(restoreFirmFrom(env, SEED)).builds).toEqual([{ lotId: start, readyDay: 90, price, pay: 'raty' }]);
+    env.firm.builds = [{ lotId: start, readyDay: 90, price: 12_300, pay: 'gotowka' }];
+    expect(opened(restoreFirmFrom(env, SEED)).builds).toEqual([{ lotId: start, readyDay: 90, price: 12_300, pay: 'gotowka' }]);
+    // lokal otwartego sklepu to nadal nie jest lokal do wynajęcia
+    env.firm.builds = [{ lotId: env.stores[1].lotId, readyDay: 90, pay: 'raty' }];
+    expect(opened(restoreFirmFrom(env, SEED)).builds).toEqual([]);
+  });
+
+  it('koperty fixtures (schemat 3) po wczytaniu i zapisie nie mają klucza `reopened`', () => {
+    const names = readdirSync(new URL('./fixtures/', import.meta.url)).filter((n) => n.startsWith('save-v3-'));
+    expect(names.length).toBeGreaterThanOrEqual(2);
+    for (const name of names) {
+      const raw = json(name) as { schema: number; seed: string; stores: object[] };
+      expect(raw.schema, name).toBe(3);
+      expect(raw.stores.some((s) => 'reopened' in s), name).toBe(false);
+      const f = opened(restoreFirmFrom(raw, raw.seed));
+      expect(f.stores.some((s) => s.reopened !== undefined || 'reopened' in s), name).toBe(false);
+      const saved = JSON.stringify(firmEnvelopeOf(f));
+      expect(saved, name).not.toContain('reopened');
     }
   });
 });
