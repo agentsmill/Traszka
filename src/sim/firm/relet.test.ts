@@ -1,13 +1,13 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { lotById } from '@/sim/city/generateCity';
+import { generateCity, lotById, lotNeighbour } from '@/sim/city/generateCity';
 import { storeSeedFor } from '@/sim/city/traffic';
 import { dayOf, isLastDayOfMonth } from '@/sim/economy/calendar';
 import { MINUTES_PER_DAY, OPEN_FROM, OPEN_TO } from '@/sim/economy/catalog';
 import {
   awaitingDecision, createEconomy, kpiMetricsOf, kpiScaleOf, type EconomyState, type MonthReport, type StoreFittings,
 } from '@/sim/economy/economy';
-import { planFor } from '@/sim/economy/franchisee';
+import { installmentLimit, planFor } from '@/sim/economy/franchisee';
 import { defaultAnswer } from '@/sim/economy/monthPreview';
 import { computeStoreInfo } from '@/sim/economy/storeInfo';
 import { visibleCards } from '@/sim/economy/tycoon/cards';
@@ -15,9 +15,10 @@ import { newKpiWeek } from '@/sim/economy/tycoon/kpi';
 import { TRUST } from '@/sim/economy/tycoon/trust';
 import { freshRun } from '@/sim/run';
 import { layoutFor } from '@/sim/store/layoutFor';
+import { takeoverSide } from '@/sim/store/takeover';
 import { closeStore } from './closure';
 import {
-  RELET_BUILD_DAYS, RELET_SHARE, applyFirmCommand, lotState, openDueBuilds, rentBuildDays, rentPrice, rentRefusal, type FirmCommand,
+  RELET_BUILD_DAYS, RELET_SHARE, applyFirmCommand, lotRentable, lotState, openDueBuilds, rentBuildDays, rentPrice, rentRefusal, type FirmCommand,
 } from './commands';
 import {
   activeStore, applyStoreCommand, createFirm, emptyStepOut, grantToFirm, openStoreAt, openStores, refreshSites, setPartner, stepFirmMinute,
@@ -229,7 +230,22 @@ describe('cena i czas ponownego wynajmu', () => {
     f.person.wallet = price - 1;
     syncWallet(f);
     refused(f, { type: 'rentLot', lotId, pay: 'gotowka' }, 'gotowka');
-    expect(rentRefusal(f, lotId, 'raty')).toBeNull();   // rata 6 albo 12 z `planFor(price)` mieści się w limicie nowego sklepu
+  }, 60_000);
+
+  it('raty liczą z ceny po Traszce, a nie z pakietu: pakiet ponad limit nowego sklepu odrzuca wolny lokal, a po Traszce przechodzi', () => {
+    const { f, lotId } = closedSecond();
+    const limit = installmentLimit([], TRUST.start);
+    expect(limit).toBe(8750);
+    lotById(f.city, lotId).package = 100_000;   // jak w teście 4a.1: 12 rat z opłatą 15% to ok. 9170 zł miesięcznie
+    expect(planFor(100_000).monthly).toBeGreaterThan(limit);
+    expect(planFor(rentPrice(f, lotId)).monthly).toBeLessThanOrEqual(limit);   // 30 tys. zł: rata ok. 2900 zł
+    expect(rentRefusal(f, lotId, 'raty')).toBeNull();
+    const free = lotById(f.city, freeLot(f));
+    free.package = 100_000;   // kontrola: wolny lokal z tym samym pakietem jest odrzucony
+    refused(f, { type: 'rentLot', lotId: free.id, pay: 'raty' }, 'raty');
+    expect(rentRefusal(f, free.id, 'gotowka')).toBeNull();
+    expect(applyFirmCommand(f, { type: 'rentLot', lotId, pay: 'raty' }, emptyStepOut())).toEqual({ ok: true });
+    expect(f.builds[0]!.price).toBe(30_000);
   }, 60_000);
 
   it('lot: zajęty, konkurencja, własny (otwarty) i lokal w budowie nie przechodzą; „po Traszce” przechodzi', () => {
@@ -368,6 +384,118 @@ describe('ponowne otwarcie sklepu #2 po zamknięciu', () => {
     expect(f.stores[1]!.closed).toBe(false);
     expect(f.builds).toEqual([]);
     expect(f.stores[1]!.econ.minute).toBe(ready);
+  }, 120_000);
+});
+
+// --- Lokal obok: dwa sklepy nie dzielą lokalu -----------------------------------------------------------------------------
+
+/**
+ * Para lokali S i Y: Y leży po stronie przejęcia sklepu w wolnym lokalu S (remont poziomu 1 dokupuje Y, §7.2), a generator zbuduje sklep w obu.
+ * Generator nie stawia wolnych lokali obok siebie (każdy wolny w innym kwartale), więc w teście Y trzeba oznaczyć jako wolny.
+ */
+function neighbourPair(): { seed: string; s: number; y: number } {
+  for (const seed of [SEED, ...Array.from({ length: 10 }, (_, i) => `miasto-${i}`)]) {
+    const city = generateCity(seed);
+    for (const lot of city.lots.filter((l) => l.state === 'wolny')) {
+      const storeSeed = storeSeedFor(seed, lot.id);
+      const side = takeoverSide(layoutFor(storeSeed, 0, lot.spec), storeSeed);
+      const y = side === null ? null : lotNeighbour(city, lot.id, side);
+      if (y === null || y.state !== 'zajety') continue;
+      try {
+        layoutFor(storeSeedFor(seed, y.id), 0, y.spec);
+      } catch {
+        continue;   // generator sklepu bywa bezradny wobec rzadkiej kombinacji wymiarów
+      }
+      return { seed, s: lot.id, y: y.id };
+    }
+  }
+  throw new Error('żaden seed nie ma pary sąsiednich lokali do zbudowania');
+}
+
+/** Remont aktywnego sklepu do poziomu 1: poziom gracza i gotówka z góry, potem prawdziwe polecenie. */
+function remont(f: FirmState): void {
+  grantToFirm(f, (s) => { s.level = 14; s.cash += 100_000; });
+  expect(applyStoreCommand(f, { type: 'startRemont' }).result.ok).toBe(true);
+}
+
+/**
+ * Firma z zamkniętym sklepem w lokalu S (remont poziomu `level`) i wolnym sąsiadem Y; aktywny jest #1. Zamknięcie schodzi z portfela
+ * jak zwykle (`closeStore`).
+ */
+function neighbourWorld(level: 0 | 1): { f: FirmState; closed: FirmStore; y: number } {
+  const { seed, s, y } = neighbourPair();
+  const f = partnerFirm(seed);
+  f.city.lots[y]!.state = 'wolny';
+  const closed = rentAndOpen(f, s);
+  if (level === 1) {
+    expect(applyFirmCommand(f, { type: 'switchStore', storeId: closed.id }, emptyStepOut())).toEqual({ ok: true });
+    remont(f);
+    expect(closed.econ.remontLevel).toBe(1);
+    expect(lotState(f, y)).toBe('twoj');   // sąsiad jest w układzie otwartego sklepu
+  } else {
+    expect(lotState(f, y)).toBe('obok');
+  }
+  closeStore(f, closed.id, 'trust', emptyStepOut());
+  expect(f.activeId).toBe(1);
+  expect(lotState(f, s)).toBe('po-traszce');
+  expect(lotState(f, y)).toBe('wolny');   // po zamknięciu sąsiad wraca do stanu z generatora i można go wynająć osobno
+  return { f, closed, y };
+}
+
+describe('lokal obok zamkniętego sklepu (układ po remoncie zajmuje sąsiada)', () => {
+  it('sąsiad jest Twoim otwartym sklepem: ponowny wynajem odmówiony z lot; wynajem sąsiada przy zamkniętym sklepie przechodzi, a po jego zamknięciu ponowny wynajem wraca', () => {
+    const { f, closed, y } = neighbourWorld(1);
+    expect(lotRentable(f, closed.lotId)).toBe(true);   // sąsiad jeszcze nie jest Twój
+    expect(rentRefusal(f, closed.lotId, 'gotowka')).toBeNull();
+    expect(rentRefusal(f, y, 'gotowka')).toBeNull();
+
+    const next = rentAndOpen(f, y);
+    expect(lotState(f, y)).toBe('twoj');
+    expect(lotRentable(f, closed.lotId)).toBe(false);
+    expect(rentRefusal(f, closed.lotId, 'gotowka')).toBe('lot');
+    for (const pay of ['gotowka', 'raty'] as const) refused(f, { type: 'rentLot', lotId: closed.lotId, pay }, 'lot');
+    expect(lotState(f, closed.lotId)).toBe('po-traszce');   // odmowa nie zmienia stanu lokalu
+
+    closeStore(f, next.id, 'trust', emptyStepOut());
+    expect(lotState(f, y)).toBe('po-traszce');
+    expect(lotRentable(f, closed.lotId)).toBe(true);
+    expect(rentRefusal(f, closed.lotId, 'gotowka')).toBeNull();
+    openBuild(f, rent(f, closed.lotId, 'gotowka'));
+    expect(f.stores.find((st) => st.lotId === closed.lotId)).toMatchObject({ closed: false, reopened: true });
+  }, 120_000);
+
+  it('sąsiad w budowie też jest Twój: ponowny wynajem odmówiony z lot, a po otwarciu sąsiada nadal', () => {
+    const { f, closed, y } = neighbourWorld(1);
+    const build = rent(f, y, 'gotowka');
+    expect(lotState(f, y)).toBe('budowa');
+    expect(lotRentable(f, closed.lotId)).toBe(false);
+    for (const pay of ['gotowka', 'raty'] as const) refused(f, { type: 'rentLot', lotId: closed.lotId, pay }, 'lot');
+    openBuild(f, build);
+    expect(lotState(f, y)).toBe('twoj');
+    refused(f, { type: 'rentLot', lotId: closed.lotId, pay: 'gotowka' }, 'lot');
+  }, 120_000);
+
+  it('sklep zamknięty bez remontu (poziom 0) nie zajmuje sąsiada układem, więc ponowny wynajem przechodzi mimo Twojego sklepu obok', () => {
+    const { f, closed, y } = neighbourWorld(0);
+    expect(closed.econ.remontLevel).toBe(0);
+    rentAndOpen(f, y);
+    expect(lotState(f, y)).toBe('twoj');
+    expect(lotRentable(f, closed.lotId)).toBe(true);
+    expect(rentRefusal(f, closed.lotId, 'gotowka')).toBeNull();
+    openBuild(f, rent(f, closed.lotId, 'gotowka'));
+    expect(f.stores.find((st) => st.lotId === closed.lotId)).toMatchObject({ closed: false, reopened: true });
+  }, 120_000);
+
+  it('lotRentable: wolny tak, zajęty, konkurencja, własny, lokal w budowie i nieistniejący nie', () => {
+    const { f, closed, y } = neighbourWorld(1);
+    expect(lotRentable(f, y)).toBe(true);
+    expect(lotRentable(f, closed.lotId)).toBe(true);
+    expect(lotRentable(f, f.city.startLotId)).toBe(false);   // otwarty #1
+    expect(lotRentable(f, f.city.lots.find((l) => l.state === 'zajety' && l.id !== y)!.id)).toBe(false);
+    expect(lotRentable(f, f.city.lots.find((l) => l.state === 'konkurencja')!.id)).toBe(false);
+    for (const id of [-1, 1.5, f.city.lots.length, Number.NaN]) expect(lotRentable(f, id)).toBe(false);
+    rent(f, y, 'gotowka');
+    expect(lotRentable(f, y)).toBe(false);   // w budowie
   }, 120_000);
 });
 

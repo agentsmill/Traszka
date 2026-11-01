@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { generateCity } from '@/sim/city/generateCity';
+import { generateCity, lotNeighbour } from '@/sim/city/generateCity';
 import { CITY_GENERATOR_VERSION } from '@/sim/city/types';
 import { MINUTES_PER_DAY, OPEN_FROM } from '@/sim/economy/catalog';
 import { applyCommand } from '@/sim/economy/commands';
@@ -13,14 +13,15 @@ import { visibleCards } from '@/sim/economy/tycoon/cards';
 import { economyView, toCommand } from '@/sim/economy/tycoon/economyEnv';
 import { storeSeedFor } from '@/sim/city/traffic';
 import { closeStore } from '@/sim/firm/closure';
-import { RELET_BUILD_DAYS, RELET_SHARE, applyFirmCommand, lotState, rentPrice } from '@/sim/firm/commands';
+import { RELET_BUILD_DAYS, RELET_SHARE, applyFirmCommand, lotState, rentPrice, rentRefusal } from '@/sim/firm/commands';
 import {
-  activeStore, applyStoreCommand, createFirm, emptyStepOut, grantToFirm, openStoreAt, openStores, stepFirmMinute,
+  activeStore, applyStoreCommand, createFirm, emptyStepOut, grantToFirm, openStoreAt, openStores, stepFirmMinute, syncWallet,
 } from '@/sim/firm/firm';
 import { INBOX_MAX, type FirmState, type FirmStepOut } from '@/sim/firm/types';
 import { freshRun } from '@/sim/run';
 import { GENERATOR_VERSION } from '@/sim/store/generateStore';
 import { layoutFor } from '@/sim/store/layoutFor';
+import { takeoverSide } from '@/sim/store/takeover';
 import type { StoreLayout } from '@/sim/store/types';
 import { SAVE_MAX_BYTES } from '@/server/config';
 import { TRANSFER_FORMAT } from '@/ui/ranking/saveTransfer';
@@ -843,6 +844,29 @@ function reopenStart(f: FirmState): number {
   return ready;
 }
 
+/**
+ * Para lokali S i Y: Y leży po stronie przejęcia sklepu w wolnym lokalu S (remont poziomu 1 dokupuje Y, §7.2), a generator zbuduje sklep w obu.
+ * Generator nie stawia wolnych lokali obok siebie (każdy wolny w innym kwartale), więc w teście Y trzeba oznaczyć jako wolny (jak w `relet.test.ts`).
+ */
+function neighbourPair(): { seed: string; s: number; y: number } {
+  for (const seed of [SEED, ...Array.from({ length: 10 }, (_, i) => `miasto-${i}`)]) {
+    const city = generateCity(seed);
+    for (const lot of city.lots.filter((l) => l.state === 'wolny')) {
+      const storeSeed = storeSeedFor(seed, lot.id);
+      const side = takeoverSide(layoutFor(storeSeed, 0, lot.spec), storeSeed);
+      const y = side === null ? null : lotNeighbour(city, lot.id, side);
+      if (y === null || y.state !== 'zajety') continue;
+      try {
+        layoutFor(storeSeedFor(seed, y.id), 0, y.spec);
+      } catch {
+        continue;   // generator sklepu bywa bezradny wobec rzadkiej kombinacji wymiarów
+      }
+      return { seed, s: lot.id, y: y.id };
+    }
+  }
+  throw new Error('żaden seed nie ma pary sąsiednich lokali do zbudowania');
+}
+
 describe('ponowny wynajem lokalu „po Traszce” a zapis', () => {
   it('Review Focus 2: zapis z budową w lokalu „po Traszce” wraca z tą budową (stan budowa), a sklep otwiera się w jej dniu z tym samym wyposażeniem co bez zapisu', () => {
     const a = reletFirm();
@@ -940,6 +964,50 @@ describe('ponowny wynajem lokalu „po Traszce” a zapis', () => {
     env.firm.builds = [{ lotId: env.stores[1].lotId, readyDay: 90, pay: 'raty' }];
     expect(opened(restoreFirmFrom(env, SEED)).builds).toEqual([]);
   });
+
+  it('budowa w lokalu zamkniętego sklepu, którego układ po remoncie zajmuje lokal obok Twojego sklepu, odpada przy odczycie tak samo jak odmowa wynajmu', () => {
+    const { seed, s: lotS, y: lotY } = neighbourPair();
+    /** Zamknięty #2 w lokalu S (remont poziomu `level`) i sąsiad Y jako #3, otwarty albo zamknięty. Żywa firma ma Y oznaczone jako wolny (generator tak nie robi). */
+    const world = (level: 0 | 1, yOpen: boolean): FirmState => {
+      const f = newFirm(seed);
+      f.person.partner = true;
+      f.city.lots[lotY]!.state = 'wolny';
+      const closed = openStoreAt(f, lotS, clockOf(f));
+      if (level === 1) {
+        expect(command(f, { type: 'switchStore', storeId: closed.id })).toEqual({ ok: true });
+        remont(f, 8);
+        expect(closed.econ.remontLevel).toBe(1);
+      }
+      closeStore(f, closed.id, 'trust', emptyStepOut());
+      const next = openStoreAt(f, lotY, clockOf(f));
+      if (!yOpen) closeStore(f, next.id, 'trust', emptyStepOut());
+      syncWallet(f);
+      return f;
+    };
+    const lot = generateCity(seed).lots[lotS]!;
+    const price = Math.round(lot.package * RELET_SHARE / 100) * 100;
+    const build = { lotId: lotS, readyDay: 90, pay: 'raty' as const };
+    const loaded = (f: FirmState): FirmState['builds'] => {
+      const env = JSON.parse(JSON.stringify(firmEnvelopeOf(f))) as { firm: { builds: unknown[] } };
+      env.firm.builds = [build];
+      return opened(restoreFirmFrom(env, seed)).builds;
+    };
+
+    // sąsiad Y jest Twoim otwartym sklepem, a układ zamkniętego sklepu zajmuje Y: odmowa wynajmu i budowa wypada z zapisu
+    const taken = world(1, true);
+    expect(lotState(taken, lotY)).toBe('twoj');
+    expect(rentRefusal(taken, lotS, 'raty')).toBe('lot');
+    expect(loaded(taken)).toEqual([]);
+    // sąsiad zamknięty (nie jest Twój): wynajem przechodzi i budowa wraca z zapisu z ceną po Traszce
+    const free = world(1, false);
+    expect(rentRefusal(free, lotS, 'raty')).toBeNull();
+    expect(loaded(free)).toEqual([{ ...build, price }]);
+    // sklep zamknięty bez remontu nie zajmuje sąsiada układem: przechodzi mimo Twojego sklepu obok
+    const level0 = world(0, true);
+    expect(lotState(level0, lotY)).toBe('twoj');
+    expect(rentRefusal(level0, lotS, 'raty')).toBeNull();
+    expect(loaded(level0)).toEqual([{ ...build, price }]);
+  }, 60_000);
 
   it('koperty fixtures (schemat 3) po wczytaniu i zapisie nie mają klucza `reopened`', () => {
     const names = readdirSync(new URL('./fixtures/', import.meta.url)).filter((n) => n.startsWith('save-v3-'));

@@ -151,18 +151,36 @@ export function rentBuildDays(f: FirmState, lotId: number): number {
 }
 
 /**
- * Powód odmowy wynajmu albo null, po kolei: koniec gry, ranked, brak statusu, limit sklepów (otwarte plus budowy), lokal ani wolny, ani „po Traszce”,
- * gotówka (po zapłacie nie mniej niż zero), rata ponad limit nowego sklepu (bez historii, zaufanie startowe: 35% × 25 tys. zł). Cena to `rentPrice`.
+ * Czy lokal przyjmuje wynajem: wolny albo „po Traszce”. Ponowny wynajem przywraca układ zamkniętego sklepu, a od pierwszego remontu ten układ
+ * zajmuje też lokal obok (§7.2), więc jest odrzucony, gdy ten sąsiad jest już Twój (własny sklep, budowa w nim albo lokal zajęty przez
+ * inny sklep): dwa sklepy nie dzielą lokalu. Sklep zamknięty bez remontu (poziom 0) układem sąsiada nie zajmuje, więc mu nie przeszkadza.
+ * Wynajęcie sąsiada, gdy zamknięty sklep stoi zamknięty, zostaje dozwolone. Jedna reguła dla `rentRefusal` i wczytania budów z zapisu.
+ */
+export function lotRentable(f: FirmState, lotId: number): boolean {
+  const lot = f.city.lots[lotId];
+  if (!lot || lot.id !== lotId) return false;
+  const state = lotState(f, lotId);
+  if (state === 'wolny') return true;
+  const closed = state === 'po-traszce' ? closedStoreAt(f, lotId) : undefined;
+  if (!closed) return false;
+  if (closed.econ.remontLevel < 1) return true;
+  const next = neighbourOf(f, closed);
+  if (next === null) return true;
+  const beside = lotState(f, next);
+  return beside !== 'twoj' && beside !== 'budowa';
+}
+
+/**
+ * Powód odmowy wynajmu albo null, po kolei: koniec gry, ranked, brak statusu, limit sklepów (otwarte plus budowy), lokal nieprzyjmujący
+ * wynajmu (`lotRentable`), gotówka (po zapłacie nie mniej niż zero), rata ponad limit nowego sklepu (bez historii, zaufanie startowe:
+ * 35% × 25 tys. zł). Cena to `rentPrice`.
  */
 export function rentRefusal(f: FirmState, lotId: number, pay: 'gotowka' | 'raty'): FirmRefusal | null {
   if (f.over !== null || activeStore(f).econ.gameOver) return 'over';
   if (f.ranked) return 'ranked';
   if (!f.person.partner) return 'status';
   if (openStores(f).length + f.builds.length >= MAX_STORES) return 'limit';
-  const lot = f.city.lots[lotId];
-  if (!lot || lot.id !== lotId) return 'lot';
-  const state = lotState(f, lotId);
-  if (state !== 'wolny' && state !== 'po-traszce') return 'lot';
+  if (!lotRentable(f, lotId)) return 'lot';
   const price = rentPrice(f, lotId);
   if (pay === 'gotowka' && f.person.wallet - price < 0) return 'gotowka';
   if (pay === 'raty' && planFor(price).monthly > installmentLimit([], TRUST.start)) return 'raty';

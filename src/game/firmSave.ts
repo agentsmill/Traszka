@@ -5,7 +5,7 @@ import { createEconomy, relayout, type EconomyState } from '@/sim/economy/econom
 import { LIMITS, sanitizeEconomy } from '@/sim/economy/sanitize';
 import { computeStoreInfo, type StoreInfo } from '@/sim/economy/storeInfo';
 import { REMONTS } from '@/sim/economy/upgrades';
-import { lotState, rentPrice } from '@/sim/firm/commands';
+import { lotRentable, rentPrice } from '@/sim/firm/commands';
 import { activeStore, createFirm, openStores, refreshSites, setPartner, storeSeedOf, syncWallet } from '@/sim/firm/firm';
 import { INBOX_MAX, type FirmBuild, type FirmNote, type FirmState, type FirmStore } from '@/sim/firm/types';
 import { isNum, isRec, num, whole, type Rec } from '@/sim/guards';
@@ -201,17 +201,15 @@ function buildShell(seed: string, city: CityState, raw: Rec, id: number, lotId: 
 }
 
 /**
- * Budowy tylko w wolnych lokalach miasta i w lokalach „po Traszce” (te same reguły co wynajem): zajęte, własne, zdublowane i uszkodzone
- * wypadają. Brakująca cena to `rentPrice` lokalu, liczona przed dopisaniem budowy.
+ * Budowy tylko w lokalach, które przyjmują wynajem (`lotRentable`, te same reguły co `rentRefusal`: wolne i „po Traszce” bez Twojego sklepu
+ * w lokalu obok): zajęte, własne, zdublowane i uszkodzone wypadają. Brakująca cena to `rentPrice` lokalu, liczona przed dopisaniem budowy.
  */
 function addBuilds(f: FirmState, raw: unknown): void {
   if (!Array.isArray(raw)) return;
   for (const b of raw as unknown[]) {
     if (!isRec(b) || !Number.isInteger(b.lotId) || !isNum(b.readyDay) || (b.pay !== 'gotowka' && b.pay !== 'raty')) continue;
     const lot = f.city.lots[b.lotId as number];
-    if (!lot || lot.id !== b.lotId) continue;
-    const state = lotState(f, lot.id);   // wpis zajmuje lokal (`budowa`), więc dubel odpada
-    if (state !== 'wolny' && state !== 'po-traszce') continue;
+    if (!lot || lot.id !== b.lotId || !lotRentable(f, lot.id)) continue;   // wpis zajmuje lokal (`budowa`), więc dubel odpada
     f.builds.push({
       lotId: lot.id, readyDay: whole(b.readyDay, 0, 0, LIMITS.minute / MINUTES_PER_DAY), price: num(b.price, rentPrice(f, lot.id), 0, LIMITS.money), pay: b.pay,
     });
