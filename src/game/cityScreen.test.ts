@@ -69,6 +69,7 @@ function resetSignals(): void {
   ui.firm.value = null;
   ui.cityLayer.value = 'ruch';
   ui.selectedLot.value = null;
+  ui.lotPay.value = 'gotowka';
 }
 beforeEach(resetSignals);
 afterEach(() => { current?.screen.dispose(); current = null; resetSignals(); });
@@ -207,6 +208,68 @@ describe('pinezki', () => {
     const camera = {} as Camera;
     h.screen.update(camera);
     expect(h.pins.update).toHaveBeenCalledWith(camera);
+  });
+});
+
+describe('nowa gra czyści wybór lokalu i sposób zapłaty', () => {
+  it('przy zamkniętej zakładce: wybór z poprzedniego miasta nie wraca po otwarciu Miasta, a zapłata wraca do gotówki', () => {
+    const h = make();
+    const row = freeLotRows(h.f.seed, h.f)[1]!;
+    ui.selectedLot.value = row.lotId;
+    ui.lotPay.value = 'raty';
+    const other = firmOf(partnerSession('inny-seed-nowej-gry'));
+    expect(other.city).not.toBe(h.f.city);
+    ui.firm.value = { f: other, v: 1 };   // „Nowy sklep” z innym seedem
+    expect(ui.selectedLot.value).toBeNull();
+    expect(ui.lotPay.value).toBe('gotowka');
+    ui.tab.value = 'miasto';
+    expect(h.shown).toHaveLength(1);
+    expect(h.shown[0]!.city).toBe(other.city);
+    expect(h.revealed).toHaveLength(0);   // mapa nie jedzie do lokalu z innego miasta
+    expect(h.pinSets[h.pinSets.length - 1]!.every((p) => !p.label.includes('·'))).toBe(true);
+  });
+
+  it('przy otwartej zakładce: nowa gra zdejmuje wybór i pokazuje nowe miasto bez przesuwania kamery', () => {
+    const h = make();
+    ui.tab.value = 'miasto';
+    ui.selectedLot.value = freeLotRows(h.f.seed, h.f)[0]!.lotId;
+    ui.lotPay.value = 'raty';
+    expect(h.revealed).toHaveLength(1);
+    const other = firmOf(partnerSession('jeszcze-inny-seed'));
+    ui.firm.value = { f: other, v: 1 };
+    expect(ui.selectedLot.value).toBeNull();
+    expect(ui.lotPay.value).toBe('gotowka');
+    expect(h.shown).toHaveLength(2);
+    expect(h.shown[1]!.city).toBe(other.city);
+    expect(h.revealed).toHaveLength(1);
+  });
+
+  it('„Zacznij od nowa” w tym samym sklepie to też nowy obiekt miasta: wybór znika', () => {
+    const h = make();
+    ui.selectedLot.value = freeLotRows(h.f.seed, h.f)[2]!.lotId;
+    ui.firm.value = { f: firmOf(partnerSession()), v: 1 };   // ten sam seed, nowa gra
+    expect(ui.selectedLot.value).toBeNull();
+  });
+
+  it('ta sama gra (kolejne publikacje firmy) zostawia wybór i sposób zapłaty', () => {
+    const h = make();
+    ui.tab.value = 'miasto';
+    const row = freeLotRows(h.f.seed, h.f)[1]!;
+    ui.selectedLot.value = row.lotId;
+    ui.lotPay.value = 'raty';
+    ui.firm.value = { f: h.f, v: 2 };
+    ui.firm.value = { f: h.f, v: 3 };
+    expect(ui.selectedLot.value).toBe(row.lotId);
+    expect(ui.lotPay.value).toBe('raty');
+  });
+
+  it('numer lokalu spoza miasta nie zostaje wyborem: zdejmuje go ekran, kamera nie rusza', () => {
+    const h = make();
+    ui.tab.value = 'miasto';
+    ui.selectedLot.value = h.f.city.lots.length + 7;
+    expect(ui.selectedLot.value).toBeNull();
+    expect(h.revealed).toHaveLength(0);
+    expect(h.pinSets[h.pinSets.length - 1]!.every((p) => !p.label.includes('·'))).toBe(true);
   });
 });
 

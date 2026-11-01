@@ -80,7 +80,7 @@ export const CITY_UI: Dict = {
   'Raty razem {0}, w tym opłata {1} ({2}). Za gotówkę po zapłacie musi zostać co najmniej 0 zł.':
     'Instalments come to {0} in total, including a {1} fee ({2}). If you pay in cash, at least 0 zł must be left afterwards.',
   'Biorę lokal': 'Take this unit',
-  'Ten lokal zajmiesz remontem „Dokupienie lokalu obok”': 'You will take this unit over with the refit “Take over the unit next door”',
+  'Ten lokal zajmiesz remontem „Dokupienie lokalu obok”': 'You will take this unit over with the “Refit: take over the unit next door” upgrade',
   'Do Ulepszeń': 'To Upgrades',
   'Stan': 'Status',
   'Marka': 'Brand',

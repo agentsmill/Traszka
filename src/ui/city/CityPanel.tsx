@@ -6,7 +6,7 @@ import { MAX_STORES, type FirmState } from '@/sim/firm/types';
 import { cityLayer, firm, selectedLot, type GameActions } from '../state';
 import { zl } from '../game/format';
 import { LotCard } from './LotCard';
-import { freeLotRows } from './cityModel';
+import { freeLotRows, validLot } from './cityModel';
 import { districtName, lotKindName, progressText } from './cityText';
 import { addressText } from './firmText';
 
@@ -66,7 +66,7 @@ export function CityBar({ f }: { f: FirmState; v: number }) {
 /** Lista wolnych lokali: numer z kartki, adres, dzielnica, format i metraż, widełki klientów dziennie i pakiet otwarcia. */
 export function LotList({ f }: { f: FirmState; v: number }) {
   const rows = freeLotRows(f.seed, f);
-  const chosen = selectedLot.value;
+  const chosen = validLot(f, selectedLot.value);
   return (
     <section class="tt-lotlist" aria-label={t`Wolne lokale`}>
       <h3>{t`Wolne lokale (${rows.length})`}</h3>
@@ -90,7 +90,7 @@ export function CityPanel({ game }: { game: GameActions }) {
   const view = firm.value;
   if (!view) return null;
   const { f, v } = view;
-  const chosen = selectedLot.value;
+  const chosen = validLot(f, selectedLot.value);   // `has-card` tylko dla karty, która naprawdę się pokaże (lista i pasek ustępują jej)
   return (
     <div class={`tt-city${chosen !== null ? ' has-card' : ''}`}>
       <CityBar f={f} v={v} />

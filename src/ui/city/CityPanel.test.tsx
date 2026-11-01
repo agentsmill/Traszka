@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { lang } from '@/i18n';
+import { EN_REMONTS } from '@/i18n/en/content';
 import { PL_CHARS } from '../../../tests/i18nScan';
 import { partnerSession } from '../../../tests/firmKit';
 import { createSession, firmOf } from '@/game/session';
@@ -10,7 +11,7 @@ import { applyFirmCommand, partnerProgress } from '@/sim/firm/commands';
 import { emptyStepOut } from '@/sim/firm/firm';
 import type { FirmCommand, FirmCommandResult } from '@/sim/firm/commands';
 import { MAX_STORES, type FirmRefusal, type FirmState } from '@/sim/firm/types';
-import { cityLayer, firm, lotPay, selectedLot, tab, type GameActions } from '../state';
+import { cityLayer, firm, lotPay, selectedLot, tab, toasts, type GameActions } from '../state';
 import { zl } from '../game/format';
 import { buttonAria, buttonLabelled, buttonsOf, click, labels, textOf, walk, type Vnode } from '../game/vnodeTree';
 import { CityBar, CityPanel, LotList } from './CityPanel';
@@ -55,9 +56,10 @@ function resetSignals(): void {
   lotPay.value = 'gotowka';
   firm.value = null;
   tab.value = null;
+  toasts.value = [];
 }
 beforeEach(resetSignals);
-afterEach(() => { resetSignals(); lang.value = 'pl'; });
+afterEach(() => { resetSignals(); lang.value = 'pl'; vi.useRealTimers(); });
 
 describe('pasek miasta (data-tut="city-status")', () => {
   it('bez statusu mówi, czego brakuje: miesiące z zyskiem i zaufanie', () => {
@@ -237,12 +239,24 @@ describe('karta lokalu', () => {
       expect(selectedLot.value).toBeNull();
     });
 
-    it('odmowa Centrali po kliknięciu zostawia kartę otwartą', () => {
+    it('odmowa Centrali po kliknięciu zostawia kartę otwartą i mówi powód tekstem Centrali (toast błędu)', () => {
+      vi.useFakeTimers();
       const f = partnerFirm();
       const row = rowsOf(f)[0]!;
       selectedLot.value = row.lotId;
       click(buttonLabelled(card(f, row.lotId, fakeGame({ ok: false, reason: 'limit' })), 'Biorę lokal'));
       expect(selectedLot.value).toBe(row.lotId);
+      expect(toasts.value).toEqual([expect.objectContaining({ text: refusalText('limit'), kind: 'error' })]);
+      // ten sam tekst od powłoki gry (dispatchFirm) nie robi drugiego toastu
+      click(buttonLabelled(card(f, row.lotId, fakeGame({ ok: false, reason: 'limit' })), 'Biorę lokal'));
+      expect(toasts.value).toHaveLength(1);
+    });
+
+    it('udany wynajem nie dokłada toastu błędu', () => {
+      const f = partnerFirm();
+      const row = rowsOf(f)[0]!;
+      click(buttonLabelled(card(f, row.lotId, fakeGame()), 'Biorę lokal'));
+      expect(toasts.value).toEqual([]);
     });
 
     it.each<[FirmRefusal, string, () => FirmState, 'gotowka' | 'raty']>([
@@ -375,6 +389,22 @@ describe('panel miasta', () => {
     expect(withCard.find((v) => v.type === LotCard)!.props.lotId).toBe(lotId);
   });
 
+  it('wybór spoza miasta (id z poprzedniej gry) nie otwiera karty: bez karty i bez has-card, lista zostaje, a nic nie jest zaznaczone', () => {
+    const f = partnerFirm();
+    firm.value = { f, v: 1 };
+    selectedLot.value = f.city.lots.length + 40;
+    const tree = CityPanel({ game: fakeGame() }) as Vnode;
+    expect(String(tree.props.class)).not.toContain('has-card');
+    expect(walk(tree).some((v) => v.type === LotCard)).toBe(false);
+    expect(buttonsOf(list(f)).some((b) => b.props['aria-pressed'] === true)).toBe(false);
+    expect(LotCard({ f, lotId: selectedLot.value, game: fakeGame(), v: 1 })).toBeNull();
+    // ten sam panel z prawidłowym lokalem ma kartę i has-card
+    selectedLot.value = rowsOf(f)[0]!.lotId;
+    const ok = CityPanel({ game: fakeGame() }) as Vnode;
+    expect(String(ok.props.class)).toContain('has-card');
+    expect(walk(ok).some((v) => v.type === LotCard)).toBe(true);
+  });
+
   it('w rankingu mapę widać, pasek mówi tekst rankingowy, a wynajem jest odrzucony', () => {
     const f = plainFirm();
     f.ranked = true;
@@ -410,6 +440,19 @@ describe('angielski', () => {
     expect(texts.filter((x) => PL_CHARS.test(x))).toEqual([]);
     expect(districtName('osiedle')).toBe('Estate');
     expect(progressText({ kind: 'missing', profitMonthsNeeded: 1, trust: 68, trustNeeded: 75 })).toBe('1 more month in profit · trust 68/75');
+  });
+
+  it('lokal obok nazywa remont tak jak zakładka Ulepszenia: „Refit: take over the unit next door”', () => {
+    lang.value = 'en';
+    for (const seed of [SEED, 'a', 'b', 'c', 'd', 'e']) {
+      const f = partnerFirm(seed);
+      if (f.city.neighbourLotId === null) continue;
+      const text = textOf(card(f, f.city.neighbourLotId));
+      expect(text).toContain(`“${EN_REMONTS[1]}”`);
+      expect(text).not.toContain('„');
+      return;
+    }
+    throw new Error('żaden z seedów testu nie ma lokalu obok');
   });
 
   it('karta po angielsku nie ma polskich liter poza nazwami własnymi (ulica) i „zł”', () => {

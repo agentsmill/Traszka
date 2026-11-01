@@ -4,7 +4,7 @@ import { createCityPins, screenPosition, type CityPin, type CityPins } from '@/r
 import type { RenderContext } from '@/render/renderer';
 import type { CityState } from '@/sim/city/types';
 import { lotState } from '@/sim/firm/commands';
-import { cityLotStates, cityPinSpecs } from '@/ui/city/cityModel';
+import { cityLotStates, cityPinSpecs, validLot } from '@/ui/city/cityModel';
 import * as ui from '@/ui/state';
 import { dragPan } from './controls';
 import type { ScreenArea, SceneHost } from './scene';
@@ -54,7 +54,8 @@ export interface CityScreen {
 
 export function createCityScreen(deps: CityScreenDeps): CityScreen {
   const { scene, game, pins } = deps;
-  let shownCity: CityState | null = null;   // miasto, które scena już pokazuje (po tożsamości: nowa gra to nowy obiekt)
+  let knownCity: CityState | null = null;   // miasto ostatniej gry, także gdy zakładka jest zamknięta (po tożsamości: nowa gra to nowy obiekt)
+  let shownCity: CityState | null = null;   // miasto, które scena już pokazuje
   let stateKey = '';   // co scena miasta już pokazuje (warstwa i stany lokali)
   let pinKey = '';     // co pinezki już pokazują
   let revealed: number | null = null;
@@ -75,7 +76,17 @@ export function createCityScreen(deps: CityScreenDeps): CityScreen {
   const stop = effect(() => {
     const view = ui.firm.value;
     const layer = ui.cityLayer.value;
-    const selected = ui.selectedLot.value;
+    if (view && view.f.city !== knownCity) {
+      // inna gra („Nowy sklep”, „Zacznij od nowa”, wczytanie): numery lokali i wybór sposobu zapłaty należały do poprzedniego miasta
+      if (knownCity !== null) {
+        ui.selectedLot.value = null;
+        ui.lotPay.value = 'gotowka';
+      }
+      knownCity = view.f.city;
+    }
+    const chosen = ui.selectedLot.value;
+    const selected = view ? validLot(view.f, chosen) : chosen;
+    if (view && chosen !== null && selected === null) ui.selectedLot.value = null;   // numer spoza miasta nie zostaje jako wybór
     if (ui.tab.value !== 'miasto' || !view) {
       if (scene.cityShown) {
         scene.hideCity();

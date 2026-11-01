@@ -5,7 +5,7 @@ import { RIVAL_RADIUS_M } from '@/sim/city/traffic';
 import type { CityLot } from '@/sim/city/types';
 import { lotState } from '@/sim/firm/commands';
 import type { FirmState } from '@/sim/firm/types';
-import { lotPay, selectedLot, tab, type GameActions } from '../state';
+import { lotPay, pushToast, selectedLot, tab, type GameActions } from '../state';
 import { percentOf, plural, zl } from '../game/format';
 import { freeLotRows, lotCardModel, neighbourLot, swipeDirection, type LotRow } from './cityModel';
 import { brandName, districtName, levelText, lotKindName, lotStateName, refusalText, sourceText } from './cityText';
@@ -60,6 +60,7 @@ function rentCard(f: FirmState, lot: CityLot, game: GameActions) {
   const rent = (): void => {
     const result = game.firm({ type: 'rentLot', lotId, pay });
     if (result.ok) selectedLot.value = null;
+    else pushToast(refusalText(result.reason), 'error');   // stan mógł się zmienić między rysunkiem karty a kliknięciem; ten sam tekst co toast powłoki się nie dubluje
   };
   // przesunięcie palcem w lewo to następny lokal, w prawo poprzedni (telefon: karta wysuwa się od dołu, mapa zostaje u góry)
   const down = (e: PointerEvent): void => { swipeFrom = { id: e.pointerId, x: e.clientX, y: e.clientY }; };

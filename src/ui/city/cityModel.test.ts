@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { lang } from '@/i18n';
 import { partnerSession } from '../../../tests/firmKit';
 import { createSession, firmOf } from '@/game/session';
@@ -14,8 +14,14 @@ import { emptyStepOut, syncWallet } from '@/sim/firm/firm';
 import type { FirmState } from '@/sim/firm/types';
 import {
   SWIPE_MIN_PX, basketLevel, cityLotStates, cityPinSpecs, expectationsLevel, freeLotRows, lotCardModel, neighbourLot, swipeDirection, theftLevel,
-  type LotRow,
+  validLot, type LotRow,
 } from './cityModel';
+
+// licznik wywołań `lotEstimate` (ta sama funkcja co zawsze, tylko policzona): przypina pamięć podręczną widełek
+vi.mock('@/sim/city/traffic', async (original) => {
+  const real = await original<typeof import('@/sim/city/traffic')>();
+  return { ...real, lotEstimate: vi.fn(real.lotEstimate) };
+});
 
 /*
  * Model ekranu Miasta (spec §9.3): lista wolnych lokali, karta lokalu, poziomy słowami, nawigacja po lokalach i pinezki. Czyste funkcje
@@ -58,13 +64,36 @@ describe('freeLotRows: lista wolnych lokali', () => {
     expect(after.map((r) => r.no)).toEqual(before.filter((r) => r.lotId !== taken.lotId).map((r) => r.no));
   });
 
-  it('estymaty liczy się raz na miasto: drugie wywołanie oddaje te same widełki bez nowych obliczeń', () => {
+  it('estymaty liczy się raz na miasto: lista, karta i kolejne odświeżenia nie wołają lotEstimate drugi raz, nowa gra liczy od nowa', () => {
     const f = partnerFirm();
+    const free = f.city.lots.filter((l) => lotState(f, l.id) === 'wolny').length;
+    expect(free).toBeGreaterThanOrEqual(5);
+    vi.mocked(lotEstimate).mockClear();
     const a = freeLotRows(SEED, f);
+    expect(lotEstimate).toHaveBeenCalledTimes(free);
     const b = freeLotRows(SEED, f);
+    for (const r of a) lotCardModel(SEED, f, r.lotId, 'raty');
+    cityPinSpecs(SEED, f, a[0]!.lotId);
+    expect(lotEstimate).toHaveBeenCalledTimes(free);   // bez pamięci podręcznej byłoby 3 × free i więcej
     expect(b).toEqual(a);
+    freeLotRows(SEED, partnerFirm());                  // inny obiekt miasta (nowa gra) ma własne widełki
+    expect(lotEstimate).toHaveBeenCalledTimes(2 * free);
     // widełki z modelu to widełki z symulacji (cache nie zmienia liczb)
     expect(b.map((r) => [r.lo, r.hi])).toEqual(b.map((r) => { const e = lotEstimate(SEED, f.city, r.lotId); return [e.lo, e.hi]; }));
+  });
+});
+
+describe('validLot: wybór spoza miasta', () => {
+  it('istniejący lokal zostaje, brak wyboru, id spoza zakresu i ujemne dają null', () => {
+    const f = partnerFirm();
+    const last = f.city.lots.length - 1;
+    expect(validLot(f, 0)).toBe(0);
+    expect(validLot(f, last)).toBe(last);
+    expect(validLot(f, null)).toBeNull();
+    expect(validLot(f, last + 1)).toBeNull();
+    expect(validLot(f, 99_999)).toBeNull();
+    expect(validLot(f, -1)).toBeNull();
+    expect(validLot(f, 1.5)).toBeNull();
   });
 });
 

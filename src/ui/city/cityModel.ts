@@ -119,6 +119,10 @@ export function lotCardModel(seed: string, f: FirmState, lotId: number, pay: 'go
 
 // --- Nawigacja ------------------------------------------------------------------------------------------------------
 
+/** Wybrany lokal, o ile istnieje w tym mieście (id spoza zakresu, np. z poprzedniej gry, to brak wyboru). */
+export const validLot = (f: FirmState, lotId: number | null): number | null =>
+  lotId !== null && f.city.lots[lotId]?.id === lotId ? lotId : null;
+
 /** Następny (`dir` 1) albo poprzedni (−1) lokal z listy w kółko. Bez wyboru albo przy lokalu spoza listy: pierwszy (dalej) albo ostatni (wstecz). */
 export function neighbourLot(rows: readonly { lotId: number }[], current: number | null, dir: 1 | -1): number | null {
   if (rows.length === 0) return null;
