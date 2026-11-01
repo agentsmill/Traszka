@@ -559,7 +559,7 @@ export const DECK: readonly CardDef[] = [
     answers: [
       {
         label: 'Wpuszczam, niech się grzeją',
-        result: 'Ludzie się ogrzali, telefony naładowały. Procedura nie przewiduje, kto liczy batoniki przy kaloryferze, więc ubytki policzą je same.',
+        result: 'Ludzie się ogrzali, telefony naładowały. Wystawka batoników przy kaloryferze zrobiła się miękka, a procedura Centrali każe księgować ją jako ubytki, nie jako kaloryfer.',
         delta: (c) => ({ wut: 0.03 * c.dailyRevenue, staffMinutes: 20 }),
         mods: () => [{ kind: 'traffic', value: 0.5, minutes: 60 }],
       },

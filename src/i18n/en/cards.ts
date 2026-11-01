@@ -228,7 +228,7 @@ export const EN_CARDS: Record<string, EnCard> = {
     title: 'Last train cancelled',
     text: 'The last train has been cancelled, and {n} people who missed their connection have walked into the shop. Head Office’s procedure “Customer Who Is Not a Customer” runs to 14 pages and not a single radiator.',
     answers: [
-      { label: 'Let them in to warm up', result: 'People warmed up, phones charged. The procedure doesn’t say who counts the chocolate bars by the radiator, so shrinkage will count them itself.' },
+      { label: 'Let them in to warm up', result: 'People warmed up, phones charged. The chocolate display by the radiator went soft, and Head Office procedure says to book it as shrinkage, not as a radiator.' },
       { label: 'Half-price coffee out of my margin', result: 'The half-price coffee was gone within a quarter of an hour. “Thank you, Traszka” appeared on the Traszkapp, and Head Office asked who had approved the promotion.' },
       {
         label: 'Head Office regulations: no purchase, no loitering',
@@ -239,7 +239,7 @@ export const EN_CARDS: Record<string, EnCard> = {
   },
   'dworzec-bilon': {
     title: 'A sack of small change',
-    text: 'A traveller pays for a coffee with a sack of small change, {n} gr in total, and their train leaves in seven minutes. Head Office’s “Coin Acceptance Procedure” says everything must be counted twice.',
+    text: 'A traveller pays for a coffee with a sack of small change, {n} groszy in total, and their train leaves in seven minutes. Head Office’s “Coin Acceptance Procedure” says everything must be counted twice.',
     answers: [
       { label: 'Count it twice, as procedure says', result: 'Counted twice, and the two counts came out different. A third count began after the train had gone, but the paperwork says everything adds up.' },
       {

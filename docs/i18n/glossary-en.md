@@ -37,6 +37,7 @@ tych samych nazw.
 | potrącenia | deductions | |
 | raty, na raty | instalments, in instalments | Pisownia brytyjska *instalment*. Przycisk: „in instalments: 6 × 4,500 zł”. Limit rat: *instalment limit*. |
 | opłata za finansowanie | financing fee | |
+| grosz, groszy | grosz, groszy | Realia zostają polskie. Pełne słowo, nigdy „gr”: po angielsku to gramy. |
 | „Zostaje Ci” | You keep | Na pasku prognoza: „After close you’ll keep”, na wąskim ekranie samo *Keep*. |
 | Twoje koszty | Your costs | |
 | pensje, płace | wages | |
