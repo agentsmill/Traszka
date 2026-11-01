@@ -27,9 +27,10 @@ const SEEDS = ['traszka-1', 'kopytka-541', 'makieta', 'lublin-9', 'seed-3', 'kie
 const DAYS = 92;
 /**
  * Czas na kilkadziesiąt pełnych gier: ten sam wzorzec co `TIMEOUT` w `tests/rankedSeason.test.ts` (tam 120 s), ale 180 s, bo jeden test liczy
- * ok. 60 gier (osobno ok. 35 s), a cały zestaw równolegle obciąża maszynę (domyślne 5 s nie wystarcza).
+ * ok. 60 gier (osobno ok. 35 s), a cały zestaw równolegle obciąża maszynę (domyślne 5 s nie wystarcza). Na runnerze GitHuba
+ * test ponownego wynajmu przekroczył 180 s (2026-11-02), więc 600 s.
  */
-const TIMEOUT = 180_000;
+const TIMEOUT = 600_000;
 const DISTRICT_IDS = Object.keys(DISTRICTS) as StoreDistrict[];
 const OTHERS = DISTRICT_IDS.filter((d) => d !== 'osiedle');
 

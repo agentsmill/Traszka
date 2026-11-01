@@ -278,7 +278,7 @@ describe('przejęcie lokalu: kartka „DO WYNAJĘCIA”', () => {
         }
       }
     }
-  });
+  }, 30_000);   // siatka wszystkich seedów: na runnerze GitHuba ponad 6 s przy domyślnych 5 s
 
   it('gdy najbliższe przęsło jest wejściem do klatki, kartka wisi w najbliższej witrynie', () => {
     // blok z sąsiadem zjedzonym do 5,6 m od strony +x: dwa przęsła, wejście w przęśle 1, które stoi przy x0 (najbliżej sklepu)
