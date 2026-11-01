@@ -8,6 +8,7 @@ import {
   awaitingDecision, createEconomy, kpiMetricsOf, kpiScaleOf, type EconomyState, type MonthReport, type StoreFittings,
 } from '@/sim/economy/economy';
 import { installmentLimit, planFor } from '@/sim/economy/franchisee';
+import { MILESTONES } from '@/sim/economy/milestones';
 import { defaultAnswer } from '@/sim/economy/monthPreview';
 import { computeStoreInfo } from '@/sim/economy/storeInfo';
 import { visibleCards } from '@/sim/economy/tycoon/cards';
@@ -343,6 +344,28 @@ describe('ponowne otwarcie sklepu #2 po zamknięciu', () => {
       label: `Adaptacja lokalu: ul. ${lot.street} ${lot.number}`, price, fee: plan.fee, total: plan.total, monthly: plan.monthly, paid: 0, months: plan.months,
     });
     expect(lotState(f, lotId)).toBe('twoj');
+  }, 120_000);
+
+  it('kamienie milowe za odziedziczone wyposażenie są już zaliczone i nie wracają jako gotowe, a cele licznikowe zaczynają od zera', () => {
+    const { f, lotId } = closedSecond();
+    const b = rent(f, lotId, 'gotowka');
+    openBuild(f, b);
+    const st = f.stores[1]!;
+    expect(st.econ.equipment.map((u) => u.id)).toEqual(['sco']);
+    expect(st.econ.remontLevel).toBe(1);
+    expect(st.econ.milestones).toEqual(expect.arrayContaining(['sco1', 'remont1', 'upgrade1']));
+    expect(st.econ.milestonesReady).toEqual([]);
+    for (const m of MILESTONES) expect(st.econ.milestones.includes(m.id), m.id).toBe(m.done(st.econ, st.info));   // tylko to, co wyposażenie już spełnia
+    expect(st.econ.milestones).not.toEqual(expect.arrayContaining(['cust500']));
+    expect(st.econ.milestones).not.toEqual(expect.arrayContaining(['pallet1']));
+    const ogonki = st.econ.ogonki;
+    playTo(f, st.econ.minute + 3 * 60);   // kilka pełnych godzin: cele sprawdza się co godzinę
+    expect(st.econ.minute).toBeGreaterThanOrEqual(b.readyDay * DAY + OPEN_FROM + 3 * 60);
+    expect(st.econ.milestonesReady).not.toEqual(expect.arrayContaining(['sco1']));
+    expect(st.econ.milestonesReady).not.toEqual(expect.arrayContaining(['remont1']));
+    expect(st.econ.milestonesReady).not.toEqual(expect.arrayContaining(['upgrade1']));
+    expect(st.econ.milestones).not.toEqual(expect.arrayContaining(['pallet1', 'cust500']));
+    expect(st.econ.ogonki).toBeGreaterThanOrEqual(ogonki);
   }, 120_000);
 
   it('pierwszy wyciąg po ponownym otwarciu: bez gwarancji, z ratą pakietu z planu ceny po Traszce', () => {

@@ -8,6 +8,7 @@ import { applyCommand, type Command, type CommandOutcome } from '@/sim/economy/c
 import {
   DEBT_WARN, awaitingDecision, checkDebt, createEconomy, stepMinute, type EconEvent, type EconEventKind, type EconomyState,
 } from '@/sim/economy/economy';
+import { MILESTONES } from '@/sim/economy/milestones';
 import { defaultAnswer } from '@/sim/economy/monthPreview';
 import type { SiteMods } from '@/sim/economy/site';
 import { computeStoreInfo, type StoreInfo } from '@/sim/economy/storeInfo';
@@ -160,6 +161,9 @@ export function reopenStoreAt(f: FirmState, st: FirmStore, minute: number): Firm
   st.info = computeStoreInfo(st.layout);
   refreshSites(f);   // flagi i dzielnica od razu w `info`: pogoda i cel KPI liczą się z dzielnicy
   const econ = createEconomy(storeSeedOf(f.seed, f.city, st.lotId), st.info, { ...partner, networkIncome: 0 }, minute, st.econ);
+  // Odziedziczone wyposażenie nie daje nagród drugi raz: cele, które ono już spełnia (SCO, remont, ulepszenia), liczą się jako odebrane,
+  // a gotowe nie zostaje żaden. Liczniki są świeże, więc cele licznikowe (klienci, palety, marża) zaczynają od zera.
+  econ.milestones = MILESTONES.filter((m) => m.done(econ, st.info)).map((m) => m.id);
   econ.cash = f.person.wallet;
   econ.ogonki = f.person.ogonki;
   econ.franchisee.remanent.known = f.person.remanentKnown;
