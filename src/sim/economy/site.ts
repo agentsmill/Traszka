@@ -1,5 +1,6 @@
 import type { LotSpec } from '@/sim/store/types';
 import type { StoreInfo } from './storeInfo';
+import { HOUR_CURVE } from './catalog';
 import { dayTrafficMult } from './tycoon/sunday';
 import { weekdayOf } from './tycoon/time';
 
@@ -64,6 +65,17 @@ export function activeSite(info: StoreInfo): SiteMods | null {
   const s = info.site;
   if (!s) return null;
   return districtNeutral(s) ? null : s;
+}
+
+/** Krzywa natężenia ruchu po godzinach doby (0–23): `HOUR_CURVE` albo profil dnia dzielnicy. */
+export type HourCurve = Readonly<Record<number, number>>;
+
+/**
+ * Krzywa godzin sklepu: profil dnia dzielnicy (`SiteMods.hours`), a bez niego `HOUR_CURVE` (ten sam obiekt, jak dziś). Jedno miejsce
+ * dla czytelników popytu godzinowego poza `arrivalRate` (podpowiedź w panelu Sklep, tłum w scenie).
+ */
+export function hourCurveOf(info: StoreInfo): HourCurve {
+  return activeSite(info)?.hours ?? HOUR_CURVE;
 }
 
 /**

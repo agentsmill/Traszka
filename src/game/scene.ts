@@ -21,9 +21,9 @@ import { crowdObstaclesOf, palletMarkersOf, palletRefsOf } from './palletRefs';
 import type { RobotsSync } from '@/render/robots/robotsView';
 import { EDWARD_ID } from '@/render/staff/types';
 import { SIM_STEP, crowdHeadcount, feedCrowdMirror, payLook, setCrowdExtras, setCrowdRate, stepCrowd, type CrowdOptions } from '@/sim/crowd/crowd';
-import { CATS, HOUR_CURVE } from '@/sim/economy/catalog';
+import { CATS } from '@/sim/economy/catalog';
 import { minuteOfDay } from '@/sim/economy/calendar';
-import { effects, expectedDailyCustomers, isClosedForRemont, isOpenForCustomers, slotUsage } from '@/sim/economy/economy';
+import { customersPerHour, effects, isClosedForRemont, isOpenForCustomers, slotUsage } from '@/sim/economy/economy';
 import { slotUnits } from '@/sim/economy/slots';
 import { staffOnShift } from '@/sim/economy/tycoon/shift';
 import { generateStore } from '@/sim/store/generateStore';
@@ -121,10 +121,10 @@ export function clearSeedFromUrl(): void {
 /** Najwięcej postaci w sklepie naraz: telefon i słabsza grafika dostają mniej. */
 export const CROWD_MAX: Record<QualityPresetId, number> = { niska: 10, srednia: 16, wysoka: 22 };
 
-/** Klientów na godzinę gry z bieżącej godziny (dzień / 15,6 · krzywa): z tego liczą się i tempo napływu, i wielkość grupy w lustrze. */
+/** Klientów na godzinę gry z bieżącej godziny (dzień / 15,6 · krzywa sklepu, z profilem dnia dzielnicy): z tego liczą się i tempo napływu, i wielkość grupy w lustrze. */
 export function trafficPerHour(session: Pick<GameSession, 'econ' | 'info'>): number {
   const { econ: s, info } = session;
-  return expectedDailyCustomers(s, info) / 15.6 * (HOUR_CURVE[Math.floor(minuteOfDay(s.minute) / 60)] ?? 0);
+  return customersPerHour(s, info, Math.floor(minuteOfDay(s.minute) / 60));
 }
 
 /**

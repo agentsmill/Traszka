@@ -13,7 +13,7 @@ import {
   type FranchiseeState, type RemanentProtocol, type Statement,
 } from './franchisee';
 import { rand01 } from './rand';
-import { activeSite, siteDayTraffic, type SiteMods } from './site';
+import { activeSite, hourCurveOf, siteDayTraffic, type SiteMods } from './site';
 import type { PalletLoc, StoreInfo } from './storeInfo';
 import {
   EQUIPMENT_BY_ID, REMONTS, UPGRADE_BY_ID, WORKSHOP_LEVEL, equipmentCost, upgradeCost,
@@ -841,6 +841,22 @@ export function expectedDailyCustomers(s: EconomyState, info: StoreInfo): number
   const customers = baseTraffic(info) * curve * reputationFactor(s.reputation) * fx.traffic;
   // szacunek jest dla zwykłego dnia, bez premii niedzieli (cele KPI doliczają ją osobno), więc z dzielnicy bierze ruch roboczy
   return fx.site ? customers * fx.site.traffic : customers;
+}
+
+/**
+ * Klientów na godzinę gry w godzinie `hour` (0–23): dzień / 15,6 · krzywa sklepu (profil dnia dzielnicy albo `HOUR_CURVE`). 15,6 to suma obu
+ * krzywych, bo profil ma tę samą sumę godzin 6–22. Z tego liczą się podpowiedź w panelu Sklep i tempo napływu postaci w scenie.
+ */
+export function customersPerHour(s: EconomyState, info: StoreInfo, hour: number): number {
+  return expectedDailyCustomers(s, info) / 15.6 * (hourCurveOf(info)[hour] ?? 0);
+}
+
+/** Klientów na godzinę w najmocniejszej godzinie otwarcia (6–22); bez profilu dnia to godzina o natężeniu 1,3 z `HOUR_CURVE`. */
+export function peakCustomersPerHour(s: EconomyState, info: StoreInfo): number {
+  const curve = hourCurveOf(info);
+  let peak = 0;
+  for (let hour = OPEN_FROM / 60; hour < OPEN_TO / 60; hour++) peak = Math.max(peak, curve[hour] ?? 0);
+  return expectedDailyCustomers(s, info) / 15.6 * peak;
 }
 
 const stockItems = (s: EconomyState): number => sum(s.shelf) + sum(s.backroom) + s.pallets.reduce((n, p) => n + p.total, 0);
