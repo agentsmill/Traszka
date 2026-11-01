@@ -286,6 +286,8 @@ Na botach z harnessu SIM 6 (`tests/measure/trzyKieszenie.measure.test.ts`, strat
 
 **Wynik przeglądu (Zadanie 15, 2026-10-31; raport: `docs/superpowers/reports/2026-10-31-miasto-4a1.md`).** Cele pilnuje `tests/districtBalance.test.ts` (8 seedów, 92 dni z remanentem 30 listopada, drugi sklep w środku widełek dzielnicy). Tabela §8.1 jest po strojeniu. Kierunek zmian: przy liczbach z pierwszego szkicu Śródmieście dawało mistrzowi 2,2× wyniku Osiedla, więc dostało mniejszy ruch (0,8) przy dużym koszyku (1,3), a oczekiwania wzrosły do cierpliwości −4, żeby przy mniejszym ruchu nadal coś kosztowały. Pakiety i dni budowy zostały bez zmian.
 
+**Wynik przeglądu 4a.2 (Zadanie 8, 2026-11-01; raport: `docs/superpowers/reports/2026-11-01-miasto-4a2.md`).** Te same cele pilnuje ten sam test, teraz z profilem dnia i trudnymi klientami dzielnic (`districtSite` je niesie), bez zmiany progów i bez strojenia 4a.2: mistrz i decydent mają w 92 dniach 79–121% wyniku Osiedla (Biurowce 85% i 79%, bo szczyty kosztują kolejką; Śródmieście 121% i 120%, Dworzec 110%). Do testu doszły karty Dworca (2–7 na seed na 92 dni) i lokal „po Traszce” (po racie zostawia więcej niż świeży lokal w każdej dzielnicy). Liczby z tabeli §8.1 (profil dnia, trudni klienci) i §13.3 zostają.
+
 ## 9. Ekran Miasta
 
 ### 9.1 Widok **[U]** / **[C]**
@@ -457,7 +459,7 @@ Przycisk „Wypowiedz umowę” jest w panelu sklepu, dostępny tylko wtedy, gdy
 
 ### 13.3 Lokal „po Traszce” **[C]**
 - Lokal zachowuje wyposażenie: ulepszenia, sprzęt, poziom remontu i układ. Towar, ludzie, saldo i raty przepadają w rozliczeniu.
-- **4a.2:** lokal można znów wziąć, a pakiet otwarcia kosztuje ok. 30% ceny, bo urządzenie lokalu zostało. Sklep startuje z wyposażeniem, ale z poziomem 1, reputacją 50 i zaufaniem 65.
+- **4a.2:** lokal można znów wziąć, a pakiet otwarcia kosztuje ok. 30% ceny (`RELET_SHARE`), bo urządzenie lokalu zostało, a budowa trwa 2 dni (`RELET_BUILD_DAYS`). Sklep startuje z wyposażeniem, ale z poziomem 1, reputacją 50 i zaufaniem 65. Liczby po przeglądzie 4a.2 bez zmian (raport `docs/superpowers/reports/2026-11-01-miasto-4a2.md`).
 - To jest „sklep zostaje” rogalika w wersji miejskiej (§14).
 
 ### 13.4 Koniec gry (do czasu rogalika) **[U]**

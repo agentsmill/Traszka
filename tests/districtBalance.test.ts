@@ -2,21 +2,25 @@ import { describe, expect, it } from 'vitest';
 import { DISTRICTS, districtSite } from '@/sim/city/districts';
 import { generateCity } from '@/sim/city/generateCity';
 import type { StoreDistrict } from '@/sim/city/types';
-import { MINUTES_PER_DAY } from '@/sim/economy/catalog';
+import { MINUTES_PER_DAY, OPEN_FROM } from '@/sim/economy/catalog';
 import { applyCommand } from '@/sim/economy/commands';
+import { createEconomy } from '@/sim/economy/economy';
 import { installmentLimit, planFor } from '@/sim/economy/franchisee';
 import type { BotName } from '@/sim/economy/tycoon/bots';
+import { DWORZEC_CARD_IDS } from '@/sim/economy/tycoon/deck';
 import { playBot, type EconomyRun } from '@/sim/economy/tycoon/economyEnv';
 import { TRUST } from '@/sim/economy/tycoon/trust';
+import { RELET_SHARE } from '@/sim/firm/commands';
 
 /**
  * Cele balansu dzielnic (spec §8.4) na botach z harnessu SIM 6: drugi sklep w środku widełek dzielnicy (`districtSite`: ruch dzielnicy,
- * natężenie lokalne 1, bez rywali, flagi dodatkowego sklepu) gra 92 dni od 1 września, czyli trzy zamknięte miesiące z remanentem 30 listopada,
- * na ośmiu seedach. Liczby `DISTRICTS` stroi ten przegląd: test czyta wyniki, a nie powtarza liczb z tabeli. Wynik sklepu to suma
- * `history[].profit` (wynik bez rat, jak w statusie Partnera).
+ * natężenie lokalne 1, bez rywali, flagi dodatkowego sklepu, od 4a.2 także profil dnia i trudni klienci) gra 92 dni od 1 września, czyli
+ * trzy zamknięte miesiące z remanentem 30 listopada, na ośmiu seedach. Liczby `DISTRICTS` stroi ten przegląd: test czyta wyniki, a nie
+ * powtarza liczb z tabeli. Wynik sklepu to suma `history[].profit` (wynik bez rat, jak w statusie Partnera).
  *
  * Przebiegi są ciężkie (ok. 100 pełnych gier), więc liczą się raz na parę (bot, dzielnica) i dzielą je testy. Jeśli któryś cel przestanie
- * się trzymać po zmianie ekonomii, popraw `DISTRICTS`, a nie próg: te progi są z projektu.
+ * się trzymać po zmianie ekonomii, popraw `DISTRICTS`, a nie próg: te progi są z projektu. Od 4a.2 stroi się tylko to, co dołożył ten etap:
+ * profil dnia (`hours`), trudnych klientów (`difficult`), liczby kart Dworca, `RELET_SHARE` i `RELET_BUILD_DAYS`; balans 4a.1 jest zatwierdzony.
  */
 
 const SEEDS = ['traszka-1', 'kopytka-541', 'makieta', 'lublin-9', 'seed-3', 'kiełbasa-42', 'warszawa-7', 'poznan-12'];
@@ -39,6 +43,8 @@ interface Result {
   /** Nadwyżka z remanentów (potrącenie z przelewu), zł. */
   remanent: number;
   months: number;
+  /** Karty Dworca (`DWORZEC_CARD_IDS`), które w tej grze wypadły choć raz (`lastSeen` pamięta każdą wylosowaną kartę, także tę, na którą bot jeszcze nie odpowiedział). */
+  dworzec: string[];
 }
 
 const cache = new Map<string, Result[]>();
@@ -69,6 +75,7 @@ function runs(bot: BotName, district: StoreDistrict, { sco = false, calm = false
         revenue: s.total.revenue,
         remanent: play.reports.reduce((n, r) => n + (r.statement?.remanent ?? 0), 0),
         months: s.history.length,
+        dworzec: DWORZEC_CARD_IDS.filter((id) => s.tycoon.cards.lastSeen[id] !== undefined),
       };
     });
     cache.set(key, out);
@@ -76,7 +83,55 @@ function runs(bot: BotName, district: StoreDistrict, { sco = false, calm = false
   return out;
 }
 
-const sum = (rs: Result[], f: (r: Result) => number): number => rs.reduce((n, r) => n + f(r), 0);
+/** Pakiet otwarcia ze środka widełek dzielnicy: tyle kosztuje lokal z `districtSite` (wymiary ze środka widełek formatu). */
+const midPackage = (d: StoreDistrict): number => Math.round((DISTRICTS[d].package[0] + DISTRICTS[d].package[1]) / 2);
+
+interface NetResult {
+  /** Suma „Zostaje Ci” (`statement.net`: po racie pakietu, remanencie i kosztach własnych) trzech zamkniętych miesięcy. */
+  net: number;
+}
+
+const netCache = new Map<string, NetResult[]>();
+
+/**
+ * Drugi sklep z pakietem na raty i jego „Zostaje Ci” w trzech miesiącach. `relet = false`: świeży lokal dzielnicy za cały pakiet ze środka
+ * widełek. `relet = true`: lokal „po Traszce” (spec §13.3): ten sam lokal po jednym remoncie (prawdziwe polecenie `startRemont`, więc większa
+ * sala i zachowany poziom remontu, jak po zamknięciu sklepu), poziom 1, reputacja 50, zaufanie 65 (`createEconomy` z `fittings`, jak
+ * `reopenStoreAt`) i pakiet za `RELET_SHARE` pakietu (zaokrąglony co 100 zł jak `rentPrice`). Rata z tego samego `planFor` co w firmie.
+ */
+function netRuns(bot: BotName, district: StoreDistrict, relet: boolean): NetResult[] {
+  const key = `${bot}:${district}:${relet}`;
+  let out = netCache.get(key);
+  if (!out) {
+    out = SEEDS.map((seed) => {
+      const price = relet ? Math.round(midPackage(district) * RELET_SHARE / 100) * 100 : midPackage(district);
+      const setup = (run: EconomyRun): void => {
+        if (relet) {
+          const closed = createEconomy(seed, run.info);   // sklep, który po zamknięciu zostawił remont 1
+          closed.level = 20;
+          closed.cash = 600_000;
+          const remont = applyCommand(closed, run.info, { type: 'startRemont' });
+          expect(remont.result.ok, `${seed}: remont`).toBe(true);
+          expect(remont.layoutChanged, `${seed}: układ po remoncie`).toBe(true);
+          run.info = remont.info!;
+          run.state = createEconomy(seed, run.info, undefined, OPEN_FROM, { upgrades: closed.upgrades, equipment: closed.equipment, remontLevel: closed.remontLevel });
+          expect(run.state.remontLevel, `${seed}: remont 1`).toBe(1);
+        }
+        const plan = planFor(price);
+        const fr = run.state.franchisee;
+        fr.installments.push({
+          id: fr.nextInstallmentId++, label: 'Adaptacja lokalu', price, fee: plan.fee, total: plan.total, monthly: plan.monthly, paid: 0, months: plan.months,
+        });
+      };
+      const play = playBot(bot, seed, DAYS * MINUTES_PER_DAY, districtSite(district), setup);
+      return { net: play.reports.reduce((n, r) => n + (r.statement?.net ?? 0), 0) };
+    });
+    netCache.set(key, out);
+  }
+  return out;
+}
+
+const sum = <T>(rs: readonly T[], f: (r: T) => number): number => rs.reduce((n, r) => n + f(r), 0);
 const mean = (rs: Result[], f: (r: Result) => number): number => sum(rs, f) / rs.length;
 
 describe('balans dzielnic na botach (spec §8.4)', () => {
@@ -154,6 +209,29 @@ describe('balans dzielnic na botach (spec §8.4)', () => {
     expect(withSco, 'z SCO bez kamer').toBeGreaterThanOrEqual(3 * plain);
     // Osiedle z tą samą kasą płaci mniej: o resztę robi mnożnik kradzieży Dworca
     expect(withSco).toBeGreaterThan(mean(runs('bierny', 'osiedle', { sco: true }), (r) => r.remanent));
+  }, TIMEOUT);
+
+  it('karty Dworca: mistrz na Dworcu dostaje w 92 dniach co najmniej jedną kartę z DWORZEC_CARD_IDS na każdym seedzie, w innych dzielnicach żadnej', () => {
+    // zmierzone: 2–7 wystąpień na seed (średnio 4,0 na 92 dni, ok. 8% kart); w 24 miesiącach 28–42 (ok. 1,5 na miesiąc)
+    runs('mistrz', 'dworzec').forEach((r, i) => expect(r.dworzec.length, `mistrz na Dworcu, seed ${SEEDS[i]}`).toBeGreaterThanOrEqual(1));
+    // waga 0 poza Dworcem: ani jedna karta Dworca nie wypada gdzie indziej (bierny i mistrz, każdy seed)
+    for (const d of DISTRICT_IDS.filter((x) => x !== 'dworzec')) {
+      for (const bot of ['bierny', 'mistrz'] as const) {
+        runs(bot, d).forEach((r, i) => expect(r.dworzec, `${bot} w dzielnicy ${d}, seed ${SEEDS[i]}`).toEqual([]));
+      }
+    }
+  }, TIMEOUT);
+
+  it('lokal po Traszce: sklep z remontem 1 i pakietem RELET_SHARE zostawia w trzech miesiącach po racie (suma net) więcej niż świeży lokal tej dzielnicy, mistrz i bierny', () => {
+    // zmierzone (po Traszce wobec świeżego, mistrz i bierny): Osiedle 1,80× i 2,55×, Śródmieście 1,80× i 2,34×, Biurowce 1,43× i 1,77×, Dworzec tylko 1,03×
+    // u obu: remont 1 nie podnosi tam wyniku (57,5 wobec 60,0 tys. zł u mistrza), więc o różnicy decyduje sam pakiet. To najcieńszy zapas w tym teście.
+    for (const bot of ['mistrz', 'bierny'] as const) {
+      for (const d of DISTRICT_IDS) {
+        const fresh = sum(netRuns(bot, d, false), (r) => r.net);
+        const relet = sum(netRuns(bot, d, true), (r) => r.net);
+        expect(relet, `${bot} w dzielnicy ${d}: lokal po Traszce (${Math.round(relet)} zł) wobec świeżego (${Math.round(fresh)} zł)`).toBeGreaterThan(fresh);
+      }
+    }
   }, TIMEOUT);
 
   it('rata pakietu każdego wolnego lokalu mieści się w limicie nowego sklepu (35% × 25 tys. zł, zaufanie startowe)', () => {

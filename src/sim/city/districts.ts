@@ -1,4 +1,4 @@
-import { HOUR_CURVE } from '@/sim/economy/catalog';
+import { HOUR_CURVE, OPEN_FROM, OPEN_TO } from '@/sim/economy/catalog';
 import { NEUTRAL_SITE, type SiteMods } from '@/sim/economy/site';
 import { LOT_RANGES } from '@/sim/store/lots';
 import type { LotKind, LotSpec } from '@/sim/store/types';
@@ -33,15 +33,14 @@ export interface DistrictDef {
   package: readonly [number, number];
   buildDays: readonly [number, number];
   /**
-   * Profil dnia (§8.1, 4a.2): surowy kształt natężenia ruchu w godzinach 6–22 (17 liczb, tylko proporcje). `siteHours` normalizuje go do
-   * sumy `HOUR_CURVE`, więc zmienia rozkład klientów w dobie, nie ich liczbę. Ten sam kształt w każdym dniu (weekend Biurowców to
-   * ten kształt razy `weekendTraffic`). null = `HOUR_CURVE`, jak dziś. Liczby startowe [C], stroi je przegląd 4a.2; szczyt Biurowców
-   * jest niższy niż w pierwszym szkicu (2 → 1,75), bo przy ostrzejszych kasy nie nadążały i decydent miał 0,62 wyniku Osiedla (cel ≥ 0,7).
+   * Profil dnia (§8.1, 4a.2): surowy kształt natężenia ruchu w godzinach otwarcia 6–22 (17 liczb, tylko proporcje). `siteHours` normalizuje
+   * go do sumy `HOUR_CURVE`, więc zmienia rozkład klientów w dobie, nie ich liczbę. Ten sam kształt w każdym dniu (weekend Biurowców to
+   * ten kształt razy `weekendTraffic`). null = `HOUR_CURVE`, jak dziś. Liczby [C] po przeglądzie 4a.2 (raport `2026-11-01-miasto-4a2.md`).
    */
   hours: readonly number[] | null;
   /**
    * Trudni klienci (§8.1, 4a.2): mnożnik wagi karty `wiek` w talii sklepu (`difficultWeight`): Dworzec częściej, Śródmieście i Biurowce rzadziej,
-   * Osiedle jak dziś (1). Dworzec ma poza tym trzy własne karty (`DWORZEC_CARD_IDS`). Liczby startowe [C], stroi je przegląd 4a.2.
+   * Osiedle jak dziś (1). Dworzec ma poza tym trzy własne karty (`DWORZEC_CARD_IDS`). Liczby [C] po przeglądzie 4a.2 (raport `2026-11-01-miasto-4a2.md`).
    */
   difficult: number;
 }
@@ -53,8 +52,9 @@ export const DISTRICTS: Record<StoreDistrict, DistrictDef> = {
   biurowce:    { lotKind: 'blok',      traffic: 1.2, weekendTraffic: 0.5,  basket: 1.1,  patience: 0,  repPenalty: 1,   theft: 0.8, rivals: true,  package: [50_000, 60_000], buildDays: [6, 7], hours: [0.45, 1.45, 1.75, 1.45, 0.9, 0.95, 1.55, 1.55, 1.2, 0.9, 0.85, 0.8, 0.4, 0.15, 0.1, 0.1, 0.1], difficult: 0.7 },
 };
 
-const FIRST_HOUR = 6;
-const LAST_HOUR = 22;
+/** Godziny otwarcia sklepu (6–22: ostatnia pełna godzina przed `OPEN_TO`), czyli długość `DistrictDef.hours`. */
+const FIRST_HOUR = OPEN_FROM / 60;
+const LAST_HOUR = OPEN_TO / 60 - 1;
 
 /** Profile dnia dzielnic po normalizacji (`SiteMods.hours`), liczone raz: 24 liczby, 0 poza 6–22, suma 6–22 jak `HOUR_CURVE`. */
 const SITE_HOURS: Record<StoreDistrict, readonly number[] | null> = (() => {
