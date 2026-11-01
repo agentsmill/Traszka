@@ -212,7 +212,7 @@ async function glossary(page, vp, out) {
   await sleep(200);
   await shot(page, vp, '30-slowniczek');
   out.glossary = await page.evaluate(() => [...document.querySelectorAll('.tt-glossary dt')].map((d) => d.textContent));
-  check(out.glossary.length === 9, `${vp.name}: słowniczek ma ${out.glossary.length} haseł`);
+  check(out.glossary.length === 14, `${vp.name}: słowniczek ma ${out.glossary.length} haseł`);   // 9 pojęć pieniędzy z SIM 6 + 5 pojęć miasta z 4a
   await page.getByRole('button', { name: 'Zaczynamy', exact: true }).click();
 }
 
