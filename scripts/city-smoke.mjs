@@ -84,7 +84,7 @@ export const STEPS = [
   { id: 8, name: 'konsola i pageerror bez błędów', sizes: ['telefon', 'desktop'] },
   { id: 9, name: 'fixture po Traszce: pinezka, lista i karta z wykresem, ponowny wynajem, okno „Traszka #2 znów otwarta”, trzy sklepy', sizes: ['telefon', 'desktop'] },
   { id: 10, name: 'trzy placówki: „Biorę lokal” zablokowany tekstem Centrali', sizes: ['telefon', 'desktop'] },
-  { id: 11, name: 'koniec miesiąca przy trzech sklepach: „Sieć” i trzy wyciągi, zaufanie przy każdym', sizes: ['telefon', 'desktop'] },
+  { id: 11, name: 'koniec miesiąca przy trzech sklepach: „Sieć” i trzy wyciągi, zaufanie przy każdym, podgląd końca miesiąca (390 px)', sizes: ['telefon', 'desktop'] },
   { id: 12, name: '390 px: nowe ekrany bez poziomego przewijania, po polsku i po angielsku', sizes: ['telefon'] },
 ];
 /** Dodatkowy przebieg z dymkami miasta (Zadanie 14): tylko telefon. */
@@ -284,6 +284,10 @@ export function widthProblems(m, limit = PHONE_WIDTH) {
 export const RELET_SHARE = 0.3;
 /** Cena ponownego wynajmu (`rentPrice` dla lokalu „po Traszce”): `round(pakiet × 0,3 / 100) × 100`, jak pakiet co 100 zł. */
 export const reletPrice = (pkg) => Math.round((pkg * RELET_SHARE) / 100) * 100;
+/** Dni budowy w lokalu „po Traszce” (`RELET_BUILD_DAYS` w `src/sim/firm/commands.ts`; test pilnuje zgodności). */
+export const RELET_BUILD_DAYS = 2;
+/** Liczba dni tak, jak ją piszą karta lokalu i pinezka budowy: „1 dzień”, „2 dni”. */
+export const daysText = (n) => `${n} ${n === 1 ? 'dzień' : 'dni'}`;
 /** Słupki wykresu godzin na karcie lokalu: godziny otwarcia 6–22 (`HourChart.tsx`). */
 export const HOUR_BARS = 17;
 /** Próg ostrzeżenia o zaufaniu sklepu w tle na liście chipa (`BACKGROUND_TRUST_WARN_BELOW` w `storeSwitcherModel.ts`, czyli dolna granica poziomu „Pod obserwacją”; test pilnuje zgodności). */
@@ -371,14 +375,15 @@ export function pinProblems(m, narrow = 899) {
 }
 
 /**
- * Nowe ekrany kroku 12 i ile pomiarów szerokości każdy ma mieć (okno sieci to „Sieć” i trzy wyciągi). Etykieta pomiaru zaczyna się od nazwy ekranu,
- * po angielsku od „angielski: ” i nazwy.
+ * Nowe ekrany kroku 12 i ile pomiarów szerokości każdy ma mieć (okno sieci i podgląd końca miesiąca to „Sieć” i trzy sklepy). Etykieta pomiaru
+ * zaczyna się od nazwy ekranu, po angielsku od „angielski: ” i nazwy.
  */
 export const NEW_SCREENS = [
   { name: 'karta lokalu z wykresem', min: 1 },
   { name: 'karta lokalu po Traszce', min: 1 },
   { name: 'lista sklepów (trzy)', min: 1 },
   { name: 'okno sieci (cztery zakładki)', min: 4 },
+  { name: 'podgląd końca miesiąca (cztery zakładki)', min: 4 },
 ];
 
 /** Wady pomiarów szerokości nowych ekranów (`widths`: wpisy `checkWidth`): ekran bez wystarczającej liczby pomiarów albo z wadą szerokości. */
@@ -1340,11 +1345,44 @@ async function main(argv) {
   }
 
   /**
+   * Podgląd końca miesiąca przy trzech sklepach (telefon): przycisk prognozy w pasku otwiera okno „Wyciąg na koniec miesiąca”, „policz podgląd” liczy kopię
+   * sieci, a wynik ma cztery zakładki („Sieć” i trzy sklepy; zakładek nie ma przed policzeniem). Każdą zakładkę mierzy `checkWidth`, bo okno modalne ma własne
+   * przewijanie, którego `scrollWidth` dokumentu nie widzi. Na końcu okno się zamyka, a gra stoi jak przedtem.
+   */
+  async function monthPreviewChecks(page, ev, { lang }) {
+    const net = lang === 'en' ? 'Network' : 'Sieć';
+    const prefix = lang === 'en' ? 'angielski: ' : '';
+    const name = `${prefix}podgląd końca miesiąca (cztery zakładki)`;
+    await press(page, '.tt-due');
+    await page.waitForSelector('.tt-preview', { timeout: 10_000 });
+    await sleep(300);
+    await press(page, '.tt-preview .tt-primary.big');
+    await page.waitForSelector('.tt-preview .tt-preview-result', { timeout: 240_000 });   // liczy kopię trzech sklepów do końca miesiąca
+    await sleep(300);
+    const tabs = await page.evaluate(() => [...document.querySelectorAll('.tt-preview .tt-storetabs [role="tab"]')].map((b) => ({
+      text: b.textContent ?? '', on: b.getAttribute('aria-selected') === 'true', cut: b.scrollWidth > b.clientWidth + 1,
+    })));
+    ev.check(tabs.length === 4 && tabs[0].text === net && tabs[0].on && [1, 2, 3].every((i) => new RegExp(`^#${i}\\b`).test(tabs[i]?.text ?? '')), `zakładki podglądu końca miesiąca: ${JSON.stringify(tabs)}`);
+    const summary = await textOf(page, '.tt-preview .tt-netsum');
+    ev.check([1, 2, 3].every((n) => (summary ?? '').includes(`Traszka #${n}`)), `podsumowanie sieci w podglądzie bez trzech sklepów: ${summary?.slice(0, 200)}`);
+    ev.note(`podgląd końca miesiąca (${lang}): zakładki ${tabs.map((t) => t.text).join(' | ')}; ucięte etykiety: ${tabs.filter((t) => t.cut).map((t) => t.text).join(', ') || 'brak'}`);
+    await checkWidth(page, `${name}: ${net}`);
+    await ev.shot(lang === 'en' ? '4a2-12f-angielski-podglad-konca-miesiaca' : '4a2-11e-podglad-konca-miesiaca');
+    for (const n of [1, 2, 3]) {
+      await page.locator('.tt-preview .tt-storetabs [role="tab"]').nth(n).click();
+      await page.waitForFunction((id) => (document.querySelector('.tt-preview .tt-storetitle')?.textContent ?? '').startsWith(`Traszka #${id}`), n, { timeout: 10_000 });
+      await checkWidth(page, `${name}: #${n}`);
+    }
+    await press(page, '.tt-preview .tt-modal-foot .tt-btn');
+    await page.waitForSelector('.tt-preview', { state: 'detached', timeout: 5_000 });
+  }
+
+  /**
    * Gra kolejne miesiące (okno sieci zamykane po każdym), aż któryś otwarty sklep spadnie poniżej progu zaufania z listy chipa (`BACKGROUND_TRUST_WARN_BELOW`),
-   * najwyżej `maxMonths`. Sklep w tle traci zaufanie bez wizyt, więc zajmuje to kilka miesięcy (na fixture „po Traszce” pięć do sześciu); punkt przeglądu planu wymaga, by lista chipa z tym
+   * najwyżej `maxMonths`. Sklep w tle traci zaufanie bez wizyt, więc zajmuje to kilka miesięcy (na fixture „po Traszce” siedem; limit 12 zostawia zapas); punkt przeglądu planu wymaga, by lista chipa z tym
    * ostrzeżeniem mieściła się w 390 px, a bez sklepu poniżej progu nie ma jej jak zobaczyć. Zwraca ostatni odczyt gry i liczbę zagranych miesięcy.
    */
-  async function playUntilTrustWarning(page, ev, { stop, prefix, phone, maxMonths = 8 }) {
+  async function playUntilTrustWarning(page, ev, { stop, prefix, phone, maxMonths = 12 }) {
     let g = await readGame(page);
     let months = 0;
     while (months < maxMonths && !g.stores.some((st) => !st.closed && st.trust < BACKGROUND_TRUST_WARN_BELOW)) {
@@ -1396,7 +1434,8 @@ async function main(argv) {
           relet: document.querySelectorAll('.tt-cpin-po-traszce').length, own: document.querySelectorAll('.tt-cpin-twoj').length, free: document.querySelectorAll('.tt-cpin-wolny').length,
           label: document.querySelector('.tt-cpin-po-traszce .tt-cpin-label')?.textContent ?? null,
         }));
-        ev.check(pins.relet === 1 && pins.label === 'po Traszce' && pins.own === 2, `pinezki: ${JSON.stringify(pins)}`);
+        const openStores = g0.stores.filter((st) => !st.closed).length;   // własne pinezki: jedna na otwarty sklep (z danych gry, a nie liczba na sztywno)
+        ev.check(pins.relet === 1 && pins.label === 'po Traszce' && pins.own === openStores, `pinezki: ${JSON.stringify(pins)}, otwartych sklepów ${openStores}`);
         // lista: wiersz z dopiskiem i ceną po zniżce, reszta z pełnym pakietem
         const rows = await readLots(page);
         const row = rows.find((r) => r.id === lot.id);
@@ -1421,7 +1460,7 @@ async function main(argv) {
         ev.check(card.head === addr, `adres na karcie: ${card.head}`);
         ev.check(card.relet === reletBlockText(fit), `blok wyposażenia: „${card.relet}” (fixture: „${reletBlockText(fit)}”)`);
         ev.check(card.caption === RELET_CAPTION, `podpis zniżki: „${card.caption}”`);
-        ev.check(/^2\s+dni$/.test(card.build ?? ''), `wiersz „Budowa”: „${card.build}”`);
+        ev.check((card.build ?? '').replace(/\s+/g, ' ') === daysText(RELET_BUILD_DAYS), `wiersz „Budowa”: „${card.build}” (oczekiwane „${daysText(RELET_BUILD_DAYS)}”)`);
         ev.check(card.pay.length === 2 && digitsOf(card.pay[0]) === lot.price, `przycisk „za gotówkę”: „${card.pay[0]}” (rentPrice ${lot.price})`);
         chartChecks(ev, card, 'wykres na karcie po Traszce');
         const rata = parseInstallmentButton(card.pay[1]);
@@ -1454,11 +1493,11 @@ async function main(argv) {
         else ev.check(Math.abs(spent) < 0.01, `rata: gotówka zmieniła się o ${money(spent)} zł przed otwarciem`);
         const b = g2.builds[0];
         ev.check(b.lotId === lot.id && b.pay === pay && b.price === lot.price, `budowa: ${JSON.stringify(b)} (cena po Traszce ${lot.price})`);
-        ev.check(b.readyDay - g2.day === 2, `dzień otwarcia ${b.readyDay}, dziś ${g2.day}: budowa ma trwać 2 dni`);
+        ev.check(b.readyDay - g2.day === RELET_BUILD_DAYS, `dzień otwarcia ${b.readyDay}, dziś ${g2.day}: budowa ma trwać ${daysText(RELET_BUILD_DAYS)}`);
         // lokal w budowie to już nie „po Traszce”: pinezka budowy z licznikiem
         await until(page, (id) => !!document.querySelector(`.tt-cpin-budowa[data-lot="${id}"]`) && !document.querySelector(`.tt-cpin-po-traszce[data-lot="${id}"]`), lot.id, 'pinezka budowy zamiast „po Traszce”');
         const count = await textOf(page, `.tt-cpin-budowa[data-lot="${lot.id}"] .tt-cpin-label`);
-        ev.check(/^za 2 dni$/.test(count ?? ''), `licznik na pinezce budowy: „${count}”`);
+        ev.check((count ?? '').replace(/\s+/g, ' ') === `za ${daysText(RELET_BUILD_DAYS)}`, `licznik na pinezce budowy: „${count}” (oczekiwane „za ${daysText(RELET_BUILD_DAYS)}”)`);
         ev.note(`ponowny wynajem ${pay === 'raty' ? 'na raty' : 'gotówką'} w dniu ${g2.day}: cena ${money(lot.price)} zł, gotówka ${money(g1.wallet)} → ${money(g2.wallet)} zł, otwarcie w dniu ${b.readyDay}, pinezka „${count}”`);
 
         // okno „Traszka #2 znów otwarta” w dniu otwarcia
@@ -1542,6 +1581,7 @@ async function main(argv) {
         const g2 = await readGame(page);
         const open = g2.stores.filter((st) => !st.closed);
         ev.check(open.length === 3 && !g2.gameOver && g2.over === null, `po oknie: otwartych ${open.length}, koniec gry ${g2.gameOver}/${g2.over}`);
+        if (phone) await monthPreviewChecks(page, ev, { lang: 'pl' });
         // chip: ostrzeżenie o zaufaniu dokładnie przy sklepach poniżej progu, a ⚠ przy chipie, gdy jakiś sklep w tle woła o uwagę. Gramy do pierwszego takiego sklepu
         const { g: g3, months } = await playUntilTrustWarning(page, ev, { stop: /^Wyciągi od Centrali/, prefix: '', phone });
         const open3 = g3.stores.filter((st) => !st.closed);
@@ -1622,7 +1662,7 @@ async function main(argv) {
     await page.waitForSelector('.tt-city .tt-lotrow', { timeout: 30_000 });
     await pickLot(page, lotId);
     const card = await readCard(page);
-    ev.check(!!card.relet && card.relet.length > 10 && !!card.caption && card.caption !== RELET_CAPTION, `blok „${card.relet}”, podpis „${card.caption}”`);
+    ev.check(!!card.relet && card.relet.length > 10 && card.relet !== reletBlockText(fit) && !!card.caption && card.caption !== RELET_CAPTION, `blok „${card.relet}” (polski: „${reletBlockText(fit)}”), podpis „${card.caption}”`);
     chartChecks(ev, card, 'wykres po angielsku');
     ev.note(`po angielsku: adres „${card.head}”, blok „${card.relet}”, podpis „${card.caption}”, przyciski ${card.pay.map((b) => `„${b.replace(/\s+/g, ' ').trim()}”`).join(' | ')}`);
     await checkWidth(page, 'angielski: karta lokalu po Traszce');
@@ -1661,7 +1701,7 @@ async function main(argv) {
     const rows = await readLots(page);
     await pickLot(page, rows[0].id);
     const free = await readCard(page);
-    ev.check(free.disabled === true && !!free.lock && free.lock.length > 20 && free.relet === null, `karta wolnego lokalu po angielsku: przycisk zablokowany ${free.disabled}, tekst „${free.lock}”`);
+    ev.check(free.disabled === true && !!free.lock && free.lock.length > 20 && free.lock !== LIMIT_TEXT && free.relet === null, `karta wolnego lokalu po angielsku: przycisk zablokowany ${free.disabled}, tekst „${free.lock}” (polski: „${LIMIT_TEXT}”)`);
     chartChecks(ev, free, 'wykres wolnego lokalu po angielsku');
     ev.note(`po angielsku, trzy placówki: „${free.lock}”`);
     await checkWidth(page, 'angielski: karta lokalu z wykresem');
@@ -1678,6 +1718,7 @@ async function main(argv) {
       await networkWindowChecks(page, ev, { phone: true, lang: 'en' });
       await press(page, '.tt-modal:has(h2[data-tut="report"]) .tt-modal-foot .tt-primary');
       await settle(page);
+      await monthPreviewChecks(page, ev, { lang: 'en' });
       // lista chipa z ostrzeżeniem o zaufaniu po angielsku
       const { g: gw, months } = await playUntilTrustWarning(page, ev, { stop: /^Head Office statements/, prefix: 'angielski: ', phone: true });
       const openW = gw.stores.filter((st) => !st.closed);

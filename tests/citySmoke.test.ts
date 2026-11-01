@@ -4,9 +4,10 @@ import { devNull } from 'node:os';
 import { resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  FIXTURES, HOUR_BARS, LAUNCH_ARGS, LIMIT_TEXT, NEW_SCREENS, OPEN_MINUTE, PHONE_WIDTH, RELET_CAPTION, RELET_SHARE, RELET_TITLE, RELET_TRUST, STEPS, TIPS_STEP,
+  FIXTURES, HOUR_BARS, LAUNCH_ARGS, LIMIT_TEXT, NEW_SCREENS, OPEN_MINUTE, PHONE_WIDTH, RELET_BUILD_DAYS as SMOKE_RELET_BUILD_DAYS, RELET_CAPTION, RELET_SHARE,
+  RELET_TITLE, RELET_TRUST, STEPS, TIPS_STEP,
   BACKGROUND_TRUST_WARN_BELOW, USAGE, VIEWPORTS, DEFAULT_PLAYWRIGHT_ROOT, chromiumCandidates, chromiumExecutable, closedFittings,
-  contextOptions, digitsOf, fixtureSave, loadPlaywright, median, metaFor, newScreenProblems, overlapArea, parseArgs, parseInstallmentButton, parsePerf,
+  contextOptions, daysText, digitsOf, fixtureSave, loadPlaywright, median, metaFor, newScreenProblems, overlapArea, parseArgs, parseInstallmentButton, parsePerf,
   pinProblems, previewReady, requestVerdict, reletBlockText, reletPrice, stepResult, storageEntries, summarize, trustRowValues, tutorialMemory,
   widthProblems,
   type MakeRequire, type StepResult, type WidthBox,
@@ -141,6 +142,7 @@ describe('zapis i meta wstawiane do localStorage', () => {
     expect(model.price).toBe(rentPrice(f, lot));
     expect(model.relet).toEqual({ remontLevel: fit[0]!.remontLevel, equipment: fit[0]!.equipment.length, upgrades: fit[0]!.upgrades });
     expect(model.buildDays).toBe(RELET_BUILD_DAYS);
+    expect(model.buildDays).toBe(SMOKE_RELET_BUILD_DAYS);   // stała smoke'a to dni budowy, które pokazuje karta lokalu po Traszce
     expect(session.firm!.stores[0]!.econ.remontLevel).toBe(0);   // #1 bez remontu: jego lokal obok czeka (pinezka „obok”)
   });
 
@@ -400,6 +402,13 @@ describe('plan 4a.2 (Zadanie 9): stałe smoke\'a są zgodne z grą', () => {
     expect(OPEN_MINUTE).toBe(OPEN_FROM);   // sklep z budowy otwiera się o 6:00
   });
 
+  it('dni budowy po Traszce z gry (RELET_BUILD_DAYS) i ich zapis na karcie i pinezce', () => {
+    expect(SMOKE_RELET_BUILD_DAYS).toBe(RELET_BUILD_DAYS);
+    expect(daysText(SMOKE_RELET_BUILD_DAYS)).toBe('2 dni');
+    expect(daysText(1)).toBe('1 dzień');
+    expect(daysText(5)).toBe('5 dni');
+  });
+
   it('teksty dosłowne: odmowa limitu, tytuł okna ponownego otwarcia i podpis zniżki to teksty gry', () => {
     expect(LIMIT_TEXT).toBe(refusalText('limit'));
     expect(RELET_CAPTION).toBe(`po Traszce: ${percentOf(SIM_RELET_SHARE)} ceny`);
@@ -485,13 +494,17 @@ describe('plan 4a.2 (Zadanie 9): nowe ekrany na 390 px', () => {
   const complete = (prefix = '') => [
     entry(`${prefix}karta lokalu z wykresem`), entry(`${prefix}karta lokalu po Traszce`), entry(`${prefix}lista sklepów (trzy)`),
     ...['Sieć', 'wyciąg #1', 'wyciąg #2', 'wyciąg #3'].map((n) => entry(`${prefix}okno sieci (cztery zakładki): ${n}`)),
+    ...['Sieć', '#1', '#2', '#3'].map((n) => entry(`${prefix}podgląd końca miesiąca (cztery zakładki): ${n}`)),
   ];
 
   it('komplet pomiarów bez wad daje pustą listę, osobno po polsku i po angielsku', () => {
     expect(newScreenProblems(complete())).toEqual([]);
     expect(newScreenProblems(complete('angielski: '), 'angielski: ')).toEqual([]);
     expect(newScreenProblems(complete('angielski: '))).toHaveLength(NEW_SCREENS.length);   // angielskie etykiety nie liczą się jako polskie
-    expect(NEW_SCREENS.map((s) => s.name)).toEqual(['karta lokalu z wykresem', 'karta lokalu po Traszce', 'lista sklepów (trzy)', 'okno sieci (cztery zakładki)']);
+    expect(NEW_SCREENS.map((s) => s.name)).toEqual([
+      'karta lokalu z wykresem', 'karta lokalu po Traszce', 'lista sklepów (trzy)', 'okno sieci (cztery zakładki)', 'podgląd końca miesiąca (cztery zakładki)',
+    ]);
+    expect(NEW_SCREENS.find((s) => s.name.startsWith('podgląd końca miesiąca'))!.min).toBe(4);   // „Sieć” i trzy sklepy
   });
 
   it('brakujący ekran, za mało zakładek okna sieci i wylew to wady z nazwą ekranu', () => {
@@ -499,6 +512,17 @@ describe('plan 4a.2 (Zadanie 9): nowe ekrany na 390 px', () => {
     expect(newScreenProblems(missing)).toEqual(['lista sklepów (trzy): zmierzono 0 z 1']);
     const tabs = complete().filter((w) => !w.label.endsWith('wyciąg #3'));
     expect(newScreenProblems(tabs)).toEqual(['okno sieci (cztery zakładki): zmierzono 3 z 4']);
+    // podgląd końca miesiąca: brak całego ekranu, za mało zakładek i wylew w jednej z nich, po polsku i po angielsku
+    const noPreview = complete().filter((w) => !w.label.startsWith('podgląd końca miesiąca'));
+    expect(newScreenProblems(noPreview)).toEqual(['podgląd końca miesiąca (cztery zakładki): zmierzono 0 z 4']);
+    const threePreviewTabs = complete().filter((w) => w.label !== 'podgląd końca miesiąca (cztery zakładki): #3');
+    expect(newScreenProblems(threePreviewTabs)).toEqual(['podgląd końca miesiąca (cztery zakładki): zmierzono 3 z 4']);
+    const widePreview = complete();
+    const at = widePreview.findIndex((w) => w.label === 'podgląd końca miesiąca (cztery zakładki): #2');
+    widePreview[at] = entry('podgląd końca miesiąca (cztery zakładki): #2', false);
+    expect(newScreenProblems(widePreview)).toEqual(['podgląd końca miesiąca (cztery zakładki): #2: dokument 400 px (limit 390)']);
+    const noPreviewEn = complete('angielski: ').filter((w) => !w.label.includes('podgląd końca miesiąca'));
+    expect(newScreenProblems(noPreviewEn, 'angielski: ')).toEqual(['angielski: podgląd końca miesiąca (cztery zakładki): zmierzono 0 z 4']);
     const wide = complete();
     wide[1] = entry('karta lokalu po Traszce', false);
     expect(newScreenProblems(wide)).toEqual(['karta lokalu po Traszce: dokument 400 px (limit 390)']);
@@ -511,5 +535,30 @@ describe('plan 4a.2 (Zadanie 9): nowe ekrany na 390 px', () => {
     expect(SOURCE).toContain('okno sieci (cztery zakładki): ${net}');
     expect(SOURCE).toContain('newScreenProblems(widths)');
     expect(SOURCE).toContain("newScreenProblems(widths, 'angielski: ')");
+  });
+
+  it('źródło otwiera podgląd końca miesiąca z paska prognozy: po polsku w kroku 11 tylko na telefonie, po angielsku w kroku 12, a każdą z czterech zakładek mierzy', () => {
+    expect(SOURCE).toContain("if (phone) await monthPreviewChecks(page, ev, { lang: 'pl' });");
+    expect(SOURCE).toContain("await monthPreviewChecks(page, ev, { lang: 'en' });");
+    const body = SOURCE.slice(SOURCE.indexOf('async function monthPreviewChecks'), SOURCE.indexOf('async function playUntilTrustWarning'));
+    expect(body).toContain("press(page, '.tt-due')");
+    expect(body).toContain('podgląd końca miesiąca (cztery zakładki)');
+    expect(body).toContain('checkWidth(page, `${name}: ${net}`)');
+    expect(body).toContain('checkWidth(page, `${name}: #${n}`)');
+    expect(body).toContain("'.tt-preview .tt-modal-foot .tt-btn'");   // okno się zamyka
+    expect(body).toContain("state: 'detached'");
+  });
+
+  it('plan 4a.2 (poprawki końcowe): dni budowy, liczba własnych pinezek i miesięczny limit z gry, angielski sprawdzany tekstem, a nie długością', () => {
+    expect(SOURCE).not.toMatch(/\^2\\s\+dni\$/);
+    expect(SOURCE).not.toMatch(/\^za 2 dni\$/);
+    expect(SOURCE).not.toContain('readyDay - g2.day === 2');
+    expect(SOURCE).toContain('b.readyDay - g2.day === RELET_BUILD_DAYS');
+    expect(SOURCE).toContain('daysText(RELET_BUILD_DAYS)');
+    expect(SOURCE).not.toContain('pins.own === 2');
+    expect(SOURCE).toContain('pins.own === openStores');
+    expect(SOURCE).toContain('card.relet !== reletBlockText(fit)');
+    expect(SOURCE).toContain('free.lock !== LIMIT_TEXT');
+    expect(SOURCE).toMatch(/playUntilTrustWarning\(page, ev, \{ stop, prefix, phone, maxMonths = 12 \}\)/);
   });
 });

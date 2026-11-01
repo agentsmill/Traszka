@@ -58,6 +58,7 @@ export interface PinMeasure {
 export interface PinReport { problems: string[]; overlaps: { lot: number; with: number; kind: string; area: number }[] }
 export interface WidthEntry { label: string; scroll: number; boxes: number; problems: string[]; ok: boolean }
 export const RELET_SHARE: number;
+export const RELET_BUILD_DAYS: number;
 export const HOUR_BARS: number;
 export const BACKGROUND_TRUST_WARN_BELOW: number;
 export const RELET_TRUST: number;
@@ -67,6 +68,7 @@ export const OPEN_MINUTE: number;
 export const RELET_CAPTION: string;
 export const NEW_SCREENS: readonly { name: string; min: number }[];
 export function reletPrice(pkg: number): number;
+export function daysText(n: number): string;
 export function digitsOf(text: string): number;
 export function closedFittings(saveText: string): ClosedFitting[];
 export function reletBlockText(fit: Pick<ClosedFitting, 'remontLevel' | 'equipment' | 'upgrades'>): string;
