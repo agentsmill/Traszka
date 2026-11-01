@@ -17,6 +17,7 @@ import { xpToNext } from '@/sim/economy/progress';
 import { UPGRADES } from '@/sim/economy/upgrades';
 import { RANKED_SEASON_END_MINUTE } from '@/sim/ranked';
 import { SIM_VERSION } from '@/sim/simVersion';
+import * as cityModule from '@/sim/city/generateCity';
 import { layoutFor } from '@/sim/store/layoutFor';
 import * as layoutModule from '@/sim/store/layoutFor';
 import * as generatorModule from '@/sim/store/generateStore';
@@ -575,6 +576,15 @@ function open(h: Harness, seed = SEED): GameSession {
   return session;
 }
 
+/** Generator miasta nie daje miasta dla `bad` (tak rzuca po stu nieudanych podziałach na dzielnice); reszta seedów jak zawsze. */
+function failCity(...bad: string[]): void {
+  const real = cityModule.generateCity;
+  vi.spyOn(cityModule, 'generateCity').mockImplementation((seed) => {
+    if (bad.includes(seed)) throw new Error('generateCity: brak podziału na dzielnice');
+    return real(seed);
+  });
+}
+
 const savedMeta = (): Meta => JSON.parse(storage.getItem('traszka:meta')!) as Meta;
 
 describe('powłoka gry (createShell)', () => {
@@ -817,6 +827,40 @@ describe('powłoka gry (createShell)', () => {
       expect(storage.getItem('traszka:save:nowszy')).toContain('"schema":99');
     });
 
+    it('generator miasta rzuca dla nowej gry: sklep zastępczy z komunikatem, bez sesji bez firmy w pętli klatek i bez zbędnej budowy sceny', () => {
+      const h = harness({ seeds: ['losowy-1'] });
+      const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {});
+      failCity('bez-miasta');
+
+      expect(h.shell.open({ seed: 'bez-miasta', fresh: true, choice: null })).toBe(true);
+
+      expect(h.shell.session!.seed).toBe('losowy-1');
+      expect(h.shell.session!.firm).toBeDefined();   // sesja w powłoce zawsze ma firmę: pętla klatek jej nie założy
+      expect(h.scene.loads.map((l) => l.seed)).toEqual(['losowy-1']);   // miasto pada przed sceną
+      expect(h.notices).toEqual(['Nie udało się otworzyć sklepu „bez-miasta”. Zaczynamy w nowym.']);
+      expect(h.urls).toEqual(['losowy-1']);
+      expect(errorLog.mock.calls.some((c) => (c[1] as Error | undefined)?.message === 'generateCity: brak podziału na dzielnice')).toBe(true);
+      expect(hasStoredSave('bez-miasta')).toBe(false);
+      expect(() => advanceSession(h.shell.session!, 1, 1, false, emptyStepOut())).not.toThrow();
+      expect(() => h.shell.persist()).not.toThrow();
+    });
+
+    it('generator miasta rzuca dla zapisanego sklepu: zapis zostaje nietknięty, gracz dostaje sklep tymczasowy i komunikat o bezpiecznym zapisie', () => {
+      saveSession(createSession('traszka-1', true));
+      const before = storage.getItem('traszka:save:traszka-1');
+      const h = harness({ seeds: ['losowy-1'] });
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      failCity('traszka-1');
+
+      expect(h.shell.open({ seed: 'traszka-1', fresh: false, choice: null })).toBe(true);
+
+      expect(h.shell.session!.seed).toBe('losowy-1');
+      expect(h.shell.session!.ephemeral).toBe(true);
+      expect(h.notices).toEqual(['Nie udało się zbudować Twojego sklepu — zapis jest bezpieczny, spróbuj odświeżyć stronę']);
+      expect(storage.getItem('traszka:save:traszka-1')).toBe(before);
+      expect(hasStoredSave('losowy-1')).toBe(false);
+    });
+
     it('żaden sklep się nie buduje: false i komunikat, zapis nietknięty, adres bez zmian', () => {
       saveSession(createSession('traszka-1', true));
       const before = storage.getItem('traszka:save:traszka-1');
@@ -921,6 +965,26 @@ describe('powłoka gry (createShell)', () => {
       expect(hasStoredSave('bez-generatora')).toBe(false);
       expect(errorLog).toHaveBeenCalledOnce();
       expect(errorLog.mock.calls[0]).toContain(generatorError);
+    });
+
+    it('generator miasta rzuca dla nowego sklepu: zostaje poprzedni sklep z odtworzoną sceną i komunikatem, zapis nowego nie powstaje', () => {
+      const h = harness();
+      const old = open(h, 'traszka-1');
+      const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {});
+      failCity('bez-miasta');
+
+      expect(h.shell.setSeed('bez-miasta', true)).toBe(false);
+
+      expect(h.shell.session).toBe(old);
+      expect(h.scene.loads).toEqual([{ seed: 'traszka-1', session: old }]);   // nowego świata nie próbowano; poprzedni zbudowany od nowa
+      expect(h.scene.seed).toBe('traszka-1');
+      expect(h.urls).toEqual([]);
+      expect(ui.seed.value).toBe('traszka-1');
+      expect(h.notices).toEqual(['Nie udało się otworzyć sklepu „bez-miasta”. Zostajesz w poprzednim.']);
+      expect(hasStoredSave('bez-miasta')).toBe(false);
+      expect(hasStoredSave('traszka-1')).toBe(true);
+      expect(errorLog).toHaveBeenCalled();
+      expect(firmOf(old).seed).toBe('traszka-1');   // poprzedni sklep dalej ma swoją firmę
     });
 
     it('nowy sklep z `ephemeral` jest tymczasowy: nic go nie zapisze', () => {
@@ -1711,6 +1775,21 @@ describe('powłoka gry (createShell)', () => {
         expect(other.shell.startRanked('inny')).toBe(false);
         expect(ui.confirmRankedStart.value).toEqual({ seed: 'inny', reason: 'active' });
         expect(storage.getItem('traszka:ranked')).toBe('{"schema":99}');   // incompatible nie jest kasowany po cichu
+      });
+
+      it('generator miasta rzuca dla seeda biegu: zostaje zwykły sklep z komunikatem, a zapisu biegu nie ma', () => {
+        const h = harness();
+        const old = open(h, 'traszka-1');
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+        failCity('bez-miasta');
+
+        expect(h.shell.startRanked('bez-miasta')).toBe(false);
+
+        expect(h.shell.session).toBe(old);
+        expect(old.mode).toBe('casual');
+        expect(h.notices).toEqual(['Nie udało się zacząć biegu rankingowego „bez-miasta”. Zostajesz w poprzednim sklepie.']);
+        expect(storage.getItem('traszka:ranked')).toBeNull();
+        expect(h.scene.seed).toBe('traszka-1');
       });
 
       it('szuflada ma pierwszeństwo przed trwającym biegiem', () => {

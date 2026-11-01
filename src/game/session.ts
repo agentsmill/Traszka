@@ -15,7 +15,7 @@ import { GENERATOR_VERSION } from '@/sim/store/generateStore';
 import { layoutFor } from '@/sim/store/layoutFor';
 import { sanitizeLayout } from '@/sim/store/sanitize';
 import type { StoreLayout } from '@/sim/store/types';
-import { FIRM_SAVE_SCHEMA, firmEnvelopeOf, isNewerSave, restoreFirmFrom } from './firmSave';
+import { FIRM_SAVE_SCHEMA, firmEnvelopeOf, isNewerSave, restoreFirmFrom, type FirmSaveEnvelope } from './firmSave';
 import { GAME_VERSION } from './version';
 
 /**
@@ -162,13 +162,20 @@ export const envelopeOf = (s: GameSession): SaveEnvelope => ({
 
 /**
  * Zapis w przeglądarce (localStorage): koperta firmy w schemacie 3 pod `traszka:save:<seed>`, także przy jednym sklepie (firma powstaje
- * tu, jeśli jeszcze jej nie ma). Błędy (tryb prywatny, brak miejsca) są ciche: gra działa dalej bez zapisu. Sesja rankingowa
+ * tu, jeśli jeszcze jej nie ma; gdy miasto się nie zbuduje, zapisu nie ma i stary zostaje). Błędy (tryb prywatny, brak miejsca) są ciche: gra działa dalej bez zapisu. Sesja rankingowa
  * (`mode: 'ranked'`) nie ma tu zapisu: jej bieg żyje pod własnym kluczem (`saveRanked` w `rankedRun.ts`, schemat 2), a zwykły sklep o tym
  * samym seedzie i `traszka:last` zostają, jak były.
  */
 export function saveSession(s: GameSession): void {
   if (s.ephemeral || s.mode === 'ranked') return;
-  const envelope = firmEnvelopeOf(firmOf(s));
+  let envelope: FirmSaveEnvelope;
+  try {
+    envelope = firmEnvelopeOf(firmOf(s));
+  } catch (error) {
+    // firma (miasto z seeda) się nie złożyła: bez zapisu, a poprzedni zostaje, jakim był; sesje w grze mają firmę od otwarcia (`openStore`)
+    console.error(`Zapis sklepu „${s.seed}” pominięty: firma się nie złożyła.`, error);
+    return;
+  }
   try {
     localStorage.setItem(SAVE_PREFIX + s.seed, JSON.stringify(envelope));
     localStorage.setItem(LAST_KEY, s.seed);

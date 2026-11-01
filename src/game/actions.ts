@@ -783,6 +783,7 @@ export function createShell(deps: ShellDeps): GameShell {
     const previousSeed = scene.seed ?? ui.seed.value;
     try {
       const next = make();
+      if (next) firmOf(next);   // miasto z seeda przed sceną: gdy generator rzuci, wraca poprzedni sklep z komunikatem, jak po złym świecie
       shell.session = next;
       ui.selection.value = null;
       scene.load(next ? next.econ.seed : seed, next);   // sesja z zapisu może stać na drugim sklepie firmy: scena ładuje jego seed
@@ -1076,7 +1077,10 @@ export function createShell(deps: ShellDeps): GameShell {
       try {
         // Każda nieudana próba budowy sprząta po sobie scenę (loadStore), więc kolejna zaczyna od czystej; do kopii idzie tylko
         // zapis, którego nie da się przeczytać.
-        const build = (opening: GameSession): void => { shell.session = opening; scene.load(opening.econ.seed, opening); };
+        // Firma, a z nią miasto z seeda, powstaje przed sceną: gdy generator miasta rzuci, to ta sama porażka budowy co zły świat, więc
+        // działa cały łańcuch zastępstw `openStore` (zapis zostaje, gracz ma działający sklep i komunikat), a sesja bez firmy nie
+        // trafia do pętli klatek. Sesja z zapisu schematu 3 ma firmę od razu.
+        const build = (opening: GameSession): void => { firmOf(opening); shell.session = opening; scene.load(opening.econ.seed, opening); };
         const partner = partnerOf(shell.meta);
         session = openStore(choice
           ? openRequestFor(choice, { partner, randomSeed: deps.randomSeed, build })   // ekran startowy: nigdy `fresh`

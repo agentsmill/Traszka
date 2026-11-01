@@ -271,6 +271,24 @@ describe('koperta zapisu', () => {
     expect(storage.getItem(key(BLOK))).toBeNull();
   });
 
+  it('miasto się nie składa (generator rzuca): saveSession nie rzuca, niczego nie dotyka, a poprzedni zapis i traszka:last zostają', async () => {
+    playedSession(BLOK);
+    const before = storage.getItem(key(BLOK));
+    const last = lastSavedSeed();
+    const fresh = createSession(BLOK, true);   // sesja bez firmy: pierwsze `firmOf` złoży miasto
+    const city = await import('@/sim/city/generateCity');
+    vi.spyOn(city, 'generateCity').mockImplementation(() => { throw new Error('generateCity: brak podziału na dzielnice'); });
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    expect(() => saveSession(fresh)).not.toThrow();
+
+    expect(fresh.firm).toBeUndefined();
+    expect(storage.getItem(key(BLOK))).toBe(before);
+    expect(lastSavedSeed()).toBe(last);
+    expect(errorLog).toHaveBeenCalledOnce();
+    expect(String(errorLog.mock.calls[0]![0])).toContain(BLOK);
+  });
+
   it('brak miejsca albo tryb prywatny: zapis i odczyt nie rzucają', () => {
     const s = createSession(BLOK, true);
     storage.failWrites = true;
