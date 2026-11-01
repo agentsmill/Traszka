@@ -75,6 +75,8 @@ export interface GameSession {
   fromSave: boolean;
   /** Komunikat dla gracza po otwarciu sklepu (np. uszkodzony zapis poszedł do kopii) albo null. */
   loadNotice: string | null;
+  /** Pozostałość prestiżu „Otwórz kolejną Traszkę”, nieużywana; zostaje, bo bieg rankingowy (`rankedRun.ts`, nietykalny) ją ustawia. */
+  retired?: boolean;
   /**
    * Sklep tymczasowy: nic go nie zapisze ani nie skasuje zapisu pod jego seedem. Taką sesją gra otwiera się wtedy, gdy zapis
    * pod tym seedem jest cudzy (z nowszej wersji gry) i nie wolno go ruszyć, a gracz i tak ma dostać działającą grę.

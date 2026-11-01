@@ -95,7 +95,7 @@ export function createRankedSession(seed: string): GameSession {
   const { state, layout, info } = freshRun(seed);
   return {
     seed, mode: 'ranked', econ: state, layout, info, clock: { acc: 0 }, layoutLevel: 0, fromSave: false, loadNotice: null,
-    ephemeral: false, run: newRunLog(seed, 'ranked'),
+    retired: false, ephemeral: false, run: newRunLog(seed, 'ranked'),
   };
 }
 
