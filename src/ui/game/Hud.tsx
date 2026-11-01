@@ -136,6 +136,7 @@ export function Hud({ controls, game, ranking = false }: { controls: Controls; g
   const { s } = view;
   const closed = isClosedForRemont(s);
   const xpFrac = Math.min(1, s.xp / xpToNext(s.level));
+  const cashText = zl(cash);
   return (
     <header class="tt-hud2">
       <div class="tt-hud-row">
@@ -145,7 +146,7 @@ export function Hud({ controls, game, ranking = false }: { controls: Controls; g
           <span>{s.level}</span>
         </button>
         <span data-tut="cash" class={`tt-cash${s.cash < 0 ? ' neg' : ''}${s.cash < DEBT_WARN ? ' debt' : ''}${rising ? ' up' : ''}`}
-          title={s.cash < DEBT_WARN ? tr(debtWarningText(s.cash)) : t`Gotówka`}>{zl(cash)}</span>
+          style={{ '--len': cashText.length }} title={s.cash < DEBT_WARN ? tr(debtWarningText(s.cash)) : t`Gotówka`}>{cashText}</span>
         <span class="tt-stat" title={t`Reputacja sklepu (0–100): ściąga klientów`}>⭐ {int(s.reputation)}</span>
         <span class="tt-stat" title={t`Ogonki: nagrody za cele, wydajesz w Ulepszeniach`}>🦎 {int(s.ogonki)}</span>
         <TrustChip value={s.tycoon.trust.value} />
@@ -159,7 +160,9 @@ export function Hud({ controls, game, ranking = false }: { controls: Controls; g
       <StoreSwitcher game={game} />
       <div class="tt-hud-row">
         <span class="tt-clock">
-          {dateText(dayOf(s.minute))} · <b>{formatClock(s.minute)}</b>{closed ? t` · remont` : ''}
+          <span class="tt-clock-date">{dateText(dayOf(s.minute))}</span>
+          <span class="tt-clock-time"> · <b>{formatClock(s.minute)}</b></span>
+          {closed && <span class="tt-clock-remont">{t` · remont`}</span>}
         </span>
         <ClaimChip count={s.milestonesReady.length} />
         <div class="tt-seg" data-tut="speed" role="group" aria-label={t`Prędkość czasu`}>

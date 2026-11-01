@@ -334,16 +334,9 @@
   .tt-trust-tier { display: inline-block; }
 }
 
-/*
- * Wąski telefon (390 px): ciaśniejsze znaczki i przyciski, żeby gotówka, ⭐, 🦎, 🤝, 🏆 i ⚙ zmieściły się w jednym rzędzie. Zapas jest na
- * milion złotych na 360 px i kilkanaście milionów na 375 px (tyle co przed dojściem 🏆): ⚙ nie może wypaść poza ekran.
- */
-@media (max-width: 440px) {
-  .tt-hud-row { gap: 4px; }
-  .tt-stat { padding: 4px 5px; }
-  .tt-cash { font-size: 17px; }
-  .tt-hud-tools { gap: 4px; }
-  .tt-hud-tools .tt-iconbtn { min-width: 32px; padding: 0 5px; }
+/* od 820 do 999 px górna linia paska dzieli miejsce z zegarem i prędkością (układ dwóch linii niżej): nazwa progu ustępuje, zostaje „🤝 62” */
+@media (min-width: 820px) and (max-width: 999px) {
+  .tt-trust-tier { display: none; }
 }
 
 /* 🏆 i ⚙ razem na prawym końcu rzędu (bez rankingu w grze zostaje sam ⚙) */
@@ -354,14 +347,59 @@
   margin-left: auto;
 }
 
+/*
+ * Telefon (< 640 px): ciaśniejsze znaczki i przyciski, żeby gotówka, ⭐, 🦎, 🤝, 🏆 i ⚙ zmieściły się w jednym rzędzie, a ⚙ nie wypadło
+ * poza ekran. Gotówka sama dobiera rozmiar do wolnego miejsca: `Hud.tsx` podaje `--len` (długość zapisu „1 234 567 zł”), `--room` to
+ * szerokość rzędu bez reszty jego zawartości, a szerokość znaku liczy się na ok. 0,52 em. Do sześciu cyfr zostaje pełny rozmiar
+ * (`--cash-max`), siedmio- i ośmiocyfrowa kwota (wspólna gotówka sieci) robi się odrobinę mniejsza zamiast wypychać ⚙ za ekran.
+ * Ten blok stoi za regułą `.tt-hud-tools` wyżej, bo przy równej swoistości o wyniku decyduje kolejność.
+ */
+@media (max-width: 639px) {
+  .tt-hud-row { gap: 4px; }
+  .tt-stat { padding: 4px 5px; }
+  .tt-hud-tools { gap: 4px; }
+  .tt-hud-tools .tt-iconbtn { min-width: 32px; padding: 0 5px; }
+  .tt-cash {
+    --cash-max: 19px;
+    --room: calc(100vw - 304px - var(--pill, 0px));
+    font-size: clamp(11px, calc(var(--room) / (var(--len, 10) * 0.52)), var(--cash-max));
+  }
+  .tt-cash.debt { --pill: 12px; }   /* czerwona plakietka debetu ma po 6 px wypełnienia z każdej strony */
+}
+
+@media (max-width: 440px) {
+  .tt-cash { --cash-max: 17px; }
+}
+
+/* zegar: gdy brakuje miejsca, najpierw skraca się data (wielokropek), potem dopisek „remont”; godzina zostaje zawsze w całości */
 .tt-clock {
+  display: flex;
   flex: 1;
   min-width: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
   font-weight: 500;
   font-variant-numeric: tabular-nums;
+}
+
+.tt-clock-date {
+  flex: 0 1000 auto;   /* wielokrotnie silniejsze kurczenie niż dopisek, więc data znika pierwsza */
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tt-clock-time {
+  flex: none;
+  white-space: pre;
+}
+
+.tt-clock-remont {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: pre;
 }
 
 .tt-clock b {
@@ -512,18 +550,30 @@
 }
 
 @media (max-width: 400px) {
-  .tt-hud-row { gap: 4px; }
+  .tt-hud-row { gap: 3px; }
+  .tt-hud-tools { gap: 3px; }
   .tt-hud-row .tt-iconbtn { min-width: 30px; padding: 0 4px; }
-  /* siedmiocyfrowa gotówka (1 234 567 zł) obok „?” i ⚙: węższe znaczki, żeby rząd się nie wylewał przy 375 px */
-  .tt-hud-row .tt-stat { padding: 4px 5px; }
+  /* siedmiocyfrowa gotówka (1 234 567 zł) obok „?” i ⚙: węższe znaczki i poziom, żeby rząd się nie wylewał przy 360–390 px */
+  .tt-hud-row .tt-stat { padding: 4px; }
+  .tt-level { width: 30px; height: 30px; }
+  .tt-level span { width: 22px; height: 22px; font-size: 12px; }
+  .tt-cash { --room: calc(100vw - 282px - var(--pill, 0px)); }
 }
 
+/*
+ * Od 820 px pasek to dwie linie siatki, tak jak przy sieci (city.css): u góry gotówka ze znaczkami i zegar z prędkością, niżej trzy
+ * kieszenie z pełnymi etykietami. W jednej linii te trzy rzeczy nie mieszczą się razem, nawet na 1280 px (po angielsku i przy
+ * siedmiocyfrowej gotówce zegar i przyciski prędkości lądowały za krawędzią ekranu). `tt-net` ma własną siatkę, więc reguły
+ * `:not(.tt-net)` jej nie dotykają.
+ */
 @media (min-width: 820px) {
-  .tt-ui { --hud-h: 52px; }
-  .tt-hud2 { flex-direction: row; align-items: center; gap: 14px; }
-  .tt-hud-row:first-child { flex: 0 0 auto; }
-  .tt-hud-row:last-child { flex: 1; }
   .tt-hud-tools { order: 10; }
+  .tt-ui:not(.tt-net) { --hud-h: 82px; }
+  .tt-ui:not(.tt-net) .tt-hud2 { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 6px 14px; }
+  .tt-ui:not(.tt-net) .tt-hud2 > .tt-hud-row:first-child { grid-area: 1 / 1; }
+  .tt-ui:not(.tt-net) .tt-hud2 > .tt-hud-row:last-child { grid-area: 1 / 2; }
+  .tt-ui:not(.tt-net) .tt-hud-due { grid-area: 2 / 1 / 3 / 3; }
+  .tt-ui:not(.tt-net) .tt-hud-due .tt-due { max-width: 720px; }   /* na szerokim ekranie trzy kieszenie nie rozjeżdżają się po całym pasku */
 }
 
 /* --- Dolne zakładki ---------------------------------------------------------------------------------- */
