@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { lang } from '@/i18n';
-import { FITTINGS_LEFT, closeFirstStore, closeStoreFitted, openSecond, partnerSession, reletFirm, reopenLot } from '../../../tests/firmKit';
+import { FITTINGS_LEFT, closeStoreFitted, openSecond, partnerSession, reletFirm, reopenLot } from '../../../tests/firmKit';
 import { createSession, firmOf } from '@/game/session';
 import { DISTRICTS } from '@/sim/city/districts';
 import { lotById } from '@/sim/city/generateCity';
