@@ -217,7 +217,8 @@ describe('dymki miasta: warunki, cele i teksty', () => {
   it('tip-siec: w oknie końca miesiąca z dwoma sklepami, wskazuje podsumowanie sieci; pokazuje się nad oknem', () => {
     const { s } = game();
     expect(ids(ctxOf(s, { stores: 2, networkOpen: false, windowOpen: true }))).toEqual([]);
-    expect(ids(ctxOf(s, { stores: 1, networkOpen: true, windowOpen: true }))).toEqual([]);
+    // okno sieci wystarczy: drugi sklep mógł się zamknąć w minucie tego samego zamknięcia miesiąca
+    expect(ids(ctxOf(s, { stores: 1, networkOpen: true, windowOpen: true }))).toEqual(['tip-siec']);
     expect(tipsFor(ctxOf(s, { stores: 2, networkOpen: true, windowOpen: true }), MEM)[0])
       .toMatchObject({ id: 'tip-siec', inWindow: true, targets: ['network-summary'], text: SIEC });
   });

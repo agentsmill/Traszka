@@ -72,7 +72,7 @@ export const CITY_TIPS: readonly TipDef[] = [
   {
     id: 'tip-siec',
     inWindow: true,
-    when: (ctx) => ctx.networkOpen && ctx.stores >= 2,
+    when: (ctx) => ctx.networkOpen,   // okno sieci samo oznacza dwa sklepy (jeden mógł się zamknąć w tej samej minucie)
     targets: () => ['network-summary'],
     text: () => t`Każdy sklep ma swój wyciąg, ale gotówka jest jedna: minus w jednym sklepie zjada plus w drugim.`,
   },

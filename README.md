@@ -26,7 +26,7 @@ w tle pracuje sam, a jego karty rozstrzyga zastępca (odpowiedzią zaznaczoną z
 a koniec miesiąca daje wyciąg każdego sklepu i podsumowanie sieci. Sklep można wypowiedzieć (miesiąc wypowiedzenia i rozliczenie
 końcowe). W sezonie rankingowym miasto tylko oglądasz: gra zostaje na jednym sklepie.
 
-Przycisk „Otwórz kolejną Traszkę” (po drugim remoncie albo na 20. poziomie) zastąpiło miasto. Punkty Partnera i dochód z sieci zostają.
+Miasto zastąpiło przycisk „Otwórz kolejną Traszkę” (po drugim remoncie albo na 20. poziomie). Punkty Partnera i dochód z sieci zostają.
 
 Sterowanie: przeciąganie przesuwa widok, szczypanie albo kółko myszy przybliża, ⟲ ⟳ albo Q/E obraca kamerę.
 Spacja pauzuje, F3 pokazuje licznik FPS. Model ekonomii i liczby: [docs/ekonomia.md](docs/ekonomia.md).
