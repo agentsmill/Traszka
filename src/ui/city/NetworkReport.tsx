@@ -10,8 +10,8 @@ import { nameOf, resolveTab, storeTabDefs, tabState } from './tabState';
 
 /*
  * Okno końca miesiąca przy kilku sklepach (spec §11.5): przełącznik segmentowy „Sieć / #1 Ogrodowa / #2 Lipowa”. „Sieć” to podsumowanie
- * (`data-tut="network-summary"`): „Zostaje Ci” każdego sklepu i razem, pakiety otwarcia zapłacone gotówką, gotówka po zamknięciu i wynik
- * każdego sklepu. Dalej wyciąg każdego sklepu (ten sam widok co raport jednego sklepu). Te same zakładki ma protokół remanentu
+ * (`data-tut="network-summary"`): „Zostaje Ci” każdego sklepu i razem, pakiety otwarcia zapłacone gotówką, rozliczenie końcowe zamkniętej
+ * placówki, gotówka po zamknięciu i wynik każdego sklepu. Dalej wyciąg każdego sklepu (ten sam widok co raport jednego sklepu). Te same zakładki ma protokół remanentu
  * (`RemanentModal`) i podgląd końca miesiąca (`MonthPreviewModal`); przełącznik (`StoreTabs.tsx`) i wybór zakładki (`tabState.ts`) są osobno.
  */
 
@@ -20,8 +20,8 @@ const row = (label: string, value: string, total = false) => (
 );
 
 /**
- * Podsumowanie sieci: „Zostaje Ci” każdego sklepu i razem, pakiety otwarcia za gotówkę (gdy były), gotówka po zamknięciu z tonem z progów
- * debetu i wynik każdego sklepu. `tip`: czy blok ma być celem dymka „pierwszy raz” (podgląd końca miesiąca nim nie jest). Zwykła funkcja
+ * Podsumowanie sieci: „Zostaje Ci” każdego sklepu i razem, pakiety otwarcia za gotówkę i rozliczenie końcowe zamkniętej placówki (gdy były:
+ * gotówka po zamknięciu już je zawiera, więc liczby się zgadzają), gotówka po zamknięciu z tonem z progów debetu i wynik każdego sklepu. `tip`: czy blok ma być celem dymka „pierwszy raz” (podgląd końca miesiąca nim nie jest). Zwykła funkcja
  * wywoływana z komponentów, więc testy `vnodeTree` widzą jej wiersze.
  */
 export function NetworkSummaryView({ summary, f, tip = true }: { summary: NetworkSummary; f: FirmState | null; tip?: boolean }) {
@@ -31,6 +31,7 @@ export function NetworkSummaryView({ summary, f, tip = true }: { summary: Networ
       {summary.stores.map((s) => row(nameOf(f, s.id), signedZl(s.net)))}
       {row(t`Razem`, signedZl(summary.total), true)}
       {summary.invest > 0 && row(t`Pakiety otwarcia za gotówkę`, minusZl(summary.invest))}
+      {summary.settlement > 0 && row(t`Rozliczenie końcowe zamkniętej placówki`, minusZl(summary.settlement))}
       <div class="tt-row"><span>{t`Gotówka po zamknięciu`}</span><span class={`tt-free ${cashTone(summary.wallet)}`}>{money(summary.wallet)}</span></div>
       {summary.wallet < DEBT_WARN && <p class="tt-hint warn">{tr(debtWarningText(summary.wallet))}</p>}
       <h3>{t`Wynik miesiąca`}</h3>

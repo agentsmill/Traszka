@@ -286,7 +286,7 @@ describe('firma i podsumowanie sieci w stanie interfejsu', () => {
 
   it('networkReport otwiera okno (gra stoi), closeNetworkReport je zamyka', () => {
     expect(networkReport.value).toBeNull();
-    networkReport.value = { summary: { label: 'wrzesień 2026', wallet: 1000, stores: [{ id: 1, profit: 10, net: 20 }, { id: 2, profit: -5, net: -7 }], invest: 0, total: 13 }, reports: [] };
+    networkReport.value = { summary: { label: 'wrzesień 2026', wallet: 1000, stores: [{ id: 1, profit: 10, net: 20 }, { id: 2, profit: -5, net: -7 }], invest: 0, settlement: 0, total: 13 }, reports: [] };
     expect(isWindowOpen()).toBe(true);
     closeNetworkReport();
     expect(networkReport.value).toBeNull();

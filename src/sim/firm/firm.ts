@@ -208,7 +208,9 @@ export function stepFirmMinute(f: FirmState, out: FirmStepOut): void {
   }
 
   // 5. zamknięcia sklepów; zamknięcie ostatniego sklepu kończy grę (`over = 'closed'`) jak dziś, bez rozliczenia
+  const eventsBefore = out.firm.length;   // `out` zbiera wiele minut: rozliczenia tej minuty to wpisy dopisane od tego miejsca
   if (f.over === null) closeDueStores(f, stepped, out);
+  const settlement = out.firm.slice(eventsBefore).reduce((n, e) => (e.kind === 'settlement' && typeof e.params?.total === 'number' ? n + e.params.total : n), 0);
   if (stepped.some(({ st, events }) => st.id === 1 && events.some((e) => e.kind === 'month'))) grantPartnerIfDue(f, out);
 
   const months = stepped.flatMap(({ st, events }) => events.filter((e) => e.kind === 'month' && e.report).map((e) => ({ id: st.id, report: e.report! })));
@@ -217,7 +219,7 @@ export function stepFirmMinute(f: FirmState, out: FirmStepOut): void {
     out.firm.push({
       kind: 'network-report',
       summary: {
-        label: months[0]!.report.label, wallet: f.person.wallet, stores, invest: f.monthInvest, total: stores.reduce((n, s) => n + s.net, 0),
+        label: months[0]!.report.label, wallet: f.person.wallet, stores, invest: f.monthInvest, settlement, total: stores.reduce((n, s) => n + s.net, 0),
       },
     });
     // pakiet zapłacony, gdy działał jeszcze jeden sklep (budowa przez koniec miesiąca), czeka na pierwsze podsumowanie sieci (§11.5)

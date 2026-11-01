@@ -407,6 +407,25 @@ describe('podgląd końca miesiąca przy firmie', () => {
     expect(text).toContain(plain(`Obrót${zl(two.revenue)}`));
   });
 
+  it('podgląd z rozliczeniem końcowym pokazuje je w zakładce „Sieć” między pakietami a gotówką po zamknięciu', () => {
+    networkWorld();
+    const statement = buildStatement({
+      month: { margin: 9_000, bonus: 0, pallets: 0, wages: 4_000, media: 0 }, guarantee: 0, installments: 0, remanent: 0, spent: 0, fines: 0, other: 0, cashBefore: 5_000, partial: false,
+    });
+    const part = (id: number): FirmPreview['stores'][number] => ({
+      id, preview: { label: 'wrzesień 2026', cashNow: 5_000, cashAfter: statement.cashAfter, lowestCash: 5_000, revenue: 90_000, customers: 800, statement, profit: statement.result, gameOver: null, endedEarly: false },
+    });
+    const withSettlement: FirmPreview = {
+      label: 'wrzesień 2026', cashNow: 5_000, cashAfter: 40_000, lowestCash: 5_000, stores: [part(1), part(2)], invest: 0, settlement: 12_300, gameOver: null, endedEarly: false,
+    };
+    monthPreview.value = { phase: 'done', result: withSettlement.stores[0]!.preview, ms: 1, firm: withSettlement };
+    const text = plain(textOf(shown()));
+    expect(text).toContain(plain(`Rozliczenie końcowe zamkniętej placówki${minusZl(12_300)}`));
+    expect(text.indexOf('Rozliczenie końcowe zamkniętej placówki')).toBeLessThan(text.indexOf('Gotówka po zamknięciu', text.indexOf('Razem')));
+    monthPreview.value = { ...monthPreview.value, firm: { ...withSettlement, settlement: 0 } };
+    expect(plain(textOf(shown()))).not.toContain('Rozliczenie końcowe zamkniętej placówki');
+  });
+
   it('ostrzeżenie sieci: koniec po wypowiedzeniu ostatniej placówki, debet i dołek w trakcie miesiąca', () => {
     const base = { endedEarly: false, gameOver: null as FirmPreview['gameOver'], cashAfter: 5_000, lowestCash: 5_000 };
     expect(previewWarning(base)).toBeNull();
@@ -425,7 +444,7 @@ describe('podgląd końca miesiąca przy firmie', () => {
     const part = (id: number): FirmPreview['stores'][number] => ({
       id, preview: { label: '', cashNow: 5_000, cashAfter: -150_000, lowestCash: -150_000, revenue: 0, customers: 0, statement, profit: 0, gameOver: 'debt', endedEarly: true },
     });
-    const early: FirmPreview = { label: '', cashNow: 5_000, cashAfter: -150_000, lowestCash: -150_000, stores: [part(1), part(2)], invest: 0, gameOver: 'debt', endedEarly: true };
+    const early: FirmPreview = { label: '', cashNow: 5_000, cashAfter: -150_000, lowestCash: -150_000, stores: [part(1), part(2)], invest: 0, settlement: 0, gameOver: 'debt', endedEarly: true };
     monthPreview.value = { phase: 'done', result: early.stores[0]!.preview, ms: 1, firm: early };
     const times = (): number => plain(textOf(shown())).split('To naliczenia do chwili końca gry').length - 1;
     expect(times()).toBe(1);   // zakładka „Sieć”

@@ -693,6 +693,7 @@ describe('wspólne i osobne', () => {
     expect(sum.label).toBe(rep.get(1)!.label);
     expect(sum.stores).toEqual([1, 2].map((id) => ({ id, profit: rep.get(id)!.profit, net: rep.get(id)!.statement!.net })));
     expect(sum.invest).toBe(4_600);
+    expect(sum.settlement).toBe(0);   // żaden sklep nie traci umowy
     expect(sum.total).toBeCloseTo(sum.stores[0]!.net + sum.stores[1]!.net, 5);
     expect(sum.wallet).toBe(f.person.wallet);
     expect(f.monthInvest).toBe(0);

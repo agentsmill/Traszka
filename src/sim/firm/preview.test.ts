@@ -475,6 +475,9 @@ describe('podgląd końca miesiąca dla sieci: koniec okresu wypowiedzenia', () 
     const total = settlement[0]!.params!.total as number;
     expect(total).toBeGreaterThan(0);   // niespłacone raty pakietu
     expectSameAsReal(preview, real);
+    // podgląd pokazuje to samo rozliczenie co podsumowanie sieci z zamknięcia, więc jego liczby też się zgadzają
+    expect(preview.settlement).toBe(total);
+    expect(real.summary!.settlement).toBe(total);
     // gotówka firmy w podglądzie to wyciągi obu sklepów bez rozliczenia sklepu #2
     const last = preview.stores[1]!.preview;
     expect(last.cashAfter - total).toBeCloseTo(preview.cashAfter, 6);

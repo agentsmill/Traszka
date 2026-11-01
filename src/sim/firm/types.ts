@@ -62,9 +62,13 @@ export interface FirmEvent { kind: FirmEventKind; storeId?: number; params?: Rec
 
 /**
  * Podsumowanie sieci przy zamknięciu miesiąca w kilku sklepach: wynik (`profit`, do statusu) i „Zostaje Ci” (`net`) każdego sklepu,
- * pakiety otwarcia zapłacone gotówką w tym miesiącu (`invest`), `total` to „Zostaje Ci” razem (suma `net`), a `wallet` gotówka po zamknięciu.
+ * pakiety otwarcia zapłacone gotówką w tym miesiącu (`invest`), rozliczenie końcowe sklepu, któremu w tej minucie skończyła się umowa
+ * (`settlement`, razem; 0, gdy nie było; zeszło już z gotówki), `total` to „Zostaje Ci” razem (suma `net`), a `wallet` gotówka po zamknięciu
+ * (po rozliczeniu), więc razem z `total`, `invest` i `settlement` liczby w podsumowaniu się zgadzają.
  */
-export interface NetworkSummary { label: string; wallet: number; stores: { id: number; profit: number; net: number }[]; invest: number; total: number }
+export interface NetworkSummary {
+  label: string; wallet: number; stores: { id: number; profit: number; net: number }[]; invest: number; settlement: number; total: number;
+}
 
 /** Zdarzenia jednej minuty firmy: aktywnego sklepu bez zmian, sklepów w tle z id i ważnością, firmy jako rodzaj z parametrami. */
 export interface FirmStepOut { active: EconEvent[]; background: BackgroundEvent[]; firm: FirmEvent[] }

@@ -87,6 +87,7 @@ export const FIRM_UI: Dict = {
   // okno końca miesiąca w kilku sklepach i wiersz sieci z poprzednich gier (`NetworkReport.tsx`, `storeSwitcherModel.ts`)
   'Sieć': 'Network',
   'Pakiety otwarcia za gotówkę': 'Opening packages paid in cash',
+  'Rozliczenie końcowe zamkniętej placówki': 'Final settlement for the closed branch',
   'Z poprzednich gier: {0} {1}, {2} dziennie, {3} {4}': (n: number, shops: string, income: string, p: number, points: string) =>
     `From previous games: ${n} ${shops}, ${income} a day, ${p} ${points}`,
 };

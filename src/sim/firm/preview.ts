@@ -36,6 +36,8 @@ export interface FirmPreview {
   stores: { id: number; preview: MonthPreview }[];
   /** Pakiety otwarcia zapłacone gotówką od ostatniego podsumowania sieci (to samo pole co w podsumowaniu sieci przy zamknięciu). */
   invest: number;
+  /** Rozliczenie końcowe sklepu, któremu w scenariuszu kończy się umowa (to samo pole co w podsumowaniu sieci); 0, gdy takiego nie ma. */
+  settlement: number;
   /**
    * Czy gra firmy kończy się w tym scenariuszu i dlaczego: debet całej gotówki (`debt`), zaufanie 0 w ostatnim sklepie (`trust`) albo
    * koniec okresu wypowiedzenia ostatniego sklepu (`notice`). Sklep, który traci umowę, gdy inny gra dalej, gry nie kończy: ma wtedy
@@ -117,7 +119,7 @@ export function startFirmMonthPreview(f: FirmState): FirmPreviewJob {
       copy.person.wallet < DEBT_LIMIT ? 'debt' : copy.over === 'closed' ? (noticeEnd ? 'notice' : 'trust') : null;
     result = {
       label: stores.find((s) => !s.preview.endedEarly)?.preview.label ?? '', cashNow, cashAfter: copy.person.wallet, lowestCash: lowest, stores,
-      invest: summary?.invest ?? copy.monthInvest, gameOver, endedEarly: reports.size === 0,
+      invest: summary?.invest ?? copy.monthInvest, settlement: summary?.settlement ?? 0, gameOver, endedEarly: reports.size === 0,
     };
   };
 

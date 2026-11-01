@@ -4066,7 +4066,7 @@ describe('gra prowadzi firmę (powłoka)', () => {
     it('raport sieci z firmy idzie do networkReport.summary, a bez wyciągów w tej klatce też otwiera okno', () => {
       const h = harness();
       twoStores(h);
-      const summary: NetworkSummary = { label: 'wrzesień 2026', wallet: 5000, stores: [{ id: 1, profit: 1, net: 2 }, { id: 2, profit: 3, net: 4 }], invest: 0, total: 6 };
+      const summary: NetworkSummary = { label: 'wrzesień 2026', wallet: 5000, stores: [{ id: 1, profit: 1, net: 2 }, { id: 2, profit: 3, net: 4 }], invest: 0, settlement: 0, total: 6 };
       h.shell.handleFirmEvents(stepOut({ firm: [{ kind: 'network-report', summary }] }));
       expect(ui.networkReport.value).toEqual({ summary, reports: [] });
       expect(ui.story.value).toEqual([]);

@@ -1596,7 +1596,7 @@ function networkView(): NetworkReportView {
   const two = statementFor(2_000, 9_000);
   const mk = (st: Statement): MonthReport => monthReport(null, { statement: st, profit: st.result, cash: st.cashAfter });
   return {
-    summary: { label: 'wrzesień 2026', wallet: 50_000, invest: 40_000, total: one.net + two.net, stores: [{ id: 1, profit: one.result, net: one.net }, { id: 2, profit: two.result, net: two.net }] },
+    summary: { label: 'wrzesień 2026', wallet: 50_000, invest: 40_000, settlement: 0, total: one.net + two.net, stores: [{ id: 1, profit: one.result, net: one.net }, { id: 2, profit: two.result, net: two.net }] },
     reports: [{ storeId: 1, report: mk(one) }, { storeId: 2, report: mk(two) }],
   };
 }

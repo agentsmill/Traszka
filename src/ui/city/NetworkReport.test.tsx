@@ -37,7 +37,7 @@ function setup(over: Partial<NetworkSummary> = {}) {
   const one = reportOf('wrzesień 2026', 30_000, 8_000);
   const two = reportOf('wrzesień 2026', 9_000, 12_000);
   const summary: NetworkSummary = {
-    label: 'wrzesień 2026', wallet: 123_456, invest: 50_000, total: one.statement!.net + two.statement!.net,
+    label: 'wrzesień 2026', wallet: 123_456, invest: 50_000, settlement: 0, total: one.statement!.net + two.statement!.net,
     stores: [{ id: 1, profit: one.profit, net: one.statement!.net }, { id: 2, profit: two.profit, net: two.statement!.net }], ...over,
   };
   const view: NetworkReportView = { summary, reports: [{ storeId: 1, report: one }, { storeId: 2, report: two }] };
@@ -85,6 +85,16 @@ describe('podsumowanie sieci (zakładka „Sieć”)', () => {
     expect(rowsOf(render(view)).map(([l]) => l)).not.toContain('Pakiety otwarcia za gotówkę');
   });
 
+  it('rozliczenie końcowe zamkniętej placówki: wiersz między pakietami a gotówką po zamknięciu, a bez rozliczenia go nie ma', () => {
+    const { view } = setup({ settlement: 18_500 });
+    const labelsInOrder = rowsOf(render(view)).map(([l]) => l);
+    expect(rowsOf(render(view))).toContainEqual(['Rozliczenie końcowe zamkniętej placówki', plain(minusZl(18_500))]);
+    const at = (l: string): number => labelsInOrder.indexOf(l);
+    expect(at('Rozliczenie końcowe zamkniętej placówki')).toBeGreaterThan(at('Razem'));
+    expect(at('Rozliczenie końcowe zamkniętej placówki')).toBeLessThan(at('Gotówka po zamknięciu'));
+    expect(rowsOf(render(setup({ settlement: 0 }).view)).map(([l]) => l)).not.toContain('Rozliczenie końcowe zamkniętej placówki');
+  });
+
   it('gotówka pod progiem ostrzeżenia: ostrzeżenie z kwotą do granicy debetu', () => {
     const { view } = setup({ wallet: DEBT_WARN - 1_000 });
     const warn = walk(render(view)).filter((v) => v.type === 'p' && String(v.props.class).includes('warn'));
@@ -94,11 +104,12 @@ describe('podsumowanie sieci (zakładka „Sieć”)', () => {
   });
 
   it('po angielsku', () => {
-    const { view } = setup();
+    const { view } = setup({ settlement: 18_500 });
     lang.value = 'en';
     const tree = render(view);
     expect(labels(tree)[0]).toBe('Network');
     const text = plain(textOf(tree));
+    expect(text).toContain('Final settlement for the closed branch');
     expect(text).toContain('You keep');
     expect(text).toContain('Cash after closing');
     expect(text).toContain('Opening packages paid in cash');

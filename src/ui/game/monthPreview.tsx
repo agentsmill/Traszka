@@ -94,7 +94,7 @@ function FirmPreviewResult({ p }: { p: FirmPreview }) {
   const part = p.stores.find((x) => x.id === active);
   const warning = previewWarning(p);
   const summary: NetworkSummary = {
-    label: p.label, wallet: p.cashAfter, invest: p.invest, total: p.stores.reduce((n, x) => n + x.preview.statement.net, 0),
+    label: p.label, wallet: p.cashAfter, invest: p.invest, settlement: p.settlement, total: p.stores.reduce((n, x) => n + x.preview.statement.net, 0),
     stores: p.stores.map((x) => ({ id: x.id, profit: x.preview.profit, net: x.preview.statement.net })),
   };
   return (

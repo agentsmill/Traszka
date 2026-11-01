@@ -194,6 +194,39 @@ describe('zaufanie 0 przy dwóch sklepach', () => {
     expect(f.over).toBeNull();
   });
 
+  it('podsumowanie sieci z tej samej minuty niesie rozliczenie końcowe, więc liczby się zgadzają z gotówką po zamknięciu', () => {
+    const f = partnerFirm();
+    const st2 = rentAndOpen(f, 'raty');
+    playTo(f, SEPT_CLOSE);
+    loseTrust(st2.econ);
+    st2.econ.tycoon.wut.month.kradziez += 20_000;
+    const walletBefore = f.person.wallet;
+
+    const out = tick(f);
+    const settlement = ofKind(out.firm, 'settlement');
+    const reports = ofKind(out.firm, 'network-report');
+    expect(settlement).toHaveLength(1);
+    expect(reports).toHaveLength(1);
+    const sum = reports[0]!.summary!;
+    expect(sum.settlement).toBeGreaterThan(0);
+    expect(sum.settlement).toBe(num(settlement[0]!, 'total'));
+    expect(sum.invest).toBe(0);   // pakiet na raty: nic za gotówkę
+    // „Razem” − pakiety − rozliczenie = zmiana gotówki: nic w „Gotówce po zamknięciu” nie bierze się znikąd
+    expect(sum.wallet).toBeCloseTo(walletBefore + sum.total - sum.invest - sum.settlement, 6);
+    expect(sum.wallet).toBe(f.person.wallet);
+    // rozliczenie jest też w zdarzeniu firmy, które otworzy własne okno po „Dalej”: to ta sama kwota
+    expect(out.firm.indexOf(settlement[0]!)).toBeLessThan(out.firm.indexOf(reports[0]!));
+  });
+
+  it('miesiąc bez zamknięcia sklepu: rozliczenie w podsumowaniu sieci to zero', () => {
+    const f = partnerFirm();
+    rentAndOpen(f, 'raty');
+    const out = playTo(f, SEPT_CLOSE + 1);
+    const sum = ofKind(out.firm, 'network-report')[0]!.summary!;
+    expect(ofKind(out.firm, 'settlement')).toEqual([]);
+    expect(sum.settlement).toBe(0);
+  });
+
   it('Review Focus 1: zaufanie 0 w aktywnym #2 przełącza grę na #1 z pulą sił, bez gameover, a #1 płaci ZUS', () => {
     const f = partnerFirm();
     const st2 = rentAndOpen(f, 'gotowka');
