@@ -19,9 +19,14 @@
  *
  * Użycie: `npm run build`, potem `npm run city:smoke` (albo `node scripts/city-smoke.mjs [--only phone|desktop]`). Zrzuty i `smoke.json` idą do
  * `.smoke/city/` (katalog jest w .gitignore); wybrane zrzuty do raportu kopiuje się ręcznie do `docs/superpowers/reports/`.
- * Playwright nie jest zależnością projektu: skrypt bierze go z `PLAYWRIGHT_ROOT` (katalog pakietu `playwright-core`, albo katalog, w którego
- * `node_modules` leży `playwright`), a Chromium z `CITY_SMOKE_CHROMIUM` albo z cache'u Playwrighta (`chromium_headless_shell-*`). Okna przeglądarki
- * nie ma: to czysty headless, bez panelu w aplikacji.
+ * Playwright nie jest zależnością projektu: skrypt bierze go z `PLAYWRIGHT_ROOT` (domyślnie `/opt/node-tools`, jak `scripts/tutorial-smoke.mjs`; może to
+ * być katalog pakietu `playwright-core`, katalog `node_modules` albo katalog, w którego `node_modules` leży `playwright`), a gdy tam go nie ma,
+ * z `node_modules` projektu, np. `PLAYWRIGHT_ROOT=/ścieżka/do/node_modules npm run city:smoke`. Chromium bierze z `CITY_SMOKE_CHROMIUM`
+ * albo z cache'u Playwrighta (`chromium_headless_shell-*`). Okna przeglądarki nie ma: to czysty headless, bez panelu w aplikacji.
+ *
+ * Kliknięcia w sterowanie gry (karta lokalu, ⚙, przyciski okien, dymek „OK”) są zwykłymi kliknięciami Playwrighta i porażką, gdy cel jest
+ * zasłonięty albo poza ekranem (to właśnie błąd, który smoke ma łapać na telefonie). Awaryjne `click()` w DOM ma tylko pętla zamykająca okna
+ * (`settle`, `pause`), a każde takie użycie ląduje w `smoke.json` (`fallbacks`).
  */
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
@@ -36,8 +41,8 @@ const FIXTURES_DIR = join(ROOT, 'src', 'game', 'fixtures');
 
 // ——— stałe i czyste pomocniki (testy: tests/citySmoke.test.ts) ———
 
-/** Domyślne miejsce Playwrighta tego komputera (katalog pakietu `playwright-core`); `PLAYWRIGHT_ROOT` je nadpisuje. */
-export const DEFAULT_PLAYWRIGHT_ROOT = '/Users/mpawelczuk/Dev/ochronairz-rotator/node_modules/playwright-core';
+/** Domyślne miejsce Playwrighta poza projektem (jak w `scripts/tutorial-smoke.mjs`); `PLAYWRIGHT_ROOT` je nadpisuje. */
+export const DEFAULT_PLAYWRIGHT_ROOT = '/opt/node-tools';
 /** Flagi Chromium: grafika programowa (swiftshader), bo headless nie ma GPU. */
 export const LAUNCH_ARGS = ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'];
 /** Rozmiary okna: telefon z dotykiem i komputer. */
@@ -101,8 +106,8 @@ export function fixtureSave(file, dir = FIXTURES_DIR) {
 }
 
 /**
- * Wybór pakietu Playwrighta: `root` bywa katalogiem samego pakietu (`.../node_modules/playwright-core`) albo katalogiem, w którego `node_modules`
- * leży `playwright` lub `playwright-core`. Na końcu pakiet zainstalowany w projekcie. Zwraca moduł z `chromium`, a bez niego rzuca błąd
+ * Wybór pakietu Playwrighta: `root` bywa katalogiem samego pakietu (`.../node_modules/playwright-core`), katalogiem `node_modules` z `playwright` lub
+ * `playwright-core` albo katalogiem, w którego `node_modules` któryś z nich leży. Na końcu pakiet zainstalowany w projekcie. Zwraca moduł z `chromium`, a bez niego rzuca błąd
  * z listą prób. `makeRequire` do podmiany w testach.
  */
 export function loadPlaywright(root = process.env.PLAYWRIGHT_ROOT ?? DEFAULT_PLAYWRIGHT_ROOT, makeRequire = createRequire) {
@@ -206,6 +211,17 @@ export function summarize(results, steps = [...STEPS, TIPS_STEP]) {
   return { rows, ok: rows.every((r) => r.status !== 'FAIL') };
 }
 
+export const USAGE = `Smoke miasta i drugiego sklepu w headless Chromium (po \`npm run build\`).
+
+Użycie: node scripts/city-smoke.mjs [--only telefon|desktop]
+        npm run city:smoke
+
+  --only <rozmiar>  tylko jeden rozmiar okna: telefon (390×844, dotyk) albo desktop (1280×800)
+  --help            ta pomoc
+
+Zmienne: PLAYWRIGHT_ROOT (domyślnie ${DEFAULT_PLAYWRIGHT_ROOT}), CITY_SMOKE_CHROMIUM, CITY_SMOKE_PORT (4318), CITY_SMOKE_OUT (.smoke/city).
+Zrzuty i smoke.json idą do katalogu wyjściowego (w .gitignore). Kod wyjścia: 0 (wszystkie kroki ok), 1 (porażka kroku), 2 (błąd uruchomienia).`;
+
 /** Argumenty polecenia: `--only telefon|desktop` ogranicza przebieg do jednego rozmiaru (do ponawiania pojedynczej porażki). */
 export function parseArgs(argv) {
   const args = { only: null, help: false };
@@ -220,6 +236,30 @@ export function parseArgs(argv) {
     } else throw new Error(`nieznany argument „${a}”`);
   }
   return args;
+}
+
+/**
+ * Czy `vite preview` napisał, że stoi na naszym porcie (`Local: http://localhost:<port>/`, bez kodów kolorów). Sama odpowiedź na zapytanie
+ * nie wystarcza: na porcie może stać obcy serwer, a nasz proces wtedy padł (`--strictPort`).
+ */
+export function previewReady(log, port) {
+  const text = String(log).replace(/\u001b\[[0-9;]*m/g, '');
+  return text.includes(`http://localhost:${port}`);
+}
+
+/**
+ * Wady szerokości z pomiaru strony (`scroll`: `documentElement.scrollWidth`; `boxes`: widoczne okna, arkusz, karta i lista sklepów z ramką,
+ * `scrollWidth` i `clientWidth`). Okno modalne to `position: fixed` z własnym przewijaniem, więc jego poziomy wylew nie zmienia
+ * `scrollWidth` dokumentu: każdy element sprawdza się osobno, jego zawartością (`scroll <= client + 1`) i ramką w `[0, limit]`.
+ */
+export function widthProblems(m, limit = PHONE_WIDTH) {
+  const out = [];
+  if (m.scroll > limit) out.push(`dokument ${m.scroll} px (limit ${limit})`);
+  for (const b of m.boxes ?? []) {
+    if (b.scroll > b.client + 1) out.push(`${b.name}: zawartość ${b.scroll} px w ${b.client} px`);
+    if (b.left < -0.5 || b.right > limit + 0.5) out.push(`${b.name}: poza oknem [${Math.round(b.left)}, ${Math.round(b.right)}]`);
+  }
+  return out;
 }
 
 // ——— przeglądarka ———
@@ -252,7 +292,9 @@ function readGame(page) {
       stores: (f?.stores ?? [{ id: 1, lotId: -1, econ: s.econ, closed: false, notice: null }]).map((st) => ({
         id: st.id, lotId: st.lotId, seed: st.econ.seed, closed: st.closed, notice: st.notice, minute: st.econ.minute,
         trust: st.econ.tycoon.trust.value, gameOver: !!st.econ.gameOver, remont: st.econ.remontLevel,
-        installments: st.econ.franchisee.installments.map((i) => ({ label: i.label, monthly: i.monthly, paid: i.paid })),
+        installments: st.econ.franchisee.installments.map((i) => ({
+          label: i.label, price: i.price, fee: i.fee, total: i.total, monthly: i.monthly, months: i.months, paid: i.paid,
+        })),
       })),
       inbox: f?.inbox.length ?? 0,
     };
@@ -278,14 +320,43 @@ function readLots(page) {
 const visible = (page, sel) => page.evaluate((s) => { const el = document.querySelector(s); return !!el && el.getBoundingClientRect().height > 0; }, sel);
 const textOf = (page, sel) => page.evaluate((s) => document.querySelector(s)?.textContent ?? null, sel);
 
-/** Klik z awaryjnym `click()` w DOM: okno, które gra właśnie zamyka, albo baner, który przez chwilę zasłania przycisk, nie wiesza smoke'a. */
-async function press(page, sel, timeout = 6_000) {
+/**
+ * Kliknięcie w sterowanie gry: zwykłe kliknięcie Playwrighta z jego kontrolą (widoczny, nie zasłonięty, w oknie). Błąd to porażka kroku:
+ * przycisk zasłonięty albo poza ekranem telefonu to dokładnie to, co smoke ma łapać.
+ */
+async function press(page, sel, timeout = 8_000) {
+  await page.click(sel, { timeout });
+}
+
+/** Wspólne ustawienia infrastruktury: pomiar szerokości okien (telefon) i lista awaryjnych kliknięć w DOM. */
+const hooks = { onDialog: null, fallbacks: [] };
+
+/**
+ * Zamykanie okna przez pętlę `settle`: zwykłe kliknięcie, a gdy się nie uda (okno, które gra właśnie zamyka, baner, który przez chwilę zasłania
+ * przycisk), awaryjne `click()` w DOM, zapisane w `hooks.fallbacks`. Tylko dla infrastruktury zamykającej okna, nie dla sterowania sprawdzanego w krokach.
+ */
+async function dismiss(page, sel, timeout = 6_000) {
   try {
     await page.click(sel, { timeout });
   } catch (error) {
     const done = await page.evaluate((s) => { const el = document.querySelector(s); if (!el) return false; el.click(); return true; }, sel);
     if (!done) throw error;
+    hooks.fallbacks.push(`${sel} (${String(error.message).split('\n')[0]})`);
   }
+}
+
+/** Stuknięcie w tło (`sel`) poza oknem, które je przykrywa: punkt, w którym `elementFromPoint` trafia właśnie w ten element. */
+async function tapOutside(page, sel) {
+  const at = await page.evaluate((s) => {
+    const el = document.querySelector(s);
+    if (!el) return null;
+    for (let y = innerHeight - 12; y > 0; y -= 24) {
+      for (let x = 12; x < innerWidth; x += 24) if (document.elementFromPoint(x, y) === el) return { x, y };
+    }
+    return null;
+  }, sel);
+  if (!at) throw new Error(`nie ma punktu, w który da się stuknąć ${sel}`);
+  await page.mouse.click(at.x, at.y);
 }
 
 async function windowsOf(page) {
@@ -335,14 +406,15 @@ async function settle(page, { keepTips = [], stop = null, max = 80 } = {}) {
       if (dialog.kind === 'report' && (await page.evaluate(() => !!window.traszkaGame.session.econ.gameOver))) {
         throw new Error(`koniec gry w trakcie smoke'a: ${dialog.label}`);
       }
-      await press(page, CLOSE[dialog.kind]);
+      await hooks.onDialog?.(page, dialog);
+      await dismiss(page, CLOSE[dialog.kind]);
       closed.push(dialog.label);
       await sleep(dialog.kind === 'deck' ? 250 : 150);
       continue;
     }
     if (w.tip !== null && !keepTips.includes(w.tip)) {
       idle = 0;
-      await press(page, '.tt-tip-bubble .tt-tut-next');
+      await dismiss(page, '.tt-tip-bubble .tt-tut-next');
       closed.push(`dymek ${w.tip}`);
       await sleep(150);
       continue;
@@ -418,6 +490,10 @@ async function advance(page, { stop = null, maxDays, chunk = 1440, done = null }
 
 // ——— serwer ———
 
+/**
+ * Uruchamia `vite preview` na `port` (`--strictPort`) i czeka, aż sam napisze, że stoi na tym porcie. Odpowiedź na zapytanie nie wystarcza:
+ * gdy port zajmuje obcy serwer, nasz proces pada, a pierwsze `fetch` trafiłoby w tamten. Przed zaufaniem odpowiedzi proces musi żyć.
+ */
 async function startPreview(port) {
   const vite = join(ROOT, 'node_modules', 'vite', 'bin', 'vite.js');
   const proc = spawn(process.execPath, [vite, 'preview', '--port', String(port), '--strictPort', '--host', 'localhost'], {
@@ -426,16 +502,19 @@ async function startPreview(port) {
   let log = '';
   proc.stdout.on('data', (d) => { log += d; });
   proc.stderr.on('data', (d) => { log += d; });
+  proc.on('error', (e) => { log += String(e); });
   const base = `http://localhost:${port}`;
-  for (let i = 0; i < 100; i++) {
-    try {
-      if ((await fetch(base)).ok) return proc;
-    } catch { /* jeszcze wstaje */ }
-    if (proc.exitCode !== null) break;
+  for (let i = 0; i < 150; i++) {
+    if (proc.exitCode !== null || proc.signalCode !== null) break;
+    if (previewReady(log, port)) {
+      try {
+        if ((await fetch(base)).ok && proc.exitCode === null) return proc;
+      } catch { /* jeszcze wstaje */ }
+    }
     await sleep(200);
   }
   stopPreview(proc);
-  throw new Error(`vite preview nie wstał na ${base}: ${log.trim().slice(-300)}`);
+  throw new Error(`vite preview nie wstał na ${base} (zajęty port albo błąd): ${log.replace(/\u001b\[[0-9;]*m/g, '').trim().slice(-300)}`);
 }
 function stopPreview(proc) {
   try { process.kill(-proc.pid, 'SIGTERM'); } catch { try { proc.kill(); } catch { /* już zamknięty */ } }
@@ -445,6 +524,10 @@ function stopPreview(proc) {
 
 async function main(argv) {
   const args = parseArgs(argv);
+  if (args.help) {
+    console.log(USAGE);
+    return 0;
+  }
   const port = Number(process.env.CITY_SMOKE_PORT ?? 4318);
   const base = `http://localhost:${port}`;
   const out = process.env.CITY_SMOKE_OUT ?? join(ROOT, '.smoke', 'city');
@@ -533,12 +616,27 @@ async function main(argv) {
   // --- pomiary szerokości (telefon) ---
 
   const widths = [];
+  /**
+   * Szerokość strony i każdego widocznego okna, arkusza, karty lokalu i listy sklepów (`widthProblems`): `scrollWidth` dokumentu nie zobaczy
+   * wylewu wewnątrz okna modalnego (`position: fixed`, własne przewijanie), więc te elementy mierzy się osobno.
+   */
   async function checkWidth(page, label) {
     const m = await page.evaluate(() => {
-      const r = document.documentElement;
-      return { scroll: r.scrollWidth, client: r.clientWidth, body: document.body.scrollWidth, inner: window.innerWidth };
+      const vis = (el) => { const b = el.getBoundingClientRect(); return b.width > 0 && b.height > 0; };
+      const name = (el) => `${[...el.classList].slice(0, 2).join('.')}${el.getAttribute('aria-label') ? ` [${el.getAttribute('aria-label')}]` : ''}`;
+      // elementy, które wystają za prawą krawędź okna: do diagnozy wylewu (kto go robi), nie do oceny
+      const culprits = (el, right) => [...el.querySelectorAll('*')].filter((d) => d.getBoundingClientRect().right > right + 1 && d.getBoundingClientRect().width > 0)
+        .slice(0, 3).map((d) => `${d.tagName.toLowerCase()}.${[...d.classList].join('.')} → ${Math.round(d.getBoundingClientRect().right)} px „${(d.textContent ?? '').trim().slice(0, 40)}”`);
+      const boxes = [...document.querySelectorAll('.tt-modal, .tt-sheet, .tt-sheet-body, .tt-lotcard, .tt-stores-pop')].filter(vis).map((el) => {
+        const b = el.getBoundingClientRect();
+        const over = el.scrollWidth > el.clientWidth + 1;
+        return { name: name(el), left: b.left, right: b.right, scroll: el.scrollWidth, client: el.clientWidth, ...(over ? { culprits: culprits(el, b.right) } : {}) };
+      });
+      return { scroll: document.documentElement.scrollWidth, boxes };
     });
-    widths.push({ label, ...m, ok: m.scroll <= PHONE_WIDTH });
+    const problems = widthProblems(m, PHONE_WIDTH);
+    for (const b of m.boxes) if (b.culprits?.length) problems.push(`${b.name} wystaje: ${b.culprits.join('; ')}`);
+    widths.push({ label, scroll: m.scroll, boxes: m.boxes.length, problems, ok: problems.length === 0 });
     return widths.at(-1);
   }
   async function tabsFit(page) {
@@ -679,6 +777,7 @@ async function main(argv) {
         ev.check(/Wolne lokale czekają w zakładce Miasto/.test(found.text), `tekst okna statusu: ${found.text.slice(0, 120)}`);
         ev.note(`okno statusu: „${found.label}”`);
         await sleep(450);
+        if (phone) await checkWidth(page, 'okno: status Partnera');
         await ev.shot('02-status-partnera');
         await press(page, '.tt-story .tt-primary');
         await settle(page);
@@ -763,6 +862,7 @@ async function main(argv) {
         if (!ev.check(!!opened, 'okno „Traszka #2 otwarta” nie pojawiło się')) return;
         ev.note(`okno otwarcia: „${opened.label}” — ${opened.text.replace(/\s+/g, ' ').slice(0, 160)}`);
         await sleep(450);
+        if (phone) await checkWidth(page, 'okno: Traszka #2 otwarta');
         await ev.shot('05-traszka-2-otwarta');
         await press(page, '.tt-story .tt-primary');
         await settle(page);
@@ -773,9 +873,16 @@ async function main(argv) {
         ev.check(s2 && s2.minute >= g2.builds[0].readyDay * 1440 + 360, `sklep #2 otwarty o minucie ${s2?.minute}, dzień odbioru ${g2.builds[0].readyDay}`);
         ev.check(g3.activeId === 1, `po otwarciu aktywny sklep #${g3.activeId}`);
         if (pay === 'raty') {
+          // rata z danych sklepu: 12 rat, opłata 15% ceny pakietu (razem 115%), rata ≈ razem / 12 (zaokrąglona do pełnych złotych)
           const rata = s2?.installments.find((i) => /^Adaptacja lokalu: ul\. /.test(i.label));
-          ev.check(!!rata, `rata pakietu w sklepie #2: ${JSON.stringify(s2?.installments)}`);
-          ev.note(`rata pakietu: ${rata?.label}, ${money(rata?.monthly ?? 0)} zł miesięcznie × 12`);
+          if (ev.check(!!rata, `rata pakietu w sklepie #2: ${JSON.stringify(s2?.installments)}`)) {
+            ev.check(rata.months === 12, `liczba rat ${rata.months}, ma być 12`);
+            ev.check(rata.price === cheapest.price, `cena w racie ${rata.price}, pakiet ${cheapest.price}`);
+            ev.check(Math.abs(rata.fee - 0.15 * rata.price) < 1, `opłata ${rata.fee} zł, ma być 15% z ${rata.price} zł`);
+            ev.check(Math.abs(rata.total - 1.15 * rata.price) < 1, `razem ${rata.total} zł, ma być ${money(1.15 * rata.price)} zł`);
+            ev.check(Math.abs(rata.monthly * rata.months - rata.total) <= rata.months, `rata ${rata.monthly} zł × ${rata.months} ≠ razem ${rata.total} zł`);
+            ev.note(`rata pakietu: ${rata.label}, ${rata.months} rat po ${money(rata.monthly)} zł, razem ${money(rata.total)} zł z opłatą ${money(rata.fee)} zł (${Math.round((100 * rata.fee) / rata.price)}% z ${money(rata.price)} zł)`);
+          }
         }
         ev.note(`sklep #2 otwarty w dniu ${Math.floor((s2?.minute ?? 0) / 1440)} (budowa wynajęta w dniu ${rentedAt}), gotówka ${money(g3.wallet)} zł`);
       });
@@ -820,7 +927,8 @@ async function main(argv) {
           await page.waitForSelector('.tt-stores-pop');
           await checkWidth(page, 'lista sklepów (chip)');
           await ev.shot('07-lista-sklepow');
-          await page.evaluate(() => document.querySelector('.tt-stores-backdrop')?.click());
+          await tapOutside(page, '.tt-stores-backdrop');   // stuknięcie poza listą ją zamyka
+          await page.waitForSelector('.tt-stores-pop', { state: 'detached', timeout: 5_000 });
         }
       });
       if (!go) return failRest(vp, 4, 'krok 4 nie przeszedł');
@@ -1026,17 +1134,31 @@ async function main(argv) {
     ev.note(`po angielsku: adres „${head}”, karta ${JSON.stringify(card)}, komunikat pod przyciskiem „${lock ?? '(przycisk aktywny)'}”`);
     await checkWidth(page, 'angielski: Miasto z kartą');
     await ev.shot('14-angielski-karta');
+    // blok pakietu po angielsku: etykiety zapłaty łamią się do drugiego wiersza i nie wystają za przycisk (nowy wylew z kroku 7, poprawiony w city.css)
+    await page.evaluate(() => document.querySelector('[data-tut="lot-price"]')?.scrollIntoView({ block: 'nearest' }));
+    await sleep(300);
+    const pay = await page.evaluate(() => [...document.querySelectorAll('.tt-lotpay .tt-btn')].map((b) => {
+      const st = getComputedStyle(b);
+      const text = b.getBoundingClientRect().height - parseFloat(st.paddingTop) - parseFloat(st.paddingBottom);   // wysokość samego tekstu
+      return { text: (b.textContent ?? '').trim(), over: b.scrollWidth > b.clientWidth + 1, lines: Math.round(text / parseFloat(st.lineHeight)) };
+    }));
+    ev.check(pay.length === 2 && pay.every((b) => !b.over), `przyciski zapłaty po angielsku: ${JSON.stringify(pay)}`);
+    ev.note(`przyciski zapłaty po angielsku: ${pay.map((b) => `„${b.text}” (${b.lines} wiersze)`).join(', ')}`);
+    await ev.shot('14b-angielski-pakiet');
     await press(page, '.tt-lotcard-close');
     await closeTab(page, 'miasto');
     await page.click('[data-tut="store-switch"]');
     await page.waitForSelector('.tt-stores-pop');
     await checkWidth(page, 'angielski: lista sklepów');
     await ev.shot('15-angielski-chip');
-    await page.evaluate(() => document.querySelector('.tt-stores-backdrop')?.click());
+    await tapOutside(page, '.tt-stores-backdrop');
+    await page.waitForSelector('.tt-stores-pop', { state: 'detached', timeout: 5_000 });
 
     const bad = widths.filter((w) => !w.ok);
-    ev.check(bad.length === 0, `poziome przewijanie na ekranach: ${bad.map((w) => `${w.label} (${w.scroll} px)`).join(', ')}`);
-    ev.note(`pomiary scrollWidth (${widths.length} ekranów): ${widths.map((w) => `${w.label}=${w.scroll}`).join('; ')}`);
+    ev.check(bad.length === 0, `poziomy wylew: ${bad.map((w) => `${w.label}: ${w.problems.join('; ')}`).join(' | ')}`);
+    const modals = widths.filter((w) => w.label.startsWith('okno')).length;
+    ev.note(`pomiary szerokości: ${widths.length} ekranów i okien (w tym ${modals} okien gry z kolejki), ${widths.reduce((n, w) => n + w.boxes, 0)} elementów okien, arkuszy i kart sprawdzonych osobno; `
+      + `scrollWidth dokumentu ${Math.max(...widths.map((w) => w.scroll))} px najwyżej; ${widths.map((w) => w.label).join('; ')}`);
   }
 
   // --- przebieg z dymkami (telefon) ---
@@ -1110,7 +1232,7 @@ async function main(argv) {
         const mem1 = await page.evaluate(() => JSON.parse(localStorage.getItem('traszka:tutorial')));
         ev.check(mem1.seen.includes('tip-miasto') && mem1.seen.includes('tip-lokal'), `pamięć po „OK”: ${JSON.stringify(mem1.seen)}`);
         const bad = widths.filter((w) => !w.ok && w.label.startsWith('dymki'));
-        ev.check(bad.length === 0, `poziome przewijanie przy dymkach: ${bad.map((w) => w.label).join(', ')}`);
+        ev.check(bad.length === 0, `poziomy wylew przy dymkach: ${bad.map((w) => `${w.label}: ${w.problems.join('; ')}`).join(' | ')}`);
       });
     } finally {
       await ctx.close();
@@ -1170,14 +1292,32 @@ async function main(argv) {
 
   const server = await startPreview(port);
   const stopAll = () => { stopPreview(server); };
-  process.on('SIGINT', () => { stopAll(); process.exit(130); });
   let browser = null;
+  // przerwanie z zewnątrz: najpierw przeglądarka, potem serwer, żeby żaden proces nie został
+  const onSignal = (code) => () => {
+    void (async () => {
+      try { await browser?.close(); } catch { /* i tak kończymy */ }
+      stopAll();
+      process.exit(code);
+    })();
+  };
+  process.on('SIGINT', onSignal(130));
+  process.on('SIGTERM', onSignal(143));
   const started = Date.now();
   try {
     browser = await chromium.launch({ ...(executablePath ? { executablePath } : {}), args: LAUNCH_ARGS });
     for (const vp of VIEWPORTS) {
       if (args.only && vp.name !== args.only) continue;
       console.log(`${vp.name} (${vp.size.width}×${vp.size.height}${vp.mobile ? ', dotyk' : ''})`);
+      // telefon: każde okno z kolejki gry (karta decyzji, wpis „OK”, raport, protokół remanentu, powitanie) mierzy się raz na tytuł, zanim je zamkniemy
+      const probed = new Set();
+      const fallbacksBefore = hooks.fallbacks.length;
+      hooks.onDialog = vp.mobile ? async (page, d) => {
+        const key = d.kind === 'deck' ? 'deck' : `${d.kind}:${d.label}`;
+        if (probed.has(key)) return;
+        probed.add(key);
+        await checkWidth(page, `okno: ${d.kind === 'deck' ? 'karta decyzji' : d.label}`);
+      } : null;
       try {
         await scenarioOldSave(browser, vp);
         await scenarioFlow(browser, vp);
@@ -1196,19 +1336,24 @@ async function main(argv) {
       if (mine.length > 0) { r8.ok = false; r8.failed.push(`błędy w konsoli: ${mine.length}`); r8.notes.push(...mine.slice(0, 5)); }
       const myApi = apiBlocked.filter((a) => a.startsWith(`${vp.name}/`));
       r8.notes.push(`błędów konsoli i pageerror: ${mine.length}; przerwane zapytania do /api/**: ${myApi.length}${myApi.length ? ` (${[...new Set(myApi)].slice(0, 3).join(', ')})` : ''}`);
+      const myFallbacks = hooks.fallbacks.slice(fallbacksBefore);
+      r8.notes.push(`awaryjne click() w DOM w pętli zamykania okien (settle/pause): ${myFallbacks.length}${myFallbacks.length ? ` (${[...new Set(myFallbacks)].slice(0, 3).join(' | ')})` : ''}`);
       (results[vp.name] ??= {})[8] = r8;
       console.log(`  [${vp.name}] krok 8: ${r8.ok ? 'ok' : 'FAIL'}`);
     }
   } finally {
-    await browser?.close();   // przeglądarka i serwer zawsze się zamykają, także gdy start Chromium albo krok rzucił wyjątek
-    stopAll();
+    try {
+      await browser?.close();   // przeglądarka i serwer zawsze się zamykają, także gdy start Chromium albo krok rzucił wyjątek
+    } finally {
+      stopAll();   // także gdy `close()` odrzuci obietnicę
+    }
   }
   const seconds = Math.round((Date.now() - started) / 1000);
   const summary = summarize(results);
   const extraFailures = [];
   if (external.length > 0) extraFailures.push(`zapytania poza localhost: ${external.length}`);
   if (extraFailures.length) summary.ok = false;
-  const report = { seconds, summary, results, widths, extras, errors, warnings: [...new Set(warnings)], external, apiBlocked, dialogs, extraFailures };
+  const report = { seconds, summary, results, widths, extras, errors, warnings: [...new Set(warnings)], external, apiBlocked, dialogs, fallbacks: hooks.fallbacks, extraFailures };
   writeFileSync(join(out, 'smoke.json'), `${JSON.stringify(report, null, 2)}\n`);
   console.log('');
   for (const row of summary.rows) console.log(`${row.size.padEnd(8)} ${String(row.step).padEnd(2)} ${row.status.padEnd(5)} ${row.name}${row.detail ? `  <- ${row.detail}` : ''}`);

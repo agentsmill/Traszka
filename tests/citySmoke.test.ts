@@ -4,9 +4,10 @@ import { devNull } from 'node:os';
 import { resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  FIXTURES, LAUNCH_ARGS, PHONE_WIDTH, STEPS, TIPS_STEP, VIEWPORTS, DEFAULT_PLAYWRIGHT_ROOT, chromiumCandidates, chromiumExecutable, contextOptions,
-  fixtureSave, loadPlaywright, median, metaFor, parseArgs, parsePerf, requestVerdict, stepResult, storageEntries, summarize, tutorialMemory,
-  type MakeRequire, type StepResult,
+  FIXTURES, LAUNCH_ARGS, PHONE_WIDTH, STEPS, TIPS_STEP, USAGE, VIEWPORTS, DEFAULT_PLAYWRIGHT_ROOT, chromiumCandidates, chromiumExecutable,
+  contextOptions, fixtureSave, loadPlaywright, median, metaFor, parseArgs, parsePerf, previewReady, requestVerdict, stepResult, storageEntries,
+  summarize, tutorialMemory, widthProblems,
+  type MakeRequire, type StepResult, type WidthBox,
 } from '../scripts/city-smoke.mjs';
 import { MemoryStorage } from '@/game/memoryStorage';
 import { loadMeta, needsStartScreen } from '@/game/meta';
@@ -158,7 +159,20 @@ describe('Playwright i Chromium', () => {
     expect(loadPlaywright('/p', only((from, id) => id === 'playwright-core'))).toBe(dummy);
     expect(() => loadPlaywright('/p', only(() => false))).toThrow(/PLAYWRIGHT_ROOT.*Cannot find module/);
     expect(() => loadPlaywright('/p', () => () => ({}))).toThrow(/moduł bez chromium/);
-    expect(DEFAULT_PLAYWRIGHT_ROOT).toMatch(/playwright-core$/);
+  });
+
+  it('domyślne miejsce Playwrighta jest neutralne jak w tutorial-smoke (repozytorium jest publiczne), a źródło nie zna ścieżek z domu autora', () => {
+    expect(DEFAULT_PLAYWRIGHT_ROOT).toBe('/opt/node-tools');
+    expect(readFileSync(resolve(ROOT, 'scripts/tutorial-smoke.mjs'), 'utf8')).toContain(`'/opt/node-tools'`);
+    expect(SOURCE).not.toMatch(/\/Users\/|\/home\/|mpawelczuk/);
+    expect(USAGE).toContain('PLAYWRIGHT_ROOT');
+    expect(USAGE).toContain(DEFAULT_PLAYWRIGHT_ROOT);
+    // PLAYWRIGHT_ROOT może wskazywać katalog node_modules, w którym leży pakiet
+    const nodeModules: MakeRequire = (from) => (id) => {
+      if (from === '/x/node_modules/' && id === 'playwright') return dummy;
+      throw new Error(`Cannot find module '${id}'`);
+    };
+    expect(loadPlaywright('/x/node_modules', nodeModules)).toBe(dummy);
   });
 
   it('kandydaci Chromium: headless shell z cache\'u Playwrighta, najnowszy build pierwszy; brak cache\'u to pusta lista', () => {
@@ -231,11 +245,14 @@ describe('licznik wydajności i tabela wyników', () => {
     expect(summarize(allOk()).rows.some((r) => r.status === 'n/d')).toBe(false);   // kroki spoza rozmiaru w ogóle nie trafiają do tabeli
   });
 
-  it('parseArgs: --only telefon|phone|desktop, błędy i pomoc', () => {
+  it('parseArgs: --help to pomoc (main drukuje USAGE i kończy kodem 0), --only telefon|phone|desktop, błędy', () => {
     expect(parseArgs([])).toEqual({ only: null, help: false });
     expect(parseArgs(['--only', 'desktop'])).toEqual({ only: 'desktop', help: false });
     expect(parseArgs(['--only', 'phone'])).toEqual({ only: 'telefon', help: false });
     expect(parseArgs(['--help']).help).toBe(true);
+    expect(parseArgs(['-h']).help).toBe(true);
+    expect(USAGE).toMatch(/--only/);
+    expect(SOURCE).toMatch(/if \(args\.help\) \{\s*console\.log\(USAGE\);\s*return 0;/);
     expect(() => parseArgs(['--only', 'tablet'])).toThrow(/telefon albo desktop/);
     expect(() => parseArgs(['--only'])).toThrow();
     expect(() => parseArgs(['--write'])).toThrow(/nieznany argument/);
@@ -251,5 +268,88 @@ describe('zrzuty smoke\'a nie trafiają do commita', () => {
     expect(ignored('.smoke/city/smoke.json')).toBe(0);
     expect(ignored('docs/superpowers/reports/2026-10-31-miasto-4a1/telefon-01-stary-zapis-karta.jpg')).toBe(1);
     expect(SOURCE).toMatch(/join\(ROOT, '\.smoke', 'city'\)/);
+  });
+});
+
+describe('szerokość 390 px: okna modalne mierzy się osobno (poziomy wylew w oknie `position: fixed` nie zmienia scrollWidth dokumentu)', () => {
+  const box = (patch: Partial<WidthBox> = {}): WidthBox => ({ name: 'tt-modal [Okno]', left: 16, right: 374, scroll: 358, client: 358, ...patch });
+
+  it('dokument i okna w granicach: brak wad', () => {
+    expect(widthProblems({ scroll: 390, boxes: [box(), box({ name: 'tt-sheet' })] })).toEqual([]);
+    expect(widthProblems({ scroll: 390 })).toEqual([]);   // pomiar bez okien
+    expect(widthProblems({ scroll: 390, boxes: [box({ scroll: 359 })] })).toEqual([]);   // tolerancja 1 px na zaokrąglenia
+  });
+
+  it('wylew w oknie przy scrollWidth dokumentu równym 390 to wada (dokładnie ten przypadek, którego dokument nie widzi)', () => {
+    const p = widthProblems({ scroll: 390, boxes: [box({ name: 'tt-modal [Wyciągi od Centrali]', scroll: 412, client: 358 })] });
+    expect(p).toHaveLength(1);
+    expect(p[0]).toMatch(/tt-modal \[Wyciągi od Centrali\].*412.*358/);
+  });
+
+  it('ramka poza oknem po którejkolwiek stronie i szeroki dokument to wady; granica 390 ma tolerancję 0,5 px', () => {
+    expect(widthProblems({ scroll: 390, boxes: [box({ right: 390.4 })] })).toEqual([]);
+    expect(widthProblems({ scroll: 390, boxes: [box({ right: 391 })] })[0]).toMatch(/poza oknem/);
+    expect(widthProblems({ scroll: 390, boxes: [box({ left: -2 })] })[0]).toMatch(/poza oknem/);
+    expect(widthProblems({ scroll: 391, boxes: [] })[0]).toMatch(/dokument 391/);
+    expect(widthProblems({ scroll: 400, boxes: [box({ scroll: 500, right: 480 })] })).toHaveLength(3);
+    expect(widthProblems({ scroll: 360 }, 360)).toEqual([]);   // własny limit
+    expect(PHONE_WIDTH).toBe(390);
+  });
+
+  it('źródło mierzy okna, arkusz, kartę i listę sklepów oraz wołają to okna z kolejki gry, status i otwarcie sklepu #2', () => {
+    for (const sel of ['.tt-modal', '.tt-sheet', '.tt-lotcard', '.tt-stores-pop']) expect(SOURCE).toContain(sel);
+    expect(SOURCE).toContain("checkWidth(page, 'okno: status Partnera')");
+    expect(SOURCE).toContain("checkWidth(page, 'okno: Traszka #2 otwarta')");
+    expect(SOURCE).toMatch(/hooks\.onDialog = vp\.mobile/);
+  });
+});
+
+describe('kliknięcia w sterowanie nie omijają kontroli Playwrighta', () => {
+  it('`el.click()` w DOM jest tylko w `dismiss` (pętla zamykania okien), a użycia są zapisywane do smoke.json', () => {
+    const clicks = SOURCE.match(/\.click\(\)/g) ?? [];
+    // `locator(...).click()` i `payButton.click()` to kliknięcia Playwrighta; w DOM klika jedynie `el.click()`
+    const dom = SOURCE.match(/\bel\.click\(\)/g) ?? [];
+    expect(dom).toHaveLength(1);
+    expect(clicks.length).toBeGreaterThan(1);
+    const from = SOURCE.indexOf('async function dismiss(');
+    const to = SOURCE.indexOf('async function tapOutside(');
+    expect(from).toBeGreaterThan(0);
+    expect(to).toBeGreaterThan(from);
+    expect(SOURCE.slice(from, to)).toContain('el.click()');
+    expect(SOURCE.slice(from, to)).toContain('hooks.fallbacks.push');
+    expect(SOURCE).toMatch(/fallbacks: hooks\.fallbacks/);
+    // `press` (sterowanie sprawdzane w krokach) to samo kliknięcie Playwrighta, bez przechwytywania błędu
+    const press = SOURCE.slice(SOURCE.indexOf('async function press('), SOURCE.indexOf('const hooks'));
+    expect(press).toContain('await page.click(sel');
+    expect(press).not.toMatch(/catch|evaluate/);
+    // zamykanie listy sklepów to stuknięcie w tło, a nie `click()` w DOM
+    expect(SOURCE).not.toMatch(/stores-backdrop'\)\?\.click/);
+  });
+});
+
+describe('start serwera podglądu', () => {
+  it('gotowość to wpis vite o naszym porcie (także z kodami kolorów); błąd zajętego portu albo cudzy port to nie gotowość', () => {
+    expect(previewReady('  \u001b[32m➜\u001b[39m  \u001b[1mLocal\u001b[22m:   \u001b[36mhttp://localhost:\u001b[1m4318\u001b[22m/\u001b[39m\n', 4318)).toBe(true);
+    expect(previewReady('  ➜  Local:   http://localhost:4318/\n', 4318)).toBe(true);
+    expect(previewReady('Error: Port 4318 is already in use\n', 4318)).toBe(false);
+    expect(previewReady('  ➜  Local:   http://localhost:4319/\n', 4318)).toBe(false);
+    expect(previewReady('', 4318)).toBe(false);
+  });
+
+  it('źródło nie ufa pierwszej odpowiedzi: proces musi żyć, a SIGTERM i `close()` kończą sprzątaniem w finally', () => {
+    expect(SOURCE).toMatch(/previewReady\(log, port\)/);
+    expect(SOURCE).toMatch(/proc\.exitCode === null/);
+    expect(SOURCE).toMatch(/process\.on\('SIGINT'/);
+    expect(SOURCE).toMatch(/process\.on\('SIGTERM'/);
+    expect(SOURCE).toMatch(/try \{\s*await browser\?\.close\(\);[^}]*\} finally \{\s*stopAll\(\);/);
+  });
+});
+
+describe('krok 3: rata pakietu z danych sklepu, nie z napisu', () => {
+  it('skrypt sprawdza 12 rat, opłatę 15% i sumę 115% z `installments`, a notatka nie wpisuje „× 12” na sztywno', () => {
+    expect(SOURCE).toContain('rata.months === 12');
+    expect(SOURCE).toMatch(/0\.15 \* rata\.price/);
+    expect(SOURCE).toMatch(/1\.15 \* rata\.price/);
+    expect(SOURCE).not.toMatch(/miesięcznie × 12/);
   });
 });

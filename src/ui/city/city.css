@@ -258,6 +258,7 @@
 .tt-lotpay .tt-btn {
   text-align: left;
   line-height: 1.25;
+  white-space: normal;   /* `.tt-btn` ma nowrap, a „in instalments: 5,252 zł × 12 from this shop’s transfers” nie mieści się w 338 px: łamie się do drugiego wiersza */
 }
 
 /* „Biorę lokal” i powód odmowy stoją pod pakietem otwarcia: przycisk jest po cenie, a nie nad nią */

@@ -13,6 +13,9 @@ export interface StepResult { ok: boolean; failed: string[]; notes: string[]; na
 export interface SummaryRow { size: string; step: number | string; name: string; status: 'ok' | 'FAIL' | 'n/d'; detail: string }
 export interface Summary { rows: SummaryRow[]; ok: boolean }
 export interface SmokeArgs { only: string | null; help: boolean }
+/** Pomiar szerokości strony: `scroll` dokumentu i widoczne okna, arkusze, karty (ramka, `scrollWidth`, `clientWidth`). */
+export interface WidthBox { name: string; left: number; right: number; scroll: number; client: number; culprits?: string[] }
+export interface WidthMeasure { scroll: number; boxes?: readonly WidthBox[] }
 export type RequestVerdict = 'allow' | 'api' | 'external';
 export interface PlaywrightLike { chromium: unknown }
 export type MakeRequire = (from: string) => (id: string) => unknown;
@@ -24,6 +27,7 @@ export const FIXTURES: { readonly stary: string; readonly przedStatusem: string 
 export const STEPS: readonly StepDef[];
 export const TIPS_STEP: StepDef;
 export const PHONE_WIDTH: number;
+export const USAGE: string;
 
 export function tutorialMemory(tips: boolean): TutorialMemory;
 export function contextOptions(vp: Viewport): ContextOptions;
@@ -39,3 +43,5 @@ export function median(xs: readonly number[]): number;
 export function stepResult(patch?: Partial<StepResult>): StepResult;
 export function summarize(results: Record<string, Record<string, StepResult>>, steps?: readonly StepDef[]): Summary;
 export function parseArgs(argv: readonly string[]): SmokeArgs;
+export function previewReady(log: string, port: number | string): boolean;
+export function widthProblems(m: WidthMeasure, limit?: number): string[];
