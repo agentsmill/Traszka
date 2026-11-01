@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { lang } from '@/i18n';
 import { EN_REMONTS } from '@/i18n/en/content';
 import { PL_CHARS } from '../../../tests/i18nScan';
-import { closeFirstStore, openSecond, partnerSession } from '../../../tests/firmKit';
+import { partnerSession, reletFirm } from '../../../tests/firmKit';
 import { createSession, firmOf } from '@/game/session';
 import { RIVAL_RADIUS_M } from '@/sim/city/traffic';
 import { lotById } from '@/sim/city/generateCity';
@@ -50,12 +50,6 @@ const byTut = (tree: Vnode, tut: string): Vnode => {
   return found[0]!;
 };
 const rowFor = (f: FirmState, district: string) => rowsOf(f).find((r) => r.district === district)!;
-/** Firma po zamknięciu sklepu #1 przy działającym #2: lokal startowy jest „po Traszce” (wyposażenie: remont 1, sprzęt 2 szt., ulepszenia 3 + 1). */
-function reletFirm(seed = SEED): FirmState {
-  const s = partnerSession(seed);
-  openSecond(s, 'raty');
-  return closeFirstStore(s);
-}
 /** Wykres godzin z karty: węzeł `HourChart` z drzewa karty, rozwinięty (komponenty w drzewie nie są wołane przez `walk`). */
 function chartOf(tree: Vnode): Vnode {
   const node = walk(tree).find((v) => v.type === HourChart);
@@ -349,7 +343,7 @@ describe('karta lokalu', () => {
       const id = f.city.startLotId;
       const tree = card(f, id);
       const text = textOf(tree);
-      expect(text).toContain('Fittings kept: refit 1, equipment 2 pcs, upgrades 4');
+      expect(text).toContain('Fittings kept: refit 1, equipment 2 items, upgrades 4');
       expect(text).toContain('ex-Traszka: 30% of the price');
       const chart = textOf(chartOf(tree));
       expect(chart).toContain('Footfall through the day');
@@ -358,6 +352,13 @@ describe('karta lokalu', () => {
       const all = `${text}${chart}`.replace(lotById(f.city, id).street, '').replace(/zł/g, '');
       expect(all.match(PL_CHARS)).toBeNull();
     });
+  });
+
+  it('po angielsku jedna sztuka sprzętu to „1 item”, a nie „1 items”', () => {
+    lang.value = 'en';
+    const f = reletFirm();
+    f.stores[0]!.econ.equipment = f.stores[0]!.econ.equipment.slice(0, 1);
+    expect(textOf(card(f, f.city.startLotId))).toContain('Fittings kept: refit 1, equipment 1 item, upgrades 4');
   });
 
   it('wybór sposobu zapłaty: dwa przyciski ustawiają lotPay i przechodzą do polecenia', () => {

@@ -1,12 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { lang } from '@/i18n';
-import { closeFirstStore, openSecond, partnerSession } from '../../../tests/firmKit';
+import { FITTINGS_LEFT, closeFirstStore, closeStoreFitted, openSecond, partnerSession, reletFirm, reopenLot } from '../../../tests/firmKit';
 import { createSession, firmOf } from '@/game/session';
 import { DISTRICTS } from '@/sim/city/districts';
 import { lotById } from '@/sim/city/generateCity';
 import { lotEstimate, rivalsNear } from '@/sim/city/traffic';
 import type { StoreDistrict } from '@/sim/city/types';
 import { HOUR_CURVE, MINUTES_PER_DAY } from '@/sim/economy/catalog';
+import { expectedDailyCustomers } from '@/sim/economy/economy';
 import { CELL_SIZE_M } from '@/sim/grid';
 import { planFor } from '@/sim/economy/franchisee';
 import { RELET_BUILD_DAYS, RELET_SHARE, applyFirmCommand, lotRentable, lotState, rentBuildDays, rentPrice } from '@/sim/firm/commands';
@@ -33,12 +34,6 @@ afterEach(() => { lang.value = 'pl'; });
 const SEED = 'kiełbasa-42';
 const partnerFirm = (seed = SEED, wallet = 200_000): FirmState => firmOf(partnerSession(seed, wallet));
 const rowOf = (rows: LotRow[], district: StoreDistrict): LotRow => rows.find((r) => r.district === district)!;
-/** Firma po zamknięciu sklepu #1 przy działającym #2: lokal startowy jest „po Traszce” (wyposażenie: remont 1, sprzęt 2 szt., ulepszenia 3 + 1). */
-function reletFirm(seed = SEED): FirmState {
-  const s = partnerSession(seed);
-  openSecond(s, 'raty');
-  return closeFirstStore(s);
-}
 
 describe('freeLotRows: lista wolnych lokali', () => {
   it('tylko lokale w stanie „wolny”, rosnąco po numerze, z numerem, adresem, dzielnicą, formatem, metrażem, widełkami i pakietem', () => {
@@ -103,9 +98,12 @@ describe('freeLotRows: lokal „po Traszce” (4a.2)', () => {
     expect(relet.relet).toBe(true);
     expect(rows.filter((r) => r.lotId !== id).every((r) => r.relet === undefined)).toBe(true);   // zwykły wolny lokal nie ma znacznika
     expect(rows.map((r) => r.lotId)).toEqual(f.city.lots.filter((l) => lotRentable(f, l.id)).map((l) => l.id));
-    // widełki lokalu „po Traszce” to te same, które liczy symulacja dla lokalu
-    const est = lotEstimate(SEED, f.city, id);
+    // widełki lokalu „po Traszce” liczy symulacja z układu i wyposażenia zamkniętego sklepu, a nie z układu poziomu 0 wolnego lokalu
+    const closed = f.stores[0]!;
+    const { remontLevel, equipment, upgrades } = closed.econ;
+    const est = lotEstimate(SEED, f.city, id, { layout: closed.layout, fittings: { upgrades, equipment, remontLevel } });
     expect([relet.lo, relet.hi]).toEqual([est.lo, est.hi]);
+    expect(relet.hi).toBeGreaterThan(lotEstimate(SEED, f.city, id).hi);
   });
 
   it('lokal startowy „po Traszce” nie ma numeru kartki (numer miała tylko kartka „DO WYNAJĘCIA” z generatora), a numery pozostałych zostają', () => {
@@ -125,6 +123,67 @@ describe('freeLotRows: lokal „po Traszce” (4a.2)', () => {
     expect(applyFirmCommand(f, { type: 'rentLot', lotId: id, pay: 'gotowka' }, emptyStepOut())).toEqual({ ok: true });
     expect(lotState(f, id)).toBe('budowa');
     expect(freeLotRows(SEED, f).some((r) => r.lotId === id)).toBe(false);
+  });
+});
+
+describe('lokal „po Traszce”: widełki z układu i wyposażenia zamkniętego sklepu, nie z lokalu wolnego (4a.2)', () => {
+  /** Zamknięty, wyposażony sklep `id` (`remonts` remontów) i prawdziwy ponowny wynajem: widełki z karty przed wynajmem i ekonomia po otwarciu. */
+  function measure(seed: string, id: 1 | 2, remonts: number) {
+    const s = partnerSession(seed);
+    openSecond(s, 'raty');
+    const f = closeStoreFitted(s, id, remonts);
+    const lotId = f.stores.find((st) => st.id === id)!.lotId;
+    const card = lotCardModel(seed, f, lotId, 'gotowka');
+    const free = lotEstimate(seed, f.city, lotId);   // to, co karta pokazywałaby z układu poziomu 0 bez wyposażenia
+    const st = reopenLot(s, lotId);
+    return { f, lotId, card, free, real: expectedDailyCustomers(st.econ, st.info), st };
+  }
+
+  it.each([
+    ['kiełbasa-42', 1, 1], ['a', 2, 1], ['b', 2, 3], ['c', 1, 3], ['d', 2, 2],
+  ] as const)('seed %s, sklep #%i po %i remoncie(ach): prawdziwa liczba klientów otwartego znów sklepu mieści się w widełkach karty, a poziom 0 jej nie obejmuje', (seed, id, remonts) => {
+    const { card, free, real, st, f, lotId } = measure(seed, id, remonts);
+    expect(st.layout.lot.interiorWidth, 'układ naprawdę urósł').toBeGreaterThan(lotById(f.city, lotId).spec.interiorWidth);
+    expect(card.row.lo, `${card.row.lo}–${card.row.hi}, prawdziwa ${real}`).toBeLessThanOrEqual(real);
+    expect(card.row.hi).toBeGreaterThanOrEqual(real);
+    expect(free.hi, 'wolny lokal bez wyposażenia ma widełki wyraźnie za niskie').toBeLessThan(real);
+    // profil godzinowy idzie za widełkami: suma doby to ich środek, więc też mieści się w granicach prawdziwej liczby
+    const total = card.hours.weekday.reduce((n, v) => n + v, 0);
+    expect(total).toBeCloseTo((card.row.lo + card.row.hi) / 2, 6);
+    expect(total).toBeGreaterThan(free.hi);
+  });
+
+  it('widełki „po Traszce” nie biorą wpisu z czasów, gdy lokal był wolny (pamięć podręczna miasta nie zna zamkniętego sklepu)', () => {
+    const s = partnerSession(SEED);
+    const f = firmOf(s);
+    const before = freeLotRows(SEED, f);   // wypełnia pamięć widełek miasta dla wszystkich wolnych lokali
+    openSecond(s, 'raty');
+    closeStoreFitted(s, 2, 1);
+    const lotId = f.stores[1]!.lotId;
+    const was = before.find((r) => r.lotId === lotId)!;
+    expect(was).toBeDefined();
+    const now = freeLotRows(SEED, f).find((r) => r.lotId === lotId)!;
+    expect(now.relet).toBe(true);
+    expect(now.hi).toBeGreaterThan(was.hi);
+    expect(lotCardModel(SEED, f, lotId, 'raty').row).toEqual(now);
+  });
+
+  it('widełki „po Traszce” liczą się raz na układ i wyposażenie: lista i karta nie wołają lotEstimate drugi raz, a zmiana wyposażenia liczy od nowa', () => {
+    const f = reletFirm();
+    const id = f.city.startLotId;
+    const a = freeLotRows(SEED, f).find((r) => r.lotId === id)!;
+    vi.mocked(lotEstimate).mockClear();
+    const b = freeLotRows(SEED, f).find((r) => r.lotId === id)!;
+    lotCardModel(SEED, f, id, 'raty');
+    lotHours(SEED, f, id);
+    expect(lotEstimate).not.toHaveBeenCalled();
+    expect(b).toEqual(a);
+    // sklep, który zamknął się znów z inną zawartością (tu: pięć poziomów ulotek zamiast trzech), ma inne widełki
+    const closed = f.stores[0]!;
+    closed.econ.upgrades = { ...closed.econ.upgrades, ulotki: 5 };
+    const c = freeLotRows(SEED, f).find((r) => r.lotId === id)!;
+    expect(lotEstimate).toHaveBeenCalledTimes(1);
+    expect(c.hi).toBeGreaterThan(a.hi);
   });
 });
 
@@ -297,7 +356,7 @@ describe('lotCardModel: profil godzinowy i lokal „po Traszce” (4a.2)', () =>
     expect(card.plan.months).toBe(6);
     expect(card.buildDays).toBe(rentBuildDays(f, id));
     expect(card.buildDays).toBe(RELET_BUILD_DAYS);
-    expect(card.relet).toEqual({ remontLevel: 1, equipment: 2, upgrades: 4 });
+    expect(card.relet).toEqual(FITTINGS_LEFT);
     expect(card.row.price).toBe(card.price);
     expect(card.action).toEqual({ enabled: true });
   });

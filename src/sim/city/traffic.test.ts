@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createEconomy, expectedDailyCustomers } from '@/sim/economy/economy';
+import { createEconomy, expectedDailyCustomers, type StoreFittings } from '@/sim/economy/economy';
 import { NEUTRAL_SITE } from '@/sim/economy/site';
 import { computeStoreInfo } from '@/sim/economy/storeInfo';
 import { subSeed } from '@/sim/rng';
@@ -392,6 +392,44 @@ describe('lotEstimate: widełki klientów na karcie lokalu', () => {
       }
     }
     expect(n).toBeGreaterThan(5);
+  });
+
+  describe('lokal „po Traszce” (relet): układ i wyposażenie zamkniętego sklepu', () => {
+    const fittings1: StoreFittings = { upgrades: { ulotki: 3, szkolenie: 1 }, equipment: [{ id: 'sco', slot: null }], remontLevel: 1 };
+    const reletFor = (seed: string, c: CityState, lotId: number, level: number, fittings: StoreFittings = fittings1) => {
+      const lot = lotById(c, lotId);
+      const storeSeed = lotId === c.startLotId ? seed : storeSeedFor(seed, lotId);
+      return { storeSeed, lot, input: { layout: layoutFor(storeSeed, level, lot.spec), fittings } };
+    };
+
+    it('bez wyposażenia i z układem poziomu 0 widełki są dokładnie takie jak dla wolnego lokalu (bez `relet` nic się nie zmienia)', () => {
+      for (const seed of SEEDS.slice(0, 8)) {
+        const c = cityOf(seed);
+        for (const lot of [freeLot(c), lotById(c, c.startLotId)]) {
+          const { input } = reletFor(seed, c, lot.id, 0, { upgrades: {}, equipment: [], remontLevel: 0 });
+          expect(lotEstimate(seed, c, lot.id, input), `${seed} lokal ${lot.id}`).toEqual(lotEstimate(seed, c, lot.id));
+          expect(lotEstimate(seed, c, lot.id, undefined)).toEqual(lotEstimate(seed, c, lot.id));
+        }
+      }
+    });
+
+    it('trueDaily to expectedDailyCustomers sklepu otwartego z tego układu i wyposażenia (jak `reopenStoreAt`), a widełki go obejmują', () => {
+      for (const seed of SEEDS.slice(0, 8)) {
+        const c = cityOf(seed);
+        for (const lot of [freeLot(c), lotById(c, c.startLotId)]) {
+          const { storeSeed, input } = reletFor(seed, c, lot.id, 1);
+          const site = siteFor(c, lot.id, { extra: true, ownCosts: false, firmDebt: true, weatherHash: null });
+          const info = { ...computeStoreInfo(input.layout), site };
+          const real = expectedDailyCustomers(createEconomy(storeSeed, info, undefined, undefined, input.fittings), info);
+          const e = lotEstimate(seed, c, lot.id, input);
+          expect(e.trueDaily, `${seed} lokal ${lot.id}`).toBe(real);
+          expect(e.lo, `${seed} lokal ${lot.id}`).toBeLessThanOrEqual(real);
+          expect(e.hi).toBeGreaterThanOrEqual(real);
+          expect(e.trueDaily, 'remont i ulotki zwiększają ruch ponad układ poziomu 0').toBeGreaterThan(1.2 * lotEstimate(seed, c, lot.id).trueDaily);
+          expect(e.who).toEqual(lotEstimate(seed, c, lot.id).who);   // „kto przychodzi” zależy od lokalu, nie od wyposażenia
+        }
+      }
+    });
   });
 
   it('who: dwa najbliższe rodzaje punktów ruchu, najbliższy pierwszy', () => {

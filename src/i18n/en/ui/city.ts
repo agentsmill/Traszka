@@ -82,7 +82,8 @@ export const CITY_UI: Dict = {
   'Budowa': 'Build time',
   'Pakiet otwarcia': 'Opening package',
   // lokal „po Traszce” (4a.2): wyposażenie, które zostało, i zniżka pakietu
-  'Wyposażenie zostało: remont {0}, sprzęt {1} szt., ulepszenia {2}': 'Fittings kept: refit {0}, equipment {1} pcs, upgrades {2}',
+  'Wyposażenie zostało: remont {0}, sprzęt {1} szt., ulepszenia {2}': (refit, equipment, upgrades) =>
+    `Fittings kept: refit ${refit}, equipment ${Number(String(equipment).replace(/,/g, '')) === 1 ? '1 item' : `${equipment} items`}, upgrades ${upgrades}`,
   'po Traszce: {0} ceny': 'ex-Traszka: {0} of the price',
   'Sposób zapłaty': 'How to pay',
   'za gotówkę {0}': '{0} in cash',

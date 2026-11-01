@@ -8,10 +8,10 @@ import { dayOf } from '@/sim/economy/calendar';
 import { HOUR_CURVE } from '@/sim/economy/catalog';
 import { planFor, type InstallmentPlan } from '@/sim/economy/franchisee';
 import { CELL_SIZE_M } from '@/sim/grid';
-import { lotRentable, lotState, rentBuildDays, rentPrice, rentRefusal } from '@/sim/firm/commands';
+import { closedStoreAt, lotRentable, lotState, rentBuildDays, rentPrice, rentRefusal } from '@/sim/firm/commands';
 import { activeStore } from '@/sim/firm/firm';
-import type { FirmRefusal, FirmState, FirmStore } from '@/sim/firm/types';
-import type { LotKind } from '@/sim/store/types';
+import type { FirmRefusal, FirmState } from '@/sim/firm/types';
+import type { LotKind, StoreLayout } from '@/sim/store/types';
 import { plural } from '../game/format';
 import { brandName } from './cityText';
 import { addressText } from './firmText';
@@ -50,14 +50,32 @@ export const theftLevel = (mult: number): Level => (mult >= 1.3 ? 'wysokie' : mu
 
 // --- Lista wolnych lokali -------------------------------------------------------------------------------------------
 
-/** Widełki klientów liczą się raz na miasto (`lotEstimate` buduje ekonomię sklepu w lokalu), a ekran pyta o nie przy każdym odświeżeniu. */
+/**
+ * Widełki klientów liczą się raz na miasto (`lotEstimate` buduje ekonomię sklepu w lokalu), a ekran pyta o nie przy każdym odświeżeniu.
+ * Lokal „po Traszce” ma widełki z układu i wyposażenia zamkniętego sklepu (`ReletInput`, tak otwiera go ponowny wynajem), a to się zmienia
+ * z historią lokalu (sklep zamyka się, otwiera znów i zamyka z inną zawartością), więc nie trafia pod klucz `seed:lokal` miasta: wpis
+ * z czasów, gdy lokal był wolny, byłby nieaktualny. Ma osobną pamięć, kluczoną układem sklepu (nowy układ po remoncie to nowy obiekt)
+ * i odciskiem wyposażenia.
+ */
 const estimates = new WeakMap<CityState, Map<string, LotEstimate>>();
-function estimateOf(seed: string, city: CityState, lotId: number): LotEstimate {
-  let bySeed = estimates.get(city);
-  if (!bySeed) estimates.set(city, bySeed = new Map());
+const reletEstimates = new WeakMap<StoreLayout, Map<string, LotEstimate>>();
+
+function estimateOf(seed: string, f: FirmState, lotId: number): LotEstimate {
+  const closed = closedStoreAt(f, lotId);
+  if (closed) {
+    const { upgrades, equipment, remontLevel } = closed.econ;
+    const key = `${seed}:${lotId}:${JSON.stringify([remontLevel, upgrades, equipment])}`;
+    let byKey = reletEstimates.get(closed.layout);
+    if (!byKey) reletEstimates.set(closed.layout, byKey = new Map());
+    let e = byKey.get(key);
+    if (!e) byKey.set(key, e = lotEstimate(seed, f.city, lotId, { layout: closed.layout, fittings: { upgrades, equipment, remontLevel } }));
+    return e;
+  }
+  let bySeed = estimates.get(f.city);
+  if (!bySeed) estimates.set(f.city, bySeed = new Map());
   const key = `${seed}:${lotId}`;
   let e = bySeed.get(key);
-  if (!e) bySeed.set(key, e = lotEstimate(seed, city, lotId));
+  if (!e) bySeed.set(key, e = lotEstimate(seed, f.city, lotId));
   return e;
 }
 
@@ -73,11 +91,8 @@ function numberOf(city: CityState, lotId: number): number {
   return byLot.get(lotId) ?? 0;
 }
 
-/** Zamknięty sklep w lokalu: jego wyposażenie zostało i to jego lokal jest „po Traszce” (ten sam warunek co w `rentPrice`). */
-const closedStoreAt = (f: FirmState, lotId: number): FirmStore | undefined => f.stores.find((s) => s.lotId === lotId && s.closed);
-
 function rowOf(seed: string, f: FirmState, lot: CityLot): LotRow {
-  const est = estimateOf(seed, f.city, lot.id);
+  const est = estimateOf(seed, f, lot.id);
   const row: LotRow = {
     lotId: lot.id, no: numberOf(f.city, lot.id), street: lot.street, number: lot.number, district: lot.district, kind: lot.spec.kind,
     corner: lot.spec.corner, area: Math.round(lot.spec.interiorWidth * lot.spec.salesDepth * CELL_SIZE_M * CELL_SIZE_M),
@@ -109,7 +124,7 @@ export interface HourBars { weekday: number[]; weekend: number[] | null }
 export function lotHours(seed: string, f: FirmState, lotId: number): HourBars {
   const lot = lotById(f.city, lotId);
   const d = DISTRICTS[lot.district];
-  const est = estimateOf(seed, f.city, lotId);
+  const est = estimateOf(seed, f, lotId);
   const profile = siteHours(lot.district);
   const shape = Array.from({ length: HOUR_COUNT }, (_, i) => (profile ? profile[FIRST_HOUR + i] : HOUR_CURVE[FIRST_HOUR + i]) ?? 0);
   const sum = shape.reduce((n, v) => n + v, 0);
@@ -145,7 +160,7 @@ export function lotCardModel(seed: string, f: FirmState, lotId: number, pay: 'go
   const closed = closedStoreAt(f, lotId);
   return {
     row: rowOf(seed, f, lot),
-    who: estimateOf(seed, f.city, lotId).who,
+    who: estimateOf(seed, f, lotId).who,
     basket: basketLevel(d.basket),
     expectations: expectationsLevel(d.patience, d.repPenalty),
     theft: theftLevel(d.theft),

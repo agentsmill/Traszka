@@ -6,8 +6,8 @@ import { awaitingDecision, type EconomyState } from '@/sim/economy/economy';
 import { defaultAnswer } from '@/sim/economy/monthPreview';
 import { visibleCards } from '@/sim/economy/tycoon/cards';
 import { closeStore } from '@/sim/firm/closure';
-import { applyFirmCommand, lotState, rentRefusal } from '@/sim/firm/commands';
-import { activeStore, applyStoreCommand, emptyStepOut, stepFirmMinute, syncWallet } from '@/sim/firm/firm';
+import { applyFirmCommand, lotState, openDueBuilds, rentRefusal, switchStore } from '@/sim/firm/commands';
+import { activeStore, applyStoreCommand, emptyStepOut, grantToFirm, stepFirmMinute, syncWallet } from '@/sim/firm/firm';
 import type { FirmState, FirmStepOut, FirmStore } from '@/sim/firm/types';
 
 /*
@@ -84,19 +84,69 @@ export const openSecond = (s: GameSession, pay: 'gotowka' | 'raty' = 'raty'): Fi
 /** Sklep #3 (limit 4a.2) w pierwszym lokalu wolnym po otwarciu #2. */
 export const openThird = (s: GameSession, pay: 'gotowka' | 'raty' = 'raty'): FirmStore => openNext(s, pay, 3);
 
+/** Wyposażenie, które `fitStore` zostawia w sklepie (jeden remont): remont 1, dwie kasy samoobsługowe, ulepszenia na poziomach 3 + 1. */
+export const FITTINGS_LEFT = { remontLevel: 1, equipment: 2, upgrades: 4 } as const;
+
 /**
- * Sklep #1 zamknięty przez Centralę (zaufanie 0, prawdziwe `closeStore`) przy działającym sklepie #2: lokal startowy to „po Traszce”.
- * Sesja musi mieć już sklep #2 (`openSecond`); `fittings` to wyposażenie, które #1 zostawia w lokalu (domyślnie remont 1, dwie sztuki
- * sprzętu i ulepszenia na poziomach 3 + 1).
+ * Wyposażenie sklepu `id` prawdziwymi poleceniami (sklep staje się aktywny): ulotki na 3. poziom, szkolenie, dwie kasy samoobsługowe i `remonts`
+ * remontów (1–3), więc `layout` sklepu rośnie prawdziwą drogą `startRemont` (większa sala, więcej klientów). Między remontami ekipa „kończy”
+ * pracę (`remontUntil = null`), bo kolejny remont rusza dopiero po poprzednim.
  */
-export function closeFirstStore(s: GameSession, fittings: Pick<EconomyState, 'upgrades' | 'equipment' | 'remontLevel'> = {
-  upgrades: { ulotki: 3, szkolenie: 1 }, equipment: [{ id: 'sco', slot: null }, { id: 'sco', slot: null }], remontLevel: 1,
-}): FirmState {
+export function fitStore(f: FirmState, id: number, remonts = 1): void {
+  expect(switchStore(f, id)).toEqual({ ok: true });
+  grantToFirm(f, (e) => { e.level = 20; e.cash += 600_000; });
+  const buy = [
+    ...[1, 2, 3].map(() => ({ type: 'buyUpgrade', id: 'ulotki' }) as const),
+    { type: 'buyUpgrade', id: 'szkolenie' } as const,
+    ...[1, 2].map(() => ({ type: 'buyEquipment', id: 'sco' }) as const),
+  ];
+  for (const cmd of buy) expect(applyStoreCommand(f, cmd).result.ok, JSON.stringify(cmd)).toBe(true);
+  for (let i = 0; i < remonts; i++) {
+    const outcome = applyStoreCommand(f, { type: 'startRemont' });
+    expect(outcome.result.ok, `remont ${i + 1}`).toBe(true);
+    expect(outcome.layoutChanged).toBe(true);
+    activeStore(f).econ.remontUntil = null;
+  }
+}
+
+/**
+ * Sklep `id` wyposażony (`fitStore`) i zamknięty przez Centralę (zaufanie 0, prawdziwe `closeStore`) przy działającym innym sklepie: jego lokal
+ * to „po Traszce” z układem po remoncie i wyposażeniem. Sesja musi mieć już drugi sklep (`openSecond`).
+ */
+export function closeStoreFitted(s: GameSession, id: number, remonts = 1): FirmState {
   const f = firmOf(s);
-  Object.assign(f.stores[0]!.econ, structuredClone(fittings));
-  closeStore(f, 1, 'trust', emptyStepOut());
-  expect(f.stores[0]!.closed).toBe(true);
+  fitStore(f, id, remonts);
+  closeStore(f, id, 'trust', emptyStepOut());
+  expect(f.stores.find((st) => st.id === id)!.closed).toBe(true);
+  pointAtActive(s);
   return f;
+}
+
+/** Sklep #1 zamknięty przez Centralę przy działającym #2: lokal startowy to „po Traszce” (wyposażenie: `FITTINGS_LEFT`). */
+export const closeFirstStore = (s: GameSession, remonts = 1): FirmState => closeStoreFitted(s, 1, remonts);
+
+/** Firma po zamknięciu sklepu #1 przy działającym #2 (`partnerSession`, `openSecond`, `closeFirstStore`): lokal startowy jest „po Traszce”. */
+export function reletFirm(seed = SEED, remonts = 1): FirmState {
+  const s = partnerSession(seed);
+  openSecond(s, 'raty');
+  return closeFirstStore(s, remonts);
+}
+
+/**
+ * Ponowny wynajem lokalu „po Traszce” za gotówkę: wynajem, gra do dnia odbioru i otwarcie budowy o 6:00. Zwraca sklep zaraz po otwarciu
+ * (zdarzenie `opened` z `reopened`), jeszcze bez kroku sklepów, więc jego ekonomia jest taka, jaką dała `reopenStoreAt`.
+ */
+export function reopenLot(s: GameSession, lotId: number): FirmStore {
+  const f = firmOf(s);
+  expect(applyFirmCommand(f, { type: 'rentLot', lotId, pay: 'gotowka' }, emptyStepOut())).toEqual({ ok: true });
+  playTo(s, f.builds[f.builds.length - 1]!.readyDay * DAY + OPEN_FROM);
+  const out = emptyStepOut();
+  openDueBuilds(f, out);
+  expect(out.firm.some((e) => e.kind === 'opened' && e.params?.reopened === 1)).toBe(true);
+  const st = f.stores.find((x) => x.lotId === lotId)!;
+  expect(st.closed).toBe(false);
+  pointAtActive(s);
+  return st;
 }
 
 /** Sklep, któremu Centrala wypowie umowę przy najbliższym zamknięciu miesiąca: zaufanie przy zerze i strata miesiąca. */

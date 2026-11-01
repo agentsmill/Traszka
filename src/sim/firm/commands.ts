@@ -137,7 +137,7 @@ export const RELET_SHARE = 0.3;
 export const RELET_BUILD_DAYS = 2;
 
 /** Zamknięty sklep w lokalu (lokal „po Traszce”), także gdy ktoś właśnie wziął go znów i trwa budowa. Lokal ma najwyżej jeden wpis sklepu. */
-const closedStoreAt = (f: FirmState, lotId: number): FirmStore | undefined => f.stores.find((s) => s.lotId === lotId && s.closed);
+export const closedStoreAt = (f: FirmState, lotId: number): FirmStore | undefined => f.stores.find((s) => s.lotId === lotId && s.closed);
 
 /** Pakiet otwarcia lokalu: wolny kosztuje cały `package`, „po Traszce” `round(package × RELET_SHARE / 100) × 100` (co 100 zł jak pakiet). */
 export function rentPrice(f: FirmState, lotId: number): number {
