@@ -286,8 +286,8 @@ export const RELET_SHARE = 0.3;
 export const reletPrice = (pkg) => Math.round((pkg * RELET_SHARE) / 100) * 100;
 /** Słupki wykresu godzin na karcie lokalu: godziny otwarcia 6–22 (`HourChart.tsx`). */
 export const HOUR_BARS = 17;
-/** Próg ostrzeżenia o zaufaniu sklepu w tle na liście chipa (`TRUST_WARN_BELOW` w `storeSwitcherModel.ts`; test pilnuje zgodności). */
-export const TRUST_WARN_BELOW = 40;
+/** Próg ostrzeżenia o zaufaniu sklepu w tle na liście chipa (`BACKGROUND_TRUST_WARN_BELOW` w `storeSwitcherModel.ts`, czyli dolna granica poziomu „Pod obserwacją”; test pilnuje zgodności). */
+export const BACKGROUND_TRUST_WARN_BELOW = 40;
 /** Zaufanie ponownie otwartego sklepu (`TRUST.start`): okno „znów otwarta” je podaje, a dane sklepu mają je potwierdzić. */
 export const RELET_TRUST = 65;
 /** Dosłowne teksty z planu: odmowa limitu, tytuł okna ponownego otwarcia i podpis zniżki na karcie lokalu po Traszce. */
@@ -1340,14 +1340,14 @@ async function main(argv) {
   }
 
   /**
-   * Gra kolejne miesiące (okno sieci zamykane po każdym), aż któryś otwarty sklep spadnie poniżej progu zaufania z listy chipa (`TRUST_WARN_BELOW`),
+   * Gra kolejne miesiące (okno sieci zamykane po każdym), aż któryś otwarty sklep spadnie poniżej progu zaufania z listy chipa (`BACKGROUND_TRUST_WARN_BELOW`),
    * najwyżej `maxMonths`. Sklep w tle traci zaufanie bez wizyt, więc zajmuje to kilka miesięcy (na fixture „po Traszce” pięć do sześciu); punkt przeglądu planu wymaga, by lista chipa z tym
    * ostrzeżeniem mieściła się w 390 px, a bez sklepu poniżej progu nie ma jej jak zobaczyć. Zwraca ostatni odczyt gry i liczbę zagranych miesięcy.
    */
   async function playUntilTrustWarning(page, ev, { stop, prefix, phone, maxMonths = 8 }) {
     let g = await readGame(page);
     let months = 0;
-    while (months < maxMonths && !g.stores.some((st) => !st.closed && st.trust < TRUST_WARN_BELOW)) {
+    while (months < maxMonths && !g.stores.some((st) => !st.closed && st.trust < BACKGROUND_TRUST_WARN_BELOW)) {
       const { stopped } = await advance(page, { stop, maxDays: 40, chunk: 4320 });   // trzy doby naraz: okno miesiąca czeka na koniec kawałka, a po drodze `skip` staje na kartach
       if (!ev.check(!!stopped, `miesiąc +${months + 1} nie przyniósł okna sieci`)) break;
       months++;
@@ -1545,11 +1545,11 @@ async function main(argv) {
         // chip: ostrzeżenie o zaufaniu dokładnie przy sklepach poniżej progu, a ⚠ przy chipie, gdy jakiś sklep w tle woła o uwagę. Gramy do pierwszego takiego sklepu
         const { g: g3, months } = await playUntilTrustWarning(page, ev, { stop: /^Wyciągi od Centrali/, prefix: '', phone });
         const open3 = g3.stores.filter((st) => !st.closed);
-        ev.check(open3.length === 3 && open3.some((st) => st.trust < TRUST_WARN_BELOW), `po ${months} kolejnych miesiącach żaden z trzech sklepów nie spadł poniżej ${TRUST_WARN_BELOW}: ${open3.map((st) => `#${st.id} ${Math.round(st.trust)}`).join(', ')}`);
+        ev.check(open3.length === 3 && open3.some((st) => st.trust < BACKGROUND_TRUST_WARN_BELOW), `po ${months} kolejnych miesiącach żaden z trzech sklepów nie spadł poniżej ${BACKGROUND_TRUST_WARN_BELOW}: ${open3.map((st) => `#${st.id} ${Math.round(st.trust)}`).join(', ')}`);
         const chip = await readChipList(page, { close: false });
         const mismatch = chip.rows.flatMap((r, i) => {
           const st = open3[i];
-          const want = st.trust < TRUST_WARN_BELOW;
+          const want = st.trust < BACKGROUND_TRUST_WARN_BELOW;
           return r.warns.includes('zaufanie') === want && r.shown === Math.round(st.trust) ? [] : [`#${st.id}: pokazuje ${r.shown}${r.warns.includes('zaufanie') ? ' z ostrzeżeniem' : ''}, zaufanie ${Math.round(st.trust)}`];
         });
         ev.check(chip.rows.length === 3 && mismatch.length === 0, `ostrzeżenia zaufania na chipie: ${mismatch.join('; ') || JSON.stringify(chip.rows.map((r) => r.warns))}`);
@@ -1681,7 +1681,7 @@ async function main(argv) {
       // lista chipa z ostrzeżeniem o zaufaniu po angielsku
       const { g: gw, months } = await playUntilTrustWarning(page, ev, { stop: /^Head Office statements/, prefix: 'angielski: ', phone: true });
       const openW = gw.stores.filter((st) => !st.closed);
-      ev.check(openW.length === 3 && openW.some((st) => st.trust < TRUST_WARN_BELOW), `po ${months} kolejnych miesiącach żaden sklep nie spadł poniżej ${TRUST_WARN_BELOW}: ${openW.map((st) => `#${st.id} ${Math.round(st.trust)}`).join(', ')}`);
+      ev.check(openW.length === 3 && openW.some((st) => st.trust < BACKGROUND_TRUST_WARN_BELOW), `po ${months} kolejnych miesiącach żaden sklep nie spadł poniżej ${BACKGROUND_TRUST_WARN_BELOW}: ${openW.map((st) => `#${st.id} ${Math.round(st.trust)}`).join(', ')}`);
       const chipW = await readChipList(page, { before: async () => { await checkWidth(page, 'angielski: lista sklepów (trzy) z ostrzeżeniem zaufania'); await ev.shot('4a2-12e-angielski-lista-ostrzezenie'); } });
       ev.check(chipW.rows.some((r) => r.warns.includes('zaufanie')), `lista chipa po angielsku bez ostrzeżenia zaufania: ${JSON.stringify(chipW.rows.map((r) => r.warns))}`);
       ev.note(`po angielsku, po ${months} kolejnych miesiącach: zaufanie ${openW.map((st) => `#${st.id} ${Math.round(st.trust)}`).join(', ')}; wiersz z ostrzeżeniem: „${chipW.rows.find((r) => r.warns.includes('zaufanie'))?.text.replace(/\s+/g, ' ').trim()}”`);

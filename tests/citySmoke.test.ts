@@ -5,7 +5,7 @@ import { resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   FIXTURES, HOUR_BARS, LAUNCH_ARGS, LIMIT_TEXT, NEW_SCREENS, OPEN_MINUTE, PHONE_WIDTH, RELET_CAPTION, RELET_SHARE, RELET_TITLE, RELET_TRUST, STEPS, TIPS_STEP,
-  TRUST_WARN_BELOW, USAGE, VIEWPORTS, DEFAULT_PLAYWRIGHT_ROOT, chromiumCandidates, chromiumExecutable, closedFittings,
+  BACKGROUND_TRUST_WARN_BELOW, USAGE, VIEWPORTS, DEFAULT_PLAYWRIGHT_ROOT, chromiumCandidates, chromiumExecutable, closedFittings,
   contextOptions, digitsOf, fixtureSave, loadPlaywright, median, metaFor, newScreenProblems, overlapArea, parseArgs, parseInstallmentButton, parsePerf,
   pinProblems, previewReady, requestVerdict, reletBlockText, reletPrice, stepResult, storageEntries, summarize, trustRowValues, tutorialMemory,
   widthProblems,
@@ -20,7 +20,7 @@ import { RELET_BUILD_DAYS, RELET_SHARE as SIM_RELET_SHARE, lotState, partnerProg
 import { percentOf } from '@/ui/game/format';
 import { lotCardModel } from '@/ui/city/cityModel';
 import { firmEventText, refusalText } from '@/ui/city/firmText';
-import { TRUST_WARN_BELOW as SWITCHER_TRUST_WARN_BELOW } from '@/ui/city/storeSwitcherModel';
+import { BACKGROUND_TRUST_WARN_BELOW as SWITCHER_TRUST_WARN_BELOW } from '@/ui/city/storeSwitcherModel';
 
 /**
  * Pomocniki skryptu smoke'a miasta (scripts/city-smoke.mjs), tak jak `tests/rankingSmoke.test.ts` dla próby rankingu: sam bieg w
@@ -394,7 +394,7 @@ describe('plan 4a.2 (Zadanie 9): stałe smoke\'a są zgodne z grą', () => {
     expect(RELET_SHARE).toBe(SIM_RELET_SHARE);
     expect(reletPrice(37_500)).toBe(11_300);   // 37 500 × 0,3 = 11 250, zaokrąglone do pełnych setek jak pakiet
     expect(reletPrice(54_800)).toBe(16_400);
-    expect(TRUST_WARN_BELOW).toBe(SWITCHER_TRUST_WARN_BELOW);
+    expect(BACKGROUND_TRUST_WARN_BELOW).toBe(SWITCHER_TRUST_WARN_BELOW);
     expect(RELET_TRUST).toBe(TRUST.start);
     expect(HOUR_BARS).toBe((OPEN_TO - OPEN_FROM) / 60);
     expect(OPEN_MINUTE).toBe(OPEN_FROM);   // sklep z budowy otwiera się o 6:00

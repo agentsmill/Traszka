@@ -1,11 +1,11 @@
 import { t } from '@/i18n';
 import type { CityPinKind } from '@/render/city/cityPins';
-import { DISTRICTS, siteHours } from '@/sim/city/districts';
+import { DISTRICTS } from '@/sim/city/districts';
 import { lotById } from '@/sim/city/generateCity';
-import { lotEstimate, rivalsNear, type LotEstimate } from '@/sim/city/traffic';
+import { lotEstimate, rivalsNear, siteFor, type LotEstimate } from '@/sim/city/traffic';
 import type { CityLot, CityState, LotState, RivalBrand, SourceKind, StoreDistrict } from '@/sim/city/types';
 import { dayOf } from '@/sim/economy/calendar';
-import { HOUR_CURVE } from '@/sim/economy/catalog';
+import { HOUR_CURVE, OPEN_FROM, OPEN_TO } from '@/sim/economy/catalog';
 import { planFor, type InstallmentPlan } from '@/sim/economy/franchisee';
 import { CELL_SIZE_M } from '@/sim/grid';
 import { closedStoreAt, lotRentable, lotState, rentBuildDays, rentPrice, rentRefusal } from '@/sim/firm/commands';
@@ -26,7 +26,8 @@ export type Level = 'niskie' | 'srednie' | 'wysokie';
 /**
  * Wiersz listy lokali do wzięcia. `no` to numer lokalu na kartce i na liście: miejsce wśród wolnych lokali z generatora (od 1), więc po
  * wynajęciu jednego numery pozostałych zostają; lokal startowy „po Traszce” nie miał kartki, więc ma 0 (bez numeru). `area` to sala
- * sprzedaży w m² (`interiorWidth × salesDepth` kratek). `price` to pakiet otwarcia z reguły wynajmu (`rentPrice`: lokal „po Traszce”
+ * sprzedaży w m² (`interiorWidth × salesDepth` kratek): lokalu wolnego z jego opisu, lokalu „po Traszce” z układu zamkniętego sklepu, który
+ * po remontach jest większy niż lokal z poziomu 0 (ten układ otworzy ponowny wynajem). `price` to pakiet otwarcia z reguły wynajmu (`rentPrice`: lokal „po Traszce”
  * ma zniżkę), a `relet` jest ustawione tylko dla lokalu „po Traszce” (zwykły wolny lokal nie ma tego klucza).
  */
 export interface LotRow {
@@ -93,12 +94,14 @@ function numberOf(city: CityState, lotId: number): number {
 
 function rowOf(seed: string, f: FirmState, lot: CityLot): LotRow {
   const est = estimateOf(seed, f, lot.id);
+  const closed = closedStoreAt(f, lot.id);
+  const hall = closed ? closed.layout.lot : lot.spec;
   const row: LotRow = {
     lotId: lot.id, no: numberOf(f.city, lot.id), street: lot.street, number: lot.number, district: lot.district, kind: lot.spec.kind,
-    corner: lot.spec.corner, area: Math.round(lot.spec.interiorWidth * lot.spec.salesDepth * CELL_SIZE_M * CELL_SIZE_M),
+    corner: lot.spec.corner, area: Math.round(hall.interiorWidth * hall.salesDepth * CELL_SIZE_M * CELL_SIZE_M),
     lo: est.lo, hi: est.hi, price: rentPrice(f, lot.id),
   };
-  if (closedStoreAt(f, lot.id)) row.relet = true;
+  if (closed) row.relet = true;
   return row;
 }
 
@@ -109,15 +112,17 @@ export function freeLotRows(seed: string, f: FirmState): LotRow[] {
 
 // --- Profil godzinowy -----------------------------------------------------------------------------------------------
 
-/** Pierwsza i liczba godzin profilu: sklep sprzedaje 6:00–22:00 (ostatnia godzina to 22:00), czyli 17 słupków. */
-const FIRST_HOUR = 6;
-const HOUR_COUNT = 17;
+/** Pierwsza i ostatnia godzina profilu z godzin otwarcia (jak w `districts.ts`): sklep sprzedaje 6:00–23:00, więc ostatnia godzina to 22:00 i jest 17 słupków. */
+export const FIRST_HOUR = OPEN_FROM / 60;
+export const LAST_HOUR = OPEN_TO / 60 - 1;
+const HOUR_COUNT = LAST_HOUR - FIRST_HOUR + 1;
 
 /** Klienci na godzinę (od 6 do 22, 17 liczb) w dzień roboczy i, gdy dzielnica ma osobny ruch weekendowy, w weekend (inaczej `null`). */
 export interface HourBars { weekday: number[]; weekend: number[] | null }
 
 /**
- * Profil godzinowy lokalu przy środku widełek z karty: kształt dnia dzielnicy (`siteHours`, a bez niego `HOUR_CURVE`, jak w grze) rozłożony
+ * Profil godzinowy lokalu przy środku widełek z karty: kształt dnia z tego samego miejsca, z którego bierze go symulacja (`SiteMods.hours`
+ * lokalu z `siteFor`, a bez niego `HOUR_CURVE`, jak `hourCurveOf`; lokal startowy ma `NEUTRAL_SITE`, więc zawsze `HOUR_CURVE`) rozłożony
  * tak, żeby suma godzin dawała środek widełek, więc profil mówi, kiedy klienci przyjdą, a nie ilu ich jest. Weekend to ten sam kształt razy
  * `weekendTraffic / traffic` (Biurowce); dzielnica bez ruchu weekendowego ma `weekend: null`.
  */
@@ -125,8 +130,9 @@ export function lotHours(seed: string, f: FirmState, lotId: number): HourBars {
   const lot = lotById(f.city, lotId);
   const d = DISTRICTS[lot.district];
   const est = estimateOf(seed, f, lotId);
-  const profile = siteHours(lot.district);
-  const shape = Array.from({ length: HOUR_COUNT }, (_, i) => (profile ? profile[FIRST_HOUR + i] : HOUR_CURVE[FIRST_HOUR + i]) ?? 0);
+  // te same flagi co w `lotEstimate`: godziny nie zależą od flag, ale lokal jest ten sam, co przy widełkach
+  const curve = siteFor(f.city, lotId, { extra: true, ownCosts: false, firmDebt: true, weatherHash: null }).hours ?? HOUR_CURVE;
+  const shape = Array.from({ length: HOUR_COUNT }, (_, i) => curve[FIRST_HOUR + i] ?? 0);
   const sum = shape.reduce((n, v) => n + v, 0);
   const weekday = shape.map((v) => (est.lo + est.hi) / 2 * v / sum);
   return { weekday, weekend: d.weekendTraffic === null ? null : weekday.map((v) => v * d.weekendTraffic! / d.traffic) };

@@ -46,7 +46,7 @@ function useTweened(value: number): [number, boolean] {
   return [shown, rising];
 }
 
-/** Poniżej tej wartości zaufanie Centrali świeci ostrzeżeniem (próg „Na cenzurowanym” zaczyna się od 20, „Pod obserwacją” od 40). */
+/** Poniżej tej wartości zaufanie Centrali świeci ostrzeżeniem (próg „Na cenzurowanym” zaczyna się od 20, „Pod obserwacją” od 40). Sklep w tle ma wcześniejszy próg: `BACKGROUND_TRUST_WARN_BELOW` w `storeSwitcherModel.ts`. */
 export const TRUST_WARN_BELOW = 30;
 
 /**

@@ -59,7 +59,7 @@ export interface PinReport { problems: string[]; overlaps: { lot: number; with: 
 export interface WidthEntry { label: string; scroll: number; boxes: number; problems: string[]; ok: boolean }
 export const RELET_SHARE: number;
 export const HOUR_BARS: number;
-export const TRUST_WARN_BELOW: number;
+export const BACKGROUND_TRUST_WARN_BELOW: number;
 export const RELET_TRUST: number;
 export const LIMIT_TEXT: string;
 export const RELET_TITLE: string;

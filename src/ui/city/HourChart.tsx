@@ -1,10 +1,10 @@
 import { t } from '@/i18n';
-import type { HourBars } from './cityModel';
+import { FIRST_HOUR, LAST_HOUR, type HourBars } from './cityModel';
 
 /*
- * Profil godzinowy na karcie lokalu (spec §8.1, 4a.2): 17 słupków (godziny 6–22) z kształtem dnia dzielnicy przy środku widełek klientów.
+ * Profil godzinowy na karcie lokalu (spec §8.1, 4a.2): słupek na każdą godzinę otwarcia (6–22, czyli 17) z kształtem dnia dzielnicy przy środku widełek klientów.
  * Dzień roboczy to pełne słupki, weekend (tylko tam, gdzie dzielnica ma osobny ruch weekendowy, czyli w Biurowcach) to obrys obok. Oś ma
- * podpisy 6, 12, 18 i 22 i żadnych liczb klientów, bo widełki stoją już w wierszu nad wykresem. Rysunek jest płynny: SVG z `viewBox` skaluje
+ * podpisy pierwszej godziny, 12, 18 i ostatniej (6, 12, 18, 22) i żadnych liczb klientów, bo widełki stoją już w wierszu nad wykresem. Rysunek jest płynny: SVG z `viewBox` skaluje
  * się do szerokości karty (CSS `width: 100%`), więc na 390 px nie wylewa się poza kartę. Bez haków, jak reszta ekranu Miasta.
  */
 
@@ -13,8 +13,7 @@ const W = 340;
 const PLOT_H = 52;
 const LABEL_Y = 66;
 const H = 72;
-const FIRST_HOUR = 6;
-const TICKS = [6, 12, 18, 22] as const;
+const TICKS = [FIRST_HOUR, 12, 18, LAST_HOUR] as const;
 
 const round = (n: number): number => Math.round(n * 100) / 100;
 

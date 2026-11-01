@@ -4,9 +4,9 @@ import { FITTINGS_LEFT, closeStoreFitted, openSecond, partnerSession, reletFirm,
 import { createSession, firmOf } from '@/game/session';
 import { DISTRICTS } from '@/sim/city/districts';
 import { lotById } from '@/sim/city/generateCity';
-import { lotEstimate, rivalsNear } from '@/sim/city/traffic';
+import { lotEstimate, rivalsNear, siteFor } from '@/sim/city/traffic';
 import type { StoreDistrict } from '@/sim/city/types';
-import { HOUR_CURVE, MINUTES_PER_DAY } from '@/sim/economy/catalog';
+import { HOUR_CURVE, MINUTES_PER_DAY, OPEN_FROM, OPEN_TO } from '@/sim/economy/catalog';
 import { expectedDailyCustomers } from '@/sim/economy/economy';
 import { CELL_SIZE_M } from '@/sim/grid';
 import { planFor } from '@/sim/economy/franchisee';
@@ -14,14 +14,15 @@ import { RELET_BUILD_DAYS, RELET_SHARE, applyFirmCommand, lotRentable, lotState,
 import { emptyStepOut, syncWallet } from '@/sim/firm/firm';
 import type { FirmState } from '@/sim/firm/types';
 import {
-  SWIPE_MIN_PX, basketLevel, cityLotStates, cityPinSpecs, expectationsLevel, freeLotRows, lotCardModel, lotHours, neighbourLot, swipeDirection,
+  FIRST_HOUR, LAST_HOUR, SWIPE_MIN_PX, basketLevel, cityLotStates, cityPinSpecs, expectationsLevel, freeLotRows, lotCardModel, lotHours, neighbourLot, swipeDirection,
   theftLevel, validLot, type LotRow,
 } from './cityModel';
 
-// licznik wywołań `lotEstimate` (ta sama funkcja co zawsze, tylko policzona): przypina pamięć podręczną widełek
+// licznik wywołań `lotEstimate` (ta sama funkcja co zawsze, tylko policzona): przypina pamięć podręczną widełek; `siteFor` też przez `vi.fn`,
+// żeby test krzywej dnia mógł podstawić profil lokalu
 vi.mock('@/sim/city/traffic', async (original) => {
   const real = await original<typeof import('@/sim/city/traffic')>();
-  return { ...real, lotEstimate: vi.fn(real.lotEstimate) };
+  return { ...real, lotEstimate: vi.fn(real.lotEstimate), siteFor: vi.fn(real.siteFor) };
 });
 
 /*
@@ -104,6 +105,22 @@ describe('freeLotRows: lokal „po Traszce” (4a.2)', () => {
     const est = lotEstimate(SEED, f.city, id, { layout: closed.layout, fittings: { upgrades, equipment, remontLevel } });
     expect([relet.lo, relet.hi]).toEqual([est.lo, est.hi]);
     expect(relet.hi).toBeGreaterThan(lotEstimate(SEED, f.city, id).hi);
+  });
+
+  it('metraż lokalu „po Traszce” to sala zamkniętego sklepu po remoncie (jego układ), a nie sala lokalu z poziomu 0; karta niesie ten sam wiersz', () => {
+    const f = reletFirm(SEED, 1);
+    const id = f.city.startLotId;
+    const closed = f.stores.find((s) => s.lotId === id)!;
+    expect(closed.econ.remontLevel).toBe(1);
+    const grown = closed.layout.lot;
+    const level0 = lotById(f.city, id).spec;
+    expect(grown.interiorWidth * grown.salesDepth, 'remont naprawdę powiększył salę').toBeGreaterThan(level0.interiorWidth * level0.salesDepth);
+    const relet = freeLotRows(SEED, f).find((r) => r.lotId === id)!;
+    expect(relet.relet).toBe(true);
+    expect(relet.area).toBe(Math.round(grown.interiorWidth * grown.salesDepth * CELL_SIZE_M * CELL_SIZE_M));
+    expect(lotCardModel(SEED, f, id, 'raty').row.area).toBe(relet.area);
+    expect(relet.kind).toBe(grown.kind);
+    expect(relet.corner).toBe(grown.corner);
   });
 
   it('lokal startowy „po Traszce” nie ma numeru kartki (numer miała tylko kartka „DO WYNAJĘCIA” z generatora), a numery pozostałych zostają', () => {
@@ -197,7 +214,7 @@ describe('lotHours: profil godzinowy karty lokalu (§8.1, 4a.2)', () => {
     expect(rows.length).toBeGreaterThanOrEqual(5);
     for (const r of rows) {
       const { weekday } = lotHours(SEED, f, r.lotId);
-      expect(weekday, `lokal ${r.no}`).toHaveLength(17);
+      expect(weekday, `lokal ${r.no}`).toHaveLength((OPEN_TO - OPEN_FROM) / 60);
       expect(weekday.every((v) => v > 0), `lokal ${r.no}`).toBe(true);
       const mid = (r.lo + r.hi) / 2;
       expect(Math.abs(total(weekday) - mid) / mid, `lokal ${r.no}`).toBeLessThan(0.01);
@@ -226,6 +243,33 @@ describe('lotHours: profil godzinowy karty lokalu (§8.1, 4a.2)', () => {
     const { weekday } = hoursOf('osiedle');
     const curve = Array.from({ length: 17 }, (_, i) => HOUR_CURVE[6 + i]!);
     weekday.forEach((v, i) => expect(v / total(weekday)).toBeCloseTo(curve[i]! / total(curve), 9));
+  });
+
+  it('krzywa dnia idzie za SiteMods lokalu (`siteFor`), jak w symulacji: profil z lokalu wygrywa z nazwą dzielnicy, a brak profilu to HOUR_CURVE', async () => {
+    const real = await vi.importActual<typeof import('@/sim/city/traffic')>('@/sim/city/traffic');
+    const lotId = rowOf(rows, 'biurowce').lotId;
+    const shapeOf = (curve: Readonly<Record<number, number>>): number[] => Array.from({ length: (OPEN_TO - OPEN_FROM) / 60 }, (_, i) => curve[OPEN_FROM / 60 + i]!);
+    const share = (a: readonly number[]): number[] => a.map((v) => v / total(a));
+    const custom = Array.from({ length: 24 }, (_, h) => (h === 10 ? 9 : 1));
+    try {
+      vi.mocked(siteFor).mockImplementation((city, id, flags) => ({ ...real.siteFor(city, id, flags), hours: custom }));
+      share(lotHours(SEED, f, lotId).weekday).forEach((v, i) => expect(v).toBeCloseTo(share(shapeOf(custom))[i]!, 9));
+      vi.mocked(siteFor).mockImplementation((city, id, flags) => ({ ...real.siteFor(city, id, flags), hours: null }));
+      share(lotHours(SEED, f, lotId).weekday).forEach((v, i) => expect(v).toBeCloseTo(share(shapeOf(HOUR_CURVE))[i]!, 9));
+    } finally {
+      vi.mocked(siteFor).mockImplementation(real.siteFor);
+    }
+    // bez podmiany: Biurowce mają swój profil z `DISTRICTS`, czyli inny niż HOUR_CURVE
+    const own = share(lotHours(SEED, f, lotId).weekday);
+    expect(own.some((v, i) => Math.abs(v - share(shapeOf(HOUR_CURVE))[i]!) > 0.01)).toBe(true);
+  });
+
+  it('liczba godzin to godziny otwarcia z katalogu (OPEN_FROM–OPEN_TO), a nie liczba na sztywno', () => {
+    const { weekday, weekend } = lotHours(SEED, f, rowOf(rows, 'biurowce').lotId);
+    expect(weekday).toHaveLength((OPEN_TO - OPEN_FROM) / 60);
+    expect(weekend).toHaveLength((OPEN_TO - OPEN_FROM) / 60);
+    expect(FIRST_HOUR).toBe(OPEN_FROM / 60);
+    expect(LAST_HOUR).toBe(OPEN_TO / 60 - 1);
   });
 
   it('godziny liczą się z widełek raz na miasto: żadnego nowego wywołania lotEstimate', () => {

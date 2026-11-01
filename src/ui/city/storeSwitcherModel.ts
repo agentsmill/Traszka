@@ -5,6 +5,7 @@ import { dayOf } from '@/sim/economy/calendar';
 import { CATS } from '@/sim/economy/catalog';
 import { aislePallets } from '@/sim/economy/economy';
 import { forecastMonth, type MonthForecast } from '@/sim/economy/forecast';
+import { trustTierFrom } from '@/sim/economy/tycoon/trust';
 import { forecastFirm } from '@/sim/firm/forecast';
 import { openStores } from '@/sim/firm/firm';
 import type { FirmState, FirmStore } from '@/sim/firm/types';
@@ -19,9 +20,10 @@ import { plural, zl } from '../game/format';
 /** Znak ostrzegawczy przy sklepie: paleta w przejściu, pusta półka, karta rozstrzygnięta dziś przez zastępcę, niskie zaufanie (kolejność jest stała). */
 export type StoreWarning = 'paleta' | 'polka' | 'zastepca' | 'zaufanie';
 
-/** Zaufanie sklepu poniżej tej wartości daje znak „zaufanie”: sklep w tle może po cichu spaść do zera, a gracz nie zagląda do jego listy.
- * Inny próg niż `TRUST_WARN_BELOW` w `Hud.tsx` (30, chip aktywnego sklepu): tu ostrzegamy wcześniej, bo sklepu w tle nikt nie ogląda. */
-export const TRUST_WARN_BELOW = 40;
+/** Zaufanie sklepu w tle poniżej tej wartości daje znak „zaufanie”: sklep w tle może po cichu spaść do zera, a gracz nie zagląda do jego listy.
+ * Wartość to dolna granica poziomu „Pod obserwacją” (40, `trust.ts`): ostrzegamy, gdy sklep z niego wypada. Inny próg niż `TRUST_WARN_BELOW`
+ * w `Hud.tsx` (30, chip aktywnego sklepu): tam gracz sam patrzy na sklep, tu ostrzegamy wcześniej, bo sklepu w tle nikt nie ogląda. */
+export const BACKGROUND_TRUST_WARN_BELOW = trustTierFrom('obserwacja');
 
 /** Mini-stan sklepu na liście chipa. `number` to numer budynku z adresu lokalu („ul. Lipowa 3”), nie numer sklepu (`id`). */
 export interface StoreMini {
@@ -49,7 +51,7 @@ function warningsOf(f: FirmState, st: FirmStore): StoreWarning[] {
   if (CATS.some((c) => st.info.shelfCap[c] > 0 && st.econ.shelf[c] < SHELF_EMPTY_BELOW)) out.push('polka');
   const today = dayOf(st.econ.minute);
   if (f.inbox.some((n) => n.storeId === st.id && n.day === today)) out.push('zastepca');
-  if (st.econ.tycoon.trust.value < TRUST_WARN_BELOW) out.push('zaufanie');
+  if (st.econ.tycoon.trust.value < BACKGROUND_TRUST_WARN_BELOW) out.push('zaufanie');
   return out;
 }
 
