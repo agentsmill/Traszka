@@ -4,6 +4,7 @@ import { forecastMonth, spendCheck, type MonthForecast, type SpendLevel } from '
 import { planFor, type InstallmentPlan } from '@/sim/economy/franchisee';
 import type { StoreInfo } from '@/sim/economy/storeInfo';
 import type { AnswerInstance } from '@/sim/economy/tycoon/cards';
+import { NOTICE_NO_CREDIT } from '@/sim/firm/closure';
 import { activeStore } from '@/sim/firm/firm';
 import { forecastNow } from '../city/storeSwitcherModel';
 import { firm } from '../state';
@@ -19,6 +20,9 @@ import { int, percentOf, zl } from './format';
  *
  * Od dwóch otwartych sklepów ocena liczy prognozę całej sieci (spec §11.3), bo debet dotyczy wspólnej gotówki: zakup w jednym sklepie
  * jest groźny, gdy drugi sklep zjada gotówkę po zamknięciu miesiąca.
+ *
+ * W okresie wypowiedzenia (§13.2) Centrala nie finansuje nowych rat aktywnego sklepu: symulacja odmawia (`applyStoreCommand`), więc przyciski
+ * rat są wyłączone z tym samym tekstem (`NOTICE_NO_CREDIT`), a pod ceną stoi ta sama notka, zanim gracz dowie się o tym z komunikatu.
  */
 
 /**
@@ -28,6 +32,14 @@ import { int, percentOf, zl } from './format';
 function forecastOf(s: EconomyState, info: StoreInfo): MonthForecast {
   const view = firm.value;
   return view && activeStore(view.f).econ === s ? forecastNow({ s, info, v: 0 }, view) : forecastMonth(s, info);
+}
+
+/** Czy `s` to aktywny sklep firmy w okresie wypowiedzenia: jego raty odrzuca `applyStoreCommand`. Obcy stan (nie sklep firmy) nie ma wypowiedzenia. */
+export function underNotice(s: EconomyState): boolean {
+  const view = firm.value;
+  if (!view) return false;
+  const st = activeStore(view.f);
+  return st.econ === s && st.notice !== null;
 }
 
 /**
@@ -87,16 +99,19 @@ export function ratyTitle(plan: InstallmentPlan, room: { limit: number; free: nu
 /**
  * Ostrzeżenia pod opisem zakupu o cenie `cost`: za gotówkę i na raty (pierwsza rata). Zwykła funkcja, nie komponent: testy `vnodeTree`
  * widzą wtedy `SpendNote` w drzewie panelu. `locked`: zakup zablokowany (poziom, wymagania), więc ostrzeżeń nie ma. Rata, której limit
- * nie przepuści, nie dostaje ostrzeżenia (przycisk jest wyłączony).
+ * nie przepuści, nie dostaje ostrzeżenia (przycisk jest wyłączony). W okresie wypowiedzenia rat nie ma wcale, więc zamiast ostrzeżenia
+ * o racie stoi powód (`NOTICE_NO_CREDIT`).
  */
 export function buyNotes(s: EconomyState, info: StoreInfo, cost: number, locked: boolean) {
   if (locked) return null;
   const plan = planFor(cost);
-  const ratyOk = plan.monthly <= installmentRoom(s).free;
+  const notice = underNotice(s);
+  const ratyOk = !notice && plan.monthly <= installmentRoom(s).free;
   return (
     <>
       <SpendNote s={s} info={info} price={cost} />
       {ratyOk && <SpendNote s={s} info={info} price={plan.monthly} rata />}
+      {notice && <span class="tt-spend warn" role="note">{tr(NOTICE_NO_CREDIT)}</span>}
     </>
   );
 }
@@ -104,18 +119,19 @@ export function buyNotes(s: EconomyState, info: StoreInfo, cost: number, locked:
 /**
  * Dwa przyciski zakupu o cenie `cost`: za gotówkę (cena, jak dotąd) i na raty („na raty: N × Y zł”). `locked`: blokada zakupu
  * (poziom, wymagania), wtedy oba są wyłączone. Raty są też wyłączone, gdy rata przekracza wolny limit (`installmentRoom`) albo
- * Centrala nie finansuje przy tym zaufaniu. `buy(true)` ma wysłać polecenie z `raty: true`, `buy(false)` zwykłe. Zwykła funkcja
+ * Centrala nie finansuje przy tym zaufaniu albo sklep jest w okresie wypowiedzenia (podpowiedź to wtedy `NOTICE_NO_CREDIT`). `buy(true)` ma wysłać polecenie z `raty: true`, `buy(false)` zwykłe. Zwykła funkcja
  * (nie komponent) z tego samego powodu co `buyNotes`.
  */
 export function buyButtons(s: EconomyState, info: StoreInfo, cost: number, locked: boolean, buy: (raty: boolean) => void) {
   const plan = planFor(cost);
   const room = installmentRoom(s);
-  const noRaty = locked || plan.monthly > room.free;
+  const notice = !locked && underNotice(s);   // zablokowany zakup nie jest odmową rat, więc zostaje przy zwykłej podpowiedzi
+  const noRaty = locked || notice || plan.monthly > room.free;
   return (
     <div class="tt-buys" data-tut="buy">
       <button type="button" class="tt-btn tt-buy" data-risk={locked ? undefined : spendRisk(s, info, cost)} disabled={locked || cost > s.cash} onClick={() => buy(false)}>{zl(cost)}</button>
       <button type="button" class="tt-btn tt-rata" data-risk={noRaty ? undefined : spendRisk(s, info, plan.monthly, true)} disabled={noRaty}
-        title={ratyTitle(plan, room)} onClick={() => buy(true)}>{ratyLabel(plan)}</button>
+        title={notice ? tr(NOTICE_NO_CREDIT) : ratyTitle(plan, room)} onClick={() => buy(true)}>{ratyLabel(plan)}</button>
     </div>
   );
 }

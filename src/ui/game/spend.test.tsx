@@ -9,7 +9,10 @@ import type { AnswerInstance } from '@/sim/economy/tycoon/cards';
 import { EQUIPMENT, UPGRADES, equipmentCost, upgradeCost } from '@/sim/economy/upgrades';
 import { layoutFor } from '@/sim/store/layoutFor';
 import { lang } from '@/i18n';
-import { firmOf } from '@/game/session';
+import { firmOf, pointAtActive } from '@/game/session';
+import { NOTICE_NO_CREDIT } from '@/sim/firm/closure';
+import { applyFirmCommand } from '@/sim/firm/commands';
+import { activeStore, applyStoreCommand, emptyStepOut, syncWallet } from '@/sim/firm/firm';
 import { forecastFirm } from '@/sim/firm/forecast';
 import { openSecond, partnerSession } from '../../../tests/firmKit';
 import { forecastNow } from '../city/storeSwitcherModel';
@@ -18,7 +21,7 @@ import { ForecastChip, ForecastRow } from './Hud';
 import { forecastLabel } from './forecastText';
 import { SelectionCard } from './overlays';
 import { PeoplePanel, ShopPanel } from './panels';
-import { SpendNote, answerCashCost, ratyLabel, ratyTitle, spendLevel, spendRisk } from './spend';
+import { SpendNote, answerCashCost, ratyLabel, ratyTitle, spendLevel, spendRisk, underNotice } from './spend';
 import { int, money, signedZl, zl } from './format';
 import { buttonsOf, click, textOf, walk, type Vnode } from './vnodeTree';
 
@@ -359,6 +362,85 @@ describe('zakup na raty w panelu Ulepszenia', () => {
     const colored = raty(panel(deep.s, deep.info)).filter((r) => !r.props.disabled);
     expect(colored.length).toBeGreaterThan(0);
     for (const r of colored) expect(r.props['data-risk']).toBeDefined();
+  });
+});
+
+describe('okres wypowiedzenia: raty wyłączone, zanim sim odmówi (spec §13.2)', () => {
+  /** Dwa sklepy z grubym portfelem i pełnym poziomem; wypowiedzenie dostaje sklep `terminated`, aktywny jest `shown`. */
+  function twoShops(terminated: 1 | 2, shown: 1 | 2) {
+    const session = partnerSession();
+    openSecond(session);
+    const f = firmOf(session);
+    f.person.wallet = 1e7;
+    for (const st of f.stores) { st.econ.level = 30; st.econ.ogonki = 500; st.econ.tycoon.trust.value = 50; }
+    syncWallet(f);
+    expect(applyFirmCommand(f, { type: 'terminateStore', storeId: terminated }, emptyStepOut())).toEqual({ ok: true });
+    expect(applyFirmCommand(f, { type: 'switchStore', storeId: shown }, emptyStepOut())).toEqual({ ok: true });
+    pointAtActive(session);
+    firm.value = { f, v: 1 };
+    return { f, s: session.econ, info: session.info, panel: (game = fakeGame()) => ShopPanel({ s: session.econ, info: session.info, game, v: 1 }) };
+  }
+  const noteTexts = (tree: unknown): string[] => walk(tree as never).filter((v) => v.props.role === 'note' && textOf(v) === NOTICE_NO_CREDIT).map(textOf);
+
+  it('aktywny sklep z wypowiedzeniem: wszystkie raty wyłączone z powodem z sim, notka pod każdą ceną, gotówka dalej działa', () => {
+    const { f, s, panel } = twoShops(2, 2);
+    expect(underNotice(s)).toBe(true);
+    const tree = panel();
+    const credit = raty(tree);
+    expect(credit.length).toBeGreaterThan(5);
+    for (const r of credit) {
+      expect(r.props.disabled).toBe(true);
+      expect(r.props['data-risk']).toBeUndefined();
+    }
+    const refusedByNotice = credit.filter((r) => String(r.props.title) === NOTICE_NO_CREDIT);
+    expect(refusedByNotice.length).toBeGreaterThan(5);   // zakup zablokowany poziomem zostaje przy własnej podpowiedzi
+    expect(credit.length - refusedByNotice.length).toBeLessThan(3);
+    expect(noteTexts(tree)).toHaveLength(refusedByNotice.length);   // powód stoi pod każdą ceną, nie dopiero w komunikacie o błędzie
+    expect(buy(tree).filter((b) => !b.props.disabled).length).toBeGreaterThan(5);   // zakup za gotówkę przechodzi jak zawsze
+    // ten sam powód, który zwraca sim, gdyby polecenie jednak wyszło
+    const refused = applyStoreCommand(f, { type: 'buyEquipment', id: EQUIPMENT[0]!.id, raty: true });
+    expect(refused.result).toEqual({ ok: false, text: NOTICE_NO_CREDIT });
+    expect(applyStoreCommand(f, { type: 'buyEquipment', id: EQUIPMENT[0]!.id }).result.ok).toBe(true);
+  });
+
+  it('przycisk gotówkowy dalej wysyła polecenie, a zablokowany przycisk rat ma ten sam powód po angielsku', () => {
+    const { panel } = twoShops(1, 1);
+    const game = fakeGame();
+    const tree = panel(game);
+    click(buy(tree).find((b) => !b.props.disabled)!);
+    expect(game.dispatch).toHaveBeenCalledTimes(1);
+    expect(game.dispatch.mock.calls[0]![0]).not.toHaveProperty('raty');
+    lang.value = 'en';
+    const en = panel();
+    const reason = 'Head Office doesn’t finance the shop’s instalments during the notice period.';
+    const titled = raty(en).filter((r) => String(r.props.title) === reason);
+    expect(titled.length).toBeGreaterThan(5);
+    expect(noteTexts(en)).toHaveLength(0);   // polski tekst nie stoi nigdzie
+    expect(walk(en as never).filter((v) => v.props.role === 'note' && textOf(v) === reason)).toHaveLength(titled.length);
+  });
+
+  it('wypowiedzenie drugiego sklepu nie rusza rat aktywnego (bez wypowiedzenia), a po przełączeniu na sklep z wypowiedzeniem rat nie ma', () => {
+    const { f, s, panel } = twoShops(2, 1);
+    expect(activeStore(f).id).toBe(1);
+    expect(underNotice(s)).toBe(false);
+    const free = panel();
+    expect(raty(free).some((r) => !r.props.disabled)).toBe(true);
+    expect(raty(free).every((r) => String(r.props.title) !== NOTICE_NO_CREDIT)).toBe(true);
+    expect(noteTexts(free)).toHaveLength(0);
+    // przełączenie na sklep z wypowiedzeniem: sesja idzie za aktywnym sklepem
+    const under = twoShops(2, 2);
+    expect(raty(under.panel()).every((r) => r.props.disabled === true)).toBe(true);
+  });
+
+  it('bez firmy (obcy stan) albo bez wypowiedzenia nic się nie zmienia', () => {
+    const { s, info } = shop(1e7);
+    firm.value = null;
+    expect(underNotice(s)).toBe(false);
+    expect(raty(ShopPanel({ s, info, game: fakeGame(), v: 1 })).some((r) => !r.props.disabled)).toBe(true);
+    const session = partnerSession();
+    firm.value = { f: firmOf(session), v: 1 };
+    expect(underNotice(session.econ)).toBe(false);
+    expect(underNotice(s)).toBe(false);   // obcy `s` w firmie z wypowiedzeniem też nie dostaje cudzego wypowiedzenia
   });
 });
 
