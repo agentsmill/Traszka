@@ -20,7 +20,7 @@ import { econ, firm, monthPreview, ranked, selection, speed, tab, type GameActio
 import { ForecastChip, ForecastRow } from './Hud';
 import { forecastLabel } from './forecastText';
 import { SelectionCard } from './overlays';
-import { PeoplePanel, ShopPanel } from './panels';
+import { PeoplePanel, ShopPanel, remontsAway } from './panels';
 import { SpendNote, answerCashCost, ratyLabel, ratyTitle, spendLevel, spendRisk, underNotice } from './spend';
 import { int, money, signedZl, zl } from './format';
 import { buttonsOf, click, textOf, walk, type Vnode } from './vnodeTree';
@@ -73,7 +73,9 @@ const buy = (tree: unknown): Vnode[] => buttonsOf(tree as never).filter((b) => S
 const raty = (tree: unknown): Vnode[] => buttonsOf(tree as never).filter((b) => String(b.props.class).includes('tt-rata'));
 const priceOf = (b: Vnode): number => Number(textOf(b).replace(/\D/g, ''));
 /** Ulepszenia, które panel pokazuje zablokowane remontem (humanoid i od etapu 4b pięć ulepszeń późnej gry): ich przyciski są wyłączone niezależnie od gotówki i rat. */
-const lockedByRemont = (s: EconomyState): (typeof UPGRADES)[number][] => UPGRADES.filter((u) => /^Wymaga remontu/.test(upgradeBlocker(s, u) ?? ''));
+/** Ulepszenia zablokowane remontem, które panel w ogóle pokazuje: humanoid i te, którym brakuje najwyżej jednego poziomu remontu (późna gra chowa się wcześniej). */
+const lockedByRemont = (s: EconomyState): (typeof UPGRADES)[number][] =>
+  UPGRADES.filter((u) => /^Wymaga remontu/.test(upgradeBlocker(s, u) ?? '') && (u.id === 'humanoid' || remontsAway(s, u) <= 1));
 
 describe('SpendNote: ostrzeżenie pod ceną', () => {
   it('zakup, po którym gotówka po zamknięciu zostaje nad zerem: nic', () => {
@@ -311,11 +313,10 @@ describe('zakup na raty w panelu Ulepszenia', () => {
     expect(under.length).toBeGreaterThan(0);
     for (const r of over) expect(String(r.props.title)).toContain('Rata przekracza');
     for (const r of under) expect(monthlyOf(r)).toBeLessThanOrEqual(room.free);
-    // wyłączone, a mieszczące się w limicie: tylko ulepszenia zablokowane remontem (od 4b nie tylko humanoid)
+    // wyłączone, a mieszczące się w limicie: tylko ulepszenia zablokowane remontem (humanoid i późna gra, gdy brakuje jednego poziomu)
     const lockedWithinLimit = lockedByRemont(s).filter((u) => planFor(upgradeCost(u, 0)).monthly <= room.free);
-    expect(lockedWithinLimit.length).toBeGreaterThan(0);
-    expect(disabled.length - over.length).toBe(lockedWithinLimit.length);
-    // limit rat nie rusza zakupów za gotówkę: przy 10 mln zł wyłączone są tylko ulepszenia, którym brakuje remontu (humanoid i późna gra)
+    expect(disabled.length - over.length).toBe(lockedWithinLimit.length);   // przy remoncie 0 panel pokazuje tylko humanoida, a jego rata przekracza limit
+    // limit rat nie rusza zakupów za gotówkę: przy 10 mln zł wyłączone są tylko ulepszenia, którym brakuje remontu (humanoid)
     const locked = lockedByRemont(s);
     expect(locked.map((u) => u.id)).toContain('humanoid');
     expect(buy(tree).filter((b) => b.props.disabled).map(priceOf).sort((a, b) => a - b)).toEqual(locked.map((u) => upgradeCost(u, 0)).sort((a, b) => a - b));

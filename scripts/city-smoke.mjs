@@ -15,7 +15,7 @@
  *   2. (dopisek, telefon) pinezka „lokal obok” nie zasłania innych pinezek i nie ma napisu (390 px, fixture „przed statusem”);
  *   9. pinezka „po Traszce”, lista i karta z ceną `rentPrice`, blokiem wyposażenia i wykresem 17 słupków, ponowny wynajem (telefon na raty,
  *      komputer gotówką), okno „Traszka #2 znów otwarta” z poziomem 1, zaufaniem 65 i wyposażeniem z fixture'a, chip z trzema sklepami;
- *  10. karta innego wolnego lokalu: „Biorę lokal” zablokowany tekstem „Trzy placówki to …”;
+ *  10. karta innego wolnego lokalu: „Biorę lokal” zablokowany tekstem o progu obrotu sieci do czwartej placówki („Centrala zgodzi się na kolejną placówkę, gdy obrót sieci …”);
  *  11. koniec miesiąca: okno „Sieć” i trzy wyciągi (cztery zakładki), zaufanie przy każdym sklepie, ostrzeżenia zaufania na chipie;
  *  12. (telefon) szerokość 390 px na nowych ekranach (karta z wykresem, karta „po Traszce”, lista chipa z trzema sklepami, okno sieci
  *      z czterema zakładkami) po polsku i po angielsku (ponowny wynajem i miesiąc rozegrane od nowa w angielskim interfejsie).
@@ -295,7 +295,7 @@ export const BACKGROUND_TRUST_WARN_BELOW = 40;
 /** Zaufanie ponownie otwartego sklepu (`TRUST.start`): okno „znów otwarta” je podaje, a dane sklepu mają je potwierdzić. */
 export const RELET_TRUST = 65;
 /** Dosłowne teksty z planu: odmowa limitu, tytuł okna ponownego otwarcia i podpis zniżki na karcie lokalu po Traszce. */
-export const LIMIT_TEXT = 'Trzy placówki to na tym etapie partnerstwa wszystko, na co Centrala jest gotowa się zgodzić.';
+export const LIMIT_TEXT = 'Centrala zgodzi się na kolejną placówkę, gdy obrót sieci w miesiącu przekroczy 1\u00a0000\u00a0000 zł.';   // limit 3 (`limitText`): próg obrotu sieci do czwartej placówki, z twardymi spacjami tysięcy
 export const RELET_TITLE = 'Traszka #2 znów otwarta';
 export const RELET_CAPTION = 'po Traszce: 30% ceny';
 

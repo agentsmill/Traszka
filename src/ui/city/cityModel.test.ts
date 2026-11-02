@@ -4,18 +4,18 @@ import { FITTINGS_LEFT, closeStoreFitted, openSecond, partnerSession, reletFirm,
 import { createSession, firmOf } from '@/game/session';
 import { DISTRICTS } from '@/sim/city/districts';
 import { lotById } from '@/sim/city/generateCity';
-import { lotEstimate, rivalsNear, siteFor } from '@/sim/city/traffic';
+import { OWN_RADIUS_M, lotEstimate, rivalsNear, siteFor } from '@/sim/city/traffic';
 import type { StoreDistrict } from '@/sim/city/types';
 import { HOUR_CURVE, MINUTES_PER_DAY, OPEN_FROM, OPEN_TO } from '@/sim/economy/catalog';
 import { expectedDailyCustomers } from '@/sim/economy/economy';
 import { CELL_SIZE_M } from '@/sim/grid';
 import { planFor } from '@/sim/economy/franchisee';
 import { RELET_BUILD_DAYS, RELET_SHARE, applyFirmCommand, lotRentable, lotState, rentBuildDays, rentPrice } from '@/sim/firm/commands';
-import { emptyStepOut, syncWallet } from '@/sim/firm/firm';
+import { emptyStepOut, ownLotsOf, syncWallet } from '@/sim/firm/firm';
 import type { FirmState } from '@/sim/firm/types';
 import {
-  FIRST_HOUR, LAST_HOUR, SWIPE_MIN_PX, basketLevel, cityLotStates, cityPinSpecs, expectationsLevel, freeLotRows, lotCardModel, lotHours, neighbourLot, swipeDirection,
-  theftLevel, validLot, type LotRow,
+  FIRST_HOUR, LAST_HOUR, SWIPE_MIN_PX, basketLevel, cityLotStates, cityPinSpecs, expectationsLevel, freeLotRows, lotCardModel, lotHours, neighbourLot, ownNearLot,
+  swipeDirection, theftLevel, validLot, type LotRow,
 } from './cityModel';
 
 // licznik wywołań `lotEstimate` (ta sama funkcja co zawsze, tylko policzona): przypina pamięć podręczną widełek; `siteFor` też przez `vi.fn`,
@@ -46,7 +46,7 @@ describe('freeLotRows: lista wolnych lokali', () => {
     expect(rows.map((r) => r.no)).toEqual(rows.map((_, i) => i + 1));
     for (const r of rows) {
       const lot = lotById(f.city, r.lotId);
-      const est = lotEstimate(SEED, f.city, r.lotId);
+      const est = lotEstimate(SEED, f.city, r.lotId, undefined, ownLotsOf(f));   // własny sklep w promieniu podbiera lokalowi klientów (4b)
       expect(r).toEqual({
         lotId: lot.id, no: r.no, street: lot.street, number: lot.number, district: lot.district, kind: lot.spec.kind, corner: lot.spec.corner,
         area: Math.round(lot.spec.interiorWidth * lot.spec.salesDepth * CELL_SIZE_M * CELL_SIZE_M), lo: est.lo, hi: est.hi, price: lot.package,
@@ -81,7 +81,7 @@ describe('freeLotRows: lista wolnych lokali', () => {
     freeLotRows(SEED, partnerFirm());                  // inny obiekt miasta (nowa gra) ma własne widełki
     expect(lotEstimate).toHaveBeenCalledTimes(2 * free);
     // widełki z modelu to widełki z symulacji (cache nie zmienia liczb)
-    expect(b.map((r) => [r.lo, r.hi])).toEqual(b.map((r) => { const e = lotEstimate(SEED, f.city, r.lotId); return [e.lo, e.hi]; }));
+    expect(b.map((r) => [r.lo, r.hi])).toEqual(b.map((r) => { const e = lotEstimate(SEED, f.city, r.lotId, undefined, ownLotsOf(f)); return [e.lo, e.hi]; }));
   });
 });
 
@@ -500,5 +500,72 @@ describe('stany lokali i pinezki dla sceny miasta', () => {
     expect(pin).toEqual({ lotId: f.city.startLotId, kind: 'po-traszce', label: 'po Traszce' });
     lang.value = 'en';
     expect(cityPinSpecs(SEED, f, null).find((p) => p.lotId === f.city.startLotId)!.label).toBe('ex-Traszka');
+  });
+});
+
+describe('kanibalizacja na karcie lokalu (4b §5.4)', () => {
+  /** Pierwszy wolny lokal, któremu sklep startowy podbiera klientów (bliżej niż OWN_RADIUS_M). */
+  const nearStart = (f: FirmState): LotRow => freeLotRows(SEED, f).find((r) => ownNearLot(f, r.lotId).length > 0)!;
+
+  it('karta niesie własne sklepy w promieniu (od najbliższego, metry pełne), a lokal bez nich pustą listę', () => {
+    const f = partnerFirm();
+    const near = nearStart(f);
+    expect(near).toBeDefined();
+    const model = lotCardModel(SEED, f, near.lotId, 'raty');
+    expect(model.ownNear).toHaveLength(1);
+    expect(model.ownNear[0]!.lotId).toBe(f.city.startLotId);
+    const meters = ownNearLot(f, near.lotId)[0]!.meters;
+    expect(meters).toBeLessThan(OWN_RADIUS_M);
+    expect(model.ownNear[0]!.meters).toBe(Math.round(meters));
+    const far = freeLotRows(SEED, f).find((r) => ownNearLot(f, r.lotId).length === 0)!;
+    expect(lotCardModel(SEED, f, far.lotId, 'raty').ownNear).toEqual([]);
+  });
+
+  it('widełki lokalu z własnym sklepem obok są niższe niż bez niego i zgadzają się z lotEstimate(own)', () => {
+    const f = partnerFirm();
+    const near = nearStart(f);
+    const own = ownLotsOf(f);
+    const bare = lotEstimate(SEED, f.city, near.lotId);
+    const withOwn = lotEstimate(SEED, f.city, near.lotId, undefined, own);
+    expect(withOwn.lo).toBeLessThan(bare.lo);   // −10% ruchu przesuwa widełki o ok. 10%
+    expect([near.lo, near.hi]).toEqual([withOwn.lo, withOwn.hi]);
+    expect(lotCardModel(SEED, f, near.lotId, 'raty').row).toMatchObject({ lo: withOwn.lo, hi: withOwn.hi });
+  });
+
+  it('pamięć widełek ma w kluczu własne sklepy w promieniu: gdy sklep obok znika, widełki liczą się od nowa', () => {
+    const f = partnerFirm();
+    const near = nearStart(f);
+    const before = freeLotRows(SEED, f).find((r) => r.lotId === near.lotId)!;
+    f.stores[0]!.closed = true;   // żaden otwarty sklep nie podbiera klientów (tylko stan do sprawdzenia klucza)
+    try {
+      const after = freeLotRows(SEED, f).find((r) => r.lotId === near.lotId);
+      expect(after).toBeDefined();
+      expect(after!.lo).toBeGreaterThan(before.lo);   // nieaktualny wpis z czasów, gdy sklep stał obok, dałby te same widełki
+      expect(ownNearLot(f, near.lotId)).toEqual([]);
+    } finally {
+      f.stores[0]!.closed = false;
+    }
+    expect(freeLotRows(SEED, f).find((r) => r.lotId === near.lotId)!.lo).toBe(before.lo);   // sklep wraca i widełki też
+  });
+
+  it('lokal startowy nie traci ruchu przez własne sklepy, więc karta lokalu po Traszce nie obiecuje kanibalizacji', () => {
+    const f = reletFirm();   // sklep #1 zamknięty, otwarty #2
+    const start = f.city.startLotId;
+    expect(lotState(f, start)).toBe('po-traszce');
+    expect(ownNearLot(f, start)).toEqual([]);
+    expect(lotCardModel(SEED, f, start, 'raty').ownNear).toEqual([]);
+  });
+
+  it('prawdziwy drugi sklep podbiera sąsiednie lokale: ownNear obejmuje jego lokal (a nie zamknięte sklepy)', () => {
+    const s = partnerSession(SEED, 300_000);
+    const second = openSecond(s);
+    const f = firmOf(s);
+    const nearSecond = freeLotRows(SEED, f).find((r) => ownNearLot(f, r.lotId).some((o) => o.lotId === second.lotId));
+    expect(nearSecond).toBeDefined();
+    expect(lotCardModel(SEED, f, nearSecond!.lotId, 'raty').ownNear.map((o) => o.lotId)).toContain(second.lotId);
+    for (const r of freeLotRows(SEED, f)) {
+      const ids = lotCardModel(SEED, f, r.lotId, 'raty').ownNear.map((o) => o.lotId);
+      for (const id of ids) expect([f.city.startLotId, second.lotId]).toContain(id);
+    }
   });
 });

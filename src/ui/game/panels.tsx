@@ -6,11 +6,13 @@ import { dayOf, formatClock, minuteOfDay } from '@/sim/economy/calendar';
 import { dateText, kpiTitleText, rankText, t, tr } from '@/i18n';
 import {
   DEBT_WARN, LOC_LABEL, aislePallets, assistantSuggestion, customersPerHour, debtWarningText, effects, freeSpots, isClosedForRemont, kpiMetricsOf, kpiScaleOf, level, nextRemont, peakCustomersPerHour,
-  robotFleet, slotFree, slotUsage, upgradeBlocker, workshopUnlocked, type EconomyState,
+  robotFleet, slotFree, slotUsage, upgradeBlocker, wagesPerDay, workshopUnlocked, type EconomyState,
 } from '@/sim/economy/economy';
 import { forecastMonth, spendCheck } from '@/sim/economy/forecast';
 import { noticeEndDay } from '@/sim/firm/closure';
 import { openStores } from '@/sim/firm/firm';
+import { FIRM_GOALS, FIRM_GOAL_BY_ID, type FirmGoal } from '@/sim/firm/goals';
+import type { FirmState } from '@/sim/firm/types';
 import { dueOf } from '@/sim/economy/franchisee';
 import { MILESTONES } from '@/sim/economy/milestones';
 import { KPI, KPI_FLAVOR, kpiProgress } from '@/sim/economy/tycoon/kpi';
@@ -22,7 +24,7 @@ import { trustTier } from '@/sim/economy/tycoon/trust';
 import { WUT } from '@/sim/economy/tycoon/wut';
 import type { PalletLoc, StoreInfo } from '@/sim/economy/storeInfo';
 import {
-  EQUIPMENT, GROUP_LABEL, UPGRADES, WORKSHOP_LEVEL, equipmentCost, upgradeCost, type UpgradeGroup,
+  EQUIPMENT, GROUP_LABEL, UPGRADES, WORKSHOP_LEVEL, equipmentCost, upgradeCost, type UpgradeDef, type UpgradeGroup,
 } from '@/sim/economy/upgrades';
 import { nextRankAt, xpToNext } from '@/sim/economy/progress';
 import { CityPanel } from '../city/CityPanel';
@@ -68,7 +70,9 @@ export function TabBar() {
   if (view) {
     // pod sklepem grozi mandat, w przejściach zagracenie: obie lokalizacje to palety, którymi trzeba się zająć
     badge.palety = view.s.pallets.filter((p) => p.loc === 'sidewalk' || p.loc === 'aisle').length || undefined;
-    badge.cele = view.s.milestonesReady.length || undefined;
+    const fv = firm.value;
+    const netReady = fv && !fv.f.ranked ? fv.f.goals.ready.length : 0;   // cele sieci też czekają na „Odbierz” w Celach
+    badge.cele = view.s.milestonesReady.length + netReady || undefined;
     const affordable = UPGRADES.filter((u) => !upgradeBlocker(view.s, u) && upgradeCost(u, level(view.s, u.id)) <= view.s.cash).length;
     badge.ulepszenia = affordable || undefined;
   }
@@ -310,8 +314,9 @@ export function PeoplePanel({ s, info, game }: { s: EconomyState; info: StoreInf
           <b>{osoby(s.staff)}</b>
           <button type="button" class="tt-btn" aria-label={t`Zatrudnij`} data-risk={s.staff >= STAFF_MAX ? undefined : spendRisk(s, info, HIRE_COST)} disabled={s.staff >= STAFF_MAX} onClick={() => game.dispatch({ type: 'hire' })}>+</button>
         </div>
-        <Row label="Płace">{t`${int(s.staff * WAGE_PER_DAY)} zł / dzień`}</Row>
+        <Row label="Płace">{t`${int(wagesPerDay(s, info))} zł / dzień`}</Row>
         <p class="tt-hint">{t`Rekrutacja: ${HIRE_COST} zł. Każda osoba na zmianie to ${WAGE_PER_DAY} zł dziennie (dwa etaty na 17-godzinny dzień).`}</p>
+        {info.site?.net && info.site.net.wages < 1 && <p class="tt-hint">{t`Wspólna obsada (badania Sieci) obniża płace w tym sklepie o ${percentOf(1 - info.site.net.wages)}.`}</p>}
         {s.staff < STAFF_MAX && <SpendNote s={s} info={info} price={HIRE_COST} />}
       </Section>
       <Section title="Profil pracy">
@@ -370,11 +375,19 @@ export function PeoplePanel({ s, info, game }: { s: EconomyState; info: StoreInf
 
 // --- Ulepszenia --------------------------------------------------------------------------------------
 
+/**
+ * Ile poziomów remontu brakuje do wymagania ulepszenia (0, gdy nie ma wymagania albo już jest spełnione). Ulepszenia późnej gry (remont 3–4)
+ * od pierwszego dnia stały w panelu jako zablokowane: panel pokazuje je dopiero, gdy brakuje najwyżej jednego poziomu.
+ */
+export const remontsAway = (s: EconomyState, u: UpgradeDef): number => Math.max(0, (u.requires?.remont ?? 0) - s.remontLevel);
+
 export function ShopPanel({ s, info, game }: { s: EconomyState; info: StoreInfo; game: GameActions; v: number }) {
   const remont = nextRemont(s);
   const closed = isClosedForRemont(s);
   const groups: UpgradeGroup[] = ['kasa', 'palety', 'klienci', 'warsztat'];
   const capacityFree = info.slots.reduce((n, x) => n + slotFree(s, info, x.id), 0);
+  const fv = firm.value;
+  const network = !!fv && !fv.f.ranked && openStores(fv.f).length >= 2;   // badania Sieci mieszkają w panelu Miasto, a sklep w sieci ma o nich wiedzieć
   return (
     <>
       <Section title="Sprzęt do slotów">
@@ -403,6 +416,7 @@ export function ShopPanel({ s, info, game }: { s: EconomyState; info: StoreInfo;
         }
         const items = UPGRADES.filter((u) => u.group === g).filter((u) => {
           const b = upgradeBlocker(s, u);
+          if (remontsAway(s, u) > 1 && u.id !== 'humanoid') return false;   // ulepszenia późnej gry pokazują się, gdy do remontu zostaje jeden poziom
           return b === null || b === 'Maksymalny poziom' || /^Wymaga remontu|^Odblokujesz na/.test(b) || u.id === 'humanoid';
         });
         if (items.length === 0) return null;
@@ -452,6 +466,12 @@ export function ShopPanel({ s, info, game }: { s: EconomyState; info: StoreInfo;
             )
             : <p class="tt-hint">{t`To już Traszka Max Pro Ultra. Większego sklepu nie będzie.`}</p>}
       </Section>
+      {network && (
+        <Section title="Sieć">
+          <p class="tt-hint">{t`Badania Sieci znajdziesz w panelu Miasto. Działają we wszystkich sklepach naraz.`}</p>
+          <button type="button" class="tt-btn" onClick={() => { tab.value = 'miasto'; }}>{t`Do Miasta`}</button>
+        </Section>
+      )}
       <Section title="Za Ogonki">
         <div class="tt-item">
           <div><b>{t`Kampania w Traszkapce`}</b><div class="tt-muted">{t`+30% klientów przez dobę`}</div></div>
@@ -463,6 +483,47 @@ export function ShopPanel({ s, info, game }: { s: EconomyState; info: StoreInfo;
 }
 
 // --- Cele i wyniki -------------------------------------------------------------------------------------
+
+/** Ścieżki celów sieci (przedrostek `id` w `FIRM_GOALS`): gotówka, liczba sklepów i badania. Każda pokazuje swój najbliższy cel. */
+const GOAL_TRACKS = ['cash', 'stores', 'research'] as const;
+
+/**
+ * Cele sieci do pokazania w Celach (4b §5.6): spełnione czekają na „Odbierz” (`ready`, w kolejności spełnienia), a z niespełnionych po jednym,
+ * najbliższym z każdej ścieżki (`next`: gotówka, sklepy, badania; najwyżej trzy). Same najbliższe z kolejki tabeli pokazałyby trzy cele
+ * gotówkowe pod rząd, a o sklepach i badaniach gracz dowiedziałby się dopiero po milionie.
+ */
+export function networkGoals(f: FirmState): { ready: FirmGoal[]; next: FirmGoal[]; claimed: number } {
+  const { ready, claimed } = f.goals;
+  const known = (id: string): FirmGoal | undefined => (Object.hasOwn(FIRM_GOAL_BY_ID, id) ? FIRM_GOAL_BY_ID[id] : undefined);
+  return {
+    ready: ready.flatMap((id) => known(id) ?? []),
+    next: GOAL_TRACKS.flatMap((track) => FIRM_GOALS.find((g) => g.id.startsWith(track) && !ready.includes(g.id) && !claimed.includes(g.id)) ?? []),
+    claimed: claimed.length,
+  };
+}
+
+/**
+ * Sekcja „Sieć” w Celach: cele całej firmy (gotówka, sklepy, badania), nie jednego sklepu. Nagroda to Ogonki do wspólnego portfela, bez XP.
+ * Tylko w zwykłej grze (w rankingu ich nie ma). Zwykła funkcja z `Section`, żeby testy `vnodeTree` widziały wiersze.
+ */
+function NetworkGoals({ f, game }: { f: FirmState; game: GameActions }) {
+  const { ready, next, claimed } = networkGoals(f);
+  return (
+    <Section title="Sieć">
+      {ready.map((g) => (
+        <div key={g.id} class="tt-goal ready" data-goal={g.id}>
+          <div class="tt-row">
+            <span><span class="tt-goal-tag">{t`🎁 Do odebrania`}</span> <b>{tr(g.label)}</b></span>
+            <button type="button" class="tt-btn tt-primary" aria-label={t`Odbierz: ${tr(g.label)}`} onClick={() => { game.firm({ type: 'claimGoal', id: g.id }); }}>{t`Odbierz`}</button>
+          </div>
+          <div class="tt-muted">{t`Nagroda: +${g.reward} 🦎`}</div>
+        </div>
+      ))}
+      {next.map((g) => <div key={g.id} class="tt-goal" data-goal={g.id}><b>{tr(g.label)}</b> <span class="tt-muted">+{g.reward} 🦎</span><div class="tt-muted">{tr(g.hint)}</div></div>)}
+      <p class="tt-hint">{t`Cele całej sieci, nie jednego sklepu. Zdobyte: ${claimed} / ${FIRM_GOALS.length}`}</p>
+    </Section>
+  );
+}
 
 export function GoalsPanel({ s, info, game }: { s: EconomyState; info: StoreInfo; game: GameActions; v: number }) {
   const today = s.today;
@@ -522,6 +583,7 @@ export function GoalsPanel({ s, info, game }: { s: EconomyState; info: StoreInfo
         {goals.map((g) => <div key={g.id} class="tt-goal"><b>{tr(g.label)}</b> <span class="tt-muted">+{g.reward} 🦎</span><div class="tt-muted">{tr(g.hint)}</div></div>)}
         <p class="tt-hint">{t`Zdobyte: ${s.milestones.length} / ${MILESTONES.length}`}</p>
       </Section>
+      {fv && !fv.f.ranked && !ranked.value && NetworkGoals({ f: fv.f, game })}
       <Section title="Dziś">
         <Row label="Klienci">{t`${int(today.customers)} (utraceni: ${int(today.lost)})`}</Row>
         <Row label="Obrót">{zl(today.revenue)}</Row>

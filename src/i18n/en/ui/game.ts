@@ -249,6 +249,12 @@ export const GAME_UI: Dict = {
   'Odbierz': 'Claim',
   'Nagroda: +{0} 🦎 i XP': 'Reward: +{0} 🦎 and XP',
   'Zdobyte: {0} / {1}': 'Achieved: {0} / {1}',
+  // cele sieci w Celach, podpowiedź o badaniach w Ulepszeniach i zniżka Wspólnej obsady w Ludziach (4b)
+  'Nagroda: +{0} 🦎': 'Reward: +{0} 🦎',
+  'Cele całej sieci, nie jednego sklepu. Zdobyte: {0} / {1}': 'Goals for the whole network, not a single shop. Achieved: {0} / {1}',
+  'Badania Sieci znajdziesz w panelu Miasto. Działają we wszystkich sklepach naraz.': 'You’ll find Network research in the City panel. It works in every shop at once.',
+  'Do Miasta': 'To City',
+  'Wspólna obsada (badania Sieci) obniża płace w tym sklepie o {0}.': 'Shared staffing (Network research) lowers wages in this shop by {0}.',
   'Klienci': 'Customers',
   '{0} (utraceni: {1})': '{0} (lost: {1})',
   'Obrót': 'Turnover',

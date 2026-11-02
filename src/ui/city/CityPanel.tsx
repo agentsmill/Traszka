@@ -2,19 +2,21 @@ import { t } from '@/i18n';
 import { DISTRICT_COLOR, TRAFFIC_BUSY, TRAFFIC_QUIET, type CityLayer } from '@/render/city/buildCity';
 import { partnerProgress } from '@/sim/firm/commands';
 import { openStores } from '@/sim/firm/firm';
-import type { FirmState } from '@/sim/firm/types';
+import { MAX_STORES, type FirmState } from '@/sim/firm/types';
 import { cityLayer, firm, selectedLot, type GameActions } from '../state';
 import { zl } from '../game/format';
 import { LotCard } from './LotCard';
+import { ResearchSection } from './ResearchSection';
 import { freeLotRows, validLot } from './cityModel';
 import { districtName, lotKindName, lotStateName, progressText } from './cityText';
-import { addressText } from './firmText';
+import { addressText, limitText } from './firmText';
 
 /*
  * Ekran Miasta w arkuszu zakładki (spec §9): pasek statusu z przełącznikiem warstw, lista wolnych lokali i karta wybranego lokalu. Mapę
  * rysuje scena (`game/cityScreen.ts` podnosi ją, gdy zakładka jest otwarta), a ten panel mówi, co na niej jest. Na komputerze lista
  * i karta stoją w prawej kolumnie; na telefonie arkusz wysuwa się od dołu i pokazuje listę albo, po wyborze lokalu, kartę (CSS `.has-card`).
- * Komponenty nie mają haków i dostają `v` (wersję firmy) w propsach, bo firma zmienia się w miejscu.
+ * Komponenty nie mają haków i dostają `v` (wersję firmy) w propsach, bo firma zmienia się w miejscu. Pod listą stoją badania Sieci (4b,
+ * `ResearchSection`): tylko dla Partnera w zwykłej grze, bo bez drugiego sklepu badania nie działają, a w rankingu sieci nie ma.
  */
 
 const STATUS_ICON = { missing: '🔒', granted: '✅', ranked: '🏁' } as const;
@@ -63,6 +65,10 @@ export function CityBar({ f }: { f: FirmState; v: number }) {
   );
 }
 
+/** Czy limit placówek jest wypełniony (otwarte sklepy i budowy wobec `storeLimit`): wtedy lista mówi, jak go odblokować (`limitText`). Tylko dla Partnera w zwykłej grze, bo inaczej odmowa jest o czymś innym. */
+const atLimit = (f: FirmState): boolean =>
+  f.person.partner && !f.ranked && openStores(f).length + f.builds.length >= Math.min(f.storeLimit, MAX_STORES);
+
 /**
  * Lista lokali do wzięcia: numer z kartki, adres, dzielnica, format i metraż, widełki klientów dziennie i pakiet otwarcia. Lokal „po Traszce”
  * (4a.2) stoi na liście z dopiskiem, ceną po zniżce i bez numeru (pusty znacznik trzyma kolumnę siatki).
@@ -73,6 +79,7 @@ export function LotList({ f }: { f: FirmState; v: number }) {
   return (
     <section class="tt-lotlist" aria-label={t`Wolne lokale`}>
       <h3>{t`Wolne lokale (${rows.length})`}</h3>
+      {atLimit(f) && <p class="tt-hint tt-limit">{limitText(f)}</p>}
       {rows.length === 0 && <p class="tt-hint">{t`Brak wolnych lokali.`}</p>}
       {rows.map((r) => (
         <button key={r.lotId} type="button" class={`tt-lotrow${chosen === r.lotId ? ' sel' : ''}`} data-lot={r.lotId} aria-pressed={chosen === r.lotId}
@@ -99,6 +106,7 @@ export function CityPanel({ game }: { game: GameActions }) {
     <div class={`tt-city${chosen !== null ? ' has-card' : ''}`}>
       <CityBar f={f} v={v} />
       <LotList f={f} v={v} />
+      {f.person.partner && !f.ranked && <ResearchSection f={f} game={game} v={v} />}
       {chosen !== null && <LotCard f={f} lotId={chosen} game={game} v={v} />}
     </div>
   );

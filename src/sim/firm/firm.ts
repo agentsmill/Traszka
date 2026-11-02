@@ -27,7 +27,8 @@ import {
  * Firma (spec §11, §12, §14.1). Gotówka i Ogonki należą do osoby (`person`), a nie do sklepu: przed krokiem sklepu i przed każdym jego
  * poleceniem firma wpisuje je do `econ`, po nim odbiera, więc sklepy liczą się pełną ekonomią, a pieniądze nie dublują się i nie giną.
  * Sklepy liczą się w kolejności `id`, razem z aktywnym, minuta po minucie (kolejność jest częścią determinizmu). Firma z jednym
- * sklepem startowym gra jak sama ekonomia co do bitu: bez `site`, bez zdarzeń firmy.
+ * sklepem startowym gra jak sama ekonomia co do bitu: bez `site`, a jedyne zdarzenia firmy, jakie taka firma wysyła w zwykłej grze (4b),
+ * to cele sieci (`goal`) i pierwszy milion (`million`); reszta (budowa, otwarcie, raport sieci…) wymaga drugiego sklepu.
  */
 
 /** Zdarzenia sklepu w tle, które czekają na „OK” z nazwą sklepu (§12); reszta zamyka się sama (poziom, remont i cel dostają w grze toast z nazwą sklepu, `BACKGROUND_TOAST`). */

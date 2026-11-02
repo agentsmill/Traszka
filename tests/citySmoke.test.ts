@@ -14,7 +14,7 @@ import {
 } from '../scripts/city-smoke.mjs';
 import { MemoryStorage } from '@/game/memoryStorage';
 import { loadMeta, needsStartScreen } from '@/game/meta';
-import { createSession, hasStoredSave } from '@/game/session';
+import { createSession, firmOf, hasStoredSave } from '@/game/session';
 import { OPEN_FROM, OPEN_TO } from '@/sim/economy/catalog';
 import { TRUST } from '@/sim/economy/tycoon/trust';
 import { RELET_BUILD_DAYS, RELET_SHARE as SIM_RELET_SHARE, lotState, partnerProgress, rentPrice } from '@/sim/firm/commands';
@@ -410,7 +410,7 @@ describe('plan 4a.2 (Zadanie 9): stałe smoke\'a są zgodne z grą', () => {
   });
 
   it('teksty dosłowne: odmowa limitu, tytuł okna ponownego otwarcia i podpis zniżki to teksty gry', () => {
-    expect(LIMIT_TEXT).toBe(refusalText('limit'));
+    expect(LIMIT_TEXT).toBe(refusalText('limit', firmOf(createSession('kiełbasa-42', true))));   // świeża firma ma limit 3, jak sklep w scenariuszu smoke'a
     expect(RELET_CAPTION).toBe(`po Traszce: ${percentOf(SIM_RELET_SHARE)} ceny`);
     const save = fixtureSave(FIXTURES.poTraszce);
     const storage = new MemoryStorage();

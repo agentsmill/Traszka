@@ -5,7 +5,10 @@ import { debtWarningText, type EconEvent } from '@/sim/economy/economy';
 import type { StoreInfo } from '@/sim/economy/storeInfo';
 import { cardDef } from '@/sim/economy/tycoon/cards';
 import { TRUST } from '@/sim/economy/tycoon/trust';
-import type { FirmEvent, FirmRefusal, FirmState, FirmStore } from '@/sim/firm/types';
+import type { FirmCommand } from '@/sim/firm/commands';
+import { FIRM_GOALS } from '@/sim/firm/goals';
+import { RESEARCH, coordinationFee } from '@/sim/firm/research';
+import { STORE_UNLOCK_TURNOVER, type FirmEvent, type FirmRefusal, type FirmState, type FirmStore } from '@/sim/firm/types';
 import { money, zl } from '../game/format';
 
 /*
@@ -82,10 +85,21 @@ function settlementText(e: FirmEvent): string {
   return lines.join('\n');
 }
 
+/** Zdanie Centrali o limicie, który obowiązuje przy `limit` placówkach: próg obrotu sieci do kolejnej albo wyznanie, że to już koniec. */
+function limitSentence(limit: number): string {
+  const need = STORE_UNLOCK_TURNOVER[limit];
+  return need === undefined
+    ? t`Pięć placówek to wszystko, na co Centrala jest gotowa się zgodzić w tym mieście.`
+    : t`Centrala zgodzi się na kolejną placówkę, gdy obrót sieci w miesiącu przekroczy ${zl(need)}.`;
+}
+
+/** Limit placówek firmy słowami (4b §5.4): ile obrotu sieci w miesiącu odblokuje kolejny sklep (3 → 1 mln zł, 4 → 1,6 mln zł) albo że pięć to sufit. */
+export const limitText = (f: FirmState): string => limitSentence(f.storeLimit);
+
 /**
  * Tytuł i tekst zdarzenia firmy. `partner`, `opened` (też ponowne otwarcie lokalu „po Traszce”, `reopened`), `notice`, `settlement`, `closed`,
- * `debt` i `gameover` czekają na „OK” (ważne zdarzenia), `deputy` i `build` to krótkie toasty, a `network-report` nie ma własnego tekstu:
- * jego okno składa się z liczb podsumowania.
+ * `debt`, `gameover` i `unlock` (kolejna placówka z obrotu sieci) czekają na „OK” (ważne zdarzenia), `deputy`, `build`, `research` i `goal` to krótkie
+ * toasty, a `network-report` nie ma własnego tekstu: jego okno składa się z liczb podsumowania.
  */
 export function firmEventText(f: FirmState, e: FirmEvent): { title: string; text: string } {
   const id = e.storeId ?? 0;
@@ -149,20 +163,34 @@ export function firmEventText(f: FirmState, e: FirmEvent): { title: string; text
       };
     case 'network-report':
       return { title: t`Podsumowanie sieci`, text: '' };
-    // etap 4b: teksty na start; zdarzenia `research`, `goal` i `million` składa w pełni UI badań, celów i Galerii
+    // etap 4b: kolejna placówka z obrotu sieci, badanie Sieci i cel sieci (`million` składa Galeria sław)
     case 'unlock': {
+      const limit = num(e, 'limit');
       const turnover = zl(num(e, 'turnover'));
+      const lead = limit >= 5
+        ? t`Centrala zgadza się na piątą placówkę. Obrót sieci ${turnover} przekonał Dział Ekspansji, który zaraz potem wyszedł na lunch.`
+        : t`Centrala zgadza się na czwartą placówkę. Obrót sieci ${turnover} przekonał Dział Ekspansji, który zaraz potem wyszedł na lunch.`;
+      return { title: t`Kolejna placówka`, text: `${lead}\n${limitSentence(limit)}` };
+    }
+    case 'research': {
+      const def = RESEARCH.find((d) => d.id === str(e, 'id'));
+      const price = num(e, 'price');
       return {
-        title: t`Kolejna placówka`,
-        text: num(e, 'limit') >= 5
-          ? t`Centrala zgadza się na piątą placówkę. Obrót sieci ${turnover} przekonał Dział Ekspansji, który zaraz potem wyszedł na lunch.`
-          : t`Centrala zgadza się na czwartą placówkę. Obrót sieci ${turnover} przekonał Dział Ekspansji, który zaraz potem wyszedł na lunch.`,
+        title: t`Badania Sieci`,
+        text: def
+          ? t`${tr(def.name)}: poziom ${num(e, 'level')}. Centrala pobrała ${zl(price)}, w tym opłatę koordynacyjną ${zl(coordinationFee(price))}.`
+          : t`Badanie Sieci na poziomie ${num(e, 'level')}. Centrala pobrała ${zl(price)}.`,
       };
     }
-    case 'research':
-      return { title: t`Badania Sieci`, text: t`Badanie Sieci na poziomie ${num(e, 'level')}. Centrala pobrała ${zl(num(e, 'price'))}.` };
-    case 'goal':
-      return { title: t`Cel sieci`, text: t`Cel sieci spełniony. Nagroda czeka na odbiór w Celach.` };
+    case 'goal': {
+      const goal = FIRM_GOALS.find((g) => g.id === str(e, 'id'));
+      return {
+        title: t`Cel sieci`,
+        text: goal
+          ? t`Cel sieci spełniony: ${tr(goal.label)}. Nagroda czeka na odbiór w Celach.`
+          : t`Cel sieci spełniony. Nagroda czeka na odbiór w Celach.`,
+      };
+    }
     case 'million':
       return { title: t`Milion!`, text: t`Centrala jest w szoku, księgowa w euforii.` };
     default: {
@@ -173,14 +201,29 @@ export function firmEventText(f: FirmState, e: FirmEvent): { title: string; text
   }
 }
 
-/** Dlaczego Centrala odmówiła polecenia firmy (`FirmRefusal`): ranking i limit dosłownie z §10, reszta w tym samym tonie. */
-export function refusalText(reason: FirmRefusal): string {
+/**
+ * Toast o celach sieci spełnionych w jednej minucie: jeden cel mówi, który, kilka naraz (zapis z portfelem ponad milion spełnia ćwierć
+ * bańki, pół i milion w pierwszej minucie) dostaje jedno zdanie z liczbą, żeby gracz nie dostał serii okien.
+ */
+export function goalsToastText(f: FirmState, goals: readonly FirmEvent[]): string {
+  return goals.length === 1 ? firmEventText(f, goals[0]!).text : t`Cele sieci do odebrania: ${goals.length}. Nagrody czekają w Celach.`;
+}
+
+/** Brak gotówki na badanie Sieci: po zapłacie musi zostać co najmniej zero (odmowa `gotowka` przy poleceniu `research`; zdanie o pakiecie i budowie tu nie pasuje). */
+export const researchCashText = (): string => t`Za mało gotówki na badanie: po zapłacie musi zostać co najmniej 0 zł.`;
+
+/**
+ * Dlaczego Centrala odmówiła polecenia firmy (`FirmRefusal`): ranking dosłownie z §10, reszta w tym samym tonie. Odmowa `limit` mówi o limicie
+ * firmy `f` (próg obrotu sieci do kolejnej placówki, `limitText`); bez firmy mówi ogólnie. `command`: polecenie, które Centrala odrzuciła, gdy
+ * to zmienia treść (brak gotówki na badanie, `researchCashText`, zamiast pakietu otwarcia).
+ */
+export function refusalText(reason: FirmRefusal, f?: FirmState, command?: FirmCommand['type']): string {
   switch (reason) {
     case 'ranked': return t`W sezonie rankingowym Centrala ocenia jedną placówkę. Prosimy wrócić po sezonie.`;
     case 'status': return t`Centrala rozważy kolejną placówkę, gdy nada Panu/Pani status Partnera Strategicznego.`;
-    case 'limit': return t`Trzy placówki to na tym etapie partnerstwa wszystko, na co Centrala jest gotowa się zgodzić.`;
+    case 'limit': return f ? limitText(f) : t`Centrala nie zgadza się teraz na kolejną placówkę. Limit rośnie wraz z obrotem sieci.`;
     case 'lot': return t`Ten lokal nie jest do wzięcia.`;
-    case 'gotowka': return t`Po zapłaceniu pakietu gotówka musi zostać nie mniejsza od zera: Centrala nie finansuje budów na debecie.`;
+    case 'gotowka': return command === 'research' ? researchCashText() : t`Po zapłaceniu pakietu gotówka musi zostać nie mniejsza od zera: Centrala nie finansuje budów na debecie.`;
     case 'raty': return t`Rata pakietu przekracza limit rat nowej placówki. Prosimy o gotówkę albo o tańszy lokal.`;
     case 'store': return t`Nie ma takiej placówki albo już nie działa.`;
     case 'single': return t`Centrala nie przyjmie wypowiedzenia, jeśli nie zostaje inna działająca placówka.`;

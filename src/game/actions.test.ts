@@ -10,7 +10,7 @@ import { levelReward } from '@/sim/economy/progress';
 import { emptyStepOut, syncWallet } from '@/sim/firm/firm';
 import { replayFirm } from '@/sim/firm/replay';
 import type { FirmEvent, FirmStepOut, NetworkSummary } from '@/sim/firm/types';
-import { firmEventText, storeName } from '@/ui/city/firmText';
+import { firmEventText, goalsToastText, limitText, researchCashText, storeName } from '@/ui/city/firmText';
 import { SEPT_CLOSE, answerActive, loseTrust, openSecond, partnerSession, playTo } from '../../tests/firmKit';
 import { cardDef, visibleCards } from '@/sim/economy/tycoon/cards';
 import { CIRCULARS, DECK } from '@/sim/economy/tycoon/deck';
@@ -3743,7 +3743,7 @@ describe('dispatchFirm i polecenia firmy', () => {
     expect(s.run ?? null).toBeNull();
   });
 
-  it('trzeci wynajem w trakcie dwóch budów dostaje tekst limitu z §10.2 (budowy liczą się do limitu trzech sklepów)', () => {
+  it('trzeci wynajem w trakcie dwóch budów dostaje tekst limitu (budowy liczą się do limitu trzech sklepów)', () => {
     const s = partnerSession(SEED, 300_000);
     const f = firmOf(s);
     const [first, second, other] = f.city.lots.filter((l) => l.state === 'wolny');
@@ -3753,7 +3753,7 @@ describe('dispatchFirm i polecenia firmy', () => {
     rec.calls.length = 0;
 
     expect(dispatchFirm(s, { type: 'rentLot', lotId: other!.id, pay: 'gotowka' }, rec.fx)).toEqual({ ok: false, reason: 'limit' });
-    expect(rec.named('toast')).toEqual([['toast', 'Trzy placówki to na tym etapie partnerstwa wszystko, na co Centrala jest gotowa się zgodzić.', 'error']]);
+    expect(rec.named('toast')).toEqual([['toast', limitText(f), 'error']]);   // limit 3: tekst niesie próg obrotu sieci do czwartej placówki
     expect(f.builds).toHaveLength(2);
   });
 
@@ -4251,6 +4251,90 @@ describe('gra prowadzi firmę (powłoka)', () => {
         firmEventText(f, { kind: 'build', params: { lotId: f.stores[1]!.lotId, readyDay: 40, price: 50_000, pay: 'raty' } }).text,
       ]);
       expect(h.scene.syncs).toEqual([true]);   // odświeżenie sceny i interfejsu raz
+    });
+
+    describe('etap 4b: unlock, research, goal i million', () => {
+      const plays = (h: Harness): string[] => h.calls.filter((c) => c[0] === 'play').map((c) => String(c[1]));
+
+      it('unlock (kolejna placówka z obrotu sieci) czeka na „OK” z tekstem z firmText, a nie jest toastem', () => {
+        const h = harness();
+        const { f } = twoStores(h);
+        const e: FirmEvent = { kind: 'unlock', params: { limit: 4, turnover: 1_012_345 } };
+        h.shell.handleFirmEvents(stepOut({ firm: [e] }));
+        expect(ui.story.value.map((x) => ({ title: x.title, text: x.text }))).toEqual([firmEventText(f, e)]);
+        expect(ui.toasts.value).toEqual([]);
+      });
+
+      it('research (kupno badania) to toast „ok” z nazwą badania i ceną, bez okna', () => {
+        const h = harness();
+        const { f } = twoStores(h);
+        const e: FirmEvent = { kind: 'research', params: { id: 'obsada', level: 1, price: 60_000 } };
+        h.shell.handleFirmEvents(stepOut({ firm: [e] }));
+        expect(ui.story.value).toEqual([]);
+        expect(ui.toasts.value.map((x) => [x.text, x.kind])).toEqual([[firmEventText(f, e).text, 'ok']]);
+        expect(firmEventText(f, e).text).toContain('Wspólna obsada');
+      });
+
+      it('jeden cel sieci to toast „milestone” z nazwą celu i monety, bez okna; działa też przy jednym sklepie', () => {
+        const h = harness();
+        const s = open(h);   // jeden sklep: firma z jednym sklepem też emituje cele
+        const f = firmOf(s);
+        const e: FirmEvent = { kind: 'goal', params: { id: 'cash250k' } };
+        h.shell.handleFirmEvents(stepOut({ firm: [e] }));
+        expect(ui.story.value).toEqual([]);
+        expect(ui.toasts.value.map((x) => [x.text, x.kind])).toEqual([[firmEventText(f, e).text, 'milestone']]);
+        expect(firmEventText(f, e).text).toContain('Ćwierć bańki na koncie');
+        expect(plays(h)).toEqual(['coins']);
+      });
+
+      it('kilka celów z jednej minuty (zapis z milionem) to jeden toast z liczbą i jedne monety, nie seria okien', () => {
+        const h = harness();
+        const { f } = twoStores(h);
+        const goals: FirmEvent[] = ['cash250k', 'cash500k', 'cash1m'].map((id) => ({ kind: 'goal', params: { id } }));
+        h.shell.handleFirmEvents(stepOut({ firm: [...goals, { kind: 'million', params: { day: 400, cash: 1_200_000 } }] }));
+        expect(ui.story.value).toEqual([]);   // ani cele, ani milion nie otwierają okna z „default”
+        expect(ui.toasts.value.map((x) => [x.text, x.kind])).toEqual([[goalsToastText(f, goals), 'milestone']]);
+        expect(goalsToastText(f, goals)).toContain('Cele sieci do odebrania: 3');
+        expect(plays(h)).toEqual(['coins']);
+      });
+
+      it('million nie trafia do okna „OK” z default (Zadanie 8 podepnie własną obsługę)', () => {
+        const h = harness();
+        twoStores(h);
+        h.shell.handleFirmEvents(stepOut({ firm: [{ kind: 'million', params: { day: 400, cash: 1_000_100 } }] }));
+        expect(ui.story.value).toEqual([]);
+        expect(ui.toasts.value).toEqual([]);
+      });
+
+      it('dispatchFirm: odmowa badania z braku gotówki mówi o badaniu, nie o pakiecie lokalu', () => {
+        const s = partnerSession(SEED, 1_000);
+        openSecond(s);
+        const rec = recorder();
+        rec.calls.length = 0;
+        expect(dispatchFirm(s, { type: 'research', id: 'obsada' }, rec.fx)).toEqual({ ok: false, reason: 'gotowka' });
+        expect(rec.named('toast')).toEqual([['toast', researchCashText(), 'error']]);
+        expect(researchCashText()).not.toContain('pakietu');
+        expect(rec.named('play')).toEqual([['play', 'error']]);
+      });
+
+      it('dispatchFirm: kupno badania i odebranie celu grają monety, odmowa limitu mówi o progu firmy', () => {
+        const s = partnerSession(SEED, 400_000);
+        openSecond(s);
+        const f = firmOf(s);
+        const rec = recorder();
+        rec.calls.length = 0;
+        expect(dispatchFirm(s, { type: 'research', id: 'obsada' }, rec.fx)).toEqual({ ok: true });
+        expect(rec.named('play')).toEqual([['play', 'coins']]);
+        const sent = rec.named('handleFirmEvents')[0]![1] as FirmStepOut;
+        expect(sent.firm).toEqual([{ kind: 'research', params: { id: 'obsada', level: 1, price: 60_000 } }]);
+        f.goals = { ready: ['stores3'], claimed: [] };
+        rec.calls.length = 0;
+        expect(dispatchFirm(s, { type: 'claimGoal', id: 'stores3' }, rec.fx)).toEqual({ ok: true });
+        expect(rec.named('play')).toEqual([['play', 'coins']]);
+        rec.calls.length = 0;
+        expect(dispatchFirm(s, { type: 'claimGoal', id: 'stores3' }, rec.fx)).toEqual({ ok: false, reason: 'goal' });
+        expect(rec.named('play')).toEqual([['play', 'error']]);
+      });
     });
 
     it('puste zdarzenia nic nie robią, ale pętla klatek może wołać je co klatkę (zamyka tylko sezon rankingowy)', () => {

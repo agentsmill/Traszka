@@ -8,9 +8,9 @@ import { rankFor } from '@/sim/economy/progress';
 import { noticeLevel } from '@/sim/economy/tycoon/notices';
 import { applyFirmCommand, type FirmCommand, type FirmCommandResult } from '@/sim/firm/commands';
 import { activeStore, applyStoreCommand, emptyStepOut, grantToFirm, openStores, stepFirmMinute } from '@/sim/firm/firm';
-import type { FirmStepOut } from '@/sim/firm/types';
+import type { FirmEvent, FirmStepOut } from '@/sim/firm/types';
 import { seasonBankrupt } from '@/sim/ranked';
-import { backgroundToastText, firmEventText, refusalText, storeName } from '@/ui/city/firmText';
+import { backgroundToastText, firmEventText, goalsToastText, refusalText, storeName } from '@/ui/city/firmText';
 import type { Sfx } from '@/ui/sfx';
 import * as ui from '@/ui/state';
 import { bootMeta } from './bootMeta';
@@ -244,7 +244,7 @@ export function dispatchFirm(session: GameSession, cmd: FirmCommand, fx: Command
   const out = emptyStepOut();
   const result = applyFirmCommand(f, command, out);
   if (!result.ok) {
-    fx.toast(refusalText(result.reason), 'error');
+    fx.toast(refusalText(result.reason, f, command.type), 'error');
     fx.play('error');
     fx.refresh();
     return result;
@@ -261,7 +261,7 @@ export function dispatchFirm(session: GameSession, cmd: FirmCommand, fx: Command
       fx.notice(session.ephemeral ? REBUILD_FAILED_EPHEMERAL : REBUILD_FAILED);
     }
   }
-  if (command.type === 'rentLot') fx.play('coins');
+  if (command.type === 'rentLot' || command.type === 'research' || command.type === 'claimGoal') fx.play('coins');   // wynajem, badanie Sieci i odebranie celu to pieniądze w ruchu
   fx.handleFirmEvents?.(out);
   fx.persist();
   fx.refresh();
@@ -636,8 +636,9 @@ export function createShell(deps: ShellDeps): GameShell {
       ui.pushStory(`${storeName(f, b.storeId)}: ${title}`, b.event.text);   // tekst Centrali z symulacji tłumaczy okno przy rysowaniu
     }
 
-    // firma: ważne zdarzenia czekają na „OK”, zastępca i budowa to toast z odświeżeniem
+    // firma: ważne zdarzenia czekają na „OK”, zastępca i budowa to toast z odświeżeniem, a badania i cele sieci toasty bez okna (4b)
     let refresh = false;
+    const goals: FirmEvent[] = [];
     for (const e of out.firm) {
       switch (e.kind) {
         case 'deputy':
@@ -645,6 +646,14 @@ export function createShell(deps: ShellDeps): GameShell {
           ui.pushToast(firmEventText(f, e).text, 'info');
           refresh = true;
           break;
+        case 'research':
+          ui.pushToast(firmEventText(f, e).text, 'ok');   // kupno badania z panelu Miasto: potwierdzenie z ceną, bez okna
+          break;
+        case 'goal':
+          goals.push(e);   // cele z jednej minuty (zapis z milionem na portfelu spełnia kilka naraz) dostają jeden toast niżej
+          break;
+        case 'million':
+          break;   // tymczasowo bez okna: gratulacje i Galerię sław podpina Zadanie 8, a modalne okno z `default` nie jest dla niego
         case 'network-report':
           break;   // okno sieci składamy niżej z raportem i wyciągami
         default: {
@@ -652,6 +661,10 @@ export function createShell(deps: ShellDeps): GameShell {
           ui.pushStory(title, text);
         }
       }
+    }
+    if (goals.length > 0) {
+      ui.pushToast(goalsToastText(f, goals), 'milestone');
+      fx.play('coins');
     }
     if (summary) ui.networkReport.value = { summary, reports: [...reports].sort(([a], [b]) => a - b).map(([storeId, report]) => ({ storeId, report })) };
 
