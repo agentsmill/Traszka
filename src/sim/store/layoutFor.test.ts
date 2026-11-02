@@ -90,7 +90,7 @@ describe('layoutFor', () => {
       }
     }
     expect(widest).toBeGreaterThan(0);
-  }, 60_000);
+  }, 240_000);   // lokalnie ok. 17 s, CI na GitHubie bywa ok. 5× wolniejsze
 
   it('poziom 5 jest deterministyczny: ten sam seed i lokal dają ten sam układ', () => {
     for (const seed of SEEDS) {

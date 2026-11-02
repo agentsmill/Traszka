@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_CASHIER_LOOK } from '@/game/cashier';
-import { SAVE_TRANSFER_MAX_BYTES, firmEnvelopeOf, restoreFirmFrom, type FirmSaveEnvelope } from '@/game/firmSave';
+import { FIRM_SAVE_SCHEMA, SAVE_TRANSFER_MAX_BYTES, firmEnvelopeOf, restoreFirmFrom, type FirmSaveEnvelope } from '@/game/firmSave';
 import { MemoryStorage } from '@/game/memoryStorage';
 import { loadMeta, saveMeta, type Meta } from '@/game/meta';
 import { NEWER_SAVE_NOTICE, createSession, hasStoredSave, lastSavedSeed, saveSession } from '@/game/session';
@@ -213,7 +213,7 @@ describe('przeniesienie zapisu: koperta firmy (schemat 4, a stary zapis schematu
     storage.setItem(`traszka:save:${seed}`, raw);
     storage.setItem('traszka:last', seed);
     const text = exportTransfer()!;
-    expect((JSON.parse(text) as TransferBundle).save).toMatchObject({ schema: 3, seed });
+    expect((JSON.parse(text) as TransferBundle).save).toMatchObject({ schema: FIRM_SAVE_SCHEMA, seed });   // paczka zawsze w schemacie 4 (stara wersja odmówi czysto)
     expect(storage.getItem(`traszka:save:${seed}`)).toBe(raw);   // wysłanie nie rusza zapisu lokalnego
     switchDevice();
     expect(importTransfer(text)).toEqual({ seed });
@@ -777,6 +777,7 @@ describe('paczka „Wyślij zapis”: zamknięte sklepy (lokale „po Traszce”
     const fixture = JSON.parse(readFileSync(new URL('../../game/fixtures/save-v3-po-traszce.json', import.meta.url), 'utf8')) as Record<string, unknown>;
     expect(unpackTransfer(fixture)).toEqual(fixture);   // zamknięty #2 w pełnym kształcie zostaje taki, jaki był
     const packed = compactForTransfer(fixture as unknown as FirmSaveEnvelope) as unknown as Record<string, unknown>;
+    expect([fixture.schema, packed.schema]).toEqual([3, FIRM_SAVE_SCHEMA]);   // paczka z koperty schematu 3 niesie schemat 4: stara wersja gry odmawia jej czysto
     const back = unpackTransfer(packed) as { stores: Record<string, unknown>[] };
     const orig = (fixture.stores as Record<string, unknown>[])[1]!;
     expect(back.stores[1]).toEqual({ ...orig, notice: null });   // z wypowiedzenia zamkniętego sklepu nic nie korzysta

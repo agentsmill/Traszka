@@ -1,4 +1,4 @@
-import { isFirmEnvelope, isNewerSave, type ClosedFittings, type FirmSaveEnvelope, type SavedStore } from '@/game/firmSave';
+import { FIRM_SAVE_SCHEMA, isFirmEnvelope, isNewerSave, type ClosedFittings, type FirmSaveEnvelope, type SavedStore } from '@/game/firmSave';
 import { loadMeta, sanitizeMeta, saveMeta, type Meta } from '@/game/meta';
 import { setPlayMode } from '@/game/rankedRun';
 import { NEWER_SAVE_NOTICE, lastSavedSeed } from '@/game/session';
@@ -143,6 +143,8 @@ export function compactForTransfer(env: FirmSaveEnvelope): FirmSaveEnvelope {
   const kept = Array.isArray(stores) ? keptClosed(stores, isRec(firm) ? firm.builds : undefined) : new Set<Rec>();
   return {
     ...env,
+    // zawsze schemat 4: koperta schematu 3 ze spakowanymi zamkniętymi sklepami jest czytelna tylko dla tej wersji, a stara (`isNewerSave`) odmówi jej czysto zamiast :broken
+    schema: FIRM_SAVE_SCHEMA,
     firm: isRec(firm) && Array.isArray(firm.inbox) ? { ...env.firm, inbox: env.firm.inbox.slice(-TRANSFER_INBOX) } : env.firm,
     stores: Array.isArray(stores)
       ? (stores as unknown[]).filter((st) => !isRec(st) || st.closed !== true || kept.has(st))
