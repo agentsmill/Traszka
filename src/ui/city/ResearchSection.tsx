@@ -1,17 +1,19 @@
 import { t, tr } from '@/i18n';
-import { openStores } from '@/sim/firm/firm';
+import { activeStore, openStores } from '@/sim/firm/firm';
 import { RESEARCH, RESEARCH_BY_ID, coordinationFee, netMods, researchCost, researchRefusal, type ResearchId } from '@/sim/firm/research';
 import type { NetMods } from '@/sim/economy/site';
 import type { FirmRefusal, FirmState } from '@/sim/firm/types';
 import type { GameActions } from '../state';
 import { percentOf, zl } from '../game/format';
+import { SpendNote, spendRisk } from '../game/spend';
 import { refusalText, researchCashText } from './firmText';
 
 /*
  * Sekcja „Sieć: badania” w panelu Miasto (spec 4b §5.3, §5.9): sześć badań, które działają we wszystkich sklepach naraz, ale dopiero od dwóch
  * otwartych. Wiersz mówi, jaki poziom jest kupiony, ile kosztuje następny (z satyryczną opłatą koordynacyjną Centrali, która siedzi w cenie,
  * a nie na wyciągu), jaki efekt da przy obecnej liczbie sklepów i czemu przycisk jest wyłączony. Wygląd jak w „Ulepszeniach” (`tt-item`);
- * badania nie mają rat, więc przycisk jest jeden, za gotówkę. Komponent bez haków: dostaje `v` (wersję firmy) w propsach, jak reszta Miasta.
+ * badania nie mają rat, więc przycisk jest jeden, za gotówkę, z tym samym ostrzeżeniem o debecie po zamknięciu miesiąca co inne zakupy za gotówkę
+ * (`SpendNote` i `data-risk`, prognoza sieci). Komponent bez haków: dostaje `v` (wersję firmy) w propsach, jak reszta Miasta.
  */
 
 /** Wiersz badania: poziom, cena następnego poziomu z opłatą koordynacyjną, efekt następnego poziomu przy obecnej liczbie sklepów i powód blokady. */
@@ -85,6 +87,7 @@ function researchItem(f: FirmState, id: ResearchId, game: GameActions) {
   const r = researchRow(f, id);
   const total = researchTotal(f, id);
   const maxed = r.price === null;
+  const a = activeStore(f);   // gotówka sklepu to portfel (`syncWallet`), więc ocena wydatku (prognoza sieci) czyta ten sam stan co inne zakupy
   return (
     <div key={id} class={`tt-item${maxed ? ' done' : ''}`} data-research={id}>
       <div>
@@ -95,12 +98,13 @@ function researchItem(f: FirmState, id: ResearchId, game: GameActions) {
         {!maxed && r.effectNow && <div class="tt-muted">{t`Kolejny poziom: ${r.effectNow}`}</div>}
         {!maxed && r.fee !== null && <div class="tt-muted">{t`w tym opłata koordynacyjna Centrali: ${zl(r.fee)}`}</div>}
         {!maxed && r.blocked !== null && <div class="tt-muted warn">{blockedText(r.blocked, f)}</div>}
+        {!maxed && r.blocked === null && <SpendNote s={a.econ} info={a.info} price={r.price!} />}
       </div>
       {maxed
-        ? <span class="tt-check" aria-label={t`Najwyższy poziom`}>✓</span>
+        ? <span class="tt-check" role="img" aria-label={t`Najwyższy poziom`}>✓</span>
         : (
-          <button type="button" class="tt-btn tt-buy" disabled={r.blocked !== null} aria-label={t`Kup: ${tr(def.name)}, poziom ${r.level + 1}`}
-            onClick={() => { game.firm({ type: 'research', id }); }}>{zl(r.price!)}</button>
+          <button type="button" class="tt-btn tt-buy" disabled={r.blocked !== null} data-risk={r.blocked === null ? spendRisk(a.econ, a.info, r.price!) : undefined}
+            aria-label={t`Kup: ${tr(def.name)}, poziom ${r.level + 1}, ${zl(r.price!)}`} onClick={() => { game.firm({ type: 'research', id }); }}>{zl(r.price!)}</button>
         )}
     </div>
   );

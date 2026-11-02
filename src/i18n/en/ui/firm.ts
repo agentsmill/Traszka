@@ -133,7 +133,7 @@ export const FIRM_UI: Dict = {
   'Kolejny poziom: {0}': 'Next level: {0}',
   'w tym opłata koordynacyjna Centrali: {0}': 'including Head Office’s coordination fee: {0}',
   'Najwyższy poziom': 'Top level',
-  'Kup: {0}, poziom {1}': 'Buy: {0}, level {1}',
+  'Kup: {0}, poziom {1}, {2}': 'Buy: {0}, level {1}, {2}',
   'ruch {0}': 'footfall {0}',
   'koszyk {0}': 'basket {0}',
   'płace {0}': 'wages {0}',

@@ -1,14 +1,17 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { lang } from '@/i18n';
 import { firmOf, type GameSession } from '@/game/session';
-import { syncWallet } from '@/sim/firm/firm';
+import { activeStore, syncWallet } from '@/sim/firm/firm';
+import { forecastFirm } from '@/sim/firm/forecast';
+import { spendCheck } from '@/sim/economy/forecast';
 import type { FirmCommand, FirmCommandResult } from '@/sim/firm/commands';
 import { RESEARCH, RESEARCH_BY_ID, coordinationFee, researchCost, type ResearchId } from '@/sim/firm/research';
 import type { FirmState } from '@/sim/firm/types';
 import { PL_CHARS } from '../../../tests/i18nScan';
 import { openSecond, openThird, partnerSession } from '../../../tests/firmKit';
-import type { GameActions } from '../state';
+import { firm, type GameActions } from '../state';
 import { percentOf, zl } from '../game/format';
+import { SpendNote, spendRisk } from '../game/spend';
 import { buttonsOf, click, labels, textOf, walk, type Vnode } from '../game/vnodeTree';
 import { ResearchSection, blockedText, researchRow, researchTotal } from './ResearchSection';
 
@@ -17,7 +20,7 @@ import { ResearchSection, blockedText, researchRow, researchTotal } from './Rese
  * kupno idzie przez `game.firm`, a symulacja liczy tylko to, co tu pokazujemy (`researchRow` bierze `netMods`, `researchCost`, `researchRefusal`).
  */
 
-afterEach(() => { lang.value = 'pl'; });
+afterEach(() => { lang.value = 'pl'; firm.value = null; });
 
 function fakeGame(result: FirmCommandResult = { ok: true }): GameActions & { firm: ReturnType<typeof vi.fn<(cmd: FirmCommand) => FirmCommandResult>> } {
   return {
@@ -219,6 +222,89 @@ describe('ResearchSection: angielski', () => {
     const f = firmWith(3);
     lang.value = 'en';
     const button = buttonsOf(rowFor(render(f), 'obsada'))[0]!;
-    expect(button.props['aria-label']).toBe('Buy: Shared staffing (network rota), level 1');
+    expect(button.props['aria-label']).toBe(`Buy: Shared staffing (network rota), level 1, ${zl(60_000)}`);   // nazwa dostępna zawiera cenę z widocznego napisu
+    expect(textOf(button)).toBe(zl(60_000));
+  });
+
+  it('✓ na poziomie maksymalnym jest obrazkiem z czytelną etykietą (aria-label bez roli nie byłby odczytany)', () => {
+    const f = firmWith(3);
+    f.research = { obsada: 4 };
+    lang.value = 'en';
+    const check = walk(rowFor(render(f), 'obsada')).find((v) => String(v.props.class) === 'tt-check')!;
+    expect(check.props.role).toBe('img');
+    expect(check.props['aria-label']).toBe('Top level');
+  });
+});
+
+describe('ResearchSection: ostrzeżenie o wydatku (jak przy innych zakupach za gotówkę)', () => {
+  /** Firma z trzema sklepami i portfelem na wszystko, której prognoza „gotówka po zamknięciu” jest przesunięta na `cashAfter` (potrącenie za palety w sklepie #1). */
+  function firmForecasting(cashAfter: number): FirmState {
+    const f = firmWith(3);
+    firm.value = { f, v: 1 };
+    const shift = forecastFirm(f).cashAfter - cashAfter;
+    f.stores[0]!.econ.franchisee.month.pallets += shift;
+    expect(Math.round(forecastFirm(f).cashAfter)).toBe(cashAfter);
+    return f;
+  }
+  const noteOf = (row: Vnode): Vnode => walk(row).find((v) => v.type === SpendNote)!;
+  const shownNote = (row: Vnode): string | null => {
+    const n = noteOf(row);
+    return n ? textOf(SpendNote(n.props as never) as never) : null;
+  };
+
+  it('badanie, po którym gotówka po zamknięciu miesiąca zejdzie pod zero, ma notkę z kwotą „zostanie Ci”, a tańsze, które się mieści, nie', () => {
+    const f = firmForecasting(30_000);
+    const tree = render(f);
+    const a = activeStore(f);
+    // 25 000 zł (Wspólne dostawy) mieści się: zostaje 5 000 zł
+    expect(shownNote(rowFor(tree, 'dostawy'))).toBe('');
+    // 60 000 zł (Wspólna obsada): zostaje −30 000 zł
+    const note = shownNote(rowFor(tree, 'obsada'))!;
+    expect(note).toContain('Po zamknięciu miesiąca zostanie Ci');
+    expect(spendCheck(forecastFirm(f), 60_000).cashAfter).toBeCloseTo(-30_000, 0);
+    expect(note.replace(/[\s\u00a0\u202f]/g, '')).toContain('−30000zł');
+    expect(note).toContain('gotówka zejdzie pod zero');
+    expect(a.econ.cash).toBeGreaterThanOrEqual(60_000);   // sam zakup się opłaca z portfela: ostrzeżenie nie blokuje
+    expect(buttonsOf(rowFor(tree, 'obsada'))[0]!.props.disabled).toBe(false);
+  });
+
+  it('każdy wiersz z ceną przechodzi przez SpendNote z ceną badania i sklepem aktywnym', () => {
+    const f = firmForecasting(30_000);
+    const a = activeStore(f);
+    const prices = RESEARCH.map((d) => {
+      const n = noteOf(rowFor(render(f), d.id));
+      expect(n.props.s).toBe(a.econ);
+      expect(n.props.info).toBe(a.info);
+      return n.props.price;
+    });
+    expect(prices).toEqual(RESEARCH.map((d) => researchCost(d, 0)));
+  });
+
+  it('przycisk dostaje kolor ostrzeżenia (data-risk) dopiero od progu, tak jak inne zakupy; „ciasno” zostaje zwykłe', () => {
+    const f = firmForecasting(-10_000);
+    const a = activeStore(f);
+    const tree = render(f);
+    const risk = (id: ResearchId): unknown => buttonsOf(rowFor(tree, id))[0]!.props['data-risk'];
+    expect(risk('dostawy')).toBeUndefined();   // −35 000 zł: ciasno (pod zerem, nad progiem ostrzeżenia)
+    expect(risk('obsada')).toBe('warn');       // −70 000 zł: poniżej progu ostrzeżenia (−60 000 zł)
+    expect(risk('lojalnosc')).toBe('warn');    // −90 000 zł
+    for (const d of RESEARCH) expect(risk(d.id), d.id).toBe(spendRisk(a.econ, a.info, researchCost(d, 0)));
+  });
+
+  it('badanie niedostępne (jeden sklep, brak gotówki, ranking) nie dokłada ostrzeżenia o wydatku', () => {
+    const one = firmWith(1);
+    expect(walk(rowFor(render(one), 'obsada')).some((v) => v.type === SpendNote)).toBe(false);
+    expect(buttonsOf(rowFor(render(one), 'obsada'))[0]!.props['data-risk']).toBeUndefined();
+    const poor = firmWith(3, 40_000);
+    expect(walk(rowFor(render(poor), 'obsada')).some((v) => v.type === SpendNote)).toBe(false);
+    const max = firmWith(3);
+    max.research = { obsada: 4 };
+    expect(walk(rowFor(render(max), 'obsada')).some((v) => v.type === SpendNote)).toBe(false);
+  });
+
+  it('po angielsku notka mówi o gotówce po zamknięciu miesiąca', () => {
+    const f = firmForecasting(30_000);
+    lang.value = 'en';
+    expect(shownNote(rowFor(render(f), 'obsada'))).toContain('After the month closes you’ll keep −30,000 zł: your cash will go below zero.');
   });
 });

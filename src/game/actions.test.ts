@@ -4295,7 +4295,7 @@ describe('gra prowadzi firmę (powłoka)', () => {
       expect(h.scene.syncs).toEqual([true]);   // odświeżenie sceny i interfejsu raz
     });
 
-    describe('etap 4b: unlock, research, goal i million', () => {
+    describe('etap 4b: unlock, research i goal (million ma własne testy wyżej: fameOffer)', () => {
       const plays = (h: Harness): string[] => h.calls.filter((c) => c[0] === 'play').map((c) => String(c[1]));
 
       it('unlock (kolejna placówka z obrotu sieci) czeka na „OK” z tekstem z firmText, a nie jest toastem', () => {
@@ -4338,14 +4338,6 @@ describe('gra prowadzi firmę (powłoka)', () => {
         expect(ui.toasts.value.map((x) => [x.text, x.kind])).toEqual([[goalsToastText(f, goals), 'milestone']]);
         expect(goalsToastText(f, goals)).toContain('Cele sieci do odebrania: 3');
         expect(plays(h)).toEqual(['coins', 'coins']);   // monety gratulacji za milion (fameOffer, Zadanie 8) i jedne za zbiorczy toast celów
-      });
-
-      it('million nie trafia do okna „OK” z default (Zadanie 8 podepnie własną obsługę)', () => {
-        const h = harness();
-        twoStores(h);
-        h.shell.handleFirmEvents(stepOut({ firm: [{ kind: 'million', params: { day: 400, cash: 1_000_100 } }] }));
-        expect(ui.story.value).toEqual([]);
-        expect(ui.toasts.value).toEqual([]);
       });
 
       it('dispatchFirm: odmowa badania z braku gotówki mówi o badaniu, nie o pakiecie lokalu', () => {

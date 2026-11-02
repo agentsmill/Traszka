@@ -503,6 +503,13 @@ export function networkGoals(f: FirmState): { ready: FirmGoal[]; next: FirmGoal[
 }
 
 /**
+ * Czy Cele pokazują sekcję „Sieć”: tylko w zwykłej grze i dopiero od statusu Partnera albo gdy jakiś cel już czeka na odbiór (cele gotówkowe
+ * da się spełnić jednym sklepem). Wcześniej podpowiedzi celów (badania w panelu Miasto, kolejne placówki) prowadziłyby do ekranów, których
+ * przed statusem nie ma (`CityPanel` chowa badania do statusu).
+ */
+export const networkGoalsShown = (f: FirmState): boolean => !f.ranked && (f.person.partner || f.goals.ready.length > 0);
+
+/**
  * Sekcja „Sieć” w Celach: cele całej firmy (gotówka, sklepy, badania), nie jednego sklepu. Nagroda to Ogonki do wspólnego portfela, bez XP.
  * Tylko w zwykłej grze (w rankingu ich nie ma). Zwykła funkcja z `Section`, żeby testy `vnodeTree` widziały wiersze.
  */
@@ -583,7 +590,7 @@ export function GoalsPanel({ s, info, game }: { s: EconomyState; info: StoreInfo
         {goals.map((g) => <div key={g.id} class="tt-goal"><b>{tr(g.label)}</b> <span class="tt-muted">+{g.reward} 🦎</span><div class="tt-muted">{tr(g.hint)}</div></div>)}
         <p class="tt-hint">{t`Zdobyte: ${s.milestones.length} / ${MILESTONES.length}`}</p>
       </Section>
-      {fv && !fv.f.ranked && !ranked.value && NetworkGoals({ f: fv.f, game })}
+      {fv && networkGoalsShown(fv.f) && !ranked.value && NetworkGoals({ f: fv.f, game })}
       <Section title="Dziś">
         <Row label="Klienci">{t`${int(today.customers)} (utraceni: ${int(today.lost)})`}</Row>
         <Row label="Obrót">{zl(today.revenue)}</Row>
