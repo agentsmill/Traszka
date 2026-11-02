@@ -28,6 +28,9 @@
  *  4b-e. ta sama sekcja badań po angielsku;
  *  4b-f. kopia „po Traszce” z remontem 4 sklepu startowego: sklep i ulica;
  *  4b-g. „Zrzut Traszkomonów”: talia z kopii zapisu, w której jutro może wypaść tylko ta karta.
+ * Plan 4b (Zadanie 11), krok f (komputer, jakość „średnia”): zapis „przed statusem” z zrzutem Traszkomonów wymuszonym w kopercie (`saveWithCardDrop`: ruch +1,6
+ * od 6:00 do 10:00 następnej doby), przewinięcie do 7:30 i puszczenie czasu: przed wejściem staje kolejka 12 postaci, razem z salą mieści się w puli postaci
+ * presetu, zrzut kadru na chodnik, a po 10:00 kolejka się rozchodzi.
  *
  * Bezpieczeństwo: nic nie wychodzi poza `localhost` na porcie smoke'a. Zapytania do `/api/**` są przerywane (smoke niczego nie wysyła
  * do rankingu, ani lokalnego, ani prawdziwego), a każde inne zapytanie poza localhost jest blokowane i liczone. Zapisy gry i metę
@@ -120,6 +123,25 @@ export const WALLET_4B_RENT = 400_000;
 export const WALLET_4B_MILLION = 999_500;
 export const FAME_TITLE = 'Milion!';
 export const FAME_CLOSED = 'Galeria jest teraz nieczynna';
+/** Krok f (plan 4b, Zadanie 11): kolejka przed sklepem przy zrzucie Traszkomonów, karta wymuszona kopertą zapisu; tylko komputer. */
+export const QUEUE_STEP = { id: 'f', name: 'zrzut Traszkomonów: kolejka 6–12 postaci przed sklepem rano, po 10:00 pusto, w ramach puli postaci', sizes: ['desktop'] };
+
+/**
+ * Zapis z zrzutem Traszkomonów w toku, bez grania karty: do `econ.tycoon.cards.active` sklepu #1 dochodzi efekt ruchu `value`
+ * („Bez limitu” to +1,6) od 6:00 następnej doby przez `hours` godzin, jak po odpowiedzi gracza. Zapis wczytuje się zwykłą drogą
+ * (`sanitizeCards`), a smoke przewija grę do rana tej doby. Zwraca nowy tekst koperty, dobę efektu i jego minuty (`from`, `until`).
+ */
+export function saveWithCardDrop(saveText, { value = 1.6, hours = 4 } = {}) {
+  const save = JSON.parse(saveText);
+  const store = save.stores.find((s) => s.id === 1);
+  if (!store) throw new Error('zapis bez sklepu #1');
+  const cards = store.econ.tycoon.cards;
+  const day = Math.floor(store.econ.minute / 1440) + 1;
+  const from = day * 1440 + 6 * 60;
+  const until = from + hours * 60;
+  cards.active.push({ kind: 'traffic', value, from, until, seq: cards.seq });
+  return { text: JSON.stringify(save), day, from, until };
+}
 
 /** Opcje kontekstu Playwrighta dla rozmiaru okna: zawsze `pl-PL`, dotyk tylko na telefonie. */
 export function contextOptions(vp) {
@@ -781,7 +803,7 @@ async function main(argv) {
 
   // --- kontekst i strona ---
 
-  async function newPage(browser, vp, tag, { fixture, tips = false }) {
+  async function newPage(browser, vp, tag, { fixture, tips = false, quality = 'niska' }) {
     const ctx = await browser.newContext(contextOptions(vp));
     // najpierw ogólna blokada, potem `/api/**` (późniejsza trasa ma pierwszeństwo): niczego nie wysyłamy do rankingu
     await ctx.route('**/*', (route) => {
@@ -812,7 +834,7 @@ async function main(argv) {
     });
     page.on('pageerror', (e) => errors.push(`${vp.name}/${tag}: pageerror ${e.message}`));
     page.on('dialog', (d) => { dialogs.push(`${vp.name}/${tag}: ${d.type()} ${d.message().slice(0, 80)}`); void d.accept(); });
-    await page.goto(`${base}/?seed=${encodeURIComponent(fixture.seed)}&q=niska&debug=1`);
+    await page.goto(`${base}/?seed=${encodeURIComponent(fixture.seed)}&q=${quality}&debug=1`);
     return { ctx, page };
   }
 
@@ -2325,6 +2347,88 @@ async function main(argv) {
     }
   }
 
+  // --- zrzut Traszkomonów: kolejka przed sklepem (komputer) ---
+
+  /** Pula postaci presetu `srednia` (jak `CROWD_MAX` w scene.ts): agenci w sali i kolejka razem nie wychodzą ponad nią. */
+  const POOL_SREDNIA = 16;
+
+  async function queueRun(browser, vp) {
+    const drop = saveWithCardDrop(before.text);
+    const { ctx, page } = await newPage(browser, vp, 'kolejka', { fixture: { seed: before.seed, text: drop.text }, quality: 'srednia' });
+    const read = () => page.evaluate(() => {
+      const g = window.traszkaGame;
+      const root = g.ctx.scene.getObjectByName('crowd');
+      return {
+        minute: g.session.econ.minute,
+        queue: g.crowdView?.queueSize ?? -1,
+        // do puli liczą się ci, którzy jeszcze są w sali albo wchodzą: wychodzący (`leaving`) są już w drodze do zniknięcia
+        agents: g.world.crowd.agents.filter((a) => a.state !== 'gone' && a.state !== 'leaving').length,
+        states: g.world.crowd.agents.filter((a) => a.state !== 'gone').map((a) => a.state).join(','),
+        objects: root ? root.children.filter((o) => !o.isInstancedMesh).length : -1,
+      };
+    });
+    try {
+      await runStep(vp, 'f', page, async (ev) => {
+        await waitReady(page);
+        await pause(page);
+        await settle(page);
+        // doba zrzutu, 7:30: przewijanie staje na kartach decyzji, więc kawałkami i z zamykaniem okien
+        const start = drop.from + 90;
+        for (let i = 0; i < 40 && (await readGame(page)).minute < start; i++) {
+          await skip(page, Math.min(1440, start - (await readGame(page)).minute));
+          await settle(page);
+        }
+        const g0 = await readGame(page);
+        ev.check(g0.minute >= start && g0.minute < start + 30, `po przewinięciu minuta ${g0.minute}, oczekiwana ${start}`);
+        ev.note(`karta wymuszona w kopercie zapisu: ruch +1,6 od minuty ${drop.from} do ${drop.until} (doba ${drop.day}, 6:00–10:00); start 7:30, minuta ${g0.minute}`);
+        // czas rusza (×1), tłum wypełnia salę, a kolejka dochodzi po kilka postaci
+        await page.click('[data-tut="speed"] .tt-btn:nth-child(2)');
+        await until(page, () => (window.traszkaGame.crowdView?.queueSize ?? 0) >= 6, null, 'kolejka przed sklepem (co najmniej 6 postaci)', 90_000);
+        // tłum w sali dochodzi do tempa z kartą, a pula postaci (sala + kolejka) ma się ustalić w granicach presetu: agenci, którzy
+        // weszli, zanim kolejka urosła, wychodzą sami (nowych do puli nie przybywa), więc odczekujemy do ustalenia, najwyżej ~20 s
+        let maxLoad = 0;
+        let last = null;
+        let calm = 0;
+        for (let i = 0; i < 40 && calm < 3; i++) {
+          await sleep(500);
+          await settle(page);
+          last = await read();
+          maxLoad = Math.max(maxLoad, last.agents + last.queue);
+          calm = i >= 10 && last.queue === 12 && last.agents + last.queue <= POOL_SREDNIA ? calm + 1 : 0;
+        }
+        ev.check(last.minute < drop.until - 5, `zrzut jeszcze trwa (minuta ${last.minute}, koniec efektu ${drop.until})`);
+        ev.check(last.queue >= 6 && last.queue <= 12, `postaci w kolejce: ${last.queue} (oczekiwane 6–12)`);
+        ev.check(last.queue === 12, `ruch +1,6 daje pełną kolejkę 12, jest ${last.queue}`);
+        ev.check(last.agents + last.queue <= POOL_SREDNIA, `agenci w sali ${last.agents} + kolejka ${last.queue} ponad pulę postaci ${POOL_SREDNIA}`);
+        ev.note(`kolejka ${last.queue}, agenci w sali ${last.agents} (poza wychodzącymi; wszyscy: ${last.states}; po ustaleniu), razem najwyżej ${maxLoad} w trakcie narastania (pula presetu srednia: ${POOL_SREDNIA}), obiekty w grupie tłumu ${last.objects} (z kasjerem i załogą), minuta ${last.minute}`);
+        // kadr na chodnik przed wejściem: kolejka stoi po obu stronach drzwi
+        await page.evaluate(() => {
+          const g = window.traszkaGame;
+          const l = g.world.layout;
+          const e = l.entrance;
+          const cx = e.reduce((n, c) => n + c.x, 0) / e.length;
+          const rig = g.ctx.rig;
+          rig.panBy(((cx + 0.5 - l.width / 2) * 0.5) - rig.target.x, ((2 + 0.5 - l.depth / 2) * 0.5) - rig.target.z);
+          rig.zoomBy(1.6);
+        });
+        await sleep(1000);
+        await ev.shot('f1-kolejka-zrzut');
+        // po 10:00 efekt wygasa i kolejka się rozchodzi (po kilka postaci na raz)
+        await page.evaluate(() => { document.querySelector('[data-tut="speed"] .tt-btn:nth-child(1)')?.click(); });
+        await settle(page);
+        const gNow = await readGame(page);
+        await skip(page, Math.max(1, drop.until + 15 - gNow.minute));
+        await settle(page);
+        await page.click('[data-tut="speed"] .tt-btn:nth-child(2)');
+        await until(page, () => (window.traszkaGame.crowdView?.queueSize ?? 1) === 0, null, 'kolejka rozeszła się po 10:00', 60_000);
+        const after = await read();
+        ev.check(after.queue === 0 && after.minute >= drop.until, `po zrzucie: kolejka ${after.queue}, minuta ${after.minute}`);
+      });
+    } finally {
+      await ctx.close();
+    }
+  }
+
   const round = (r) => (r ? { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.w), h: Math.round(r.h) } : null);
 
   /** Powtarza odczyt co 300 ms, aż ten sam dymek stoi w tym samym miejscu przez 4 pomiary (swiftshader daje kilka klatek na sekundę). */
@@ -2407,7 +2511,7 @@ async function main(argv) {
       } : null;
       const scenarios = args.stage === '4b' ? [] : [scenarioOldSave, scenarioFlow, scenarioRelet, ...(vp.mobile ? [tipsRun] : [])];
       // kroki 4b we własnym bloku: wyjątek w scenariuszach 4a nie zabiera im przebiegu (i odwrotnie)
-      for (const group of [scenarios, [scenario4b, scenario4bZrzut]]) {
+      for (const group of [scenarios, [scenario4b, scenario4bZrzut, ...(vp.mobile ? [] : [queueRun])]]) {   // kolejka przy zrzucie (Zadanie 11): tylko komputer
         try {
           for (const run of group) await run(browser, vp);
         } catch (error) {
@@ -2416,9 +2520,9 @@ async function main(argv) {
           r.exception = stepResult({ ok: false, failed: [`wyjątek: ${error instanceof Error ? error.message : String(error)}`] });
         }
       }
-      for (const step of [...STEPS, TIPS_STEP, ...STEPS_4B]) {
+      for (const step of [...STEPS, TIPS_STEP, ...STEPS_4B, QUEUE_STEP]) {
         if (!step.sizes.includes(vp.name)) (results[vp.name] ??= {})[step.id] = stepResult({ na: true, notes: ['nie dotyczy tego rozmiaru'] });
-        else if (args.stage === '4b' && !STEPS_4B.includes(step) && step.id !== 8) (results[vp.name] ??= {})[step.id] = stepResult({ na: true, notes: ['--etap 4b: tylko kroki 4b'] });
+        else if (args.stage === '4b' && !STEPS_4B.includes(step) && step !== QUEUE_STEP && step.id !== 8) (results[vp.name] ??= {})[step.id] = stepResult({ na: true, notes: ['--etap 4b: tylko kroki 4b'] });
       }
       // 8: konsola i pageerror z całego rozmiaru
       const mine = errors.filter((e) => e.startsWith(`${vp.name}/`));
@@ -2441,7 +2545,7 @@ async function main(argv) {
     }
   }
   const seconds = Math.round((Date.now() - started) / 1000);
-  const summary = summarize(results);
+  const summary = summarize(results, [...STEPS, TIPS_STEP, ...STEPS_4B, QUEUE_STEP]);
   const extraFailures = [];
   if (external.length > 0) extraFailures.push(`zapytania poza localhost: ${external.length}`);
   if (extraFailures.length) summary.ok = false;

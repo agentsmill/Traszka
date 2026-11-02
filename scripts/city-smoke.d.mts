@@ -33,6 +33,9 @@ export const WALLET_4B_RENT: number;
 export const WALLET_4B_MILLION: number;
 export const FAME_TITLE: string;
 export const FAME_CLOSED: string;
+export const QUEUE_STEP: StepDef;
+/** Zapis z zrzutem Traszkomonów w toku (efekt ruchu w `cards.active` sklepu #1): tekst koperty, doba efektu i jego minuty. */
+export function saveWithCardDrop(saveText: string, opts?: { value?: number; hours?: number }): { text: string; day: number; from: number; until: number };
 export const PHONE_WIDTH: number;
 export const USAGE: string;
 

@@ -1208,6 +1208,21 @@ describe('etap 4b: cele sieci w panelu Cele', () => {
     expect(textOf(panel(s, info))).not.toContain('Ćwierć bańki');
   });
 
+  it('jeden sklep bez statusu Partnera: sekcji „Sieć” nie ma, dopóki żaden cel nie czeka na odbiór; Partner ma ją od razu', () => {
+    const { s, info, f } = goalsSetup({ ready: [], claimed: [] });
+    const sections = (): Vnode[] => walk(panel(s, info)).filter((v) => v.props.title === 'Sieć');
+    f.person.partner = false;
+    expect(sections()).toEqual([]);   // podpowiedź „Kup badanie w panelu Miasto” prowadziłaby do ekranu, którego przed statusem nie ma
+    expect(textOf(panel(s, info))).not.toContain('Pierwsze badanie Sieci');
+    f.goals = { ready: ['cash250k'], claimed: [] };   // cel gotówkowy da się spełnić jednym sklepem: musi dać się odebrać
+    expect(sections()).toHaveLength(1);
+    expect(labels(sections()[0]!)).toEqual(['Odbierz']);
+    f.goals = { ready: [], claimed: ['cash250k'] };   // odebrany nie wraca; bez statusu znów nic
+    expect(sections()).toEqual([]);
+    f.person.partner = true;
+    expect(sections()).toHaveLength(1);
+  });
+
   it('bez firmy (pierwsza klatka) panel Cele nie rzuca i nie ma sekcji „Sieć”', () => {
     const { s, info } = rich();
     firm.value = null;

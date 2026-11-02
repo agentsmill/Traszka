@@ -654,8 +654,6 @@ export function createShell(deps: ShellDeps): GameShell {
         case 'goal':
           goals.push(e);   // cele z jednej minuty (zapis z milionem na portfelu spełnia kilka naraz) dostają jeden toast niżej
           break;
-        case 'million':
-          break;   // tymczasowo bez okna: gratulacje i Galerię sław podpina Zadanie 8, a modalne okno z `default` nie jest dla niego
         case 'network-report':
           break;   // okno sieci składamy niżej z raportem i wyciągami
         default: {

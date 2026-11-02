@@ -5,17 +5,19 @@ import { resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   FIXTURES, HOUR_BARS, LAUNCH_ARGS, LIMIT_TEXT, NEW_SCREENS, OPEN_MINUTE, PHONE_WIDTH, RELET_BUILD_DAYS as SMOKE_RELET_BUILD_DAYS, RELET_CAPTION, RELET_SHARE,
-  RELET_TITLE, RELET_TRUST, STEPS, STEPS_4B, TIPS_STEP, DESKTOP_4B, RESEARCH_DOSTAWY_COST, WALLET_4B_MILLION, FAME_TITLE, FAME_CLOSED,
+  QUEUE_STEP, RELET_TITLE, RELET_TRUST, STEPS, STEPS_4B, TIPS_STEP, DESKTOP_4B, RESEARCH_DOSTAWY_COST, WALLET_4B_MILLION, FAME_TITLE, FAME_CLOSED,
   deckIds, isApiUrl, withOnlyCardTomorrow, withRemont,
   BACKGROUND_TRUST_WARN_BELOW, USAGE, VIEWPORTS, DEFAULT_PLAYWRIGHT_ROOT, chromiumCandidates, chromiumExecutable, closedFittings,
   contextOptions, daysText, digitsOf, fixtureSave, loadPlaywright, median, metaFor, newScreenProblems, overlapArea, parseArgs, parseInstallmentButton, parsePerf,
-  pinProblems, previewReady, requestVerdict, reletBlockText, reletPrice, stepResult, storageEntries, summarize, trustRowValues, tutorialMemory,
+  pinProblems, previewReady, requestVerdict, reletBlockText, reletPrice, saveWithCardDrop, stepResult, storageEntries, summarize, trustRowValues, tutorialMemory,
   widthProblems,
   type MakeRequire, type StepResult, type WidthBox,
 } from '../scripts/city-smoke.mjs';
 import { MemoryStorage } from '@/game/memoryStorage';
 import { loadMeta, needsStartScreen } from '@/game/meta';
 import { createSession, firmOf, hasStoredSave, type GameSession } from '@/game/session';
+import { queueSizeFor } from '@/render/crowdView';
+import { cardModifiers } from '@/sim/economy/tycoon/cards';
 import { OPEN_FROM, OPEN_TO } from '@/sim/economy/catalog';
 import { TRUST } from '@/sim/economy/tycoon/trust';
 import { visibleCards } from '@/sim/economy/tycoon/cards';
@@ -676,5 +678,52 @@ describe('plan 4b (Zadanie 10): kroki 4b-a…4b-g i koperty zapisów', () => {
     expect(at("ctx.route('**/api/fame/**'")).toBeGreaterThan(at('4b-05-galeria'));
     expect(SOURCE).toMatch(/route\.fulfill\(\{ json: \{ ok: true, first: true/);
     expect(SOURCE).not.toMatch(/traszka\.vercel\.app/);
+  });
+});
+
+describe('krok f (plan 4b, Zadanie 11): kolejka przed sklepem przy zrzucie Traszkomonów', () => {
+  let storage: MemoryStorage;
+  beforeEach(() => { storage = new MemoryStorage(); vi.stubGlobal('localStorage', storage); });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('krok f jest osobnym przebiegiem tylko na komputerze, poza dwunastoma krokami i przebiegiem z dymkami', () => {
+    expect(QUEUE_STEP.id).toBe('f');
+    expect(QUEUE_STEP.sizes).toEqual(['desktop']);
+    expect(QUEUE_STEP.name.length).toBeGreaterThan(10);
+    expect(STEPS.map((s) => s.id)).not.toContain('f');
+    const s = summarize({ desktop: { ...Object.fromEntries(STEPS.filter((x) => x.sizes.includes('desktop')).map((x) => [x.id, stepResult()])), f: stepResult() } }, [...STEPS, QUEUE_STEP]);
+    expect(s.rows.at(-1)).toMatchObject({ size: 'desktop', step: 'f', status: 'ok' });
+    expect(summarize({ desktop: {} }, [QUEUE_STEP]).rows[0]).toMatchObject({ step: 'f', status: 'FAIL' });   // krok, który się nie wykonał, to porażka
+  });
+
+  it('saveWithCardDrop: dopisuje efekt ruchu +1,6 od 6:00 następnej doby do 10:00, reszta koperty bez zmian, wejściowy tekst nietknięty', () => {
+    const fixture = fixtureSave(FIXTURES.przedStatusem);
+    const before = JSON.parse(fixture.text);
+    const drop = saveWithCardDrop(fixture.text);
+    const econ0 = before.stores[0].econ;
+    expect(drop.day).toBe(Math.floor(econ0.minute / 1440) + 1);
+    expect(drop.from).toBe(drop.day * 1440 + 360);
+    expect(drop.until).toBe(drop.from + 240);
+    const after = JSON.parse(drop.text);
+    const cards = after.stores[0].econ.tycoon.cards;
+    expect(cards.active).toEqual([...econ0.tycoon.cards.active, { kind: 'traffic', value: 1.6, from: drop.from, until: drop.until, seq: econ0.tycoon.cards.seq }]);
+    after.stores[0].econ.tycoon.cards.active = econ0.tycoon.cards.active;
+    expect(after).toEqual(before);
+    expect(JSON.parse(fixture.text)).toEqual(before);
+    expect(saveWithCardDrop(fixture.text, { value: 0.9, hours: 6 })).toMatchObject({ until: drop.from + 360 });
+  });
+
+  it('gra wczytuje taki zapis zwykłą drogą: efekt przeżywa sanitizeCards i daje ruch 2,6 od 6:00 do 10:00 (kolejka 12), a przed i po niego nie ma', () => {
+    const fixture = fixtureSave(FIXTURES.przedStatusem);
+    const drop = saveWithCardDrop(fixture.text);
+    for (const [k, v] of Object.entries(storageEntries({ seed: fixture.seed, saveText: drop.text, tips: false, now: Date.now() }))) storage.setItem(k, v);
+    const s = createSession(fixture.seed);
+    const at = (minute: number): number => cardModifiers(s.econ.tycoon.cards, minute).traffic;
+    expect(s.econ.tycoon.cards.active.filter((m) => m.kind === 'traffic' && m.from === drop.from)).toHaveLength(1);
+    expect(at(drop.from - 1)).toBe(1);
+    expect(at(drop.from + 90)).toBeCloseTo(2.6, 12);
+    expect(queueSizeFor(at(drop.from + 90), 7 * 60 + 30)).toBe(12);
+    expect(at(drop.until)).toBe(1);
+    expect(queueSizeFor(at(drop.until), 10 * 60)).toBe(0);
   });
 });
