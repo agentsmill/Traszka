@@ -1,7 +1,7 @@
 import { dateOfDay, isLastDayOfMonth, dayOf, minuteOfDay } from './calendar';
-import { DEBT_LIMIT, GUARANTEE, OPEN_FROM, OPEN_TO, WAGE_PER_DAY } from './catalog';
+import { DEBT_LIMIT, GUARANTEE, OPEN_FROM, OPEN_TO } from './catalog';
 import {
-  DEBT_WARN, estimatedDailyMargin, estimatedDailyRevenue, mediaPerDay, type EconomyState,
+  DEBT_WARN, estimatedDailyMargin, estimatedDailyRevenue, mediaPerDay, wagesPerDay, type EconomyState,
 } from './economy';
 import { buildStatement, installmentsDue, saldoOf, type Statement } from './franchisee';
 import type { StoreInfo } from './storeInfo';
@@ -66,7 +66,7 @@ export function forecastMonth(s: EconomyState, info: StoreInfo): MonthForecast {
   const statement = buildStatement({
     month: {
       margin, bonus, pallets: f.month.pallets,
-      wages: f.month.wages + closes * s.staff * WAGE_PER_DAY, media: f.month.media + closes * mediaPerDay(info),
+      wages: f.month.wages + closes * wagesPerDay(s, info), media: f.month.media + closes * mediaPerDay(info),
     },
     guarantee, installments, remanent: f.remanent.pending, spent: m.investments, fines: m.fines, other: m.other, cashBefore: s.cash,
     partial: false, ownCosts: info.site?.ownCosts ?? true,

@@ -14,6 +14,20 @@ import { weekdayOf } from './tycoon/time';
  * to dzisiejsze zachowanie.
  */
 
+/**
+ * Mnożniki badań Sieci (4b §5.3): jeden na pole, 1 = bez zmiany. Liczy je `netMods` (firma) ze stanu badań i liczby otwartych sklepów, a ekonomia
+ * czyta je jak flagę (`info.site?.net`), za gałęzią w sześciu miejscach. `traffic` mnoży ruch, `basket` obrót i marżę z klienta, `wages` płace dnia,
+ * `media` media dnia, `logistics` opłatę za palety ponad przydział, `backroom` pojemność zaplecza. Pole nie wchodzi do `districtNeutral`.
+ */
+export interface NetMods {
+  traffic: number;
+  basket: number;
+  wages: number;
+  media: number;
+  logistics: number;
+  backroom: number;
+}
+
 export interface SiteMods {
   district: 'osiedle' | 'srodmiescie' | 'dworzec' | 'biurowce';
   /** Ruch w dni robocze: dzielnica × natężenie lokalne × konkurencja. */
@@ -48,6 +62,8 @@ export interface SiteMods {
   ownCosts: boolean;
   /** Debet sprawdza firma, nie sklep (§11.4). */
   firmDebt: boolean;
+  /** Badania Sieci (4b §5.3): jest tylko przy co najmniej dwóch otwartych sklepach i kupionym badaniu; brak pola to gra bez Sieci co do bitu. */
+  net?: NetMods;
 }
 
 /** Osiedle bez żadnego modyfikatora: gra jak dziś. */
@@ -56,7 +72,10 @@ export const NEUTRAL_SITE: SiteMods = {
   hours: null, difficult: 1, extra: false, ownCosts: true, firmDebt: false,
 };
 
-/** Czy pola dzielnicy (bez flag) są wszystkie neutralne. Każdy nowy modyfikator dzielnicy w `SiteMods` dopisuje się tutaj, w jednym miejscu. */
+/**
+ * Czy pola dzielnicy (bez flag) są wszystkie neutralne. Każdy nowy modyfikator dzielnicy w `SiteMods` dopisuje się tutaj, w jednym miejscu.
+ * `net` (badania Sieci) tu nie wchodzi: czyta się go wprost z `info.site?.net`, więc nie włącza gałęzi dzielnicy (`fx.site`).
+ */
 function districtNeutral(s: SiteMods): boolean {
   return s.traffic === 1 && s.weekendTraffic === null && s.basket === 1 && s.patience === 0 && s.repPenalty === 1
     && s.theft === 1 && s.lot === null && s.weatherHash === null && s.hours === null && s.difficult === 1;

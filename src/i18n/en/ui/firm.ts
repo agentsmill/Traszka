@@ -66,6 +66,31 @@ export const FIRM_UI: Dict = {
     'Head Office agrees to a fourth branch. A network turnover of {0} convinced the Expansion Department, which promptly went to lunch.',
   'Centrala zgadza się na piątą placówkę. Obrót sieci {0} przekonał Dział Ekspansji, który zaraz potem wyszedł na lunch.':
     'Head Office agrees to a fifth branch. A network turnover of {0} convinced the Expansion Department, which promptly went to lunch.',
+  // badania Sieci (4b §5.3): nazwy, efekty i teksty z tabeli `RESEARCH` (sim/firm/research.ts); UI podaje je do `tr`
+  'Wspólne dostawy': 'Shared deliveries',
+  'Niższa opłata za palety ponad przydział we wszystkich sklepach': 'A lower fee for pallets over the free allowance in every shop',
+  'Jeden kierowca, pięć sklepów i ani jednej palety więcej, niż trzeba. Centrala dziwi się, że to w ogóle możliwe.':
+    'One driver, five shops and not a single pallet more than needed. Head Office is amazed that this is even possible.',
+  'Wspólna obsada (grafik sieci)': 'Shared staffing (network rota)',
+  'Niższe płace dnia we wszystkich sklepach': 'Lower daily wages in every shop',
+  'Grafik sieci przesuwa ludzi tam, gdzie akurat brakuje rąk. Ludzie dowiadują się o tym w drodze do pracy.':
+    'The network rota moves people to wherever hands are short. They find out on the way to work.',
+  'Wspólny marketing': 'Shared marketing',
+  'Więcej klientów we wszystkich sklepach': 'More customers in every shop',
+  'Jedna ulotka na pięć sklepów, bo drukarnia daje rabat od nakładu. Hasło brzmi: „Traszka jest wszędzie”.':
+    'One flyer for five shops, because the printer gives a discount on volume. The slogan: “Traszka is everywhere”.',
+  'Centralny magazyn': 'Central warehouse',
+  'Większe zaplecze we wszystkich sklepach': 'A bigger back room in every shop',
+  'To, co nie zmieściło się na zapleczu, leży teraz w hali na obrzeżach miasta. Nikt nie wie, gdzie dokładnie.':
+    'Whatever did not fit in the back room now sits in a hall on the edge of town. Nobody knows exactly where.',
+  'Program lojalnościowy „Traszka+”': 'Loyalty scheme “Traszka+”',
+  'Większy koszyk: obrót i marża z klienta we wszystkich sklepach': 'A bigger basket: turnover and margin per customer in every shop',
+  'Każdy zakup to punkt, a punkty wymienia się na kolejne zakupy. Centrala nazywa to „mechaniką zaangażowania”.':
+    'Every purchase is a point, and points are exchanged for further purchases. Head Office calls this “engagement mechanics”.',
+  'Grupa zakupowa prądu': 'Electricity buying group',
+  'Niższe rachunki za media we wszystkich sklepach': 'Lower utility bills in every shop',
+  'Jeden sklep nie ma siły przebicia u dostawcy prądu, pięć już się liczy. Dostawca też liczy, tylko inaczej.':
+    'One shop has no clout with the electricity supplier; five do. The supplier counts too, just differently.',
   'Badania Sieci': 'Network research',
   'Badanie Sieci na poziomie {0}. Centrala pobrała {1}.': 'Network research at level {0}. Head Office has taken {1}.',
   'Cel sieci': 'Network goal',

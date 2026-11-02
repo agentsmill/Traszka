@@ -36,6 +36,7 @@ import { STAFF_PROFILES, STAFF_TASKS } from '@/sim/economy/tycoon/staff';
 import { TRUST_REASONS, trustTier } from '@/sim/economy/tycoon/trust';
 import { WUT_REASONS } from '@/sim/economy/tycoon/wut';
 import { EQUIPMENT, GROUP_LABEL, REMONTS, UPGRADES } from '@/sim/economy/upgrades';
+import { RESEARCH } from '@/sim/firm/research';
 import { freshRun } from '@/sim/run';
 import { deltaLines } from '@/ui/game/cardText';
 import { forecastLabel } from '@/ui/game/forecastText';
@@ -93,6 +94,17 @@ describe('dane gry po identyfikatorach: każdy polski tekst ma angielski odpowie
     expect(Object.keys(EN_EQUIPMENT).sort()).toEqual(EQUIPMENT.map((e) => e.id).sort());
     expect(Object.keys(EN_GROUP_LABEL).sort()).toEqual(Object.keys(GROUP_LABEL).sort());
     expect(Object.keys(EN_REMONTS).map(Number).sort()).toEqual(REMONTS.map((r) => r.level).sort());
+  });
+
+  it('badania Sieci: nazwa, efekt i flavor każdego badania tłumaczy tr na angielski bez polskich liter', () => {
+    lang.value = 'en';
+    for (const d of RESEARCH) {
+      for (const text of [d.name, d.effect, d.flavor]) {
+        const en = tr(text);
+        expect(en, `${d.id}: ${text}`).not.toBe(text);
+        expect(PL_CHARS.test(en), `${d.id}: ${en}`).toBe(false);
+      }
+    }
   });
 
   it('cele, kategorie, zaufanie, raport, KPI, ludzie, pogoda, ubytki, miejsca palet, rangi i kalendarz', () => {

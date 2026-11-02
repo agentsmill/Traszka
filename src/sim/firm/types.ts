@@ -58,7 +58,7 @@ export interface FirmState {
   stores: FirmStore[];
   activeId: number;
   builds: FirmBuild[];
-  /** Pakiety otwarcia zapłacone gotówką od ostatniego podsumowania sieci (zeruje je `network-report`). */
+  /** Pakiety otwarcia i badania Sieci zapłacone gotówką od ostatniego podsumowania sieci (zeruje je `network-report`). */
   monthInvest: number;
   inbox: FirmNote[];
   /** Skrót pogody miasta: `seedHash` sklepu startowego (pogodę losuje sklep #1, §11.1). */
@@ -86,7 +86,7 @@ export interface FirmEvent { kind: FirmEventKind; storeId?: number; params?: Rec
 
 /**
  * Podsumowanie sieci przy zamknięciu miesiąca w kilku sklepach: wynik (`profit`, do statusu) i „Zostaje Ci” (`net`) każdego sklepu,
- * pakiety otwarcia zapłacone gotówką w tym miesiącu (`invest`), rozliczenie końcowe sklepu, któremu w tej minucie skończyła się umowa
+ * pakiety otwarcia i badania Sieci zapłacone gotówką w tym miesiącu (`invest`), rozliczenie końcowe sklepu, któremu w tej minucie skończyła się umowa
  * (`settlement`, razem; 0, gdy nie było; zeszło już z gotówki), `total` to „Zostaje Ci” razem (suma `net`), a `wallet` gotówka po zamknięciu
  * (po rozliczeniu), więc razem z `total`, `invest` i `settlement` liczby w podsumowaniu się zgadzają.
  */

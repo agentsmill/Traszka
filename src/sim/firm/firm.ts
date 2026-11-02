@@ -17,6 +17,7 @@ import { layoutFor } from '@/sim/store/layoutFor';
 import type { StoreLayout } from '@/sim/store/types';
 import { NOTICE_NO_CREDIT, closeDueStores, endedByTrust } from './closure';
 import { grantPartnerIfDue, openDueBuilds } from './commands';
+import { netMods } from './research';
 import {
   BASE_STORE_LIMIT, INBOX_MAX, MAX_STORES, STORE_UNLOCK_TURNOVER, type FirmState, type FirmStepOut, type FirmStore,
 } from './types';
@@ -107,16 +108,20 @@ export function ownLotsOf(f: FirmState, exceptId?: number): number[] {
  */
 function siteOf(f: FirmState, lotId: number, id: number, openIds: readonly number[], reopened = false): SiteMods {
   const start = lotId === f.city.startLotId;
-  return siteFor(
+  const site = siteFor(
     f.city, lotId, { extra: !start || reopened, ownCosts: id === openIds[0], firmDebt: openIds.length >= 2, weatherHash: start ? null : f.weatherHash },
     ownLotsOf(f, id),
   );
+  const net = netMods(f.research, openIds.length);
+  if (net) site.net = net;   // tylko gdy badania działają (od dwóch sklepów, co najmniej jedno kupione): bez nich sklep nie ma pola `net` w ogóle
+  return site;
 }
 
 /**
  * Flagi z §11.2 i §11.4 po każdej zmianie składu. Jeden sklep startowy to sklep jak dziś: bez `site`, chyba że został wynajęty ponownie
  * (`reopened`): wtedy ma flagę dodatkowego sklepu (bez gwarancji) także sam. Każda zmiana składu przelicza też kanibalizację (`ownLotsOf`):
- * otwarcie, ponowne otwarcie i zamknięcie sklepu zmienia ruch sąsiednich własnych sklepów.
+ * otwarcie, ponowne otwarcie i zamknięcie sklepu zmienia ruch sąsiednich własnych sklepów. Przelicza też `site.net` (badania Sieci): skala
+ * zależy od liczby otwartych sklepów, więc woła ją również kupno badania. Jeden otwarty sklep nigdy nie dostaje `net`.
  */
 export function refreshSites(f: FirmState): void {
   const open = openStores(f);

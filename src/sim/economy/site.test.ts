@@ -6,15 +6,17 @@ import { generateStore } from '@/sim/store/generateStore';
 import { layoutFor } from '@/sim/store/layoutFor';
 import { pickLot } from '@/sim/store/lots';
 import type { LotSpec } from '@/sim/store/types';
-import { DEBT_LIMIT, GUARANTEE, HOUR_CURVE, MINUTES_PER_DAY, OPEN_FROM, OPEN_TO, OWN_COSTS } from './catalog';
+import {
+  DEBT_LIMIT, GUARANTEE, HOUR_CURVE, MINUTES_PER_DAY, OPEN_FROM, OPEN_TO, ORDER_DEADLINE, OWN_COSTS, PALLETS_FREE, PALLET_FEE, WAGE_PER_DAY,
+} from './catalog';
 import { applyCommand } from './commands';
 import {
   arrivalRate, awaitingDecision, createEconomy, customersPerHour, effects, expectedDailyCustomers, isClosedForRemont, kpiMetricsOf, kpiScaleOf,
-  peakCustomersPerHour, sell, stepMinute, type EconEvent, type EconomyState,
+  mediaPerDay, peakCustomersPerHour, sell, setOrder, stepMinute, wagesPerDay, type EconEvent, type EconomyState,
 } from './economy';
 import { forecastMonth } from './forecast';
 import { buildStatement, emptySettleMonth } from './franchisee';
-import { NEUTRAL_SITE, activeSite, hourCurveOf, siteDayTraffic, type SiteMods } from './site';
+import { NEUTRAL_SITE, activeSite, hourCurveOf, siteDayTraffic, type NetMods, type SiteMods } from './site';
 import { computeStoreInfo, type StoreInfo } from './storeInfo';
 import { visibleCards } from './tycoon/cards';
 import { rollWeather } from './tycoon/cleanliness';
@@ -656,5 +658,143 @@ describe('createEconomy: sklep otwierany w środku gry', () => {
     const remanent = playTo(p, 92 * DAY).events.find((e) => e.kind === 'remanent');
     expect(remanent, 'remanent w sklepie z dnia 40').toBeDefined();
     expect(remanent!.remanent!.day).toBe(first.franchisee.remanent.nextDay);
+  }, 60_000);
+});
+
+describe('badania Sieci (SiteMods.net, spec 4b §5.3)', () => {
+  /** Mnożniki bez zmiany; test podmienia jedno pole. */
+  const ONE: NetMods = { traffic: 1, basket: 1, wages: 1, media: 1, logistics: 1, backroom: 1 };
+  /** Osiedle bez żadnej dzielnicy, ale z `net`: pole badań jest jedynym, które się zmienia. */
+  const netSite = (net: Partial<NetMods>, over: Partial<SiteMods> = {}): SiteMods => ({ ...NEUTRAL_SITE, ...over, net: { ...ONE, ...net } });
+
+  it('neutralność: sklep z site bez net ma po 3 dniach stan identyczny (skrót) jak przed etapem dla tego samego site', () => {
+    const sites: Record<string, SiteMods> = {
+      srodmiescie: siteOf('srodmiescie'),
+      dworzec: siteOf('dworzec', { extra: true, ownCosts: false, firmDebt: true }),
+      biurowce: siteOf('biurowce', { extra: true }),
+      osiedleFlagi: { ...NEUTRAL_SITE, extra: true, ownCosts: false, firmDebt: true },
+    };
+    const digests: Record<string, string> = {};
+    for (const [name, site] of Object.entries(sites)) digests[name] = hashOf(playTo(start(SEED, site), 3 * DAY).s);
+    // skróty policzone na kodzie sprzed badań Sieci (b643c92): ten sam site bez pola `net` ma dawać dokładnie to samo
+    expect(digests).toEqual({
+      srodmiescie: '873dd8ff464799ba66e698d05b4d664b1fefe7d1fb901737a363d6c511d9a93d',
+      dworzec: '5c2808e33bbff78596b56ce05d31cd2595b116cfb4fe369c73e6647b1d2ca99a',
+      biurowce: '5fcf416df877b3eca60e79169d6f6bd0a7671e84d65865b96f920d83acfa338a',
+      osiedleFlagi: 'f60973e0859ff8d39d1ff7f2e4c8c4cd92bf3321f0cbc78555e6dd4fe3b77454',
+    });
+  }, 60_000);
+
+  it('net nie włącza gałęzi dzielnicy: activeSite null i brak Effects.site, ale Effects.net jest', () => {
+    const info = infoOf(SEED, netSite({ traffic: 1.1 }));
+    const s = createEconomy(SEED, info);
+    expect(activeSite(info)).toBeNull();
+    const fx = effects(s, info);
+    expect('site' in fx).toBe(false);
+    expect(fx.net).toBe(info.site!.net);
+    expect('net' in effects(s, infoOf(SEED, siteOf('srodmiescie')))).toBe(false);   // bez net w site Effects też go nie ma
+  });
+
+  it('haki: traffic 1.1 → arrivalRate i oczekiwani klienci × 1.1, także razem z dzielnicą', () => {
+    const plain = infoOf(SEED);
+    const withNet = infoOf(SEED, netSite({ traffic: 1.1 }));
+    const s = createEconomy(SEED, plain);
+    s.minute = 3 * DAY + 12 * 60;   // czwartek w południe
+    expect(arrivalRate(s, withNet)).toBeCloseTo(arrivalRate(s, plain) * 1.1, 12);
+    expect(expectedDailyCustomers(s, withNet)).toBeCloseTo(expectedDailyCustomers(s, plain) * 1.1, 9);
+    const mid = siteOf('srodmiescie');
+    const both = infoOf(SEED, { ...mid, net: { ...ONE, traffic: 1.1 } });
+    expect(arrivalRate(s, both)).toBeCloseTo(arrivalRate(s, infoOf(SEED, mid)) * 1.1, 12);
+  });
+
+  it('haki: backroom 1.3 → pojemność zaplecza × 1.3 (jedno zaokrąglenie, razem z regałami i magazynem wysokiego składowania)', () => {
+    const plain = infoOf(SEED);
+    const withNet = infoOf(SEED, netSite({ backroom: 1.3 }));
+    const s = createEconomy(SEED, plain);
+    expect(effects(s, withNet).backroomCap).toBe(Math.round(plain.backroomCap * 1.3));
+    expect(effects(s, withNet).backroomCap).toBeGreaterThan(effects(s, plain).backroomCap);
+    s.upgrades.regaly = 2;
+    s.upgrades.magazynWys = 1;
+    expect(effects(s, plain).backroomCap).toBe(Math.round(plain.backroomCap * (1 + 0.5 * 2 + 0.4 * 1)));
+    expect(effects(s, withNet).backroomCap).toBe(Math.round(plain.backroomCap * (1 + 0.5 * 2 + 0.4 * 1) * 1.3));
+  });
+
+  it('haki: basket 1.05 → obrót i marża × 1.05, towaru schodzi tyle samo; razem z koszykiem dzielnicy mnożniki się składają', () => {
+    const sold = (site?: SiteMods): EconomyState => {
+      const info = infoOf(SEED, site);
+      const s = createEconomy(SEED, info);
+      sell(s, effects(s, info), 30, 0);
+      return s;
+    };
+    const a = sold();
+    const b = sold(netSite({ basket: 1.05 }));
+    expect(b.shelf).toEqual(a.shelf);
+    expect(b.today.customers).toBe(a.today.customers);
+    expect(b.today.revenue).toBeCloseTo(1.05 * a.today.revenue, 9);
+    expect(b.today.margin).toBeCloseTo(1.05 * a.today.margin, 9);
+    expect(b.franchisee.month.margin).toBeCloseTo(1.05 * a.franchisee.month.margin, 9);
+    const mid = siteOf('srodmiescie');
+    const c = sold(mid);
+    const d = sold({ ...mid, net: { ...ONE, basket: 1.05 } });
+    expect(d.today.revenue).toBeCloseTo(1.05 * c.today.revenue, 9);
+    expect(d.today.margin).toBeCloseTo(1.05 * c.today.margin, 9);
+  });
+
+  it('haki: wages 0.9 → płace pierwszego dnia × 0.9 (do pełnych złotych), a wagesPerDay i prognoza wyciągu to widzą', () => {
+    const plain = playTo(start(SEED), DAY).s;
+    const info = infoOf(SEED, netSite({ wages: 0.9 }));
+    const net = playTo({ s: createEconomy(SEED, info), info, events: [] }, DAY).s;
+    expect(plain.total.wages).toBe(2 * WAGE_PER_DAY);
+    expect(net.total.wages).toBe(Math.round(2 * WAGE_PER_DAY * 0.9));
+    expect(net.total.wages).toBeLessThan(plain.total.wages);
+    expect(net.franchisee.month.wages).toBe(net.total.wages);
+    expect(wagesPerDay(plain, infoOf(SEED))).toBe(plain.staff * WAGE_PER_DAY);
+    expect(wagesPerDay(plain, info)).toBe(Math.round(plain.staff * WAGE_PER_DAY * 0.9));
+    const s = createEconomy(SEED, info);
+    s.minute = 5 * DAY + 12 * 60;
+    expect(forecastMonth(s, info).statement.wages).toBeLessThan(forecastMonth(s, infoOf(SEED)).statement.wages);
+  });
+
+  it('haki: media 0.8 → media pierwszego dnia × 0.8 (do pełnych złotych), a mediaPerDay to widzi', () => {
+    const plain = playTo(start(SEED), DAY).s;
+    const info = infoOf(SEED, netSite({ media: 0.8 }));
+    const net = playTo({ s: createEconomy(SEED, info), info, events: [] }, DAY).s;
+    expect(plain.total.media).toBe(mediaPerDay(infoOf(SEED)));
+    expect(net.total.media).toBe(Math.round(mediaPerDay(infoOf(SEED)) * 0.8));
+    expect(mediaPerDay(info)).toBe(net.total.media);
+    expect(net.total.media).toBeLessThan(plain.total.media);
+  });
+
+  it('haki: logistics 0.5 → opłata za palety ponad przydział × 0.5 (do pełnych złotych), przydział bez opłaty bez zmian', () => {
+    const fee = (site: SiteMods | undefined, pallets: number): number => {
+      const info = infoOf(SEED, site);
+      const s = createEconomy(SEED, info);
+      s.cash = 1e6;
+      setOrder(s, false, pallets);
+      playTo({ s, info, events: [] }, ORDER_DEADLINE + 1);   // zamówienie na jutro składa się o ORDER_DEADLINE
+      return s.franchisee.month.pallets;
+    };
+    const net = netSite({ logistics: 0.5 });
+    const plain = fee(undefined, PALLETS_FREE + 3);
+    expect(plain).toBe(3 * PALLET_FEE);
+    expect(fee(net, PALLETS_FREE + 3)).toBe(Math.round(3 * PALLET_FEE * 0.5));
+    expect(fee(net, PALLETS_FREE + 1)).toBe(Math.round(PALLET_FEE * 0.5));
+    expect(fee(undefined, PALLETS_FREE)).toBe(0);
+    expect(fee(net, PALLETS_FREE)).toBe(0);
+  });
+
+  it('wszystkie pola net naraz: sklep z badaniami zarabia więcej na kliencie i płaci mniej za płace, media i palety niż ten sam sklep bez nich (7 dni)', () => {
+    const run = (site?: SiteMods): EconomyState => {
+      const info = infoOf(SEED, site);
+      const s = createEconomy(SEED, info);
+      s.cash = 1e6;
+      return playTo({ s, info, events: [] }, 7 * DAY).s;
+    };
+    const a = run();
+    const b = run(netSite({ traffic: 1.1, basket: 1.05, wages: 0.9, media: 0.9, logistics: 0.5, backroom: 1.3 }));
+    expect(b.total.customers).toBeGreaterThan(a.total.customers);
+    expect(b.total.margin).toBeGreaterThan(a.total.margin * 1.05);
+    expect(b.total.wages).toBeLessThan(a.total.wages);
+    expect(b.total.media).toBeLessThan(a.total.media);
   }, 60_000);
 });

@@ -5,7 +5,7 @@ import { generateCity, lotNeighbour } from '@/sim/city/generateCity';
 import { CITY_GENERATOR_VERSION } from '@/sim/city/types';
 import { MINUTES_PER_DAY, OPEN_FROM } from '@/sim/economy/catalog';
 import { applyCommand } from '@/sim/economy/commands';
-import { awaitingDecision, isClosedForRemont, stepMinute, type EconomyState } from '@/sim/economy/economy';
+import { awaitingDecision, effects, isClosedForRemont, stepMinute, type EconomyState } from '@/sim/economy/economy';
 import { defaultAnswer } from '@/sim/economy/monthPreview';
 import { LIMITS } from '@/sim/economy/sanitize';
 import { BOTS } from '@/sim/economy/tycoon/bots';
@@ -17,7 +17,7 @@ import { RELET_BUILD_DAYS, RELET_SHARE, applyFirmCommand, lotState, openDueBuild
 import {
   activeStore, applyStoreCommand, createFirm, emptyStepOut, grantToFirm, openStoreAt, openStores, ownLotsOf, refreshSites, stepFirmMinute, syncWallet,
 } from '@/sim/firm/firm';
-import { RESEARCH_IDS, RESEARCH_MAX_LEVEL } from '@/sim/firm/research';
+import { RESEARCH_IDS, RESEARCH_MAX_LEVEL, netMods } from '@/sim/firm/research';
 import { INBOX_MAX, type FirmState, type FirmStepOut } from '@/sim/firm/types';
 import { freshRun } from '@/sim/run';
 import { GENERATOR_VERSION } from '@/sim/store/generateStore';
@@ -1515,21 +1515,41 @@ describe('schemat 4: badania, limit sklepów, cele firmy i Galeria w kopercie', 
     for (const bad of [null, [], 'cele', { ready: 'a', claimed: 7 }]) expect(load({ goals: bad }).goals).toEqual({ ready: [], claimed: [] });
   }, 20_000);
 
-  it('research i storeLimit czytane przed refreshSites (site.net istnieje od razu po odczycie, Task 4 dopisze asercję net)', () => {
+  it('research i storeLimit czytane przed refreshSites: site.net istnieje od razu po odczycie, od pierwszej minuty', () => {
     const env = smallEnvelope();
     env.firm.research = { dostawy: 2, lojalnosc: 1 };
     env.firm.storeLimit = 4;
     const f = opened(restoreFirmFrom(env, SEED));
     expect(f.research).toEqual({ dostawy: 2, lojalnosc: 1 });
     expect(f.storeLimit).toBe(4);
+    // dwa otwarte sklepy (skala 1): dostawy 2 → opłata za palety × 0,8, lojalność 1 → koszyk × 1,015; każdy otwarty sklep, także startowy
+    const net = { traffic: 1, basket: 1 + 0.015 * 1 * 1, wages: 1, media: 1, logistics: 1 - 0.1 * 2 * 1, backroom: 1 };
+    expect(netMods(f.research, 2)).toEqual(net);
+    expect(openStores(f)).toHaveLength(2);
+    for (const st of openStores(f)) expect(st.info.site?.net, `#${st.id}`).toEqual(net);
     // `info` sklepów to już wynik `refreshSites` na pełnym stanie firmy: kolejne wywołanie niczego nie zmienia
     const infos = JSON.stringify(f.stores.map((st) => st.info));
     refreshSites(f);
     expect(JSON.stringify(f.stores.map((st) => st.info))).toBe(infos);
-    // kanibalizacja też: #2 ma `site` z lokalami pozostałych otwartych sklepów
-    expect(f.stores[1]!.info.site).toEqual(siteFor(f.city, f.stores[1]!.lotId, {
-      extra: true, ownCosts: false, firmDebt: true, weatherHash: f.weatherHash,
-    }, ownLotsOf(f, 2)));
+    // kanibalizacja też: #2 ma `site` z lokalami pozostałych otwartych sklepów, plus badania
+    expect(f.stores[1]!.info.site).toEqual({
+      ...siteFor(f.city, f.stores[1]!.lotId, { extra: true, ownCosts: false, firmDebt: true, weatherHash: f.weatherHash }, ownLotsOf(f, 2)),
+      net,
+    });
+    // ekonomia czyta to od pierwszej minuty: efekty sklepu widzą koszyk bez żadnego kroku
+    expect(effects(activeStore(f).econ, activeStore(f).info).net).toEqual(net);
+    // zapis i odczyt niczego nie gubią (koperta niesie tylko poziomy badań, `net` powstaje od nowa)
+    const again = opened(viaJson(f));
+    expect(again.research).toEqual(f.research);
+    for (const st of openStores(again)) expect(st.info.site?.net, `#${st.id}`).toEqual(net);
+  });
+
+  it('badania w zapisie jednego sklepu: poziomy zostają, ale sklep startowy nie ma site (net działa od dwóch sklepów)', () => {
+    const f = newFirm();
+    f.research = { marketing: 3, media: 1 };
+    const back = opened(viaJson(f));
+    expect(back.research).toEqual({ marketing: 3, media: 1 });
+    expect(back.stores[0]!.info.site).toBeUndefined();
   });
 
   it('isNewerSave({schema: 5}) true, {schema: 4} false', () => {

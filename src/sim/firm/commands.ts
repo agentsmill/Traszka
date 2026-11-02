@@ -8,13 +8,14 @@ import { TRUST } from '@/sim/economy/tycoon/trust';
 import { layoutFor } from '@/sim/store/layoutFor';
 import { takeoverSide } from '@/sim/store/takeover';
 import { noticeEndDay } from './closure';
-import { activeStore, openStoreAt, openStores, reopenStoreAt, syncWallet } from './firm';
+import { activeStore, openStoreAt, openStores, refreshSites, reopenStoreAt, syncWallet } from './firm';
+import { RESEARCH_BY_ID, RESEARCH_IDS, researchCost, researchRefusal, type ResearchId } from './research';
 import { MAX_STORES, type FirmRefusal, type FirmState, type FirmStepOut, type FirmStore } from './types';
 
 /*
  * Polecenia firmy (spec §10, §12, §13): status Partnera Strategicznego, wynajem lokalu z pakietem otwarcia (gotówka albo raty z `planFor`;
  * lokal „po Traszce” za ok. 30% pakietu), budowa, otwarcie sklepu o `OPEN_FROM` w dniu odbioru (zamknięty sklep wraca pod tym samym wpisem),
- * przełączanie aktywnego sklepu i wypowiedzenie umowy sklepu. To osobny typ od `Command`
+ * przełączanie aktywnego sklepu, wypowiedzenie umowy sklepu i badania Sieci (4b, za gotówkę, od dwóch otwartych sklepów). To osobny typ od `Command`
  * ze sklepu: `Command`, `COMMAND_TYPES` i `AFTER` się nie zmieniają, a pola zostają płaskie. Polskich zdań stąd nie ma: zdarzenia
  * i odmowy to identyfikatory i parametry, tekst składa interfejs (wyjątek: etykieta raty „Adaptacja lokalu: ul. …”, bo żyje
  * w `EconomyState` jak każda rata).
@@ -23,9 +24,10 @@ import { MAX_STORES, type FirmRefusal, type FirmState, type FirmStepOut, type Fi
 export type FirmCommand =
   | { type: 'rentLot'; lotId: number; pay: 'gotowka' | 'raty' }
   | { type: 'switchStore'; storeId: number }
-  | { type: 'terminateStore'; storeId: number };
+  | { type: 'terminateStore'; storeId: number }
+  | { type: 'research'; id: ResearchId };
 
-export const FIRM_COMMAND_TYPES: readonly FirmCommand['type'][] = ['rentLot', 'switchStore', 'terminateStore'];
+export const FIRM_COMMAND_TYPES: readonly FirmCommand['type'][] = ['rentLot', 'switchStore', 'terminateStore', 'research'];
 
 const PAYS: readonly string[] = ['gotowka', 'raty'];
 const isInt = (x: unknown): x is number => typeof x === 'number' && Number.isInteger(x);
@@ -36,6 +38,7 @@ const VALID = {
   rentLot: (c) => isInt(c.lotId) && typeof c.pay === 'string' && PAYS.includes(c.pay),
   switchStore: (c) => isInt(c.storeId),
   terminateStore: (c) => isInt(c.storeId),
+  research: (c) => typeof c.id === 'string' && (RESEARCH_IDS as readonly string[]).includes(c.id),
 } satisfies Record<FirmCommand['type'], (c: Fields) => boolean>;
 
 /** Czy `x` ma kształt polecenia firmy. Zbędne klucze są dozwolone; `Object.hasOwn`, bo `in` przepuszczałby `toString` i `__proto__`. */
@@ -265,6 +268,34 @@ function terminateStore(f: FirmState, storeId: number, out: FirmStepOut): FirmCo
   return { ok: true };
 }
 
+// --- Badania Sieci -----------------------------------------------------------------------------------------------
+
+/**
+ * Kupno kolejnego poziomu badania Sieci (4b §5.3): cena `researchCost` schodzi z portfela osoby (bez rat) i idzie do podsumowania sieci
+ * (`monthInvest`), poziom rośnie na stałe, a `refreshSites` podaje nowe mnożniki wszystkim otwartym sklepom od następnej minuty. Odmowy:
+ * `researchRefusal` (koniec gry, ranked, mniej niż dwa sklepy, najwyższy poziom, brak gotówki). Zdarzenie `research` niesie `id`, nowy `level`
+ * i zapłaconą `price`.
+ */
+function buyResearch(f: FirmState, id: ResearchId, out: FirmStepOut): FirmCommandResult {
+  const reason = researchRefusal(f, id);
+  if (reason !== null) return refuse(reason);
+  const level = f.research[id] ?? 0;
+  const price = researchCost(RESEARCH_BY_ID[id], level);
+  f.person.wallet -= price;
+  f.monthInvest += price;
+  // klucze w kolejności `RESEARCH_IDS`, jak po odczycie zapisu: stan po kupnie i po zapisie z odczytem wygląda tak samo
+  const next: FirmState['research'] = {};
+  for (const rid of RESEARCH_IDS) {
+    const lv = rid === id ? level + 1 : f.research[rid] ?? 0;
+    if (lv > 0) next[rid] = lv;
+  }
+  f.research = next;
+  refreshSites(f);
+  syncWallet(f);
+  out.firm.push({ kind: 'research', params: { id, level: level + 1, price } });
+  return { ok: true };
+}
+
 /**
  * Polecenie gracza na poziomie firmy. Odmowa nie rusza stanu i nie rzuca; zdarzenia firmy trafiają do `out.firm`. Polecenie jest
  * kopiowane raz na początku (obiekt z getterem nie da innego `type` przy walidacji i w gałęzi). Zły kształt dostaje `lot` (wynajem)
@@ -277,6 +308,7 @@ export function applyFirmCommand(f: FirmState, cmd: FirmCommand, out: FirmStepOu
     case 'rentLot': return rentLot(f, c.lotId, c.pay, out);
     case 'switchStore': return switchStore(f, c.storeId);
     case 'terminateStore': return terminateStore(f, c.storeId, out);
+    case 'research': return buyResearch(f, c.id, out);
     default: {
       const unreachable: never = c;
       void unreachable;

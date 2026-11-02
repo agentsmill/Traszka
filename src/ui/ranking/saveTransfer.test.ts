@@ -16,6 +16,7 @@ import { defaultAnswer } from '@/sim/economy/monthPreview';
 import { CARDS, visibleCards } from '@/sim/economy/tycoon/cards';
 import { EQUIPMENT, REMONTS, UPGRADES } from '@/sim/economy/upgrades';
 import { applyFirmCommand, lotState } from '@/sim/firm/commands';
+import { RESEARCH } from '@/sim/firm/research';
 import { activeStore, applyStoreCommand, createFirm, emptyStepOut, grantToFirm, openStores, stepFirmMinute } from '@/sim/firm/firm';
 import { INBOX_MAX, MAX_STORES, type FirmState } from '@/sim/firm/types';
 import { freshRun } from '@/sim/run';
@@ -429,7 +430,15 @@ describe('paczka „Wyślij zapis” przy pięciu sklepach (compactForTransfer)'
       expect(st.econ.tycoon.cards.log.length, `log kart #${st.id} pełny`).toBe(CARDS.logMax);
     }
     expect(largest.pallets, 'najgorsza minuta to ta z paletami w sklepach').toBeGreaterThanOrEqual(20);
-    expect(report('najgorszy przypadek (pięć sklepów po remoncie 5, pełne wyposażenie)', largest)).toBeLessThanOrEqual(62_000);
+    const total = report('najgorszy przypadek (pięć sklepów po remoncie 5, pełne wyposażenie)', largest);
+    expect(total).toBeLessThanOrEqual(62_000);
+    // badania Sieci (4b) na najwyższych poziomach to kilkadziesiąt bajtów w kopercie firmy: mieszczą się w zapasie do 62 000 B
+    const fullResearch = Object.fromEntries(RESEARCH.map((d) => [d.id, d.maxLevel]));
+    const extra = bytes(firmEnvelopeOf({ ...f, research: fullResearch })) - bytes(firmEnvelopeOf(f));
+    console.log(`Badania Sieci na pełnych poziomach dokładają do koperty ${extra} B (paczka ${total} B, z badaniami ${total + extra} B z 62 000 B).`);
+    expect(extra).toBeGreaterThan(0);
+    expect(extra).toBeLessThanOrEqual(100);
+    expect(total + extra).toBeLessThanOrEqual(62_000);
   }, 400_000);
 
   it('log kart nie wpływa na grę: firma z logami skróconymi do 10 wpisów gra tydzień co do bajtu tak samo (poza samym logiem), też po przełączeniu sklepu', () => {

@@ -13,7 +13,7 @@ import {
   type FranchiseeState, type RemanentProtocol, type Statement,
 } from './franchisee';
 import { rand01 } from './rand';
-import { activeSite, hourCurveOf, siteDayTraffic, type SiteMods } from './site';
+import { activeSite, hourCurveOf, siteDayTraffic, type NetMods, type SiteMods } from './site';
 import type { PalletLoc, StoreInfo } from './storeInfo';
 import {
   EQUIPMENT_BY_ID, REMONTS, UPGRADE_BY_ID, WORKSHOP_LEVEL, equipmentCost, remontTrafficMult, upgradeCost,
@@ -219,6 +219,8 @@ export interface Effects {
   marginMult: number;
   /** Dzielnica sklepu (site.ts), tylko gdy zmienia ekonomię (`activeSite`); jej poprawka cierpliwości jest już w `patience`. */
   site?: SiteMods;
+  /** Badania Sieci (4b §5.3): `info.site.net`, tylko gdy sklep je ma. Jego ruch i zaplecze są już w `traffic` i `backroomCap`; `sell` czyta stąd koszyk. */
+  net?: NetMods;
   /**
    * Mnożnik kradzieży (WUT `kradziez` ze sprzedaży i z SCO): kradzież dzielnicy razy dron-inwentaryzator. Brak pola, gdy sklep nie ma
    * ani dzielnicy z mnożnikiem, ani drona (`wutFromSales` dostaje wtedy `undefined`, czyli dzisiejsze liczenie).
@@ -237,6 +239,7 @@ export const aislePallets = (s: EconomyState): number => s.pallets.filter((p) =>
 
 export function effects(s: EconomyState, info: StoreInfo): Effects {
   const regaly = level(s, 'regaly');
+  const backroomMult = 1 + 0.5 * regaly + 0.4 * level(s, 'magazynWys');
   const humanoid = level(s, 'humanoid') > 0;
   const fx: Effects = {
     tills: 1 + level(s, 'drugaKasa'),
@@ -246,7 +249,7 @@ export function effects(s: EconomyState, info: StoreInfo): Effects {
     scoAccept: Math.min(0.95, SCO_ACCEPT + 0.08 * level(s, 'scoSoft')),
     patience: PATIENCE + 2 * level(s, 'klima') - Math.min(CLUTTER.patienceMax, hallPallets(s)),
     unloadMult: 1 + 0.4 * level(s, 'wozek'),
-    backroomCap: Math.round(info.backroomCap * (1 + 0.5 * regaly + 0.4 * level(s, 'magazynWys'))),
+    backroomCap: Math.round(info.backroomCap * backroomMult),
     backroomSpots: Math.min(info.spots.backroom.length, 2 + regaly + s.remontLevel),
     overorder: [1.3, 1.15, 1.02][level(s, 'asystent')] ?? 1.02,
     deliveryAt: level(s, 'nocne') > 0 ? DELIVERY_AT_NIGHT : DELIVERY_AT,
@@ -264,6 +267,13 @@ export function effects(s: EconomyState, info: StoreInfo): Effects {
   if (site) {
     fx.site = site;
     fx.patience += site.patience;   // Śródmieście: −4 osoby (liczby w `DISTRICTS`), Dworzec: +1
+  }
+  const net = info.site?.net;
+  if (net) {
+    // badania Sieci (4b): ruch i zaplecze liczą się tu raz, reszta (koszyk, płace, media, palety) w `sell`, `closeDay` i `placeOrder`
+    fx.net = net;
+    fx.traffic *= net.traffic;
+    fx.backroomCap = Math.round(info.backroomCap * backroomMult * net.backroom);
   }
   const dron = level(s, 'dron');
   const theft = dron > 0 ? (site?.theft ?? 1) * (1 - 0.12 * dron) : site?.theft;
@@ -553,6 +563,11 @@ export function sell(s: EconomyState, fx: Effects, served: number, scoShare: num
     // koszyk dzielnicy to poziom cen: obrót i marża z klienta rosną albo maleją, a towaru schodzi tyle samo
     revenue *= fx.site.basket;
     margin *= fx.site.basket;
+  }
+  if (fx.net) {
+    // program lojalnościowy Sieci (4b §5.3): koszyk rośnie we wszystkich sklepach, towaru schodzi tyle samo
+    revenue *= fx.net.basket;
+    margin *= fx.net.basket;
   }
   margin *= fx.marginMult * cardModifiers(s.tycoon.cards, s.minute).margin;   // partner i efekt karty (rabat z glitcha, promocja)
   s.xp += served * XP.customer;
@@ -942,7 +957,8 @@ function placeOrder(s: EconomyState, info: StoreInfo, fx: Effects, out: EconEven
     return;
   }
   const fee = Math.max(0, count - PALLETS_FREE) * PALLET_FEE;
-  if (fee > 0) accrue(s, 'logistics', fee);   // Centrala potrąci przy przelewie
+  const owed = fx.net ? Math.round(fee * fx.net.logistics) : fee;   // wspólne dostawy Sieci (4b §5.3), do pełnych złotych jak opłata bez nich
+  if (owed > 0) accrue(s, 'logistics', owed);   // Centrala potrąci przy przelewie
   if (fx.splitDelivery && count > 1) {
     s.deliveries.push({ at: tomorrow + fx.deliveryAt, count: Math.ceil(count / 2) });
     s.deliveries.push({ at: tomorrow + DELIVERY_AT_AFTERNOON, count: Math.floor(count / 2) });
@@ -1019,8 +1035,22 @@ function bonus(s: EconomyState, amount: number, scope: Scope = 'day'): void {
 
 // --- Koniec dnia i miesiąca -------------------------------------------------------------------------------
 
-/** Media za dzień: większa sala to więcej lodówek i światła. */
-export const mediaPerDay = (info: StoreInfo): number => Math.round(MEDIA_PER_DAY * Math.max(0.6, info.salesCells / 260));
+/**
+ * Media za dzień: większa sala to więcej lodówek i światła. Grupa zakupowa prądu (badania Sieci, `site.net.media`) obniża rachunek do pełnych
+ * złotych; bez niej wynik jest dokładnie dzisiejszy.
+ */
+export const mediaPerDay = (info: StoreInfo): number => {
+  const media = Math.round(MEDIA_PER_DAY * Math.max(0.6, info.salesCells / 260));
+  const net = info.site?.net;
+  return net ? Math.round(media * net.media) : media;
+};
+
+/** Płace za dzień: osoby na zmianie razy stawka; wspólna obsada (badania Sieci, `site.net.wages`) obniża je do pełnych złotych. */
+export const wagesPerDay = (s: EconomyState, info: StoreInfo): number => {
+  const wages = s.staff * WAGE_PER_DAY;
+  const net = info.site?.net;
+  return net ? Math.round(wages * net.wages) : wages;
+};
 
 /** Wartość towaru w sklepie po cenach sklepu (półki, zaplecze, palety; bez dostaw w drodze). */
 const stockValue = (s: EconomyState): number => stockItems(s) * avgPrice;
@@ -1036,7 +1066,7 @@ function expireOverstock(s: EconomyState, info: StoreInfo): void {
 
 function closeDay(s: EconomyState, info: StoreInfo, out: EconEvent[]): void {
   const day = dayOf(s.minute);
-  accrue(s, 'wages', s.staff * WAGE_PER_DAY);
+  accrue(s, 'wages', wagesPerDay(s, info));
   accrue(s, 'media', mediaPerDay(info));
   const rent = 25 * activeEquipment(s, 'bankomat');
   if (rent > 0) income(s, rent);
