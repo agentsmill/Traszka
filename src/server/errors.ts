@@ -21,6 +21,8 @@ export const API_ERRORS = {
   'save-budget': { status: 429, message: 'Wszystkie szuflady Centrali są na dziś zajęte. Wyślij zapis jutro.' },
   'save-conflict': { status: 409, message: 'Na serwerze leży nowsza kopia zapisu, której to urządzenie jeszcze nie widziało.' },
   'no-save': { status: 404, message: 'Pod tym kodem nie ma zapisu w szufladzie Centrali.' },
+  'fame-invalid': { status: 422, message: 'Centrala nie wierzy w ten milion. Wpis nie przeszedł kontroli.' },
+  'fame-budget': { status: 429, message: 'Galeria sław jest na dziś pełna. Wpisz się jutro.' },
   'bad-board': { status: 400, message: 'Nie ma takiego rankingu. Centrala prowadzi globalny, seeda i tygodnia.' },
   'method': { status: 405, message: 'Ta metoda tu nie działa.' },
   'ranking-off': { status: 503, message: 'Ranking Centrali jeszcze nie ruszył.' },

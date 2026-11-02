@@ -48,6 +48,12 @@ export interface Meta {
    */
   player?: Player;
   /**
+   * Seedy firm, których wpis do Galerii sław serwer przyjął (4b §5.7), od najstarszego, najwyżej `FAME_SENT_MAX`. Gra nie pokazuje
+   * gratulacji ani przycisku „Wyślij mój wpis” dla seeda z tej listy, nawet gdy zapis firmy zgubi pole `fame` (karta ze starszej
+   * wersji). Brak pola to nic jeszcze nie wysłano.
+   */
+  fameSent?: string[];
+  /**
    * Meta zapisana przez nowszą wersję gry: w tej karcie działają wartości domyślne, a pod kluczem mety nic się nie zapisuje,
    * żeby nie zjeść cudzej sieci sklepów i punktów. Zwykła meta nie ma tego pola w ogóle.
    */
@@ -56,6 +62,8 @@ export interface Meta {
 
 const KEY = 'traszka:meta';
 const META_VERSION = 1;
+/** Ile wysłanych seedów Galerii meta pamięta (najnowsze). */
+export const FAME_SENT_MAX = 50;
 
 const defaults = (): Meta => ({
   version: 1, partnerPoints: 0, network: [], daily: { date: '', streak: 0 }, lastSeen: 0, sound: true, vibration: true,
@@ -94,6 +102,7 @@ export function sanitizeMeta(data: unknown): Meta {
       }] : []
   )).slice(0, LIMITS.network) : d.network;
   const player = sanitizePlayer(data.player);
+  const fameSent = sanitizeFameSent(data.fameSent);
   return {
     version: 1,
     partnerPoints: num(data.partnerPoints, 0, 0, LIMITS.partnerPoints),
@@ -103,7 +112,25 @@ export function sanitizeMeta(data: unknown): Meta {
     sound: typeof data.sound === 'boolean' ? data.sound : d.sound,
     vibration: typeof data.vibration === 'boolean' ? data.vibration : d.vibration,
     ...(player ? { player } : {}),
+    ...(fameSent.length > 0 ? { fameSent } : {}),
   };
+}
+
+/** Lista wysłanych seedów z zapisu bez zaufania: tylko teksty, bez duplikatów (zostaje pierwsze wystąpienie), najwyżej `FAME_SENT_MAX` najnowszych. */
+function sanitizeFameSent(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const texts = [...new Set(raw.filter((x): x is string => typeof x === 'string'))];
+  return texts.slice(-FAME_SENT_MAX);
+}
+
+/**
+ * Dopisuje seed do wysłanych wpisów Galerii, w miejscu (powłoka trzyma ten sam obiekt mety i zapisuje go przy zamknięciu karty, więc
+ * kopia zniknęłaby przy najbliższym `persist`). Seed już zapisany zostaje na swoim miejscu; po przekroczeniu `FAME_SENT_MAX` wypada najstarszy.
+ * Zapis do przeglądarki robi wołający (`saveMeta`).
+ */
+export function markFameSent(meta: Meta, seed: string): void {
+  const sent = meta.fameSent ?? [];
+  if (!sent.includes(seed)) meta.fameSent = [...sent, seed].slice(-FAME_SENT_MAX);
 }
 
 /**

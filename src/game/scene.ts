@@ -26,6 +26,7 @@ import { CATS } from '@/sim/economy/catalog';
 import { dateOfDay, dayOf, minuteOfDay } from '@/sim/economy/calendar';
 import { customersPerHour, effects, isClosedForRemont, isOpenForCustomers, slotUsage } from '@/sim/economy/economy';
 import { slotUnits } from '@/sim/economy/slots';
+import { cardModifiers } from '@/sim/economy/tycoon/cards';
 import { staffOnShift } from '@/sim/economy/tycoon/shift';
 import { generateStore } from '@/sim/store/generateStore';
 import type { CityState, LotState } from '@/sim/city/types';
@@ -133,11 +134,29 @@ export function trafficPerHour(session: Pick<GameSession, 'econ' | 'info'>): num
  * i wyprasza tych w środku (`closing`: do kasy i za próg, szybko, bo noc trwa kilka sekund),
  * otwarty liczy ruch z bieżącej godziny (klientów na godzinę), ograniczony presetem grafiki (`CROWD_MAX`) i widełkami 4–… oraz 3–24.
  */
-export function crowdRateFor(session: Pick<GameSession, 'econ' | 'info'>, preset: QualityPresetId): CrowdOptions {
+export function crowdRateFor(session: Pick<GameSession, 'econ' | 'info'>, preset: QualityPresetId, reserve = 0): CrowdOptions {
   const { econ: s } = session;
   if (!isOpenForCustomers(s)) return { targetCount: 0, spawnPerMinute: 0, closing: true };
   const perHour = trafficPerHour(session);
-  return { targetCount: Math.max(4, Math.min(CROWD_MAX[preset], Math.round(perHour * 0.35))), spawnPerMinute: Math.max(3, Math.min(24, perHour * 0.3)) };
+  return { targetCount: Math.max(4, Math.min(CROWD_MAX[preset] - reserve, Math.round(perHour * 0.35))), spawnPerMinute: Math.max(3, Math.min(24, perHour * 0.3)) };
+}
+
+/** Tyle postaci zawsze zostaje w sali, kiedy kolejka przed sklepem zajmuje część puli presetu (to dolna granica tłumu z `crowdRateFor`). */
+export const QUEUE_ROOM_MIN = 4;
+
+/**
+ * Wejście kolejki przed sklepem przy zrzucie kart: ruch z kart (`cardModifiers(...).traffic`, jedyne, co render czyta ze stanu kart),
+ * minuta doby i limit postaci. Zamknięty sklep (noc, remont, karta „zamknij na godzinę”) nie ma kolejki, więc daje ruch 1. Kolejka
+ * liczy się do puli postaci presetu (`CROWD_MAX`): `cap` to pula bez miejsca, które zostaje w sali, żeby draw calle postaci
+ * nie rosły ponad to, co tłum ma dziś. Stan symulacji zostaje nietknięty.
+ */
+export function queueInputFor(session: Pick<GameSession, 'econ'>, preset: QualityPresetId): { traffic: number; minuteOfDay: number; cap: number } {
+  const { econ: s } = session;
+  return {
+    traffic: isOpenForCustomers(s) ? cardModifiers(s.tycoon.cards, s.minute).traffic : 1,
+    minuteOfDay: minuteOfDay(s.minute),
+    cap: CROWD_MAX[preset] - QUEUE_ROOM_MIN,
+  };
 }
 
 /**
@@ -410,14 +429,17 @@ export function createSceneHost(deps: SceneDeps): SceneHost {
       .map((u) => ({ cell: u.access!, look: payLook(u.fixture.facing) }));
     setCrowdExtras(loaded.world.crowd, obstacles, pay);
     // tłum jako lustro: tempo i zamknięcie z ekonomii, a przyjścia, kolejka, płacenie i złość z jej liczników (grupami)
-    const rate = crowdRateFor(session, ctx.preset);
+    // kolejka przed sklepem przy zrzucie kart: jej postacie zajmują część puli presetu, więc w sali jest o tyle mniej miejsca
+    const queue = queueInputFor(session, ctx.preset);
+    const queued = loaded.crowdView?.setQueue(queue.traffic, queue.minuteOfDay, queue.cap) ?? 0;
+    const rate = crowdRateFor(session, ctx.preset, queued);
     setCrowdRate(loaded.world.crowd, { ...rate, mirror: true });
     const simDt = lastMirrorAt < 0 ? 0 : Math.min(1, (now - lastMirrorAt) / 1000) * loaded.world.speed;
     lastMirrorAt = now;
     mirrored = session;
     feedCrowdMirror(loaded.world.crowd, mirror.update({
       customers: s.total.customers, lost: s.total.lost, queue: s.queue, open: !rate.closing, perHour: trafficPerHour(session),
-      maxCharacters: CROWD_MAX[ctx.preset], queueSlots: layout.checkoutQueue.length, speed: loaded.world.speed, simDt,
+      maxCharacters: CROWD_MAX[ctx.preset] - queued, queueSlots: layout.checkoutQueue.length, speed: loaded.world.speed, simDt,
       headcount: crowdHeadcount(loaded.world.crowd),
     }));
     // załoga: kto jest na zmianie i co robi (numery osób są stałe, `shift.people`), oraz palety (przeszkody i cele rozładunku);

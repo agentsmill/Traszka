@@ -10,7 +10,8 @@ import type { CityLot, CityState, SourceKind, StoreDistrict, StreetSegment, Traf
 /*
  * Ruch w mieście (spec §7.3). Punkty ruchu (`CityState.sources`) mają profil godzinowy i tygodniowy; natężenie odcinka ulicy to suma
  * ich wpływów malejących z odległością. Mnożnik ruchu lokalu to iloczyn trzech czynników i mnoży `baseTraffic(info)` (rodzaj i
- * wielkość lokalu już tam siedzą): dzielnica, natężenie przy wejściu względem średniej dzielnicy i konkurencja w promieniu.
+ * wielkość lokalu już tam siedzą): dzielnica, natężenie przy wejściu względem średniej dzielnicy i konkurencja w promieniu. Od 4b dochodzą
+ * własne sklepy firmy w promieniu (kanibalizacja): tylko wtedy, gdy wołający poda ich lokale (`own`), więc bez nich wynik jest co do bitu ten sam.
  * `siteFor` składa z tego `SiteMods` sklepu w lokalu, a `lotEstimate` widełki klientów na karcie lokalu. Profil dnia dzielnicy (`hours`)
  * nie wchodzi do mnożnika ruchu: zmienia rozkład klientów w dobie, nie ich liczbę, więc widełki i skala sklepu go nie widzą.
  *
@@ -20,6 +21,10 @@ import type { CityLot, CityState, SourceKind, StoreDistrict, StreetSegment, Traf
 
 export const RIVAL_RADIUS_M = 150;
 export const RIVAL_FACTOR = 0.8;
+/** Własny sklep firmy bliżej niż tyle metrów od wejścia lokalu podbiera mu klientów (4b §5.4, ten sam promień co rywale). */
+export const OWN_RADIUS_M = 150;
+/** Tyle ruchu zostaje lokalowi za każdy własny sklep w promieniu ([W] start, gałka strojenia 0,85–0,95). */
+export const OWN_FACTOR = 0.9;
 export const LOCAL_RANGE = [0.85, 1.15] as const;
 export const ESTIMATE_SPREAD = 0.25;            // widełki ±25%
 export const ESTIMATE_SHIFT = 0.15;             // środek przesunięty o ≤ 15% (deterministycznie)
@@ -167,10 +172,29 @@ export function rivalsNear(city: CityState, lotId: number): { lot: CityLot; mete
   return out.sort((p, q) => p.meters - q.meters || p.lot.id - q.lot.id);
 }
 
-/** Natężenie lokalne razem z konkurencją, bez dzielnicy: czynnik, przez który `siteFor` mnoży ruch dzielnicy i jej ruch weekendowy. */
-function lotFactor(city: CityState, lotId: number): number {
+/**
+ * Własne sklepy firmy (`own`: ich lokale) bliżej niż `OWN_RADIUS_M` od wejścia lokalu, od najbliższego (remis: niższy numer lokalu); lokal
+ * nie podbiera klientów sam sobie. Patrzy tylko na listę `own`, nie na stan lokalu z generatora. Dla karty lokalu („Twoja Traszka 120 m stąd”).
+ */
+export function ownNear(city: CityState, lotId: number, own: readonly number[]): { lotId: number; meters: number }[] {
+  const lot = lotOf(city, lotId);
+  const out: { lotId: number; meters: number }[] = [];
+  for (const id of own) {
+    if (id === lotId) continue;
+    const d2 = dist2(lotOf(city, id), lot);
+    if (d2 < OWN_RADIUS_M * OWN_RADIUS_M) out.push({ lotId: id, meters: Math.sqrt(d2) });
+  }
+  return out.sort((p, q) => p.meters - q.meters || p.lotId - q.lotId);
+}
+
+/**
+ * Natężenie lokalne razem z konkurencją, bez dzielnicy: czynnik, przez który `siteFor` mnoży ruch dzielnicy i jej ruch weekendowy. Własne
+ * sklepy w promieniu mnożą go dalej przez `OWN_FACTOR` każdy; bez nich (brak `own`, pusta lista, wszystkie dalej) nie ma ani jednego mnożenia.
+ */
+function lotFactor(city: CityState, lotId: number, own?: readonly number[]): number {
   let f = lotLocalFactor(city, lotId);
   for (let i = rivalsNear(city, lotId).length; i > 0; i--) f *= RIVAL_FACTOR;   // pętla zamiast `**`: ten sam wynik w każdym silniku
+  if (own !== undefined && own.length > 0) for (let i = ownNear(city, lotId, own).length; i > 0; i--) f *= OWN_FACTOR;
   return f;
 }
 
@@ -199,13 +223,14 @@ export type SiteFlags = Pick<SiteMods, 'extra' | 'ownCosts' | 'firmDebt' | 'weat
 /**
  * `SiteMods` sklepu w lokalu miasta: charakter dzielnicy z `DISTRICTS` (z profilem dnia i trudnymi klientami), ruch z `lotTrafficMult` (w weekend Biurowców
  * ruch weekendowy dzielnicy z tym samym natężeniem lokalnym i konkurencją), układ z lokalu i flagi od firmy. Lokal startowy to
- * `NEUTRAL_SITE` z flagami: sklep startowy gra jak dziś.
+ * `NEUTRAL_SITE` z flagami: sklep startowy gra jak dziś, także z własnymi sklepami obok. `own` (4b): lokale innych otwartych sklepów firmy;
+ * każdy w promieniu `OWN_RADIUS_M` zostawia lokalowi `OWN_FACTOR` ruchu (dni robocze i weekend). Bez `own` wynik jest ten sam co przed 4b.
  */
-export function siteFor(city: CityState, lotId: number, flags: SiteFlags): SiteMods {
+export function siteFor(city: CityState, lotId: number, flags: SiteFlags, own?: readonly number[]): SiteMods {
   const lot = lotOf(city, lotId);
   if (lotId === city.startLotId) return { ...NEUTRAL_SITE, ...flags };
   const d = DISTRICTS[lot.district];
-  const factor = lotFactor(city, lotId);
+  const factor = lotFactor(city, lotId, own);
   return {
     district: lot.district,
     traffic: d.traffic * factor,
@@ -238,11 +263,13 @@ const TEN = 10;
  * `relet` (4a.2) to zamknięty sklep w lokalu: ponowny wynajem otwiera go z jego układem i wyposażeniem (`reopenStoreAt`), więc „prawdziwa liczba”
  * liczy się z tego układu i `createEconomy(…, fittings)`, a nie z układu poziomu 0 bez wyposażenia (po remoncie i ulotkach to nawet 3× więcej).
  * Bez `relet` wynik jest dokładnie taki jak dotąd (lokal wolny).
+ *
+ * `own` (4b): lokale otwartych sklepów firmy, jak w `siteFor`; własny sklep w promieniu obniża widełki (badania Sieci ich nie zmieniają).
  */
-export function lotEstimate(seed: string, city: CityState, lotId: number, relet?: ReletInput): LotEstimate {
+export function lotEstimate(seed: string, city: CityState, lotId: number, relet?: ReletInput, own?: readonly number[]): LotEstimate {
   const lot = lotOf(city, lotId);
   const storeSeed = lotId === city.startLotId ? seed : storeSeedFor(seed, lotId);
-  const site = siteFor(city, lotId, { extra: true, ownCosts: false, firmDebt: true, weatherHash: null });
+  const site = siteFor(city, lotId, { extra: true, ownCosts: false, firmDebt: true, weatherHash: null }, own);
   const info: StoreInfo = { ...computeStoreInfo(relet ? relet.layout : layoutFor(storeSeed, 0, lot.spec)), site };
   const econ = relet ? createEconomy(storeSeed, info, undefined, undefined, relet.fittings) : createEconomy(storeSeed, info);
   const trueDaily = expectedDailyCustomers(econ, info);

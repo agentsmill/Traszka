@@ -42,19 +42,21 @@ export const LIMITS = {
    * przejściach bez granicy miejsc. Liczbę palet ogranicza kredyt kupiecki (po trzecim remoncie ok. 60 palet towaru razem z półkami).
    */
   pallets: 256,
-  /** Sprzęt w slotach: największy sklep ma 8 slotów o łącznej pojemności 15. */
-  equipment: 64,
+  /** Sprzęt w slotach: największy sklep (piąty remont) ma 9 slotów 2×2 i jeden slot SCO, łącznie pojemność 19; granica z zapasem ×5. */
+  equipment: 96,
   /** Dostawy w drodze: zamówienie raz dziennie, najwyżej w dwóch turach, więc w drodze są najwyżej trzy. */
   deliveries: 8,
   /** Historia: jeden wiersz na miesiąc przez tysiąc lat gry. */
   history: 12_000,
-  /** Kamienie milowe: w grze jest ich 15. */
+  /** Kamienie milowe: w grze jest ich 18. */
   milestones: 200,
   /**
    * Sztuk jednej kategorii na półkach albo zapleczu: największa półka z generatora mieści 2451 sztuk kategorii (zmierzone na
-   * wszystkich 45 000 seedach, które losuje gra, na czterech poziomach remontu), zaplecze 18 810 w sumie.
+   * wszystkich 45 000 seedach, które losuje gra, na czterech poziomach remontu), zaplecze 18 810 w sumie. Piąty remont i
+   * najwyższe regały (do ×4,7 pojemności zaplecza: 5 poziomów regałów i 3 magazynu wysokiego składowania) podnoszą to kilkukrotnie,
+   * więc granica rośnie z 100 000 do 250 000 (test w `game/session.test.ts` liczy ją z zapasem ×4 na seedach testowych).
    */
-  stockPerCat: 100_000,
+  stockPerCat: 250_000,
   /** Sztuk na palecie: PALLET_ITEMS i sztuka zapasu na zaokrąglenia (suma składu palety wychodzi z ułamków). */
   palletItems: PALLET_ITEMS + 1,
   /** Worków z jednej palety: gra liczy 1,5 albo 3 (`palletBags`; zapisy sprzed SIM_VERSION 5 mają 1 albo 2), reszta to zapas. */

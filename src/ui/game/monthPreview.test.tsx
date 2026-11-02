@@ -390,7 +390,7 @@ describe('podgląd końca miesiąca przy firmie', () => {
     const total = got.stores.reduce((n, x) => n + x.preview.statement.net, 0);
     expect(text).toContain(plain(`Razem${signedZl(total)}`));
     expect(text).toContain(plain(`Gotówka po zamknięciu${money(got.cashAfter)}`));
-    if (got.invest > 0) expect(text).toContain('Pakiety otwarcia za gotówkę');
+    if (got.invest > 0) expect(text).toContain('Pakiety otwarcia i badania za gotówkę');
     expect(walk(tree).some((v) => v.props['data-tut'] === 'network-summary')).toBe(false);   // to okno podglądu, nie okno końca miesiąca
   });
 

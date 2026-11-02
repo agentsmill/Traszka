@@ -230,6 +230,44 @@
 }
 
 /*
+ * Galeria sław (FameWindow i zakładka w panelu rankingu). Okno ma układ okna końca sezonu (.tt-finish). Wiersz listy to „1. Nick — 2 listopada
+ * 2026” w jednej linii, a gdy nick i data nie mieszczą się obok siebie (390 px), data schodzi do następnej linii zamiast wypychać panel w bok.
+ */
+.tt-fame-cash {
+  font-variant-numeric: tabular-nums;
+  color: var(--tt-green-dark, #0f4d2a);
+}
+
+.tt-fame-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 0.4em;
+  padding: 6px 8px;
+  border-radius: 8px;
+}
+
+.tt-fame-row:nth-child(odd) {
+  background: rgba(29, 107, 58, 0.06);
+}
+
+.tt-fame-row .tt-rank-pos {
+  min-width: 2.4em;
+}
+
+.tt-fame-nick {
+  min-width: 0;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.tt-fame-when {
+  white-space: nowrap;   /* myślnik i data schodzą do następnej linii razem */
+  font-variant-numeric: tabular-nums;
+  opacity: 0.85;
+}
+
+/*
  * Ekran startowy (StartScreen): „Start rankingowy” pod „Otwieramy sklep!”, chip „Seed tygodnia” obok kostki seeda i pytanie o porzucenie
  * biegu w miejscu „Otwieramy sklep!”. Przyklejony do dołu okna telefonu (.tt-start-go, ui.css) jest tylko ten pierwszy przycisk albo
  * pytanie: „Start rankingowy”, jego podpis i „Wróć do gry” (.tt-start-more) płyną pod nim, bo razem z podpisem zajęłyby co trzecią

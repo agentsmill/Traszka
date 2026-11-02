@@ -61,6 +61,8 @@ function setup(over: Partial<RecoveryDeps> = {}, download: ApiResult<SaveDownloa
     uploadSave,
     downloadSave: vi.fn(async () => download),
     submitRun: vi.fn(),
+    fameList: vi.fn(),
+    fameSubmit: vi.fn(),
   };
   const deps: RecoveryDeps = {
     client,

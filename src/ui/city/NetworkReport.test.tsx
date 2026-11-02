@@ -88,10 +88,10 @@ describe('podsumowanie sieci (zakładka „Sieć”)', () => {
     expect(net[0]! + net[1]!).toBe(view.summary.total);
   });
 
-  it('pakiety otwarcia za gotówkę, gotówka po zamknięciu i wynik każdego sklepu', () => {
+  it('pakiety otwarcia i badania za gotówkę, gotówka po zamknięciu i wynik każdego sklepu', () => {
     const { f, view } = setup();
     const rows = rowsOf(withTut(render(view), 'network-summary')[0]!);
-    expect(rows).toContainEqual(['Pakiety otwarcia za gotówkę', plain(minusZl(50_000))]);
+    expect(rows).toContainEqual(['Pakiety otwarcia i badania za gotówkę', plain(minusZl(50_000))]);
     expect(rows).toContainEqual(['Gotówka po zamknięciu', plain(money(123_456))]);
     for (const s of view.summary.stores) expect(rows).toContainEqual([storeName(f, s.id), plain(signedZl(s.profit))]);
     const text = plain(textOf(render(view)));
@@ -117,7 +117,7 @@ describe('podsumowanie sieci (zakładka „Sieć”)', () => {
 
   it('bez pakietów za gotówkę wiersza o nich nie ma', () => {
     const { view } = setup({ invest: 0 });
-    expect(rowsOf(render(view)).map(([l]) => l)).not.toContain('Pakiety otwarcia za gotówkę');
+    expect(rowsOf(render(view)).map(([l]) => l)).not.toContain('Pakiety otwarcia i badania za gotówkę');
   });
 
   it('rozliczenie końcowe zamkniętej placówki: wiersz między pakietami a gotówką po zamknięciu, a bez rozliczenia go nie ma', () => {
@@ -147,7 +147,7 @@ describe('podsumowanie sieci (zakładka „Sieć”)', () => {
     expect(text).toContain('Final settlement for the closed branch');
     expect(text).toContain('You keep');
     expect(text).toContain('Cash after closing');
-    expect(text).toContain('Opening packages paid in cash');
+    expect(text).toContain('Opening packages and research paid in cash');
   });
 });
 
@@ -259,7 +259,7 @@ describe('trzy sklepy w oknie końca miesiąca', () => {
     expect(rows).toContainEqual(['Razem', plain(signedZl(nets[0]! + nets[1]! + nets[2]!))]);
     expect(rows).toContainEqual(['Razem', plain(signedZl(view.summary.total))]);
     expect(view.summary.total).toBe(nets[0]! + nets[1]! + nets[2]!);
-    expect(rows).toContainEqual(['Pakiety otwarcia za gotówkę', plain(minusZl(50_000))]);
+    expect(rows).toContainEqual(['Pakiety otwarcia i badania za gotówkę', plain(minusZl(50_000))]);
     expect(rows).toContainEqual(['Gotówka po zamknięciu', plain(money(123_456))]);
     const names = [1, 2, 3].map((id) => storeName(f, id));
     expect(rows.filter(([l]) => names.includes(l))).toHaveLength(6);   // trzy w „Zostaje Ci” i trzy w „Wyniku miesiąca”

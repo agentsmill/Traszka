@@ -294,15 +294,17 @@ export function closeFinish(game: Pick<GameActions, 'leaveRanked'>): void {
 
 /** Panel rankingu (`ui/ranking/RankingPanel.tsx`) albo kodu odzyskiwania i zapisu (`RecoveryPanel.tsx`). */
 export type PanelId = 'ranking' | 'recovery';
+/** Zakładka panelu rankingu: jeden z rankingów albo „Galeria sław” (`fame`, nie jest rankingiem wyników: ma własny model). */
+export type PanelTab = RankingTab | 'fame';
 /** Otwarty panel; `tab` ma sens tylko dla rankingu (którą zakładkę załadować na wejściu). */
-export interface PanelState { id: PanelId; tab?: RankingTab }
+export interface PanelState { id: PanelId; tab?: PanelTab }
 /**
  * Otwarty panel rankingu albo kodu odzyskiwania (z HUD-u i z ⚙), albo null. Dopóki jest otwarty, gra stoi (`isWindowOpen`), a panel leży
  * nad arkuszami, kartą decyzji i wpisami „OK”, pod oknem końca sezonu i ustawieniami (kolejność w App.tsx). Każde `openPanel` to nowa
  * wartość, więc usługi rankingu przygotowują model przy każdym otwarciu (`createRankingServices` słucha tego sygnału). Zamyka go `closePanel`. Nie jest częścią zapisu.
  */
 export const panel: Signal<PanelState | null> = signal<PanelState | null>(null);
-export function openPanel(id: PanelId, tab?: RankingTab): void {
+export function openPanel(id: PanelId, tab?: PanelTab): void {
   panel.value = tab === undefined ? { id } : { id, tab };
 }
 export function closePanel(): void {
@@ -311,6 +313,18 @@ export function closePanel(): void {
 /** Ranking z przycisku w HUD-zie i z ⚙: w biegu rankingowym zaczyna od „Ten seed” (tam jest bieg), w zwykłej grze od rankingu globalnego. */
 export function openRanking(): void {
   openPanel('ranking', ranked.value ? 'seed' : 'global');
+}
+
+/**
+ * Gratulacje za pierwszy milion i wpis do Galerii sław (`ui/ranking/FameWindow.tsx`, montuje je `PanelHost`): seed firmy, dzień gry i gotówka
+ * z chwili, gdy portfel przekroczył milion. Ustawia je zdarzenie firmy `million` (`game/fameOffer.ts`) albo przycisk „Wyślij mój wpis”
+ * w zakładce Galerii. Dopóki jest ustawione, gra stoi (`isWindowOpen`). Zamyka je `closeFameOffer`. Nie jest częścią zapisu: o tym, czy
+ * wpis poszedł, mówi `meta.fameSent`, a o tym, że gracz ma milion, `firm.fame`.
+ */
+export interface FameOffer { seed: string; day: number; cash: number }
+export const fameOffer: Signal<FameOffer | null> = signal<FameOffer | null>(null);
+export function closeFameOffer(): void {
+  fameOffer.value = null;
 }
 
 /**
@@ -362,10 +376,10 @@ export interface GameActions {
 /**
  * Czy otwarte jest okno, które zatrzymuje grę i ma swój sygnał: raport miesiąca, podsumowanie sieci (`networkReport`), protokół remanentu, ważne zdarzenie czekające na „OK”, ekran startowy,
  * powitanie, „Jak grać”, okno wyboru samouczka (`tutorialOffer`), wyciąg na koniec miesiąca (`monthPreview`), okno końca sezonu (`finish`) albo panel
- * rankingu i kodu odzyskiwania (`panel`). Czyta to `isModalOpen` (game/frame.ts: pętla klatek) i samouczek (przelot i dymki „pierwszy raz” czekają pod oknem).
+ * rankingu i kodu odzyskiwania (`panel`) albo gratulacje za milion (`fameOffer`). Czyta to `isModalOpen` (game/frame.ts: pętla klatek) i samouczek (przelot i dymki „pierwszy raz” czekają pod oknem).
  * Karta decyzji i koniec gry nie mają sygnału okna: wynikają ze stanu gry.
  */
 export const isWindowOpen = (): boolean =>
   !!report.value || !!networkReport.value || !!remanent.value || story.value.length > 0 || !!start.value || !!welcome.value || howTo.value || tutorialOffer.value
-  || !!monthPreview.value || !!finish.value || !!panel.value;
+  || !!monthPreview.value || !!finish.value || !!panel.value || !!fameOffer.value;
 

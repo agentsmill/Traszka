@@ -202,6 +202,66 @@
   background: rgba(29, 107, 58, 0.16);
 }
 
+/* --- Badania Sieci (`ResearchSection.tsx`) ------------------------------------------------------------ */
+
+.tt-research {
+  border-top: 1px solid rgba(29, 107, 58, 0.18);
+}
+
+.tt-research > summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+  min-height: 36px;
+  padding: 8px 0 4px;
+  list-style: none;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.tt-research > summary::-webkit-details-marker {
+  display: none;
+}
+
+.tt-research > summary::before {
+  content: '▸';
+  color: var(--tt-green-dark);
+}
+
+.tt-research[open] > summary::before {
+  content: '▾';
+}
+
+.tt-research-title {
+  font-size: 13px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--tt-green-dark);
+}
+
+/* opis badania łamie się w wąskiej kolumnie obok przycisku z ceną, także angielski; przycisk z ceną nie kurczy się */
+.tt-research .tt-item > div:first-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* karta lokalu ustępuje miejsca tak samo jak lista: po wyborze lokalu badania chowają się (stan rozwinięcia zostaje) */
+.tt-city.has-card .tt-research {
+  display: none;
+}
+
+.tt-limit {
+  margin: 0 0 6px;
+}
+
+/* własny sklep obok lokalu na karcie (kanibalizacja) */
+.tt-own {
+  margin: 4px 0;
+  overflow-wrap: anywhere;
+}
+
 /* --- Karta lokalu -------------------------------------------------------------------------------------- */
 
 .tt-lotcard {

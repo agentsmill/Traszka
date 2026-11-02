@@ -8,13 +8,14 @@ import { rankFor } from '@/sim/economy/progress';
 import { noticeLevel } from '@/sim/economy/tycoon/notices';
 import { applyFirmCommand, type FirmCommand, type FirmCommandResult } from '@/sim/firm/commands';
 import { activeStore, applyStoreCommand, emptyStepOut, grantToFirm, openStores, stepFirmMinute } from '@/sim/firm/firm';
-import type { FirmStepOut } from '@/sim/firm/types';
+import type { FirmEvent, FirmStepOut } from '@/sim/firm/types';
 import { seasonBankrupt } from '@/sim/ranked';
-import { backgroundToastText, firmEventText, refusalText, storeName } from '@/ui/city/firmText';
+import { backgroundToastText, firmEventText, goalsToastText, refusalText, storeName } from '@/ui/city/firmText';
 import type { Sfx } from '@/ui/sfx';
 import * as ui from '@/ui/state';
 import { bootMeta } from './bootMeta';
 import type { CashierLook } from './cashier';
+import { offerFame } from './fameOffer';
 import { claimDaily, partnerOf, saveMeta, startupWindow, type Meta } from './meta';
 import { openStore } from './openStore';
 import {
@@ -244,7 +245,7 @@ export function dispatchFirm(session: GameSession, cmd: FirmCommand, fx: Command
   const out = emptyStepOut();
   const result = applyFirmCommand(f, command, out);
   if (!result.ok) {
-    fx.toast(refusalText(result.reason), 'error');
+    fx.toast(refusalText(result.reason, f, command.type), 'error');
     fx.play('error');
     fx.refresh();
     return result;
@@ -261,7 +262,7 @@ export function dispatchFirm(session: GameSession, cmd: FirmCommand, fx: Command
       fx.notice(session.ephemeral ? REBUILD_FAILED_EPHEMERAL : REBUILD_FAILED);
     }
   }
-  if (command.type === 'rentLot') fx.play('coins');
+  if (command.type === 'rentLot' || command.type === 'research' || command.type === 'claimGoal') fx.play('coins');   // wynajem, badanie Sieci i odebranie celu to pieniądze w ruchu
   fx.handleFirmEvents?.(out);
   fx.persist();
   fx.refresh();
@@ -636,14 +637,22 @@ export function createShell(deps: ShellDeps): GameShell {
       ui.pushStory(`${storeName(f, b.storeId)}: ${title}`, b.event.text);   // tekst Centrali z symulacji tłumaczy okno przy rysowaniu
     }
 
-    // firma: ważne zdarzenia czekają na „OK”, zastępca i budowa to toast z odświeżeniem
+    // firma: ważne zdarzenia czekają na „OK”, zastępca i budowa to toast z odświeżeniem, a badania i cele sieci toasty bez okna (4b)
     let refresh = false;
+    const goals: FirmEvent[] = [];
     for (const e of out.firm) {
+      if (offerFame(e, session, shell.meta, fx)) continue;   // milion: gratulacje z wpisem do Galerii sław zamiast zwykłego okna „OK”
       switch (e.kind) {
         case 'deputy':
         case 'build':
           ui.pushToast(firmEventText(f, e).text, 'info');
           refresh = true;
+          break;
+        case 'research':
+          ui.pushToast(firmEventText(f, e).text, 'ok');   // kupno badania z panelu Miasto: potwierdzenie z ceną, bez okna
+          break;
+        case 'goal':
+          goals.push(e);   // cele z jednej minuty (zapis z milionem na portfelu spełnia kilka naraz) dostają jeden toast niżej
           break;
         case 'network-report':
           break;   // okno sieci składamy niżej z raportem i wyciągami
@@ -652,6 +661,10 @@ export function createShell(deps: ShellDeps): GameShell {
           ui.pushStory(title, text);
         }
       }
+    }
+    if (goals.length > 0) {
+      ui.pushToast(goalsToastText(f, goals), 'milestone');
+      fx.play('coins');
     }
     if (summary) ui.networkReport.value = { summary, reports: [...reports].sort(([a], [b]) => a - b).map(([storeId, report]) => ({ storeId, report })) };
 
@@ -1089,7 +1102,7 @@ export function createShell(deps: ShellDeps): GameShell {
         // zapis, którego nie da się przeczytać.
         // Firma, a z nią miasto z seeda, powstaje przed sceną: gdy generator miasta rzuci, to ta sama porażka budowy co zły świat, więc
         // działa cały łańcuch zastępstw `openStore` (zapis zostaje, gracz ma działający sklep i komunikat), a sesja bez firmy nie
-        // trafia do pętli klatek. Sesja z zapisu schematu 3 ma firmę od razu.
+        // trafia do pętli klatek. Sesja z koperty firmy (schemat 4 albo 3) ma firmę od razu.
         const build = (opening: GameSession): void => { firmOf(opening); shell.session = opening; scene.load(opening.econ.seed, opening); };
         const partner = partnerOf(shell.meta);
         session = openStore(choice

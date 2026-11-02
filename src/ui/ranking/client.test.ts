@@ -1,12 +1,13 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { RunRecord } from '@/sim/run';
 import { BOARD_LIMITS, KNOWN_GENERATOR_VERSIONS } from '@/server/config';
 import { API_ERRORS } from '@/server/errors';
-import { handleLeaderboard, handleRuns, handleSaveUpload, type ServerDeps } from '@/server/http';
+import { handleFameList, handleFameSubmit, handleLeaderboard, handleRuns, handleSaveUpload, type ServerDeps } from '@/server/http';
 import { MemoryRedis } from '@/server/memoryRedis';
 import { testBundle } from '@/server/testBundle';
 import { replayNotAvailable } from '@/server/verify';
-import { NETWORK_ERROR, UNAVAILABLE_ERROR, createRankingClient } from './client';
+import { SIM_VERSION } from '@/sim/simVersion';
+import { FAME_TIMEOUT_MS, NETWORK_ERROR, UNAVAILABLE_ERROR, createRankingClient } from './client';
 
 /** Atrapa fetch: zapisuje zapytania, oddaje przygotowaną odpowiedź. */
 function fake(respond: (url: string, init: RequestInit) => Response | Promise<Response>) {
@@ -157,5 +158,97 @@ describe('klient API rankingu w grze', () => {
     expect(accepted).toEqual({ ok: true, nick: 'Mateusz', score: 25_000, best: 25_000, improved: true, ranks: { global: 1, seed: 1, week: null } });
     expect(await client.submitRun(OTHER_KEY, 'MATEUSZ', RUN)).toMatchObject({ ok: false, error: 'nick-taken' });
     expect(await client.submitRun(KEY, 'Mateusz', { ...RUN, mode: 'casual' })).toMatchObject({ ok: false, error: 'not-ranked' });
+  });
+});
+
+describe('klient API Galerii sław', () => {
+  afterEach(() => { vi.useRealTimers(); });
+  const ENTRY = { nick: 'Mateusz', seed: 'pierogi-731', day: 134, cash: 1_012_345, simVersion: SIM_VERSION };
+
+  it('fameSubmit: POST /api/fame/submit z { key, nick, seed, day, cash, simVersion } w ciele, klucz nigdy w adresie', async () => {
+    const { fetchFn, calls } = fake(() => Response.json({ ok: true, first: true, place: 3, entry: { nick: 'Mateusz', at: 1_000 } }));
+    const result = await createRankingClient(fetchFn).fameSubmit(KEY, ENTRY);
+    expect(result).toEqual({ ok: true, first: true, place: 3, entry: { nick: 'Mateusz', at: 1_000 } });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.url).toBe('/api/fame/submit');
+    expect(calls[0]!.url).not.toContain(KEY);
+    expect(calls[0]!.init.method).toBe('POST');
+    expect(JSON.parse(String(calls[0]!.init.body))).toEqual({ key: KEY, nick: 'Mateusz', seed: 'pierogi-731', day: 134, cash: 1_012_345, simVersion: SIM_VERSION });
+  });
+
+  it('fameList: GET /api/fame/list bez żadnych parametrów; błąd sieci to { ok: false, message: NETWORK_ERROR }', async () => {
+    const body = { ok: true, total: 1, rows: [{ place: 1, nick: 'Ala', at: 5 }] };
+    const { fetchFn, calls } = fake(() => Response.json(body));
+    expect(await createRankingClient(fetchFn).fameList()).toEqual(body);
+    expect(calls[0]!.url).toBe('/api/fame/list');
+    expect(calls[0]!.init.method ?? 'GET').toBe('GET');
+    const offline = fake(() => { throw new TypeError('Failed to fetch'); });
+    expect(await createRankingClient(offline.fetchFn).fameList()).toEqual({ ok: false, error: 'network', message: NETWORK_ERROR });
+    expect(await createRankingClient(offline.fetchFn).fameSubmit(KEY, ENTRY)).toEqual({ ok: false, error: 'network', message: NETWORK_ERROR });
+  });
+
+  it('odpowiedź spoza API (strona 404) to ranking niedostępny, także dla Galerii', async () => {
+    const { fetchFn } = fake(() => new Response('<html>404</html>', { status: 404 }));
+    expect(await createRankingClient(fetchFn).fameList()).toEqual({ ok: false, error: 'unavailable', message: UNAVAILABLE_ERROR });
+    expect(await createRankingClient(fetchFn).fameSubmit(KEY, ENTRY)).toEqual({ ok: false, error: 'unavailable', message: UNAVAILABLE_ERROR });
+  });
+
+  it('przez prawdziwą obsługę na serwerze: wpis, drugi wpis tego nicka (first: false), lista (goły adres przechodzi), cudzy nick i poza zakresem', async () => {
+    const redis = new MemoryRedis();
+    const clock = { now: Date.UTC(2026, 10, 2, 12) };
+    const deps: ServerDeps = { redis, readRedis: redis, verifyRun: replayNotAvailable, now: () => clock.now };
+    const toServer = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = `https://traszka.test${String(input)}`;
+      return String(input).startsWith('/api/fame/list') ? handleFameList(new Request(url, init), deps) : handleFameSubmit(new Request(url, init), deps);
+    }) as typeof fetch;
+    const client = createRankingClient(toServer);
+
+    expect(await client.fameList()).toEqual({ ok: true, total: 0, rows: [] });
+    const first = await client.fameSubmit(KEY, ENTRY);
+    expect(first).toEqual({ ok: true, first: true, place: 1, entry: { nick: 'Mateusz', at: clock.now } });
+    clock.now += 1000;
+    const again = await client.fameSubmit(OTHER_KEY, { ...ENTRY, nick: 'MATEUSZ', cash: 2_000_000 });
+    expect(again).toEqual({ ok: true, first: false, place: 1, entry: { nick: 'Mateusz', at: Date.UTC(2026, 10, 2, 12) } });
+    expect(await client.fameList()).toEqual({ ok: true, total: 1, rows: [{ place: 1, nick: 'Mateusz', at: Date.UTC(2026, 10, 2, 12) }] });
+    expect(await client.fameSubmit(KEY, { ...ENTRY, nick: 'Ala', day: 89 })).toMatchObject({ ok: false, error: 'fame-invalid' });
+  });
+
+  /** fetch, który wisi, dopóki ktoś go nie przerwie (`signal`), jak połączenie bez odpowiedzi. */
+  const hanging = (): { fetchFn: typeof fetch; signals: AbortSignal[] } => {
+    const signals: AbortSignal[] = [];
+    const fetchFn = ((_input: RequestInfo | URL, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      signals.push(init!.signal!);
+      init!.signal!.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
+    })) as typeof fetch;
+    return { fetchFn, signals };
+  };
+
+  it('limit czasu: zapytania Galerii bez odpowiedzi kończą się po FAME_TIMEOUT_MS błędem sieci (a nie wiszą), tuż przed limitem jeszcze czekają', async () => {
+    vi.useFakeTimers();
+    for (const call of [(c: ReturnType<typeof createRankingClient>) => c.fameList(), (c: ReturnType<typeof createRankingClient>) => c.fameSubmit(KEY, ENTRY)]) {
+      const { fetchFn, signals } = hanging();
+      let settled = false;
+      const pending = call(createRankingClient(fetchFn)).then((r) => { settled = true; return r; });
+      await vi.advanceTimersByTimeAsync(FAME_TIMEOUT_MS - 1);
+      expect(settled).toBe(false);
+      expect(signals[0]!.aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(await pending).toEqual({ ok: false, error: 'network', message: NETWORK_ERROR });
+      expect(signals[0]!.aborted).toBe(true);
+    }
+    expect(FAME_TIMEOUT_MS).toBe(10_000);
+  });
+
+  it('zegar limitu nie zostaje po odpowiedzi (ani po błędzie sieci), a zapytania spoza Galerii nie dostają limitu', async () => {
+    vi.useFakeTimers();
+    const ok = fake(() => Response.json({ ok: true, total: 0, rows: [] }));
+    await createRankingClient(ok.fetchFn).fameList();
+    expect(vi.getTimerCount()).toBe(0);
+    const offline = fake(() => { throw new TypeError('Failed to fetch'); });
+    await createRankingClient(offline.fetchFn).fameSubmit(KEY, ENTRY);
+    expect(vi.getTimerCount()).toBe(0);
+    const other = fake(() => Response.json({ ok: true, board: 'global', week: WEEK, rows: [] }));
+    await createRankingClient(other.fetchFn).board('global');
+    expect(other.calls[0]!.init.signal).toBeUndefined();
   });
 });

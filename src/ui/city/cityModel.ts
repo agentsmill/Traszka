@@ -2,14 +2,14 @@ import { t } from '@/i18n';
 import type { CityPinKind } from '@/render/city/cityPins';
 import { DISTRICTS } from '@/sim/city/districts';
 import { lotById } from '@/sim/city/generateCity';
-import { lotEstimate, rivalsNear, siteFor, type LotEstimate } from '@/sim/city/traffic';
+import { lotEstimate, ownNear, rivalsNear, siteFor, type LotEstimate } from '@/sim/city/traffic';
 import type { CityLot, CityState, LotState, RivalBrand, SourceKind, StoreDistrict } from '@/sim/city/types';
 import { dayOf } from '@/sim/economy/calendar';
 import { HOUR_CURVE, OPEN_FROM, OPEN_TO } from '@/sim/economy/catalog';
 import { planFor, type InstallmentPlan } from '@/sim/economy/franchisee';
 import { CELL_SIZE_M } from '@/sim/grid';
 import { closedStoreAt, lotRentable, lotState, rentBuildDays, rentPrice, rentRefusal } from '@/sim/firm/commands';
-import { activeStore } from '@/sim/firm/firm';
+import { activeStore, ownLotsOf } from '@/sim/firm/firm';
 import type { FirmRefusal, FirmState } from '@/sim/firm/types';
 import type { LotKind, StoreLayout } from '@/sim/store/types';
 import { plural } from '../game/format';
@@ -61,22 +61,36 @@ export const theftLevel = (mult: number): Level => (mult >= 1.3 ? 'wysokie' : mu
 const estimates = new WeakMap<CityState, Map<string, LotEstimate>>();
 const reletEstimates = new WeakMap<StoreLayout, Map<string, LotEstimate>>();
 
+/**
+ * Własne sklepy firmy, które podbierają klientów lokalowi `lotId` (4b §5.4): otwarte sklepy bliżej niż `OWN_RADIUS_M`, od najbliższego. Lokal
+ * startowy nie traci ruchu przez własne sklepy (`siteFor` daje mu `NEUTRAL_SITE`, także po ponownym wynajmie), więc dla niego lista jest pusta
+ * i karta nie obiecuje kary, której sim nie nałoży. Z tego samego składu liczy się `own` widełek (`estimateOf`) i wiersz karty (`ownNear`).
+ */
+export function ownNearLot(f: FirmState, lotId: number): { lotId: number; meters: number }[] {
+  return lotId === f.city.startLotId ? [] : ownNear(f.city, lotId, ownLotsOf(f));
+}
+
+/**
+ * Widełki lokalu `lotId` z kanibalizacją: klucz pamięci obejmuje własne sklepy w promieniu (`own`), bo otwarcie albo zamknięcie sklepu obok zmienia
+ * ruch lokalu (i widełki z nim), a miasto zostaje to samo. Badania Sieci widełek nie zmieniają.
+ */
 function estimateOf(seed: string, f: FirmState, lotId: number): LotEstimate {
+  const own = ownNearLot(f, lotId).map((o) => o.lotId);
   const closed = closedStoreAt(f, lotId);
   if (closed) {
     const { upgrades, equipment, remontLevel } = closed.econ;
-    const key = `${seed}:${lotId}:${JSON.stringify([remontLevel, upgrades, equipment])}`;
+    const key = `${seed}:${lotId}:${JSON.stringify([remontLevel, upgrades, equipment, own])}`;
     let byKey = reletEstimates.get(closed.layout);
     if (!byKey) reletEstimates.set(closed.layout, byKey = new Map());
     let e = byKey.get(key);
-    if (!e) byKey.set(key, e = lotEstimate(seed, f.city, lotId, { layout: closed.layout, fittings: { upgrades, equipment, remontLevel } }));
+    if (!e) byKey.set(key, e = lotEstimate(seed, f.city, lotId, { layout: closed.layout, fittings: { upgrades, equipment, remontLevel } }, own));
     return e;
   }
   let bySeed = estimates.get(f.city);
   if (!bySeed) estimates.set(f.city, bySeed = new Map());
-  const key = `${seed}:${lotId}`;
+  const key = `${seed}:${lotId}:${own.join(',')}`;
   let e = bySeed.get(key);
-  if (!e) bySeed.set(key, e = lotEstimate(seed, f.city, lotId));
+  if (!e) bySeed.set(key, e = lotEstimate(seed, f.city, lotId, undefined, own));
   return e;
 }
 
@@ -147,6 +161,8 @@ export interface LotCardModel {
   basket: Level; expectations: Level; theft: Level;
   /** Konkurencja bliżej niż `RIVAL_RADIUS_M`, od najbliższej; odległość w pełnych metrach. */
   rivals: { brand: RivalBrand; meters: number }[];
+  /** Własne otwarte sklepy bliżej niż `OWN_RADIUS_M` (4b): każdy zostawia lokalowi `OWN_FACTOR` ruchu. Od najbliższego, metry pełne; lokal startowy ma pustą listę. */
+  ownNear: { lotId: number; meters: number }[];
   /** Pakiet otwarcia (`rentPrice`), plan rat z tej ceny (6 albo 12 rat) i dni budowy (`rentBuildDays`). */
   price: number; plan: InstallmentPlan; buildDays: number;
   /** Klienci na godzinę przy środku widełek (`lotHours`). */
@@ -171,6 +187,7 @@ export function lotCardModel(seed: string, f: FirmState, lotId: number, pay: 'go
     expectations: expectationsLevel(d.patience, d.repPenalty),
     theft: theftLevel(d.theft),
     rivals: rivalsNear(f.city, lotId).flatMap((r) => (r.lot.brand ? [{ brand: r.lot.brand, meters: Math.round(r.meters) }] : [])),
+    ownNear: ownNearLot(f, lotId).map((o) => ({ lotId: o.lotId, meters: Math.round(o.meters) })),
     price,
     plan: planFor(price),
     buildDays: rentBuildDays(f, lotId),

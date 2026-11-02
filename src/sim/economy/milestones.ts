@@ -30,4 +30,7 @@ export const MILESTONES: readonly Milestone[] = [
   { id: 'sco8', label: 'Osiem kas samoobsługowych', hint: 'Po remoncie jest więcej slotów', reward: 40, done: (s) => sco(s) >= 8 },
   { id: 'flagowiec', label: 'Flagowiec', hint: 'Trzeci remont', reward: 60, done: (s) => s.remontLevel >= 3 },
   { id: 'edward', label: 'eDward przejmuje zmianę', hint: 'Humanoid z warsztatu', reward: 100, done: (s) => lvl(s, 'humanoid') >= 1 },
+  { id: 'remont4', label: 'Flagowiec Plus', hint: 'Czwarty remont', reward: 80, done: (s) => s.remontLevel >= 4 },
+  { id: 'remont5', label: 'Traszka Max Pro Ultra', hint: 'Piąty remont, większego sklepu już nie będzie', reward: 120, done: (s) => s.remontLevel >= 5 },
+  { id: 'earned1m', label: 'Milion marży w jednym sklepie', hint: 'Skaluj sklep, remonty i ulepszenia późnej gry', reward: 80, done: (s) => s.total.margin >= 1_000_000 },
 ];

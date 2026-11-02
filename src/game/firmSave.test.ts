@@ -5,18 +5,20 @@ import { generateCity, lotNeighbour } from '@/sim/city/generateCity';
 import { CITY_GENERATOR_VERSION } from '@/sim/city/types';
 import { MINUTES_PER_DAY, OPEN_FROM } from '@/sim/economy/catalog';
 import { applyCommand } from '@/sim/economy/commands';
-import { awaitingDecision, isClosedForRemont, stepMinute, type EconomyState } from '@/sim/economy/economy';
+import { awaitingDecision, effects, isClosedForRemont, stepMinute, type EconomyState } from '@/sim/economy/economy';
 import { defaultAnswer } from '@/sim/economy/monthPreview';
 import { LIMITS } from '@/sim/economy/sanitize';
 import { BOTS } from '@/sim/economy/tycoon/bots';
 import { visibleCards } from '@/sim/economy/tycoon/cards';
 import { economyView, toCommand } from '@/sim/economy/tycoon/economyEnv';
-import { storeSeedFor } from '@/sim/city/traffic';
+import { siteFor, storeSeedFor } from '@/sim/city/traffic';
 import { closeStore } from '@/sim/firm/closure';
 import { RELET_BUILD_DAYS, RELET_SHARE, applyFirmCommand, lotState, openDueBuilds, rentPrice, rentRefusal } from '@/sim/firm/commands';
 import {
-  activeStore, applyStoreCommand, createFirm, emptyStepOut, grantToFirm, openStoreAt, openStores, stepFirmMinute, syncWallet,
+  activeStore, applyStoreCommand, createFirm, emptyStepOut, grantToFirm, openStoreAt, openStores, ownLotsOf, refreshSites, stepFirmMinute, syncWallet,
 } from '@/sim/firm/firm';
+import { FAME_CASH, FIRM_GOALS } from '@/sim/firm/goals';
+import { RESEARCH_IDS, RESEARCH_MAX_LEVEL, netMods } from '@/sim/firm/research';
 import { INBOX_MAX, type FirmState, type FirmStepOut } from '@/sim/firm/types';
 import { freshRun } from '@/sim/run';
 import { GENERATOR_VERSION } from '@/sim/store/generateStore';
@@ -281,6 +283,37 @@ function mistrzPoTraszce(): PoTraszce {
 
 // --- Schemat 1 i 2: sklep z zapisu to sklep #1 ------------------------------------------------------------------------
 
+/**
+ * Zamrożony zapis schematu 3 z ponownym wynajmem (`reopened: true` w sklepie #2): `save-v3-po-traszce.json` wczytany kodem sprzed etapu 4b
+ * (89149ab), lokal #2 wzięty znów na raty, gra do 6:00 dnia po otwarciu, zapis tym samym kodem. Nowy kod go nie odtworzy (pisze schemat 4).
+ */
+const REOPENED_FIXTURE = 'save-v3-ponowny-wynajem.json';
+
+/**
+ * Skróty stanu firmy po wczytaniu każdego fixture'a kodem sprzed etapu 4b (89149ab, `FIRM_SAVE_SCHEMA` 3): osoba, budowy, skrzynka i sklepy
+ * (ekonomia, układ, flagi) bez `info` i nowych pól 4b. Migracja 3 → 4 ma dać ten sam stan co do bajtu (K1: inaczej zapisy graczy trafiają do
+ * `:broken` albo wracają inne).
+ */
+const BASE_DIGESTS: Readonly<Record<string, string>> = {
+  'save-sim4-palety.json': 'df0b3f98c23027780ead8a42442aa29fa61828827ae5700cdbc5ec3c2c29c74d',
+  'save-sim5-polowa-miesiaca.json': 'f191002b51faded486f625ff37dcefccf95b4126553e063b207bc6f259d7f01d',
+  'save-v1-blok-dzien40.json': '0ee5571f7a2a75315ad273ce3518f4c0c1c3df65a018e3d9cf74c72cdd1da0f9',
+  'save-v1-remont1.json': 'd7b0c795231190bfa440c320dcbbc7c760b0d6eb8af9c19f74122fa2ad9ebc1b',
+  'save-v2-dzien30.json': '1ff754b6bbaeea118134ef2b36b4a854c90c7ba2981a231428905825a7081155',
+  'save-v2-remont2.json': '2bb0e50da58e8b596d68e682c4e85d68db78c50555d14822f343dcb65839eca6',
+  'save-v3-dwa-sklepy.json': 'ed3bf3dca28a2b5541c9a7db470851c7977998f7e0962347ebed19baaeba7317',
+  'save-v3-po-traszce.json': 'ee0f2d19bd2f24baca1bed64b3cc3a0d9d4cbcc9a6b09bc26d596d8fc819eb5e',
+  'save-v3-ponowny-wynajem.json': '53dda970321b002b99b1f10a12be59eb98eedb1953a60ecca524c37d6792d182',
+  'save-v3-przed-statusem.json': '52564049513ff0d611bc93069e369f6fedae70cc89cbf9ea5524890b1daef13a',
+};
+
+/** Stan firmy do porównania z `BASE_DIGESTS`: to, co niósł zapis schematu 3, w tej samej kolejności kluczy. */
+const legacyDigest = (f: FirmState): string => hashOf({
+  seed: f.seed, ranked: f.ranked, person: f.person, activeId: f.activeId, builds: f.builds, monthInvest: f.monthInvest, inbox: f.inbox,
+  weatherHash: f.weatherHash, over: f.over,
+  stores: f.stores.map((s) => ({ id: s.id, lotId: s.lotId, closed: s.closed, notice: s.notice, reopened: s.reopened ?? null, econ: s.econ, layout: s.layout })),
+});
+
 const LEGACY = [
   'save-v1-blok-dzien40.json', 'save-v1-remont1.json', 'save-v2-dzien30.json', 'save-v2-remont2.json', 'save-sim4-palety.json',
   'save-sim5-polowa-miesiaca.json',
@@ -293,8 +326,8 @@ it('GENERATOR_VERSION 1: zapisy bez układów odtwarzają się tym generatorem',
 });
 
 describe('schemat 1 i 2: wczytanie jako firma z jednym sklepem', () => {
-  it('stałe: koperta firmy to schemat 3, schemat biegu rankingowego zostaje 2, a paczka mieści tyle, co przyjmuje serwer', () => {
-    expect(FIRM_SAVE_SCHEMA).toBe(3);
+  it('stałe: koperta firmy to schemat 4, schemat biegu rankingowego zostaje 2, a paczka mieści tyle, co przyjmuje serwer', () => {
+    expect(FIRM_SAVE_SCHEMA).toBe(4);
     expect(SAVE_SCHEMA).toBe(2);
     expect(SAVE_TRANSFER_MAX_BYTES).toBe(64 * 1024);
     expect(SAVE_TRANSFER_MAX_BYTES).toBe(SAVE_MAX_BYTES);
@@ -318,12 +351,12 @@ describe('schemat 1 i 2: wczytanie jako firma z jednym sklepem', () => {
     expect(f.weatherHash).toBe(session.econ.seedHash);
   });
 
-  it.each(LEGACY)('%s: pierwszy zapis ma schemat 3 i wraca z niego ten sam sklep', (name) => {
+  it.each(LEGACY)('%s: pierwszy zapis ma schemat 4 i wraca z niego ten sam sklep', (name) => {
     const data = json(name);
     const seed = data.seed as string;
     const f = opened(restoreFirmFrom(data, seed));
     const envelope = firmEnvelopeOf(f);
-    expect(envelope).toMatchObject({ schema: 3, gameVersion: GAME_VERSION, cityGeneratorVersion: CITY_GENERATOR_VERSION, seed });
+    expect(envelope).toMatchObject({ schema: 4, gameVersion: GAME_VERSION, cityGeneratorVersion: CITY_GENERATOR_VERSION, seed });
     expect(envelope.stores).toHaveLength(1);
     expect(Object.keys(envelope).sort()).toEqual(['cityGeneratorVersion', 'firm', 'gameVersion', 'schema', 'seed', 'stores']);
     const again = opened(viaJson(f));
@@ -354,7 +387,7 @@ describe('schemat 1 i 2: wczytanie jako firma z jednym sklepem', () => {
     expect(st.econ.partner).toEqual(partner);
     expect(st.econ).toEqual(direct.econ);
     expect(f.person.partner).toBe(false);   // premia sieci z poprzednich gier to nie status Partnera Strategicznego
-    expect(firmEnvelopeOf(f).schema).toBe(3);
+    expect(firmEnvelopeOf(f).schema).toBe(4);
 
     // premia sieci działa jak dziś: trzy doby firmy i trzy doby samej ekonomii dają ten sam stan (dochód z sieci wpada przy zamknięciu dnia)
     const events: never[] = [];
@@ -381,7 +414,7 @@ describe('schemat 1 i 2: wczytanie jako firma z jednym sklepem', () => {
 
 // --- Schemat 3: obieg ----------------------------------------------------------------------------------------------
 
-describe('schemat 3: zapis i odczyt firmy', () => {
+describe('schemat 4: zapis i odczyt firmy', () => {
   it('scenariusz jest tym, co ma być: #1 zamknięty z wypowiedzeniem, aktywny #2 po remoncie, budowa w toku', () => {
     const f = scenario();
     expect(f.stores.map((s) => ({ id: s.id, closed: s.closed }))).toEqual([{ id: 1, closed: true }, { id: 2, closed: false }]);
@@ -398,9 +431,10 @@ describe('schemat 3: zapis i odczyt firmy', () => {
   it('koperta: seed, wersje, osoba, budowy i skrzynka; sklep otwarty z econ, zamknięty tylko z wyposażeniem, układów odtwarzalnych nie ma (bez miasta i info)', () => {
     const f = scenario();
     const env = firmEnvelopeOf(f);
-    expect(env).toMatchObject({ schema: 3, gameVersion: GAME_VERSION, cityGeneratorVersion: CITY_GENERATOR_VERSION, seed: SEED });
+    expect(env).toMatchObject({ schema: 4, gameVersion: GAME_VERSION, cityGeneratorVersion: CITY_GENERATOR_VERSION, seed: SEED });
     expect(env.firm).toEqual({
       person: f.person, activeId: 2, builds: f.builds, monthInvest: f.monthInvest, inbox: f.inbox, weatherHash: f.weatherHash, over: null,
+      research: {}, storeLimit: 3, goals: f.goals, fame: null,   // bot w scenariuszu zbiera po drodze ćwierć bańki: cele firmy to stan z gry, nie pusta lista
     });
     // układ odtwarzalny z lokalu miasta i poziomu remontu nie leży w kopercie (ani zamkniętego, ani otwartego sklepu)
     expect(env.stores.map((s) => Object.keys(s).sort())).toEqual(env.stores.map(() => ['closed', 'econ', 'generatorVersion', 'id', 'lotId', 'notice']));
@@ -712,7 +746,7 @@ describe('schemat 3: zapis i odczyt firmy', () => {
 
 // --- Zepsuta koperta ------------------------------------------------------------------------------------------------
 
-describe('schemat 3: odczyt zepsutej koperty', () => {
+describe('schemat 3 i 4: odczyt zepsutej koperty', () => {
   const invalid = { ok: false, reason: 'invalid' } as const;
 
   it('koperta jest poprawna, zanim ją zepsujemy', () => {
@@ -874,10 +908,14 @@ describe('schemat 3: odczyt zepsutej koperty', () => {
 });
 
 describe('isNewerSave', () => {
-  it('schemat wyższy niż 3 albo miasto z nowszego generatora to zapis z nowszej wersji gry; reszta nie', () => {
-    expect(isNewerSave({ schema: 4 })).toBe(true);
+  it('schemat wyższy niż 4 albo miasto z nowszego generatora to zapis z nowszej wersji gry; reszta nie', () => {
+    expect(isNewerSave({ schema: 5 })).toBe(true);
+    expect(isNewerSave({ schema: 4 })).toBe(false);
+    expect(isNewerSave({ schema: 4.5 })).toBe(true);
     expect(isNewerSave({ schema: 99, seed: 'x' })).toBe(true);
+    expect(isNewerSave({ schema: 4, cityGeneratorVersion: CITY_GENERATOR_VERSION + 1 })).toBe(true);
     expect(isNewerSave({ schema: 3, cityGeneratorVersion: CITY_GENERATOR_VERSION + 1 })).toBe(true);
+    expect(isNewerSave({ schema: 4, cityGeneratorVersion: CITY_GENERATOR_VERSION })).toBe(false);
     expect(isNewerSave({ schema: 3, cityGeneratorVersion: CITY_GENERATOR_VERSION })).toBe(false);
     expect(isNewerSave({ schema: 3 })).toBe(false);
     expect(isNewerSave({ schema: 2, cityGeneratorVersion: 99 })).toBe(false);
@@ -890,7 +928,7 @@ describe('isNewerSave', () => {
 
 // --- Sesja: odczyt schematu 3 -------------------------------------------------------------------------------------------
 
-describe('sesja: odczyt zapisu schematu 3 (createSession)', () => {
+describe('sesja: odczyt zapisu schematu 3 i 4 (createSession)', () => {
   it('sesja to aktywny sklep (ten sam obiekt econ, układ i info), a cała firma leży w session.firm', () => {
     storage.setItem(key(SEED), text('save-v3-dwa-sklepy.json'));
     const s = createSession(SEED);
@@ -920,9 +958,9 @@ describe('sesja: odczyt zapisu schematu 3 (createSession)', () => {
     expect(s.firm).toBeUndefined();
   });
 
-  it('schemat 4 albo miasto z nowszego generatora: NEWER_SAVE_NOTICE, sklep tymczasowy i zapis nienadpisany', () => {
+  it('schemat 5 albo miasto z nowszego generatora: NEWER_SAVE_NOTICE, sklep tymczasowy i zapis nienadpisany', () => {
     const base = json('save-v3-dwa-sklepy.json');
-    for (const newer of [{ ...base, schema: 4 }, { ...base, cityGeneratorVersion: 2 }, { schema: 4 }]) {
+    for (const newer of [{ ...base, schema: 5 }, { ...base, cityGeneratorVersion: 2 }, { ...base, schema: 4, cityGeneratorVersion: 2 }, { schema: 5 }]) {
       const raw = JSON.stringify(newer);
       storage.clear();
       storage.setItem(key(SEED), raw);
@@ -1157,8 +1195,8 @@ describe('ponowny wynajem lokalu „po Traszce” a zapis', () => {
     expect(loaded(level0)).toEqual([{ ...build, price }]);
   }, 60_000);
 
-  it('koperty fixtures (schemat 3) po wczytaniu i zapisie nie mają klucza `reopened`', () => {
-    const names = readdirSync(new URL('./fixtures/', import.meta.url)).filter((n) => n.startsWith('save-v3-'));
+  it('koperty fixtures (schemat 3) bez ponownego wynajmu po wczytaniu i zapisie nie mają klucza `reopened`', () => {
+    const names = readdirSync(new URL('./fixtures/', import.meta.url)).filter((n) => n.startsWith('save-v3-') && n !== REOPENED_FIXTURE);
     expect(names.length).toBeGreaterThanOrEqual(2);
     for (const name of names) {
       const raw = json(name) as { schema: number; seed: string; stores: object[] };
@@ -1342,4 +1380,243 @@ describe('rozmiar paczki „Wyślij zapis”', () => {
     expect(back.stores.map((s) => s.layout)).toEqual(f.stores.map((s) => s.layout));
     expect(JSON.stringify(firmEnvelopeOf(back))).toBe(JSON.stringify(firmEnvelopeOf(f)));
   }, 180_000);
+});
+
+// --- Schemat 4 (etap 4b): nowe pola firmy i migracja 3 → 4 ------------------------------------------------------------------
+
+/** Wszystkie pliki fixtures: zapisy z produkcji i z poprzednich etapów, schematy 1–3. */
+const FIXTURES = readdirSync(new URL('./fixtures/', import.meta.url)).filter((n) => n.endsWith('.json')).sort();
+
+describe('schemat 4: badania, limit sklepów, cele firmy i Galeria w kopercie', () => {
+  it('FIRM_SAVE_SCHEMA = 4; koperta niesie research, storeLimit, goals, fame', () => {
+    expect(FIRM_SAVE_SCHEMA).toBe(4);
+    const f = structuredClone(scenario());
+    f.research = { dostawy: 2, media: 1 };
+    f.storeLimit = 4;
+    f.goals = { ready: ['cash250k'], claimed: ['stores3'] };
+    f.fame = { day: 400, cash: 1_000_123.5 };
+    const env = firmEnvelopeOf(f);
+    expect(env.schema).toBe(4);
+    expect(env.firm).toMatchObject({ research: { dostawy: 2, media: 1 }, storeLimit: 4, goals: { ready: ['cash250k'], claimed: ['stores3'] }, fame: { day: 400, cash: 1_000_123.5 } });
+    expect(Object.keys(env.firm).sort()).toEqual(
+      ['activeId', 'builds', 'fame', 'goals', 'inbox', 'monthInvest', 'over', 'person', 'research', 'storeLimit', 'weatherHash'],
+    );
+    const back = opened(viaJson(f));
+    expect({ research: back.research, storeLimit: back.storeLimit, goals: back.goals, fame: back.fame }).toEqual({
+      research: { dostawy: 2, media: 1 }, storeLimit: 4, goals: { ready: ['cash250k'], claimed: ['stores3'] }, fame: { day: 400, cash: 1_000_123.5 },
+    });
+    // save -> load -> save: ta sama koperta co do znaku
+    const text = JSON.stringify(firmEnvelopeOf(f));
+    expect(JSON.stringify(firmEnvelopeOf(opened(restoreFirmFrom(JSON.parse(text), SEED))))).toBe(text);
+  });
+
+  it('każdy plik src/game/fixtures/*.json wczytuje się (ok) z research {}, storeLimit 3, goals puste, fame null', () => {
+    expect(FIXTURES).toEqual(Object.keys(BASE_DIGESTS).sort());   // nowy fixture: dopisz skrót z kodu, z którego powstał
+    for (const name of FIXTURES) {
+      const data = json(name);
+      const f = opened(restoreFirmFrom(data, data.seed as string));
+      expect({ research: f.research, storeLimit: f.storeLimit, goals: f.goals, fame: f.fame }, name).toEqual({
+        research: {}, storeLimit: 3, goals: { ready: [], claimed: [] }, fame: null,
+      });
+      // migracja nie zmienia niczego, co zapis już niósł (K1)
+      expect(legacyDigest(f), name).toBe(BASE_DIGESTS[name]);
+      // pierwszy zapis po wczytaniu to schemat 4 i wraca z niego ten sam stan
+      const env = firmEnvelopeOf(f);
+      expect(env.schema, name).toBe(4);
+      expect(legacyDigest(opened(viaJson(f))), name).toBe(BASE_DIGESTS[name]);
+    }
+  }, 60_000);
+
+  it('K1: zapis schematu 3 (też z `reopened`) w przeglądarce wczytuje się w sesji bez :broken i z tym samym stanem, a schemat 3 zapisany na nowo to schemat 4', () => {
+    const v3 = FIXTURES.filter((n) => (json(n) as { schema?: unknown }).schema === 3);
+    expect(v3).toEqual(['save-v3-dwa-sklepy.json', 'save-v3-po-traszce.json', REOPENED_FIXTURE, 'save-v3-przed-statusem.json'].sort());
+    expect((json(REOPENED_FIXTURE).stores as { reopened?: true }[]).map((st) => st.reopened)).toEqual([undefined, true, undefined]);
+    for (const name of v3) {
+      storage.clear();
+      const raw = text(name);
+      const seed = (JSON.parse(raw) as { seed: string }).seed;
+      storage.setItem(key(seed), raw);
+      const s = createSession(seed);
+      expect({ fromSave: s.fromSave, loadNotice: s.loadNotice, ephemeral: s.ephemeral }, name).toEqual({ fromSave: true, loadNotice: null, ephemeral: false });
+      expect(storage.getItem(`${key(seed)}:broken`), name).toBeNull();
+      expect(storage.getItem(key(seed)), name).toBe(raw);   // wczytanie niczego nie zapisuje
+      const f = s.firm!;
+      expect(f, name).toBeDefined();
+      expect(legacyDigest(f), name).toBe(BASE_DIGESTS[name]);
+      expect(f.storeLimit, name).toBe(3);
+
+      // to, co zapisze gra, to stara koperta z czterema nowymi polami (gameVersion to wersja bieżąca)
+      const old = JSON.parse(raw) as Record<string, any>;
+      const env = JSON.parse(JSON.stringify(firmEnvelopeOf(f))) as Record<string, any>;
+      expect(env, name).toEqual({
+        ...old, schema: 4, gameVersion: GAME_VERSION,
+        firm: { ...old.firm, research: {}, storeLimit: 3, goals: { ready: [], claimed: [] }, fame: null },
+      });
+    }
+  });
+
+  it('save-v3-po-traszce.json: #2 zamknięty, #3 reopened bez zmian, storeLimit 3', () => {
+    const raw = json('save-v3-po-traszce.json');
+    const f = opened(restoreFirmFrom(raw, STATUS_SEED));
+    expect(f.stores.map((st) => [st.id, st.closed, st.reopened ?? null])).toEqual([[1, false, null], [2, true, null], [3, false, null]]);
+    expect(f.storeLimit).toBe(3);
+    expect(lotState(f, f.stores[1]!.lotId)).toBe('po-traszce');
+    // po ponownym wynajmie #2 trzy placówki to dalej komplet: czwarta czeka na obrót sieci
+    const reopened = opened(restoreFirmFrom(json(REOPENED_FIXTURE), STATUS_SEED));
+    expect(reopened.stores.map((st) => [st.id, st.closed, st.reopened ?? null])).toEqual([[1, false, null], [2, false, true], [3, false, null]]);
+    expect(reopened.storeLimit).toBe(3);
+    const free = reopened.city.lots.find((l) => lotState(reopened, l.id) === 'wolny')!.id;
+    expect(rentRefusal(reopened, free, 'raty')).toBe('limit');
+    expect(JSON.stringify(firmEnvelopeOf(reopened))).toContain('"reopened":true');
+  });
+
+  it('sanityzacja: research {dostawy: 99} → maxLevel; storeLimit 9 → 5; storeLimit 3 przy 4 sklepach w zapisie → 4; fame {day: "x"} → null', () => {
+    const load = (firm: Record<string, unknown>, env: Record<string, any> = smallEnvelope(), schema = 4): FirmState =>
+      opened(restoreFirmFrom({ ...env, schema, firm: { ...env.firm, ...firm } }, SEED));
+
+    expect(load({ research: { dostawy: 99 } }).research).toEqual({ dostawy: RESEARCH_MAX_LEVEL.dostawy });
+    expect(RESEARCH_MAX_LEVEL.dostawy).toBe(3);
+    expect(load({ research: { obsada: 2.4, marketing: -1, media: '2', nieznane: 3, magazyn: 0, lojalnosc: 5 } }).research).toEqual({ obsada: 2, lojalnosc: 5 });
+    for (const bad of [null, 'dużo', [1, 2], 7]) expect(load({ research: bad }).research).toEqual({});
+    expect(Object.keys(load({ research: { media: 1, dostawy: 1 } }).research)).toEqual(['dostawy', 'media']);   // kolejność RESEARCH_IDS
+    expect(RESEARCH_IDS).toEqual(['dostawy', 'obsada', 'marketing', 'magazyn', 'lojalnosc', 'media']);
+
+    expect(load({ storeLimit: 9 }).storeLimit).toBe(5);
+    expect(load({ storeLimit: 4 }).storeLimit).toBe(4);
+    expect(load({ storeLimit: 4.6 }).storeLimit).toBe(5);
+    for (const bad of [1, 2, null, 'pięć', undefined]) expect(load({ storeLimit: bad }).storeLimit).toBe(3);
+
+    // cztery otwarte sklepy w zapisie z limitem 3: zapis z gry nie mógł go przekroczyć, więc limit rośnie do liczby placówek
+    const four = newFirm();
+    playTo(four, 10 * DAY + OPEN_FROM);
+    const free = four.city.lots.filter((l) => lotState(four, l.id) === 'wolny');
+    for (const lot of free.slice(0, 3)) openStoreAt(four, lot.id, clockOf(four));
+    expect(openStores(four)).toHaveLength(4);
+    const fourEnv = JSON.parse(JSON.stringify(firmEnvelopeOf(four))) as Record<string, any>;
+    expect(load({ storeLimit: 3 }, fourEnv).storeLimit).toBe(4);
+    expect(load({ storeLimit: undefined }, fourEnv, 3).storeLimit).toBe(4);
+    // budowa liczy się jak placówka: trzy otwarte i budowa przy limicie 3 to 4
+    const withBuild = structuredClone(fourEnv);
+    const building = withBuild.stores.pop() as { lotId: number };
+    withBuild.firm.builds = [{ lotId: building.lotId, readyDay: 40, price: 50_000, pay: 'raty' }];
+    const fb = load({ storeLimit: 3 }, withBuild);
+    expect([openStores(fb).length, fb.builds.length, fb.storeLimit]).toEqual([3, 1, 4]);
+
+    expect(load({ fame: { day: 'x', cash: 1_000_000 } }).fame).toBeNull();
+    expect(load({ fame: { day: 120.5, cash: 1_000_000 } }).fame).toBeNull();
+    expect(load({ fame: { day: 120, cash: null } }).fame).toBeNull();
+    expect(load({ fame: 'tak' }).fame).toBeNull();
+    expect(load({ fame: { day: 120, cash: 1_000_001.25 } }).fame).toEqual({ day: 120, cash: 1_000_001.25 });
+
+    // cele firmy: tylko znane id z FIRM_GOALS, bez dubli, najwyżej tyle, ile jest celów; odebrany nie czeka na odbiór
+    const ids = FIRM_GOALS.map((g) => g.id);
+    expect(ids).toHaveLength(10);
+    expect(load({ goals: { ready: ['cash250k', 5, 'cash250k', null, 'cash500k'], claimed: ['cash500k', 'stores3'] } }).goals).toEqual({ ready: ['cash250k'], claimed: ['cash500k', 'stores3'] });
+    expect(load({ goals: { ready: ids, claimed: ids } }).goals).toEqual({ ready: [], claimed: ids });
+    expect(load({ goals: { ready: ids } }).goals).toEqual({ ready: ids, claimed: [] });
+    expect(load({ goals: { ready: [...ids, ...ids, 'cel10', 'cel11'] } }).goals).toEqual({ ready: ids, claimed: [] });
+    expect(load({ goals: { ready: [...ids].reverse() } }).goals).toEqual({ ready: [...ids].reverse(), claimed: [] });   // kolejność z zapisu zostaje
+    for (const bad of [null, [], 'cele', { ready: 'a', claimed: 7 }]) expect(load({ goals: bad }).goals).toEqual({ ready: [], claimed: [] });
+  }, 20_000);
+
+  it('odczyt: goals.ready z nieznanym id i duplikatem → przefiltrowane, bez duplikatów', () => {
+    const env = smallEnvelope();
+    env.firm.goals = {
+      ready: ['cash250k', 'nieznany', 'cash250k', 'toString', '__proto__', 'stores3', 7, null, 'cash1m'],
+      claimed: ['research1', 'research1', 'cel-z-przyszlosci'],
+    };
+    const f = opened(restoreFirmFrom(env, SEED));
+    expect(f.goals).toEqual({ ready: ['cash250k', 'stores3', 'cash1m'], claimed: ['research1'] });
+    // cel odebrany, który zapis ma też w ready, zostaje tylko w claimed
+    env.firm.goals = { ready: ['cash250k', 'stores3'], claimed: ['stores3'] };
+    expect(opened(restoreFirmFrom(env, SEED)).goals).toEqual({ ready: ['cash250k'], claimed: ['stores3'] });
+    // zapis → odczyt → zapis zostawia tę samą listę
+    const again = opened(viaJson(f));
+    expect(again.goals).toEqual(f.goals);
+  }, 20_000);
+
+  it('próg miliona nie pada drugi raz po wczytaniu zapisu: fame zostaje w kopercie, a zdarzenie million nie wraca', () => {
+    const f = smallFirm();
+    f.person.wallet = FAME_CASH + 50_000;
+    syncWallet(f);
+    const first = emptyStepOut();
+    answerActive(f);
+    stepFirmMinute(f, first);
+    expect(first.firm.filter((e) => e.kind === 'million')).toHaveLength(1);
+    expect(f.fame).toEqual({ day: Math.floor(clockOf(f) / DAY), cash: f.person.wallet });
+    const saved = JSON.parse(JSON.stringify(firmEnvelopeOf(f))) as { firm: { fame: unknown; goals: { ready: string[] } } };
+    expect(saved.firm.fame).toEqual(f.fame);
+    expect(saved.firm.goals.ready).toEqual(expect.arrayContaining(['cash250k', 'cash500k', 'cash1m']));
+
+    const back = opened(restoreFirmFrom(saved, SEED));
+    expect(back.fame).toEqual(f.fame);
+    const out = emptyStepOut();
+    answerActive(back);
+    stepFirmMinute(back, out);
+    expect(out.firm.filter((e) => e.kind === 'million' || e.kind === 'goal')).toEqual([]);
+    expect(back.fame).toEqual(f.fame);
+
+    // zapis, w którym wallet jest już ponad milionem, a fame jest null (np. sprzed 4b), dostaje wpis w pierwszej minucie po wczytaniu
+    saved.firm.fame = null;
+    const late = opened(restoreFirmFrom(saved, SEED));
+    expect(late.fame).toBeNull();
+    const lateOut = emptyStepOut();
+    answerActive(late);
+    stepFirmMinute(late, lateOut);
+    expect(lateOut.firm.filter((e) => e.kind === 'million')).toHaveLength(1);
+    expect(late.fame).not.toBeNull();
+  }, 30_000);
+
+  it('research i storeLimit czytane przed refreshSites: site.net istnieje od razu po odczycie, od pierwszej minuty', () => {
+    const env = smallEnvelope();
+    env.firm.research = { dostawy: 2, lojalnosc: 1 };
+    env.firm.storeLimit = 4;
+    const f = opened(restoreFirmFrom(env, SEED));
+    expect(f.research).toEqual({ dostawy: 2, lojalnosc: 1 });
+    expect(f.storeLimit).toBe(4);
+    // dwa otwarte sklepy (skala 1): dostawy 2 → opłata za palety × 0,8, lojalność 1 → koszyk × 1,015; każdy otwarty sklep, także startowy
+    const net = { traffic: 1, basket: 1 + 0.015 * 1 * 1, wages: 1, media: 1, logistics: 1 - 0.1 * 2 * 1, backroom: 1 };
+    expect(netMods(f.research, 2)).toEqual(net);
+    expect(openStores(f)).toHaveLength(2);
+    for (const st of openStores(f)) expect(st.info.site?.net, `#${st.id}`).toEqual(net);
+    // `info` sklepów to już wynik `refreshSites` na pełnym stanie firmy: kolejne wywołanie niczego nie zmienia
+    const infos = JSON.stringify(f.stores.map((st) => st.info));
+    refreshSites(f);
+    expect(JSON.stringify(f.stores.map((st) => st.info))).toBe(infos);
+    // kanibalizacja też: #2 ma `site` z lokalami pozostałych otwartych sklepów, plus badania
+    expect(f.stores[1]!.info.site).toEqual({
+      ...siteFor(f.city, f.stores[1]!.lotId, { extra: true, ownCosts: false, firmDebt: true, weatherHash: f.weatherHash }, ownLotsOf(f, 2)),
+      net,
+    });
+    // ekonomia czyta to od pierwszej minuty: efekty sklepu widzą koszyk bez żadnego kroku
+    expect(effects(activeStore(f).econ, activeStore(f).info).net).toEqual(net);
+    // zapis i odczyt niczego nie gubią (koperta niesie tylko poziomy badań, `net` powstaje od nowa)
+    const again = opened(viaJson(f));
+    expect(again.research).toEqual(f.research);
+    for (const st of openStores(again)) expect(st.info.site?.net, `#${st.id}`).toEqual(net);
+  });
+
+  it('badania w zapisie jednego sklepu: poziomy zostają, ale sklep startowy nie ma site (net działa od dwóch sklepów)', () => {
+    const f = newFirm();
+    f.research = { marketing: 3, media: 1 };
+    const back = opened(viaJson(f));
+    expect(back.research).toEqual({ marketing: 3, media: 1 });
+    expect(back.stores[0]!.info.site).toBeUndefined();
+  });
+
+  it('isNewerSave({schema: 5}) true, {schema: 4} false', () => {
+    expect(isNewerSave({ schema: 5 })).toBe(true);
+    expect(isNewerSave({ schema: 4 })).toBe(false);
+  });
+
+  // Sprawdza tylko to, że koperta 4 spełnia regułę starej wersji przy wczytaniu (`isNewerSave` sprzed 4b: `schema > 3`, czyli zapis z nowszej
+  // wersji, sklep tymczasowy, zapis nietknięty). Karty starej wersji otwartej w chwili wdrożenia to nie chroni (komentarz przy FIRM_SAVE_SCHEMA).
+  it('koperta 4 przy wczytaniu w karcie sprzed 4b (reguła `schema > 3`) to zapis z nowszej wersji, a w tej wersji nie', () => {
+    const f = structuredClone(scenario());
+    f.storeLimit = 5;
+    const env = firmEnvelopeOf(f);
+    const oldTabIsNewer = (data: { schema: number }): boolean => data.schema > 3;   // `isNewerSave` sprzed etapu 4b
+    expect(oldTabIsNewer(env)).toBe(true);
+    expect(isNewerSave(env)).toBe(false);
+  });
 });

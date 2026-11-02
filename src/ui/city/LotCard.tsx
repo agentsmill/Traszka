@@ -1,7 +1,7 @@
 import type { ComponentChildren } from 'preact';
 import { t } from '@/i18n';
 import { DISTRICT_COLOR } from '@/render/city/buildCity';
-import { RIVAL_RADIUS_M } from '@/sim/city/traffic';
+import { OWN_FACTOR, RIVAL_RADIUS_M } from '@/sim/city/traffic';
 import type { CityLot } from '@/sim/city/types';
 import { RELET_SHARE, lotRentable, lotState } from '@/sim/firm/commands';
 import type { FirmState } from '@/sim/firm/types';
@@ -15,8 +15,9 @@ import { addressText } from './firmText';
 /*
  * Karta lokalu (spec §9.3): widełki klientów z profilem godzinowym, kto przychodzi, koszyk, oczekiwania i kradzieże słowami, konkurencja
  * obok, czas budowy i pakiet otwarcia (za gotówkę albo na raty) z przyciskiem „Biorę lokal”, który mówi tekstem Centrali, dlaczego nie
- * działa. Tę kartę ma każdy lokal, który przyjmuje wynajem (`lotRentable`): wolny albo „po Traszce” (4a.2; z blokiem wyposażenia, które
- * zostało, i podpisem zniżki pakietu). Lokal obok sklepu prowadzi do Ulepszeń (zajmuje go remont), reszta lokali ma kartę informacyjną.
+ * działa. Własny sklep bliżej niż `OWN_RADIUS_M` dostaje wiersz „Twoja Traszka 120 m stąd: −10% ruchu” (kanibalizacja, 4b; widełki ją już mają).
+ * Tę kartę ma każdy lokal, który przyjmuje wynajem (`lotRentable`): wolny albo „po Traszce” (4a.2; z blokiem wyposażenia, które zostało,
+ * i podpisem zniżki pakietu). Lokal obok sklepu prowadzi do Ulepszeń (zajmuje go remont), reszta lokali ma kartę informacyjną.
  * Liczby z `cityModel.ts`, teksty z `cityText.ts`. Bez haków: przesunięcie palcem po karcie trzyma pamięć na poziomie modułu (jedna karta naraz).
  */
 
@@ -62,7 +63,7 @@ function rentCard(f: FirmState, lot: CityLot, game: GameActions) {
   const rent = (): void => {
     const result = game.firm({ type: 'rentLot', lotId, pay });
     if (result.ok) selectedLot.value = null;
-    else pushToast(refusalText(result.reason), 'error');   // stan mógł się zmienić między rysunkiem karty a kliknięciem; ten sam tekst co toast powłoki się nie dubluje
+    else pushToast(refusalText(result.reason, f), 'error');   // stan mógł się zmienić między rysunkiem karty a kliknięciem; ten sam tekst co toast powłoki się nie dubluje
   };
   // przesunięcie palcem w lewo to następny lokal, w prawo poprzedni (telefon: karta wysuwa się od dołu, mapa zostaje u góry)
   const down = (e: PointerEvent): void => { swipeFrom = { id: e.pointerId, x: e.clientX, y: e.clientY }; };
@@ -89,6 +90,7 @@ function rentCard(f: FirmState, lot: CityLot, game: GameActions) {
       {row(t`Konkurencja obok`, model.rivals.length === 0
         ? t`brak w promieniu ${RIVAL_RADIUS_M} m`
         : model.rivals.map((r, i) => <div key={i}>{`${brandName(r.brand)}, ${r.meters} m`}</div>))}
+      {model.ownNear.map((o) => <p key={o.lotId} class="tt-hint warn tt-own">{t`Twoja Traszka ${o.meters} m stąd: −${percentOf(1 - OWN_FACTOR)} ruchu`}</p>)}
       {row(t`Budowa`, <>{model.buildDays} {plural(model.buildDays, 'dzień', 'dni', 'dni')}</>)}
       <div class="tt-lotprice" data-tut="lot-price">
         <h4>{t`Pakiet otwarcia`}</h4>
@@ -105,7 +107,7 @@ function rentCard(f: FirmState, lot: CityLot, game: GameActions) {
       </div>
       <div class="tt-lotact">
         <button type="button" class="tt-btn tt-primary big" disabled={!model.action.enabled} onClick={rent}>{t`Biorę lokal`}</button>
-        {!model.action.enabled && <p class="tt-lockmsg">{refusalText(model.action.reason)}</p>}
+        {!model.action.enabled && <p class="tt-lockmsg">{refusalText(model.action.reason, f)}</p>}
       </div>
     </article>
   );
