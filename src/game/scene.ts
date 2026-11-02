@@ -207,13 +207,16 @@ export interface SceneHost {
   /** Fabryka postaci doszła: tłum i kasjer w sklepie, który już stoi, dostają postacie. */
   attachFactory(factory: CharacterFactory): void;
   /**
-   * Pokazuje miasto (widok warstw) zamiast sklepu: sklep, ulica i tłum są ukryte, a kamera obejmuje całe miasto. Wywołane przy już
-   * pokazanym mieście odświeża tylko stany lokali i warstwę. Czas gry płynie dalej, scena sklepu nadal żyje pod spodem.
+   * Pokazuje miasto (makietę albo warstwę) zamiast sklepu: sklep, ulica i tłum są ukryte, a kamera obejmuje całe miasto. Wywołane przy już
+   * pokazanym mieście odświeża tylko stany lokali i tryb. Czas gry płynie dalej, scena sklepu nadal żyje pod spodem.
    * To samo miasto to ten sam obiekt `CityState` (porównanie po tożsamości, nie po seedzie ani zawartości): wołający trzyma jedną
    * instancję na grę, a inny obiekt (nawet o tym samym seedzie) wymienia scenę miasta na nową.
+   * Szczegółowość wybiera scena: pierwszy widok makiety to `pelny`, warstw `prosty`; `'makieta'` na widoku `prosty` buduje `pelny` od
+   * nowa (stary zwalnia), a warstwy zostają na bieżącym widoku (na `pelny` spłaszczone). W każdej chwili istnieje jedna geometria.
    * `area`: prostokąt okna (px), który nie jest przykryty przez interfejs (pasek u góry, zakładki, arkusz miasta). Kamera ustawia w nim
    * całe miasto, także na telefonie w pionie, gdzie do tego trzeba oddalić ją poza `VIEW_SIZE_MAX` (limit zoomu rośnie na czas miasta).
-   * Bez `area` to całe okno. Obowiązuje do `hideCity`.
+   * Bez `area` to całe okno. Obowiązuje do `hideCity`. Zmiana trybu przy pokazanym mieście kadru nie przestawia, tylko podnosi limit
+   * zoomu tak, żeby dało się oddalić do całej makiety z wieżami.
    */
   showCity(city: CityState, states: Record<number, LotState>, layer: CityLayer, area?: ScreenArea): void;
   /** Wraca do sklepu: pokazuje go i oddaje kamerze granice, przesunięcie i zoom sprzed `showCity`. Na presecie `niska` zwalnia scenę miasta. */
@@ -257,7 +260,7 @@ export function createSceneHost(deps: SceneDeps): SceneHost {
   let mirrored: GameSession | null = null;
   let staffSyncFailed = false;           // błąd synchronizacji załogi zgłaszamy raz, a nie co ~100 ms
   let robotsSyncFailed = false;          // tak samo robotów z warsztatu
-  // ekran Miasta: widok warstw zamiast sklepu (sklep, ulica i tłum tylko ukryte), z kadrem kamery do oddania po powrocie
+  // ekran Miasta: makieta albo warstwa zamiast sklepu (sklep, ulica i tłum tylko ukryte), z kadrem kamery do oddania po powrocie
   let city: CityView | null = null;
   let cityFrom: CityState | null = null; // miasto, z którego zbudowano `city`: to samo miasto nie buduje się drugi raz
   let cityOn = false;
@@ -293,16 +296,24 @@ export function createSceneHost(deps: SceneDeps): SceneHost {
     ctx.rig.zoomBy(ctx.rig.viewSize / frame.viewSize);
   }
 
+  /** Zoom, przy którym całe miasto (z najwyższym punktem bieżącego trybu, `CityView.fitHeight`) mieści się w `cityArea`. */
+  function cityFitSize(): number {
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    const area = cityArea ?? { left: 0, top: 0, right: w, bottom: h };
+    return cityFitViewSize(area.right - area.left, area.bottom - area.top, h, city?.fitHeight());
+  }
+
   /**
    * Kamera na środku miasta, oddalona tak, żeby całe miasto mieściło się w `cityArea` (domyślnie całe okno), a środek miasta stał w środku
-   * tego prostokąta. Na ekranie poziomym wystarcza `VIEW_SIZE_MAX`; telefon w pionie potrzebuje ok. dwa razy więcej, więc limit zoomu
-   * rośnie na czas miasta (`hideCity` go przywraca). Przesuwanie tylko po mieście.
+   * tego prostokąta. Na ekranie poziomym warstwy mieszczą się w `VIEW_SIZE_MAX`; telefon w pionie i makieta z wieżami potrzebują więcej,
+   * więc limit zoomu rośnie na czas miasta (`hideCity` go przywraca). Przesuwanie tylko po mieście.
    */
   function frameCity(): void {
     const w = window.innerWidth;
     const h = window.innerHeight;
     const area = cityArea ?? { left: 0, top: 0, right: w, bottom: h };
-    const size = cityFitViewSize(area.right - area.left, area.bottom - area.top, h);
+    const size = cityFitSize();
     const b = CITY_BOUNDS;
     ctx.rig.setViewMax(Math.max(VIEW_SIZE_MAX, size));
     ctx.rig.setBounds(b.minX, b.minZ, b.maxX, b.maxZ);
@@ -332,6 +343,7 @@ export function createSceneHost(deps: SceneDeps): SceneHost {
     ctx.setTimeOfDay(next);
     loaded?.view.setTimeOfDay(next);
     loaded?.street?.setTimeOfDay(next);
+    city?.setTimeOfDay(next);
   }
 
   function syncVisuals(session: GameSession | null, force = false): void {
@@ -578,16 +590,23 @@ export function createSceneHost(deps: SceneDeps): SceneHost {
 
     showCity(cityState, states, layer, area) {
       if (city && cityFrom !== cityState) dropCity();   // inne miasto (inny seed): stary widok precz
+      if (city && !city.supports(layer)) dropCity();    // makieta na prostej geometrii: pełna od nowa, prosta zwalnia się od razu
       if (!city) {
-        city = buildCity(cityState, states);
+        // pierwsza geometria: pełna dla makiety, prosta dla warstw (Zadanie 12 bierze ją z profilu miasta)
+        city = buildCity(cityState, states, { detail: layer === 'makieta' ? 'pelny' : 'prosty' });
         cityFrom = cityState;
+        city.setTimeOfDay(tod);
         ctx.scene.add(city.root);
       } else {
         city.setLots(states);
       }
       city.root.visible = true;
       city.setLayer(layer);
-      if (cityOn) return;
+      if (cityOn) {
+        // inny tryb przy pokazanym mieście: kadr gracza zostaje, a limit zoomu rośnie do całej makiety (i nie maleje do `hideCity`)
+        ctx.rig.setViewMax(Math.max(ctx.rig.viewMax, cityFitSize()));
+        return;
+      }
       cityOn = true;
       cityArea = area ?? null;
       storeCamera = captureCamera();

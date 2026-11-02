@@ -1,37 +1,48 @@
 import {
-  Box3, BufferGeometry, Color, DynamicDrawUsage, Float32BufferAttribute, Group, Mesh, MeshBasicMaterial, Vector3,
-  type Material, type Object3D, type Raycaster,
+  Box3, BufferGeometry, Color, DynamicDrawUsage, Float32BufferAttribute, Group, Mesh, MeshBasicMaterial, MeshStandardMaterial, Vector3,
+  type BufferAttribute, type Material, type Object3D, type Raycaster,
 } from 'three';
 import { BLOCK_M } from '@/sim/city/districts';
 import { SLOT_M, STREET_HALF_M } from '@/sim/city/generateCity';
 import { CITY_SIZE, type CityLot, type CityState, type DistrictId, type LotState, type StreetSegment } from '@/sim/city/types';
 import type { LotKind } from '@/sim/store/types';
 import { ISO_PITCH_DEG } from '@/render/cameraRig';
+import type { TimeOfDay } from '@/render/lighting';
+import { createFacadeAtlas, type AtlasCellName } from '@/render/street/facadeAtlas';
 import { PALETTE } from '@/render/style';
+import { buildChunkGeometries, planCityBuildings, setFront, type ShopFront } from './cityBuildings';
+import { CITY_M, CITY_UNIT_M, cityToWorld, unit } from './cityCoords';
+
+export { CITY_UNIT_M, cityToWorld };
 
 /**
- * Widok warstw miasta (spec §9.1, §19): płaska, jasna mapa, na której widać ruch i dzielnice. Bez cieni, aut i drzew; cała scena to
- * 2 siatki (tło kwartałów, ulice) i do 9 siatek z budynkami (chunk 2 × 2 kwartały), czyli kilkanaście wywołań rysowania zamiast
- * budżetu 60. Budynki to niskie, wybielone bryły postawione na slocie każdego lokalu; kolory (ruch, dzielnice, stan lokalu) siedzą w
- * kolorach wierzchołków, więc warstwy i stany zmieniają tylko bufor koloru, nigdy geometrię ani materiał. Materiał jest bez świateł
- * (`MeshBasicMaterial`, cieniowanie ścian wypieczone w kolorach): gra przełącza słońce i niebo wg godziny (noc 20:00–6:00), a mapa
- * danych ma wyglądać tak samo o każdej porze, żeby żółć i czerwień ruchu nie ciemniały ani nie niebieściały.
+ * Scena miasta (spec §9.1, §19): makieta 3D i dwie warstwy danych („Ruch”, „Dzielnice”) na jednej geometrii. Bez cieni, aut i drzew
+ * (te dokłada Zadanie 12); cała scena to 2 siatki ziemi (tło kwartałów, ulice) i do 9 siatek z budynkami (chunk 2 × 2 kwartały), czyli
+ * kilkanaście wywołań rysowania zamiast budżetu 60.
+ *
+ * Dwie szczegółowości (`CityDetail`), w każdej chwili jedna geometria:
+ * - `prosty` (4a.1): niskie, wybielone bryły postawione na slocie każdego lokalu, tylko warstwy. Kolory (ruch, dzielnice, stan lokalu)
+ *   siedzą w kolorach wierzchołków, więc warstwy i stany zmieniają tylko bufor koloru, nigdy geometrię ani materiał.
+ * - `pelny` (4a.2): bryły makiety z `cityBuildings.ts` (fasady z atlasu elewacji ulicy). Tryb zmienia materiał, bufor koloru i `scale.y`
+ *   chunków, a geometrii nie rusza: makieta ma `MeshStandardMaterial` z atlasem (jak budynki ulicy) i barwy budynków, warstwy ten sam
+ *   materiał bez świateł co `prosty`, biel z barwą stanu lokalu i budynki spłaszczone do `FLAT_SCALE`. Witryna parteru każdego lokalu
+ *   pokazuje jego stan (kartka „DO WYNAJĘCIA”, kartka „po Traszce”, barwa sklepu, tynk budowy; `setFront`).
+ *
+ * Warstwy mają materiał bez świateł (`MeshBasicMaterial`, cieniowanie ścian wypieczone w kolorach): gra przełącza słońce i niebo wg
+ * godziny (noc 20:00–6:00), a mapa danych ma wyglądać tak samo o każdej porze, żeby żółć i czerwień ruchu nie ciemniały ani nie
+ * niebieściały. Makieta jest oświetlona jak ulica przed sklepem i nocą zapala okna (`setTimeOfDay`).
  *
  * Układ: jednostka sceny to `CITY_UNIT_M` metrów miasta, środek miasta leży w (0, 0), x miasta to x sceny, a y miasta to z sceny (jak
- * `cellToWorld` w sklepie). Korzeń stoi w początku układu i się nie przesuwa: `pickLot` liczy w tych samych współrzędnych co promień.
- * Pinezki to elementy HTML (`cityPins.ts`), ich kotwice daje `pinAnchors`. Scena nie importuje firmy: stany lokali dostaje gotowe.
+ * `cellToWorld` w sklepie, `cityCoords.ts`). Korzeń stoi w początku układu i się nie przesuwa: `pickLot` liczy w tych samych
+ * współrzędnych co promień. Pinezki to elementy HTML (`cityPins.ts`), ich kotwice daje `pinAnchors`. Scena nie importuje firmy:
+ * stany lokali dostaje gotowe.
  */
 
-export type CityLayer = 'ruch' | 'dzielnice';
-
-/** Jednostka sceny w metrach miasta: całe miasto (660 m) ma 22 jednostki, więc mieści się w `VIEW_SIZE_MAX` kamery na ekranie poziomym. */
-export const CITY_UNIT_M = 30;
-const CITY_M = CITY_SIZE * BLOCK_M;
-
-/** Punkt miasta (metry) we współrzędnych sceny (y = 0). */
-export function cityToWorld(mx: number, my: number): Vector3 {
-  return new Vector3((mx - CITY_M / 2) / CITY_UNIT_M, 0, (my - CITY_M / 2) / CITY_UNIT_M);
-}
+export type CityLayer = 'makieta' | 'ruch' | 'dzielnice';
+/** `prosty`: bryły z 4a.1 (tylko warstwy); `pelny`: bryły makiety z Zadania 10 (makieta i spłaszczone warstwy). */
+export type CityDetail = 'prosty' | 'pelny';
+/** Spłaszczenie budynków `pelny` w warstwach (`scale.y` chunków): wieża 49 m ma wtedy ok. 0,4 jednostki, mniej niż najwyższe bryły 4a.1 (0,58). */
+export const FLAT_SCALE = 0.25;
 
 /** Granice miasta na scenie razem z ulicami brzegowymi; kamera ogranicza do nich przesuwanie. */
 export const CITY_BOUNDS: Readonly<{ minX: number; minZ: number; maxX: number; maxZ: number }> = (() => {
@@ -41,20 +52,21 @@ export const CITY_BOUNDS: Readonly<{ minX: number; minZ: number; maxX: number; m
 
 /** Zapas na pinezki i etykiety nad dachami oraz na brzegi ekranu: miasto zajmuje najwyżej tyle ekranu, ile podaje `cityFitViewSize`, podzielone przez ten zapas. */
 const FIT_MARGIN = 1.1;
-/** Najwyższy budynek mapy w jednostkach sceny (`HEIGHT` biurowców +15%). */
+/** Najwyższy budynek warstw w jednostkach sceny (`HEIGHT` biurowców +15%); kadr warstw liczy się z tej wysokości (`CityView.fitHeight`). */
 const FIT_ROOF = 0.6;
 
 /**
  * Wysokość widoku kamery (`CameraRig.viewSize`, jednostki sceny), przy której całe miasto mieści się w prostokącie `visW` × `visH` px
  * okna o wysokości `canvasH` px, gdy kamera celuje w środek miasta i środek miasta stoi w środku tego prostokąta (przy każdym obrocie
  * o 90°; rzut izometryczny widzi kwadrat jako romb o przekątnej `bok · √2`). Poziomy ekran mieści się w `VIEW_SIZE_MAX`, telefon w pionie
- * potrzebuje ok. dwa razy więcej, dlatego ekran Miasta podnosi limit zoomu (`CameraRig.setViewMax`).
+ * potrzebuje ok. dwa razy więcej, dlatego ekran Miasta podnosi limit zoomu (`CameraRig.setViewMax`). `roof`: najwyższy punkt sceny
+ * (`CityView.fitHeight`); domyślnie kadr warstw z 4a.1, makieta z wieżami potrzebuje więcej.
  */
-export function cityFitViewSize(visW: number, visH: number, canvasH: number): number {
+export function cityFitViewSize(visW: number, visH: number, canvasH: number, roof: number = FIT_ROOF): number {
   const side = CITY_BOUNDS.maxX - CITY_BOUNDS.minX;
   const pitch = (ISO_PITCH_DEG * Math.PI) / 180;
   const spanW = side * Math.SQRT2;
-  const spanH = side * Math.SQRT2 * Math.sin(pitch) + 2 * FIT_ROOF * Math.cos(pitch);
+  const spanH = side * Math.SQRT2 * Math.sin(pitch) + 2 * roof * Math.cos(pitch);
   return canvasH * Math.max(spanW / Math.max(1, visW), spanH / Math.max(1, visH)) * FIT_MARGIN;
 }
 
@@ -71,6 +83,12 @@ const BLOCK_NEUTRAL = PALETTE.wall[3]!;          // tło kwartałów w „Ruchu�
 const PARK_RUCH = PALETTE.street.grass[0]!;
 const STREET_NEUTRAL = PALETTE.street.curb[0]!;  // ulice w „Dzielnicach”: jasne, bez koloru ruchu
 const BUILDING_WHITE = PALETTE.wall[0]!;
+/** Ziemia makiety: park zielony, wnętrza kwartałów jasny bruk (podwórka, place), ulice asfalt, jak ulica przed sklepem. */
+const PARK_MAKIETA = PALETTE.street.grass[0]!;
+const BLOCK_MAKIETA = PALETTE.street.sidewalk[2]!;
+const STREET_MAKIETA = PALETTE.street.asphalt[0]!;
+/** Świecenie okien makiety nocą: te same barwa i siła co budynki ulicy (`WINDOW_GLOW` w `street/buildings.ts`). */
+const WINDOW_GLOW = { color: '#ffd28a', night: 1.1 } as const;
 /** Kolory skali ruchu w warstwie „Ruch” (legenda ekranu Miasta rysuje z nich pasek). */
 export const TRAFFIC_QUIET = PALETTE.productCategory.przekaski[0]!;   // żółty
 export const TRAFFIC_BUSY = PALETTE.productCategory.napoje[0]!;       // czerwony
@@ -83,16 +101,35 @@ const TRAFFIC_FULL = 100;
  */
 const SHADE = { roof: 0.88, wallZ: 0.88 * 0.88, wallX: 0.88 * 0.76 } as const;
 
+/** Barwa sieci konkurencji: Szop 24h pomarańczowy, Kawka Express fioletowa (jak pinezki). */
+const rivalColor = (brand: CityLot['brand']): string => (brand === 'kawka' ? PALETTE.clothes[6]! : PALETTE.brand.orange);
+
 /** Barwa budynku lokalu wg stanu (mieszana z bielą budynku): kolory pinezek, żeby mapa czytała się też bez nich. */
 function lotTint(state: LotState, brand: CityLot['brand']): { color: string; amount: number } | null {
   switch (state) {
     case 'twoj': return { color: PALETTE.brand.green, amount: 0.6 };
-    case 'konkurencja': return { color: brand === 'kawka' ? PALETTE.clothes[6]! : PALETTE.brand.orange, amount: 0.55 };
+    case 'konkurencja': return { color: rivalColor(brand), amount: 0.55 };
     case 'wolny': return { color: PALETTE.productCategory.przekaski[0]!, amount: 0.4 };
     case 'budowa': return { color: PALETTE.brand.orange, amount: 0.35 };
     case 'po-traszce': return { color: PALETTE.floor[3]!, amount: 0.5 };
     case 'obok': return { color: PALETTE.brand.green, amount: 0.2 };
     case 'zajety': return null;
+  }
+}
+
+/**
+ * Witryna parteru lokalu w makiecie wg stanu: komórka atlasu i barwa (null: komórka bez barwy). Wolny lokal i lokal obok mają tę samą
+ * kartkę co na ulicy (§7.2), lokal po Traszce kartkę z dopiskiem, budowa zabity tynkiem pomarańczowy front.
+ */
+function frontLook(state: LotState, brand: CityLot['brand']): { cell: AtlasCellName; tint: string | null } {
+  switch (state) {
+    case 'wolny':
+    case 'obok': return { cell: 'witrynaWynajem', tint: null };
+    case 'po-traszce': return { cell: 'witrynaPoTraszce', tint: null };
+    case 'twoj': return { cell: 'witryna', tint: PALETTE.brand.green };
+    case 'konkurencja': return { cell: 'witryna', tint: rivalColor(brand) };
+    case 'budowa': return { cell: 'tynk', tint: PALETTE.brand.orange };
+    case 'zajety': return { cell: 'witryna', tint: null };
   }
 }
 
@@ -104,26 +141,44 @@ const FOOTPRINT_M: Record<LotKind, { w: number; d: number }> = {
 };
 /** Wysokość w jednostkach sceny wg dzielnicy (niskie, płaskie bryły); lokal dostaje ±15% wg numeru. */
 const HEIGHT: Record<CityLot['district'], number> = { osiedle: 0.3, srodmiescie: 0.36, dworzec: 0.14, biurowce: 0.5 };
-/** Kotwica pinezki leży tyle nad dachem. */
+/**
+ * Kotwica pinezki leży tyle nad najwyższym punktem budynku lokalu przy bieżącej skali (`pelny`: z nadbudówką, z prawdziwych
+ * wierzchołków, więc w makiecie pinezka stoi nad wieżą, a w warstwach nad spłaszczonym dachem).
+ */
 const ANCHOR_LIFT = 0.04;
 
 const CHUNK_BLOCKS = 2;
 const CHUNKS_PER_SIDE = Math.ceil(CITY_SIZE / CHUNK_BLOCKS);
 const VERTS_PER_BOX = 20;   // dach i cztery ściany, bez spodu
 
-/** Deterministyczna liczba z [0, 1) z numeru lokalu: wysokość i jasność budynku (render nie losuje). */
-const unit = (id: number): number => (Math.imul(id + 1, 2654435761) >>> 0) / 4294967296;
-
 export interface CityView {
   root: Group;
-  /** „Ruch”: ulice w kolorze natężenia, tło kwartałów neutralne; „Dzielnice”: tło w kolorze dzielnicy, ulice jasne. */
+  /** Szczegółowość geometrii: stała przez całe życie widoku (inna to nowy widok). */
+  readonly detail: CityDetail;
+  /** Czy ten widok umie tryb: `prosty` nie umie makiety (scena buduje wtedy `pelny`). */
+  supports(layer: CityLayer): boolean;
+  /**
+   * „Makieta”: bryły makiety w barwach budynków, ziemia jak ulica (tylko `pelny`); „Ruch”: ulice w kolorze natężenia, tło kwartałów
+   * neutralne; „Dzielnice”: tło w kolorze dzielnicy, ulice jasne. Warstwy na `pelny` spłaszczają budynki do `FLAT_SCALE`. `prosty`
+   * poproszony o makietę rysuje „Ruch” (wołający sprawdza `supports`).
+   */
   setLayer(layer: CityLayer): void;
-  /** Stany lokali w grze: barwią budynki i wyznaczają, które lokale mają kotwicę pinezki (wszystkie poza zwykłym `zajety`). Brak wpisu to stan z generatora. */
+  /**
+   * Stany lokali w grze: barwią budynki w warstwach, ustawiają witryny makiety i wyznaczają, które lokale mają kotwicę pinezki
+   * (wszystkie poza zwykłym `zajety`). Brak wpisu to stan z generatora.
+   */
   setLots(states: Record<number, LotState>): void;
-  /** Punkty nad dachami lokali z pinezką, we współrzędnych sceny. */
+  /** Punkty nad dachami lokali z pinezką, we współrzędnych sceny, przy bieżącym trybie (spłaszczenie). */
   pinAnchors(): { lotId: number; world: Vector3 }[];
-  /** Lokal pod promieniem (najbliższy trafiony) albo null. */
+  /** Lokal pod promieniem (najbliższy trafiony, bryły w bieżącej skali) albo null. */
   pickLot(ray: Raycaster): number | null;
+  /**
+   * Najwyższy punkt sceny w bieżącym trybie (jednostki sceny), nie mniej niż kadr warstw z 4a.1: wysokość dla `cityFitViewSize`.
+   * Makieta liczy go z prawdziwych brył (wieże biurowców, wieża dworca), warstwy zostają przy kadrze z 4a.1.
+   */
+  fitHeight(): number;
+  /** Pora dnia: nocą okna makiety świecą jak na ulicy; warstwy i `prosty` wyglądają tak samo o każdej porze. */
+  setTimeOfDay(tod: TimeOfDay): void;
   dispose(): void;
 }
 
@@ -204,23 +259,88 @@ function trafficColor(hourly: readonly number[]): Color {
   return new Color(TRAFFIC_QUIET).lerp(new Color(TRAFFIC_BUSY), clamp01(meanOf(hourly) / TRAFFIC_FULL));
 }
 
+/** Bryła lokalu do kotwic, wyboru i barwienia: obrys i wysokość bez skali siatki. */
 interface LotBox {
   lot: CityLot;
+  /** Obrys bryły (y od 0 do najwyższego wierzchołka budynku), bez `scale.y` siatki. */
   box: Box3;
-  /** Środek dachu. */
+  /** Środek dachu na wysokości `box.max.y`. */
   top: Vector3;
-  chunk: number;
-  /** Pierwszy wierzchołek bryły w siatce chunku. */
+  /** Siatka chunku z budynkiem. */
+  mesh: Mesh;
+  /** Ciąg wierzchołków budynku w geometrii chunku (`prosty`: 20, dach i ściany). */
   first: number;
+  count: number;
   /** Biel budynku z odrobiną zmienności. */
   base: Color;
 }
 
-export function buildCity(city: CityState, states: Record<number, LotState>): CityView {
+/** Bufory kolorów jednego chunku `pelny`: makieta (barwy budynków, witryny wg stanu) i warstwy (biel z barwą stanu, cieniowanie). */
+interface ChunkColors {
+  mesh: Mesh;
+  makieta: Float32Array;
+  flat: Float32Array;
+  /** Cieniowanie warstw wypieczone na wierzchołek (`SHADE` wg normalnej). */
+  shade: Float32Array;
+  fronts: { front: ShopFront; lot: CityLot }[];
+  lots: LotBox[];
+}
+
+/** `SHADE` dla każdego wierzchołka wg normalnej: dach (i połacie), ściany ±z, ściany ±x. */
+function bakedShade(g: BufferGeometry): Float32Array {
+  const nor = g.getAttribute('normal');
+  const out = new Float32Array(nor.count);
+  for (let i = 0; i < nor.count; i++) {
+    const nx = Math.abs(nor.getX(i));
+    const nz = Math.abs(nor.getZ(i));
+    out[i] = nor.getY(i) > 0.5 ? SHADE.roof : nz >= nx ? SHADE.wallZ : SHADE.wallX;
+  }
+  return out;
+}
+
+/** Wierzchołki `[first, first + count)` w buforze warstw: kolor `c` razy wypieczone cieniowanie. */
+function paintRange(out: Float32Array, shade: Float32Array, first: number, count: number, c: Color): void {
+  for (let i = first; i < first + count; i++) {
+    out[i * 3] = c.r * shade[i]!;
+    out[i * 3 + 1] = c.g * shade[i]!;
+    out[i * 3 + 2] = c.b * shade[i]!;
+  }
+}
+
+/** Obrys wierzchołków `[first, first + count)` (y od 0). */
+function rangeBox(g: BufferGeometry, first: number, count: number): Box3 {
+  const pos = g.getAttribute('position');
+  const box = new Box3();
+  const v = new Vector3();
+  for (let i = first; i < first + count; i++) box.expandByPoint(v.fromBufferAttribute(pos, i));
+  box.min.y = 0;
+  return box;
+}
+
+/** Biel budynku lokalu (0,95–1,0 bieli wg numeru), wspólna dla obu szczegółowości. */
+const baseWhite = (lot: CityLot): Color => new Color(BUILDING_WHITE).multiplyScalar(0.95 + 0.05 * unit(lot.id + 7919));
+/** Biel budynku z barwą stanu lokalu. */
+function tinted(rec: LotBox, state: LotState): Color {
+  const tint = lotTint(state, rec.lot.brand);
+  return tint ? rec.base.clone().lerp(new Color(tint.color), tint.amount) : rec.base;
+}
+
+export function buildCity(city: CityState, states: Record<number, LotState>, opts: { detail?: CityDetail } = {}): CityView {
+  const detail: CityDetail = opts.detail ?? 'prosty';
+  const full = detail === 'pelny';
   const root = new Group();
   root.name = 'city';
-  const surface = new MeshBasicMaterial({ vertexColors: true });   // bez świateł: dane na mapie wyglądają tak samo o każdej porze doby
+  const surface = new MeshBasicMaterial({ name: 'city:warstwy', vertexColors: true });   // bez świateł: dane na mapie wyglądają tak samo o każdej porze doby
+  const atlas = full ? createFacadeAtlas() : null;
+  // makieta: jak budynki ulicy (atlas koloru i emissive okien); tekstury atlasu są wspólne (cache), więc ich nie zwalniamy
+  const lit = atlas
+    ? new MeshStandardMaterial({
+      name: 'city:makieta', map: atlas.map, vertexColors: true, roughness: 0.85, metalness: 0,
+      emissiveMap: atlas.emissive, emissive: new Color(WINDOW_GLOW.color), emissiveIntensity: 0,
+    })
+    : null;
   const geometries: BufferGeometry[] = [];
+  const meshes: Mesh[] = [];
   const add = (name: string, g: BufferGeometry): Mesh => {
     geometries.push(g);
     const mesh = new Mesh(g, surface);
@@ -228,7 +348,17 @@ export function buildCity(city: CityState, states: Record<number, LotState>): Ci
     mesh.castShadow = false;
     mesh.receiveShadow = false;
     root.add(mesh);
+    meshes.push(mesh);
     return mesh;
+  };
+  /** UV ziemi makiety: punkt w środku komórki `tynk` (bez faktury, jak bryły bez faktury w `cityBuildings.ts`). */
+  const flatUv = (g: BufferGeometry): void => {
+    if (!atlas) return;
+    const [u0, v0, u1, v1] = atlas.cell('tynk');
+    const n = g.getAttribute('position').count;
+    const uv = new Float32Array(n * 2);
+    for (let i = 0; i < n; i++) { uv[i * 2] = (u0 + u1) / 2; uv[i * 2 + 1] = (v0 + v1) / 2; }
+    g.setAttribute('uv', new Float32BufferAttribute(uv, 2));
   };
 
   // tło kwartałów: jeden czworokąt na kwartał, między ulicami
@@ -243,8 +373,11 @@ export function buildCity(city: CityState, states: Record<number, LotState>): Ci
     const by = Math.floor(i / CITY_SIZE);
     flat(blocks, bx * BLOCK_M + STREET_HALF_M, by * BLOCK_M + STREET_HALF_M, (bx + 1) * BLOCK_M - STREET_HALF_M, (by + 1) * BLOCK_M - STREET_HALF_M, new Color());
   });
-  const blockMesh = add('blocks', blocks.geometry());
+  const blockGeometry = blocks.geometry();
+  flatUv(blockGeometry);
+  const blockMesh = add('blocks', blockGeometry);
   const blockColors: Record<CityLayer, Float32Array> = {
+    makieta: colorsOf((i) => new Color(city.blocks[i] === 'park' ? PARK_MAKIETA : BLOCK_MAKIETA), city.blocks.length),
     ruch: colorsOf((i) => new Color(city.blocks[i] === 'park' ? PARK_RUCH : BLOCK_NEUTRAL), city.blocks.length),
     dzielnice: colorsOf((i) => new Color(DISTRICT_COLOR[city.blocks[i]!]), city.blocks.length),
   };
@@ -255,31 +388,77 @@ export function buildCity(city: CityState, states: Record<number, LotState>): Ci
     const [x0, y0, x1, y1] = streetRect(s);
     flat(streets, x0, y0, x1, y1, new Color());
   }
-  const streetMesh = add('streets', streets.geometry());
+  const streetGeometry = streets.geometry();
+  flatUv(streetGeometry);
+  const streetMesh = add('streets', streetGeometry);
   const streetColors: Record<CityLayer, Float32Array> = {
+    makieta: colorsOf(() => new Color(STREET_MAKIETA), city.streets.length),
     ruch: colorsOf((i) => trafficColor(city.streets[i]!.hourly), city.streets.length),
     dzielnice: colorsOf(() => new Color(STREET_NEUTRAL), city.streets.length),
   };
 
-  // budynki: bryła na slocie każdego lokalu, sklejone w jedną geometrię na chunk 2 × 2 kwartały
-  const meshers = new Map<number, Mesher>();
+  // budynki: sklejone w jedną geometrię na chunk 2 × 2 kwartały
   const boxes: LotBox[] = [];
-  for (const lot of city.lots) {
-    const chunk = Math.floor(lot.by / CHUNK_BLOCKS) * CHUNKS_PER_SIDE + Math.floor(lot.bx / CHUNK_BLOCKS);
-    let mesher = meshers.get(chunk);
-    if (!mesher) { mesher = new Mesher(); meshers.set(chunk, mesher); }
-    const fp = FOOTPRINT_M[lot.spec.kind];
-    const north = lot.y - lot.by * BLOCK_M < BLOCK_M / 2;   // pierzeja północna: budynek rośnie na południe od ulicy
-    const a = cityToWorld(lot.x - fp.w / 2, north ? lot.y : lot.y - fp.d);
-    const b = cityToWorld(lot.x + fp.w / 2, north ? lot.y + fp.d : lot.y);
-    const h = HEIGHT[lot.district] * (0.85 + 0.3 * unit(lot.id));
-    const base = new Color(BUILDING_WHITE).multiplyScalar(0.95 + 0.05 * unit(lot.id + 7919));
-    const first = mesher.vertices;
-    mesher.box(a.x, b.x, a.z, b.z, h, shadesOf(base));
-    boxes.push({ lot, box: new Box3(new Vector3(a.x, 0, a.z), new Vector3(b.x, h, b.z)), top: new Vector3((a.x + b.x) / 2, h, (a.z + b.z) / 2), chunk, first, base });
+  const chunkMeshes: Mesh[] = [];
+  const chunkColors: ChunkColors[] = [];
+  /** Najwyższy wierzchołek wszystkich brył (bez skali): kadr makiety. */
+  let sceneTop = 0;
+  if (atlas) {
+    // `pelny`: bryły makiety; kolory makiety to kolory z budowy, kolory warstw liczą się z normalnych i stanów lokali
+    const white = new Color(BUILDING_WHITE);
+    for (const c of buildChunkGeometries(city, planCityBuildings(city), atlas)) {
+      const g = c.geometry;
+      const mesh = add(`chunk:${c.chunk}`, g);
+      chunkMeshes.push(mesh);
+      sceneTop = Math.max(sceneTop, g.boundingBox!.max.y);
+      const n = g.getAttribute('position').count;
+      const shade = bakedShade(g);
+      const colors: ChunkColors = {
+        mesh, shade, makieta: (g.getAttribute('color').array as Float32Array).slice(), flat: new Float32Array(n * 3),
+        fronts: c.fronts.map((front) => ({ front, lot: city.lots[front.lotId]! })), lots: [],
+      };
+      if (c.station) paintRange(colors.flat, shade, c.station.first, c.station.count, white);
+      for (const b of c.boxes) {
+        const lot = city.lots[b.lotId]!;
+        const box = rangeBox(g, b.first, b.count);
+        const rec: LotBox = {
+          lot, box, top: new Vector3((box.min.x + box.max.x) / 2, box.max.y, (box.min.z + box.max.z) / 2),
+          mesh, first: b.first, count: b.count, base: baseWhite(lot),
+        };
+        boxes.push(rec);
+        colors.lots.push(rec);
+      }
+      chunkColors.push(colors);
+    }
+  } else {
+    // `prosty`: bryła na slocie każdego lokalu
+    const meshers = new Map<number, Mesher>();
+    const pending: (Omit<LotBox, 'mesh'> & { chunk: number })[] = [];
+    for (const lot of city.lots) {
+      const chunk = Math.floor(lot.by / CHUNK_BLOCKS) * CHUNKS_PER_SIDE + Math.floor(lot.bx / CHUNK_BLOCKS);
+      let mesher = meshers.get(chunk);
+      if (!mesher) { mesher = new Mesher(); meshers.set(chunk, mesher); }
+      const fp = FOOTPRINT_M[lot.spec.kind];
+      const north = lot.y - lot.by * BLOCK_M < BLOCK_M / 2;   // pierzeja północna: budynek rośnie na południe od ulicy
+      const a = cityToWorld(lot.x - fp.w / 2, north ? lot.y : lot.y - fp.d);
+      const b = cityToWorld(lot.x + fp.w / 2, north ? lot.y + fp.d : lot.y);
+      const h = HEIGHT[lot.district] * (0.85 + 0.3 * unit(lot.id));
+      const base = baseWhite(lot);
+      const first = mesher.vertices;
+      mesher.box(a.x, b.x, a.z, b.z, h, shadesOf(base));
+      pending.push({
+        lot, box: new Box3(new Vector3(a.x, 0, a.z), new Vector3(b.x, h, b.z)), top: new Vector3((a.x + b.x) / 2, h, (a.z + b.z) / 2),
+        chunk, first, count: VERTS_PER_BOX, base,
+      });
+    }
+    const byChunk = new Map<number, Mesh>();
+    for (const [chunk, mesher] of [...meshers].sort((p, q) => p[0] - q[0])) {
+      const mesh = add(`chunk:${chunk}`, mesher.geometry());
+      byChunk.set(chunk, mesh);
+      chunkMeshes.push(mesh);
+    }
+    for (const { chunk, ...rec } of pending) boxes.push({ ...rec, mesh: byChunk.get(chunk)! });
   }
-  const chunkMeshes = new Map<number, Mesh>();
-  for (const [chunk, mesher] of [...meshers].sort((p, q) => p[0] - q[0])) chunkMeshes.set(chunk, add(`chunk:${chunk}`, mesher.geometry()));
 
   // --- stan ---------------------------------------------------------------------------------------------------------
 
@@ -287,19 +466,43 @@ export function buildCity(city: CityState, states: Record<number, LotState>): Ci
   let layer: CityLayer = 'ruch';
   let disposed = false;
   const stateOf = (l: CityLot): LotState => current[l.id] ?? l.state;
+  /** `scale.y` chunków w bieżącym trybie: warstwy `pelny` są spłaszczone. */
+  const scaleY = (): number => (full && layer !== 'makieta' ? FLAT_SCALE : 1);
 
-  const paintLot = (rec: LotBox): void => {
-    const tint = lotTint(stateOf(rec.lot), rec.lot.brand);
-    const shades = shadesOf(tint ? rec.base.clone().lerp(new Color(tint.color), tint.amount) : rec.base);
-    const attr = chunkMeshes.get(rec.chunk)!.geometry.getAttribute('color');
+  /** `prosty`: dach i ściany bryły lokalu w kolorach stanu (kolejność ścian jak w `Mesher.box`). */
+  const paintSimple = (rec: LotBox): void => {
+    const shades = shadesOf(tinted(rec, stateOf(rec.lot)));
+    const attr = rec.mesh.geometry.getAttribute('color');
     for (let v = 0; v < VERTS_PER_BOX; v++) {
-      const c = v < 4 ? shades.roof : v < 12 ? shades.wallZ : shades.wallX;   // kolejność ścian jak w `Mesher.box`
+      const c = v < 4 ? shades.roof : v < 12 ? shades.wallZ : shades.wallX;
       attr.setXYZ(rec.first + v, c.r, c.g, c.b);
     }
   };
+  /**
+   * `pelny`: witryny makiety wg stanu (`setFront` pisze w bieżący bufor geometrii, więc na chwilę wkładamy tam bufor makiety), budynki
+   * warstw w bieli z barwą stanu, a do geometrii wraca bufor bieżącego trybu. Pozycje i normalne zostają.
+   */
+  const paintFull = (ch: ChunkColors): void => {
+    const g = ch.mesh.geometry;
+    const attr = g.getAttribute('color') as BufferAttribute;
+    const live = attr.array as Float32Array;
+    live.set(ch.makieta);
+    for (const { front, lot } of ch.fronts) {
+      const look = frontLook(stateOf(lot), lot.brand);
+      setFront(g, front, look.cell, new Color(look.tint ?? '#ffffff'));
+    }
+    ch.makieta.set(live);
+    for (const rec of ch.lots) paintRange(ch.flat, ch.shade, rec.first, rec.count, tinted(rec, stateOf(rec.lot)));
+    live.set(layer === 'makieta' ? ch.makieta : ch.flat);
+    attr.needsUpdate = true;
+  };
   const paintAll = (): void => {
-    for (const rec of boxes) paintLot(rec);
-    for (const m of chunkMeshes.values()) m.geometry.getAttribute('color').needsUpdate = true;
+    if (full) {
+      for (const ch of chunkColors) paintFull(ch);
+      return;
+    }
+    for (const rec of boxes) paintSimple(rec);
+    for (const m of chunkMeshes) m.geometry.getAttribute('color').needsUpdate = true;
   };
   const paintGround = (): void => {
     blockMesh.geometry.getAttribute('color').array.set(blockColors[layer]);
@@ -307,30 +510,51 @@ export function buildCity(city: CityState, states: Record<number, LotState>): Ci
     streetMesh.geometry.getAttribute('color').array.set(streetColors[layer]);
     streetMesh.geometry.getAttribute('color').needsUpdate = true;
   };
+  /** Materiał, bufory kolorów budynków i spłaszczenie wg trybu (`pelny`); geometria zostaje ta sama. */
+  const applyMode = (): void => {
+    if (!full) return;
+    const material = layer === 'makieta' && lit ? lit : surface;
+    for (const m of meshes) m.material = material;
+    for (const m of chunkMeshes) m.scale.y = scaleY();
+    for (const ch of chunkColors) {
+      const attr = ch.mesh.geometry.getAttribute('color');
+      attr.array.set(layer === 'makieta' ? ch.makieta : ch.flat);
+      attr.needsUpdate = true;
+    }
+  };
   paintGround();
   paintAll();
+  applyMode();
 
   return {
     root,
+    detail,
+    supports: (l) => full || l !== 'makieta',
     setLayer(next) {
-      layer = next;
+      layer = full || next !== 'makieta' ? next : 'ruch';
       paintGround();
+      applyMode();
     },
     setLots(next) {
       current = next;
       paintAll();
     },
     pinAnchors() {
+      const s = scaleY();
       return boxes
         .filter((r) => stateOf(r.lot) !== 'zajety')
-        .map((r) => ({ lotId: r.lot.id, world: r.top.clone().setY(r.top.y + ANCHOR_LIFT) }));
+        .map((r) => ({ lotId: r.lot.id, world: new Vector3(r.top.x, r.top.y * s + ANCHOR_LIFT, r.top.z) }));
     },
     pickLot(ray) {
+      const s = scaleY();
+      const box = new Box3();
       const hit = new Vector3();
       let best: number | null = null;
       let bestAt = Infinity;
       for (const r of boxes) {
-        if (!ray.ray.intersectBox(r.box, hit)) continue;
+        box.copy(r.box);
+        box.max.y = r.box.max.y * s;
+        if (!ray.ray.intersectBox(box, hit)) continue;
         const d = hit.distanceTo(ray.ray.origin);
         if (d < ray.near || d > ray.far || d >= bestAt) continue;
         best = r.lot.id;
@@ -338,12 +562,17 @@ export function buildCity(city: CityState, states: Record<number, LotState>): Ci
       }
       return best;
     },
+    fitHeight: () => Math.max(FIT_ROOF, sceneTop * scaleY()),
+    setTimeOfDay(tod) {
+      if (lit) lit.emissiveIntensity = tod === 'night' ? WINDOW_GLOW.night : 0;
+    },
     dispose() {
       if (disposed) return;
       disposed = true;
       root.removeFromParent();
       for (const g of geometries) g.dispose();
       surface.dispose();
+      lit?.dispose();
     },
   };
 }

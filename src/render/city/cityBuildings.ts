@@ -6,7 +6,7 @@ import { CELL_SIZE_M } from '@/sim/grid';
 import { GeomBuilder, type V3 } from '@/render/street/buildings';
 import { createFacadeAtlas, type AtlasCellName, type FacadeAtlas } from '@/render/street/facadeAtlas';
 import { PALETTE } from '@/render/style';
-import { CITY_UNIT_M, cityToWorld } from './buildCity';
+import { CITY_UNIT_M, cityToWorld, unit } from './cityCoords';
 
 /**
  * Bryły makiety miasta (spec §7.1, §19 „4a.2”): proceduralne budynki w stylu ulicy przed sklepem, z fasadami z atlasu elewacji
@@ -24,11 +24,10 @@ import { CITY_UNIT_M, cityToWorld } from './buildCity';
  *   swój pastel z siatką okien, a z bliska widać okna. Komórki z własnym kolorem (witryna, brama) dostają biel.
  *
  * Determinizm: nic nie jest losowane. Warianty (kondygnacje, obrys, barwy, które okno świeci, garaże) biorą się ze skrótu numeru
- * lokalu, jak `unit(id)` w `buildCity.ts`, więc ten sam seed daje tę samą geometrię co do bitu.
+ * lokalu (`unit(id)` z `cityCoords.ts`, wspólny z widokiem warstw), więc ten sam seed daje tę samą geometrię co do bitu.
  *
  * Jednostki: obrysy i wysokości planu są w jednostkach sceny (`CITY_UNIT_M` metrów, środek miasta w (0, 0), x miasta to x sceny,
- * y miasta to z sceny, jak `cityToWorld`); stałe wyglądu niżej są w metrach. Moduł używa `CITY_UNIT_M` i `cityToWorld` tylko wewnątrz
- * funkcji, bo `buildCity.ts` importuje go z powrotem (cykl importów jest bezpieczny, dopóki nic nie czyta ich przy ładowaniu modułu).
+ * y miasta to z sceny, jak `cityToWorld`); stałe wyglądu niżej są w metrach.
  */
 
 export type BuildingStyle = 'blok' | 'kamienica' | 'pawilon' | 'biurowiec' | 'dworzec';
@@ -64,6 +63,8 @@ export interface ChunkGeometry {
    * (`[first, first + count)`, razem z witryną), żeby warstwy mogły barwić budynek według stanu lokalu.
    */
   boxes: { lotId: number; box: Box3; top: Vector3; first: number; count: number }[];
+  /** Ciąg wierzchołków dworca (budynek bez lokalu), tylko w chunku, w którym stoi. Budynki lokali i dworzec pokrywają cały chunk. */
+  station?: { first: number; count: number };
 }
 
 /** Budżet trójkątów całej makiety (bryły wszystkich chunków). */
@@ -140,9 +141,6 @@ const GARAGE_DOORS = [PALETTE.clothes[4]!, PALETTE.clothes[3]!, PALETTE.clothes[
 const STATION_COLORS = { main: ST.kamienicaPlaster[1]!, accent: CREAM, roof: ST.kamienicaPlaster[5]!, spire: ST.kamienicaPlaster[3]!, hands: PALETTE.wall[4]! } as const;
 
 // --- Skróty (render nie losuje) --------------------------------------------------------------------------------
-
-/** Deterministyczna liczba z [0, 1) z numeru lokalu, ten sam wzór co `unit` w `buildCity.ts` (wysokość, garaże). */
-const unit = (id: number): number => (Math.imul(id + 1, 2654435761) >>> 0) / 4294967296;
 
 /** Skrót kilku liczb całkowitych do [0, 1): pozostałe warianty (obrys, barwy, które okno świeci). */
 function hash01(...xs: number[]): number {
@@ -577,8 +575,14 @@ export function buildChunkGeometries(city: CityState, plans: readonly BuildingPl
     const c: Ctx = { b: new GeomBuilder(flat), cell, flat: [flat[0], flat[1], flat[0], flat[1]], u: CITY_UNIT_M };
     const fronts: ShopFront[] = [];
     const boxes: ChunkGeometry['boxes'] = [];
+    let station: ChunkGeometry['station'];
     for (const p of byChunk.get(chunk)!) {
-      if (p.lotId === null) { emitStation(c, p); continue; }
+      if (p.lotId === null) {
+        const first = vertexCount(c.b);
+        emitStation(c, p);
+        station = { first, count: vertexCount(c.b) - first };
+        continue;
+      }
       const lot = city.lots[p.lotId];
       if (!lot || lot.id !== p.lotId) throw new RangeError(`buildChunkGeometries: brak lokalu ${p.lotId}`);
       const built = emitLot(c, p, lot);
@@ -596,7 +600,7 @@ export function buildChunkGeometries(city: CityState, plans: readonly BuildingPl
     (geometry.getAttribute('color') as BufferAttribute).setUsage(DynamicDrawUsage);
     geometry.computeBoundingBox();
     atlasOf.set(geometry, atlas);
-    out.push({ chunk, geometry, fronts, boxes });
+    out.push(station ? { chunk, geometry, fronts, boxes, station } : { chunk, geometry, fronts, boxes });
   }
   return out;
 }

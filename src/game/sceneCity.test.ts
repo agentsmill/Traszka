@@ -1,4 +1,4 @@
-import { Scene, Vector3, type Mesh } from 'three';
+import { Scene, Vector3, type Mesh, type MeshStandardMaterial, type Object3D } from 'three';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CameraRig, VIEW_SIZE_DEFAULT, VIEW_SIZE_MAX } from '@/render/cameraRig';
 import { CITY_BOUNDS, cityFitViewSize } from '@/render/city/buildCity';
@@ -18,6 +18,19 @@ vi.mock('@/render/assets', async (original) => ({
   ...(await original<typeof import('@/render/assets')>()),
   loadGLB: () => Promise.reject(new Error('brak sieci')),
 }));
+
+/** Licznik budów sceny miasta: szczegółowość każdego wywołania `buildCity` (scena nie może budować pełnej geometrii częściej, niż trzeba). */
+const builds = vi.hoisted(() => ({ details: [] as string[] }));
+vi.mock('@/render/city/buildCity', async (original) => {
+  const mod = await original<typeof import('@/render/city/buildCity')>();
+  return {
+    ...mod,
+    buildCity: (...args: Parameters<typeof mod.buildCity>) => {
+      builds.details.push(args[2]?.detail ?? 'prosty');
+      return mod.buildCity(...args);
+    },
+  };
+});
 
 const CITY = generateCity('kiełbasa-42');
 const STATES: Record<number, LotState> = Object.fromEntries(CITY.lots.map((l) => [l.id, l.state]));
@@ -303,6 +316,117 @@ describe('showCity / hideCity', () => {
       expect(host.pickCityLot(2, 2)).toBeNull();   // róg okna leży poza rombem miasta
       host.hideCity();
       expect(host.pickCityLot(640, 400)).toBeNull();
+    });
+  });
+
+  describe('makieta: jedna geometria dla trybów', () => {
+    const meshesOf = (root: Object3D): Mesh[] => {
+      const out: Mesh[] = [];
+      root.traverse((o) => { if ((o as Mesh).isMesh) out.push(o as Mesh); });
+      return out;
+    };
+
+    it('przejście ruch → makieta → ruch buduje pelny raz, a licznik zwolnionych geometrii zgadza się z liczbą siatek prosty', async () => {
+      const { host, ctx } = hostOn('srednia');
+      await withStore(host);
+      builds.details.length = 0;
+
+      host.showCity(CITY, STATES, 'ruch');
+      expect(builds.details).toEqual(['prosty']);
+      const simple = host.cityView!;
+      expect(simple.detail).toBe('prosty');
+      const simpleMeshes = meshesOf(simple.root);
+      let disposed = 0;
+      for (const g of new Set(simpleMeshes.map((m) => m.geometry))) g.addEventListener('dispose', () => { disposed++; });
+
+      host.showCity(CITY, STATES, 'makieta');
+      expect(builds.details).toEqual(['prosty', 'pelny']);
+      const full = host.cityView!;
+      expect(full.detail).toBe('pelny');
+      expect(full.root.parent).toBe(ctx.scene);
+      expect(simple.root.parent).toBeNull();
+      expect(disposed).toBe(simpleMeshes.length);
+
+      host.showCity(CITY, STATES, 'ruch');
+      expect(builds.details).toEqual(['prosty', 'pelny']);   // warstwy zostają na pełnej geometrii, spłaszczonej
+      expect(host.cityView).toBe(full);
+      expect(disposed).toBe(simpleMeshes.length);
+      const chunks = meshesOf(full.root).filter((m) => m.name.startsWith('chunk:'));
+      expect(chunks.length).toBeGreaterThan(0);
+      for (const m of chunks) expect(m.scale.y, m.name).toBeLessThan(1);
+    });
+
+    it('pierwszy widok makiety to od razu pelny (bez prostego po drodze), a warstw prosty', () => {
+      builds.details.length = 0;
+      const a = hostOn('srednia');
+      a.host.showCity(CITY, STATES, 'makieta');
+      expect(builds.details).toEqual(['pelny']);
+      builds.details.length = 0;
+      const b = hostOn('srednia');
+      b.host.showCity(CITY, STATES, 'dzielnice');
+      expect(builds.details).toEqual(['prosty']);
+    });
+
+    it('kadr makiety obejmuje wieże: zoom z najwyższego punktu sceny, większy niż kadr warstw; przejście z warstwy do makiety podnosi limit zoomu', () => {
+      const layersHost = hostOn('srednia');
+      layersHost.host.showCity(CITY, STATES, 'ruch');
+      const layersSize = layersHost.ctx.rig.viewSize;
+      expect(layersSize).toBeCloseTo(cityFitViewSize(1280, 800, 800), 6);
+
+      const { host, ctx } = hostOn('srednia');
+      host.showCity(CITY, STATES, 'makieta');
+      const roof = host.cityView!.fitHeight();
+      expect(roof).toBeGreaterThan(1);
+      expect(ctx.rig.viewSize).toBeCloseTo(cityFitViewSize(1280, 800, 800, roof), 6);
+      expect(ctx.rig.viewSize).toBeGreaterThan(layersSize);
+      for (const yaw of [0, 1, 2, 3] as const) {
+        ctx.rig.yawIndex = yaw;
+        for (const x of [CITY_BOUNDS.minX, CITY_BOUNDS.maxX]) {
+          for (const z of [CITY_BOUNDS.minZ, CITY_BOUNDS.maxZ]) {
+            const p = new Vector3(x, roof, z).project(ctx.rig.camera);
+            expect(Math.abs(p.x), `yaw ${yaw}`).toBeLessThanOrEqual(1);
+            expect(Math.abs(p.y), `yaw ${yaw}`).toBeLessThanOrEqual(1);
+          }
+        }
+      }
+
+      // telefon w pionie: gracz w „Ruchu” przełącza na makietę; kadru nie przestawiamy, ale da się oddalić do całej makiety
+      vi.stubGlobal('window', { innerWidth: 390, innerHeight: 844 });
+      const phone = hostOn('srednia', 390 / 844);
+      phone.host.showCity(CITY, STATES, 'ruch');
+      const target = { x: phone.ctx.rig.target.x, z: phone.ctx.rig.target.z, size: phone.ctx.rig.viewSize };
+      phone.host.showCity(CITY, STATES, 'makieta');
+      const need = cityFitViewSize(390, 844, 844, phone.host.cityView!.fitHeight());
+      expect(phone.ctx.rig.viewMax).toBeGreaterThanOrEqual(need - 1e-9);
+      expect(phone.ctx.rig.viewSize).toBeCloseTo(target.size, 6);
+      expect(phone.ctx.rig.target.x).toBeCloseTo(target.x, 6);
+      expect(phone.ctx.rig.target.z).toBeCloseTo(target.z, 6);
+      phone.host.showCity(CITY, STATES, 'ruch');
+      expect(phone.ctx.rig.viewMax).toBeGreaterThanOrEqual(need - 1e-9);   // limit nie maleje pod nogami gracza
+    });
+
+    it('pickCityLot w makiecie: promień przez kotwicę trafia w budynek', () => {
+      const { host, ctx } = hostOn('srednia');
+      host.showCity(CITY, STATES, 'makieta');
+      ctx.rig.camera.updateMatrixWorld();
+      const anchors = host.cityView!.pinAnchors();
+      expect(anchors.length).toBeGreaterThan(5);
+      const picked = anchors.map((a) => {
+        const p = a.world.clone().project(ctx.rig.camera);
+        return host.pickCityLot((p.x * 0.5 + 0.5) * 1280, (-p.y * 0.5 + 0.5) * 800);
+      });
+      expect(picked.every((id) => id !== null)).toBe(true);
+      expect(picked.filter((id, i) => id === anchors[i]!.lotId).length).toBeGreaterThan(anchors.length / 2);
+    });
+
+    it('pora dnia trafia do makiety: noc zapala okna, także w makiecie zbudowanej nocą', () => {
+      const { host } = hostOn('srednia');
+      host.setTimeOfDay('night');
+      host.showCity(CITY, STATES, 'makieta');
+      const mat = () => (meshesOf(host.cityView!.root).find((m) => m.name.startsWith('chunk:'))!.material as MeshStandardMaterial);
+      expect(mat().emissiveIntensity).toBeGreaterThan(0);
+      host.setTimeOfDay('day');
+      expect(mat().emissiveIntensity).toBe(0);
     });
   });
 

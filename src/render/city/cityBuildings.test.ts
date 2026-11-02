@@ -379,6 +379,51 @@ describe('buildChunkGeometries: witryny i bryły do wskazywania', () => {
     }
   });
 
+  it('witryna stoi na wprost wejścia: środek jej rozpiętości wzdłuż x leży przy `lot.x` (do ok. 1 m)', () => {
+    for (const seed of SEEDS) {
+      const { city, chunks } = builtOf(seed);
+      for (const c of chunks) {
+        const pos = c.geometry.getAttribute('position');
+        for (const f of c.fronts) {
+          let lo = Infinity;
+          let hi = -Infinity;
+          for (let i = f.first; i < f.first + f.count; i++) { lo = Math.min(lo, pos.getX(i)); hi = Math.max(hi, pos.getX(i)); }
+          expect(Math.abs(toM((lo + hi) / 2) - city.lots[f.lotId]!.x), `${seed} #${f.lotId}`).toBeLessThanOrEqual(1 + 1e-4);
+        }
+      }
+    }
+  });
+
+  it('dworzec ma własny ciąg wierzchołków w swoim chunku; budynki lokali i dworzec pokrywają chunk bez przerw i bez nakładania', () => {
+    for (const seed of SEEDS) {
+      const { plans, chunks } = builtOf(seed);
+      const station = plans.find((p) => p.lotId === null)!;
+      const withStation = chunks.filter((c) => c.station);
+      expect(withStation, seed).toHaveLength(1);
+      const sc = withStation[0]!;
+      const pos = sc.geometry.getAttribute('position');
+      expect(sc.station!.count, seed).toBeGreaterThan(0);
+      let top = 0;
+      for (let i = sc.station!.first; i < sc.station!.first + sc.station!.count; i++) {
+        const x = pos.getX(i);
+        const z = pos.getZ(i);
+        if (x < station.x0 - EPS || x > station.x1 + EPS || z < station.z0 - EPS || z > station.z1 + EPS) throw new Error(`${seed} dworzec: wierzchołek ${i} poza obrysem`);
+        top = Math.max(top, pos.getY(i));
+      }
+      expect(top * CITY_UNIT_M, seed).toBeGreaterThan(station.height * CITY_UNIT_M + 10);   // wieża zegarowa nad halą
+      for (const c of chunks) {
+        const ranges = [...c.boxes.map((b) => [b.first, b.count] as const), ...(c.station ? [[c.station.first, c.station.count] as const] : [])]
+          .sort((a, b) => a[0] - b[0]);
+        let next = 0;
+        for (const [first, count] of ranges) {
+          expect(first, `${seed} chunk ${c.chunk}`).toBe(next);
+          next = first + count;
+        }
+        expect(next, `${seed} chunk ${c.chunk}`).toBe(c.geometry.getAttribute('position').count);
+      }
+    }
+  });
+
   it('setFront zmienia tylko uv i color w [first, first + count), a UV leżą w komórce atlasu', () => {
     const { chunks } = builtOf(SEEDS[0]!);
     expect(chunks.length).toBeGreaterThanOrEqual(3);

@@ -6,8 +6,13 @@ import { generateCity } from '@/sim/city/generateCity';
 import { BLOCK_M } from '@/sim/city/districts';
 import { CITY_SIZE, type CityState, type LotState } from '@/sim/city/types';
 import { CameraRig, VIEW_SIZE_MAX } from '@/render/cameraRig';
-import { material } from '@/render/style';
-import { CITY_BOUNDS, CITY_UNIT_M, DISTRICT_COLOR, buildCity, cityFitViewSize, cityToWorld, countDrawCalls } from './buildCity';
+import { createFacadeAtlas, type AtlasCellName } from '@/render/street/facadeAtlas';
+import { PALETTE, material } from '@/render/style';
+import {
+  CITY_BOUNDS, CITY_UNIT_M, DISTRICT_COLOR, FLAT_SCALE, buildCity, cityFitViewSize, cityToWorld, countDrawCalls,
+  type CityLayer, type CityView,
+} from './buildCity';
+import { buildChunkGeometries, planCityBuildings, type ChunkGeometry } from './cityBuildings';
 
 /** Dziesięć seedów z testów generatora miasta. */
 const SEEDS = ['kiełbasa-42', 'kiełbasa-12', 'a', 'b', 'traszka-1', 'traszka-2', 'miasto-1', 'miasto-2', 'miasto-3', 'miasto-4'];
@@ -432,6 +437,394 @@ describe('buildCity: sprzątanie', () => {
   });
 });
 
+// --- 4a.2: makieta i warstwy na jednej geometrii (szczegółowość `pelny`) ------------------------------------------
+
+const LAYERS: readonly CityLayer[] = ['makieta', 'ruch', 'dzielnice'];
+const atlas = createFacadeAtlas();
+
+/** Te same chunki, z których `buildCity` składa `pelny` (geometria jest deterministyczna): zakresy witryn i budynków lokali. */
+const chunksFor = new Map<string, ChunkGeometry[]>();
+const referenceChunks = (seed: string): ChunkGeometry[] => {
+  let c = chunksFor.get(seed);
+  if (!c) { const city = cityOf(seed); c = buildChunkGeometries(city, planCityBuildings(city), atlas); chunksFor.set(seed, c); }
+  return c;
+};
+const chunkMeshes = (view: CityView): Mesh[] => meshesOf(view.root).filter((m) => m.name.startsWith('chunk:'));
+const chunkMesh = (view: CityView, chunk: number): Mesh => meshNamed(view.root, `chunk:${chunk}`);
+/** Najwyższy wierzchołek budynku lokalu (z nadbudówką) w geometrii chunku, bez skali siatki. */
+function lotTop(chunks: readonly ChunkGeometry[], lotId: number): number {
+  for (const c of chunks) {
+    const b = c.boxes.find((x) => x.lotId === lotId);
+    if (!b) continue;
+    const pos = c.geometry.getAttribute('position');
+    let top = 0;
+    for (let i = b.first; i < b.first + b.count; i++) top = Math.max(top, pos.getY(i));
+    return top;
+  }
+  throw new Error(`brak lokalu ${lotId}`);
+}
+const uvInCell = (g: BufferGeometry, i: number, cell: AtlasCellName): boolean => {
+  const [u0, v0, u1, v1] = atlas.cell(cell);
+  const uv = g.getAttribute('uv');
+  return uv.getX(i) >= u0 - 1e-6 && uv.getX(i) <= u1 + 1e-6 && uv.getY(i) >= v0 - 1e-6 && uv.getY(i) <= v1 + 1e-6;
+};
+const all = (city: CityState, state: LotState): Record<number, LotState> => Object.fromEntries(city.lots.map((l) => [l.id, state]));
+
+describe('buildCity pelny: tryby na jednej geometrii', () => {
+  it('prosty to domyślna szczegółowość i nie umie makiety; pelny umie wszystkie trzy tryby', () => {
+    const city = cityOf(SEEDS[0]!);
+    const simple = buildCity(city, generated(city));
+    expect(simple.detail).toBe('prosty');
+    expect(simple.supports('makieta')).toBe(false);
+    expect(simple.supports('ruch')).toBe(true);
+    expect(simple.supports('dzielnice')).toBe(true);
+    simple.dispose();
+    const full = buildCity(city, generated(city), { detail: 'pelny' });
+    expect(full.detail).toBe('pelny');
+    for (const layer of LAYERS) expect(full.supports(layer), layer).toBe(true);
+    full.dispose();
+  });
+
+  it('poniżej 60 draw calli w każdym trybie (10 seedów)', () => {
+    for (const seed of SEEDS) {
+      const city = cityOf(seed);
+      const view = buildCity(city, generated(city), { detail: 'pelny' });
+      for (const layer of LAYERS) {
+        view.setLayer(layer);
+        const n = countDrawCalls(view.root);
+        expect(n, `${seed} ${layer}`).toBeLessThan(60);
+        expect(n, `${seed} ${layer}`).toBeGreaterThanOrEqual(3);
+      }
+      view.dispose();
+    }
+  });
+
+  it('setLayer nie zmienia obiektów BufferGeometry ani tablic position, a zmienia materiał i scale.y chunków', () => {
+    for (const seed of SEEDS.slice(0, 3)) {
+      const city = cityOf(seed);
+      const view = buildCity(city, generated(city), { detail: 'pelny' });
+      const meshes = meshesOf(view.root);
+      const geoms = meshes.map((m) => m.geometry);
+      const positions = geoms.map((g) => g.getAttribute('position'));
+      const arrays = positions.map((p) => p.array);
+      const copies = arrays.map((a) => Array.from(a));
+      const materialIn: Partial<Record<CityLayer, Material>> = {};
+      for (const layer of ['makieta', 'ruch', 'dzielnice', 'makieta', 'ruch'] as const) {
+        view.setLayer(layer);
+        meshes.forEach((m, i) => {
+          expect(m.geometry, `${seed} ${layer} ${m.name}`).toBe(geoms[i]);
+          expect(m.geometry.getAttribute('position'), `${seed} ${layer} ${m.name}`).toBe(positions[i]);
+          expect(m.geometry.getAttribute('position').array, `${seed} ${layer} ${m.name}`).toBe(arrays[i]);
+        });
+        // jeden materiał na tryb dla wszystkich siatek
+        const mats = new Set(meshes.map((m) => m.material as Material));
+        expect(mats.size, `${seed} ${layer}`).toBe(1);
+        const mat = [...mats][0]!;
+        if (materialIn[layer]) expect(mat, `${seed} ${layer}`).toBe(materialIn[layer]);
+        materialIn[layer] = mat;
+        for (const m of chunkMeshes(view)) expect(m.scale.y, `${seed} ${layer} ${m.name}`).toBe(layer === 'makieta' ? 1 : FLAT_SCALE);
+        expect(meshNamed(view.root, 'blocks').scale.y).toBe(1);
+        expect(meshNamed(view.root, 'streets').scale.y).toBe(1);
+      }
+      expect(materialIn.makieta).not.toBe(materialIn.ruch);
+      expect(materialIn.ruch).toBe(materialIn.dzielnice);
+      arrays.forEach((a, i) => expect(Array.from(a), `${seed} pozycje ${meshes[i]!.name}`).toEqual(copies[i]));
+      view.dispose();
+    }
+  });
+
+  it('makieta: MeshStandardMaterial z mapą i emissive atlasu i kolorami wierzchołków; warstwy: MeshBasicMaterial z kolorami wierzchołków, bez cieni', () => {
+    const city = cityOf(SEEDS[0]!);
+    const view = buildCity(city, generated(city), { detail: 'pelny' });
+    view.setLayer('makieta');
+    const lit = chunkMeshes(view)[0]!.material as MeshStandardMaterial;
+    expect(lit.type).toBe('MeshStandardMaterial');
+    expect(lit.vertexColors).toBe(true);
+    expect(lit.map).toBe(atlas.map);
+    expect(lit.emissiveMap).toBe(atlas.emissive);
+    view.setLayer('ruch');
+    const flat = chunkMeshes(view)[0]!.material as MeshBasicMaterial;
+    expect(flat.type).toBe('MeshBasicMaterial');
+    expect(flat.vertexColors).toBe(true);
+    expect(flat.map).toBeNull();
+    for (const m of meshesOf(view.root)) {
+      expect(m.castShadow, m.name).toBe(false);
+      expect(m.receiveShadow, m.name).toBe(false);
+    }
+    view.dispose();
+  });
+
+  it('noc zapala okna makiety (emissive), dzień je gasi; prosty nie ma czego zapalać', () => {
+    const city = cityOf(SEEDS[0]!);
+    const view = buildCity(city, generated(city), { detail: 'pelny' });
+    view.setLayer('makieta');
+    const lit = chunkMeshes(view)[0]!.material as MeshStandardMaterial;
+    expect(lit.emissiveIntensity).toBe(0);
+    view.setTimeOfDay('night');
+    expect(lit.emissiveIntensity).toBeGreaterThan(0);
+    view.setTimeOfDay('day');
+    expect(lit.emissiveIntensity).toBe(0);
+    view.dispose();
+    const simple = buildCity(city, generated(city));
+    expect(() => simple.setTimeOfDay('night')).not.toThrow();
+    simple.dispose();
+  });
+
+  it('trzy bufory kolorów: makieta ma barwy budynków z Zadania 10 (park zielony, ulice asfalt), warstwy biel z wypieczonym cieniowaniem i ziemię jak w 4a.1', () => {
+    const seed = SEEDS[0]!;
+    const city = cityOf(seed);
+    const plain = all(city, 'zajety');
+    const view = buildCity(city, plain, { detail: 'pelny' });
+    const ref = referenceChunks(seed);
+    const blocks = meshNamed(view.root, 'blocks').geometry;
+    const streets = meshNamed(view.root, 'streets').geometry;
+
+    view.setLayer('makieta');
+    // budynki: kolory wierzchołków takie jak z budowy (wszystkie lokale zajęte: witryna bez barwy)
+    for (const c of ref) expect(Array.from(chunkMesh(view, c.chunk).geometry.getAttribute('color').array), `chunk ${c.chunk}`).toEqual(Array.from(c.geometry.getAttribute('color').array));
+    const close = (got: [number, number, number], want: Color, label: string): void => [want.r, want.g, want.b].forEach((x, k) => expect(got[k], label).toBeCloseTo(x, 5));
+    city.blocks.forEach((d, i) => { if (d === 'park') close(colorOf(blocks, i * 4), new Color(PALETTE.street.grass[0]!), `park ${i}`); });
+    city.streets.forEach((_, i) => close(colorOf(streets, i * 4), new Color(PALETTE.street.asphalt[0]!), `ulica ${i}`));
+    const makietaBlocks = Array.from(blocks.getAttribute('color').array);
+
+    view.setLayer('dzielnice');
+    city.blocks.forEach((d, i) => close(colorOf(blocks, i * 4), new Color(DISTRICT_COLOR[d]), `dzielnica ${i}`));
+    expect(Array.from(blocks.getAttribute('color').array)).not.toEqual(makietaBlocks);
+    // ziemia warstw jak w prostym widoku
+    const simple = buildCity(city, plain);
+    for (const layer of ['ruch', 'dzielnice'] as const) {
+      view.setLayer(layer);
+      simple.setLayer(layer);
+      expect(Array.from(blocks.getAttribute('color').array), layer).toEqual(Array.from(meshNamed(simple.root, 'blocks').geometry.getAttribute('color').array));
+      expect(Array.from(streets.getAttribute('color').array), layer).toEqual(Array.from(meshNamed(simple.root, 'streets').geometry.getAttribute('color').array));
+    }
+    simple.dispose();
+
+    // budynki warstw: biel budynków z 4a.1 (te same proporcje kanałów), dach jaśniejszy od ścian ±z, te od ścian ±x, poniżej progu bloomu
+    const lum = (r: number, g: number, b: number): number => 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    const white = new Color(PALETTE.wall[0]!);
+    for (const layer of ['ruch', 'dzielnice'] as const) {
+      view.setLayer(layer);
+      for (const m of chunkMeshes(view)) {
+        const g = m.geometry;
+        const col = g.getAttribute('color');
+        const nor = g.getAttribute('normal');
+        const byFace = { roof: new Set<number>(), z: new Set<number>(), x: new Set<number>() };
+        for (let i = 0; i < col.count; i++) {
+          const [r, gr, b] = [col.getX(i), col.getY(i), col.getZ(i)];
+          expect(lum(r, gr, b), `${layer} ${m.name} ${i}`).toBeLessThan(0.85);
+          expect(gr / r, `${layer} ${m.name} ${i} biel`).toBeCloseTo(white.g / white.r, 3);
+          expect(b / r, `${layer} ${m.name} ${i} biel`).toBeCloseTo(white.b / white.r, 3);
+          const [nx, ny, nz] = [nor.getX(i), nor.getY(i), nor.getZ(i)];
+          const face = ny > 0.99 ? 'roof' : Math.abs(nz) > 0.99 ? 'z' : Math.abs(nx) > 0.99 ? 'x' : null;
+          if (face) byFace[face].add(Math.round(lum(r, gr, b) * 1e4));
+        }
+        expect(Math.min(...byFace.roof), m.name).toBeGreaterThan(Math.max(...byFace.z));
+        expect(Math.min(...byFace.z), m.name).toBeGreaterThan(Math.max(...byFace.x));
+      }
+    }
+    view.dispose();
+  });
+
+  it('warstwy barwią cały budynek lokalu wg stanu (własny sklep zielony), a dworzec i reszta chunku zostają białe', () => {
+    const seed = SEEDS[0]!;
+    const city = cityOf(seed);
+    const plain = all(city, 'zajety');
+    const view = buildCity(city, plain, { detail: 'pelny' });
+    view.setLayer('ruch');
+    const lot = city.lots[city.startLotId]!;
+    const ref = referenceChunks(seed);
+    const c = ref.find((x) => x.boxes.some((b) => b.lotId === lot.id))!;
+    const box = c.boxes.find((b) => b.lotId === lot.id)!;
+    const g = chunkMesh(view, c.chunk).geometry;
+    const before = Array.from(g.getAttribute('color').array);
+    view.setLots({ ...plain, [lot.id]: 'twoj' });
+    const after = Array.from(g.getAttribute('color').array);
+    for (let i = 0; i < g.getAttribute('color').count; i++) {
+      const changed = [0, 1, 2].some((k) => after[i * 3 + k] !== before[i * 3 + k]);
+      expect(changed, `wierzchołek ${i}`).toBe(i >= box.first && i < box.first + box.count);
+    }
+    const [r, gr, b] = [after[box.first * 3]!, after[box.first * 3 + 1]!, after[box.first * 3 + 2]!];
+    expect(gr).toBeGreaterThan(r);
+    expect(gr).toBeGreaterThan(b);
+    view.dispose();
+  });
+});
+
+describe('buildCity pelny: witryny wg stanu lokalu', () => {
+  const brandTint = (city: CityState, lotId: number): string => (city.lots[lotId]!.brand === 'kawka' ? PALETTE.clothes[6]! : PALETTE.brand.orange);
+  const EXPECTED: Record<LotState, (city: CityState, lotId: number) => { cell: AtlasCellName; tint: string }> = {
+    wolny: () => ({ cell: 'witrynaWynajem', tint: '#ffffff' }),
+    obok: () => ({ cell: 'witrynaWynajem', tint: '#ffffff' }),
+    'po-traszce': () => ({ cell: 'witrynaPoTraszce', tint: '#ffffff' }),
+    twoj: () => ({ cell: 'witryna', tint: PALETTE.brand.green }),
+    konkurencja: (city, id) => ({ cell: 'witryna', tint: brandTint(city, id) }),
+    budowa: () => ({ cell: 'tynk', tint: PALETTE.brand.orange }),
+    zajety: () => ({ cell: 'witryna', tint: '#ffffff' }),
+  };
+
+  it('setLots z „wolny” daje UV komórki witrynaWynajem, z „po-traszce” komórki witrynaPoTraszce, a pozycje się nie zmieniają', () => {
+    const seed = SEEDS[0]!;
+    const city = cityOf(seed);
+    const view = buildCity(city, all(city, 'zajety'), { detail: 'pelny' });
+    view.setLayer('makieta');
+    const ref = referenceChunks(seed);
+    const positions = chunkMeshes(view).map((m) => Array.from(m.geometry.getAttribute('position').array));
+    for (const [state, cell] of [['wolny', 'witrynaWynajem'], ['po-traszce', 'witrynaPoTraszce'], ['zajety', 'witryna']] as const) {
+      view.setLots(all(city, state));
+      for (const c of ref) {
+        const g = chunkMesh(view, c.chunk).geometry;
+        for (const f of c.fronts) for (let i = f.first; i < f.first + f.count; i++) expect(uvInCell(g, i, cell), `${state} #${f.lotId} uv ${i}`).toBe(true);
+      }
+    }
+    expect(chunkMeshes(view).map((m) => Array.from(m.geometry.getAttribute('position').array))).toEqual(positions);
+    view.dispose();
+  });
+
+  it('każdy stan ma swoją komórkę i barwę witryny (tabela zadania), także po przejściu przez warstwy', () => {
+    const seed = SEEDS[0]!;
+    const city = cityOf(seed);
+    const view = buildCity(city, all(city, 'zajety'), { detail: 'pelny' });
+    const ref = referenceChunks(seed);
+    for (const state of Object.keys(EXPECTED) as LotState[]) {
+      view.setLayer('ruch');
+      view.setLots(all(city, state));    // stan zmieniony pod warstwą: witryna makiety czeka na powrót
+      view.setLayer('makieta');
+      for (const c of ref) {
+        const g = chunkMesh(view, c.chunk).geometry;
+        const col = g.getAttribute('color');
+        for (const f of c.fronts) {
+          const want = EXPECTED[state](city, f.lotId);
+          const tint = new Color(want.tint);
+          for (let i = f.first; i < f.first + f.count; i++) {
+            expect(uvInCell(g, i, want.cell), `${state} #${f.lotId} uv ${i}`).toBe(true);
+            expect(col.getX(i), `${state} #${f.lotId}`).toBeCloseTo(tint.r, 5);
+            expect(col.getY(i), `${state} #${f.lotId}`).toBeCloseTo(tint.g, 5);
+            expect(col.getZ(i), `${state} #${f.lotId}`).toBeCloseTo(tint.b, 5);
+          }
+        }
+      }
+    }
+    view.dispose();
+  });
+});
+
+describe('buildCity pelny: kotwice, wybór lokalu i kadr', () => {
+  it('kotwice w makiecie leżą nad najwyższym punktem budynku i wyżej niż w warstwach; promień z góry trafia lokal w obu trybach', () => {
+    for (const seed of SEEDS) {
+      const city = cityOf(seed);
+      const view = buildCity(city, generated(city), { detail: 'pelny' });
+      const ref = referenceChunks(seed);
+      view.setLayer('makieta');
+      const mock = new Map(view.pinAnchors().map((a) => [a.lotId, a.world.clone()]));
+      view.setLayer('ruch');
+      const flat = new Map(view.pinAnchors().map((a) => [a.lotId, a.world.clone()]));
+      expect([...mock.keys()].sort(), seed).toEqual([...flat.keys()].sort());
+      expect(mock.size, seed).toBeGreaterThan(0);
+      for (const [lotId, m] of mock) {
+        const f = flat.get(lotId)!;
+        const top = lotTop(ref, lotId);
+        expect(m.y, `${seed} #${lotId}`).toBeGreaterThan(top);
+        expect(f.y, `${seed} #${lotId}`).toBeGreaterThan(top * FLAT_SCALE);
+        expect(m.y, `${seed} #${lotId}`).toBeGreaterThan(f.y);
+        expect(f.x).toBeCloseTo(m.x, 10);
+        expect(f.z).toBeCloseTo(m.z, 10);
+      }
+      for (const layer of LAYERS) {
+        view.setLayer(layer);
+        for (const { lotId, world } of view.pinAnchors()) {
+          const ray = new Raycaster(new Vector3(world.x, world.y + 20, world.z), new Vector3(0, -1, 0));
+          expect(view.pickLot(ray), `${seed} ${layer} #${lotId}`).toBe(lotId);
+        }
+      }
+      view.dispose();
+    }
+  });
+
+  it('pickLot liczy z bieżącym scale.y: poziomy promień ponad spłaszczonymi dachami trafia wieżę w makiecie, a w warstwach nic', () => {
+    const seed = SEEDS[0]!;
+    const city = cityOf(seed);
+    const view = buildCity(city, generated(city), { detail: 'pelny' });
+    const ref = referenceChunks(seed);
+    const tops = city.lots.map((l) => ({ lot: l, top: lotTop(ref, l.id) }));
+    const tallest = tops.reduce((a, b) => (b.top > a.top ? b : a));
+    const y = Math.max(...tops.map((t) => t.top)) * FLAT_SCALE + 0.02;
+    expect(tallest.top).toBeGreaterThan(y + 0.1);
+    const box = ref.flatMap((c) => c.boxes).find((b) => b.lotId === tallest.lot.id)!.box;
+    const ray = new Raycaster(new Vector3(box.min.x - 0.01, y, (box.min.z + box.max.z) / 2), new Vector3(1, 0, 0));
+    view.setLayer('makieta');
+    expect(view.pickLot(ray)).toBe(tallest.lot.id);
+    view.setLayer('dzielnice');
+    expect(view.pickLot(ray)).toBeNull();
+    view.dispose();
+  });
+
+  it('kadr: w makiecie wysokość do kadru to najwyższy punkt sceny (wieże), w warstwach zostaje kadr z 4a.1; miasto mieści się w oknie', () => {
+    const city = cityOf(SEEDS[0]!);
+    const simple = buildCity(city, generated(city));
+    const view = buildCity(city, generated(city), { detail: 'pelny' });
+    const maxY = Math.max(...chunkMeshes(view).map((m) => m.geometry.boundingBox!.max.y));
+    expect(maxY).toBeGreaterThan(1);   // wieże biurowców w prawdziwej skali
+    view.setLayer('makieta');
+    const roof = view.fitHeight();
+    expect(roof).toBeGreaterThanOrEqual(maxY);
+    for (const layer of ['ruch', 'dzielnice'] as const) {
+      view.setLayer(layer);
+      simple.setLayer(layer);
+      expect(view.fitHeight(), layer).toBe(simple.fitHeight());
+      expect(cityFitViewSize(1280, 800, 800, view.fitHeight()), layer).toBe(cityFitViewSize(1280, 800, 800));
+    }
+    expect(cityFitViewSize(1280, 800, 800, roof)).toBeGreaterThan(cityFitViewSize(1280, 800, 800));
+    // makieta w kadrze: narożniki miasta z najwyższym punktem mieszczą się w oknie przy każdym obrocie
+    for (const [w, h] of [[1280, 800], [390, 844]] as const) {
+      const rig = new CameraRig(w / h);
+      const size = cityFitViewSize(w, h, h, roof);
+      rig.setViewMax(Math.max(VIEW_SIZE_MAX, size));
+      rig.zoomBy(rig.viewSize / size);
+      for (const yaw of [0, 1, 2, 3] as const) {
+        rig.yawIndex = yaw;
+        for (const x of [CITY_BOUNDS.minX, CITY_BOUNDS.maxX]) {
+          for (const z of [CITY_BOUNDS.minZ, CITY_BOUNDS.maxZ]) {
+            for (const yy of [0, roof]) {
+              const p = new Vector3(x, yy, z).project(rig.camera);
+              expect(Math.abs(p.x), `${w}×${h} yaw ${yaw}`).toBeLessThanOrEqual(1);
+              expect(Math.abs(p.y), `${w}×${h} yaw ${yaw}`).toBeLessThanOrEqual(1);
+            }
+          }
+        }
+      }
+    }
+    simple.dispose();
+    view.dispose();
+  });
+});
+
+describe('buildCity pelny: sprzątanie', () => {
+  it('dispose zwalnia wszystkie geometrie i oba materiały, ale nie tekstury atlasu (wspólny cache)', () => {
+    const city = cityOf(SEEDS[0]!);
+    const view = buildCity(city, generated(city), { detail: 'pelny' });
+    const geometries = new Set(meshesOf(view.root).map((m) => m.geometry));
+    const materials = new Set<Material>();
+    for (const layer of LAYERS) { view.setLayer(layer); for (const m of meshesOf(view.root)) materials.add(m.material as Material); }
+    expect(materials.size).toBe(2);
+    let geometry = 0;
+    let mat = 0;
+    let texture = 0;
+    for (const g of geometries) g.addEventListener('dispose', () => { geometry++; });
+    for (const m of materials) m.addEventListener('dispose', () => { mat++; });
+    for (const t of [atlas.map, atlas.emissive]) t.addEventListener('dispose', () => { texture++; });
+    const parent = new Mesh();
+    parent.add(view.root);
+    view.dispose();
+    expect(geometry).toBe(geometries.size);
+    expect(mat).toBe(2);
+    expect(texture).toBe(0);
+    expect(view.root.parent).toBeNull();
+    expect(() => view.dispose()).not.toThrow();
+    expect(geometry).toBe(geometries.size);
+  });
+});
+
 describe('źródła: wspólna kartka „DO WYNAJĘCIA”', () => {
   const read = (rel: string): string => readFileSync(join(__dirname, '..', '..', '..', rel), 'utf8');
 
@@ -454,5 +847,12 @@ describe('źródła: wspólna kartka „DO WYNAJĘCIA”', () => {
 
   it('cityPins.ts rysuje kartkę z dopiskiem „po Traszce” przez tr()', () => {
     expect(read('src/render/city/cityPins.ts')).toMatch(/tr\('po Traszce'\)/);
+  });
+
+  it('skrót numeru lokalu `unit` ma jedną definicję (cityCoords.ts), a cityBuildings.ts nie importuje buildCity.ts (bez cyklu importów)', () => {
+    const def = /const unit = \(id: number\)/;
+    expect(read('src/render/city/cityCoords.ts')).toMatch(def);
+    for (const rel of ['src/render/city/buildCity.ts', 'src/render/city/cityBuildings.ts']) expect(read(rel), rel).not.toMatch(def);
+    expect(read('src/render/city/cityBuildings.ts')).not.toMatch(/from '\.\/buildCity'/);
   });
 });
