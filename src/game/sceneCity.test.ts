@@ -405,19 +405,50 @@ describe('showCity / hideCity', () => {
         }
       }
 
-      // telefon w pionie: gracz w „Ruchu” przełącza na makietę; kadru nie przestawiamy, ale da się oddalić do całej makiety
+      // telefon w pionie: gracz w „Ruchu” przełącza na makietę; kadr staje na całej makiecie z wieżami (raz), a limit zoomu jej starcza
       vi.stubGlobal('window', { innerWidth: 390, innerHeight: 844 });
       const phone = hostOn('srednia', 390 / 844);
       phone.host.showCity(CITY, STATES, 'ruch');
-      const target = { x: phone.ctx.rig.target.x, z: phone.ctx.rig.target.z, size: phone.ctx.rig.viewSize };
+      phone.ctx.rig.panBy(5, 3);   // gracz przesunął kadr po warstwie
       phone.host.showCity(CITY, STATES, 'makieta');
       const need = cityFitViewSize(390, 844, 844, phone.host.cityView!.fitHeight());
       expect(phone.ctx.rig.viewMax).toBeGreaterThanOrEqual(need - 1e-9);
-      expect(phone.ctx.rig.viewSize).toBeCloseTo(target.size, 6);
-      expect(phone.ctx.rig.target.x).toBeCloseTo(target.x, 6);
-      expect(phone.ctx.rig.target.z).toBeCloseTo(target.z, 6);
+      expect(phone.ctx.rig.viewSize).toBeCloseTo(need, 6);
+      expect(phone.ctx.rig.target.x).toBeCloseTo(0, 6);   // makieta stoi znów w środku okna
+      expect(phone.ctx.rig.target.z).toBeCloseTo(0, 6);
       phone.host.showCity(CITY, STATES, 'ruch');
       expect(phone.ctx.rig.viewMax).toBeGreaterThanOrEqual(need - 1e-9);   // limit nie maleje pod nogami gracza
+    });
+
+    it('wejście w makietę przy pokazanym mieście kadruje całe miasto raz; ruch ↔ dzielnice i wyjście z makiety zostawiają kadr gracza', () => {
+      const { host, ctx } = hostOn('srednia');
+      host.showCity(CITY, STATES, 'ruch');
+      const moved = (): { x: number; z: number; size: number } => ({ x: ctx.rig.target.x, z: ctx.rig.target.z, size: ctx.rig.viewSize });
+      // gracz przybliża (zoomBy dzieli rozmiar widoku przez współczynnik) i przesuwa kadr
+      ctx.rig.zoomBy(2);
+      ctx.rig.panBy(6, -4);
+      const own = moved();
+      expect(own.size).toBeLessThan(cityFitViewSize(1280, 800, 800));
+      expect(Math.hypot(own.x, own.z)).toBeGreaterThan(1);
+
+      host.showCity(CITY, STATES, 'dzielnice');   // warstwa ↔ warstwa: kadr zostaje
+      expect(moved()).toEqual(own);
+
+      host.showCity(CITY, STATES, 'makieta');     // do makiety: kadr na całe miasto z wieżami
+      const fit = cityFitViewSize(1280, 800, 800, host.cityView!.fitHeight());
+      expect(ctx.rig.viewSize).toBeCloseTo(fit, 6);
+      expect(ctx.rig.target.x).toBeCloseTo(0, 6);
+      expect(ctx.rig.target.z).toBeCloseTo(0, 6);
+
+      ctx.rig.zoomBy(1.5);                         // gracz znów kadruje po swojemu
+      ctx.rig.panBy(3, 2);
+      const again = moved();
+      host.showCity(CITY, STATES, 'makieta');      // to samo wywołanie (zmiana stanów lokali, presetu): bez ponownego kadru
+      expect(moved()).toEqual(again);
+      host.showCity(CITY, STATES, 'ruch');         // z makiety do warstwy: kadr zostaje
+      expect(moved()).toEqual(again);
+      host.showCity(CITY, STATES, 'makieta');      // i znów do makiety: kadr na całość
+      expect(ctx.rig.viewSize).toBeCloseTo(fit, 6);
     });
 
     it('pickCityLot w makiecie: promień przez kotwicę trafia w budynek', () => {

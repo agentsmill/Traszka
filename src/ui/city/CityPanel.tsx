@@ -3,7 +3,7 @@ import { DISTRICT_COLOR, TRAFFIC_BUSY, TRAFFIC_QUIET, type CityLayer } from '@/r
 import { partnerProgress } from '@/sim/firm/commands';
 import { openStores } from '@/sim/firm/firm';
 import { MAX_STORES, type FirmState } from '@/sim/firm/types';
-import { cityLayer, firm, selectedLot, type GameActions } from '../state';
+import { cityLayer, cityMockup, firm, selectedLot, shownCityLayer, type GameActions } from '../state';
 import { zl } from '../game/format';
 import { LotCard } from './LotCard';
 import { ResearchSection } from './ResearchSection';
@@ -21,8 +21,9 @@ import { addressText, limitText } from './firmText';
 
 const STATUS_ICON = { missing: '🔒', granted: '✅', ranked: '🏁' } as const;
 
-/** Legenda warstwy: skala ruchu od cichego do tłocznego albo kolory dzielnic. */
+/** Legenda trybu mapy: skala ruchu od cichego do tłocznego albo kolory dzielnic. Makieta ma własne kolory budynków i legendy nie ma. */
 function legend(layer: CityLayer) {
+  if (layer === 'makieta') return null;
   if (layer === 'ruch') {
     return (
       <div class="tt-citylegend">
@@ -41,10 +42,16 @@ function legend(layer: CityLayer) {
   );
 }
 
-/** Pasek miasta: postęp do statusu Partnera (albo tekst rankingowy), nazwa miasta, licznik placówek i przełącznik „Ruch / Dzielnice”. */
+/** Przycisk trybu mapy w przełączniku paska; `shown` to tryb, który się teraz pokazuje. */
+const layerButton = (id: CityLayer, label: string, shown: CityLayer) => (
+  <button type="button" class={`tt-btn${shown === id ? ' on' : ''}`} aria-pressed={shown === id} onClick={() => { cityLayer.value = id; }}>{label}</button>
+);
+
+/** Pasek miasta: postęp do statusu Partnera (albo tekst rankingowy), nazwa miasta, licznik placówek i przełącznik „Makieta / Ruch / Dzielnice” (makieta tylko, gdy profil sprzętu ją ma). */
 export function CityBar({ f }: { f: FirmState; v: number }) {
   const p = partnerProgress(f);
-  const layer = cityLayer.value;
+  const mockup = cityMockup.value;
+  const layer = shownCityLayer(cityLayer.value, mockup);
   const text = progressText(p);
   return (
     <div class="tt-citybar">
@@ -56,8 +63,9 @@ export function CityBar({ f }: { f: FirmState; v: number }) {
         <span class="tt-cityname">{f.city.name}</span>
         <span class="tt-muted">{t`placówki ${openStores(f).length + f.builds.length}/${f.storeLimit}`}</span>
         <div class="tt-seg tt-layers" role="group" aria-label={t`Warstwa mapy`}>
-          <button type="button" class={`tt-btn${layer === 'ruch' ? ' on' : ''}`} aria-pressed={layer === 'ruch'} onClick={() => { cityLayer.value = 'ruch'; }}>{t`Ruch`}</button>
-          <button type="button" class={`tt-btn${layer === 'dzielnice' ? ' on' : ''}`} aria-pressed={layer === 'dzielnice'} onClick={() => { cityLayer.value = 'dzielnice'; }}>{t`Dzielnice`}</button>
+          {mockup && layerButton('makieta', t`Makieta`, layer)}
+          {layerButton('ruch', t`Ruch`, layer)}
+          {layerButton('dzielnice', t`Dzielnice`, layer)}
         </div>
       </div>
       {legend(layer)}

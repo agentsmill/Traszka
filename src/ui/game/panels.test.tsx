@@ -213,7 +213,7 @@ describe('panele wysyłają polecenia przez game.dispatch, a nie wołają symula
       expect(sheetFolded.value).toBe(false);
     });
 
-    it('zmiana zakładki, zamknięcie i wybór lokalu rozwijają arkusz; stuknięcie w zwiniętą zakładkę ją rozwija zamiast zamykać', () => {
+    it('zmiana zakładki, zamknięcie i wybór lokalu rozwijają arkusz, odznaczenie nie; stuknięcie w zwiniętą zakładkę ją rozwija zamiast zamykać', () => {
       const { s, info } = rich();
       econ.value = { s, info, v: 1 };
       tab.value = 'ludzie';
@@ -224,6 +224,8 @@ describe('panele wysyłają polecenia przez game.dispatch, a nie wołają symula
       selectedLot.value = 3;
       expect(sheetFolded.value).toBe(false);
       sheetFolded.value = true;
+      selectedLot.value = null;   // odznaczenie (stuknięcie w pustą mapę) nie rozwija: gracz zwinął arkusz, żeby widzieć mapę
+      expect(sheetFolded.value).toBe(true);
       click(walk(TabBar()).find((v) => v.props['data-tut'] === 'tab-cele')!);
       expect(tab.value).toBe('cele');
       expect(sheetFolded.value).toBe(false);

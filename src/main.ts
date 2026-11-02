@@ -1,3 +1,4 @@
+import { batch } from '@preact/signals';
 import { createRenderContext, type RenderContext } from '@/render/renderer';
 import { QUALITY, detectDeviceCaps, pickInitialPreset, type QualityPresetId } from '@/render/quality';
 import { createCharacterFactory, type CharacterFactory } from '@/render/characters/characterFactory';
@@ -9,7 +10,7 @@ import { lastSavedSeed } from '@/game/session';
 import { createShell, dropUnsentRun } from '@/game/actions';
 import { bootImport, openAtBoot } from '@/game/boot';
 import { bootMeta } from '@/game/bootMeta';
-import { browserCityScreen } from '@/game/cityScreen';
+import { applyCityProfile, browserCityScreen } from '@/game/cityScreen';
 import { bindControls } from '@/game/controls';
 import { advanceSession, debugHandleEnabled, debugHandleOf, installDebugHandle, isModalOpen, isSceneHeld } from '@/game/frame';
 import { loadMeta, needsStartScreen, saveMeta } from '@/game/meta';
@@ -137,10 +138,22 @@ function startGame(
   const yaw = Number(params.get('yaw'));
   if (!benchMode && yaw >= 1 && yaw <= 3) ctx.rig.yawIndex = yaw as 1 | 2 | 3;
 
+  /**
+   * Preset renderera idzie do interfejsu razem z profilem miasta (`cityProfile(preset, telefon)`: czy jest „Makieta”; przy starcie gry także tryb
+   * mapy, na którym otwiera się miasto). Sprzęt to to samo wykrywanie, którego używa scena miasta. Jedna paczka (`batch`), więc ekran miasta
+   * widzi preset i profil naraz. `id` bez argumentu to preset renderera (po `setPreset` renderer mógł zejść niżej, np. bez AO).
+   */
+  function syncPreset(atStart = false, id: QualityPresetId = ctx.preset): void {
+    batch(() => {
+      ui.preset.value = id;
+      applyCityProfile(id, detectDeviceCaps().isMobile, atStart);
+    });
+  }
+
   // stan startowy dla nakładki (świat startuje z prędkością ×1)
   ui.seed.value = initialSeed;
   ui.speed.value = 1;
-  ui.preset.value = ctx.preset;
+  syncPreset(true);
   ui.showPerf.value = params.get('perf') === '1';
 
   // Jedyne miejsce, w którym zmienia się stan gry na żądanie gracza. Przyciski i klawisze wołają te funkcje.
@@ -153,7 +166,7 @@ function startGame(
     setTimeOfDay: (next) => scene.setTimeOfDay(next),
     setPreset(next) {
       ctx.setPreset(next);
-      ui.preset.value = ctx.preset;   // bez AO renderer schodzi niżej i sam o tym informuje (traszka:notice)
+      syncPreset();   // bez AO renderer schodzi niżej i sam o tym informuje (traszka:notice), więc bierzemy preset z renderera
     },
     generate: shell.generate,
     randomize: shell.randomize,
@@ -199,7 +212,7 @@ function startGame(
     ? benchKit.createBenchSession(ctx, scene.crowdRoot, {
       quick: params.get('quick') === '1',
       onProgress: (progress) => { ui.bench.value = progress; },
-      onPreset: (id) => { ui.preset.value = id; },
+      onPreset: (id) => { syncPreset(false, id); },
       city: benchKit.createBenchCityScene(scene),
     })
     : null;

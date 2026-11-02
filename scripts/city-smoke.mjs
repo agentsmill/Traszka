@@ -43,7 +43,17 @@
  * (nie jest „przezroczysta” dla dotyku) i mieści w widocznej części kolumny bramki (FPS, p95, Wywołania). Wynik idzie do `.smoke/city-bench/`, osobno
  * od pełnego smoke'a. Liczby z headless (swiftshader) niczego nie rozstrzygają.
  *
- * Użycie: `npm run build`, potem `npm run city:smoke` (albo `node scripts/city-smoke.mjs [--only phone|desktop] [--bench]`). Zrzuty i `smoke.json` idą do
+ * Plan 4a.2 (Zadanie 15) dokłada kroki makiety 3D (`--etap makieta` biegnie same):
+ *  13. (komputer, preset domyślny Średnia) miasto otwiera się w „Makiecie”: pełna geometria, auta, mniej niż 150 wywołań rysowania razem z rzucającymi cień;
+ *      „Ruch” i „Dzielnice” bez aut i poniżej 60 wywołań; powrót do „Makiety” ustawia kadr od nowa; zrzuty wolnego lokalu i lokalu „po Traszce” z bliska,
+ *      w czterech obrotach kamery, z pomiarem, czy pinezka leży na witrynie;
+ *  14. (telefon, profil „telefon” z mobilnym User-Agentem) miasto startuje w „Ruchu” na prostej geometrii, „Makieta” daje pełną bez aut, wyjście z zakładki zwalnia
+ *      scenę (`built === false`, liczba geometrii w rendererze wraca do stanu sprzed wejścia), powrót znów buduje prostą, bez wycieku; trzy przyciski paska miasta
+ *      mieszczą się w 390 px po polsku i po angielsku („Model / Footfall / Districts”); FPS warstwy i makiety z licznika F3 (orientacyjnie, swiftshader);
+ *  15. pełny bieg zawiera bieg `--bench` (ten sam rdzeń `benchPass` co `npm run city:smoke -- --bench`) na tej samej przeglądarce: `?bench=1&quick=1` kończy się,
+ *      `__benchExtra.city` ma cztery wiersze z `calls` < 150, a zapytań do `/api/**` i poza localhost jest zero.
+ *
+ * Użycie: `npm run build`, potem `npm run city:smoke` (albo `node scripts/city-smoke.mjs [--only phone|desktop] [--etap 4b|makieta] [--bench]`). Zrzuty i `smoke.json` idą do
  * `.smoke/city/` (katalog jest w .gitignore); wybrane zrzuty do raportu kopiuje się ręcznie do `docs/superpowers/reports/`.
  * Playwright nie jest zależnością projektu: skrypt bierze go z `PLAYWRIGHT_ROOT` (domyślnie `/opt/node-tools`, jak `scripts/tutorial-smoke.mjs`; może to
  * być katalog pakietu `playwright-core`, katalog `node_modules` albo katalog, w którego `node_modules` leży `playwright`), a gdy tam go nie ma,
@@ -89,8 +99,9 @@ export const FIXTURES = {
 /** Pamięć samouczka: przelot pominięty, dymki „pierwszy raz” wyłączone (albo włączone w przebiegu z dymkami). */
 export const tutorialMemory = (tips) => ({ v: 1, tour: 'skipped', seen: [], tips });
 /**
- * Kroki smoke'a (numeracja z Zadania 16 i 9 planu 4a.2) i rozmiary, na których biegną: 6 tylko na komputerze (wypowiedzenie), 7 i 12 tylko na telefonie
- * (poziome przewijanie, angielski, FPS, nowe ekrany). Na pozostałym rozmiarze krok jest „nie dotyczy” i nie liczy się jako porażka.
+ * Kroki smoke'a (numeracja z Zadania 16, 9 i 15 planu 4a.2) i rozmiary, na których biegną: 6 tylko na komputerze (wypowiedzenie), 7 i 12 tylko na telefonie
+ * (poziome przewijanie, angielski, FPS, nowe ekrany), 13 tylko na komputerze (makieta na Średniej), 14 tylko na telefonie (profil „telefon”), 15 na obu (bieg
+ * benchmarku). Na pozostałym rozmiarze krok jest „nie dotyczy” i nie liczy się jako porażka.
  */
 export const STEPS = [
   { id: 1, name: 'stary zapis: jeden sklep, mapa, karta, „Biorę lokal” zablokowany', sizes: ['telefon', 'desktop'] },
@@ -105,7 +116,12 @@ export const STEPS = [
   { id: 10, name: 'trzy placówki: „Biorę lokal” zablokowany tekstem Centrali', sizes: ['telefon', 'desktop'] },
   { id: 11, name: 'koniec miesiąca przy trzech sklepach: „Sieć” i trzy wyciągi, zaufanie przy każdym, podgląd końca miesiąca (390 px)', sizes: ['telefon', 'desktop'] },
   { id: 12, name: '390 px: nowe ekrany bez poziomego przewijania, po polsku i po angielsku', sizes: ['telefon'] },
+  { id: 13, name: 'komputer, Średnia: miasto w makiecie (pełna geometria, auta, < 150 wywołań), Ruch i Dzielnice bez aut (< 60), kadr makiety, zbliżenia lokali', sizes: ['desktop'] },
+  { id: 14, name: 'telefon, profil „telefon”: Ruch na prostej geometrii, Makieta pełna bez aut, zwolnienie sceny po wyjściu z zakładki, trzy przyciski na 390 px po polsku i angielsku', sizes: ['telefon'] },
+  { id: 15, name: 'bieg ?bench=1&quick=1 w pełnym przebiegu: kończy się, cztery wiersze miasta z calls < 150, /api/** zero', sizes: ['telefon', 'desktop'] },
 ];
+/** Kroki makiety z Zadania 15 (13–15): same biegną z `--etap makieta`. */
+export const STEPS_MAKIETA = STEPS.filter((s) => typeof s.id === 'number' && s.id >= 13);
 /** Dodatkowy przebieg z dymkami miasta (Zadanie 14): tylko telefon. */
 export const TIPS_STEP = { id: 'T', name: 'dymki miasta (tip-miasto, tip-lokal) na 390 px', sizes: ['telefon'] };
 /**
@@ -304,20 +320,24 @@ export function outDirFor(bench, env = process.env) {
 
 export const USAGE = `Smoke miasta i drugiego sklepu w headless Chromium (po \`npm run build\`).
 
-Użycie: node scripts/city-smoke.mjs [--only telefon|desktop] [--etap 4b] [--bench]
+Użycie: node scripts/city-smoke.mjs [--only telefon|desktop] [--etap 4b|makieta] [--bench]
         npm run city:smoke
 
   --only <rozmiar>  tylko jeden rozmiar okna: telefon (390×844, dotyk) albo desktop (1280×800; w krokach 4b 1440×900)
   --etap 4b         tylko kroki etapu 4b (4b-a…4b-g) i konsola (krok 8); reszta „nie dotyczy”
+  --etap makieta    tylko kroki 13–15 (makieta na komputerze, profil „telefon”, bieg benchmarku) i konsola (krok 8); reszta „nie dotyczy”
   --bench           zamiast kroków sam bieg \`?bench=1&quick=1\` (benchmark z miastem) na obu rozmiarach; zero zapytań do /api/** to warunek
   --help            ta pomoc
 
 Zmienne: PLAYWRIGHT_ROOT (domyślnie ${DEFAULT_PLAYWRIGHT_ROOT}), CITY_SMOKE_CHROMIUM, CITY_SMOKE_PORT (4318), CITY_SMOKE_OUT (.smoke/city).
 Zrzuty i smoke.json idą do katalogu wyjściowego (w .gitignore; \`--bench\` pisze do .smoke/city-bench z bench.json, żeby nie kasować wyników pełnego smoke'a). Kod wyjścia: 0 (wszystkie kroki ok), 1 (porażka kroku), 2 (błąd uruchomienia).`;
 
+/** Wartości `--etap`: kroki etapu 4b albo kroki makiety z Zadania 15 (13–15). */
+export const STAGES = ['4b', 'makieta'];
+
 /**
- * Argumenty polecenia: `--only telefon|desktop` ogranicza przebieg do jednego rozmiaru (do ponawiania pojedynczej porażki), `--etap 4b` do kroków
- * etapu 4b (`stage`), a `--bench` zamienia kroki na sam bieg benchmarku z miastem (`?bench=1&quick=1`).
+ * Argumenty polecenia: `--only telefon|desktop` ogranicza przebieg do jednego rozmiaru (do ponawiania pojedynczej porażki), `--etap 4b|makieta` do kroków
+ * etapu 4b albo kroków makiety (`stage`), a `--bench` zamienia kroki na sam bieg benchmarku z miastem (`?bench=1&quick=1`).
  */
 export function parseArgs(argv) {
   const args = { only: null, help: false, bench: false, stage: null };
@@ -327,7 +347,7 @@ export function parseArgs(argv) {
     else if (a === '--bench') args.bench = true;
     else if (a === '--etap') {
       const v = argv[++i];
-      if (v !== '4b') throw new Error(`--etap przyjmuje 4b, dostałem „${v ?? ''}”`);
+      if (!STAGES.includes(v)) throw new Error(`--etap przyjmuje 4b albo makieta, dostałem „${v ?? ''}”`);
       args.stage = v;
     } else if (a === '--only') {
       const v = argv[++i];
@@ -522,6 +542,91 @@ export function withOnlyCardTomorrow(saveText, { storeId, cardId, ids }) {
   return JSON.stringify(save);
 }
 
+// ——— plan 4a.2 (Zadanie 15): kroki makiety (testy: tests/citySmoke.test.ts) ———
+
+/** Napisy przełącznika trybu mapy w pasku miasta (`.tt-layers`): po polsku i po angielsku (`EN_UI`: „Model / Footfall / Districts”). */
+export const LAYER_LABELS = { pl: ['Makieta', 'Ruch', 'Dzielnice'], en: ['Model', 'Footfall', 'Districts'] };
+
+/**
+ * Wady przełącznika trybu mapy: trzy przyciski w kolejności „Makieta / Ruch / Dzielnice” (po angielsku „Model / Footfall / Districts”) i dokładnie jeden wciśnięty,
+ * ten z `pressed`. `buttons`: odczyt ze strony (`{ text, pressed }` po kolei).
+ */
+export function layerBarProblems(buttons, pressed, lang = 'pl') {
+  const want = LAYER_LABELS[lang];
+  const out = [];
+  const texts = buttons.map((b) => b.text);
+  if (texts.join('|') !== want.join('|')) out.push(`przyciski „${texts.join(' / ')}”, oczekiwane „${want.join(' / ')}”`);
+  const on = buttons.filter((b) => b.pressed).map((b) => b.text);
+  if (on.length !== 1 || on[0] !== pressed) out.push(`wciśnięte: ${on.length ? on.join(', ') : 'żaden'}, oczekiwany „${pressed}”`);
+  return out;
+}
+
+/** Bok miasta w metrach i jednostka sceny (`src/render/city/cityCoords.ts`): smoke ustawia kamerę na lokalu bez importu z `src` (test pilnuje zgodności). */
+export const CITY_M = 660;
+export const CITY_UNIT_M = 30;
+/** Wejście lokalu (metry miasta) we współrzędnych sceny: środek miasta w (0, 0), x miasta to x sceny, y miasta to z sceny. */
+export const cityWorld = (lot) => ({ x: (lot.x - CITY_M / 2) / CITY_UNIT_M, z: (lot.y - CITY_M / 2) / CITY_UNIT_M });
+
+/**
+ * Wady migawki `cityStats()` (`window.traszkaGame.cityStats()`) wobec oczekiwań kroku. `want.built === false`: miasto zwolnione (nie pokazane, sceny nie ma).
+ * Inaczej miasto jest pokazane i zbudowane, a `want` mówi o widoku (`layer`), geometrii (`detail`), autach (`cars: true`: więcej niż 0, `false`: zero)
+ * i budżecie §19: wywołania sceny razem z rzucającymi cień poniżej 150 w makiecie i poniżej 60 w warstwach (`CITY_BUDGET`, liczony dla `want.layer`).
+ */
+export function cityStatsProblems(stats, want) {
+  if (!stats || typeof stats !== 'object') return ['brak cityStats()'];
+  const out = [];
+  if (want.built === false) {
+    if (stats.shown) out.push('miasto nadal pokazane (shown true)');
+    if (stats.built) out.push('scena miasta nadal istnieje (built true)');
+    return out;
+  }
+  if (!stats.shown) out.push('miasto nie jest pokazane (shown false)');
+  if (!stats.built) out.push('sceny miasta nie ma (built false)');
+  if (want.layer !== undefined && stats.layer !== want.layer) out.push(`widok ${stats.layer}, oczekiwany ${want.layer}`);
+  if (want.detail !== undefined && stats.detail !== want.detail) out.push(`geometria ${stats.detail}, oczekiwana ${want.detail}`);
+  if (want.cars === true && !(stats.cars > 0)) out.push(`auta ${stats.cars}, oczekiwane więcej niż 0`);
+  if (want.cars === false && stats.cars !== 0) out.push(`auta ${stats.cars}, oczekiwane 0`);
+  const layer = want.layer ?? stats.layer;
+  const budget = CITY_BUDGET[layer];
+  if (budget !== undefined && !(stats.drawCalls + stats.shadowCasters < budget)) out.push(`scena ${stats.drawCalls} + ${stats.shadowCasters} wywołań (budżet ${budget} dla ${layer})`);
+  return out;
+}
+
+/**
+ * Wady licznika geometrii renderera (`renderer.info.memory.geometries`) w życiu sceny miasta na telefonie: `before` przed pierwszym wejściem w zakładkę, `open` z miastem
+ * (prosta geometria), `mockup` po „Makiecie” (pełna zastępuje prostą), `flat` po wróceniu do „Ruchu” (spłaszczenie nie buduje niczego od nowa), `exited` po wyjściu z zakładki
+ * (scena zwolniona) i `again` po powrocie (prosta od nowa). Jedna geometria w każdej chwili, bez wycieku: miasto coś dodaje (`open > before`), spłaszczenie nie rusza
+ * licznika, wyjście wraca do `before` (z zapasem `slack` na rzeczy sklepu, które powstają w tle) i ponowne wejście daje to samo co pierwsze (`again === open`).
+ */
+export function geometryProblems(g, slack = 0) {
+  const out = [];
+  if (!(g.open > g.before)) out.push(`z miastem ${g.open} geometrii, a przed ${g.before}: miasto niczego nie dodało`);
+  if (g.flat !== g.mockup) out.push(`po powrocie do Ruchu ${g.flat} geometrii, w makiecie ${g.mockup}: spłaszczenie przebudowało scenę`);
+  if (g.exited > g.before + slack) out.push(`po wyjściu z zakładki ${g.exited} geometrii, przed wejściem ${g.before}${slack ? ` (zapas ${slack})` : ''}: scena miasta nie została zwolniona`);
+  if (g.again !== g.open) out.push(`po powrocie ${g.again} geometrii, przy pierwszym wejściu ${g.open}: wyciek albo przebudowa`);
+  return out;
+}
+
+/** Dzień 0 to wtorek (jak `cityClockOf`): sobota i niedziela to dni 4 i 5 tygodnia. */
+const isWeekendDay = (day) => day % 7 === 4 || day % 7 === 5;
+/**
+ * Minuta gry z południem najbliższego dnia roboczego, które jeszcze nie minęło: auta makiety jadą wg godziny i dnia gry (fixture „po Traszce” stoi w niedzielę o 6:00, a w południe dnia roboczego aut jest dużo),
+ * a zrzuty w pełnym świetle dnia. Minuta, która już jest południem dnia roboczego, zostaje.
+ */
+export function nextWorkdayNoon(minute) {
+  let day = Math.floor(minute / 1440);
+  if (minute % 1440 > 720) day += 1;
+  while (isWeekendDay(day)) day += 1;
+  return day * 1440 + 720;
+}
+
+/** Czy pinezka (ramka `{ l, t, r, b }` w px) leży na punkcie ekranu `{ x, y }` (z zapasem `pad` px): zasłania to, co jest pod nim. */
+export const pinCoversPoint = (pin, point, pad = 0) =>
+  !!pin && point.x >= pin.l - pad && point.x <= pin.r + pad && point.y >= pin.t - pad && point.y <= pin.b + pad;
+
+/** Opis wyniku licznika wydajności (F3) do notatek kroku. */
+export const perfHint = (x) => `${x.fps.toFixed(1)} FPS (min ${x.minFps}, max ${x.maxFps}), klatka ${x.ms.toFixed(0)} ms, ${x.calls} wywołań rysowania, ${Math.round(x.tris / 1000)} tys. trójkątów`;
+
 // ——— przeglądarka ———
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -590,8 +695,8 @@ async function press(page, sel, timeout = 8_000) {
   await page.click(sel, { timeout });
 }
 
-/** Wspólne ustawienia infrastruktury: pomiar szerokości okien (telefon) i lista awaryjnych kliknięć w DOM. */
-const hooks = { onDialog: null, fallbacks: [] };
+/** Wspólne ustawienia infrastruktury: pomiar szerokości okien (telefon), lista awaryjnych kliknięć w DOM (z kartą i krokiem, w którym padły) i krok w toku (`runStep`). */
+const hooks = { onDialog: null, fallbacks: [], step: null };
 
 /**
  * Zamykanie okna przez pętlę `settle`: zwykłe kliknięcie, a gdy się nie uda (okno, które gra właśnie zamyka, baner, który przez chwilę zasłania
@@ -603,7 +708,7 @@ async function dismiss(page, sel, timeout = 6_000) {
   } catch (error) {
     const done = await page.evaluate((s) => { const el = document.querySelector(s); if (!el) return false; el.click(); return true; }, sel);
     if (!done) throw error;
-    hooks.fallbacks.push(`${sel} (${String(error.message).split('\n')[0]})`);
+    hooks.fallbacks.push(`${page.smokeTag ?? '?'}${hooks.step === null ? '' : ` krok ${hooks.step}`}: ${sel} (${String(error.message).split('\n')[0]})`);   // karta i krok wskazują, gdzie okno nie dało się zamknąć zwykłym kliknięciem
   }
 }
 
@@ -750,6 +855,37 @@ async function advance(page, { stop = null, maxDays, chunk = 1440, done = null }
     if ((done && done(game)) || game.day - startDay > maxDays) return { stopped: null, closed, game };
   }
   throw new Error('advance: gra nie posuwa się naprzód');
+}
+
+/**
+ * Przewija grę do minuty `target` (co do minuty): `skip` staje na kartach decyzji, więc po każdym kawałku zamykamy okna i liczymy dalej. Zwraca minutę, na której stanęła gra.
+ */
+async function skipTo(page, target) {
+  for (let i = 0; i < 40; i++) {
+    const g = await readGame(page);
+    if (g.minute >= target) return g.minute;
+    await skip(page, Math.min(target - g.minute, 1440));
+    await settle(page);
+  }
+  throw new Error(`gra nie doszła do minuty ${target}`);
+}
+
+/**
+ * Licznik wydajności (F3, `.tt-perf` musi być włączony): po ustaleniu się obrazu (`settleMs`) osiem odczytów co 0,7 s; mediana i rozrzut FPS, mediana klatki,
+ * wywołań rysowania i trójkątów. Orientacyjnie: headless liczy scenę na procesorze (swiftshader), więc to nie jest liczba prawdziwego urządzenia.
+ */
+async function measurePerf(page, { settleMs = 2500, samples = 8, every = 700 } = {}) {
+  await sleep(settleMs);
+  const taken = [];
+  for (let i = 0; i < samples; i++) {
+    const rows = await page.evaluate(() => [...document.querySelectorAll('.tt-perf > div')].map((d) => [d.firstElementChild?.textContent ?? '', d.querySelector('b')?.textContent ?? '']));
+    taken.push(parsePerf(rows));
+    await sleep(every);
+  }
+  return {
+    fps: median(taken.map((x) => x.fps)), minFps: Math.min(...taken.map((x) => x.fps)), maxFps: Math.max(...taken.map((x) => x.fps)),
+    ms: median(taken.map((x) => x.ms)), calls: median(taken.map((x) => x.calls)), tris: median(taken.map((x) => x.tris)),
+  };
 }
 
 // ——— plan 4a.2 (Zadanie 13): blokada sieci i sprawdzenia biegu `--bench` (testy: tests/citySmoke.test.ts) ———
@@ -927,93 +1063,75 @@ function stopPreview(proc) {
 const BENCH_TIMEOUT_MS = 480_000;
 
 /**
- * Sam bieg benchmarku z miastem (`?bench=1&quick=1`) na obu rozmiarach okna (albo jednym z `--only`): ten sam `vite preview`, ta sama blokada
- * sieci (`guardNetwork`) i `locale: 'pl-PL'`, czysty kontekst na rozmiar, pamięć samouczka wstawiona przed pierwszym wczytaniem. Strona dostaje
- * dokładnie ten adres, który właściciel otwiera na produkcji (z `quick=1`). Warunki: bieg się kończy, `benchProblems` nic nie znajduje, a zapytań
- * do `/api/**` i poza localhost jest zero (przerywamy je mimo to, więc nic nie mogłoby wyjść z maszyny). Liczby FPS z headless nie rozstrzygają bramki.
+ * Rdzeń biegu benchmarku z miastem (`?bench=1&quick=1`) na obu rozmiarach okna (albo jednym z `--only`), na już działającej przeglądarce i przy już stojącym
+ * `vite preview` na `port`: czysty kontekst na rozmiar z tą samą blokadą sieci (`guardNetwork`) i `locale: 'pl-PL'`, pamięć samouczka wstawiona przed pierwszym
+ * wczytaniem. Strona dostaje dokładnie ten adres, który właściciel otwiera na produkcji (z `quick=1`). Warunki: bieg się kończy, `benchProblems` nic nie znajduje,
+ * a zapytań do `/api/**` i poza localhost jest zero (przerywamy je mimo to, więc nic nie mogłoby wyjść z maszyny). Liczby FPS z headless nie rozstrzygają bramki.
+ * Woła to `runBench` (`--bench`: własny serwer i przeglądarka) i pełny przebieg (krok 15, na serwerze i przeglądarce kroków 1–14). Wynik idzie do `out/bench.json`.
+ * Zwraca raport (`ok`, `results` po rozmiarach, `apiBlocked`, `external`, `apiFailures`), niczego nie drukuje poza nagłówkiem rozmiaru.
  */
-async function runBench({ args, chromium, executablePath, port, base, out }) {
+async function benchPass({ browser, args, port, base, out }) {
   const sink = { external: [], apiBlocked: [] };
   const sizes = VIEWPORTS.filter((vp) => !args.only || vp.name === args.only);
   const results = {};
-  const server = await startPreview(port);
-  let browser = null;
-  const onSignal = (code) => () => {
-    void (async () => {
-      try { await browser?.close(); } catch { /* i tak kończymy */ }
-      stopPreview(server);
-      process.exit(code);
-    })();
-  };
-  process.on('SIGINT', onSignal(130));
-  process.on('SIGTERM', onSignal(143));
   const started = Date.now();
-  try {
-    browser = await chromium.launch({ ...(executablePath ? { executablePath } : {}), args: LAUNCH_ARGS });
-    for (const vp of sizes) {
-      console.log(`${vp.name} (${vp.size.width}×${vp.size.height}${vp.mobile ? ', dotyk' : ''}): ${BENCH_PATH}`);
-      const ctx = await browser.newContext({ ...contextOptions(vp), ...(vp.mobile ? { userAgent: BENCH_MOBILE_UA } : {}) });
-      await guardNetwork(ctx, port, `${vp.name}/bench`, sink);
-      await ctx.addInitScript((tutorial) => {
-        try { localStorage.setItem('traszka:tutorial', tutorial); } catch { /* bez magazynu bench i tak ruszy */ }
-      }, JSON.stringify(tutorialMemory(false)));
-      const page = await ctx.newPage();
-      const errors = [];
-      const warnings = [];
-      const requests = [];
-      page.on('console', (m) => {
-        if (m.type() === 'error') errors.push(m.text());
-        else if (m.type() === 'warning') warnings.push(m.text());
-      });
-      page.on('pageerror', (e) => errors.push(`pageerror ${e.message}`));
-      page.on('request', (r) => requests.push(new URL(r.url()).pathname));
-      const r = { ok: true, failed: [], seconds: 0, requests: 0, apiPaths: [] };
-      results[vp.name] = r;
-      const t0 = Date.now();
-      try {
-        await page.goto(`${base}${BENCH_PATH}`);
-        await page.waitForFunction(() => window.__benchResult !== undefined && window.__benchExtra !== undefined, null, { timeout: BENCH_TIMEOUT_MS, polling: 1000 });
-        const { result, extra } = await page.evaluate(() => ({ result: window.__benchResult, extra: window.__benchExtra }));
-        r.result = result;
-        r.extra = extra;
-        r.failed.push(...benchProblems(result, extra, { mobile: vp.mobile }));
-        r.table = benchTableLines(result, extra);
-        // karta wyników: po wyrenderowaniu czterech wierszy miasta; dostaje dotyk (inaczej `.tt-ui { pointer-events: none }` przepuszcza go do płótna) i ma kolumny bramki w widocznej części
-        await page.waitForFunction(() => document.querySelectorAll('.tt-bench table')[2]?.querySelectorAll('tbody tr').length === 4, null, { timeout: 30_000 });
-        r.overlay = await page.evaluate(() => {
-          const card = document.querySelector('.tt-bench');
-          if (!card) return { card: null };
-          const box = card.getBoundingClientRect();
-          const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
-          const table = [...card.querySelectorAll('table')].find((t) => t.querySelector('th')?.textContent === 'Miasto');
-          const columns = [...(table?.querySelectorAll('th') ?? [])].map((th) => { const b = th.getBoundingClientRect(); return { name: th.textContent, left: b.left, right: b.right }; });
-          return {
-            card: { left: box.left, right: box.right, scroll: card.scrollWidth, client: card.clientWidth },
-            hit: !!hit && card.contains(hit), hitTag: hit?.tagName ?? null, viewport: window.innerWidth, columns,
-          };
-        });
-        r.failed.push(...overlayProblems(r.overlay));
-        await page.screenshot({ path: join(out, `${vp.name}-bench.jpg`), type: 'jpeg', quality: 80, timeout: 120_000 });
-      } catch (error) {
-        r.failed.push(`wyjątek: ${error instanceof Error ? error.message : String(error)}`);
-        try { await page.screenshot({ path: join(out, `${vp.name}-bench-fail.jpg`), type: 'jpeg', quality: 80, timeout: 30_000 }); } catch { /* strona mogła paść */ }
-      }
-      r.seconds = Math.round((Date.now() - t0) / 1000);
-      r.requests = requests.length;
-      r.apiPaths = requests.filter((p) => p === '/api' || p.startsWith('/api/'));
-      r.paths = [...new Set(requests)];   // dowód dla raportu: z czego składa się ruch strony (tu ma nie być `/api`)
-      r.errors = errors;
-      r.warnings = [...new Set(warnings)];
-      if (errors.length > 0) r.failed.push(`błędy w konsoli: ${errors.length} (${errors.slice(0, 2).join(' | ')})`);
-      r.ok = r.failed.length === 0;
-      await ctx.close();
-    }
-  } finally {
+  for (const vp of sizes) {
+    console.log(`${vp.name} (${vp.size.width}×${vp.size.height}${vp.mobile ? ', dotyk' : ''}): ${BENCH_PATH}`);
+    const ctx = await browser.newContext({ ...contextOptions(vp), ...(vp.mobile ? { userAgent: BENCH_MOBILE_UA } : {}) });
+    await guardNetwork(ctx, port, `${vp.name}/bench`, sink);
+    await ctx.addInitScript((tutorial) => {
+      try { localStorage.setItem('traszka:tutorial', tutorial); } catch { /* bez magazynu bench i tak ruszy */ }
+    }, JSON.stringify(tutorialMemory(false)));
+    const page = await ctx.newPage();
+    const errors = [];
+    const warnings = [];
+    const requests = [];
+    page.on('console', (m) => {
+      if (m.type() === 'error') errors.push(m.text());
+      else if (m.type() === 'warning') warnings.push(m.text());
+    });
+    page.on('pageerror', (e) => errors.push(`pageerror ${e.message}`));
+    page.on('request', (r) => requests.push(new URL(r.url()).pathname));
+    const r = { ok: true, failed: [], seconds: 0, requests: 0, apiPaths: [] };
+    results[vp.name] = r;
+    const t0 = Date.now();
     try {
-      await browser?.close();
-    } finally {
-      stopPreview(server);
+      await page.goto(`${base}${BENCH_PATH}`);
+      await page.waitForFunction(() => window.__benchResult !== undefined && window.__benchExtra !== undefined, null, { timeout: BENCH_TIMEOUT_MS, polling: 1000 });
+      const { result, extra } = await page.evaluate(() => ({ result: window.__benchResult, extra: window.__benchExtra }));
+      r.result = result;
+      r.extra = extra;
+      r.failed.push(...benchProblems(result, extra, { mobile: vp.mobile }));
+      r.table = benchTableLines(result, extra);
+      // karta wyników: po wyrenderowaniu czterech wierszy miasta; dostaje dotyk (inaczej `.tt-ui { pointer-events: none }` przepuszcza go do płótna) i ma kolumny bramki w widocznej części
+      await page.waitForFunction(() => document.querySelectorAll('.tt-bench table')[2]?.querySelectorAll('tbody tr').length === 4, null, { timeout: 30_000 });
+      r.overlay = await page.evaluate(() => {
+        const card = document.querySelector('.tt-bench');
+        if (!card) return { card: null };
+        const box = card.getBoundingClientRect();
+        const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+        const table = [...card.querySelectorAll('table')].find((t) => t.querySelector('th')?.textContent === 'Miasto');
+        const columns = [...(table?.querySelectorAll('th') ?? [])].map((th) => { const b = th.getBoundingClientRect(); return { name: th.textContent, left: b.left, right: b.right }; });
+        return {
+          card: { left: box.left, right: box.right, scroll: card.scrollWidth, client: card.clientWidth },
+          hit: !!hit && card.contains(hit), hitTag: hit?.tagName ?? null, viewport: window.innerWidth, columns,
+        };
+      });
+      r.failed.push(...overlayProblems(r.overlay));
+      await page.screenshot({ path: join(out, `${vp.name}-bench.jpg`), type: 'jpeg', quality: 80, timeout: 120_000 });
+    } catch (error) {
+      r.failed.push(`wyjątek: ${error instanceof Error ? error.message : String(error)}`);
+      try { await page.screenshot({ path: join(out, `${vp.name}-bench-fail.jpg`), type: 'jpeg', quality: 80, timeout: 30_000 }); } catch { /* strona mogła paść */ }
     }
+    r.seconds = Math.round((Date.now() - t0) / 1000);
+    r.requests = requests.length;
+    r.apiPaths = requests.filter((p) => p === '/api' || p.startsWith('/api/'));
+    r.paths = [...new Set(requests)];   // dowód dla raportu: z czego składa się ruch strony (tu ma nie być `/api`)
+    r.errors = errors;
+    r.warnings = [...new Set(warnings)];
+    if (errors.length > 0) r.failed.push(`błędy w konsoli: ${errors.length} (${errors.slice(0, 2).join(' | ')})`);
+    r.ok = r.failed.length === 0;
+    await ctx.close();
   }
   const seconds = Math.round((Date.now() - started) / 1000);
   // zapytania do /api/** są poza kontrolą strony: licznik trasy przerywającej musi zostać zerem (przerwane zapytanie to porażka, nie „zabezpieczenie zadziałało”)
@@ -1026,17 +1144,52 @@ async function runBench({ args, chromium, executablePath, port, base, out }) {
     results, apiBlocked: sink.apiBlocked, external: sink.external, apiFailures,
   };
   writeFileSync(join(out, 'bench.json'), `${JSON.stringify(report, null, 2)}\n`);
+  return report;
+}
+
+/** Podsumowanie biegu benchmarku do konsoli: tabela i wady każdego rozmiaru, wady sieci i wynik (kod wyjścia 0 albo 1). */
+function printBench(report, out) {
   console.log('');
-  for (const [name, r] of Object.entries(results)) {
+  for (const [name, r] of Object.entries(report.results)) {
     console.log(`${name}: ${r.ok ? 'ok' : 'FAIL'} (${r.seconds} s, zapytań ${r.requests}, z tego /api/**: ${r.apiPaths.length}, błędów konsoli ${r.errors?.length ?? 0})`);
     for (const line of r.table ?? []) console.log(`  ${line}`);
     for (const f of r.failed) console.log(`  <- ${f}`);
     for (const w of r.extra?.warnings ?? []) console.log(`  uwaga benchmarku: ${w}`);
   }
-  for (const f of apiFailures) console.log(`<- ${f}`);
-  console.log(`\nbench: ${ok ? 'ok' : 'FAIL'}; przerwane /api/**: ${sink.apiBlocked.length}, poza localhost: ${sink.external.length}, ${seconds} s, wynik: ${out}/bench.json`);
+  for (const f of report.apiFailures) console.log(`<- ${f}`);
+  console.log(`\nbench: ${report.ok ? 'ok' : 'FAIL'}; przerwane /api/**: ${report.apiBlocked.length}, poza localhost: ${report.external.length}, ${report.seconds} s, wynik: ${out}/bench.json`);
   console.log('Liczby: headless (swiftshader), niediagnostyczne, nie rozstrzygają bramki makiety (decyduje właściciel na laptopie i telefonie, na produkcji).');
-  return ok ? 0 : 1;
+}
+
+/**
+ * Sam bieg benchmarku (`npm run city:smoke -- --bench`): własny `vite preview` i przeglądarka, bieg `benchPass` na obu rozmiarach, podsumowanie w konsoli.
+ * Kod wyjścia: 0, gdy bieg jest ważny na każdym rozmiarze i nie było zapytań do `/api/**` ani poza localhost.
+ */
+async function runBench({ args, chromium, executablePath, port, base, out }) {
+  const server = await startPreview(port);
+  let browser = null;
+  const onSignal = (code) => () => {
+    void (async () => {
+      try { await browser?.close(); } catch { /* i tak kończymy */ }
+      stopPreview(server);
+      process.exit(code);
+    })();
+  };
+  process.on('SIGINT', onSignal(130));
+  process.on('SIGTERM', onSignal(143));
+  let report = null;
+  try {
+    browser = await chromium.launch({ ...(executablePath ? { executablePath } : {}), args: LAUNCH_ARGS });
+    report = await benchPass({ browser, args, port, base, out });
+  } finally {
+    try {
+      await browser?.close();
+    } finally {
+      stopPreview(server);
+    }
+  }
+  printBench(report, out);
+  return report.ok ? 0 : 1;
 }
 
 // ——— bieg ———
@@ -1073,8 +1226,9 @@ async function main(argv) {
 
   // --- kontekst i strona ---
 
-  async function newPage(browser, vp, tag, { fixture, tips = false, quality = 'niska' }) {
-    const ctx = await browser.newContext(contextOptions(vp));
+  async function newPage(browser, vp, tag, { fixture, tips = false, quality = 'niska', userAgent = null }) {
+    // `quality: null` to adres bez `?q=`: gra wybiera preset sama (Średnia na komputerze, Niska na telefonie); `userAgent` daje kontekstowi telefonu mobilny nagłówek (profil „telefon”)
+    const ctx = await browser.newContext({ ...contextOptions(vp), ...(userAgent ? { userAgent } : {}) });
     // najpierw ogólna blokada, potem `/api/**` (późniejsza trasa ma pierwszeństwo): niczego nie wysyłamy do rankingu
     await guardNetwork(ctx, port, `${vp.name}/${tag}`, { external, apiBlocked });
     const entries = storageEntries({ seed: fixture.seed, saveText: fixture.text, tips, now: Date.now() });
@@ -1087,6 +1241,7 @@ async function main(argv) {
       } catch { /* bez magazynu gra i tak nie ruszy */ }
     }, entries);
     const page = await ctx.newPage();
+    page.smokeTag = `${vp.name}/${tag}`;   // do wpisów o awaryjnych kliknięciach (`dismiss`)
     page.on('console', (m) => {
       // przerwane przez smoke zapytanie do `/api/**` (Galeria i ranking w krokach 4b) Chromium sam zgłasza w konsoli: to nie jest błąd gry
       if (m.type() === 'error' && /^Failed to load resource: net::ERR_FAILED$/.test(m.text()) && isApiUrl(m.location()?.url ?? '', port)) apiConsole.push(`${vp.name}/${tag}: ${m.location().url}`);
@@ -1095,7 +1250,7 @@ async function main(argv) {
     });
     page.on('pageerror', (e) => errors.push(`${vp.name}/${tag}: pageerror ${e.message}`));
     page.on('dialog', (d) => { dialogs.push(`${vp.name}/${tag}: ${d.type()} ${d.message().slice(0, 80)}`); void d.accept(); });
-    await page.goto(`${base}/?seed=${encodeURIComponent(fixture.seed)}&q=${quality}&debug=1`);
+    await page.goto(`${base}/?seed=${encodeURIComponent(fixture.seed)}${quality ? `&q=${quality}` : ''}&debug=1`);
     return { ctx, page };
   }
 
@@ -1116,6 +1271,7 @@ async function main(argv) {
       shot: async (name) => { r.notes.push(`zrzut ${await shot(page, vp, name)}`); },
     };
     const started = Date.now();
+    hooks.step = id;
     try {
       await fn(ev);
       if (!r.ok) await shot(page, vp, `fail-${id}`);   // porażka sprawdzenia: zrzut stanu, w którym padło
@@ -1124,6 +1280,7 @@ async function main(argv) {
       r.failed.push(`wyjątek: ${error instanceof Error ? error.message : String(error)}`);
       try { await shot(page, vp, `fail-${id}`); } catch { /* strona mogła paść */ }
     }
+    hooks.step = null;
     r.seconds = Math.round((Date.now() - started) / 1000);
     console.log(`  [${vp.name}] krok ${id}: ${r.ok ? 'ok' : 'FAIL'}${r.ok ? '' : ` (${r.failed[0]})`}`);
     return r.ok;
@@ -1999,7 +2156,7 @@ async function main(argv) {
   /** Kroki 9–12 po porażce wcześniejszego z nich (te, które dotyczą tego rozmiaru): porażka z przyczyną, a nie milczenie. */
   function failRelet(vp, afterId, why) {
     for (const step of STEPS) {
-      if (typeof step.id !== 'number' || step.id <= afterId || step.id < 9 || !step.sizes.includes(vp.name)) continue;
+      if (typeof step.id !== 'number' || step.id <= afterId || step.id < 9 || step.id > 12 || !step.sizes.includes(vp.name)) continue;   // 13–15 to osobne scenariusze
       (results[vp.name] ??= {})[step.id] = stepResult({ ok: false, failed: [`pominięty: ${why}`] });
       console.log(`  [${vp.name}] krok ${step.id}: FAIL (pominięty: ${why})`);
     }
@@ -2110,6 +2267,296 @@ async function main(argv) {
     const bad = widths.filter((w) => !w.ok && (w.label.startsWith('angielski: ') || NEW_SCREENS.some((sc) => w.label.startsWith(sc.name))));
     ev.check(bad.length === 0, `poziomy wylew: ${bad.map((w) => `${w.label}: ${w.problems.join('; ')}`).join(' | ')}`);
     ev.note(`po angielsku zmierzono: ${NEW_SCREENS.map((sc) => `${sc.name} ×${widths.filter((w) => w.label.startsWith(`angielski: ${sc.name}`)).length}`).join(', ')}`);
+  }
+
+  // ——————— plan 4a.2, Zadanie 15: makieta 3D na komputerze (krok 13) i profil „telefon” (krok 14) ———————
+
+  /** Migawka sceny miasta (`SceneHost.cityStats()`, uchwyt `traszkaGame` pod `?debug=1`). */
+  const cityStatsOf = (page) => page.evaluate(() => window.traszkaGame.cityStats());
+  /** Renderer i kamera: preset, geometrie w pamięci GPU (`renderer.info.memory`), zoom (`viewSize`), cel kamery i obrót. */
+  const gpuOf = (page) => page.evaluate(() => {
+    const { ctx } = window.traszkaGame;
+    return { preset: ctx.preset, geometries: ctx.renderer.info.memory.geometries, view: ctx.rig.viewSize, x: ctx.rig.target.x, z: ctx.rig.target.z, yaw: ctx.rig.yawIndex };
+  });
+  /** Przełącznik trybu mapy w pasku miasta: napisy i wciśnięty przycisk (`aria-pressed`). */
+  const layerBar = (page) => page.evaluate(() => [...document.querySelectorAll('.tt-layers button')].map((b) => ({ text: (b.textContent ?? '').trim(), pressed: b.getAttribute('aria-pressed') === 'true' })));
+
+  /** Stuknięcie w przycisk trybu mapy (po napisie), potem czekanie, aż scena narysuje ten tryb (`cityStats().layer`), i chwila na klatki. */
+  async function pressLayer(page, label, layer) {
+    await page.locator('.tt-layers').getByRole('button', { name: label, exact: true }).click();
+    await until(page, (l) => window.traszkaGame.cityStats().layer === l, layer, `scena miasta w trybie ${layer}`, 30_000);
+    await sleep(500);
+  }
+
+  /** Migawka `cityStats()` sprawdzona przez `cityStatsProblems` i zapisana w notatkach kroku. */
+  async function statsCheck(page, ev, what, want) {
+    const stats = await cityStatsOf(page);
+    const problems = cityStatsProblems(stats, want);
+    ev.check(problems.length === 0, `${what}: ${problems.join('; ')} (cityStats ${JSON.stringify(stats)})`);
+    ev.note(`${what}: cityStats ${JSON.stringify(stats)}`);
+    return stats;
+  }
+
+  /** Licznik wydajności (F3) włączony na czas pomiaru (`measurePerf`), potem wyłączony, żeby nie wchodził na zrzuty. */
+  async function perfOf(page) {
+    await page.keyboard.press('F3');
+    await page.waitForSelector('.tt-perf', { timeout: 10_000 });
+    try {
+      return await measurePerf(page);
+    } finally {
+      await page.keyboard.press('F3');
+      await page.waitForSelector('.tt-perf', { state: 'detached', timeout: 10_000 });
+    }
+  }
+
+  /**
+   * Pasek miasta na 390 px: ramki paska, narzędzi, przełącznika i każdego z trzech przycisków mieszczą się w oknie i niczego w nich nie przewija (`widthProblems`),
+   * a dokument nie jest szerszy od okna. Wynik idzie do wspólnej listy pomiarów szerokości (`widths`) pod nazwą `label`.
+   */
+  async function layerBarWidth(page, label) {
+    const m = await page.evaluate(() => {
+      const box = (el, name) => { const b = el.getBoundingClientRect(); return { name, left: b.left, right: b.right, scroll: el.scrollWidth, client: el.clientWidth }; };
+      const boxes = [];
+      for (const [sel, name] of [['.tt-citybar', 'pasek miasta'], ['.tt-citytools', 'narzędzia paska'], ['.tt-layers', 'przełącznik trybu mapy']]) {
+        const el = document.querySelector(sel);
+        if (el) boxes.push(box(el, name));
+      }
+      for (const b of document.querySelectorAll('.tt-layers button')) boxes.push(box(b, `przycisk „${(b.textContent ?? '').trim()}”`));
+      return { scroll: document.documentElement.scrollWidth, boxes };
+    });
+    const problems = widthProblems(m, PHONE_WIDTH);
+    if (m.boxes.length !== 6) problems.push(`zmierzono ${m.boxes.length} elementów paska, oczekiwane 6 (pasek, narzędzia, przełącznik i trzy przyciski)`);
+    widths.push({ label, scroll: m.scroll, boxes: m.boxes.length, problems, ok: problems.length === 0 });
+    return widths.at(-1);
+  }
+
+  /**
+   * Zbliżenie na lokal: kamera (przez `rig`, tak jak przeciąganie i kółko myszy) staje na wejściu lokalu, na najbliższym zoomie gracza (6 jednostek sceny). Potem cztery obroty
+   * kamery klawiszem `E`, bo witryna lokalu patrzy na ulicę i w jednym obrocie bywa schowana za bryłą: w każdym zrzut i pomiar, czy pinezka lokalu leży na witrynie
+   * (rzut punktu wejścia na wysokości 1,5 m przez kamerę sceny wobec ramki pinezki, `pinCoversPoint`, zapas 4 px). Pomiar to dowód do raportu, nie warunek kroku.
+   */
+  async function closeUps(page, ev, row, tag) {
+    await pickLot(page, row.id);   // karta w arkuszu, kamera dosunięta do lokalu spod arkusza
+    const lot = await page.evaluate((id) => { const l = window.traszkaGame.session.firm.city.lots[id]; return { x: l.x, y: l.y }; }, row.id);
+    const at = cityWorld(lot);
+    await page.evaluate(({ x, z, size }) => {
+      const { rig } = window.traszkaGame.ctx;
+      rig.panBy(x - rig.target.x, z - rig.target.z);
+      rig.zoomBy(rig.viewSize / size);
+    }, { ...at, size: 6 });
+    const near = await gpuOf(page);
+    ev.check(near.view <= 6.5, `zbliżenie na lokal ${row.id}: widok ${near.view} jednostek (najbliższy zoom to 6)`);
+    const covers = [];
+    for (let k = 0; k < 4; k++) {
+      await sleep(700);
+      const m = await page.evaluate(({ id, x, z }) => {
+        const cam = window.traszkaGame.ctx.rig.camera;
+        cam.updateMatrixWorld(true);
+        const v = cam.matrixWorldInverse.elements;
+        const p = cam.projectionMatrix.elements;
+        const y = 1.5 / 30;   // witryna na ok. 1,5 m (jednostka sceny to 30 m)
+        const vx = v[0] * x + v[4] * y + v[8] * z + v[12];
+        const vy = v[1] * x + v[5] * y + v[9] * z + v[13];
+        const vz = v[2] * x + v[6] * y + v[10] * z + v[14];
+        const cx = p[0] * vx + p[4] * vy + p[8] * vz + p[12];
+        const cy = p[1] * vx + p[5] * vy + p[9] * vz + p[13];
+        const cw = p[3] * vx + p[7] * vy + p[11] * vz + p[15];
+        const pin = document.querySelector(`.tt-cpin[data-lot="${id}"]`)?.getBoundingClientRect();
+        return {
+          window: { x: (cx / cw * 0.5 + 0.5) * innerWidth, y: (0.5 - cy / cw * 0.5) * innerHeight },
+          pin: pin && pin.width > 0 ? { l: pin.left, t: pin.top, r: pin.right, b: pin.bottom } : null,
+        };
+      }, { id: row.id, ...at });
+      const covered = pinCoversPoint(m.pin, m.window, 4);
+      covers.push({ turn: k, window: { x: Math.round(m.window.x), y: Math.round(m.window.y) }, pin: m.pin && { l: Math.round(m.pin.l), t: Math.round(m.pin.t), r: Math.round(m.pin.r), b: Math.round(m.pin.b) }, covered });
+      if (k === 0) ev.check(!!m.pin, `pinezka lokalu ${row.id} (${tag}) nie stoi na ekranie przy zbliżeniu`);
+      await ev.shot(`4a2-13d-${tag}-obrot${k}`);
+      await page.keyboard.press('e');
+    }
+    await press(page, '.tt-lotcard-close');   // karta zastępuje listę w arkuszu: bez zamknięcia następny lokal nie da się wybrać z listy
+    await sleep(300);
+    (extras.zblizenia ??= {})[tag] = { lot: row.id, covers };
+    ev.note(`zbliżenie (${tag}, lokal ${row.id}): pinezka na witrynie w obrotach ${covers.filter((c) => c.covered).map((c) => c.turn).join(', ') || 'żadnym'} z 0–3; ${covers.map((c) => `obrót ${c.turn}: witryna ${c.window.x},${c.window.y} pinezka ${c.pin ? `${c.pin.l}–${c.pin.r}×${c.pin.t}–${c.pin.b}` : 'brak'}`).join('; ')}`);
+  }
+
+  async function scenarioMakieta(browser, vp) {
+    const { ctx, page } = await newPage(browser, vp, 'makieta', { fixture: after, quality: null });
+    try {
+      await runStep(vp, 13, page, async (ev) => {
+        await waitReady(page);
+        await pause(page);
+        await settle(page);
+        await pause(page);
+        const gpu0 = await gpuOf(page);
+        ev.check(gpu0.preset === 'srednia', `preset domyślny na komputerze: ${gpu0.preset} (oczekiwana srednia)`);
+        // południe dnia roboczego: auta jadą wg godziny gry, a zrzuty są w pełnym świetle
+        const noon = await skipTo(page, nextWorkdayNoon((await readGame(page)).minute));
+        await pause(page);
+        await settle(page);
+        await page.waitForFunction(() => document.querySelectorAll('.tt-toast').length === 0, null, { timeout: 30_000 }).catch(() => {});   // toasty z przewiniętego czasu schodzą z ekranu przed zrzutami (czas stoi, nowe nie powstają)
+        ev.note(`preset ${gpu0.preset}; gra przewinięta do południa dnia roboczego (dzień ${Math.floor(noon / 1440)}, godzina ${(noon % 1440) / 60})`);
+
+        // otwarcie: Makieta
+        await openTab(page, 'miasto');
+        await page.waitForSelector('.tt-layers', { timeout: 30_000 });
+        await until(page, () => { const st = window.traszkaGame.cityStats(); return st.shown && st.built && st.cars > 0; }, null, 'miasto w makiecie z autami (profil Średniej)', 120_000);
+        await sleep(800);
+        const bar = layerBarProblems(await layerBar(page), 'Makieta');
+        ev.check(bar.length === 0, `przełącznik trybu mapy po otwarciu: ${bar.join('; ')}`);
+        await statsCheck(page, ev, 'Makieta po otwarciu', { layer: 'makieta', detail: 'pelny', cars: true });
+        const open = await gpuOf(page);
+        await ev.shot('4a2-13a-makieta');
+        const fps = { makieta: await perfOf(page) };
+
+        // „Ruch”: spłaszczone te same bryły, bez aut
+        await pressLayer(page, 'Ruch', 'ruch');
+        await statsCheck(page, ev, 'Ruch', { layer: 'ruch', detail: 'pelny', cars: false });
+        fps.ruch = await perfOf(page);
+        await ev.shot('4a2-13b-ruch');
+        // zoom gracza w warstwie (kółko myszy nad mapą): „Dzielnice” go nie rusza, dopiero powrót do „Makiety” ustawia kadr od nowa
+        await page.mouse.move(300, 400);
+        for (let i = 0; i < 6; i++) await page.mouse.wheel(0, -120);
+        await sleep(400);
+        const zoomed = await gpuOf(page);
+        ev.check(zoomed.view < open.view - 0.5, `kółko myszy nie przybliżyło kadru: widok ${open.view} → ${zoomed.view}`);
+        await pressLayer(page, 'Dzielnice', 'dzielnice');
+        await statsCheck(page, ev, 'Dzielnice', { layer: 'dzielnice', detail: 'pelny', cars: false });
+        fps.dzielnice = await perfOf(page);
+        await ev.shot('4a2-13c-dzielnice');
+        const kept = await gpuOf(page);
+        ev.check(Math.abs(kept.view - zoomed.view) < 0.01, `Ruch → Dzielnice przestawił kadr gracza: widok ${zoomed.view} → ${kept.view}`);
+        await pressLayer(page, 'Makieta', 'makieta');
+        await statsCheck(page, ev, 'Makieta po powrocie', { layer: 'makieta', detail: 'pelny', cars: true });
+        const back = await gpuOf(page);
+        ev.check(Math.abs(back.view - open.view) < 0.01 && Math.abs(back.x - open.x) < 0.01 && Math.abs(back.z - open.z) < 0.01,
+          `kadr makiety po powrocie ${JSON.stringify([back.view, back.x, back.z])} to nie kadr po otwarciu ${JSON.stringify([open.view, open.x, open.z])} (zoom gracza ${zoomed.view} miał zniknąć)`);
+        ev.check(fps.makieta.calls > 0 && fps.makieta.calls < CITY_BUDGET.makieta && fps.ruch.calls > 0 && fps.ruch.calls < CITY_BUDGET.ruch && fps.dzielnice.calls > 0 && fps.dzielnice.calls < CITY_BUDGET.dzielnice,
+          `wywołania rysowania z licznika F3 (cała klatka, razem z postprocessingiem): Makieta ${fps.makieta.calls} (budżet ${CITY_BUDGET.makieta}), Ruch ${fps.ruch.calls} i Dzielnice ${fps.dzielnice.calls} (budżet ${CITY_BUDGET.ruch})`);
+        extras.makieta = { fps, view: { open: open.view, zoomed: zoomed.view, back: back.view } };
+        ev.note(`FPS Makieta: ${perfHint(fps.makieta)}`);
+        ev.note(`FPS Ruch: ${perfHint(fps.ruch)}`);
+        ev.note(`FPS Dzielnice: ${perfHint(fps.dzielnice)}`);
+        ev.note(`kadr: po otwarciu widok ${open.view.toFixed(2)}, po zbliżeniu w „Ruchu” ${zoomed.view.toFixed(2)}, po „Dzielnicach” ${kept.view.toFixed(2)}, po powrocie do makiety ${back.view.toFixed(2)}`);
+
+        // zbliżenia: wolny lokal (kartka w ciemnej witrynie) i lokal „po Traszce”
+        await page.waitForSelector('.tt-city .tt-lotrow', { timeout: 30_000 });
+        const rows = await readLots(page);
+        // zbliżenia: pierwszy wolny lokal z listy i lokal „po Traszce”; rodzaj budynku (blok, kamienica, niski pawilon) wpływa na to, czy pinezka stoi nad dachem, czy na witrynie
+        const kinds = await page.evaluate((ids) => ids.map((id) => window.traszkaGame.session.firm.city.lots[id].spec.kind), rows.map((r) => r.id));
+        const free = rows.find((r) => !r.relet);
+        const relet = rows.find((r) => r.relet);
+        if (!ev.check(!!free && !!relet, `lista lokali: wolny ${free?.id}, po Traszce ${relet?.id}`)) return;
+        ev.note(`zbliżenia: wolny lokal ${free.id} (${kinds[rows.indexOf(free)]}), lokal po Traszce ${relet.id} (${kinds[rows.indexOf(relet)]})`);
+        await closeUps(page, ev, free, 'wolny');
+        await closeUps(page, ev, relet, 'po-traszce');
+      });
+    } finally {
+      await ctx.close();
+    }
+  }
+
+  async function scenarioTelefon(browser, vp) {
+    const { ctx, page } = await newPage(browser, vp, 'telefon-profil', { fixture: after, quality: null, userAgent: BENCH_MOBILE_UA });
+    try {
+      await runStep(vp, 14, page, async (ev) => {
+        await waitReady(page);
+        await pause(page);
+        await settle(page);
+        await pause(page);
+        const gpu0 = await gpuOf(page);
+        ev.check(gpu0.preset === 'niska', `preset domyślny na telefonie: ${gpu0.preset} (oczekiwana niska)`);
+        await statsCheck(page, ev, 'przed wejściem w zakładkę Miasto', { built: false });
+
+        // wejście: „Ruch” na prostej geometrii
+        await openTab(page, 'miasto');
+        await page.waitForSelector('.tt-layers', { timeout: 30_000 });
+        await until(page, () => window.traszkaGame.cityStats().built, null, 'scena miasta po otwarciu zakładki', 60_000);
+        await sleep(1200);
+        const bar = layerBarProblems(await layerBar(page), 'Ruch');
+        ev.check(bar.length === 0, `przełącznik trybu mapy po otwarciu: ${bar.join('; ')}`);
+        await statsCheck(page, ev, 'Ruch po otwarciu', { layer: 'ruch', detail: 'prosty', cars: false });
+        const geo = { before: gpu0.geometries, open: (await gpuOf(page)).geometries };
+        const wide = await layerBarWidth(page, 'makieta: pasek miasta z trzema przyciskami');
+        ev.check(wide.ok, `pasek miasta na 390 px: ${wide.problems.join('; ')}`);
+        const sheet = await checkWidth(page, 'makieta: Miasto z paskiem i trzema przyciskami');
+        ev.check(sheet.ok, `Miasto na 390 px: ${sheet.problems.join('; ')}`);
+        await ev.shot('4a2-14a-ruch-prosty');
+        const fps = { ruch: await perfOf(page) };
+
+        // „Makieta”: pełna geometria zastępuje prostą (jedna naraz), bez aut i cieni
+        await pressLayer(page, 'Makieta', 'makieta');
+        await statsCheck(page, ev, 'Makieta', { layer: 'makieta', detail: 'pelny', cars: false });
+        geo.mockup = (await gpuOf(page)).geometries;
+        const bar2 = layerBarProblems(await layerBar(page), 'Makieta');
+        ev.check(bar2.length === 0, `przełącznik trybu mapy po „Makiecie”: ${bar2.join('; ')}`);
+        await ev.shot('4a2-14b-makieta');
+        fps.makieta = await perfOf(page);
+        // „Ruch” po makiecie: pełna geometria zostaje (spłaszczona), nic się nie buduje od nowa
+        await pressLayer(page, 'Ruch', 'ruch');
+        await statsCheck(page, ev, 'Ruch po Makiecie (spłaszczona pełna geometria)', { layer: 'ruch', detail: 'pelny', cars: false });
+        geo.flat = (await gpuOf(page)).geometries;
+
+        // wyjście z zakładki zwalnia scenę, powrót buduje prostą od nowa
+        await closeTab(page, 'miasto');
+        await until(page, () => !window.traszkaGame.cityStats().built, null, 'zwolnienie sceny miasta po wyjściu z zakładki', 30_000);
+        await statsCheck(page, ev, 'po wyjściu z zakładki', { built: false });
+        await sleep(500);
+        geo.exited = (await gpuOf(page)).geometries;
+        await openTab(page, 'miasto');
+        await until(page, () => window.traszkaGame.cityStats().built, null, 'scena miasta po powrocie do zakładki', 60_000);
+        await sleep(1200);
+        await statsCheck(page, ev, 'Ruch po powrocie', { layer: 'ruch', detail: 'prosty', cars: false });
+        geo.again = (await gpuOf(page)).geometries;
+        const leak = geometryProblems(geo);
+        ev.check(leak.length === 0, `geometrie renderera ${JSON.stringify(geo)}: ${leak.join('; ')}`);
+        ev.note(`geometrie w rendererze: przed ${geo.before}, z miastem (prosta) ${geo.open}, makieta ${geo.mockup}, ruch po makiecie ${geo.flat}, po wyjściu ${geo.exited}, po powrocie ${geo.again}`);
+        extras.telefon = { fps, geometries: geo };
+        ev.note(`FPS Ruch (prosta geometria): ${perfHint(fps.ruch)}`);
+        ev.note(`FPS Makieta (pełna geometria, bez aut i cieni): ${perfHint(fps.makieta)}`);
+        ev.check(fps.ruch.calls > 0 && fps.ruch.calls < CITY_BUDGET.ruch && fps.makieta.calls > 0 && fps.makieta.calls < CITY_BUDGET.makieta,
+          `wywołania rysowania z licznika F3: Ruch ${fps.ruch.calls} (budżet ${CITY_BUDGET.ruch}), Makieta ${fps.makieta.calls} (budżet ${CITY_BUDGET.makieta})`);
+
+        // po angielsku (⚙, przeładowanie z zapisem): „Model / Footfall / Districts”, pasek i arkusz na 390 px
+        await closeTab(page, 'miasto');
+        await press(page, '.tt-gear');
+        await page.waitForSelector('[role="dialog"][aria-label="Ustawienia"]');
+        await Promise.all([
+          page.waitForEvent('load', { timeout: 120_000 }),
+          page.locator('[aria-label="Ustawienia"]').getByRole('button', { name: 'English', exact: true }).click(),
+        ]);
+        await waitReady(page);
+        await pause(page);
+        await settle(page);
+        await pause(page);
+        const lang = await page.evaluate(() => localStorage.getItem('traszka:lang'));
+        ev.check(lang === 'en', `język w pamięci: ${lang}`);
+        await openTab(page, 'miasto');
+        await page.waitForSelector('.tt-layers', { timeout: 30_000 });
+        await until(page, () => window.traszkaGame.cityStats().built, null, 'scena miasta po angielsku', 60_000);
+        await sleep(1200);
+        const barEn = layerBarProblems(await layerBar(page), 'Footfall', 'en');
+        ev.check(barEn.length === 0, `przełącznik po angielsku: ${barEn.join('; ')}`);
+        const wideEn = await layerBarWidth(page, 'makieta: pasek miasta po angielsku');
+        ev.check(wideEn.ok, `pasek miasta po angielsku na 390 px: ${wideEn.problems.join('; ')}`);
+        const sheetEn = await checkWidth(page, 'makieta: Miasto po angielsku');
+        ev.check(sheetEn.ok, `Miasto po angielsku na 390 px: ${sheetEn.problems.join('; ')}`);
+        await ev.shot('4a2-14c-angielski-ruch');
+        await pressLayer(page, 'Model', 'makieta');
+        await statsCheck(page, ev, 'Model (angielski)', { layer: 'makieta', detail: 'pelny', cars: false });
+        const barEn2 = layerBarProblems(await layerBar(page), 'Model', 'en');
+        ev.check(barEn2.length === 0, `przełącznik po angielsku po „Model”: ${barEn2.join('; ')}`);
+        const wideEn2 = await layerBarWidth(page, 'makieta: pasek miasta po angielsku (Model)');
+        ev.check(wideEn2.ok, `pasek miasta po angielsku (Model) na 390 px: ${wideEn2.problems.join('; ')}`);
+        await ev.shot('4a2-14d-angielski-makieta');
+        await closeTab(page, 'miasto');
+
+        const bad = widths.filter((w) => w.label.startsWith('makieta: ') && !w.ok);
+        ev.check(bad.length === 0, `poziomy wylew: ${bad.map((w) => `${w.label}: ${w.problems.join('; ')}`).join(' | ')}`);
+        ev.note(`pomiary szerokości kroku 14: ${widths.filter((w) => w.label.startsWith('makieta: ')).map((w) => `${w.label} (dokument ${w.scroll} px, ${w.boxes} elem.)`).join('; ')}`);
+      });
+    } finally {
+      await ctx.close();
+    }
   }
 
   // ——————— plan 4b, Zadanie 10: remonty 4–5, badania Sieci, cztery sklepy, milion i Galeria, karta „Zrzut Traszkomonów” (kroki 4b-a…4b-g) ———————
@@ -2441,23 +2888,12 @@ async function main(argv) {
     const fps = {};
     for (const layer of ['Ruch', 'Dzielnice']) {
       await page.locator('.tt-layers').getByRole('button', { name: layer, exact: true }).click();
-      await sleep(2500);
-      const samples = [];
-      for (let i = 0; i < 8; i++) {
-        const rows = await page.evaluate(() => [...document.querySelectorAll('.tt-perf > div')].map((d) => [d.firstElementChild?.textContent ?? '', d.querySelector('b')?.textContent ?? '']));
-        samples.push(parsePerf(rows));
-        await sleep(700);
-      }
-      fps[layer] = {
-        fps: median(samples.map((s) => s.fps)), minFps: Math.min(...samples.map((s) => s.fps)), maxFps: Math.max(...samples.map((s) => s.fps)),
-        ms: median(samples.map((s) => s.ms)), calls: median(samples.map((s) => s.calls)), tris: median(samples.map((s) => s.tris)),
-      };
+      fps[layer] = await measurePerf(page);
       await ev.shot(`13-warstwa-${layer === 'Ruch' ? 'ruch' : 'dzielnice'}`);
     }
     extras.fps = fps;
-    const hint = (x) => `${x.fps.toFixed(1)} FPS (min ${x.minFps}, max ${x.maxFps}), klatka ${x.ms.toFixed(0)} ms, ${x.calls} wywołań rysowania, ${Math.round(x.tris / 1000)} tys. trójkątów`;
-    ev.note(`FPS widoku warstw „Ruch”: ${hint(fps.Ruch)}`);
-    ev.note(`FPS widoku warstw „Dzielnice”: ${hint(fps.Dzielnice)}`);
+    ev.note(`FPS widoku warstw „Ruch”: ${perfHint(fps.Ruch)}`);
+    ev.note(`FPS widoku warstw „Dzielnice”: ${perfHint(fps.Dzielnice)}`);
     ev.check(fps.Ruch.calls > 0 && fps.Dzielnice.calls > 0 && fps.Ruch.calls < 60 && fps.Dzielnice.calls < 60, `wywołania rysowania: ${fps.Ruch.calls}/${fps.Dzielnice.calls} (budżet warstw: < 60)`);
     await page.keyboard.press('F3');
     await closeTab(page, 'miasto');
@@ -2770,9 +3206,12 @@ async function main(argv) {
         probed.add(key);
         await checkWidth(page, `okno: ${d.kind === 'deck' ? 'karta decyzji' : d.label}${d.tabs > 0 ? ` [${d.tabs} zakładki sklepów]` : ''}`);
       } : null;
-      const scenarios = args.stage === '4b' ? [] : [scenarioOldSave, scenarioFlow, scenarioRelet, ...(vp.mobile ? [tipsRun] : [])];
+      // makieta (Zadanie 15): krok 13 tylko na komputerze, krok 14 tylko na telefonie; `--etap makieta` biegnie same kroki 13–15
+      const makieta = vp.mobile ? scenarioTelefon : scenarioMakieta;
+      const scenarios = args.stage === '4b' ? [] : args.stage === 'makieta' ? [makieta] : [scenarioOldSave, scenarioFlow, scenarioRelet, makieta, ...(vp.mobile ? [tipsRun] : [])];
+      const scenarios4b = args.stage === 'makieta' ? [] : [scenario4b, scenario4bZrzut, ...(vp.mobile ? [] : [queueRun])];   // kolejka przy zrzucie (Zadanie 11): tylko komputer
       // kroki 4b we własnym bloku: wyjątek w scenariuszach 4a nie zabiera im przebiegu (i odwrotnie)
-      for (const group of [scenarios, [scenario4b, scenario4bZrzut, ...(vp.mobile ? [] : [queueRun])]]) {   // kolejka przy zrzucie (Zadanie 11): tylko komputer
+      for (const group of [scenarios, scenarios4b]) {
         try {
           for (const run of group) await run(browser, vp);
         } catch (error) {
@@ -2784,6 +3223,7 @@ async function main(argv) {
       for (const step of [...STEPS, TIPS_STEP, ...STEPS_4B, QUEUE_STEP]) {
         if (!step.sizes.includes(vp.name)) (results[vp.name] ??= {})[step.id] = stepResult({ na: true, notes: ['nie dotyczy tego rozmiaru'] });
         else if (args.stage === '4b' && !STEPS_4B.includes(step) && step !== QUEUE_STEP && step.id !== 8) (results[vp.name] ??= {})[step.id] = stepResult({ na: true, notes: ['--etap 4b: tylko kroki 4b'] });
+        else if (args.stage === 'makieta' && !STEPS_MAKIETA.includes(step) && step.id !== 8) (results[vp.name] ??= {})[step.id] = stepResult({ na: true, notes: ['--etap makieta: tylko kroki 13–15'] });
       }
       // 8: konsola i pageerror z całego rozmiaru
       const mine = errors.filter((e) => e.startsWith(`${vp.name}/`));
@@ -2797,6 +3237,39 @@ async function main(argv) {
       r8.notes.push(`awaryjne click() w DOM w pętli zamykania okien (settle/pause): ${myFallbacks.length}${myFallbacks.length ? ` (${[...new Set(myFallbacks)].slice(0, 3).join(' | ')})` : ''}`);
       (results[vp.name] ??= {})[8] = r8;
       console.log(`  [${vp.name}] krok 8: ${r8.ok ? 'ok' : 'FAIL'}`);
+    }
+    // 15: ten sam bieg, co `npm run city:smoke -- --bench` (rdzeń `benchPass`), na przeglądarce i serwerze kroków 1–14; kroki 4b same go nie dotyczą
+    if (args.stage !== '4b') {
+      console.log('krok 15: bieg ?bench=1&quick=1');
+      let bench = null;
+      let benchError = null;
+      try {
+        bench = await benchPass({ browser, args, port, base, out });
+      } catch (error) {
+        benchError = error instanceof Error ? error.message : String(error);
+      }
+      if (bench) {
+        external.push(...bench.external);   // liczniki sieci całego przebiegu obejmują też bieg benchmarku
+        apiBlocked.push(...bench.apiBlocked);
+        printBench(bench, out);
+      }
+      for (const vp of VIEWPORTS) {
+        if (args.only && vp.name !== args.only) continue;
+        const r = bench?.results[vp.name];
+        const step = !bench
+          ? stepResult({ ok: false, failed: [`wyjątek: ${benchError}`] })
+          : stepResult({
+            ok: !!r?.ok && bench.apiFailures.length === 0,
+            failed: [...(r ? r.failed : ['brak wyniku biegu na tym rozmiarze']), ...bench.apiFailures],
+            notes: [
+              ...(r?.table ?? []), `zapytań ${r?.requests ?? 0}, z tego /api/**: ${r?.apiPaths.length ?? 0}, błędów konsoli ${r?.errors?.length ?? 0}; przerwane /api/** w całym biegu ${bench.apiBlocked.length}, poza localhost ${bench.external.length}`,
+              `zrzut ${vp.name}-bench.jpg, wynik w bench.json (headless, niediagnostyczne)`,
+            ],
+          });
+        step.seconds = r?.seconds;
+        (results[vp.name] ??= {})[15] = step;
+        console.log(`  [${vp.name}] krok 15: ${step.ok ? 'ok' : 'FAIL'}${step.ok ? '' : ` (${step.failed[0]})`}`);
+      }
     }
   } finally {
     try {

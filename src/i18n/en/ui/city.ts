@@ -48,6 +48,7 @@ export const CITY_UI: Dict = {
   'zaufanie {0}/{1}': 'trust {0}/{1}',
   'placówki {0}/{1}': 'branches {0}/{1}',
   'Warstwa mapy': 'Map layer',
+  'Makieta': 'Model',
   'Ruch': 'Footfall',
   'Dzielnice': 'Districts',
   'mały ruch': 'quiet',

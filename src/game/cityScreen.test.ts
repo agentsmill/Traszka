@@ -9,7 +9,7 @@ import type { FirmCommand, FirmCommandResult } from '@/sim/firm/commands';
 import type { FirmState } from '@/sim/firm/types';
 import { freeLotRows } from '@/ui/city/cityModel';
 import * as ui from '@/ui/state';
-import { CityScreen, SHEET_PHONE_SHARE, SHEET_WIDE_PX, createCityScreen, visibleArea } from './cityScreen';
+import { CityScreen, SHEET_PHONE_SHARE, SHEET_WIDE_PX, applyCityProfile, createCityScreen, visibleArea } from './cityScreen';
 import type { ScreenArea } from './scene';
 
 /*
@@ -68,6 +68,8 @@ function resetSignals(): void {
   ui.tab.value = null;
   ui.firm.value = null;
   ui.cityLayer.value = 'ruch';
+  ui.cityMockup.value = true;
+  ui.preset.value = 'srednia';
   ui.selectedLot.value = null;
   ui.lotPay.value = 'gotowka';
 }
@@ -159,6 +161,87 @@ describe('zakładka Miasto zapala i gasi mapę', () => {
     expect(h.shown).toHaveLength(2);
     expect(h.shown[1]!.states[row.lotId]).toBe('budowa');
     expect(h.pinSets[h.pinSets.length - 1]!.find((p) => p.lotId === row.lotId)!.kind).toBe('budowa');
+  });
+});
+
+describe('tryb mapy z profilu sprzętu (Makieta / Ruch / Dzielnice)', () => {
+  it('Średnia i Wysoka na komputerze otwierają miasto w makiecie, Niska i każdy telefon w „Ruchu”', () => {
+    for (const [preset, mobile, expected] of [
+      ['srednia', false, 'makieta'], ['wysoka', false, 'makieta'], ['niska', false, 'ruch'],
+      ['srednia', true, 'ruch'], ['wysoka', true, 'ruch'], ['niska', true, 'ruch'],   // telefon wygrywa z presetem
+    ] as const) {
+      ui.cityLayer.value = expected === 'ruch' ? 'dzielnice' : 'ruch';   // coś innego niż oczekiwane: start ma to nadpisać
+      applyCityProfile(preset, mobile, true);
+      expect(ui.cityLayer.value, `${preset}${mobile ? ' (telefon)' : ''}`).toBe(expected);
+      expect(ui.cityMockup.value).toBe(true);
+    }
+  });
+
+  it('start w makiecie trafia do sceny jako „makieta”, na telefonie jako „ruch”', () => {
+    applyCityProfile('srednia', false, true);
+    const h = make();
+    ui.tab.value = 'miasto';
+    expect(h.shown[0]!.layer).toBe('makieta');
+    ui.tab.value = null;
+    applyCityProfile('srednia', true, true);
+    ui.tab.value = 'miasto';
+    expect(h.shown[1]!.layer).toBe('ruch');
+  });
+
+  it('zmiana presetu w ⚙ (bez startu) nie przestawia wybranego trybu, także gdy gracz wybrał inny niż startowy', () => {
+    applyCityProfile('srednia', false, true);
+    ui.cityLayer.value = 'dzielnice';   // wybór gracza
+    applyCityProfile('niska', false);   // Niska startowo otwiera „Ruch”, ale to nie start
+    expect(ui.cityLayer.value).toBe('dzielnice');
+    applyCityProfile('wysoka', false);
+    expect(ui.cityLayer.value).toBe('dzielnice');
+    ui.cityLayer.value = 'makieta';
+    applyCityProfile('niska', false);
+    expect(ui.cityLayer.value).toBe('makieta');   // makieta na Niskiej dalej działa (profil ją ma), tylko startowo jej nie zapala
+  });
+
+  it('bez makiety w profilu (cityMockup=false) wybór „makieta” trafia do sceny jako „ruch”, a wybór gracza zostaje', () => {
+    const h = make();
+    ui.cityMockup.value = false;
+    ui.cityLayer.value = 'makieta';
+    ui.tab.value = 'miasto';
+    expect(h.shown).toHaveLength(1);
+    expect(h.shown[0]!.layer).toBe('ruch');
+    expect(ui.cityLayer.value).toBe('makieta');
+    ui.cityLayer.value = 'dzielnice';
+    expect(h.shown[1]!.layer).toBe('dzielnice');
+  });
+
+  it('profil, który traci makietę przy otwartej zakładce, pokazuje miasto od nowa w „Ruchu”; wejście z makiety w makietę nie rusza sceny', () => {
+    const h = make();
+    ui.cityLayer.value = 'makieta';
+    ui.tab.value = 'miasto';
+    expect(h.shown.map((s) => s.layer)).toEqual(['makieta']);
+    ui.cityMockup.value = false;
+    expect(h.shown.map((s) => s.layer)).toEqual(['makieta', 'ruch']);
+    ui.cityLayer.value = 'ruch';   // ten sam efektywny tryb: scena ma go już
+    expect(h.shown).toHaveLength(2);
+  });
+
+  it('zmiana presetu przy otwartej zakładce wywołuje scenę jeszcze raz (profil: auta, cienie), z tym samym trybem', () => {
+    const h = make();
+    applyCityProfile('srednia', false, true);
+    ui.tab.value = 'miasto';
+    expect(h.shown).toHaveLength(1);
+    ui.preset.value = 'niska';
+    applyCityProfile('niska', false);
+    expect(h.shown).toHaveLength(2);
+    expect(h.shown[1]!.layer).toBe('makieta');
+    expect(h.shown[1]!.city).toBe(h.f.city);
+    ui.preset.value = 'niska';   // ten sam preset: bez nowego wywołania
+    expect(h.shown).toHaveLength(2);
+  });
+
+  it('zmiana presetu przy zamkniętej zakładce nie dotyka sceny', () => {
+    const h = make();
+    ui.preset.value = 'niska';
+    expect(h.shown).toHaveLength(0);
+    expect(h.hides).toBe(0);
   });
 });
 

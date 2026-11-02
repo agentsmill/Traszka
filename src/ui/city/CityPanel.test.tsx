@@ -11,7 +11,7 @@ import { RELET_SHARE, applyFirmCommand, lotState, partnerProgress, rentPrice } f
 import { emptyStepOut } from '@/sim/firm/firm';
 import type { FirmCommand, FirmCommandResult } from '@/sim/firm/commands';
 import { BASE_STORE_LIMIT, type FirmRefusal, type FirmState } from '@/sim/firm/types';
-import { cityLayer, firm, lotPay, selectedLot, tab, toasts, type GameActions } from '../state';
+import { cityLayer, cityMockup, firm, lotPay, selectedLot, tab, toasts, type GameActions } from '../state';
 import { percentOf, zl } from '../game/format';
 import { buttonAria, buttonLabelled, buttonsOf, click, labels, textOf, walk, type Vnode } from '../game/vnodeTree';
 import { CityBar, CityPanel, LotList } from './CityPanel';
@@ -50,6 +50,12 @@ const byTut = (tree: Vnode, tut: string): Vnode => {
   if (found.length !== 1) throw new Error(`Elementów data-tut="${tut}": ${found.length}, oczekiwano jednego.`);
   return found[0]!;
 };
+/** Przełącznik trybu mapy z paska: grupa przycisków `.tt-layers`. */
+const layersOf = (tree: Vnode): Vnode => {
+  const group = walk(tree).find((v) => v.props.role === 'group' && String(v.props.class ?? '').split(' ').includes('tt-layers'));
+  if (!group) throw new Error('pasek nie ma przełącznika trybu mapy');
+  return group;
+};
 const rowFor = (f: FirmState, district: string) => rowsOf(f).find((r) => r.district === district)!;
 /** Wykres godzin z karty: węzeł `HourChart` z drzewa karty, rozwinięty (komponenty w drzewie nie są wołane przez `walk`). */
 function chartOf(tree: Vnode): Vnode {
@@ -62,6 +68,7 @@ const barsOf = (chart: Vnode, kind: 'day' | 'end'): Vnode[] => walk(chart).filte
 
 function resetSignals(): void {
   cityLayer.value = 'ruch';
+  cityMockup.value = true;
   selectedLot.value = null;
   lotPay.value = 'gotowka';
   firm.value = null;
@@ -110,20 +117,44 @@ describe('pasek miasta (data-tut="city-status")', () => {
     expect(text).not.toContain('Partner Strategiczny');
   });
 
-  it('pokazuje nazwę miasta, a przełącznik „Ruch / Dzielnice” zmienia warstwę', () => {
+  it('pokazuje nazwę miasta, a przełącznik „Makieta / Ruch / Dzielnice” zmienia tryb mapy', () => {
     const f = partnerFirm();
     const tree = bar(f);
     expect(textOf(tree)).toContain(f.city.name);
-    expect(labels(tree)).toEqual(expect.arrayContaining(['Ruch', 'Dzielnice']));
+    const layers = layersOf(tree);
+    expect(labels(layers)).toEqual(['Makieta', 'Ruch', 'Dzielnice']);   // w tej kolejności: makieta pierwsza
     expect(buttonLabelled(tree, 'Ruch').props['aria-pressed']).toBe(true);
     click(buttonLabelled(tree, 'Dzielnice'));
     expect(cityLayer.value).toBe('dzielnice');
     expect(buttonLabelled(bar(f), 'Dzielnice').props['aria-pressed']).toBe(true);
+    click(buttonLabelled(bar(f), 'Makieta'));
+    expect(cityLayer.value).toBe('makieta');
     click(buttonLabelled(bar(f), 'Ruch'));
     expect(cityLayer.value).toBe('ruch');
   });
 
-  it('legenda zależy od warstwy: ruch ma skalę od cichego do tłocznego, dzielnice cztery nazwy', () => {
+  it('aria-pressed ma dokładnie jeden przycisk: ten z bieżącego trybu', () => {
+    const f = partnerFirm();
+    for (const [layer, label] of [['makieta', 'Makieta'], ['ruch', 'Ruch'], ['dzielnice', 'Dzielnice']] as const) {
+      cityLayer.value = layer;
+      const tree = bar(f);
+      for (const l of ['Makieta', 'Ruch', 'Dzielnice']) expect(buttonLabelled(tree, l).props['aria-pressed']).toBe(l === label);
+    }
+  });
+
+  it('bez makiety w profilu (cityMockup=false) nie ma przycisku „Makieta”, a zapamiętana makieta pokazuje się jako „Ruch”', () => {
+    const f = partnerFirm();
+    cityMockup.value = false;
+    expect(labels(bar(f))).toEqual(['Ruch', 'Dzielnice']);
+    cityLayer.value = 'makieta';   // np. wybór sprzed zmiany presetu
+    const tree = bar(f);
+    expect(buttonLabelled(tree, 'Ruch').props['aria-pressed']).toBe(true);
+    expect(buttonLabelled(tree, 'Dzielnice').props['aria-pressed']).toBe(false);
+    expect(textOf(tree)).toContain('mały ruch');   // legenda jak dla „Ruch”
+    expect(cityLayer.value).toBe('makieta');   // panel niczego nie przestawia, tylko pokazuje
+  });
+
+  it('legenda zależy od trybu: ruch ma skalę od cichego do tłocznego, dzielnice cztery nazwy, makieta jej nie ma', () => {
     const f = partnerFirm();
     const traffic = textOf(bar(f));
     expect(traffic).toContain('mały ruch');
@@ -131,6 +162,19 @@ describe('pasek miasta (data-tut="city-status")', () => {
     cityLayer.value = 'dzielnice';
     const districts = textOf(bar(f));
     for (const d of ['osiedle', 'srodmiescie', 'dworzec', 'biurowce', 'park'] as const) expect(districts).toContain(districtName(d));
+    cityLayer.value = 'makieta';
+    const mockup = bar(f);
+    expect(walk(mockup).some((v) => hasClass(v, 'tt-citylegend'))).toBe(false);
+    const text = textOf(mockup);
+    expect(text).not.toContain('mały ruch');
+    for (const d of ['osiedle', 'srodmiescie', 'dworzec', 'biurowce', 'park'] as const) expect(text).not.toContain(districtName(d));
+  });
+
+  it('po angielsku przyciski to „Model / Footfall / Districts”', () => {
+    lang.value = 'en';
+    const tree = bar(partnerFirm());
+    expect(labels(layersOf(tree))).toEqual(['Model', 'Footfall', 'Districts']);
+    expect(layersOf(tree).props['aria-label']).toBe('Map layer');
   });
 });
 

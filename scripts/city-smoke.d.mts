@@ -12,7 +12,7 @@ export interface TutorialMemory { v: 1; tour: 'skipped'; seen: string[]; tips: b
 export interface StepResult { ok: boolean; failed: string[]; notes: string[]; na: boolean; seconds?: number }
 export interface SummaryRow { size: string; step: number | string; name: string; status: 'ok' | 'FAIL' | 'n/d'; detail: string }
 export interface Summary { rows: SummaryRow[]; ok: boolean }
-export interface SmokeArgs { only: string | null; help: boolean; bench: boolean; stage: '4b' | null }
+export interface SmokeArgs { only: string | null; help: boolean; bench: boolean; stage: '4b' | 'makieta' | null }
 /** Pomiar szerokości strony: `scroll` dokumentu i widoczne okna, arkusze, karty (ramka, `scrollWidth`, `clientWidth`). */
 export interface WidthBox { name: string; left: number; right: number; scroll: number; client: number; culprits?: string[] }
 export interface WidthMeasure { scroll: number; boxes?: readonly WidthBox[] }
@@ -27,6 +27,9 @@ export const FIXTURES: { readonly stary: string; readonly przedStatusem: string;
 export const STEPS: readonly StepDef[];
 export const TIPS_STEP: StepDef;
 export const STEPS_4B: readonly StepDef[];
+/** Kroki 13–15 (Zadanie 15): same biegną z `--etap makieta`. */
+export const STEPS_MAKIETA: readonly StepDef[];
+export const STAGES: readonly string[];
 export const DESKTOP_4B: { width: number; height: number };
 export const RESEARCH_DOSTAWY_COST: number;
 export const WALLET_4B_RENT: number;
@@ -119,3 +122,26 @@ export function benchTableLines(result: unknown, extra: unknown): string[];
 export function withRemont(saveText: string, patch: { storeId: number; remontLevel: number; level: number }): string;
 export function deckIds(source: string): string[];
 export function withOnlyCardTomorrow(saveText: string, opts: { storeId: number; cardId: string; ids: readonly string[] }): string;
+
+// Plan 4a.2 (Zadanie 15): kroki makiety (13 komputer, 14 telefon, 15 bieg benchmarku w pełnym przebiegu).
+export type LayerLang = 'pl' | 'en';
+/** Przycisk przełącznika trybu mapy z pomiaru strony. */
+export interface LayerButton { text: string; pressed: boolean }
+/** Migawka `window.traszkaGame.cityStats()`. */
+export interface CityStatsLike {
+  shown: boolean; built: boolean; detail: string | null; layer: string | null; cars: number; drawCalls: number; shadowCasters: number;
+}
+/** Oczekiwania wobec migawki: `built: false` (miasto zwolnione) albo widok, geometria i auta (`true`: więcej niż 0, `false`: zero). */
+export interface CityStatsWant { built?: false; layer?: string; detail?: string; cars?: boolean }
+/** Licznik geometrii renderera w życiu sceny miasta na telefonie (zob. `geometryProblems`). */
+export interface GeometryCounts { before: number; open: number; mockup: number; flat: number; exited: number; again: number }
+export const LAYER_LABELS: { readonly pl: readonly string[]; readonly en: readonly string[] };
+export const CITY_M: number;
+export const CITY_UNIT_M: number;
+export function layerBarProblems(buttons: readonly LayerButton[], pressed: string, lang?: LayerLang): string[];
+export function cityWorld(lot: { x: number; y: number }): { x: number; z: number };
+export function cityStatsProblems(stats: CityStatsLike | null | undefined, want: CityStatsWant): string[];
+export function geometryProblems(g: GeometryCounts, slack?: number): string[];
+export function nextWorkdayNoon(minute: number): number;
+export function pinCoversPoint(pin: PinBox | null | undefined, point: { x: number; y: number }, pad?: number): boolean;
+export function perfHint(x: { fps: number; minFps: number; maxFps: number; ms: number; calls: number; tris: number }): string;
