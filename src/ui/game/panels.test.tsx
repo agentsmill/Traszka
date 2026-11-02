@@ -20,7 +20,7 @@ import { layoutFor } from '@/sim/store/layoutFor';
 import { lang } from '@/i18n';
 import { districtSite } from '@/sim/city/districts';
 import { noticeEndDay } from '@/sim/firm/closure';
-import { econ, firm, metaView, monthPreview, ranked, speed, tab, type GameActions } from '../state';
+import { econ, firm, metaView, monthPreview, ranked, selectedLot, sheetFolded, speed, tab, type GameActions } from '../state';
 import { firmOf } from '@/game/session';
 import { applyFirmCommand } from '@/sim/firm/commands';
 import { FIRM_GOALS } from '@/sim/firm/goals';
@@ -29,7 +29,7 @@ import { lotAddress, storeName } from '../city/firmText';
 import { networkRow } from '../city/storeSwitcherModel';
 import { openSecond, partnerSession } from '../../../tests/firmKit';
 import { CityPanel } from '../city/CityPanel';
-import { Bar, GoalsPanel, PalletItem, PalletsPanel, PeoplePanel, Sheet, ShopPanel, StorePanel, TabBar, remontsAway } from './panels';
+import { Bar, FOLD_MIN_PX, GoalsPanel, PalletItem, PalletsPanel, PeoplePanel, Sheet, ShopPanel, StorePanel, TabBar, foldGesture, remontsAway } from './panels';
 import { int, minusZl, money, percentOf, plural, signedZl, zl } from './format';
 import { buttonAria, buttonLabelled, buttonsOf, click, labels, sectionTitled, textOf, walk, type Vnode } from './vnodeTree';
 
@@ -58,6 +58,8 @@ afterEach(() => {
   econ.value = null;
   firm.value = null;
   tab.value = null;
+  sheetFolded.value = false;
+  selectedLot.value = null;
   metaView.value = { points: 0, stores: 0, networkIncome: 0, network: [], sound: true, vibration: true };
   speed.value = 1;
   ranked.value = null;
@@ -180,6 +182,54 @@ describe('panele wysyłają polecenia przez game.dispatch, a nie wołają symula
     expect(tab.value).toBeNull();
     tab.value = 'sklep';
     expect(String((Sheet({ game: fakeGame() }) as Vnode).props.class)).not.toContain('tt-sheet-city');
+  });
+
+  describe('zwijanie arkusza (telefon) i przewijanie od góry', () => {
+    it('gest na nagłówku: w dół zwija, w górę rozwija, stuknięcie przełącza, ruch pośredni nic nie zmienia', () => {
+      expect(foldGesture(FOLD_MIN_PX, false)).toBe(true);
+      expect(foldGesture(120, true)).toBe(true);
+      expect(foldGesture(-FOLD_MIN_PX, true)).toBe(false);
+      expect(foldGesture(-120, false)).toBe(false);
+      expect(foldGesture(3, false)).toBe(true);
+      expect(foldGesture(-3, true)).toBe(false);
+      expect(foldGesture(20, false)).toBeNull();
+      expect(foldGesture(-20, true)).toBeNull();
+    });
+
+    it('▾ zwija arkusz (klasa folded, aria-expanded), ▴ go rozwija; ciało arkusza ma klucz zakładki', () => {
+      const { s, info } = rich();
+      econ.value = { s, info, v: 1 };
+      tab.value = 'ulepszenia';
+      const sheet = (): Vnode => Sheet({ game: fakeGame() }) as Vnode;
+      expect(walk(sheet()).find((v) => v.props.class === 'tt-sheet-body')!.key).toBe('ulepszenia');
+      expect(String(sheet().props.class)).not.toContain('folded');
+      const fold = buttonAria(sheet(), 'Zwiń arkusz');
+      expect(fold.props['aria-expanded']).toBe(true);
+      click(fold);
+      expect(sheetFolded.value).toBe(true);
+      expect(String(sheet().props.class)).toContain('folded');
+      expect(buttonAria(sheet(), 'Rozwiń arkusz').props['aria-expanded']).toBe(false);
+      click(buttonAria(sheet(), 'Rozwiń arkusz'));
+      expect(sheetFolded.value).toBe(false);
+    });
+
+    it('zmiana zakładki, zamknięcie i wybór lokalu rozwijają arkusz; stuknięcie w zwiniętą zakładkę ją rozwija zamiast zamykać', () => {
+      const { s, info } = rich();
+      econ.value = { s, info, v: 1 };
+      tab.value = 'ludzie';
+      sheetFolded.value = true;
+      tab.value = 'cele';
+      expect(sheetFolded.value).toBe(false);
+      sheetFolded.value = true;
+      selectedLot.value = 3;
+      expect(sheetFolded.value).toBe(false);
+      sheetFolded.value = true;
+      click(walk(TabBar()).find((v) => v.props['data-tut'] === 'tab-cele')!);
+      expect(tab.value).toBe('cele');
+      expect(sheetFolded.value).toBe(false);
+      click(walk(TabBar()).find((v) => v.props['data-tut'] === 'tab-cele')!);
+      expect(tab.value).toBeNull();
+    });
   });
 
   it('znaczniki zakładek: Palety liczą palety pod sklepem i w przejściach, Cele kamienie milowe do odebrania', () => {

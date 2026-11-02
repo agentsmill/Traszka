@@ -96,6 +96,8 @@ export const GAME_UI: Dict = {
   'Ulepszenia': 'Upgrades',
   'Cele': 'Goals',
   'Zakładki': 'Tabs',
+  'Rozwiń arkusz': 'Expand the panel',
+  'Zwiń arkusz': 'Collapse the panel',
   'Kasa i kolejka': 'Till and queue',
   'Kolejka': 'Queue',
   '{0} {1} (cierpliwość: {2})': '{0} {1} (patience: {2})',

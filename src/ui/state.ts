@@ -1,4 +1,4 @@
-import { signal, type Signal } from '@preact/signals';
+import { effect, signal, type Signal } from '@preact/signals';
 import type { Speed } from '@/game/loop';
 import type { StartChoice, StartForm } from '@/game/start';
 import type { CharacterFactory } from '@/render/characters/characterFactory';
@@ -76,6 +76,13 @@ export const tab: Signal<TabId | null> = signal<TabId | null>(null);
 export const cityLayer: Signal<CityLayer> = signal<CityLayer>('ruch');
 export const selectedLot: Signal<number | null> = signal<number | null>(null);
 export const lotPay: Signal<'gotowka' | 'raty'> = signal<'gotowka' | 'raty'>('gotowka');
+
+/**
+ * Arkusz zakładki zwinięty w dół do samego nagłówka (telefon, < 900 px; `game/panels.tsx`, `Sheet`): widać wtedy całą scenę albo mapę. Zwija go
+ * gracz, a rozwija każda zmiana zakładki (także zamknięcie) i wybór lokalu, bo wtedy chce zobaczyć to, co otwiera. Nie jest częścią zapisu.
+ */
+export const sheetFolded: Signal<boolean> = signal(false);
+effect(() => { void tab.value; void selectedLot.value; sheetFolded.value = false; });
 
 export type ToastKind = EconEventKind | 'ok' | 'error';
 export interface Toast { id: number; text: string; kind: ToastKind }
