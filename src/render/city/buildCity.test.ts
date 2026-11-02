@@ -628,7 +628,7 @@ describe('buildCity pelny: tryby na jednej geometrii', () => {
       }
     }
     view.dispose();
-  });
+  }, 20_000);   // porównuje całe bufory kolorów makiety i warstw element po elemencie: lokalnie ok. 2,6 s, CI na GitHubie bywa ok. 5× wolniejsze
 
   it('warstwy barwią cały budynek lokalu wg stanu (własny sklep zielony), a dworzec i reszta chunku zostają białe', () => {
     const seed = SEEDS[0]!;
