@@ -1,12 +1,14 @@
 /*
  * Ekran Miasta (zakładka „Miasto”, `ui/city/CityPanel.tsx` i `LotCard.tsx`): arkusz z paskiem statusu, listą wolnych lokali i kartą lokalu.
  * Komputer: prawa kolumna jak każdy arkusz (≥ 900 px), mapa po lewej. Telefon: arkusz od dołu niższy niż zwykły (do 46% ekranu), żeby mapa
- * zostawała u góry; po wyborze lokalu lista ustępuje karcie (`.has-card`, na telefonie także pasek), a między lokalami przesuwa się palcem. Wysokość 46vh i prawa
- * kolumna 390 px są też w `game/cityScreen.ts` (`visibleArea`): tam mapa ustawia się w tym, co arkusz zostawia widoczne.
+ * zostawała u góry; po wyborze lokalu lista ustępuje karcie (`.has-card`, na telefonie także pasek), a między lokalami przesuwa się palcem. Wysokość 46 %
+ * (dvh, czyli widocznej wysokości okna, a w starszych przeglądarkach vh) i prawa kolumna 390 px są też w `game/cityScreen.ts` (`visibleArea`, z `innerHeight`):
+ * tam mapa ustawia się w tym, co arkusz zostawia widoczne.
  */
 
 .tt-sheet-city {
   max-height: min(46vh, calc(100vh - var(--hud-h) - var(--tabs-h) - 16px));
+  max-height: min(46dvh, calc(100dvh - var(--hud-h) - var(--tabs-h) - 16px));
 }
 
 @media (min-width: 900px) {

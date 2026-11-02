@@ -702,6 +702,8 @@
   display: flex;
   flex-direction: column;
   max-height: min(62vh, calc(100vh - var(--hud-h) - var(--tabs-h) - 16px));
+  /* dvh to wysokość widoczna przy pasku przeglądarki telefonu: z samym vh góra arkusza (nagłówek i pierwsze wiersze) wchodziła pod górny pasek */
+  max-height: min(62dvh, calc(100dvh - var(--hud-h) - var(--tabs-h) - 16px));
 }
 
 .tt-sheet-head {
@@ -718,6 +720,51 @@
   font-size: 17px;
   font-weight: 800;
   color: var(--tt-green-dark);
+}
+
+.tt-sheet-btns {
+  display: flex;
+  gap: 6px;
+}
+
+/* Telefon: nagłówek arkusza to uchwyt (kreska u góry). Ruch palcem w dół albo ▾ zwija arkusz do samego nagłówka nad zakładkami, w górę
+   go rozwija (`panels.tsx`, `foldGesture`); od 900 px arkusz to prawa kolumna i się nie zwija. */
+@media (max-width: 899px) {
+  .tt-sheet-head {
+    position: relative;
+    touch-action: none;
+  }
+
+  .tt-sheet-head::before {
+    content: '';
+    position: absolute;
+    top: 4px;
+    left: 50%;
+    width: 40px;
+    height: 4px;
+    margin-left: -20px;
+    border-radius: 2px;
+    background: rgba(29, 107, 58, 0.28);
+  }
+
+  .tt-sheet-fold {
+    font-size: 24px;   /* ▾ i ▴ w kroju systemowym są o połowę mniejsze od ✕ */
+  }
+
+  .tt-sheet.folded .tt-sheet-body {
+    display: none;
+  }
+
+  .tt-sheet.folded .tt-sheet-head {
+    padding-bottom: 10px;
+    border-bottom: 0;
+  }
+}
+
+@media (min-width: 900px) {
+  .tt-sheet-fold {
+    display: none;
+  }
 }
 
 .tt-sheet .tt-iconbtn,

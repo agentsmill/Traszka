@@ -30,7 +30,7 @@ import { nextRankAt, xpToNext } from '@/sim/economy/progress';
 import { CityPanel } from '../city/CityPanel';
 import { lotAddress, storeName, storeStateText } from '../city/firmText';
 import { forecastNow, isNetwork, networkRow } from '../city/storeSwitcherModel';
-import { econ, firm, metaView, openMonthPreview, ranked, selection, tab, type GameActions, type TabId } from '../state';
+import { econ, firm, metaView, openMonthPreview, ranked, selection, sheetFolded, tab, type GameActions, type TabId } from '../state';
 import { duration, int, money, minusZl, pct, people, percentOf, plural, signedZl, zl } from './format';
 import { SpendNote, buyButtons, buyNotes, spendRisk } from './spend';
 import { tapBlock } from './tapBlock';
@@ -63,7 +63,7 @@ const TABS: { id: TabId; icon: string; label: string }[] = [
   { id: 'miasto', icon: '🗺️', label: 'Miasto' },
 ];
 
-/** Dolny pasek zakładek. Drugie stuknięcie w otwartą zakładkę ją zamyka. */
+/** Dolny pasek zakładek. Drugie stuknięcie w otwartą zakładkę ją zamyka, a zwiniętą (`sheetFolded`) rozwija. */
 export function TabBar() {
   const view = econ.value;
   const badge: Partial<Record<TabId, number>> = {};
@@ -80,7 +80,7 @@ export function TabBar() {
     <nav class="tt-tabs" data-tut="tabs" aria-label={t`Zakładki`}>
       {TABS.map((x) => (
         <button key={x.id} type="button" class={`tt-tab${tab.value === x.id ? ' on' : ''}`} data-tut={`tab-${x.id}`} aria-pressed={tab.value === x.id}
-          onClick={() => { tab.value = tab.value === x.id ? null : x.id; selection.value = null; }}>
+          onClick={() => { tab.value = tab.value === x.id && !sheetFolded.value ? null : x.id; sheetFolded.value = false; selection.value = null; }}>
           <span class="tt-tab-icon" aria-hidden="true">{x.icon}</span>
           <span class="tt-tab-label">{tr(x.label)}</span>
           {badge[x.id] ? <span class="tt-badge">{badge[x.id]}</span> : null}
@@ -90,19 +90,58 @@ export function TabBar() {
   );
 }
 
-/** Arkusz z zawartością otwartej zakładki. */
+/** Przesunięcie palcem po nagłówku arkusza (px), od którego arkusz się zwija albo rozwija. */
+export const FOLD_MIN_PX = 40;
+/** Krótszy ruch palcem po nagłówku to stuknięcie. */
+const FOLD_TAP_PX = 8;
+
+/** Stan arkusza po geście na nagłówku: w dół zwija, w górę rozwija, stuknięcie przełącza; ruch pośredni niczego nie zmienia (null). */
+export function foldGesture(dy: number, folded: boolean): boolean | null {
+  if (Math.abs(dy) < FOLD_TAP_PX) return !folded;
+  if (dy >= FOLD_MIN_PX) return true;
+  if (dy <= -FOLD_MIN_PX) return false;
+  return null;
+}
+
+let foldFrom: { id: number; y: number } | null = null;   // początek gestu na nagłówku (jak `swipeFrom` w `LotCard.tsx`)
+
+const foldDown = (e: PointerEvent): void => {
+  // od 900 px arkusz to prawa kolumna (ui.css) i się nie zwija; przyciski nagłówka działają po swojemu
+  if (window.innerWidth >= 900 || (e.target as Element).closest('button')) return;
+  foldFrom = { id: e.pointerId, y: e.clientY };
+  (e.currentTarget as Element).setPointerCapture(e.pointerId);
+};
+
+const foldUp = (e: PointerEvent): void => {
+  const from = foldFrom;
+  foldFrom = null;
+  if (!from || from.id !== e.pointerId) return;
+  const next = foldGesture(e.clientY - from.y, sheetFolded.value);
+  if (next !== null) sheetFolded.value = next;
+};
+
+/**
+ * Arkusz z zawartością otwartej zakładki. Na telefonie nagłówek jest uchwytem: ruch palcem w dół (albo ▾) zwija arkusz do samego nagłówka,
+ * żeby było widać scenę, w górę go rozwija. Ciało ma klucz zakładki: każda zakładka zaczyna od góry, a nie od miejsca, do którego
+ * przewinęła się poprzednia (wspólny element przenosił `scrollTop`).
+ */
 export function Sheet({ game }: { game: GameActions }) {
   const view = econ.value;
   const open = tab.value;
   if (!view || !open) return null;
   const title = tr(TABS.find((x) => x.id === open)!.label);
+  const folded = sheetFolded.value;
   return (
-    <aside class={`tt-sheet${open === 'miasto' ? ' tt-sheet-city' : ''}`} data-tut="sheet" aria-label={title}>
-      <div class="tt-sheet-head">
+    <aside class={`tt-sheet${open === 'miasto' ? ' tt-sheet-city' : ''}${folded ? ' folded' : ''}`} data-tut="sheet" aria-label={title}>
+      <div class="tt-sheet-head" onPointerDown={foldDown} onPointerUp={foldUp} onPointerCancel={() => { foldFrom = null; }}>
         <h2>{title}</h2>
-        <button type="button" class="tt-iconbtn" aria-label={t`Zamknij`} onClick={() => { tab.value = null; }}>✕</button>
+        <div class="tt-sheet-btns">
+          <button type="button" class="tt-iconbtn tt-sheet-fold" aria-expanded={!folded} aria-label={folded ? t`Rozwiń arkusz` : t`Zwiń arkusz`}
+            onClick={() => { sheetFolded.value = !folded; }}>{folded ? '▴' : '▾'}</button>
+          <button type="button" class="tt-iconbtn" aria-label={t`Zamknij`} onClick={() => { tab.value = null; }}>✕</button>
+        </div>
       </div>
-      <div class="tt-sheet-body">
+      <div class="tt-sheet-body" key={open}>
         {/* `v` (wersja stanu) jest w propsach celowo: stan ekonomii zmienia się w miejscu, a @preact/signals pomija
             render komponentu, którego propsy są płytko równe. Bez `v` panel po „Odbierz!” albo zakupie zostawał nieaktualny. */}
         {open === 'sklep' && <StorePanel s={view.s} info={view.info} game={game} v={view.v} />}
