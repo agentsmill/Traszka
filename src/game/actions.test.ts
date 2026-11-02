@@ -4329,7 +4329,7 @@ describe('gra prowadzi firmę (powłoka)', () => {
         expect(plays(h)).toEqual(['coins']);
       });
 
-      it('kilka celów z jednej minuty (zapis z milionem) to jeden toast z liczbą i jedne monety, nie seria okien', () => {
+      it('kilka celów z jednej minuty (zapis z milionem) to jeden toast z liczbą i jedne monety za cele (plus monety gratulacji za milion), nie seria okien', () => {
         const h = harness();
         const { f } = twoStores(h);
         const goals: FirmEvent[] = ['cash250k', 'cash500k', 'cash1m'].map((id) => ({ kind: 'goal', params: { id } }));
@@ -4337,7 +4337,7 @@ describe('gra prowadzi firmę (powłoka)', () => {
         expect(ui.story.value).toEqual([]);   // ani cele, ani milion nie otwierają okna z „default”
         expect(ui.toasts.value.map((x) => [x.text, x.kind])).toEqual([[goalsToastText(f, goals), 'milestone']]);
         expect(goalsToastText(f, goals)).toContain('Cele sieci do odebrania: 3');
-        expect(plays(h)).toEqual(['coins']);
+        expect(plays(h)).toEqual(['coins', 'coins']);   // monety gratulacji za milion (fameOffer, Zadanie 8) i jedne za zbiorczy toast celów
       });
 
       it('million nie trafia do okna „OK” z default (Zadanie 8 podepnie własną obsługę)', () => {
