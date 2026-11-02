@@ -1,11 +1,18 @@
 import { Group, type Mesh } from 'three';
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createEconomy, type EconomyState } from '@/sim/economy/economy';
 import { computeStoreInfo } from '@/sim/economy/storeInfo';
 import { cellKey } from '@/sim/grid';
 import { generateStore } from '@/sim/store/generateStore';
+import { createConveyor, createRestocker } from './machines';
 import { CONVEYOR_MAX_CELLS, placeRobots } from './robotPlacement';
 import { RobotsView, WORK_HOLD_S } from './robotsView';
+
+// fabryki maszyn przepuszczają wywołania do prawdziwych (siatki powstają naprawdę), ale zapamiętują, z jakim poziomem wyglądu je wołano
+vi.mock('./machines', async (importOriginal) => {
+  const real = await importOriginal<typeof import('./machines')>();
+  return { ...real, createConveyor: vi.fn(real.createConveyor), createRestocker: vi.fn(real.createRestocker) };
+});
 
 const SEED = 'kielbasa-42';
 const layout = generateStore(SEED);
@@ -94,6 +101,51 @@ describe('RobotsView', () => {
     s.upgrades.wykladacz = 0;
     view.sync(s);
     expect(named(parent, 'wykładacz')).toBe(false);
+  });
+
+  describe('ulepszenia 4–5 (taśmociąg i wykładacz mają po 5 poziomów, a modele po 3)', () => {
+    beforeEach(() => {
+      vi.mocked(createConveyor).mockClear();
+      vi.mocked(createRestocker).mockClear();
+    });
+    /** Poziom wyglądu z ostatniego wywołania fabryki (trzeci argument obu). */
+    const lookOf = (factory: typeof createConveyor | typeof createRestocker): unknown => vi.mocked(factory).mock.calls.at(-1)?.[2];
+
+    it('taśmociąg 5 i wykładacz 5: createConveyor i createRestocker dostają poziom 3, a sync nie rzuca', () => {
+      const { view, parent, s } = make();
+      s.upgrades.tasmociag = 5;
+      s.upgrades.wykladacz = 5;
+      expect(() => view.sync(s)).not.toThrow();
+      expect(lookOf(createConveyor)).toBe(3);
+      expect(lookOf(createRestocker)).toBe(3);
+      expect([named(parent, 'taśmociąg'), named(parent, 'wykładacz')]).toEqual([true, true]);
+      for (const level of [4, 5]) {
+        s.upgrades.tasmociag = level;
+        s.upgrades.wykladacz = level;
+        view.sync(s);
+        expect([lookOf(createConveyor), lookOf(createRestocker)], `poziom ${level}`).toEqual([3, 3]);
+      }
+    });
+
+    it('wygląd poziomów 4–5 równa się wyglądowi poziomu 3: taśmociąg ma te same kratki (przeszkody), a maszyny nie są stawiane od nowa', () => {
+      const { view, parent, s } = make();
+      s.upgrades.tasmociag = 3;
+      s.upgrades.wykladacz = 3;
+      view.sync(s);
+      const cells = view.obstacles.map(cellKey).sort((a, b) => a - b);
+      const [conveyor, restocker] = [parent.getObjectByName('taśmociąg'), parent.getObjectByName('wykładacz')];
+      expect(cells.length).toBeGreaterThan(0);
+      expect([vi.mocked(createConveyor).mock.calls.length, vi.mocked(createRestocker).mock.calls.length]).toEqual([1, 1]);
+      for (const level of [4, 5]) {
+        s.upgrades.tasmociag = level;
+        s.upgrades.wykladacz = level;
+        view.sync(s);
+        expect(view.obstacles.map(cellKey).sort((a, b) => a - b), `poziom ${level}`).toEqual(cells);
+        expect(parent.getObjectByName('taśmociąg'), `poziom ${level} taśmociąg`).toBe(conveyor);
+        expect(parent.getObjectByName('wykładacz'), `poziom ${level} wykładacz`).toBe(restocker);
+      }
+      expect([vi.mocked(createConveyor).mock.calls.length, vi.mocked(createRestocker).mock.calls.length]).toEqual([1, 1]);
+    });
   });
 
   it('maszyna pracuje przez WORK_HOLD_S po postępie, a potem staje', () => {

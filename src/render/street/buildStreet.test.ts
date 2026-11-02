@@ -3,10 +3,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Box3, BoxGeometry, Color, Group, Mesh, MeshStandardMaterial, Object3D, Vector3, type BufferGeometry } from 'three';
 import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { generateStore } from '@/sim/store/generateStore';
+import { layoutFor } from '@/sim/store/layoutFor';
+import { LOT_RANGES } from '@/sim/store/lots';
 import { cellToWorld } from '@/render/coords';
 import { CameraRig } from '@/render/cameraRig';
 import { CELL_SIZE_M } from '@/sim/grid';
-import type { LotKind, StoreLayout } from '@/sim/store/types';
+import type { LotKind, LotSpec, StoreLayout } from '@/sim/store/types';
 import { PALETTE } from '@/render/style';
 import { WALL_H } from '@/render/store/shell';
 import { SIDE_STREET, cornerSide, planRow, storeOuter, volumeHeight } from './buildings';
@@ -175,6 +177,39 @@ describe('buildStreet: budynki', () => {
     expect(left!.coverMax).toBeGreaterThan(0);
     expect(right!.coverMin).toBeGreaterThan(0);
   });
+});
+
+describe('buildStreet: sklep po piątym remoncie', () => {
+  /** Największy możliwy pawilon: wszystkie wymiary lokalu na górze zakresu (26 kratek wnętrza), a remont 5 poszerza go o 16 kratek. */
+  const widest: LotSpec = {
+    kind: 'pawilon', interiorWidth: LOT_RANGES.pawilon.interiorWidth[1], salesDepth: LOT_RANGES.pawilon.salesDepth[1],
+    backroomDepth: LOT_RANGES.pawilon.backroomDepth[1], corner: false,
+  };
+
+  it('layoutFor(seed, 5) na 20 seedach (wszystkie rodzaje lokalu) i na największym pawilonie: ulica bez wyjątku, bryła nad sklepem obejmuje sklep', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const kinds = new Set<LotKind>();
+    const cases: { seed: string; lot?: LotSpec }[] = Array.from({ length: 20 }, (_, i) => ({ seed: `remont5-${i}` }));
+    cases.push({ seed: 'remont5-najwiekszy', lot: widest });
+    for (const { seed, lot } of cases) {
+      const layout = layoutFor(seed, 5, lot);
+      kinds.add(layout.lot.kind);
+      const view = await buildStreet(layout, seed, failing, 5, lot);
+      built.push(view);
+      const o = storeOuter(layout);
+      const box = boxOf(view.root.getObjectByName(`building:${layout.lot.kind}:full`) as Mesh);
+      const label = `${seed} (${layout.lot.kind})`;
+      // wierzchołki bryły nad sklepem leżą co najmniej na obrysie sklepu (z reliefem elewacji nawet poza nim)
+      expect(box.min.x, `${label} x0`).toBeLessThanOrEqual(o.x0 + 1e-6);
+      expect(box.max.x, `${label} x1`).toBeGreaterThanOrEqual(o.x1 - 1e-6);
+      expect(box.min.z, `${label} z0`).toBeLessThanOrEqual(o.z0 + 1e-6);
+      expect(box.max.z, `${label} z1`).toBeGreaterThanOrEqual(o.z1 - 1e-6);
+      expect(box.max.y, `${label} wysokość`).toBeGreaterThan(WALL_H);
+      expect(view.root.getObjectByName('neighbour:0'), label).toBeDefined();
+      expect(view.root.getObjectByName('neighbour:1'), label).toBeDefined();
+    }
+    expect([...kinds].sort()).toEqual(['blok', 'kamienica', 'pawilon']);
+  }, 60_000);
 });
 
 describe('buildStreet: rekwizyty i seed', () => {

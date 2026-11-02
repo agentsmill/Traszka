@@ -57,7 +57,7 @@ describe('layoutFor', () => {
     }
   });
 
-  it('poziomy 4 i 5 na 200 seedach (pickLot i trzy rodzaje LotSpec): bez wyjątku, szerokość L5 ≥ L4 ≥ L3, sloty sprzętu L4 i L5 ≥ L3', () => {
+  it('poziomy 4 i 5 na 200 seedach (pickLot i trzy rodzaje LotSpec): bez wyjątku, szerokość i głębokość L5 ≥ L4 ≥ L3, sloty sprzętu L5 ≥ L4 ≥ L3', () => {
     const KINDS: LotKind[] = ['blok', 'kamienica', 'pawilon'];
     /** Lokal rodzaju `kind` z wymiarami rozrzuconymi po całym zakresie (deterministycznie, bez losowania). */
     const lotOf = (kind: LotKind, i: number): LotSpec => {
@@ -80,7 +80,10 @@ describe('layoutFor', () => {
         const [l3, l4, l5] = [3, 4, 5].map((lv) => layoutFor(seed, lv, lot));
         expect(l4!.width, `${tag}: szerokość L4 ≥ L3`).toBeGreaterThanOrEqual(l3!.width);
         expect(l5!.width, `${tag}: szerokość L5 ≥ L4`).toBeGreaterThanOrEqual(l4!.width);
+        expect(l4!.depth, `${tag}: głębokość L4 ≥ L3`).toBeGreaterThanOrEqual(l3!.depth);
+        expect(l5!.depth, `${tag}: głębokość L5 ≥ L4`).toBeGreaterThanOrEqual(l4!.depth);
         expect(slotsOf(l4!), `${tag}: sloty L4 ≥ L3`).toBeGreaterThanOrEqual(slotsOf(l3!));
+        expect(slotsOf(l5!), `${tag}: sloty L5 ≥ L4`).toBeGreaterThanOrEqual(slotsOf(l4!));
         expect(slotsOf(l5!), `${tag}: sloty L5 ≥ L3`).toBeGreaterThanOrEqual(slotsOf(l3!));
         expect(l5!.lot.kind, tag).toBe(l3!.lot.kind);
         widest = Math.max(widest, l5!.width);
