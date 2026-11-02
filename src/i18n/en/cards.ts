@@ -263,6 +263,141 @@ export const EN_CARDS: Record<string, EnCard> = {
       },
     ],
   },
+  // --- Karty dnia 4b (spec §5.5) ---
+  'karty-zrzut': {
+    title: 'Traszkomon drop',
+    text: 'Head Office is releasing collectible Traszkomon packs, “Shiny Cashier” edition. The carton holds {n} packs, and since 5:40 there have been kids with backpacks at the door and parents with the faces of people who are going to pay for this. The promotion’s rules run to three pages and say nothing about queues.',
+    answers: [
+      { label: 'Limit of 2 packs', result: 'The limit is on the door in marker pen. The kids count on their fingers, the parents on a miracle, and the queue still reaches the bus stop. The cashier pulled her own “Shiny Cashier” card out of a pack. Head Office did not provide for royalties.' },
+      {
+        label: 'No limit',
+        result: 'The carton was gone in a quarter of an hour, and the queue looked like the opening of a phone shop. One child pulled a “Shiny Cashier” card; the other hundred and thirty wrote to Head Office.',
+        risk: 'Things got tense over the last carton: shoving, torn packs, cards under the shelves. You book the losses as shrinkage, and Head Office asks why there was no limit.',
+      },
+      { label: 'Send the carton back', result: 'The carton went back on the lorry and the kids went to Kawka Express. Head Office noted that Traszka had refused the Traszkomons. It sounds odd, but it went in the file.' },
+    ],
+  },
+  festyn: {
+    title: 'Estate fête with pierogi',
+    text: 'There’s a fête outside the block: pierogi, a bouncy castle and a compote-drinking race. Half the estate is on the lawn, and Head Office reminds you by circular that “local activities must be notified 30 days in advance”. The fête was notified this morning.',
+    answers: [
+      { label: 'Hot-dog stall', result: 'The stall went up right next to the bouncy castle. The hot dogs sold faster than the pierogi, and Head Office sent a letter saying “sales outside the premises require an addendum”. The addendum will arrive after the fête.' },
+      { label: 'Poster: “Cold drinks next door”', result: 'The poster hangs over the pierogi table, with an arrow pointing at your door. The fête committee pretends not to notice, and the kids run over for cold drinks.' },
+      { label: 'Do nothing; it’s not our fête', result: 'The fête took place without you. The pierogi ran out at two, the compote at three, and Head Office found out about the whole thing from the estate newsletter.' },
+    ],
+  },
+  sanepid: {
+    title: 'Health inspector on a bicycle',
+    text: 'A health inspector cycles into the shop and peers into the fridges from the doorway. Head Office has said for years that “every shop is always ready for inspection”. The message didn’t reach the mop.',
+    answers: [
+      {
+        label: 'I show them round',
+        result: 'The inspector looked over the fridges, the stockroom and a thermometer that shows what it should. They wrote “no comments” and cycled off, and you stood to attention for an hour.',
+        risk: 'There was something under the fridge that nobody remembers buying. The report runs to four pages, the fine has more zeros than it should, and Head Office “expects explanations”.',
+      },
+      {
+        label: 'Coffee on the house',
+        result: 'The inspector drank the coffee and praised the stockroom. The coffee went in the expenses, and the receipt in the binder labelled “Documents nobody checks”.',
+        risk: 'The inspector drank the coffee and asked whether that wasn’t hospitality, strictly speaking. They wrote “attempt to influence the inspection” in the report, and Head Office heard about it first.',
+      },
+    ],
+  },
+  'awaria-pradu': {
+    title: 'Power cut across half the district',
+    text: 'The power has gone out across half the district, including your shop. The fridges have fallen silent, the till is dark, and the scanner blinks with its last laser. The Head Office helpline assures you that “your report has been registered and added to the others from 2019”.',
+    answers: [
+      { label: 'Brother-in-law’s generator', result: 'The generator roars like a tractor, but the till is alive and the fridges are cooling. Your brother-in-law has invoiced you “for moral support” and wants his jerrycan back.' },
+      { label: 'Close for 2 hours', result: 'The shop is shut for two hours with a note on the door: “Back when the power is”. The ice cream went slightly soft, and Head Office sent a survey about satisfaction with the outage.' },
+      {
+        label: 'Sell in the dark',
+        result: 'Torches, a calculator and the honesty of customers. Selling by word of mouth went surprisingly smoothly, and two Traszdogs left on trust.',
+        risk: 'In the dark some of the stock left with the customers, and the calculator made two mistakes, both in the buyers’ favour. The shrinkage glows brighter than the torch.',
+      },
+    ],
+  },
+  rozkopy: {
+    title: 'City roads authority digs up the pavement',
+    text: 'The City Roads Authority has dug up the pavement outside the shop “as part of modernisation”. The notice has been on a pole since March, except the pole is two streets away. A narrow path now leads to your door between a pipe and some tape.',
+    answers: [
+      { label: 'Footbridge made of pallets', result: 'The pallet footbridge stands and is even level. Customers cross it carefully, like a suspension bridge, and the City Wardens look at it with interest. So far, only look.' },
+      { label: 'Do nothing; the city will deal with it', result: 'The city will deal with it, for sure. The notice on the pole says the works will last “until Friday”, but not which one.' },
+    ],
+  },
+  koncert: {
+    title: 'Disco polo concert at the stadium',
+    text: 'This evening there’s a disco polo concert at the stadium, and the tickets went faster than the Traszdogs. Before the concert the crowd needs a drink, and after it, something to eat. Head Office has sent a memo saying that “presence in the concert zone is in line with the brand vision”.',
+    answers: [
+      { label: 'Stock up on drinks', result: 'The queue stretched to the stadium, and the last multipack left with the last chorus. Head Office is charging for an extra delivery because “it wasn’t in the plan”.' },
+      { label: 'Close at 10 pm', result: 'The post-concert wave swept through the shop like a storm: queue, queue, sudden silence. After 10 even the people who wanted “just one more beer” had gone.' },
+      { label: 'Bouncer (brother-in-law)', result: 'Your brother-in-law stood in the doorway looking like a man who has seen worse concerts. The queue formed in an orderly line, and the only intervention was confiscating someone’s sparklers.' },
+    ],
+  },
+  elearning: {
+    title: 'Head Office’s mandatory e-learning',
+    text: 'Head Office reminds you about mandatory e-learning: “Cashier Safety”, “Smile Hygiene” and “Digital Assertiveness”. Eleven hours in total, nine of which are a narrator reading out regulations. The deadline is today at 23:59, as Head Office announced yesterday at 23:58.',
+    answers: [
+      { label: 'During working hours', result: 'The cashiers clicked “next” while the shop was run by the self-service queue. The certificates arrived by email in a format nobody can open.' },
+      {
+        label: 'Click for everyone',
+        result: 'Nine courses in a quarter of an hour, and one click too many. The system decided everything was passed, including the first-aid exam.',
+        risk: 'The system noticed that five people passed the exam from one computer in four minutes. Head Office invites you to a chat about “organisational culture”.',
+      },
+      { label: 'Ignore it', result: 'The deadline passed at 23:59. The report on uncompleted training went to Head Office, where it lies next to the report about reports.' },
+    ],
+  },
+  'catering-korpo': {
+    title: 'A corporation orders sandwiches for a meeting',
+    text: 'The office next door is ordering {n} sandwiches for a “team meeting with the transformation leader”. They must be gluten-free, lactose-free and guilt-free. Head Office immediately asks for a report on “synergies with the local business environment”.',
+    answers: [
+      {
+        label: 'Accept',
+        result: 'Sandwiches ready and packed in boxes of three colours, because marketing wanted it that way. Payment arrived once all three departments had approved it.',
+        risk: 'The meeting was cancelled by email at 8:59. The sandwiches sit in their three-coloured boxes, and marketing asks for a photo “for the materials”.',
+      },
+      { label: 'Decline', result: 'The refusal was polite and firm. The office ordered from a chain with a longer name, and Head Office noted that Traszka “showed no flexibility”.' },
+    ],
+  },
+  kibice: {
+    title: 'Train full of football fans',
+    text: 'At 16:00 a special train carrying the away team’s fans pulls into the station. The police set up a cordon, and Head Office reminds you of the “Customer in a Scarf” procedure: smile, make eye contact, and leave by the back door.',
+    answers: [
+      { label: 'Security at the door', result: 'Two bouncers at the door, one set of regulations at the till, a queue as straight as railway track. The fans bought what they needed and sang only three times.' },
+      { label: 'Close until they leave', result: 'Shutters down, a note saying “Back after the match”. A crowd in scarves went past the glass, and you sat inside drinking coffee, far too calmly.' },
+      {
+        label: 'Business as usual',
+        result: 'The fans bought everything that glows and fizzes, and then moved on. The cashier received a scarf from them that she doesn’t want but doesn’t dare return.',
+        risk: 'It got crowded by the drinks fridge, then loud, and then something in the fridge cracked. The losses go to shrinkage, and Head Office asks why there was no security.',
+      },
+    ],
+  },
+  'bon-centrali': {
+    title: 'Motivational voucher from Head Office',
+    text: 'Head Office is awarding you a motivational voucher for extra own-brand pallets: “Naturally Crunchy Snacks, Within the Meaning of the Law” and “Summer-Flavoured Drink”. The voucher is valid, and Head Office will add its validity terms later.',
+    answers: [
+      { label: 'Take the own-brand pallets', result: 'The pallets arrived labelled “Tastes like it used to”, without saying when that was. The voucher paid out, and Head Office is charging a fee for “voucher handling”.' },
+      { label: 'Save it for better times', result: 'The voucher expired after 3 days, in line with terms announced after 2 days.' },
+    ],
+  },
+  'ai-inwentaryzacja': {
+    title: 'Head Office is testing AI for counting stock',
+    text: 'Head Office is rolling out “smart stocktaking”: a camera under the ceiling is meant to count the stock by itself, and you can put your shop forward for the pilot. Head Office assures you the algorithm “learns from mistakes”. Yours.',
+    answers: [
+      {
+        label: 'Put my shop forward for the pilot',
+        result: 'The camera is up, the light blinks, and Head Office got a new slide for its presentation. The first report reads: “stock level: a lot”.',
+        risk: 'The AI counted a cat as 14 chocolate bars and the water shelf as one big chocolate bar. The differences went into shrinkage and onto the agenda of a team meeting at Head Office.',
+      },
+      { label: 'Politely decline', result: 'Head Office took the refusal graciously and added a note: “requires technological education”. For consolation, it sent an invitation to a webinar.' },
+    ],
+  },
+  wybory: {
+    title: 'Polling station in the school next door',
+    text: 'A polling station has been set up in the school next door, and since morning people have been queuing outside with ID in hand. The election silence bans campaigning, but not buying rolls. Head Office reminds you the shop must remain “politically and flavourfully neutral”.',
+    answers: [
+      { label: 'Promo: “Citizen’s Coffee”', result: 'Coffee for a zloty for anyone with an “I Voted” sticker. More stickers were handed out than votes cast, but that is a matter for the electoral commission, not you.' },
+      { label: 'Do nothing; the voters will come by themselves', result: 'The voters came by themselves, some with a ballot for the box, others with a shopping list. Turnout in the shop was high, in the commission average.' },
+    ],
+  },
   'okolnik-premia': {
     title: 'Circular: attendance bonus',
     text: 'Head Office awards a {b} zł attendance bonus. Condition: one week of displaying the drink “Kraftuś Zero Sense” at the till. The drink is “blue” flavoured.',

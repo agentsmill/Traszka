@@ -593,7 +593,7 @@ describe('pełny przebieg na lokalnym serwerze ze sędzią z bundla', () => {
     expect(a!.run.log).toEqual([]);
     expect(b!.run.log).toEqual(SMOKE_LOG);
     expect(worse!.run.log).toEqual(better ? [] : SMOKE_LOG);   // ponawia ten bieg, który wypadł gorzej
-  }, 60_000);
+  }, 240_000);   // wariant „false” szuka seeda, w którym `SMOKE_LOG` wypada gorzej niż pusty dziennik; od kart 4b zdarza się to rzadko (ok. 30 prób, lokalnie ok. 50 s), a CI jest wolniejsze
 });
 
 describe('identyfikatory próby', () => {

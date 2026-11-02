@@ -3781,7 +3781,7 @@ describe('dispatchFirm i polecenia firmy', () => {
 
   it('dziennik firmy z prawdziwej gry odtwarza firmę co do znaku: wynajem, otwarcie, przełączenie i polecenia w drugim sklepie', () => {
     // ziarno, dla którego status Partnera przychodzi sam po dwóch miesiącach (jak w replay.test.ts)
-    const s = createSession('c', true);
+    const s = createSession('q', true);
     const rec = recorder();
     const f = firmOf(s);
     const answer = (): void => {

@@ -52,12 +52,14 @@ describe('difficultWeight', () => {
 });
 
 describe('talia: karty Dworca i trudni klienci w losowaniu', () => {
-  it('kontekst bez dzielnicy i z neutralnym Osiedlem (`difficult` 1) losuje tę samą talię przez 400 dni', () => {
+  it('kontekst bez dzielnicy i z samym `difficult` 1 (bez `district`) losuje tę samą talię przez 400 dni; Osiedle losuje inaczej, bo karty 4b mają dla niego osobne wagi', () => {
     const none = season(SEED, 400);
-    const osiedle = season(SEED, 400, { district: 'osiedle', difficult: 1 });
-    expect(idsOf(osiedle)).toEqual(idsOf(none));
-    expect(JSON.stringify(osiedle)).toBe(JSON.stringify(none));
+    const neutral = season(SEED, 400, { difficult: 1 });
+    expect(idsOf(neutral)).toEqual(idsOf(none));
+    expect(JSON.stringify(neutral)).toBe(JSON.stringify(none));
     expect(idsOf(none).length).toBeGreaterThan(100);
+    // spec §5.5 (4b): `byDistrict` odróżnia sklep bez aktywnej dzielnicy od Osiedla (np. festyn 0,6 kontra 1,4)
+    expect(idsOf(season(SEED, 400, { district: 'osiedle', difficult: 1 }))).not.toEqual(idsOf(none));
   });
 
   it('§20: karty Dworca wypadają tylko na Dworcu; bez dzielnicy, na Osiedlu, w Śródmieściu i w Biurowcach jest ich 0', () => {
@@ -86,11 +88,11 @@ describe('talia: karty Dworca i trudni klienci w losowaniu', () => {
     expect(osiedle).toBeGreaterThan(srodmiescie);
   });
 
-  it('karty Dworca są na samym końcu talii, po `wiralowy`, i mają wagę 0 poza Dworcem', () => {
+  it('karty Dworca stoją w talii po `wiralowy` (przed dwunastoma kartami 4b, które dopisano na końcu) i mają wagę 0 poza Dworcem', () => {
     expect([...DWORZEC_CARD_IDS]).toEqual(['dworzec-pociag', 'dworzec-bilon', 'dworzec-walizka']);
-    expect(DECK.slice(-4).map((d) => d.id)).toEqual(['wiralowy', ...DWORZEC_CARD_IDS]);
+    expect(DECK.slice(-16, -12).map((d) => d.id)).toEqual(['wiralowy', ...DWORZEC_CARD_IDS]);
     const weightOf = (d: CardDef, c: CardContext): number => (typeof d.weight === 'function' ? d.weight(c) : d.weight);
-    for (const d of DECK.slice(-3)) {
+    for (const d of DECK.slice(-15, -12)) {
       expect(weightOf(d, ctx(3)), d.id).toBe(0);
       expect(weightOf(d, ctx(3, { district: 'biurowce', difficult: 0.7 })), d.id).toBe(0);
       expect(weightOf(d, ctx(3, { district: 'dworzec', difficult: 1.6 })), d.id).toBeGreaterThan(0);
