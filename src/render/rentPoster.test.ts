@@ -1,6 +1,7 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { lang, tr } from '@/i18n';
 import { EN_RENDER } from '@/i18n/en/render';
+import { createFacadeAtlas } from '@/render/street/facadeAtlas';
 import { PALETTE } from '@/render/style';
 import { fakeContext, fontPx, type Call } from '../../tests/canvasFake';
 import { drawRentPoster } from './rentPoster';
@@ -62,6 +63,56 @@ describe('drawRentPoster: wspólna kartka „DO WYNAJĘCIA”', () => {
     expect(sizes(small.calls).map((s) => s * 2)).toEqual(sizes(big.calls));
     const centres = (calls: Call[]): number[] => calls.filter((c) => c.op === 'translate').map((c) => c.args[1] as number);
     expect(centres(small.calls).map((y) => y * 2)).toEqual(centres(big.calls));
+  });
+});
+
+describe('atlas elewacji: kartka w ciemnej witrynie', () => {
+  /**
+   * Maluje atlas na atrapach płótna (mapa koloru i emissive), zapisując wywołania. `document` jest atrapą tylko na czas budowy atlasu;
+   * w tym pliku nikt wcześniej nie tworzy atlasu, więc pamięć podręczna tekstur jest pusta i malowanie naprawdę biegnie.
+   */
+  function paintAtlas(): { color: Call[]; glow: Call[]; atlas: ReturnType<typeof createFacadeAtlas> } {
+    const canvases: Call[][] = [];
+    const gradient = { addColorStop: () => undefined };
+    vi.stubGlobal('document', {
+      createElement: () => {
+        const { ctx, calls } = fakeContext();
+        canvases.push(calls);
+        const withGradients = new Proxy(ctx as object, {
+          get: (t, k) => (k === 'createLinearGradient' || k === 'createRadialGradient' ? () => gradient : Reflect.get(t, k)),
+          set: (t, k, v) => Reflect.set(t, k, v),
+        });
+        return { width: 0, height: 0, getContext: () => withGradients };
+      },
+    });
+    try {
+      const atlas = createFacadeAtlas();
+      expect(canvases).toHaveLength(2);
+      return { color: canvases[0]!, glow: canvases[1]!, atlas };
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  }
+  /** Wywołania jednej komórki: od przesunięcia do jej narożnika do `restore`, które zamyka jej `save`. */
+  function cellCalls(calls: Call[], x: number, y: number): Call[] {
+    const start = calls.findIndex((c) => c.op === 'translate' && c.args[0] === x && c.args[1] === y);
+    expect(start, `komórka (${x}, ${y})`).toBeGreaterThanOrEqual(0);
+    let depth = 1;
+    for (let i = start + 1; i < calls.length; i++) {
+      if (calls[i]!.op === 'save') depth++;
+      if (calls[i]!.op === 'restore' && --depth === 0) return calls.slice(start, i);
+    }
+    throw new Error('komórka bez restore');
+  }
+
+  it('witrynaPoTraszce leży w { x: 256, y: 1024, w: 256, h: 256 } i ma kartkę z dopiskiem tr(„po Traszce”); witrynaWynajem zostaje z żartem o Centrali', () => {
+    const { color, glow, atlas } = paintAtlas();
+    expect(atlas.cell('witrynaPoTraszce')).toEqual([(256 + 6) / 1024, 1 - (1024 + 256 - 6) / 1280, (512 - 6) / 1024, 1 - (1024 + 6) / 1280]);
+    expect(texts(cellCalls(color, 256, 1024))).toEqual([tr('DO'), tr('WYNAJĘCIA'), tr('po Traszce')]);
+    expect(texts(cellCalls(color, 0, 1024))).toEqual([tr('DO'), tr('WYNAJĘCIA'), tr('pytać w Centrali')]);
+    // nocą pusty lokal po Traszce nie świeci jak sklep: emissive jak w witrynie do wynajęcia
+    const fills = (calls: Call[]): string[] => calls.filter((c) => c.op === 'fillRect').map((c) => `${c.fill}|${c.args.join(',')}`);
+    expect(fills(cellCalls(glow, 256, 1024))).toEqual(fills(cellCalls(glow, 0, 1024)));
   });
 });
 

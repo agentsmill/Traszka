@@ -57,8 +57,9 @@ const rankingClient = createRankingClient();
  * `perf=1` (nakładka wydajności od startu), `new=1` (nowa gra zamiast zapisu). `?charTest=1` to osobna strona podglądu
  * postaci (ładowana dynamicznie).
  *
- * `bench=1` to benchmark (src/bench): seed `bench`, 60 postaci, stała kamera, bez sterowania i bez ekonomii. Parametry
- * `seed`, `yaw`, `zoom`, `night` i `ext` są wtedy ignorowane, żeby wyniki były porównywalne. `quick=1` skraca bieg.
+ * `bench=1` to benchmark (src/bench): seed `bench`, 60 postaci, stała kamera, bez sterowania i bez ekonomii; po sklepie mierzy miasto
+ * (makieta na każdym presecie, „Ruch” na Niskiej). Parametry `seed`, `yaw`, `zoom`, `night` i `ext` są wtedy ignorowane, żeby wyniki
+ * były porównywalne. `quick=1` skraca bieg.
  * `startGame` dostaje moduł benchmarku jako `benchKit` (dynamiczny import w main.ts); `null` to zwykła gra.
  *
  * Symulacja tłumu idzie stałym krokiem SIM_STEP (advanceClock), render interpoluje pozycje współczynnikiem acc / SIM_STEP.
@@ -192,11 +193,14 @@ function startGame(
 
   void characterFactory().then((created) => scene.attachFactory(created)).catch((error: unknown) => console.error('Nie udało się wczytać postaci.', error));
 
+  // Benchmark mierzy też miasto (bramka makiety): `generateCity('bench')` ze stanami z generatora, pokazywane przez tę samą scenę co ekran Miasta.
+  // Nic z tego nie sięga do sieci: ani miasto, ani bieg nie dotykają klienta rankingu (zob. raport 4a.2, „Bramka makiety”).
   const bench = benchKit
     ? benchKit.createBenchSession(ctx, scene.crowdRoot, {
       quick: params.get('quick') === '1',
       onProgress: (progress) => { ui.bench.value = progress; },
       onPreset: (id) => { ui.preset.value = id; },
+      city: benchKit.createBenchCityScene(scene),
     })
     : null;
   const meter = new FrameMeter();
@@ -242,8 +246,11 @@ function startGame(
   };
   requestAnimationFrame(frame);
 
-  // uchwyt do ręcznych testów w konsoli (pola odczytywane na bieżąco); tylko w buildzie deweloperskim albo pod adresem z `?debug=1` (M11)
-  installDebugHandle(window, debugHandleOf({ ctx, shell, scene }), debugHandleEnabled(import.meta.env.DEV, params));
+  // uchwyt do ręcznych testów w konsoli (pola odczytywane na bieżąco); tylko w buildzie deweloperskim albo pod adresem z `?debug=1` (M11).
+  // `cityStats()` (smoke i bramka makiety): stan sceny miasta z licznikami rysowania, auto i cieni (spread uchwytu zamroziłby jego gettery, więc dopisek)
+  const debugHandle = debugHandleOf({ ctx, shell, scene });
+  Object.defineProperty(debugHandle, 'cityStats', { value: (): ReturnType<typeof scene.cityStats> => scene.cityStats(), enumerable: true });
+  installDebugHandle(window, debugHandle, debugHandleEnabled(import.meta.env.DEV, params));
 
   if (!benchMode) {
     // Panele rankingu i kodu odzyskiwania (🏆 w HUD-zie i ⚙): modele z powłoki gry i z tego samego klienta co ekran startowy i okno końca sezonu.

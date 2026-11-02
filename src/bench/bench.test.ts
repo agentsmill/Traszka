@@ -2,24 +2,35 @@ import { Group, Mesh } from 'three';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { QUALITY, type QualityPresetId } from '@/render/quality';
 import type { RenderContext } from '@/render/renderer';
+import type { CityLayer } from '@/render/city/buildCity';
+import { CITY_PROFILES } from '@/render/city/cityQuality';
+import type { CityStats } from '@/game/scene';
 import {
-  BENCH_CROWD, BENCH_MAX_STALL_RESTARTS, BENCH_PRESETS, BENCH_SEED, BENCH_STALL_MS, BenchRun, createBenchHost, createBenchSession,
-  percentile, summarize,
-  type BenchHost, type BenchProbe, type BenchProgress, type BenchTimings, type FrameInfo,
+  BENCH_CROWD, BENCH_MAX_STALL_RESTARTS, BENCH_PRESETS, BENCH_SEED, BENCH_STALL_MS, BENCH_TIMINGS, BENCH_TIMINGS_QUICK, BenchRun,
+  createBenchHost, createBenchSession, percentile, summarize,
+  type BenchCityScene, type BenchHost, type BenchProbe, type BenchProgress, type BenchTimings, type FrameInfo,
 } from './bench';
 
 const TIMINGS: BenchTimings = {
   fillTarget: 55, fillMaxMs: 500, prefillMaxMs: 700, warmupMs: 200, measureMs: 1000, probeSettleMs: 100, probeMs: 300, loadMaxMs: 400,
+  cityWarmupMs: 100, cityMeasureMs: 600,
 };
 const FRAME_MS = 20;
+
+/** Stan miasta z atrapy gospodarza: tyle, ile wiersz bramki zapisuje z `cityStats()` (reszta pól nie ma tu znaczenia). */
+const cityStatsOf = (layer: CityLayer | null): CityStats => ({
+  shown: layer !== null, built: layer !== null, detail: layer === null ? null : 'pelny', layer, cars: layer === 'makieta' ? 40 : 0,
+  drawCalls: layer === null ? 0 : 13, shadowCasters: layer === 'makieta' ? 10 : 0,
+});
 
 /** Atrapa gospodarza: zapisuje wywołania i pamięta, jaka próba jest włączona. `initial` to preset sprzed biegu. */
 function fakeHost(
   applied: Partial<Record<QualityPresetId, QualityPresetId>> = {}, initial: QualityPresetId = 'srednia',
-): BenchHost & { log: string[]; probe: BenchProbe | null } {
+): BenchHost & { log: string[]; probe: BenchProbe | null; layer: CityLayer | null } {
   const host = {
     log: [] as string[],
     probe: null as BenchProbe | null,
+    layer: null as CityLayer | null,
     setPreset(id: QualityPresetId): QualityPresetId {
       host.log.push(`preset:${id}`);
       return applied[id] ?? id;
@@ -28,12 +39,32 @@ function fakeHost(
       host.log.push(`probe:${probe}`);
       host.probe = probe;
     },
+    setCity(layer: CityLayer | null): void {
+      host.log.push(`city:${layer}`);
+      host.layer = layer;
+    },
+    citySnapshot() {
+      return host.layer === null ? null : { stats: cityStatsOf(host.layer), profile: CITY_PROFILES.srednia };
+    },
     restore(): void {
       host.log.push(`restore:${initial}`);
       host.probe = null;
     },
   };
   return host;
+}
+
+/** Atrapa sceny miasta dla `createBenchHost`: zapisuje, co host każe miastu. */
+function fakeCityScene(): BenchCityScene & { log: string[] } {
+  const log: string[] = [];
+  let layer: CityLayer | null = null;
+  return {
+    log,
+    show(next) { log.push(`show:${next}`); layer = next; },
+    hide() { log.push('hide'); layer = null; },
+    stats: () => cityStatsOf(layer),
+    profile: (preset) => CITY_PROFILES[preset],
+  };
 }
 
 interface Drive {
@@ -111,6 +142,11 @@ describe('stałe benchmarku', () => {
     expect(BENCH_STALL_MS).toBe(500);
     expect(BENCH_MAX_STALL_RESTARTS).toBe(3);
   });
+
+  it('miasto: rozgrzewka 2 s i pomiar 8 s na wiersz, w wersji quick 0,5 s i 1,5 s', () => {
+    expect(BENCH_TIMINGS).toMatchObject({ cityWarmupMs: 2000, cityMeasureMs: 8000 });
+    expect(BENCH_TIMINGS_QUICK).toMatchObject({ cityWarmupMs: 500, cityMeasureMs: 1500 });
+  });
 });
 
 describe('BenchRun', () => {
@@ -123,7 +159,9 @@ describe('BenchRun', () => {
       'preset:niska', 'probe:charShadowsOff', 'probe:null',
       'preset:srednia', 'probe:charShadowsOff', 'probe:null', 'probe:crowdHidden', 'probe:null', 'probe:aoOff', 'probe:null',
       'preset:wysoka', 'probe:charShadowsOff', 'probe:null',
-      'restore:srednia',
+      // miasto po sklepie: każdy preset od nowa, na Niskiej jeszcze „ruch”; potem sklep i preset sprzed biegu
+      'preset:niska', 'city:makieta', 'city:ruch', 'preset:srednia', 'city:makieta', 'preset:wysoka', 'city:makieta',
+      'city:null', 'restore:srednia',
     ]);
   });
 
@@ -247,6 +285,152 @@ describe('BenchRun', () => {
   });
 });
 
+describe('BenchRun: miasto', () => {
+  const ROWS: [string, string][] = [['niska', 'makieta'], ['niska', 'ruch'], ['srednia', 'makieta'], ['wysoka', 'makieta']];
+
+  it('po presetach i próbach sklepu: trzy wiersze makiety i jeden „ruch” na Niskiej, w tej kolejności', () => {
+    const host = fakeHost();
+    const run = new BenchRun(host, TIMINGS);
+    drive(run, host);
+    expect(run.city.map((r) => [r.preset, r.layer])).toEqual(ROWS);
+    expect(run.extra.city.map((r) => [r.preset, r.layer])).toEqual(ROWS);
+  });
+
+  it('miasto zaczyna się dopiero po ostatniej próbie sklepu, a sklep wraca (setCity(null)) przed przywróceniem presetu', () => {
+    const host = fakeHost();
+    const run = new BenchRun(host, TIMINGS);
+    drive(run, host);
+    const at = (entry: string): number => host.log.indexOf(entry);
+    expect(at('city:makieta')).toBeGreaterThan(host.log.lastIndexOf('probe:null'));
+    expect(host.log.slice(-2)).toEqual(['city:null', 'restore:srednia']);
+    expect(host.layer).toBeNull();
+  });
+
+  it('wiersz miasta ma liczby z okna pomiaru (bez rozgrzewki) i migawkę sceny z końca pomiaru', () => {
+    const host = fakeHost();
+    const run = new BenchRun(host, TIMINGS);
+    drive(run, host);
+    for (const row of run.city) {
+      expect(row.avgFps).toBe(50);
+      expect(row.p95FrameMs).toBe(FRAME_MS);
+      expect(row.calls).toBe(160);
+      expect(row.frames).toBeGreaterThanOrEqual(TIMINGS.cityMeasureMs / FRAME_MS - 2);
+      expect(row.frames).toBeLessThanOrEqual(TIMINGS.cityMeasureMs / FRAME_MS);
+      expect(row.applied).toBe(row.preset);
+      expect(row.drawn).toBe(row.layer);   // widok faktycznie narysowany (ze `stats.layer`) to ten zamówiony, gdy profil ma makietę
+      expect(row.stats).toEqual(cityStatsOf(row.layer));
+      expect(row.profile).toBe(CITY_PROFILES.srednia);
+    }
+  });
+
+  it('gospodarz bez migawki miasta daje wiersz z null (stats i profile), a reszta wiersza jest kompletna', () => {
+    const host = fakeHost();
+    delete (host as { citySnapshot?: unknown }).citySnapshot;
+    const run = new BenchRun(host, TIMINGS);
+    drive(run, host);
+    expect(run.city).toHaveLength(4);
+    expect(run.city.every((r) => r.stats === null && r.profile === null && r.drawn === null && r.frames > 0)).toBe(true);
+  });
+
+  it('wiersz niesie widok faktycznie narysowany: profil bez makiety rysuje „makietę” jako „ruch”, a wiersz zostaje „makieta” (to jego tożsamość w bramce)', () => {
+    const host = fakeHost();
+    host.citySnapshot = () => (host.layer === null ? null : {
+      stats: { ...cityStatsOf(host.layer === 'makieta' ? 'ruch' : host.layer), detail: 'prosty' },
+      profile: { ...CITY_PROFILES.telefon, mockup: false },
+    });
+    const run = new BenchRun(host, TIMINGS);
+    drive(run, host);
+    expect(run.city.map((r) => [r.preset, r.layer, r.drawn])).toEqual([
+      ['niska', 'makieta', 'ruch'], ['niska', 'ruch', 'ruch'], ['srednia', 'makieta', 'ruch'], ['wysoka', 'makieta', 'ruch'],
+    ]);
+  });
+
+  it('wynik sklepu (`__benchResult`) zostaje w starym kształcie: trzy wiersze po pięć pól, bez pól miasta', () => {
+    const host = fakeHost();
+    const run = new BenchRun(host, TIMINGS);
+    drive(run, host);
+    expect(run.rows).toHaveLength(3);
+    for (const row of run.rows) expect(Object.keys(row).sort()).toEqual(['avgFps', 'calls', 'p95FrameMs', 'preset', 'tris']);
+    expect(run.extra.presets).toHaveLength(3);
+    expect(run.extra.probes).toHaveLength(5);
+  });
+
+  it('preset, który renderer zmienił, trafia do wiersza (applied) i do ostrzeżenia z przedrostkiem „miasto”', () => {
+    const host = fakeHost({ srednia: 'niska' });
+    const run = new BenchRun(host, TIMINGS);
+    drive(run, host);
+    expect(run.city.find((r) => r.preset === 'srednia')?.applied).toBe('niska');
+    expect(run.warnings.some((w) => w.startsWith('miasto srednia') && w.includes('niska'))).toBe(true);
+  });
+
+  it('postęp: status mówi o mieście, a wiersze miasta dochodzą po kolei (nakładka i konsola z tych samych liczb)', () => {
+    const host = fakeHost();
+    const seen: BenchProgress[] = [];
+    const run = new BenchRun(host, TIMINGS, (p) => seen.push(p), BENCH_PRESETS, 0);
+    drive(run, host);
+    expect(seen.some((p) => /miasto makieta · rozgrzewka/.test(p.status))).toBe(true);
+    expect(seen.some((p) => /miasto ruch · pomiar/.test(p.status))).toBe(true);
+    expect(seen.map((p) => p.city.length)).toEqual([...seen.map((p) => p.city.length)].sort((a, b) => a - b));   // tylko rosną
+    const last = seen[seen.length - 1]!;
+    expect(last.city).toHaveLength(4);
+    expect(last.city.every((r) => r.maxFrameMs === FRAME_MS)).toBe(true);
+    expect(last.step).toMatch(/^krok (\d+) z \1$/);   // na końcu numer kroku równa się liczbie kroków
+  });
+
+  /** Numer klatki (jak w `drive`), na której czysty bieg wchodzi w pierwszy krok miasta (pierwsze `setCity('makieta')`). */
+  function cityStartFrame(): number {
+    const clean = fakeHost();
+    const run = new BenchRun(clean, TIMINGS, () => {}, BENCH_PRESETS, 0);
+    let now = 5000;
+    for (let i = 0; i < 5000 && !run.done; i++) {
+      if (i > 0) now += FRAME_MS;
+      run.frame(now, { calls: 1, tris: 1, agents: 60, ready: true, cpuMs: 1 });
+      if (clean.log.includes('city:makieta')) return i;
+    }
+    throw new Error('bieg nie doszedł do miasta');
+  }
+
+  it('przerwa w pomiarze miasta powtarza krok jak krok presetu: ostrzeżenie z wierszem, pełne okno, bez klatki przerwy', () => {
+    const host = fakeHost();
+    const run = new BenchRun(host, TIMINGS);
+    const stallAt = cityStartFrame() + Math.ceil(TIMINGS.cityWarmupMs / FRAME_MS) + 5;   // w środku pomiaru pierwszego wiersza miasta
+    drive(run, host, { intervals: { [stallAt]: 10_000 } });
+    expect(run.warnings).toEqual(['miasto niska/makieta: przerwa w klatkach 10000 ms (karta w tle?) — krok powtórzony']);
+    expect(run.city[0]).toMatchObject({ preset: 'niska', layer: 'makieta', maxFrameMs: FRAME_MS, avgFps: 50 });
+    expect(run.city[0]!.frames).toBeGreaterThanOrEqual(TIMINGS.cityMeasureMs / FRAME_MS - 2);
+  });
+
+  it('karta ukryta w rozgrzewce miasta: rozgrzewka zaczyna się od nowa, a miasto nie jest pokazywane drugi raz', () => {
+    const host = fakeHost();
+    const run = new BenchRun(host, TIMINGS);
+    drive(run, host, { hiddenBefore: [cityStartFrame() + 2] });
+    expect(run.warnings).toEqual([`miasto niska/makieta: przerwa w klatkach ${FRAME_MS} ms (karta ukryta) — krok powtórzony`]);
+    expect(host.log.filter((e) => e === 'city:makieta')).toHaveLength(3);   // niska, srednia, wysoka (bez powtórki po przerwie)
+  });
+
+  it('budowa sceny miasta zaraz po wejściu w krok nie jest przerwą w karcie (pierwsza klatka po `setCity` jest zwolniona), kolejna przerwa już tak', () => {
+    const host = fakeHost();
+    const run = new BenchRun(host, TIMINGS);
+    const enter = cityStartFrame();
+    drive(run, host, { intervals: { [enter + 1]: 10_000, [enter + 3]: 10_000 } });
+    // pierwsza przerwa (budowa, kompilacja shaderów) jest zwolniona; druga, dwie klatki dalej, to zwykła przerwa i powtarza rozgrzewkę
+    expect(run.warnings).toEqual(['miasto niska/makieta: przerwa w klatkach 10000 ms (karta w tle?) — krok powtórzony']);
+    expect(run.city[0]).toMatchObject({ preset: 'niska', layer: 'makieta', maxFrameMs: FRAME_MS });
+  });
+
+  it('gdy zdjęcie miasta rzuci wyjątek, preset i tak wraca, a wyniki trafiają do nakładki', () => {
+    const host = fakeHost();
+    host.setCity = (layer) => { host.log.push(`city:${layer}`); if (layer === null) throw new Error('scena'); };
+    const seen: BenchProgress[] = [];
+    const run = new BenchRun(host, TIMINGS, (p) => seen.push(p), BENCH_PRESETS, 0);
+    expect(() => drive(run, host)).toThrow('scena');
+    expect(host.log[host.log.length - 1]).toBe('restore:srednia');
+    const last = seen[seen.length - 1]!;
+    expect(last.done).toBe(true);
+    expect(last.city).toHaveLength(4);
+  });
+});
+
 describe('BenchRun: przerwy w klatkach', () => {
   it('przerwa 10 s w środku pomiaru: krok powtórzony z ostrzeżeniem, okno pełne i bez 10-sekundowej klatki w wynikach', () => {
     const host = fakeHost();
@@ -330,7 +514,8 @@ describe('createBenchHost', () => {
     };
     const crowd = new Group();
     const character = (): Mesh => { const m = new Mesh(); m.castShadow = true; return m; };
-    return { ctx, crowd, seen, character, host: createBenchHost(ctx, crowd) };
+    const city = fakeCityScene();
+    return { ctx, crowd, seen, character, city, host: createBenchHost(ctx, crowd, city) };
   }
 
   it('setPreset przekazuje do renderera i oddaje preset, który faktycznie działa', () => {
@@ -391,7 +576,7 @@ describe('createBenchHost', () => {
       get preset(): QualityPresetId { return 'srednia'; },
       setPreset(id: QualityPresetId) { if (QUALITY[id].ao === 'off') throw new Error('brak AO w sterowniku'); },
     };
-    const host = createBenchHost(ctx, new Group());
+    const host = createBenchHost(ctx, new Group(), fakeCityScene());
     expect(() => host.setProbe('aoOff')).toThrow('brak AO w sterowniku');
     expect(QUALITY.srednia.ao).toBe(before);
   });
@@ -401,13 +586,39 @@ describe('createBenchHost', () => {
     const ctx = { get preset() { return current; }, setPreset(id: QualityPresetId) { current = id; } };
     const crowd = new Group();
     const reported: QualityPresetId[] = [];
-    const host = createBenchHost(ctx, crowd, (id) => { reported.push(id); });
+    const host = createBenchHost(ctx, crowd, fakeCityScene(), (id) => { reported.push(id); });
     host.setPreset('wysoka');
     host.setProbe('crowdHidden');
     host.restore();
     expect(current).toBe('srednia');
     expect(crowd.visible).toBe(true);
     expect(reported).toEqual(['wysoka', 'srednia']);
+  });
+
+  it('setCity(warstwa) zleca scenie miasta pokazanie widoku (kolejność chowania i pokazywania to sprawa sceny), a preset miasta nie rusza', () => {
+    const { host, city } = setup();
+    host.setCity('makieta');
+    host.setPreset('niska');
+    host.setCity('ruch');
+    expect(city.log).toEqual(['show:makieta', 'show:ruch']);
+  });
+
+  it('setCity(null) wraca do sklepu, a citySnapshot oddaje stan sceny i profil bieżącego presetu (null bez miasta)', () => {
+    const { host, city } = setup();
+    host.setCity('makieta');
+    expect(host.citySnapshot()).toEqual({ stats: cityStatsOf('makieta'), profile: CITY_PROFILES.srednia });
+    host.setPreset('niska');
+    expect(host.citySnapshot()?.profile).toBe(CITY_PROFILES.niska);
+    host.setCity(null);
+    expect(city.log[city.log.length - 1]).toBe('hide');
+    expect(host.citySnapshot()).toBeNull();
+  });
+
+  it('restore zdejmuje miasto, gdyby bieg przerwano w mieście', () => {
+    const { host, city } = setup();
+    host.setCity('ruch');
+    host.restore();
+    expect(city.log[city.log.length - 1]).toBe('hide');
   });
 
   it('zmiana próby na inną najpierw zdejmuje poprzednią', () => {
@@ -442,7 +653,7 @@ describe('createBenchSession', () => {
       setPreset(id: QualityPresetId) { current = id; },
     } as unknown as RenderContext;
     const progress: BenchProgress[] = [];
-    const session = createBenchSession(ctx, new Group(), { quick: true, onProgress: (p) => progress.push(p) });
+    const session = createBenchSession(ctx, new Group(), { quick: true, onProgress: (p) => progress.push(p), city: fakeCityScene() });
     expect(doc.addEventListener).toHaveBeenCalledWith('visibilitychange', expect.any(Function));
     const onVisibility = doc.addEventListener.mock.calls[0]![1] as () => void;
 
@@ -464,5 +675,41 @@ describe('createBenchSession', () => {
     expect(last.quick).toBe(true);
     expect(last.warnings).toEqual(['niska: przerwa w klatkach 20 ms (karta ukryta) — krok powtórzony']);
     expect(doc.removeEventListener).toHaveBeenCalledWith('visibilitychange', onVisibility);
+  });
+
+  it('po końcu: wiersze miasta w `__benchExtra.city` i w konsoli, `__benchResult` bez zmiany kształtu, środowisko wie o telefonie', () => {
+    vi.stubGlobal('document', { visibilityState: 'visible', addEventListener: vi.fn(), removeEventListener: vi.fn() });
+    const win: { innerWidth: number; innerHeight: number; devicePixelRatio: number; __benchResult?: unknown[]; __benchExtra?: Record<string, unknown> } = {
+      innerWidth: 1200, innerHeight: 728, devicePixelRatio: 2,
+    };
+    vi.stubGlobal('window', win);
+    const table = vi.spyOn(console, 'table').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    let current: QualityPresetId = 'srednia';
+    const ctx = { get preset() { return current; }, setPreset(id: QualityPresetId) { current = id; } } as unknown as RenderContext;
+    const progress: BenchProgress[] = [];
+    const session = createBenchSession(ctx, new Group(), { quick: true, onProgress: (p) => progress.push(p), city: fakeCityScene() });
+    const info: FrameInfo = { calls: 100, tris: 1000, agents: 60, ready: true, cpuMs: 1 };
+    let now = 0;
+    for (let i = 0; i < 5000 && !(progress[progress.length - 1]?.done); i++) {
+      session.beforeRender();
+      session.afterRender(now, info);
+      now += FRAME_MS;
+    }
+    expect(progress[progress.length - 1]!.done).toBe(true);
+
+    const extra = win.__benchExtra as { city: { preset: string; layer: string; stats: { cars: number } | null; profile: unknown }[]; env: { isMobile: unknown }; timings: BenchTimings };
+    expect(extra.city.map((r) => `${r.preset}/${r.layer}`)).toEqual(['niska/makieta', 'niska/ruch', 'srednia/makieta', 'wysoka/makieta']);
+    expect(extra.city.every((r) => r.stats !== null && r.profile !== null)).toBe(true);
+    expect(extra.timings).toMatchObject({ cityWarmupMs: 500, cityMeasureMs: 1500 });
+    expect(typeof extra.env.isMobile).toBe('boolean');
+    expect(win.__benchResult).toHaveLength(3);
+    for (const row of win.__benchResult as object[]) expect(Object.keys(row).sort()).toEqual(['avgFps', 'calls', 'p95FrameMs', 'preset', 'tris']);
+    // konsola: tabela presetów, prób i miasta (cztery wiersze z autami, cieniami i szczegółowością)
+    expect(table).toHaveBeenCalledTimes(3);
+    const cityTable = table.mock.calls[2]![0] as { preset: string; layer: string; drawn: string; cars: number; casters: number; detail: string }[];
+    expect(cityTable).toHaveLength(4);
+    expect(cityTable[2]).toMatchObject({ preset: 'srednia', layer: 'makieta', drawn: 'makieta', detail: 'pelny' });
   });
 });

@@ -20,7 +20,7 @@ import { drawNewt } from '@/render/store/signTexture';
  */
 
 export type AtlasCellName = 'okno' | 'oknoGasne' | 'loggia' | 'szewPlyty' | 'tynk' | 'witryna' | 'witrynaWynajem' | 'brama' | 'gzyms'
-  | 'mural' | 'muralSzop' | 'podloga';
+  | 'mural' | 'muralSzop' | 'podloga' | 'witrynaPoTraszce';
 
 export interface FacadeAtlas {
   map: Texture;
@@ -50,6 +50,7 @@ const LAYOUT: Record<AtlasCellName, Rect> = {
   mural: { x: 0, y: 512, w: 512, h: 512 },
   muralSzop: { x: 512, y: 576, w: 512, h: 448 },
   witrynaWynajem: { x: 0, y: 1024, w: 256, h: 256 },
+  witrynaPoTraszce: { x: 256, y: 1024, w: 256, h: 256 },
 };
 
 const CELL_NAMES = Object.keys(LAYOUT) as AtlasCellName[];
@@ -214,7 +215,17 @@ function drawRentWindow(ctx: Ctx, w: number, h: number): void {
   drawRentPoster(ctx, x, y, pw, ph, tr('pytać w Centrali'));
 }
 
-/** Maska emissive lokalu do wynajęcia: pusty, więc szyba nie świeci, tylko kartka odbija światło latarni. */
+/**
+ * Witryna lokalu „po Traszce” (spec §9.2, §13.3: wolny lokal po zamkniętym sklepie, z wyposażeniem) w makiecie miasta: ta sama ciemna
+ * witryna i ta sama kartka co u lokalu do wynajęcia, z dopiskiem „po Traszce” zamiast żartu o Centrali.
+ */
+function drawExTraszkaWindow(ctx: Ctx, w: number, h: number): void {
+  drawShopWindow(ctx, w, h);
+  const { x, y, w: pw, h: ph } = RENT_POSTER;
+  drawRentPoster(ctx, x, y, pw, ph, tr('po Traszce'));
+}
+
+/** Maska emissive lokalu do wynajęcia (i lokalu „po Traszce”): pusty, więc szyba nie świeci, tylko kartka odbija światło latarni. */
 function drawRentWindowGlow(ctx: Ctx, w: number, h: number): void {
   rect(ctx, '#000000', 0, 0, w, h);
   const { x, y, w: pw, h: ph } = RENT_POSTER;
@@ -273,6 +284,7 @@ const DRAW: Record<AtlasCellName, { color: DrawCell; glow: DrawCell | null }> = 
   },
   witryna: { color: drawShopWindow, glow: drawShopWindowGlow },
   witrynaWynajem: { color: drawRentWindow, glow: drawRentWindowGlow },
+  witrynaPoTraszce: { color: drawExTraszkaWindow, glow: drawRentWindowGlow },
   brama: {
     color: (ctx, w, h) => {
       // brama przejazdowa: kamienny łuk, drewniane skrzydła z deskami, ciemny prześwit w lunecie

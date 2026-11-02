@@ -12,7 +12,7 @@ export interface TutorialMemory { v: 1; tour: 'skipped'; seen: string[]; tips: b
 export interface StepResult { ok: boolean; failed: string[]; notes: string[]; na: boolean; seconds?: number }
 export interface SummaryRow { size: string; step: number | string; name: string; status: 'ok' | 'FAIL' | 'n/d'; detail: string }
 export interface Summary { rows: SummaryRow[]; ok: boolean }
-export interface SmokeArgs { only: string | null; help: boolean; stage: '4b' | null }
+export interface SmokeArgs { only: string | null; help: boolean; bench: boolean; stage: '4b' | null }
 /** Pomiar szerokości strony: `scroll` dokumentu i widoczne okna, arkusze, karty (ramka, `scrollWidth`, `clientWidth`). */
 export interface WidthBox { name: string; left: number; right: number; scroll: number; client: number; culprits?: string[] }
 export interface WidthMeasure { scroll: number; boxes?: readonly WidthBox[] }
@@ -88,6 +88,32 @@ export function trustRowValues(rows: readonly string[], word?: string): number[]
 export function overlapArea(a: PinBox, b: PinBox): number;
 export function pinProblems(m: { width: number; pins: readonly PinMeasure[] }, narrow?: number): PinReport;
 export function newScreenProblems(widths: readonly WidthEntry[], prefix?: string): string[];
+
+// Plan 4a.2 (Zadanie 13): blokada sieci i sprawdzenia biegu `--bench`.
+export interface RouteLike { request(): { url(): string; method(): string }; continue(): unknown; abort(): unknown }
+/** Kontekst Playwrighta w tym, co potrzebuje `guardNetwork` (trasy `route`). */
+export interface RouteHost { route(pattern: string, handler: (route: RouteLike) => unknown): Promise<unknown> }
+/** Liczniki blokady: zapytania spoza localhost (adresy) i przerwane `/api/**` (etykieta, metoda, ścieżka). */
+export interface NetworkSink { external: string[]; apiBlocked: string[] }
+export const BENCH_PATH: string;
+export const BENCH_MOBILE_UA: string;
+export const BENCH_CITY_ORDER: readonly (readonly [string, string])[];
+export const BENCH_SHOP_KEYS: readonly string[];
+export const BENCH_CALLS_LIMIT: number;
+export const CITY_BUDGET: Readonly<Record<string, number>>;
+export function guardNetwork(ctx: RouteHost, port: number | string, label: string, sink: NetworkSink): Promise<void>;
+/** Wady biegu benchmarku z `window.__benchResult` i `window.__benchExtra` (pusta lista: bieg ważny). */
+export function benchProblems(result: unknown, extra: unknown, opts?: { mobile?: boolean }): string[];
+export const BENCH_GATE_COLUMNS: readonly string[];
+/** Pomiar karty benchmarku (`.tt-bench`) po końcu biegu: czy dostaje zdarzenia wskaźnika i gdzie leżą kolumny tabeli „Miasto”. */
+export interface OverlayMeasure {
+  card: { left: number; right: number; scroll: number; client: number } | null;
+  hit?: boolean; hitTag?: string; viewport?: number;
+  columns?: readonly { name: string; left: number; right: number }[];
+}
+export function overlayProblems(m: OverlayMeasure): string[];
+export function outDirFor(bench: boolean, env?: Record<string, string | undefined>): string;
+export function benchTableLines(result: unknown, extra: unknown): string[];
 
 // Plan 4b (Zadanie 10): koperty zapisów do kroków 4b.
 export function withRemont(saveText: string, patch: { storeId: number; remontLevel: number; level: number }): string;

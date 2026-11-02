@@ -4,6 +4,8 @@ import { devNull } from 'node:os';
 import { resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  BENCH_CALLS_LIMIT, BENCH_CITY_ORDER, BENCH_GATE_COLUMNS, BENCH_MOBILE_UA, BENCH_PATH, BENCH_SHOP_KEYS, CITY_BUDGET, benchProblems, benchTableLines, guardNetwork,
+  outDirFor, overlayProblems,
   FIXTURES, HOUR_BARS, LAUNCH_ARGS, LIMIT_TEXT, NEW_SCREENS, OPEN_MINUTE, PHONE_WIDTH, RELET_BUILD_DAYS as SMOKE_RELET_BUILD_DAYS, RELET_CAPTION, RELET_SHARE,
   QUEUE_STEP, RELET_TITLE, RELET_TRUST, STEPS, STEPS_4B, TIPS_STEP, DESKTOP_4B, RESEARCH_DOSTAWY_COST, WALLET_4B_MILLION, FAME_TITLE, FAME_CLOSED,
   deckIds, isApiUrl, withOnlyCardTomorrow, withRemont,
@@ -298,10 +300,10 @@ describe('licznik wydajności i tabela wyników', () => {
   });
 
   it('parseArgs: --help to pomoc (main drukuje USAGE i kończy kodem 0), --only telefon|phone|desktop, --etap 4b, błędy', () => {
-    expect(parseArgs([])).toEqual({ only: null, help: false, stage: null });
-    expect(parseArgs(['--only', 'desktop'])).toEqual({ only: 'desktop', help: false, stage: null });
-    expect(parseArgs(['--only', 'phone'])).toEqual({ only: 'telefon', help: false, stage: null });
-    expect(parseArgs(['--etap', '4b', '--only', 'telefon'])).toEqual({ only: 'telefon', help: false, stage: '4b' });
+    expect(parseArgs([])).toEqual({ only: null, help: false, bench: false, stage: null });
+    expect(parseArgs(['--only', 'desktop'])).toEqual({ only: 'desktop', help: false, bench: false, stage: null });
+    expect(parseArgs(['--only', 'phone'])).toEqual({ only: 'telefon', help: false, bench: false, stage: null });
+    expect(parseArgs(['--etap', '4b', '--only', 'telefon'])).toEqual({ only: 'telefon', help: false, bench: false, stage: '4b' });
     expect(() => parseArgs(['--etap', '4a'])).toThrow(/--etap przyjmuje 4b/);
     expect(USAGE).toMatch(/--etap 4b/);
     expect(parseArgs(['--help']).help).toBe(true);
@@ -321,8 +323,9 @@ describe('zrzuty smoke\'a nie trafiają do commita', () => {
   it('katalog wyjściowy skryptu (.smoke/city) jest w .gitignore, a zrzuty wybrane do raportu w docs/ nie', () => {
     expect(ignored('.smoke/city/telefon-01-stary-zapis-karta.jpg')).toBe(0);
     expect(ignored('.smoke/city/smoke.json')).toBe(0);
+    expect(ignored('.smoke/city-bench/bench.json')).toBe(0);   // `--bench` pisze osobno, żeby nie kasować wyników pełnego smoke'a
     expect(ignored('docs/superpowers/reports/2026-10-31-miasto-4a1/telefon-01-stary-zapis-karta.jpg')).toBe(1);
-    expect(SOURCE).toMatch(/join\(ROOT, '\.smoke', 'city'\)/);
+    expect(SOURCE).toMatch(/join\(ROOT, '\.smoke', bench \? 'city-bench' : 'city'\)/);
   });
 });
 
@@ -578,6 +581,299 @@ describe('plan 4a.2 (Zadanie 9): nowe ekrany na 390 px', () => {
     expect(SOURCE).toContain('card.relet !== reletBlockText(fit)');
     expect(SOURCE).toContain('free.lock !== LIMIT_TEXT');
     expect(SOURCE).toMatch(/playUntilTrustWarning\(page, ev, \{ stop, prefix, phone, maxMonths = 12 \}\)/);
+  });
+});
+
+describe('plan 4a.2 (Zadanie 13): przełącznik --bench', () => {
+  it('parseArgs: --bench włącza sam bieg benchmarku, łączy się z --only, a USAGE go opisuje', () => {
+    expect(parseArgs(['--bench'])).toEqual({ only: null, help: false, bench: true, stage: null });
+    expect(parseArgs(['--bench', '--only', 'desktop'])).toEqual({ only: 'desktop', help: false, bench: true, stage: null });
+    expect(parseArgs(['--only', 'phone', '--bench'])).toEqual({ only: 'telefon', help: false, bench: true, stage: null });
+    expect(USAGE).toMatch(/--bench/);
+    expect(USAGE).toContain('bench=1&quick=1');
+  });
+
+  it('bieg to ten sam adres, który właściciel otwiera na produkcji, tylko z quick=1', () => {
+    expect(BENCH_PATH).toBe('/?bench=1&quick=1');
+  });
+
+  it('rozmiar „telefon” w biegu --bench dostaje User-Agent telefonu (inaczej profil „telefon” w ogóle by się nie sprawdził), komputer nie', () => {
+    expect(BENCH_MOBILE_UA).toMatch(/Android.*Mobile/);
+    const body = SOURCE.slice(SOURCE.indexOf('async function runBench'), SOURCE.indexOf('async function main'));
+    expect(body).toContain('{ ...contextOptions(vp), ...(vp.mobile ? { userAgent: BENCH_MOBILE_UA } : {}) }');
+    // ten sam wzorzec co `detectDeviceCaps` (src/render/quality.ts)
+    expect(/Android|iPhone|iPad|iPod|Mobi/i.test(BENCH_MOBILE_UA)).toBe(true);
+  });
+
+  it('źródło: --bench używa tego samego vite preview, tej samej blokady sieci i locale z contextOptions co kroki 1–12', () => {
+    const body = SOURCE.slice(SOURCE.indexOf('async function runBench'), SOURCE.indexOf('async function main'));
+    expect(body).toContain('await startPreview(port)');
+    expect(body).toContain('contextOptions(vp)');
+    expect(body).toContain('await guardNetwork(ctx, port,');
+    expect(contextOptions(VIEWPORTS[0]!).locale).toBe('pl-PL');
+    expect(contextOptions(VIEWPORTS[1]!).locale).toBe('pl-PL');
+    // kroki 1–12 idą przez to samo `guardNetwork` (jedna blokada, nie dwie kopie)
+    const newPage = SOURCE.slice(SOURCE.indexOf('async function newPage'), SOURCE.indexOf('const shot = async'));
+    expect(newPage).toContain('await guardNetwork(ctx, port,');
+    expect(newPage).not.toContain("ctx.route(");
+    // main rozgałęzia się na bench po przygotowaniu katalogu wyjściowego, przed odczytem fixtures
+    expect(SOURCE).toMatch(/if \(args\.bench\) return runBench\(\{ args, chromium, executablePath, port, base, out \}\);/);
+    expect(SOURCE.indexOf('if (args.bench) return runBench')).toBeLessThan(SOURCE.indexOf('const old = fixtureSave(FIXTURES.stary)'));
+  });
+
+  it('źródło: zapytanie do /api/** albo poza localhost w biegu --bench to porażka (przerwanie nie jest „zabezpieczeniem, które zadziałało”)', () => {
+    const body = SOURCE.slice(SOURCE.indexOf('async function runBench'), SOURCE.indexOf('async function main'));
+    expect(body).toContain('sink.apiBlocked.length > 0');
+    expect(body).toContain('sink.external.length > 0');
+    expect(body).toContain('apiFailures.length === 0');
+    expect(body).toContain('przerwane zapytania do /api/**');
+  });
+});
+
+describe('guardNetwork: wspólna blokada sieci smoke\'a', () => {
+  type Handler = (route: { request(): { url(): string; method(): string }; continue(): string; abort(): string }) => string;
+  function fakeContext() {
+    const routes: { pattern: string; handler: Handler }[] = [];
+    return { routes, route: (pattern: string, handler: Handler) => { routes.push({ pattern, handler }); return Promise.resolve(); } };
+  }
+  const request = (url: string, method = 'GET') => ({ request: () => ({ url: () => url, method: () => method }), continue: () => 'continue', abort: () => 'abort' });
+
+  it('dwie trasy w tej kolejności (ogólna, potem /api/**, bo późniejsza ma pierwszeństwo): localhost przechodzi, reszta jest przerwana i policzona', async () => {
+    const ctx = fakeContext();
+    const sink = { external: [] as string[], apiBlocked: [] as string[] };
+    await guardNetwork(ctx, 4318, 'telefon/bench', sink);
+    expect(ctx.routes.map((r) => r.pattern)).toEqual(['**/*', '**/api/**']);
+    const [general, api] = ctx.routes.map((r) => r.handler);
+    expect(general!(request('http://localhost:4318/assets/a.js'))).toBe('continue');
+    expect(general!(request('http://example.com/x'))).toBe('abort');
+    expect(sink.external).toEqual(['http://example.com/x']);
+    expect(api!(request('http://localhost:4318/api/runs', 'POST'))).toBe('abort');
+    expect(sink.apiBlocked).toEqual(['telefon/bench: POST /api/runs']);
+  });
+
+  it('/api bez ukośnika nie łapie trasa /api/**, ale ogólna go odrzuca i liczy jako zapytanie spoza localhost', async () => {
+    const ctx = fakeContext();
+    const sink = { external: [] as string[], apiBlocked: [] as string[] };
+    await guardNetwork(ctx, 4318, 'x', sink);
+    expect(ctx.routes[0]!.handler(request('http://localhost:4318/api'))).toBe('abort');
+    expect(sink.external).toEqual(['http://localhost:4318/api']);
+  });
+});
+
+describe('benchProblems: ważność biegu z miastem', () => {
+  const shop = () => ['niska', 'srednia', 'wysoka'].map((preset) => ({ preset, avgFps: 5, p95FrameMs: 250, calls: 20, tris: 1000 }));
+  type Facts = Record<string, unknown>;
+  interface CityRow { preset: string; layer: string; frames: number; calls: number; stats: Facts | null; profile: Facts | null }
+  const profile = (patch: Facts = {}): Facts => ({ mockup: true, defaultLayer: 'ruch', cars: false, shadows: 'off', firstDetail: 'prosty', releaseOnExit: true, ...patch });
+  const stats = (patch: Facts = {}): Facts => ({ shown: true, built: true, detail: 'pelny', layer: 'makieta', cars: 0, drawCalls: 13, shadowCasters: 0, ...patch });
+  /** Czterowierszowy bieg zgodny z profilami z `CITY_PROFILES` (komputer): Niska bez aut i cieni, Średnia i Wysoka z autami i cieniami. */
+  const city = (): CityRow[] => [
+    { preset: 'niska', layer: 'makieta', frames: 6, calls: 30, stats: stats(), profile: profile() },
+    { preset: 'niska', layer: 'ruch', frames: 6, calls: 12, stats: stats({ layer: 'ruch', detail: 'prosty', drawCalls: 11 }), profile: profile() },
+    { preset: 'srednia', layer: 'makieta', frames: 6, calls: 60, stats: stats({ cars: 50, shadowCasters: 10 }), profile: profile({ cars: true, shadows: 'static', firstDetail: 'pelny' }) },
+    { preset: 'wysoka', layer: 'makieta', frames: 6, calls: 90, stats: stats({ cars: 50, shadowCasters: 10 }), profile: profile({ cars: true, shadows: 'static', firstDetail: 'pelny' }) },
+  ];
+  const extra = (c: unknown[] = city()) => ({ city: c, warnings: [] });
+
+  it('stałe zgadzają się z planem: cztery wiersze miasta w kolejności biegu, calls < 150, budżet makiety 150 i warstw 60, wynik sklepu o pięciu polach', () => {
+    expect(BENCH_CITY_ORDER).toEqual([['niska', 'makieta'], ['niska', 'ruch'], ['srednia', 'makieta'], ['wysoka', 'makieta']]);
+    expect(BENCH_CALLS_LIMIT).toBe(150);
+    expect(CITY_BUDGET).toMatchObject({ makieta: 150, ruch: 60, dzielnice: 60 });
+    expect(BENCH_SHOP_KEYS).toEqual(['avgFps', 'calls', 'p95FrameMs', 'preset', 'tris']);
+  });
+
+  it('poprawny bieg: brak wad', () => {
+    expect(benchProblems(shop(), extra())).toEqual([]);
+  });
+
+  it('brak wyniku albo dodatków to wada, nie wyjątek', () => {
+    expect(benchProblems(undefined, extra())).toEqual(['brak window.__benchResult']);
+    expect(benchProblems(shop(), undefined)).toEqual(['brak window.__benchExtra']);
+  });
+
+  it('__benchResult musi mieć stary kształt: trzy presety i pięć pól (nowe pole w wierszu sklepu to wada)', () => {
+    const wide = shop().map((r) => ({ ...r, city: [] }));
+    expect(benchProblems(wide, extra())[0]).toMatch(/__benchResult\[niska\]: pola avgFps,calls,city,p95FrameMs,preset,tris/);
+    expect(benchProblems(shop().slice(0, 2), extra())[0]).toMatch(/__benchResult: wiersze 2/);
+  });
+
+  it('cztery wiersze w kolejności: brakujący albo przestawiony wiersz miasta to wada', () => {
+    expect(benchProblems(shop(), extra(city().slice(0, 3)))[0]).toMatch(/__benchExtra\.city: wiersze „niska\/makieta niska\/ruch srednia\/makieta”/);
+    expect(benchProblems(shop(), extra([...city()].reverse()))[0]).toMatch(/__benchExtra\.city/);
+  });
+
+  it('calls ≥ 150 i brak klatek to wady wiersza', () => {
+    const c = city();
+    c[2]!.calls = 150;
+    c[0]!.frames = 0;
+    const p = benchProblems(shop(), extra(c));
+    expect(p).toContain('srednia/makieta: calls 150 (limit 150)');
+    expect(p).toContain('niska/makieta: brak klatek w pomiarze');
+  });
+
+  it('wiersz zmierzony pod złym profilem to wada: Średnia bez aut, Niska z autami albo cieniami, zła geometria „ruchu”', () => {
+    const noCars = city();
+    noCars[2]!.stats = stats({ cars: 0, shadowCasters: 10 });
+    expect(benchProblems(shop(), extra(noCars))).toEqual(['srednia/makieta: auta 0, a profil je daje']);
+
+    const leftover = city();
+    leftover[0]!.stats = stats({ cars: 40, shadowCasters: 10 });   // profil Średniej zostawiony na Niskiej
+    expect(benchProblems(shop(), extra(leftover))).toEqual([
+      'niska/makieta: auta 40, a profil ich nie daje',
+      'niska/makieta: rzucających cień 10, a profil nie daje cieni',
+    ]);
+
+    const full = city();
+    full[1]!.stats = stats({ layer: 'ruch', detail: 'pelny' });   // „ruch” na pełnej geometrii z makiety, nie na prostej z profilu
+    expect(benchProblems(shop(), extra(full))).toEqual(['niska/ruch: geometria pelny, oczekiwana prosty']);
+  });
+
+  it('profil bez cieni statycznych: brak rzucających cień jest poprawny także w makiecie (zmiana CITY_PROFILES nie psuje smoke\'a)', () => {
+    const c = city();
+    c[2]!.profile = profile({ cars: true, shadows: 'off', firstDetail: 'pelny' });
+    c[2]!.stats = stats({ cars: 50, shadowCasters: 0 });
+    expect(benchProblems(shop(), extra(c))).toEqual([]);
+  });
+
+  it('urządzenie mobilne: wszystkie wiersze muszą mieć ten sam profil „telefon”, także Średnia i Wysoka; na komputerze profile różnią się wg presetu', () => {
+    expect(benchProblems(shop(), { city: city(), env: { isMobile: false } })).toEqual([]);
+    expect(benchProblems(shop(), { city: city(), env: { isMobile: true } })).toEqual([
+      'urządzenie mobilne: wiersze miasta nie mają jednego profilu „telefon” (telefon ma wygrywać z presetem)',
+    ]);
+    const phone = city().map((r) => ({ ...r, profile: profile(), stats: { ...r.stats, cars: 0, shadowCasters: 0 } }));
+    expect(benchProblems(shop(), { city: phone, env: { isMobile: true } })).toEqual([]);
+  });
+
+  it('profil bez makiety (szczebel drabiny „telefon: mockup: false”): wiersz „makieta” rysuje „Ruch” na prostej geometrii i to jest poprawne', () => {
+    const phone = (preset: string, layer: string): CityRow => ({
+      preset, layer, frames: 6, calls: 15,
+      stats: stats({ layer: 'ruch', detail: 'prosty', drawCalls: 11 }), profile: profile({ mockup: false }),
+    });
+    const rows = [phone('niska', 'makieta'), phone('niska', 'ruch'), phone('srednia', 'makieta'), phone('wysoka', 'makieta')];
+    expect(benchProblems(shop(), { city: rows, env: { isMobile: true } })).toEqual([]);
+    // widok narysowany ma być zgodny z profilem: makieta mimo `mockup: false` to wada sceny
+    const stillMockup = rows.map((r, i) => (i === 0 ? { ...r, stats: stats({ layer: 'makieta' }) } : r));
+    expect(benchProblems(shop(), { city: stillMockup, env: { isMobile: true } })).toEqual([
+      'niska/makieta: scena rysowała widok makieta, oczekiwany ruch (profil bez makiety)',
+      'niska/makieta: geometria pelny, oczekiwana prosty',
+    ]);
+  });
+
+  it('budżet i auta liczą się dla widoku faktycznie narysowanego: „makieta” rysowana jako „ruch” ma budżet 60, a auta tylko w makiecie', () => {
+    const c = city();
+    c[2]!.profile = profile({ mockup: false, cars: true, shadows: 'static', firstDetail: 'pelny' });
+    c[2]!.stats = stats({ layer: 'ruch', detail: 'pelny', drawCalls: 61, cars: 0, shadowCasters: 0 });
+    expect(benchProblems(shop(), extra(c))).toEqual(['srednia/makieta: scena 61 + 0 wywołań (budżet 60)']);
+    c[2]!.stats = stats({ layer: 'ruch', detail: 'pelny', drawCalls: 11, cars: 0, shadowCasters: 0 });
+    expect(benchProblems(shop(), extra(c))).toEqual([]);
+  });
+
+  it('geometrię „Ruchu” sprawdza się tylko tam, gdzie scena budowała ją od nowa (profil zwalnia scenę przy wyjściu); zostawione miasto może mieć inną', () => {
+    const c = city();
+    c[1]!.profile = profile({ releaseOnExit: false, firstDetail: 'pelny' });
+    c[1]!.stats = stats({ layer: 'ruch', detail: 'prosty', drawCalls: 11 });
+    expect(benchProblems(shop(), extra(c))).toEqual([]);
+    c[1]!.profile = profile({ releaseOnExit: true, firstDetail: 'pelny' });
+    expect(benchProblems(shop(), extra(c))).toEqual(['niska/ruch: geometria prosty, oczekiwana pelny']);
+  });
+
+  it('środowisko: jeśli rozmiar okna mówi „telefon”, a przeglądarka podaje komputer (zepsuty User-Agent), bieg jest nieważny', () => {
+    expect(benchProblems(shop(), { city: city(), env: { isMobile: false } }, { mobile: false })).toEqual([]);
+    expect(benchProblems(shop(), { city: city(), env: { isMobile: false } }, { mobile: true })).toEqual([
+      'środowisko: isMobile false, a rozmiar okna to telefon (User-Agent nie zadziałał, miasto dostało profil komputera)',
+    ]);
+    const uniform = city().map((r) => ({ ...r, profile: profile(), stats: { ...r.stats, cars: 0, shadowCasters: 0 } }));   // jeden profil „telefon” w każdym wierszu
+    expect(benchProblems(shop(), { city: uniform, env: { isMobile: true } }, { mobile: false })).toEqual([
+      'środowisko: isMobile true, a rozmiar okna to komputer',
+    ]);
+  });
+
+  it('brak migawki sceny, nie pokazane miasto, zły widok i budżet sceny to wady', () => {
+    const c = city();
+    c[3]!.stats = null;
+    expect(benchProblems(shop(), extra(c))).toEqual(['wysoka/makieta: brak migawki sceny (stats/profile)']);
+
+    const hidden = city();
+    hidden[0]!.stats = stats({ shown: false });
+    expect(benchProblems(shop(), extra(hidden))).toEqual(['niska/makieta: miasto nie było pokazane (shown false, built true)']);
+
+    const wrongLayer = city();
+    wrongLayer[0]!.stats = stats({ layer: 'ruch' });
+    expect(benchProblems(shop(), extra(wrongLayer))).toEqual(['niska/makieta: scena rysowała widok ruch, oczekiwany makieta']);
+
+    const heavy = city();
+    heavy[1]!.stats = stats({ layer: 'ruch', detail: 'prosty', drawCalls: 61 });
+    expect(benchProblems(shop(), extra(heavy))).toEqual(['niska/ruch: scena 61 + 0 wywołań (budżet 60)']);
+  });
+
+  it('benchTableLines: wiersze sklepu i miasta z geometrią, autami i cieniami (do konsoli i raportu)', () => {
+    const lines = benchTableLines(shop(), extra());
+    expect(lines).toHaveLength(1 + 3 + 4);
+    expect(lines[0]).toMatch(/wiersz\s+FPS\s+p95 ms\s+calls\s+geom\.\s+auta\s+cienie/);
+    expect(lines[4]).toMatch(/^niska makieta\s+.*pelny\s+0\s+0$/);
+    expect(lines[7]).toMatch(/^wysoka makieta\s+.*pelny\s+50\s+10$/);
+  });
+
+  it('benchTableLines: wiersz „makieta” narysowany jako „ruch” ma to w etykiecie', () => {
+    const c = city();
+    c[0]!.stats = stats({ layer: 'ruch', detail: 'prosty' });
+    expect(benchTableLines(shop(), extra(c))[4]).toMatch(/^niska makieta→ruch\s/);
+  });
+});
+
+describe('karta benchmarku na telefonie (Zadanie 13, poprawka 1)', () => {
+  const m = (patch = {}) => ({
+    viewport: 390, hit: true, hitTag: 'DIV',
+    card: { left: 12, right: 378, scroll: 520, client: 366 },
+    columns: [{ name: 'Miasto', left: 22, right: 219 }, { name: 'FPS', left: 219, right: 265 }, { name: 'p95 ms', left: 265, right: 311 }, { name: 'Wywołania', left: 311, right: 357 }, { name: 'maks ms', left: 357, right: 403 }],
+    ...patch,
+  });
+
+  it('kolumny bramki to FPS, p95 ms i Wywołania', () => {
+    expect([...BENCH_GATE_COLUMNS]).toEqual(['FPS', 'p95 ms', 'Wywołania']);
+  });
+
+  it('karta, która dostaje zdarzenia i ma trzy kolumny bramki w widocznym obszarze, jest w porządku (reszta może się przewijać)', () => {
+    expect(overlayProblems(m())).toEqual([]);
+  });
+
+  it('karta zasłonięta płótnem (`pointer-events: none` odziedziczone z `.tt-ui`) to wada: właściciel nie przewinie tabeli', () => {
+    expect(overlayProblems(m({ hit: false, hitTag: 'CANVAS' }))).toEqual(['karta nie dostaje zdarzeń wskaźnika (w jej środku leży CANVAS)']);
+  });
+
+  it('kolumna bramki poza widoczną częścią karty albo poza oknem to wada, kolumna „maks ms” poza kartą nie', () => {
+    const wide = m({ columns: [{ name: 'FPS', left: 219, right: 265 }, { name: 'p95 ms', left: 265, right: 311 }, { name: 'Wywołania', left: 311, right: 420 }] });
+    expect(overlayProblems(wide)).toEqual(['kolumna „Wywołania” wystaje poza widoczną część karty (311–420 px, karta 12–378 px, okno 390 px)']);
+    const left = m({ columns: [{ name: 'FPS', left: 2, right: 40 }, { name: 'p95 ms', left: 265, right: 311 }, { name: 'Wywołania', left: 311, right: 357 }] });
+    expect(overlayProblems(left)[0]).toMatch(/kolumna „FPS”/);
+  });
+
+  it('brak karty, brak tabeli „Miasto” i brak kolumny to wady z nazwą', () => {
+    expect(overlayProblems({ card: null })).toEqual(['brak karty benchmarku (.tt-bench)']);
+    expect(overlayProblems(m({ columns: [] }))).toEqual(['brak tabeli „Miasto” w karcie']);
+    expect(overlayProblems(m({ columns: [{ name: 'FPS', left: 219, right: 265 }, { name: 'p95 ms', left: 265, right: 311 }] }))).toEqual(['brak kolumny „Wywołania” w tabeli „Miasto”']);
+  });
+
+  it('karta wystająca poza okno (na telefonie) to wada', () => {
+    expect(overlayProblems(m({ card: { left: 12, right: 392, scroll: 520, client: 380 } }))[0]).toMatch(/karta wystaje poza okno/);
+  });
+
+  it('źródło: rozmiar „telefon” i komputer mierzą kartę po końcu biegu, po wyrenderowaniu czterech wierszy miasta', () => {
+    const body = SOURCE.slice(SOURCE.indexOf('async function runBench'), SOURCE.indexOf('async function main'));
+    expect(body).toContain('overlayProblems(');
+    expect(body).toContain('elementFromPoint');
+    expect(body).toContain('benchProblems(result, extra, { mobile: vp.mobile })');
+    expect(body).toContain('tbody tr');
+  });
+});
+
+describe('katalog wyjściowy `--bench` (osobny od pełnego smoke\'a)', () => {
+  it('bench pisze do .smoke/city-bench, pełny smoke do .smoke/city, a CITY_SMOKE_OUT wygrywa w obu', () => {
+    expect(outDirFor(false, {})).toMatch(/\.smoke[\\/]city$/);
+    expect(outDirFor(true, {})).toMatch(/\.smoke[\\/]city-bench$/);
+    expect(outDirFor(true, { CITY_SMOKE_OUT: '/x/y' })).toBe('/x/y');
+    expect(outDirFor(false, { CITY_SMOKE_OUT: '/x/y' })).toBe('/x/y');
+    expect(SOURCE).toContain('const out = outDirFor(args.bench);');
   });
 });
 

@@ -10,14 +10,15 @@ const PROBE_NAME: Record<BenchProbe, string> = {
 const num = (n: number): string => n.toLocaleString('pl-PL');
 
 /**
- * Nakładka benchmarku (`?bench=1`): postęp, a po końcu tabele wyników i prób. Obie tabele pokazują liczbę klatek i najdłuższą
- * klatkę, bo bez nich nie widać, czy okno pomiaru jest pełne i czy nie wpadło w nie zawieszenie. Bieg próbny (`quick=1`)
+ * Nakładka benchmarku (`?bench=1`): postęp, a po końcu tabele wyników, prób i miasta (bramka makiety: wiersz na preset × widok, z autami
+ * ze sceny; liczby bramki, czyli FPS, p95 i Wywołania, stoją obok siebie na początku wiersza, żeby mieściły się w jednym zrzucie ekranu
+ * telefonu; wiersz „makieta” przy profilu bez makiety pokazuje „→ ruch”, bo scena rysuje wtedy „Ruch”). Tabele pokazują liczbę klatek i najdłuższą klatkę, bo bez nich nie widać, czy okno pomiaru jest pełne i czy nie wpadło w nie zawieszenie. Bieg próbny (`quick=1`)
  * jest podpisany w tytule. Styl jak nakładka wydajności.
  */
 export function BenchOverlay() {
   const progress = bench.value;
   if (progress === null) return null;
-  const { done, status, step, rows, probes, warnings, quick } = progress;
+  const { done, status, step, rows, probes, city, warnings, quick } = progress;
   return (
     <div class="tt-perf tt-bench" role="status">
       <h2>
@@ -51,6 +52,22 @@ export function BenchOverlay() {
               <tr key={`${p.preset}-${p.probe}`}>
                 <td>{p.preset} {PROBE_NAME[p.probe]}</td><td>{p.avgFps}</td><td>{p.p95FrameMs}</td><td>{p.maxFrameMs}</td>
                 <td>{p.frames}</td><td>{num(p.calls)}</td><td>{num(p.tris)}</td><td>{p.cpuMs}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      {city.length > 0 && (
+        <table>
+          <thead>
+            <tr><th>Miasto</th><th>FPS</th><th>p95 ms</th><th>Wywołania</th><th>maks ms</th><th>Klatki</th><th>Trójkąty</th><th>Auta</th></tr>
+          </thead>
+          <tbody>
+            {city.map((c) => (
+              <tr key={`${c.preset}-${c.layer}`}>
+                <td>{c.preset} {c.layer}{c.drawn && c.drawn !== c.layer ? ` → ${c.drawn}` : ''}</td>
+                <td>{c.avgFps}</td><td>{c.p95FrameMs}</td><td>{num(c.calls)}</td>
+                <td>{c.maxFrameMs}</td><td>{c.frames}</td><td>{num(c.tris)}</td><td>{c.stats ? c.stats.cars : '–'}</td>
               </tr>
             ))}
           </tbody>

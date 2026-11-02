@@ -69,8 +69,9 @@ export type TabId = 'sklep' | 'palety' | 'ludzie' | 'ulepszenia' | 'cele' | 'mia
 export const tab: Signal<TabId | null> = signal<TabId | null>(null);
 
 /**
- * Ekran Miasta (zakładka `miasto`, `ui/city/CityPanel.tsx`): warstwa mapy, wybrany lokal (id lokalu miasta albo null) i sposób zapłaty za pakiet
- * otwarcia na jego karcie. Zakładka zapala mapę (`game/cityScreen.ts` słucha `tab`, `cityLayer` i `selectedLot`). Nie są częścią zapisu.
+ * Ekran Miasta (zakładka `miasto`, `ui/city/CityPanel.tsx`): tryb mapy (makieta albo warstwa: `CityLayer`), wybrany lokal (id lokalu miasta albo
+ * null) i sposób zapłaty za pakiet otwarcia na jego karcie. Zakładka zapala mapę (`game/cityScreen.ts` słucha `tab`, `cityLayer` i `selectedLot`),
+ * a scena sama wybiera do trybu szczegółowość geometrii. Nie są częścią zapisu.
  */
 export const cityLayer: Signal<CityLayer> = signal<CityLayer>('ruch');
 export const selectedLot: Signal<number | null> = signal<number | null>(null);
