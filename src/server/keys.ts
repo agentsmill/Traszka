@@ -13,6 +13,10 @@ import { sha256Hex } from './hash.js';
  * - `tr:salt:{okno}:{nr}` → losowa sól okna limitu, tylko bez `RANKING_SALT` (z sekretem skrót adresu liczy się bez soli w bazie);
  * - `tr:rl:{akcja}:{nr}:{k|a}:{skrót}` → liczniki limitu zgłoszeń na klucz (`k`: początek hasha właściciela) i na adres (`a`: skrót
  *   z solą okna albo HMAC z `RANKING_SALT`); sól i liczniki giną z końcem okna (czas życia względny: `PX`, `PEXPIRE`);
+ * - `tr:fame:list` → zbiór sortowany Galerii sław: członek to klucz nicka, wynik to chwila serwera (ms) pierwszego wpisu, więc lista
+ *   idzie od najwcześniejszego; `tr:fame:e:{nickKey}` → JSON `{ nick, seed, day, cash, simVersion, at }`: wpis, który powstaje raz
+ *   (`SET NX`) i nigdy się nie zmienia. Przedrostek `tr:fame:` i brak `SIM_VERSION` w kluczu sprawiają, że reset rankingu (nowy sezon,
+ *   nowa wersja symulacji) Galerii nie dotyka; bez czasu życia;
  * - `tr:budget:{nazwa}:{RRRR-MM-DD}` → globalny licznik wysłań w dobie UTC (np. `tr:budget:save:2026-10-28`), żyje dobę.
  *
  * `owner` to SHA-256 klucza gracza (samego klucza serwer nie przechowuje), `tag` to jego pierwsze 16 znaków: członek rankingu
@@ -31,6 +35,8 @@ export const KEYS = {
   salt: (window: number, index: number): string => `${P}salt:${window}:${index}`,
   rate: (action: string, index: number, who: string): string => `${P}rl:${action}:${index}:${who}`,
   budget: (name: string, day: string): string => `${P}budget:${name}:${day}`,
+  fameList: `${P}fame:list`,
+  fameEntry: (nickKey: string): string => `${P}fame:e:${nickKey}`,
 } as const;
 
 /** Właściciel nicka: SHA-256 klucza gracza (w postaci kanonicznej, z przedrostkiem tej gry). */

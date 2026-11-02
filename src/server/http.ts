@@ -2,9 +2,11 @@ import { nickKey as keyOfNick, normalizeNick } from '../game/nick.js';
 import { parseRecoveryCode } from '../game/playerKey.js';
 import { isRec } from '../sim/guards.js';
 import {
-  BOARD_CACHE, BOARD_LIMIT_DEFAULT, BOARD_LIMITS, RUN_MAX_BODY_BYTES, SAVE_BODY_BYTES, SAVE_DAILY_BUDGET, SMALL_BODY_BYTES, type RateAction,
+  BOARD_CACHE, BOARD_LIMIT_DEFAULT, BOARD_LIMITS, FAME_DAILY_BUDGET, RUN_MAX_BODY_BYTES, SAVE_BODY_BYTES, SAVE_DAILY_BUDGET, SMALL_BODY_BYTES,
+  type RateAction,
 } from './config.js';
 import { API_ERRORS, fail, type ApiErrorCode, type ApiFailure, type Checked } from './errors.js';
+import { parseFameSubmission, readFame, recordFame } from './fame.js';
 import type { RandomBytes } from './hash.js';
 import { KEYS, memberOf, ownerOf, seedIdOf } from './keys.js';
 import { rankOf, readBoard, recordScore, type BoardRef } from './leaderboard.js';
@@ -337,4 +339,54 @@ export const handleSaveDownload: Handler = async (request, deps) => {
   if (limit) return limit;
   const save = await getSave(deps.redis, who.value.owner);
   return save === null ? apiError('no-save') : json({ ok: true, ...save });
+};
+
+/**
+ * `POST /api/fame/submit` z `{ key, nick, seed, day, cash, simVersion }`: wpis do Galerii sław (pierwszy milion gotówki firmy w zwykłej
+ * grze). Serwer niczego nie odtwarza, więc wpis jest do sfałszowania; granicą są sprawdzenia wiarygodności, limit i budżet dzienny.
+ * Pierwszy wpis nicka zapisuje chwilę serwera i dopisuje go na koniec listy; kolejny wpis tego nicka (dowolny klucz i kwota) niczego
+ * nie zmienia i zwraca ten pierwszy (`first: false`, `entry.at` pierwszego wpisu). `place` to miejsce tego nicka na liście (od 1,
+ * także poza pierwszą setką, którą pokazuje `GET /api/fame/list`): lista leży w pamięci podręcznej, więc klient nie wyczyta swojego
+ * miejsca z niej zaraz po wpisie. Nick wolny nie jest rezerwowany (rezerwuje go
+ * tylko przyjęty bieg rankingu), ale nick cudzy (`nick-taken`) nie przejdzie: Galeria nie ma zmieniać rankingu.
+ *
+ * Kolejność kontroli jak w `POST /api/runs`: metoda, wczesny limit po adresie, ciało (do `SMALL_BODY_BYTES`), kształt, klucz, nick
+ * i wiarygodność (to jedna funkcja, `parseFameSubmission`, bez zapytań do bazy, więc zepsute zgłoszenie nie zużywa limitu), limit
+ * na klucz i adres, dopiero potem cudzy nick (zapytanie do bazy) i na końcu globalny budżet dzienny `fame` (429 do północy UTC):
+ * po limicie na adres, żeby jeden adres nie wypalił go w całości, i po cudzym nicku, bo odrzucone zgłoszenie niczego nie zajmuje.
+ */
+export const handleFameSubmit: Handler = async (request, deps) => {
+  const bad = wrongMethod(request, 'POST');
+  if (bad) return bad;
+  const rate = rateLimiter(request, deps, 'fame');
+  const early = await rate.early();
+  if (early) return early;
+  const body = await readJson(request, SMALL_BODY_BYTES);
+  if (!body.ok) return failure(body);
+  const sub = parseFameSubmission(body.value);
+  if (!sub.ok) return failure(sub);
+  const { nick, nickKey, seed, day, cash, simVersion } = sub.value;
+  const owner = await ownerOf(sub.value.key);
+  const limit = await rate.limited(owner);
+  if (limit) return limit;
+  const now = deps.now();
+  if (await nickStatus(deps.redis, nickKey, owner, now) === 'taken') return apiError('nick-taken');
+  const budget = await checkBudget(deps.redis, 'fame', FAME_DAILY_BUDGET, now);
+  if (!budget.ok) return apiError('fame-budget', undefined, { 'retry-after': String(budget.retryAfter) });
+  const { first, entry, place } = await recordFame(deps.redis, nickKey, { nick, seed, day, cash, simVersion, at: now });
+  return json({ ok: true, first, place, entry: { nick: entry.nick, at: entry.at } });
+};
+
+/**
+ * `GET /api/fame/list`: pierwsze `FAME_LIST_MAX` wpisów Galerii od najwcześniejszego (`place`, `nick`, `at`; seed i gotówka zostają
+ * w bazie) i liczba wszystkich wpisów. Publiczne i jednakowe dla wszystkich, więc odpowiedź leży chwilę w pamięci podręcznej Vercela
+ * (`BOARD_CACHE`). Ta pamięć kluczuje adresem z zapytaniem, więc każde zapytanie poza gołym adresem (parametr, ale też same `?&`,
+ * `?&&`…, których `searchParams` nie widzi) to 400 `bad-request`, bez zapytania do bazy. Goły `?` na końcu adresu ma puste `search`.
+ */
+export const handleFameList: Handler = async (request, deps) => {
+  const bad = wrongMethod(request, 'GET');
+  if (bad) return bad;
+  if (new URL(request.url).search !== '') return apiError('bad-request');
+  const { total, rows } = await readFame(deps.readRedis);
+  return json({ ok: true, total, rows }, 200, { 'cache-control': BOARD_CACHE });
 };

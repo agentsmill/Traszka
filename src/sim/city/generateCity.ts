@@ -41,7 +41,11 @@ const HOURS_PER_DAY = 24;
 const STORE_DISTRICTS: readonly StoreDistrict[] = ['osiedle', 'srodmiescie', 'dworzec', 'biurowce'];
 const MIN_DISTRICT_BLOCKS = 5;
 const PARK_MAX_BLOCKS = 3;
-const FREE_LOTS: readonly [number, number] = [5, 8];
+/**
+ * Ile wolnych lokali (najmniej, najwięcej) losuje miasto. Wynająć da się tylko lokal wolny albo „po Traszce” (ten sam sklep), więc firma ma
+ * w mieście najwyżej `1 + FREE_LOTS[1]` sklepów razem z zamkniętymi: na tym stoi najgorszy przypadek paczki „Wyślij zapis” (test w `saveTransfer`).
+ */
+export const FREE_LOTS: readonly [number, number] = [5, 8];
 const RIVAL_LOTS: readonly [number, number] = [3, 5];
 /** Konkurencja nie stoi bliżej startu niż tyle kwartałów (w poziomie albo w pionie, liczy większa z odległości). */
 const RIVAL_MIN_BLOCKS = 2;

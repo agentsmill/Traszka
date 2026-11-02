@@ -12,11 +12,14 @@ import { placeRobots, type RobotPlacement } from './robotPlacement';
 /** Ile sekund animacji maszyna pracuje po ostatnim postępie: synchronizacja przychodzi co ~100 ms, a postęp nie zawsze w każdej. */
 export const WORK_HOLD_S = 1.2;
 
-/** Poziom ulepszenia jako poziom wyglądu (1…3); ulepszenia mają najwyżej 3 poziomy, a wyższy zapis jest przycięty. */
+/**
+ * Poziom ulepszenia jako poziom wyglądu (1…3). Taśmociąg i wykładacz mają od etapu 4b po 5 poziomów, ale modele mają tablice kolorów
+ * na trzy, więc poziomy 4–5 wyglądają jak 3 (spec 4b §5.2); wyższy zapis jest przycięty.
+ */
 const asLevel = (n: number): MachineLevel => Math.min(3, Math.max(1, Math.floor(n))) as MachineLevel;
 
-/** Maszyna na scenie razem z poziomem, z którego powstała (po zmianie poziomu jest budowana od nowa). */
-interface Standing { level: number; rig: MachineRig; cells: readonly Cell[]; hold: number }
+/** Maszyna na scenie razem z poziomem wyglądu, z którego powstała (po zmianie wyglądu jest budowana od nowa; 3 → 4 → 5 go nie zmienia). */
+interface Standing { level: MachineLevel; rig: MachineRig; cells: readonly Cell[]; hold: number }
 
 /** Co `RobotsView.sync` mówi załodze: czym zajmuje się eDward (`null`, gdy go nie kupiono). */
 export interface RobotsSync { edward: StaffDuty | null }
@@ -108,11 +111,12 @@ export class RobotsView {
       current?.rig.dispose();
       return null;
     }
-    if (current && current.level === level) return current;
+    const look = asLevel(level);
+    if (current && current.level === look) return current;
     const hold = current?.hold ?? 0;
     current?.rig.dispose();
-    const made = build(asLevel(level));
+    const made = build(look);
     this.root.add(made.rig.object);
-    return { level, rig: made.rig, cells: made.cells, hold };
+    return { level: look, rig: made.rig, cells: made.cells, hold };
   }
 }

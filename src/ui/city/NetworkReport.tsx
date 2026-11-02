@@ -11,7 +11,7 @@ import { nameOf, resolveTab, storeTabDefs, tabState } from './tabState';
 
 /*
  * Okno końca miesiąca przy kilku sklepach (spec §11.5): przełącznik segmentowy „Sieć / #1 Ogrodowa / #2 Lipowa”. „Sieć” to podsumowanie
- * (`data-tut="network-summary"`): „Zostaje Ci” każdego sklepu i razem, pakiety otwarcia zapłacone gotówką, rozliczenie końcowe zamkniętej
+ * (`data-tut="network-summary"`): „Zostaje Ci” każdego sklepu i razem, pakiety otwarcia i badania Sieci zapłacone gotówką, rozliczenie końcowe zamkniętej
  * placówki, gotówka po zamknięciu i wynik każdego sklepu. Dalej wyciąg każdego sklepu (ten sam widok co raport jednego sklepu). Te same zakładki ma protokół remanentu
  * (`RemanentModal`) i podgląd końca miesiąca (`MonthPreviewModal`); przełącznik (`StoreTabs.tsx`) i wybór zakładki (`tabState.ts`) są osobno.
  */
@@ -27,7 +27,7 @@ const trustLine = (f: FirmState | null, id: number) => {
 };
 
 /**
- * Podsumowanie sieci: „Zostaje Ci” każdego sklepu i razem, pakiety otwarcia za gotówkę i rozliczenie końcowe zamkniętej placówki (gdy były:
+ * Podsumowanie sieci: „Zostaje Ci” każdego sklepu i razem, pakiety otwarcia i badania Sieci za gotówkę oraz rozliczenie końcowe zamkniętej placówki (gdy były:
  * gotówka po zamknięciu już je zawiera, więc liczby się zgadzają), gotówka po zamknięciu z tonem z progów debetu i wynik każdego sklepu. `tip`: czy blok ma być celem dymka „pierwszy raz” (podgląd końca miesiąca nim nie jest). Zwykła funkcja
  * wywoływana z komponentów, więc testy `vnodeTree` widzą jej wiersze.
  */
@@ -37,7 +37,7 @@ export function NetworkSummaryView({ summary, f, tip = true }: { summary: Networ
       <h3>{t`Zostaje Ci`}</h3>
       {summary.stores.flatMap((s) => [row(nameOf(f, s.id), signedZl(s.net)), ...trustLine(f, s.id)])}
       {row(t`Razem`, signedZl(summary.total), true)}
-      {summary.invest > 0 && row(t`Pakiety otwarcia za gotówkę`, minusZl(summary.invest))}
+      {summary.invest > 0 && row(t`Pakiety otwarcia i badania za gotówkę`, minusZl(summary.invest))}
       {summary.settlement > 0 && row(t`Rozliczenie końcowe zamkniętej placówki`, minusZl(summary.settlement))}
       <div class="tt-row"><span>{t`Gotówka po zamknięciu`}</span><span class={`tt-free ${cashTone(summary.wallet)}`}>{money(summary.wallet)}</span></div>
       {summary.wallet < DEBT_WARN && <p class="tt-hint warn">{tr(debtWarningText(summary.wallet))}</p>}

@@ -61,11 +61,35 @@ export interface CardDef {
  */
 export const difficultWeight = (base: number) => (c: CardContext): number => (c.difficult === undefined ? base : base * c.difficult);
 
-/** Karty tylko dla Dworca (stoją na końcu `DECK`): wypadają wyłącznie w sklepie, którego dzielnicą jest Dworzec. */
+/** Karty tylko dla Dworca (stoją w `DECK` po `wiralowy`, przed kartami 4b): wypadają wyłącznie w sklepie, którego dzielnicą jest Dworzec. */
 export const DWORZEC_CARD_IDS = ['dworzec-pociag', 'dworzec-bilon', 'dworzec-walizka'] as const;
 
 /** Waga karty Dworca: `w` na Dworcu, poza nim 0. Waga 0 wypada z `eligible`, więc nowa karta nie przesuwa losowania talii innych sklepów. */
 const dworzecOnly = (w: number) => (c: CardContext): number => (c.district === 'dworzec' ? w : 0);
+
+/** Wagi karty w pięciu kontekstach: sklep bez aktywnej dzielnicy (`none`) i cztery dzielnice. */
+export interface DistrictWeights { none: number; osiedle: number; srodmiescie: number; dworzec: number; biurowce: number }
+
+/**
+ * Waga karty zależna od dzielnicy sklepu (4b, spec §5.5): `none` dla sklepu bez aktywnej dzielnicy (kontekst nie ma wtedy `district`), reszta dla
+ * dzielnicy z kontekstu. Waga 0 wypada z `eligible`, tak jak w kartach Dworca (`dworzecOnly`).
+ */
+export const byDistrict = (w: DistrictWeights) => (c: CardContext): number => (c.district === undefined ? w.none : w[c.district]);
+
+/** Dwanaście kart dnia z etapu 4b (stoją na końcu `DECK`, w tej kolejności; spec §5.5). */
+export const NEW_CARD_IDS_4B = [
+  'karty-zrzut', 'festyn', 'sanepid', 'awaria-pradu', 'rozkopy', 'koncert',
+  'elearning', 'catering-korpo', 'kibice', 'bon-centrali', 'ai-inwentaryzacja', 'wybory',
+] as const;
+
+/**
+ * Waga decyzji `CARDS.stakes` (cards.ts). Nie importujemy jej, bo cards.ts importuje ten plik; `newCards.test.ts` pilnuje, że to ta sama liczba.
+ * Karty 4b podają skutki tak jak spec §5.5, czyli już po tym mnożniku (pieniądze, zaufanie, reputacja, WUT, opłaty logistyczne, ruch i marża),
+ * a talia trzyma wartości przed nim, jak starsze karty (rozstrzygnięcie etapu 4b: liczby specu są skuteczne). `eff(0.9)` to ruch +0,9 widoczny w grze, czyli 0,3 w talii.
+ * Czas ludzi, siły, Ogonki, mandaty, zamknięcie sklepu i osoby na zmianie nie mają mnożnika i idą bez `eff`.
+ */
+const STAKES = 3;
+const eff = (effective: number): number => effective / STAKES;
 
 const h = (hour: number, min = 0): number => hour * 60 + min;
 /** Skala sklepu: 1 przy marży dnia ok. 2000 zł. */
@@ -631,6 +655,317 @@ export const DECK: readonly CardDef[] = [
           chance: () => 0.35, delta: () => ({ reputation: -2, trust: -2 }),
           text: 'Nikt nie wrócił, za to wrócił strach: klienci omijali wejście, a Centrala spytała, gdzie formularz „Zdarzenie nietypowe”.',
         },
+      },
+    ],
+  },
+  // --- Karty dnia 4b (spec §5.5): waga zależna od dzielnicy (`byDistrict`), skutki podane jako skuteczne (`eff`). Fale ruchu mają godzinę (`from`). ---
+  {
+    id: 'karty-zrzut',
+    kind: 'zdarzenie',
+    title: 'Zrzut Traszkomonów',
+    text: 'Centrala wypuszcza kolekcjonerskie saszetki Traszkomonów, edycja „Błyszcząca Kasjerka”. W kartonie jest {n} saszetek, a pod drzwiami od 5:40 stoją dzieciaki z plecakami i rodzice z minami ludzi, którzy za to zapłacą. Regulamin akcji ma trzy strony i ani słowa o kolejce.',
+    at: h(6), weight: byDistrict({ none: 0.8, osiedle: 1.0, srodmiescie: 0.9, dworzec: 0.6, biurowce: 0.5 }), cooldown: 18,
+    defaultAnswer: 0,
+    params: (_, r) => ({ n: 60 + 20 * Math.floor(r * 9) }),
+    answers: [
+      {
+        label: 'Limit 2 saszetki',
+        result: 'Limit wisi na drzwiach, pisany flamastrem. Dzieciaki liczą na palcach, rodzice na cud, a kolejka i tak sięga przystanku. Kasjerka wyciągnęła z saszetki własną kartę „Błyszcząca Kasjerka”. Tantiem Centrala nie przewidziała.',
+        delta: () => ({ staffMinutes: 40, trust: eff(1), reputation: eff(1) }),
+        mods: () => [{ kind: 'traffic', value: eff(0.9), minutes: 360, from: h(6) }],
+      },
+      {
+        label: 'Bez limitu',
+        result: 'Karton zniknął w kwadrans, a kolejka wyglądała jak przed otwarciem sklepu z telefonami. Jedno dziecko wyciągnęło kartę „Błyszcząca Kasjerka”, a pozostałe sto trzydzieści napisało do Centrali.',
+        mods: () => [{ kind: 'traffic', value: eff(1.6), minutes: 240, from: h(6) }],
+        risk: {
+          chance: () => 0.5, delta: (c) => ({ reputation: eff(-3), wut: eff(0.15 * c.dailyMargin) }),
+          text: 'Przy ostatnim kartonie zrobiło się nerwowo: przepychanka, rozdarte saszetki, karty pod regałami. Straty księgujesz w ubytkach, a Centrala pyta, czemu nie było limitu.',
+        },
+      },
+      {
+        label: 'Odsyłam karton',
+        result: 'Karton wrócił na ciężarówkę, a dzieciaki poszły do Kawki Express. Centrala odnotowała, że Traszka odmówiła Traszkomonom. Zdanie brzmi dziwnie, ale trafiło do akt.',
+        delta: () => ({ trust: eff(-2) }),
+      },
+    ],
+  },
+  {
+    id: 'festyn',
+    kind: 'zdarzenie',
+    title: 'Festyn osiedlowy z pierogami',
+    text: 'Pod blokiem festyn: pierogi, dmuchany zamek i konkurs picia kompotu na czas. Pół osiedla stoi na trawniku, a Centrala przypomina okólnikiem, że „aktywności lokalne zgłasza się z 30-dniowym wyprzedzeniem”. Festyn zgłoszono dziś rano.',
+    at: h(9), weight: byDistrict({ none: 0.6, osiedle: 1.4, srodmiescie: 0.4, dworzec: 0.3, biurowce: 0.3 }), cooldown: 21,
+    defaultAnswer: 2,
+    answers: [
+      {
+        label: 'Stoisko z hot-dogami',
+        result: 'Stoisko stanęło tuż obok dmuchanego zamku. Hot-dogi schodziły szybciej niż pierogi, a Centrala przysłała pismo, że „sprzedaż poza lokalem wymaga aneksu”. Aneks przyjdzie po festynie.',
+        delta: (c) => ({ cash: eff(-0.1 * c.dailyMargin), staffMinutes: 90 }),
+        mods: () => [{ kind: 'traffic', value: eff(0.3), minutes: 480, from: h(10) }, { kind: 'margin', value: eff(0.15), minutes: 480, from: h(10) }],
+      },
+      {
+        label: 'Plakat „Zimne napoje obok”',
+        result: 'Plakat wisi nad stołem z pierogami, a strzałka wskazuje Twoje drzwi. Komitet festynowy udaje, że nie widzi, a dzieciaki biegną po zimne napoje.',
+        delta: (c) => ({ cash: eff(-0.02 * c.dailyMargin) }),
+        mods: () => [{ kind: 'traffic', value: eff(0.2), minutes: 480 }],
+      },
+      {
+        label: 'Nic nie robię, to nie nasz festyn',
+        result: 'Festyn odbył się bez Ciebie. Pierogi skończyły się o drugiej, kompot o trzeciej, a Centrala dowiedziała się o wszystkim z gazetki osiedlowej.',
+      },
+    ],
+  },
+  {
+    id: 'sanepid',
+    kind: 'zdarzenie',
+    title: 'Sanepid na rowerze',
+    text: 'Do sklepu wjeżdża na rowerze inspektor sanepidu i od progu zagląda do lodówek. Centrala od lat zapewnia, że „każdy sklep jest zawsze gotowy na kontrolę”. Komunikat nie dotarł do mopa.',
+    at: h(11), weight: byDistrict({ none: 1, osiedle: 1, srodmiescie: 1, dworzec: 1.2, biurowce: 0.8 }), cooldown: 25,
+    defaultAnswer: 0,
+    answers: [
+      {
+        label: 'Oprowadzam',
+        result: 'Inspektor obejrzał lodówki, zaplecze i termometr, który pokazuje to, co trzeba. Wpisał „bez uwag” i odjechał, a Ty przez godzinę stałeś na baczność.',
+        delta: () => ({ staffMinutes: 30 }),
+        risk: {
+          chance: (c) => (c.cleanliness < 60 ? 0.6 : 0.1), delta: () => ({ cash: eff(-1.5 * FINE_BASE), trust: eff(-2) }),
+          text: 'Pod lodówką leżało coś, czego nikt nie pamięta kupować. Protokół ma cztery strony, mandat ma więcej zer, niż trzeba, a Centrala „oczekuje wyjaśnień”.',
+        },
+      },
+      {
+        label: 'Kawa na koszt firmy',
+        result: 'Inspektor wypił kawę i pochwalił zaplecze. Rachunek za kawę trafił do kosztów, a paragon do segregatora „Dokumenty, których nikt nie sprawdza”.',
+        delta: () => ({ cash: eff(-15) }),
+        risk: {
+          chance: () => 0.3, delta: () => ({ trust: eff(-3) }),
+          text: 'Inspektor wypił kawę i zapytał, czy to nie jest przypadkiem poczęstunek. Zapisał w protokole „próba wpływu na kontrolę”, a Centrala dowiedziała się o tym pierwsza.',
+        },
+      },
+    ],
+  },
+  {
+    id: 'awaria-pradu',
+    kind: 'zdarzenie',
+    title: 'Awaria prądu na pół dzielnicy',
+    text: 'Prąd zgasł na pół dzielnicy, w tym u Ciebie. Lodówki ucichły, kasa zgasła, skaner mruga ostatnim laserem. Infolinia Centrali zapewnia, że „zgłoszenie zostało zarejestrowane i dołączone do pozostałych z roku 2019”.',
+    at: h(14), weight: 0.7, cooldown: 30,
+    defaultAnswer: 1,
+    answers: [
+      {
+        label: 'Agregat od szwagra',
+        result: 'Agregat wyje jak traktor, ale kasa żyje, a lodówki chłodzą. Szwagier wystawił fakturę „za dobre słowo” i prosi o zwrot kanistra.',
+        delta: (c) => ({ cash: eff(-0.15 * c.dailyMargin), staffMinutes: 30 }),
+      },
+      {
+        label: 'Zamykam na 2 h',
+        result: 'Sklep zamknięty na dwie godziny, na drzwiach kartka „Wracamy z prądem”. Lody lekko zmiękły, a Centrala przysłała ankietę o satysfakcji z awarii.',
+        delta: (c) => ({ wut: eff(0.05 * c.dailyMargin) }),
+        mods: () => [{ kind: 'closed', value: 1, minutes: 120 }],
+      },
+      {
+        label: 'Sprzedaję po ciemku',
+        result: 'Latarki, kalkulator i uczciwość klientów. Sprzedaż na gębę szła zaskakująco sprawnie, a dwa Traszdogi wyszły na kredyt zaufania.',
+        mods: () => [{ kind: 'traffic', value: eff(-0.3), minutes: 120 }],
+        risk: {
+          chance: () => 0.4, delta: (c) => ({ wut: eff(0.2 * c.dailyMargin) }),
+          text: 'W ciemności część towaru wyszła razem z klientami, a kalkulator pomylił się dwa razy, zawsze na korzyść kupujących. Ubytki świecą jaśniej niż latarka.',
+        },
+      },
+    ],
+  },
+  {
+    id: 'rozkopy',
+    kind: 'zdarzenie',
+    title: 'ZDM rozkopał chodnik',
+    text: 'Zarząd Dróg Miejskich rozkopał chodnik przed sklepem „w ramach modernizacji”. Zapowiedź wisiała na słupie od marca, tylko że słup stoi dwie ulice dalej. Do drzwi prowadzi wąska ścieżka między rurą a taśmą.',
+    at: h(7), weight: byDistrict({ none: 0.8, osiedle: 0.8, srodmiescie: 1.2, dworzec: 0.8, biurowce: 0.8 }), cooldown: 30,
+    defaultAnswer: 1,
+    answers: [
+      {
+        label: 'Kładka z palet',
+        result: 'Kładka z palet stoi i nawet jest równa. Klienci przechodzą po niej ostrożnie, jak po wiszącym moście, a Straż Miejska patrzy na nią z zainteresowaniem. Na razie tylko patrzy.',
+        delta: (c) => ({ cash: eff(-0.08 * c.dailyMargin), staffMinutes: 45 }),
+        mods: () => [{ kind: 'traffic', value: eff(-0.1), minutes: 3 * DAY }],
+      },
+      {
+        label: 'Nic nie robię, zajmie się tym miasto',
+        result: 'Miasto się tym zajmie, na pewno. Zapowiedź na słupie mówi, że roboty potrwają „do piątku”, ale nie mówi, którego.',
+        mods: () => [{ kind: 'traffic', value: eff(-0.3), minutes: 3 * DAY }],
+      },
+    ],
+  },
+  {
+    id: 'koncert',
+    kind: 'zdarzenie',
+    title: 'Koncert disco polo na stadionie',
+    text: 'Wieczorem na stadionie koncert disco polo, a bilety rozeszły się szybciej niż Traszdogi. Przed koncertem tłum musi się czegoś napić, a po koncercie czegoś zjeść. Centrala przysłała pismo, że „obecność w strefie koncertowej jest zgodna z wizją marki”.',
+    at: h(16), weight: byDistrict({ none: 0.5, osiedle: 0.6, srodmiescie: 1.3, dworzec: 1.3, biurowce: 0.4 }), cooldown: 21,
+    defaultAnswer: 1,
+    answers: [
+      {
+        label: 'Zatowarowuję napoje',
+        result: 'Kolejka sięgała stadionu, a ostatnia zgrzewka wyszła razem z ostatnim refrenem. Centrala dolicza opłatę za dodatkową dostawę, bo „nie było jej w planie”.',
+        delta: () => ({ logistics: -eff(PALLET_FEE), staffMinutes: 30 }),
+        mods: () => [{ kind: 'traffic', value: eff(0.6), minutes: 300, from: h(18) }, { kind: 'margin', value: eff(0.05), minutes: 300, from: h(18) }],
+      },
+      {
+        label: 'Zamykam o 22',
+        result: 'Fala po koncercie przeszła przez sklep jak burza: kolejka, kolejka, nagle cisza. Po 22 rozeszli się nawet ci, którzy mieli „jeszcze tylko jedno piwo”.',
+        mods: () => [{ kind: 'traffic', value: eff(0.3), minutes: 240, from: h(18) }],
+      },
+      {
+        label: 'Ochroniarz (szwagier)',
+        result: 'Szwagier stanął w drzwiach z miną człowieka, który widział gorsze koncerty. Kolejka stała w rządku, a jedyną interwencją było odebranie komuś zimnych ogni.',
+        delta: (c) => ({ cash: eff(-0.04 * c.dailyMargin) }),
+        mods: () => [{ kind: 'traffic', value: eff(0.6), minutes: 300, from: h(18) }],
+      },
+    ],
+  },
+  {
+    id: 'elearning',
+    kind: 'zdarzenie',
+    title: 'Obowiązkowe e-learningi Centrali',
+    text: 'Centrala przypomina o obowiązkowych e-learningach: „Bezpieczeństwo kasjera”, „Higiena uśmiechu” i „Cyfrowa asertywność”. Razem 11 godzin, z czego 9 to lektor czytający przepisy. Termin mija dziś o 23:59, o czym Centrala poinformowała wczoraj o 23:58.',
+    at: h(8), weight: 0.8, cooldown: 30,
+    defaultAnswer: 2,
+    answers: [
+      {
+        label: 'W godzinach pracy',
+        result: 'Kasjerzy klikali „dalej”, a sklep prowadziła kolejka samoobsługowa. Certyfikaty przyszły mailem w formacie, którego nikt nie otworzy.',
+        delta: () => ({ staffMinutes: 180, trust: eff(2) }),
+      },
+      {
+        label: 'Klikam za wszystkich',
+        result: 'Dziewięć kursów w kwadrans i jedno kliknięcie za dużo. System uznał, że zaliczone wszystko, łącznie z egzaminem z pierwszej pomocy.',
+        delta: () => ({ staffMinutes: 20 }),
+        risk: {
+          chance: () => 0.35, delta: () => ({ trust: eff(-4) }),
+          text: 'System wykrył, że pięć osób zaliczyło egzamin z jednego komputera w cztery minuty. Centrala zaprasza na rozmowę o „kulturze organizacyjnej”.',
+        },
+      },
+      {
+        label: 'Ignoruję',
+        result: 'Termin minął o 23:59. Raport o niezaliczonych szkoleniach trafił do Centrali, gdzie leży obok raportu o raportach.',
+        delta: () => ({ trust: eff(-2) }),
+      },
+    ],
+  },
+  {
+    id: 'catering-korpo',
+    kind: 'zdarzenie',
+    title: 'Korporacja zamawia kanapki na spotkanie',
+    text: 'Biuro obok zamawia {n} kanapek na „spotkanie zespołu z liderem transformacji”. Mają być bez glutenu, bez laktozy i bez poczucia winy. Centrala od razu prosi o raport „synergii z lokalnym otoczeniem biznesowym”.',
+    at: h(9), weight: byDistrict({ none: 0.3, osiedle: 0.2, srodmiescie: 0.8, dworzec: 0.3, biurowce: 2.0 }), cooldown: 10,
+    defaultAnswer: 0,
+    params: (_, r) => ({ n: 40 + Math.floor(r * 61) }),
+    answers: [
+      {
+        label: 'Przyjmuję',
+        result: 'Kanapki gotowe i opakowane w trzech kolorach pudełek, bo tak chciał dział marketingu. Płatność przyszła po zaakceptowaniu przez wszystkie trzy działy.',
+        delta: (_, p) => ({ cash: eff(4 * p.n), staffMinutes: 60 }),
+        risk: {
+          chance: () => 0.2, delta: (_, p) => ({ cash: eff(-4 * p.n) }),
+          text: 'Spotkanie odwołano mailem o 8:59. Kanapki stoją w trzech kolorach pudełek, a dział marketingu prosi o zdjęcie „do materiałów”.',
+        },
+      },
+      {
+        label: 'Odmawiam',
+        result: 'Odmowa grzeczna i stanowcza. Biuro zamówiło w sieci z dłuższą nazwą, a Centrala wpisała w notatce, że Traszka „nie wykazała elastyczności”.',
+        delta: () => ({ reputation: eff(-1) }),
+      },
+    ],
+  },
+  {
+    id: 'kibice',
+    kind: 'zdarzenie',
+    title: 'Pociąg z kibicami',
+    text: 'O 16:00 na dworzec wjeżdża pociąg specjalny z kibicami drużyny gości. Policja ustawia kordon, a Centrala przypomina o procedurze „Klient w szaliku”: uśmiech, kontakt wzrokowy i wyjście tylnymi drzwiami.',
+    at: h(15), weight: byDistrict({ none: 0.3, osiedle: 0.2, srodmiescie: 0.6, dworzec: 2.0, biurowce: 0.1 }), cooldown: 14,
+    defaultAnswer: 2,
+    answers: [
+      {
+        label: 'Ochrona przy wejściu',
+        result: 'Dwóch ochroniarzy przy drzwiach, jeden regulamin przy kasie, kolejka równa jak na torach. Kibice kupili, co trzeba, i zaśpiewali tylko trzy razy.',
+        delta: (c) => ({ cash: eff(-0.05 * c.dailyMargin) }),
+        mods: () => [{ kind: 'traffic', value: eff(0.5), minutes: 180, from: h(16) }],
+      },
+      {
+        label: 'Zamykam do odjazdu',
+        result: 'Żaluzje w dół, kartka „Wracamy po meczu”. Za szybą przeszedł tłum w szalikach, a Ty w środku piłeś kawę, zdecydowanie zbyt spokojnie.',
+        mods: () => [{ kind: 'closed', value: 1, minutes: 120, from: h(16) }],
+      },
+      {
+        label: 'Normalna praca',
+        result: 'Kibice kupili wszystko, co świeci i szumi, a potem poszli dalej. Kasjerka dostała od nich szalik, którego nie chce, ale nie śmie oddać.',
+        mods: () => [{ kind: 'traffic', value: eff(0.5), minutes: 180, from: h(16) }],
+        risk: {
+          chance: () => 0.6, delta: (c) => ({ wut: eff(0.25 * c.dailyMargin), reputation: eff(-2) }),
+          text: 'Przy lodówce z napojami zrobiło się tłoczno, potem głośno, a potem w lodówce coś trzasnęło. Straty idą w ubytki, a Centrala pyta, czemu nie było ochrony.',
+        },
+      },
+    ],
+  },
+  {
+    id: 'bon-centrali',
+    kind: 'zdarzenie',
+    title: 'Bon motywacyjny od Centrali',
+    text: 'Centrala przyznaje Ci bon motywacyjny na dodatkowe palety marki własnej: „Chrupki Naturalne w Rozumieniu Prawa” i „Napój o Smaku Lata”. Bon jest ważny, a regulamin jego ważności Centrala dołączy później.',
+    at: h(10), weight: 0.6, cooldown: 40,
+    defaultAnswer: 1,
+    answers: [
+      {
+        label: 'Biorę palety marki własnej',
+        result: 'Palety przyjechały z napisem „Smak jak dawniej”, bez wskazania kiedy to było. Bon wypłacił swoje, a Centrala dolicza opłatę za „obsługę bonu”.',
+        delta: (c) => ({ cash: eff(0.2 * c.dailyMargin), logistics: -eff(PALLET_FEE) }),
+      },
+      {
+        label: 'Zostawiam na lepsze czasy',
+        result: 'Bon wygasł po 3 dniach, zgodnie z regulaminem ogłoszonym po 2 dniach.',
+      },
+    ],
+  },
+  {
+    id: 'ai-inwentaryzacja',
+    kind: 'zdarzenie',
+    title: 'Centrala testuje AI do liczenia towaru',
+    text: 'Centrala wdraża „inteligentną inwentaryzację”: kamera pod sufitem ma sama liczyć towar, a Ty możesz zgłosić sklep do pilotażu. Centrala zapewnia, że algorytm „uczy się na błędach”. Twoich.',
+    at: h(6), weight: 0.5, cooldown: 45,
+    defaultAnswer: 1,
+    answers: [
+      {
+        label: 'Zgłaszam sklep do pilotażu',
+        result: 'Kamera wisi, dioda mruga, a Centrala dostała w prezentacji nowy slajd. Pierwszy raport brzmi: „stan magazynu: dużo”.',
+        delta: () => ({ trust: eff(3) }),
+        risk: {
+          chance: () => 0.5, delta: (c) => ({ wut: eff(0.1 * c.dailyMargin) }),
+          text: 'AI policzyło kota jako 14 batonów, a półkę z wodą jako jeden duży baton. Różnice trafiły do ubytków i na spotkanie zespołu w Centrali.',
+        },
+      },
+      {
+        label: 'Grzecznie odmawiam',
+        result: 'Centrala przyjęła odmowę ze zrozumieniem i notatką „wymaga edukacji technologicznej”. Na pocieszenie wysłała zaproszenie na webinar.',
+        delta: () => ({ trust: eff(-1) }),
+      },
+    ],
+  },
+  {
+    id: 'wybory',
+    kind: 'zdarzenie',
+    title: 'Lokal wyborczy w szkole obok',
+    text: 'W szkole obok urządzono lokal wyborczy i od rana stoją przed nim ludzie z dowodami w ręku. Cisza wyborcza zakazuje agitacji, ale nie kupowania bułek. Centrala przypomina, że sklep ma pozostać „neutralny politycznie i smakowo”.',
+    at: h(7), weight: byDistrict({ none: 1.0, osiedle: 1.3, srodmiescie: 0.8, dworzec: 0.5, biurowce: 0.5 }), cooldown: 60,
+    defaultAnswer: 1,
+    answers: [
+      {
+        label: 'Promocja „Kawa obywatelska”',
+        result: 'Kawa za złotówkę dla każdego z naklejką „Głosowałem”. Naklejek rozdano więcej niż głosów, ale to już sprawa komisji, nie Twoja.',
+        mods: () => [{ kind: 'traffic', value: eff(0.25), minutes: 600, from: h(7) }, { kind: 'margin', value: eff(-0.05), minutes: 600, from: h(7) }],
+      },
+      {
+        label: 'Nic nie robię, głosujący sami przyjdą',
+        result: 'Głosujący przychodzili sami, jedni z kartą do urny, drudzy z listą zakupów. Frekwencja w sklepie wysoka, w komisji średnia.',
+        mods: () => [{ kind: 'traffic', value: eff(0.15), minutes: 600, from: h(7) }],
       },
     ],
   },

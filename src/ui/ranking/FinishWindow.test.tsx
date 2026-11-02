@@ -33,7 +33,7 @@ afterEach(() => {
 
 function setup(reply: ApiResult<RunAccepted> | (() => Promise<ApiResult<RunAccepted>>) = accepted()) {
   const submitRun = vi.fn(async () => (typeof reply === 'function' ? reply() : reply));
-  const client: RankingClient = { board: vi.fn(), player: vi.fn(), uploadSave: vi.fn(), downloadSave: vi.fn(), submitRun };
+  const client: RankingClient = { board: vi.fn(), player: vi.fn(), uploadSave: vi.fn(), downloadSave: vi.fn(), submitRun, fameList: vi.fn(), fameSubmit: vi.fn() };
   const player = { key: KEY, nick: 'Mateusz' as string | null };
   saveFinished(finishedRun());
   const model = createFinishModel({

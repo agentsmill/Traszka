@@ -211,7 +211,7 @@ export const GAME_UI: Dict = {
   'Przyspiesz o dzień (40 🦎)': 'Speed up by a day (40 🦎)',
   'Większy lokal: więcej półek, slotów ({0} × 2×2) i miejsc na palety, więcej klientów. Sklep zamknięty {1} {2}.':
     'A bigger unit: more shelves, slots ({0} × 2×2) and pallet spots, more customers. The shop closes for {1} {2}.',
-  'To już Flagowiec. Większego sklepu nie będzie.': 'This is already the Flagship. The shop won’t get any bigger.',
+  'To już Traszka Max Pro Ultra. Większego sklepu nie będzie.': 'This is already the Traszka Max Pro Ultra. The shop won’t get any bigger.',
   'Za Ogonki': 'For Ogonki',
   'Kampania w Traszkapce': 'Traszkapp campaign',
   '+30% klientów przez dobę': '+30% customers for 24 hours',
@@ -249,6 +249,12 @@ export const GAME_UI: Dict = {
   'Odbierz': 'Claim',
   'Nagroda: +{0} 🦎 i XP': 'Reward: +{0} 🦎 and XP',
   'Zdobyte: {0} / {1}': 'Achieved: {0} / {1}',
+  // cele sieci w Celach, podpowiedź o badaniach w Ulepszeniach i zniżka Wspólnej obsady w Ludziach (4b)
+  'Nagroda: +{0} 🦎': 'Reward: +{0} 🦎',
+  'Cele całej sieci, nie jednego sklepu. Zdobyte: {0} / {1}': 'Goals for the whole network, not a single shop. Achieved: {0} / {1}',
+  'Badania Sieci znajdziesz w panelu Miasto. Działają we wszystkich sklepach naraz.': 'You’ll find Network research in the City panel. It works in every shop at once.',
+  'Do Miasta': 'To City',
+  'Wspólna obsada (badania Sieci) obniża płace w tym sklepie o {0}.': 'Shared staffing (Network research) lowers wages in this shop by {0}.',
   'Klienci': 'Customers',
   '{0} (utraceni: {1})': '{0} (lost: {1})',
   'Obrót': 'Turnover',

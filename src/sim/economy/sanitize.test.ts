@@ -395,7 +395,7 @@ describe('sanitizeEconomy: napraw to, co da się naprawić', () => {
     expect(s.queue).toBe(0);
     expect(s.staff).toBe(8);
     expect(s.level).toBe(1);
-    expect(s.remontLevel).toBe(3);
+    expect(s.remontLevel).toBe(5);   // od etapu 4b pięć poziomów remontu
     playable(s);
   });
 
@@ -450,7 +450,12 @@ describe('sanitizeEconomy: napraw to, co da się naprawić', () => {
 
   it('ulepszenia: nieznane i zbyt wysokie poziomy są odrzucone albo przycięte', () => {
     const out = sanitizeEconomy({ ...json(defaults()), upgrades: { ulotki: 99, szkolenie: 'x', czołg: 3, wozek: 2.4, klima: -1 } }, defaults(), info)!;
-    expect(out.upgrades).toEqual({ ulotki: 5, wozek: 2 });
+    expect(out.upgrades).toEqual({ ulotki: 8, wozek: 2 });   // ulotki mają od etapu 4b osiem poziomów
+  });
+
+  it('ulepszenia późnej gry (4b) wczytują się i są przycinane do własnego maxLevel', () => {
+    const out = sanitizeEconomy({ ...json(defaults()), upgrades: { dron: 99, kasaEkspres: 2, ekrany: 5, barHot: 7, magazynWys: 3 } }, defaults(), info)!;
+    expect(out.upgrades).toEqual({ dron: 3, kasaEkspres: 2, ekrany: 5, barHot: 4, magazynWys: 3 });
   });
 
   it('paleta: suma sztuk wynika z zawartości, a nowy numer palety nie koliduje z istniejącymi', () => {
@@ -583,7 +588,7 @@ describe('sanitizeEconomy: skończone, ale absurdalne liczby (zapis ręcznie zmi
     }, s);
     expect(out.deliveries.length).toBeLessThanOrEqual(8);
     expect(out.pallets.length).toBeLessThanOrEqual(256);
-    expect(out.equipment.length).toBeLessThanOrEqual(64);
+    expect(out.equipment.length).toBeLessThanOrEqual(96);
     expect(out.history.length).toBeLessThanOrEqual(12_000);
     expect(out.milestones.length).toBeLessThanOrEqual(200);
     expect(out.nextPalletId).toBeGreaterThan(Math.max(...out.pallets.map((p) => p.id)));
@@ -619,7 +624,7 @@ describe('sanitizeEconomy: skończone, ale absurdalne liczby (zapis ręcznie zmi
   it('znaczniki czasu: remont najwyżej tak długi jak największy w grze, kary i premie nie wybiegają w przyszłość', () => {
     const s = rich();
     const out = load({ remontUntil: 1e300, boostUntil: 1e300, lastFineAt: 1e300 }, s);
-    expect(out.remontUntil).toBeLessThanOrEqual(s.minute + 4 * MINUTES_PER_DAY);
+    expect(out.remontUntil).toBeLessThanOrEqual(s.minute + 6 * MINUTES_PER_DAY);   // najdłuższy remont (piąty) trwa 6 dni
     expect(out.boostUntil).toBeLessThanOrEqual(1000 * 366 * MINUTES_PER_DAY);
     expect(out.lastFineAt).toBeLessThanOrEqual(s.minute);
     expect(load({ lastFineAt: -1e300 }, s).lastFineAt).toBe(-1e9);
@@ -649,8 +654,8 @@ describe('sanitizeEconomy: skończone, ale absurdalne liczby (zapis ręcznie zmi
     const shelf = Object.fromEntries(CATS.map((c) => [c, 1e308]));
     const out = load({ shelf, backroom: shelf, queue: 1e308, arrivalAcc: 1e308, ogonkiAcc: 1e308 });
     for (const c of CATS) {
-      expect(out.shelf[c]).toBeLessThanOrEqual(100_000);
-      expect(out.backroom[c]).toBeLessThanOrEqual(100_000);
+      expect(out.shelf[c]).toBeLessThanOrEqual(250_000);
+      expect(out.backroom[c]).toBeLessThanOrEqual(250_000);
     }
     expect(out.queue).toBeLessThanOrEqual(1000);
     expect(out.arrivalAcc).toBeLessThanOrEqual(1);

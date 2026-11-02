@@ -5,7 +5,7 @@ import { HOUR_CURVE, MINUTES_PER_DAY, OPEN_FROM, OPEN_TO } from '@/sim/economy/c
 import { expectedDailyCustomers, isOpenForCustomers, isStoreOpen } from '@/sim/economy/economy';
 import { openSecond, partnerSession } from '../../tests/firmKit';
 import { MemoryStorage } from './memoryStorage';
-import { CROWD_MAX, baseLotOf, clearSeedFromUrl, crowdRateFor, timeOfDayAt, trafficPerHour } from './scene';
+import { CROWD_MAX, QUEUE_ROOM_MIN, baseLotOf, clearSeedFromUrl, crowdRateFor, queueInputFor, timeOfDayAt, trafficPerHour } from './scene';
 import { createSession, firmOf, pointAtActive, saveSession, type GameSession } from './session';
 
 /*
@@ -119,6 +119,61 @@ describe('crowdRateFor: gęstość tłumu z ekonomii', () => {
     const s = busy(17);
     const before = JSON.stringify([s.econ, s.info]);
     crowdRateFor(s, 'niska');
+    expect(JSON.stringify([s.econ, s.info])).toBe(before);
+  });
+
+  it('postacie w kolejce przed sklepem liczą się do puli presetu: tłum w sali dostaje o tyle mniej, ale nigdy poniżej 4', () => {
+    for (const preset of PRESETS) {
+      expect(crowdRateFor(busy(8), preset, 0)).toEqual(crowdRateFor(busy(8), preset));   // bez kolejki jak dotąd
+      for (const reserve of [1, 6, CROWD_MAX[preset] - QUEUE_ROOM_MIN]) {
+        const rate = crowdRateFor(busy(8), preset, reserve);
+        expect(rate.targetCount, `${preset} −${reserve}`).toBe(CROWD_MAX[preset] - reserve);
+        expect(rate.targetCount + reserve).toBeLessThanOrEqual(CROWD_MAX[preset]);
+        expect(rate.targetCount).toBeGreaterThanOrEqual(QUEUE_ROOM_MIN);
+        expect(rate.spawnPerMinute).toBe(24);   // napływ bez zmian
+      }
+    }
+    expect(crowdRateFor(atHour(3), 'niska', 6)).toEqual({ targetCount: 0, spawnPerMinute: 0, closing: true });   // zamknięty sklep bez zmian
+  });
+});
+
+describe('queueInputFor: stan kart dla kolejki przed sklepem (zadanie 11)', () => {
+  /** Zrzut Traszkomonów w toku od 6:00: ruch +0,9 („Limit 2 saszetki”) albo +1,6 („Bez limitu”), jak po odpowiedzi gracza. */
+  function withDrop(s: GameSession, value: number): GameSession {
+    const day0 = Math.floor(s.econ.minute / MINUTES_PER_DAY) * MINUTES_PER_DAY;
+    s.econ.tycoon.cards.active.push({ kind: 'traffic', value, from: day0 + 360, until: day0 + 720, seq: 1 });
+    return s;
+  }
+
+  it('bez kart ruch to 1, z zrzutem czyta mnożnik z kart, a minutę doby liczy z zegara', () => {
+    expect(queueInputFor(atHour(8), 'srednia')).toEqual({ traffic: 1, minuteOfDay: 8 * 60, cap: CROWD_MAX.srednia - QUEUE_ROOM_MIN });
+    expect(queueInputFor(withDrop(atHour(8), 0.9), 'srednia').traffic).toBeCloseTo(1.9, 12);
+    expect(queueInputFor(withDrop(atHour(9), 1.6), 'wysoka').traffic).toBeCloseTo(2.6, 12);
+    expect(queueInputFor(withDrop(atHour(9), 1.6), 'wysoka').minuteOfDay).toBe(9 * 60);
+    const nextDay = withDrop(atHour(8), 1.6);
+    nextDay.econ.minute += MINUTES_PER_DAY;   // karta wygasła (efekt tylko tego ranka)
+    expect(queueInputFor(nextDay, 'srednia').traffic).toBe(1);
+  });
+
+  it('pula: kolejka dostaje preset minus miejsce, które zostaje w sali (4 postacie)', () => {
+    expect(PRESETS.map((p) => queueInputFor(atHour(8), p).cap)).toEqual(PRESETS.map((p) => CROWD_MAX[p] - 4));
+    expect(Math.min(...PRESETS.map((p) => queueInputFor(atHour(8), p).cap))).toBeGreaterThanOrEqual(6);   // nawet „niska” ma na pełną dolną granicę kolejki
+  });
+
+  it('zamknięty sklep (remont, karta „zamknij na godzinę”, noc) nie ma kolejki: ruch 1', () => {
+    const s = withDrop(atHour(8), 1.6);
+    expect(queueInputFor(s, 'srednia').traffic).toBeCloseTo(2.6, 12);
+    s.econ.remontUntil = s.econ.minute + 120;
+    expect(queueInputFor(s, 'srednia').traffic).toBe(1);
+    s.econ.remontUntil = null;
+    s.econ.tycoon.cards.active.push({ kind: 'closed', value: 1, from: s.econ.minute, until: s.econ.minute + 60, seq: 2 });
+    expect(queueInputFor(s, 'srednia').traffic).toBe(1);
+  });
+
+  it('czyta tylko stan, niczego nie zmienia', () => {
+    const s = withDrop(atHour(8), 1.6);
+    const before = JSON.stringify([s.econ, s.info]);
+    queueInputFor(s, 'niska');
     expect(JSON.stringify([s.econ, s.info])).toBe(before);
   });
 });

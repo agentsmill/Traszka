@@ -79,6 +79,7 @@ export const CITY_UI: Dict = {
   'kradzieże: wysokie, zobaczysz je przy remanencie': 'theft: high, you will see it at the stocktake',
   'Konkurencja obok': 'Competition nearby',
   'brak w promieniu {0} m': 'none within {0} m',
+  'Twoja Traszka {0} m stąd: −{1} ruchu': 'Your Traszka {0} m away: −{1} footfall',
   'Budowa': 'Build time',
   'Pakiet otwarcia': 'Opening package',
   // lokal „po Traszce” (4a.2): wyposażenie, które zostało, i zniżka pakietu

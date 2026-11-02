@@ -4,22 +4,23 @@ import { EN_REMONTS } from '@/i18n/en/content';
 import { PL_CHARS } from '../../../tests/i18nScan';
 import { partnerSession, reletFirm } from '../../../tests/firmKit';
 import { createSession, firmOf } from '@/game/session';
-import { RIVAL_RADIUS_M } from '@/sim/city/traffic';
+import { OWN_FACTOR, OWN_RADIUS_M, RIVAL_RADIUS_M } from '@/sim/city/traffic';
 import { lotById } from '@/sim/city/generateCity';
 import { planFor } from '@/sim/economy/franchisee';
 import { RELET_SHARE, applyFirmCommand, lotState, partnerProgress, rentPrice } from '@/sim/firm/commands';
 import { emptyStepOut } from '@/sim/firm/firm';
 import type { FirmCommand, FirmCommandResult } from '@/sim/firm/commands';
-import { MAX_STORES, type FirmRefusal, type FirmState } from '@/sim/firm/types';
+import { BASE_STORE_LIMIT, type FirmRefusal, type FirmState } from '@/sim/firm/types';
 import { cityLayer, firm, lotPay, selectedLot, tab, toasts, type GameActions } from '../state';
 import { percentOf, zl } from '../game/format';
 import { buttonAria, buttonLabelled, buttonsOf, click, labels, textOf, walk, type Vnode } from '../game/vnodeTree';
 import { CityBar, CityPanel, LotList } from './CityPanel';
 import { HourChart } from './HourChart';
 import { LotCard } from './LotCard';
+import { ResearchSection } from './ResearchSection';
 import { SWIPE_MIN_PX, freeLotRows, lotCardModel, lotHours } from './cityModel';
 import { brandName, districtName, levelText, lotKindName, lotStateName, progressText, refusalText, sourceText } from './cityText';
-import { addressText } from './firmText';
+import { addressText, limitText } from './firmText';
 
 /*
  * Ekran Miasta (spec §9): pasek statusu, lista wolnych lokali i karta lokalu. Komponenty nie mają haków, więc wołamy je jak funkcje
@@ -96,7 +97,9 @@ describe('pasek miasta (data-tut="city-status")', () => {
     const text = textOf(byTut(bar(f), 'city-status'));
     expect(text).toContain('Partner Strategiczny');
     expect(text).toContain(progressText({ kind: 'granted' }));
-    expect(textOf(bar(f))).toContain(`placówki 1/${MAX_STORES}`);
+    expect(textOf(bar(f))).toContain(`placówki 1/${BASE_STORE_LIMIT}`);   // limit firmy (3 na start), a nie twardy sufit pięciu
+    f.storeLimit = 4;
+    expect(textOf(bar(f))).toContain('placówki 1/4');
   });
 
   it('w rankingu pasek mówi tekst rankingowy Centrali, a nie „Partner Strategiczny”', () => {
@@ -393,6 +396,28 @@ describe('karta lokalu', () => {
     expect(textOf(card(f, lonely.lotId))).toContain(`brak w promieniu ${RIVAL_RADIUS_M} m`);
   });
 
+  it('własny sklep w promieniu: „Twoja Traszka N m stąd: −10% ruchu” (jeden wiersz na sklep), a lokal bez sklepu obok go nie ma', () => {
+    const f = partnerFirm();
+    const near = rowsOf(f).find((r) => lotCardModel(SEED, f, r.lotId, 'raty').ownNear.length > 0)!;
+    const own = lotCardModel(SEED, f, near.lotId, 'raty').ownNear;
+    expect(own).toHaveLength(1);
+    const tree = card(f, near.lotId);
+    const lines = walk(tree).filter((v) => /^Twoja Traszka /.test(textOf(v)) && v.type === 'p').map(textOf);
+    expect(lines).toEqual([`Twoja Traszka ${own[0]!.meters} m stąd: −${percentOf(1 - OWN_FACTOR)} ruchu`]);
+    expect(percentOf(1 - OWN_FACTOR)).toBe('10%');
+    expect(own[0]!.meters).toBeLessThan(OWN_RADIUS_M);
+    const far = rowsOf(f).find((r) => lotCardModel(SEED, f, r.lotId, 'raty').ownNear.length === 0)!;
+    expect(textOf(card(f, far.lotId))).not.toContain('Twoja Traszka');
+  });
+
+  it('własny sklep obok po angielsku: „Your Traszka N m away: −10% footfall”', () => {
+    const f = partnerFirm();
+    const near = rowsOf(f).find((r) => lotCardModel(SEED, f, r.lotId, 'raty').ownNear.length > 0)!;
+    const meters = lotCardModel(SEED, f, near.lotId, 'raty').ownNear[0]!.meters;
+    lang.value = 'en';
+    expect(textOf(card(f, near.lotId))).toContain(`Your Traszka ${meters} m away: −10% footfall`);
+  });
+
   describe('przycisk „Biorę lokal”', () => {
     const lockText = (tree: Vnode): string => textOf(walk(tree).find((v) => String(v.props.class ?? '').includes('tt-lockmsg'))!);
 
@@ -416,7 +441,7 @@ describe('karta lokalu', () => {
       selectedLot.value = row.lotId;
       click(buttonLabelled(card(f, row.lotId, fakeGame({ ok: false, reason: 'limit' })), 'Biorę lokal'));
       expect(selectedLot.value).toBe(row.lotId);
-      expect(toasts.value).toEqual([expect.objectContaining({ text: refusalText('limit'), kind: 'error' })]);
+      expect(toasts.value).toEqual([expect.objectContaining({ text: refusalText('limit', f), kind: 'error' })]);
       // ten sam tekst od powłoki gry (dispatchFirm) nie robi drugiego toastu
       click(buttonLabelled(card(f, row.lotId, fakeGame({ ok: false, reason: 'limit' })), 'Biorę lokal'));
       expect(toasts.value).toHaveLength(1);
@@ -443,7 +468,7 @@ describe('karta lokalu', () => {
       expect(lockText(tree)).toBe(refusalText(reason));
     });
 
-    it('limit: trzy placówki wliczając budowy dają zdanie o trzech placówkach, a przy dwóch lokal jest jeszcze do wzięcia', () => {
+    it('limit: trzy placówki wliczając budowy dają zdanie o progu obrotu do kolejnej, a przy dwóch lokal jest jeszcze do wzięcia', () => {
       const f = partnerFirm();
       const [first, second, third] = rowsOf(f);
       lotPay.value = 'gotowka';
@@ -453,7 +478,8 @@ describe('karta lokalu', () => {
       expect(f.builds).toHaveLength(2);
       const tree = card(f, third!.lotId);
       expect(buttonLabelled(tree, 'Biorę lokal').props.disabled).toBe(true);
-      expect(lockText(tree)).toBe('Trzy placówki to na tym etapie partnerstwa wszystko, na co Centrala jest gotowa się zgodzić.');
+      expect(lockText(tree)).toBe(`Centrala zgodzi się na kolejną placówkę, gdy obrót sieci w miesiącu przekroczy ${zl(1_000_000)}.`);
+      expect(lockText(tree)).toBe(limitText(f));
     });
 
     it('raty ponad limit nowego sklepu: zdanie o limicie rat', () => {
@@ -575,6 +601,54 @@ describe('panel miasta', () => {
     const ok = CityPanel({ game: fakeGame() }) as Vnode;
     expect(String(ok.props.class)).toContain('has-card');
     expect(walk(ok).some((v) => v.type === LotCard)).toBe(true);
+  });
+
+  describe('badania Sieci i limit placówek (4b)', () => {
+    const sections = (tree: unknown): Vnode[] => walk(tree as never).filter((v) => v.type === ResearchSection);
+
+    it('Partner w zwykłej grze ma sekcję badań pod listą lokali (przed kartą), niezależnie od wyboru lokalu', () => {
+      const f = partnerFirm();
+      firm.value = { f, v: 1 };
+      const tree = CityPanel({ game: fakeGame() });
+      expect(sections(tree)).toHaveLength(1);
+      const order = walk(tree).filter((v) => v.type === CityBar || v.type === LotList || v.type === ResearchSection || v.type === LotCard).map((v) => v.type);
+      expect(order).toEqual([CityBar, LotList, ResearchSection]);
+      selectedLot.value = rowsOf(f)[0]!.lotId;
+      const withCard = walk(CityPanel({ game: fakeGame() })).filter((v) => v.type === CityBar || v.type === LotList || v.type === ResearchSection || v.type === LotCard).map((v) => v.type);
+      expect(withCard).toEqual([CityBar, LotList, ResearchSection, LotCard]);   // karta chowa sekcję w CSS (`.has-card`), stan rozwinięcia zostaje
+    });
+
+    it('bez statusu Partnera (nie da się mieć drugiego sklepu) i w biegu rankingowym sekcji badań nie ma', () => {
+      const f = plainFirm();
+      firm.value = { f, v: 1 };
+      expect(sections(CityPanel({ game: fakeGame() }))).toHaveLength(0);
+      const ranked = partnerFirm();
+      ranked.ranked = true;
+      firm.value = { f: ranked, v: 1 };
+      expect(sections(CityPanel({ game: fakeGame() }))).toHaveLength(0);
+    });
+
+    it('lista wolnych lokali mówi, jak odblokować kolejną placówkę, dopiero gdy limit jest wypełniony (budowy się liczą)', () => {
+      const f = partnerFirm();
+      expect(textOf(list(f))).not.toContain('Centrala zgodzi się');   // jedna placówka z trzech
+      const [first, second] = rowsOf(f);
+      for (const r of [first!, second!]) expect(applyFirmCommand(f, { type: 'rentLot', lotId: r.lotId, pay: 'gotowka' }, emptyStepOut())).toEqual({ ok: true });
+      const text = textOf(list(f));
+      expect(text).toContain(limitText(f));
+      expect(text).toContain(`przekroczy ${zl(1_000_000)}`);
+      f.storeLimit = 4;
+      expect(textOf(list(f))).not.toContain('Centrala zgodzi się');   // czwarta placówka jest już dozwolona
+      f.builds.length = 0;
+      f.storeLimit = 5;
+      f.builds.push(...Array.from({ length: 4 }, (_, i) => ({ lotId: rowsOf(f)[i]!.lotId, readyDay: 99, price: 1, pay: 'gotowka' as const })));
+      expect(textOf(list(f))).toContain('Pięć placówek to wszystko');
+    });
+
+    it('bez statusu Partnera lista nie mówi o limicie (odmowa jest wtedy o statusie)', () => {
+      const f = plainFirm();
+      f.storeLimit = 3;
+      expect(textOf(list(f))).not.toContain('Centrala zgodzi się');
+    });
   });
 
   it('w rankingu mapę widać, pasek mówi tekst rankingowy, a wynajem jest odrzucony', () => {

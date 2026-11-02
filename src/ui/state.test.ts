@@ -7,7 +7,7 @@ import { computeStoreInfo } from '@/sim/economy/storeInfo';
 import { visibleCards } from '@/sim/economy/tycoon/cards';
 import { MemoryStorage } from '@/game/memoryStorage';
 import {
-  closeFinish, closeHowTo, closeNetworkReport, closePanel, closeRemanent, dismissStory, econ, finish, firm, howTo, isWindowOpen, networkReport,
+  closeFameOffer, closeFinish, closeHowTo, closeNetworkReport, closePanel, closeRemanent, dismissStory, econ, fameOffer, finish, firm, howTo, isWindowOpen, networkReport,
   offerTutorial, openHowTo, openPanel, openRanking, panel, pushStory, pushToast, ranked, remanent, report, start, story, toasts,
   tutorialOffer, welcome, type FirmView, type GameActions, type NetworkReportView, type RemanentView,
 } from './state';
@@ -24,6 +24,7 @@ const clearWindows = (): void => {
   finish.value = null;
   ranked.value = null;
   panel.value = null;
+  fameOffer.value = null;
   tutorialOffer.value = false;
   networkReport.value = null;
   remanent.value = null;
@@ -168,6 +169,7 @@ describe('isWindowOpen: każde okno z sygnałem zatrzymuje grę, karta decyzji i
     ['protokół remanentu', () => { remanent.value = {} as RemanentView; }],
     ['ekran „Nowy sklep”', () => { start.value = {} as NonNullable<typeof start.value>; }],
     ['„Jak grać”', () => openHowTo()],
+    ['gratulacje za milion i wpis do Galerii sław', () => { fameOffer.value = { seed: 'traszka-okna', day: 134, cash: 1_012_345 }; }],
   ];
   for (const [name, open] of cases) {
     it(name, () => {
@@ -185,6 +187,13 @@ describe('isWindowOpen: każde okno z sygnałem zatrzymuje grę, karta decyzji i
     expect(isWindowOpen()).toBe(false);
     for (const c of visibleCards(s.tycoon.cards, s.minute)) applyCommand(s, INFO, { type: 'answerCard', seq: c.seq, answer: c.defaultAnswer });
     expect(awaitingDecision(s)).toBe(false);
+  });
+
+  it('closeFameOffer zamyka gratulacje i gra przestaje stać pod oknem', () => {
+    fameOffer.value = { seed: 'traszka-okna', day: 134, cash: 1_012_345 };
+    closeFameOffer();
+    expect(fameOffer.value).toBeNull();
+    expect(isWindowOpen()).toBe(false);
   });
 
   it('„Zaczynamy” zamyka „Jak grać”', () => {
@@ -238,6 +247,8 @@ describe('panele rankingu: sygnał panel', () => {
     expect('tab' in panel.value!).toBe(false);
     openPanel('ranking', 'week');
     expect(panel.value).toEqual({ id: 'ranking', tab: 'week' });
+    openPanel('ranking', 'fame');
+    expect(panel.value).toEqual({ id: 'ranking', tab: 'fame' });
     closePanel();
     expect(panel.value).toBeNull();
     closePanel();   // zamykanie zamkniętego niczego nie psuje

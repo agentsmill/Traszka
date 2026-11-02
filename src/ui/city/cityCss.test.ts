@@ -39,3 +39,16 @@ describe('city.css: pinezka lokalu obok na telefonie', () => {
     expect(phone).not.toMatch(/\.tt-cpin-obok \{[^}]*display:\s*none/);
   });
 });
+
+describe('city.css: badania Sieci i kanibalizacja (4b)', () => {
+  it('opis badania obok przycisku z ceną łamie się (min-width: 0, overflow-wrap), a nagłówek sekcji łamie wiersz', () => {
+    expect(rule('.tt-research .tt-item > div:first-child')).toMatch(/min-width:\s*0/);
+    expect(rule('.tt-research .tt-item > div:first-child')).toMatch(/overflow-wrap:\s*anywhere/);
+    expect(rule('.tt-research > summary')).toMatch(/flex-wrap:\s*wrap/);
+  });
+
+  it('po wyborze lokalu sekcja badań ustępuje karcie jak lista, a wiersz własnego sklepu na karcie się łamie', () => {
+    expect(rule('.tt-city.has-card .tt-research')).toMatch(/display:\s*none/);
+    expect(rule('.tt-own')).toMatch(/overflow-wrap:\s*anywhere/);
+  });
+});

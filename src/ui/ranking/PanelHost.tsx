@@ -1,4 +1,5 @@
-import { closePanel, panel, unsent, type GameActions } from '../state';
+import { closeFameOffer, closePanel, fameOffer, firm, openPanel, panel, seed, unsent, type FameOffer, type GameActions } from '../state';
+import { FameWindow } from './FameWindow';
 import { RankingPanel } from './RankingPanel';
 import { RecoveryPanel } from './RecoveryPanel';
 import type { RankingServices } from './services';
@@ -15,15 +16,39 @@ import type { RankingServices } from './services';
  *
  * Niewysłany bieg (`unsent`) ma w panelu rankingu baner z przyciskiem „Wyślij”: panel zamyka się, a okno końca sezonu otwiera się
  * w jego miejsce (`openFinish`).
+ *
+ * Galeria sław (4b §5.7): okno gratulacji `FameWindow` pokazuje się, gdy sygnał `fameOffer` ma wartość (zdarzenie `million` albo „Wyślij mój
+ * wpis” w zakładce Galerii) i ma pierwszeństwo przed panelami; zakładka „Galeria sław” jest częścią panelu rankingu.
  */
 export function PanelHost({ game, services }: { game: Pick<GameActions, 'openFinish'>; services: RankingServices | null }) {
   const open = panel.value;
-  if (!open || !services) return null;
+  const offer = fameOffer.value;
+  if (!services || (!open && !offer)) return null;
+  // Gratulacje za milion mają pierwszeństwo: gdy `fameOffer` jest ustawiony, host pokazuje samo okno (panel nie jest wtedy montowany, a jego stan
+  // leży w modelach, więc wraca po zamknięciu okna). Zdarzenie `million` i tak przychodzi przy zamkniętych panelach, bo otwarty panel zatrzymuje grę.
+  if (offer) {
+    return (
+      <FameWindow
+        model={services.fameModel} offer={offer} onClose={closeFameOffer}
+        onOpenGallery={() => { closeFameOffer(); openPanel('ranking', 'fame'); }}
+      />
+    );
+  }
+  if (!open) return null;
   if (open.id === 'recovery') return <RecoveryPanel model={services.recoveryModel} onClose={closePanel} />;
+  const mine = fameEntryOfFirm();
   return (
     <RankingPanel
       model={services.rankingModel} onClose={closePanel} unsent={unsent.value}
       onSendUnsent={() => { closePanel(); game.openFinish(); }}
+      fame={services.fameModel} fameEntry={mine}
+      onSendFame={() => { closePanel(); if (mine) fameOffer.value = mine; }}
     />
   );
+}
+
+/** Milion firmy z zapisu (`fame`: dzień i gotówka z chwili przekroczenia) z seedem otwartej gry albo null, gdy firma jeszcze go nie ma. */
+function fameEntryOfFirm(): FameOffer | null {
+  const fame = firm.value?.f.fame;
+  return fame ? { seed: seed.value, day: fame.day, cash: fame.cash } : null;
 }

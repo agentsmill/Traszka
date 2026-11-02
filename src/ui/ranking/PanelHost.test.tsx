@@ -1,10 +1,14 @@
 import type { VNode } from 'preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { openPanel, panel, unsent, type GameActions, type PanelState } from '../state';
+import type { FirmState } from '@/sim/firm/types';
+import { fameOffer, firm, openPanel, panel, seed, unsent, type GameActions, type PanelState } from '../state';
+import { FameWindow } from './FameWindow';
+import { loadMeta } from '@/game/meta';
 import type { RankingClient } from './client';
 import { PanelHost } from './PanelHost';
 import { RankingPanel } from './RankingPanel';
 import { RecoveryPanel } from './RecoveryPanel';
+import { createFameModel } from './fameModel';
 import { createRankingModel } from './rankingModel';
 import { createRecoveryModel } from './recoveryModel';
 import type { RankingServices } from './services';
@@ -18,6 +22,8 @@ const client = (): RankingClient => ({
   uploadSave: vi.fn(),
   downloadSave: vi.fn(),
   submitRun: vi.fn(),
+  fameList: vi.fn(async () => ({ ok: true as const, total: 0, rows: [] })),
+  fameSubmit: vi.fn(),
 });
 
 /** Usługi, które liczą odczyty modeli: pokazują, który model dotknął host (w grze powstaje dopiero przy pierwszym odczycie). */
@@ -29,24 +35,29 @@ function countingServices() {
     client: c, key: () => KEY, adoptKey: () => null, exportSave: () => null, stageSave: () => null, reload: () => undefined,
     sync: { get: () => null, set: () => undefined },
   });
+  const fame = createFameModel({ client: c, meta: () => loadMeta(), saveMeta: () => undefined });
   const services: RankingServices = {
     get rankingModel() { reads.push('ranking'); return ranking; },
     get recoveryModel() { reads.push('recovery'); return recovery; },
+    get fameModel() { reads.push('fame'); return fame; },
     dispose: () => undefined,
   };
-  return { services, reads, ranking, recovery, client: c };
+  return { services, reads, ranking, recovery, fame, client: c };
 }
 
 const game = (over: Partial<Pick<GameActions, 'openFinish'>> = {}): Pick<GameActions, 'openFinish'> => ({ openFinish: vi.fn(), ...over });
 const vnode = (tree: unknown): VNode<Record<string, unknown>> => tree as VNode<Record<string, unknown>>;
 
-beforeEach(() => {
+const resetSignals = (): void => {
   panel.value = null;
   unsent.value = null;
-});
+  fameOffer.value = null;
+  firm.value = null;
+  seed.value = '';
+};
+beforeEach(resetSignals);
 afterEach(() => {
-  panel.value = null;
-  unsent.value = null;
+  resetSignals();
   vi.restoreAllMocks();
 });
 
@@ -65,7 +76,7 @@ describe('PanelHost: który panel i z jakim modelem', () => {
     const tree = vnode(PanelHost({ game: game(), services }));
     expect(tree.type).toBe(RankingPanel);
     expect(tree.props.model).toBe(ranking);
-    expect(reads).toEqual(['ranking']);
+    expect(reads).toEqual(['ranking', 'fame']);   // panel rankingu ma też zakładkę Galerii sław
   });
 
   it('panel „recovery” to RecoveryPanel z modelem kodu odzyskiwania; modelu rankingu host nie rusza', () => {
@@ -109,5 +120,61 @@ describe('PanelHost: niewysłany bieg w panelu rankingu', () => {
     expect(actions.openFinish).toHaveBeenCalledTimes(1);
     expect(seenByFinish).toEqual([null]);
     expect(panel.value).toBeNull();
+  });
+});
+
+describe('PanelHost: Galeria sław', () => {
+  const withFame = (fame: FirmState['fame']): void => { firm.value = { f: { fame } as FirmState, v: 1 }; };
+
+  it('zakładka Galerii dostaje model i milion firmy z seedem otwartej gry; bez miliona (fame null) wpisu nie ma', () => {
+    const { services, fame } = countingServices();
+    openPanel('ranking', 'fame');
+    seed.value = 'pierogi-731';
+    expect(vnode(PanelHost({ game: game(), services })).props.fameEntry ?? null).toBeNull();
+    withFame({ day: 134, cash: 1_012_345 });
+    const tree = vnode(PanelHost({ game: game(), services }));
+    expect(tree.type).toBe(RankingPanel);
+    expect(tree.props.fame).toBe(fame);
+    expect(tree.props.fameEntry).toEqual({ seed: 'pierogi-731', day: 134, cash: 1_012_345 });
+  });
+
+  it('„Wyślij mój wpis” zamyka panel i otwiera okno gratulacji z milionem firmy', () => {
+    const { services } = countingServices();
+    seed.value = 'pierogi-731';
+    withFame({ day: 134, cash: 1_012_345 });
+    openPanel('ranking', 'fame');
+    const tree = vnode(PanelHost({ game: game(), services }));
+    (tree.props.onSendFame as () => void)();
+    expect(panel.value).toBeNull();
+    expect(fameOffer.value).toEqual({ seed: 'pierogi-731', day: 134, cash: 1_012_345 });
+  });
+
+  it('ustawiony fameOffer to FameWindow z modelem Galerii zamiast panelu (panel wraca po zamknięciu okna); modelu rankingu host nie rusza', () => {
+    const { services, reads, fame } = countingServices();
+    openPanel('ranking', 'global');
+    fameOffer.value = { seed: 'pierogi-731', day: 134, cash: 1_012_345 };
+    const tree = vnode(PanelHost({ game: game(), services }));
+    expect(tree.type).toBe(FameWindow);
+    expect(tree.props.model).toBe(fame);
+    expect(tree.props.offer).toEqual(fameOffer.value);
+    expect(reads).toEqual(['fame']);
+    (tree.props.onClose as () => void)();
+    expect(fameOffer.value).toBeNull();
+    expect(vnode(PanelHost({ game: game(), services })).type).toBe(RankingPanel);
+  });
+
+  it('gratulacje bez otwartego panelu też się pokazują; bez usług (benchmark) nie ma nic', () => {
+    const { services } = countingServices();
+    fameOffer.value = { seed: 'pierogi-731', day: 134, cash: 1_012_345 };
+    expect(vnode(PanelHost({ game: game(), services })).type).toBe(FameWindow);
+    expect(PanelHost({ game: game(), services: null })).toBeNull();
+  });
+
+  it('„Zobacz Galerię” zamyka gratulacje i otwiera panel rankingu na zakładce Galerii', () => {
+    const { services } = countingServices();
+    fameOffer.value = { seed: 'pierogi-731', day: 134, cash: 1_012_345 };
+    (vnode(PanelHost({ game: game(), services })).props.onOpenGallery as () => void)();
+    expect(fameOffer.value).toBeNull();
+    expect(panel.value).toEqual({ id: 'ranking', tab: 'fame' });
   });
 });

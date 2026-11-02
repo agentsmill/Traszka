@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DEBT_LIMIT, HOUR_CURVE, REMANENT, WAGE_PER_DAY } from '@/sim/economy/catalog';
-import { DEBT_WARN, LOC_LABEL, createEconomy, debtWarningText, expectedDailyCustomers, freeSpots, kpiScaleOf, nextRemont, upgradeBlocker, type CommandResult, type EconomyState, type MonthReport } from '@/sim/economy/economy';
+import { DEBT_WARN, LOC_LABEL, createEconomy, debtWarningText, expectedDailyCustomers, freeSpots, kpiScaleOf, nextRemont, upgradeBlocker, wagesPerDay, type CommandResult, type EconomyState, type MonthReport } from '@/sim/economy/economy';
 import type { Command } from '@/sim/economy/commands';
 import { forecastMonth, spendCheck } from '@/sim/economy/forecast';
 import { forecastFirm } from '@/sim/firm/forecast';
@@ -23,12 +23,13 @@ import { noticeEndDay } from '@/sim/firm/closure';
 import { econ, firm, metaView, monthPreview, ranked, speed, tab, type GameActions } from '../state';
 import { firmOf } from '@/game/session';
 import { applyFirmCommand } from '@/sim/firm/commands';
+import { FIRM_GOALS } from '@/sim/firm/goals';
 import { emptyStepOut } from '@/sim/firm/firm';
 import { lotAddress, storeName } from '../city/firmText';
 import { networkRow } from '../city/storeSwitcherModel';
 import { openSecond, partnerSession } from '../../../tests/firmKit';
 import { CityPanel } from '../city/CityPanel';
-import { Bar, GoalsPanel, PalletItem, PalletsPanel, PeoplePanel, Sheet, ShopPanel, StorePanel, TabBar } from './panels';
+import { Bar, GoalsPanel, PalletItem, PalletsPanel, PeoplePanel, Sheet, ShopPanel, StorePanel, TabBar, remontsAway } from './panels';
 import { int, minusZl, money, percentOf, plural, signedZl, zl } from './format';
 import { buttonAria, buttonLabelled, buttonsOf, click, labels, sectionTitled, textOf, walk, type Vnode } from './vnodeTree';
 
@@ -1061,5 +1062,191 @@ describe('panel Sklep: zaufanie Centrali, remanent i czystość sali', () => {
     expect(textOf(dirty)).toContain('22%');
     expect(textOf(dirty)).toContain(WEATHER_LABEL.snieg);
     expect(walk(dirty).find((v) => v.type === Bar)!.props.warn).toBe(true);
+  });
+});
+
+describe('etap 4b: ulepszenia późnej gry pokazują się, gdy brakuje jednego remontu', () => {
+  const ids = (s: EconomyState, info: StoreInfo): string[] => walk(ShopPanel({ s, info, game: fakeGame(), v: 1 }))
+    .flatMap((v) => (UPGRADES.some((u) => u.id === v.key) ? [String(v.key)] : []));
+
+  it('remontsAway: ile poziomów remontu brakuje do wymagania (0 bez wymagania i po jego spełnieniu)', () => {
+    const { s } = rich();
+    const by = (id: string) => UPGRADES.find((u) => u.id === id)!;
+    expect(remontsAway(s, by('szkolenie'))).toBe(0);
+    expect(remontsAway(s, by('ekrany'))).toBe(3);
+    expect(remontsAway(s, by('magazynWys'))).toBe(4);
+    s.remontLevel = 2;
+    expect(remontsAway(s, by('ekrany'))).toBe(1);
+    expect(remontsAway(s, by('magazynWys'))).toBe(2);
+    s.remontLevel = 5;
+    expect(remontsAway(s, by('magazynWys'))).toBe(0);
+  });
+
+  it('od pierwszego dnia (remont 0) w panelu nie ma ulepszeń późnej gry, a humanoid zostaje jako cel warsztatu', () => {
+    const { s, info } = rich();
+    const shown = ids(s, info);
+    for (const hidden of ['kasaEkspres', 'ekrany', 'barHot', 'magazynWys', 'dron']) expect(shown, hidden).not.toContain(hidden);
+    expect(shown).toContain('humanoid');
+    expect(shown).toContain('szkolenie');
+    expect(textOf(ShopPanel({ s, info, game: fakeGame(), v: 1 }))).not.toContain('Wymaga remontu (poziom 3)');
+  });
+
+  it('po remoncie 2 pojawiają się te z wymaganiem remontu 3 (z podpisem „Wymaga remontu”), ale nie remont 4', () => {
+    const { s, info } = rich();
+    s.remontLevel = 2;
+    const shown = ids(s, info);
+    for (const id of ['kasaEkspres', 'ekrany', 'barHot', 'dron']) expect(shown, id).toContain(id);
+    expect(shown).not.toContain('magazynWys');
+    expect(textOf(ShopPanel({ s, info, game: fakeGame(), v: 1 }))).toContain('Wymaga remontu (poziom 3)');
+    s.remontLevel = 3;
+    expect(ids(s, info)).toContain('magazynWys');
+  });
+});
+
+describe('etap 4b: Ulepszenia i Ludzie w sieci', () => {
+  const HINT = 'Badania Sieci znajdziesz w panelu Miasto';
+
+  it('przy dwóch otwartych sklepach panel Ulepszeń podpowiada badania Sieci i prowadzi do Miasta; przy jednym sklepie i w rankingu nic', () => {
+    const session = partnerSession();
+    const f = firmOf(session);
+    firm.value = { f, v: 1 };
+    const tree = (): Vnode => ShopPanel({ s: session.econ, info: session.info, game: fakeGame(), v: 1 }) as Vnode;
+    expect(textOf(tree())).not.toContain(HINT);   // jeden sklep: badania nie działają
+    openSecond(session);
+    const section = sectionTitled(tree(), 'Sieć');
+    expect(textOf(section)).toContain(HINT);
+    click(buttonLabelled(section, 'Do Miasta'));
+    expect(tab.value).toBe('miasto');
+    f.ranked = true;
+    expect(textOf(tree())).not.toContain(HINT);
+    lang.value = 'en';
+    f.ranked = false;
+    expect(textOf(tree())).toContain('You’ll find Network research in the City panel');
+    lang.value = 'pl';
+  });
+
+  it('Płace w panelu Ludzie liczą się ze zniżką Wspólnej obsady (wagesPerDay), a podpowiedź mówi, ile to procent', () => {
+    const session = partnerSession();
+    openSecond(session);
+    const f = firmOf(session);
+    firm.value = { f, v: 1 };
+    const st = f.stores[0]!;
+    const view = (): ReturnType<typeof PeoplePanel> => PeoplePanel({ s: st.econ, info: st.info, game: fakeGame(), v: 1 });
+    const plain = (x: string): string => x.replace(/[\s  ]/g, '');
+    expect(plain(textOf(sectionTitled(view(), 'Zmiana')))).toContain(plain(`${int(st.econ.staff * WAGE_PER_DAY)} zł / dzień`));
+    expect(textOf(sectionTitled(view(), 'Zmiana'))).not.toContain('Wspólna obsada');
+    expect(applyFirmCommand(f, { type: 'research', id: 'obsada' }, emptyStepOut())).toEqual({ ok: true });
+    expect(applyFirmCommand(f, { type: 'research', id: 'obsada' }, emptyStepOut())).toEqual({ ok: true });
+    const wages = wagesPerDay(st.econ, f.stores[0]!.info);
+    expect(wages).toBeLessThan(st.econ.staff * WAGE_PER_DAY);
+    const text = textOf(sectionTitled(PeoplePanel({ s: st.econ, info: f.stores[0]!.info, game: fakeGame(), v: 1 }), 'Zmiana'));
+    expect(plain(text)).toContain(plain(`${int(wages)} zł / dzień`));
+    expect(text).toContain('Wspólna obsada (badania Sieci) obniża płace w tym sklepie o 6%');   // dwa poziomy × 0,03 × skala 1 przy dwóch sklepach
+  });
+});
+
+describe('etap 4b: cele sieci w panelu Cele', () => {
+  /** Sklep z firmą, której cele są ustawione ręcznie (stan, który daje `checkFirmGoals`). */
+  function goalsSetup(goals: { ready: string[]; claimed: string[] }): { s: EconomyState; info: StoreInfo; f: ReturnType<typeof firmOf> } {
+    const session = partnerSession();
+    const f = firmOf(session);
+    f.goals = goals;
+    firm.value = { f, v: 1 };
+    return { s: session.econ, info: session.info, f };
+  }
+  const panel = (s: EconomyState, info: StoreInfo, game = fakeGame()): Vnode => GoalsPanel({ s, info, game, v: 1 }) as Vnode;
+
+  it('gotowy cel ma przycisk „Odbierz”, który wysyła claimGoal z id, i podpis nagrody w Ogonkach (bez XP)', () => {
+    const { s, info } = goalsSetup({ ready: ['cash250k'], claimed: [] });
+    const game = fakeGame();
+    const section = sectionTitled(panel(s, info, game), 'Sieć');
+    expect(textOf(section)).toContain('Do odebrania');
+    expect(textOf(section)).toContain('Ćwierć bańki na koncie');
+    expect(textOf(section)).toContain('Nagroda: +30 🦎');
+    expect(textOf(section)).not.toContain('XP');
+    click(buttonLabelled(section, 'Odbierz'));
+    expect(game.firm).toHaveBeenCalledTimes(1);
+    expect(game.firm).toHaveBeenCalledWith({ type: 'claimGoal', id: 'cash250k' });
+    expect(game.dispatch).not.toHaveBeenCalled();   // to polecenie firmy, nie sklepu
+    expect(buttonAria(section, 'Odbierz: Ćwierć bańki na koncie')).toBe(buttonLabelled(section, 'Odbierz'));
+  });
+
+  it('bez gotowych celów pokazuje po jednym najbliższym z każdej ścieżki: gotówka, sklepy, badania', () => {
+    const { s, info } = goalsSetup({ ready: [], claimed: [] });
+    const section = sectionTitled(panel(s, info), 'Sieć');
+    const shown = walk(section).filter((v) => v.props['data-goal']).map((v) => v.props['data-goal']);
+    expect(shown).toEqual(['cash250k', 'stores3', 'research1']);
+    expect(labels(section)).toEqual([]);   // nie ma co odbierać
+    expect(textOf(section)).toContain('Miej na koncie 250 000 zł');   // podpowiedź celu z tabeli
+    expect(textOf(section)).toContain('Zdobyte: 0 / 10');
+  });
+
+  it('odebrane i gotowe cele nie wracają jako najbliższe: ścieżka idzie do następnego celu', () => {
+    const { s, info } = goalsSetup({ ready: ['cash500k'], claimed: ['cash250k', 'stores3', 'research1'] });
+    const section = sectionTitled(panel(s, info), 'Sieć');
+    expect(walk(section).filter((v) => v.props['data-goal'] && !String(v.props.class).includes('ready')).map((v) => v.props['data-goal'])).toEqual(['cash1m', 'stores4', 'research10']);
+    expect(walk(section).filter((v) => String(v.props.class).includes('ready')).map((v) => v.props['data-goal'])).toEqual(['cash500k']);
+    expect(textOf(section)).toContain('Zdobyte: 3 / 10');
+  });
+
+  it('wszystkie cele odebrane: sekcja ma tylko licznik', () => {
+    const all = FIRM_GOALS.map((g) => g.id);
+    const { s, info } = goalsSetup({ ready: [], claimed: all });
+    const section = sectionTitled(panel(s, info), 'Sieć');
+    expect(walk(section).filter((v) => v.props['data-goal'])).toEqual([]);
+    expect(textOf(section)).toContain('Zdobyte: 10 / 10');
+  });
+
+  it('w biegu rankingowym nie ma sekcji „Sieć” (ani przez sygnał rankingu, ani przez firmę rankingową)', () => {
+    const { s, info, f } = goalsSetup({ ready: ['cash250k'], claimed: [] });
+    expect(() => sectionTitled(panel(s, info), 'Sieć')).not.toThrow();
+    ranked.value = { seed: s.seed, day: 12, days: 91, phase: 'playing' };
+    expect(walk(panel(s, info)).filter((v) => v.props.title === 'Sieć')).toEqual([]);
+    ranked.value = null;
+    f.ranked = true;
+    expect(walk(panel(s, info)).filter((v) => v.props.title === 'Sieć')).toEqual([]);
+    expect(textOf(panel(s, info))).not.toContain('Ćwierć bańki');
+  });
+
+  it('jeden sklep bez statusu Partnera: sekcji „Sieć” nie ma, dopóki żaden cel nie czeka na odbiór; Partner ma ją od razu', () => {
+    const { s, info, f } = goalsSetup({ ready: [], claimed: [] });
+    const sections = (): Vnode[] => walk(panel(s, info)).filter((v) => v.props.title === 'Sieć');
+    f.person.partner = false;
+    expect(sections()).toEqual([]);   // podpowiedź „Kup badanie w panelu Miasto” prowadziłaby do ekranu, którego przed statusem nie ma
+    expect(textOf(panel(s, info))).not.toContain('Pierwsze badanie Sieci');
+    f.goals = { ready: ['cash250k'], claimed: [] };   // cel gotówkowy da się spełnić jednym sklepem: musi dać się odebrać
+    expect(sections()).toHaveLength(1);
+    expect(labels(sections()[0]!)).toEqual(['Odbierz']);
+    f.goals = { ready: [], claimed: ['cash250k'] };   // odebrany nie wraca; bez statusu znów nic
+    expect(sections()).toEqual([]);
+    f.person.partner = true;
+    expect(sections()).toHaveLength(1);
+  });
+
+  it('bez firmy (pierwsza klatka) panel Cele nie rzuca i nie ma sekcji „Sieć”', () => {
+    const { s, info } = rich();
+    firm.value = null;
+    expect(walk(GoalsPanel({ s, info, game: fakeGame(), v: 1 })).filter((v) => v.props.title === 'Sieć')).toEqual([]);
+  });
+
+  it('znacznik zakładki Cele liczy też cele sieci do odebrania; w rankingu ich nie liczy', () => {
+    const { s, info, f } = goalsSetup({ ready: ['cash250k', 'stores3'], claimed: [] });
+    s.milestonesReady = ['pallet1'];
+    econ.value = { s, info, v: 1 };
+    const badge = (): string => textOf(walk(TabBar()).filter((v) => v.props.class === 'tt-tab' && textOf(v).startsWith('🎯')).flatMap((tab) => walk(tab).filter((v) => v.props.class === 'tt-badge')));
+    expect(badge()).toBe('3');
+    f.ranked = true;
+    expect(badge()).toBe('1');
+  });
+
+  it('po angielsku: nazwa i podpowiedź celu są po angielsku, a przycisk „Claim”', () => {
+    const { s, info } = goalsSetup({ ready: ['stores4'], claimed: [] });
+    lang.value = 'en';
+    const section = sectionTitled(panel(s, info), 'Sieć');
+    expect(textOf(section)).toContain('A fourth branch');
+    expect(textOf(section)).toContain('Reward: +60 🦎');
+    expect(textOf(section)).toContain('Goals for the whole network, not a single shop. Achieved: 0 / 10');
+    expect(labels(section)).toEqual(['Claim']);
+    lang.value = 'pl';
   });
 });

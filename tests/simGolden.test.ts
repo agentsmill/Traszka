@@ -34,6 +34,7 @@ const GOLDEN: Record<number, string> = {
   4: '16a2834398928b489f50dc3b39de8cf18a49e3c700a0e4fbfc058b3f381a2239',   // więcej klientów i fale, 6 palet, limit debetu, nowy balans opłaty i premii
   5: 'fc9c4c590639fc761f798d8711cc05c7cc5bc1bbcd43f18494fa9b7fa8ba232f',   // palety bez odsyłania, paleta 480 szt., debet −100 tys., cele „Odbierz”, 0,5 karty na dobę, urealniona ekonomia
   6: '5e9bf18c7a4f04ad3e55081aa2c7ee3fb8ad1ef5262ab0b4469d9be3cca08c0e',   // trzy kieszenie: saldo u Centrali, wyciąg, raty, remanent
+  7: '97720ee3162d85bbf8ca51ac7bec6c92a808c861502a76392204e63608f4955d',   // etap 4b: remonty 4–5 i droższe 1–2 (35 tys. zł zamiast 25 tys. zł zmienia ten bieg), ulepszenia późnej gry, cele sklepu, dwanaście nowych kart dnia (tylko one zmieniają ten skrót względem poprzedniego wpisu 7)
 };
 
 const SEED = 'kiełbasa-42';
@@ -75,7 +76,7 @@ function mulberry32(seed: number): () => number {
  * polecenie poza zapasowymi było przyjęte, a bieg przetrwał sezon. Od SIM_VERSION 6 gotówka rośnie tylko przy przelewie od Centrali
  * na koniec miesiąca (marża idzie na saldo), więc za gotówkę idą małe zakupy, a kasa samoobsługowa, bankomat, piec i remont na raty
  * (`raty: true`: pole przechodzi przez dziennik i odtworzenie). Trzecia osoba przychodzi dopiero w październiku: od SIM_VERSION 4 sklep na
- * start ma ludzi akurat na swój ruch, więc etat od drugiego dnia zjadał gotówkę na opłatę. Remont 1 (25 tys. zł, poziom 8) ma dwie próby: dziś przyjmowana jest
+ * start ma ludzi akurat na swój ruch, więc etat od drugiego dnia zjadał gotówkę na opłatę. Remont 1 (35 tys. zł od SIM_VERSION 7, poziom 8) ma dwie próby: dziś przyjmowana jest
  * pierwsza, a druga jest zapasem na zmiany cen (rush bez trwającego remontu jest odrzucany, nie błędem).
  * Palety startowe mają numery 1 i 2; sloty `equipmentSlot-1…3` (pojemność 2) są od układu 0, `equipmentSlot-4` od remontu 1.
  */
@@ -131,53 +132,55 @@ const PLAN: readonly (readonly [day: number, hour: number, minute: number, cmd: 
  * Dziennik nie zależy od stanu w trakcie testu.
  */
 const CARD_ANSWERS: readonly (readonly [seq: number, id: string, day: number, hour: number, minute: number, answer: number])[] = [
-  [1, 'cenowki', 0, 11, 0, 0],
-  [2, 'chory', 1, 6, 0, 0],
-  [3, 'fefo', 3, 18, 0, 1],
+  [1, 'influencer', 0, 15, 0, 1],
+  [2, 'promocja', 1, 7, 0, 0],
+  [3, 'glitch', 3, 10, 0, 0],
   [4, 'okolnik-ankieta', 4, 8, 0, 1],
   [5, 'fefo', 5, 18, 0, 1],
-  [6, 'ekspres', 7, 7, 30, 1],
+  [6, 'bon-centrali', 7, 10, 0, 0],
   [7, 'okolnik-premia', 9, 8, 0, 0],
   [8, 'okolnik-witryna', 13, 8, 0, 0],
   [9, 'fefo', 14, 18, 0, 1],
-  [10, 'cenowki', 16, 11, 0, 0],
-  [11, 'fefo', 17, 18, 0, 1],
+  [10, 'influencer', 16, 15, 0, 1],
+  [11, 'glitch', 17, 10, 0, 0],
   [12, 'okolnik-refundacja', 18, 8, 0, 0],
-  [13, 'wiralowy', 19, 10, 0, 0],
-  [14, 'glitch', 20, 10, 0, 0],
+  [13, 'wybory', 19, 7, 0, 0],
+  [14, 'chory', 20, 6, 0, 0],
   [15, 'okolnik-usmiech', 22, 8, 0, 0],
   [16, 'okolnik-premia', 26, 8, 0, 0],
   [17, 'fefo', 27, 18, 0, 1],
   [18, 'okolnik-ankieta', 32, 8, 0, 1],
-  [19, 'audyt', 34, 9, 0, 0],
+  [19, 'cenowki', 34, 11, 0, 0],
   [20, 'okolnik-witryna', 38, 8, 0, 0],
+  [21, 'rozkopy', 39, 7, 0, 0],
   [22, 'fefo', 41, 18, 0, 1],
   [23, 'okolnik-refundacja', 43, 8, 0, 0],
-  [24, 'glitch', 44, 10, 0, 0],
-  [25, 'wiralowy', 45, 10, 0, 0],
+  [24, 'chory', 44, 6, 0, 0],
+  [25, 'kibice', 45, 15, 0, 0],
   [26, 'okolnik-premia', 47, 8, 0, 0],
   [27, 'okolnik-paleta', 51, 8, 0, 0],
   [28, 'fefo', 53, 18, 0, 1],
   [29, 'okolnik-usmiech', 55, 8, 0, 0],
-  [30, 'mecz', 58, 12, 0, 0],
   [31, 'okolnik-premia', 61, 8, 0, 0],
-  [32, 'fefo', 64, 18, 0, 1],
-  [33, 'ekspres', 65, 7, 30, 1],
+  [32, 'glitch', 64, 10, 0, 0],
+  [33, 'elearning', 65, 8, 0, 0],
   [34, 'okolnik-paleta', 67, 8, 0, 0],
-  [35, 'ulewa', 68, 9, 0, 1],
-  [36, 'widmo', 69, 7, 10, 0],
-  [37, 'chory', 70, 6, 0, 0],
+  [35, 'sanepid', 68, 11, 0, 1],
+  [36, 'ekspres', 69, 7, 30, 1],
+  [37, 'cenowki', 70, 11, 0, 0],
   [38, 'okolnik-premia', 72, 8, 0, 0],
-  [39, 'audyt', 74, 9, 0, 0],
-  [40, 'promocja', 75, 7, 0, 0],
+  [39, 'promocja', 74, 7, 0, 0],
+  [40, 'memy', 75, 13, 0, 0],
+  [41, 'rozkopy', 77, 7, 0, 0],
   [42, 'okolnik-ankieta', 78, 8, 0, 1],
-  [43, 'widmo', 79, 7, 10, 0],
-  [44, 'memy', 81, 13, 0, 0],
+  [43, 'wiralowy', 79, 10, 0, 0],
+  [44, 'sejf', 81, 21, 0, 0],
   [45, 'okolnik-premia', 82, 8, 0, 0],
-  [46, 'ulewa', 83, 9, 0, 1],
-  [48, 'ulewa', 87, 9, 0, 1],
+  [46, 'ekspres', 83, 7, 30, 1],
+  [47, 'kibice', 84, 15, 0, 0],
+  [48, 'koncert', 87, 16, 0, 0],
   [49, 'okolnik-usmiech', 88, 8, 0, 0],
-  [50, 'fefo', 90, 18, 0, 1],
+  [50, 'glitch', 90, 10, 0, 0],
 ];
 
 /**

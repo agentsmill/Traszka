@@ -19,8 +19,8 @@ import type { FirmState } from './types';
  * z niego ma dać skrót co do znaku, w tym w punktach pośrednich.
  */
 
-/** Ziarno, dla którego status Partnera przychodzi sam z odpowiedzi zaznaczonych z góry (zaufanie 81 po dwóch miesiącach). */
-const SEED = 'c';
+/** Ziarno, dla którego status Partnera przychodzi sam z odpowiedzi zaznaczonych z góry po dwóch miesiącach (od kart 4b to ziarno „q”, wcześniej „c”: talia się zmieniła). */
+const SEED = 'q';
 const DAY = MINUTES_PER_DAY;
 /** Minuta zamknięcia października (dzień 60): w tym kroku sklep startowy zamyka drugi miesiąc, więc przychodzi status. */
 const OCT_CLOSE = 60 * DAY + OPEN_TO;

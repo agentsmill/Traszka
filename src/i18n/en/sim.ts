@@ -177,7 +177,7 @@ export function simRules(sub: (pl: string) => string): Rule[] {
     { pl: 'Odblokujesz na {}. poziomie.', en: (x) => `Unlocks at level ${plNum(x!)}.` },
     { pl: 'Brak wolnego slotu 2×2. Remont da więcej miejsca.', en: 'No free 2×2 slot. A refit will give you more room.' },
     { pl: 'Brak wolnego slotu. Remont da więcej miejsca.', en: 'No free slot. A refit will give you more room.' },
-    { pl: 'Większego sklepu już nie będzie. To jest Flagowiec.', en: 'The shop won’t get any bigger than this. This is the Flagship.' },
+    { pl: 'Większego sklepu już nie będzie. To jest Traszka Max Pro Ultra.', en: 'The shop won’t get any bigger than this. This is the Traszka Max Pro Ultra.' },
     { pl: 'Remont już trwa.', en: 'A refit is already under way.' },
     { pl: 'Remont odblokujesz na {}. poziomie.', en: (x) => `The refit unlocks at level ${plNum(x!)}.` },
     { pl: 'Za mało gotówki na remont.', en: 'Not enough cash for the refit.' },

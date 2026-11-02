@@ -15,7 +15,7 @@ import { GENERATOR_VERSION } from '@/sim/store/generateStore';
 import { layoutFor } from '@/sim/store/layoutFor';
 import { sanitizeLayout } from '@/sim/store/sanitize';
 import type { StoreLayout } from '@/sim/store/types';
-import { FIRM_SAVE_SCHEMA, firmEnvelopeOf, isNewerSave, restoreFirmFrom, type FirmSaveEnvelope } from './firmSave';
+import { firmEnvelopeOf, isFirmEnvelope, isNewerSave, restoreFirmFrom, type FirmSaveEnvelope } from './firmSave';
 import { GAME_VERSION } from './version';
 
 /**
@@ -91,7 +91,7 @@ export interface GameSession {
   run: RunLog | null;
   /**
    * Firma gracza: wszystkie sklepy, osoba, budowy i skrzynka. Powstaje leniwie przy pierwszym użyciu (krok, polecenie, zapis) z bieżącego
-   * `econ`, `layout` i `info` (`firmOf`); odczyt zapisu schematu 3 (`firmSave.ts`) ustawia ją od razu. **Niezmiennik:** `econ`, `layout` i
+   * `econ`, `layout` i `info` (`firmOf`); odczyt koperty firmy (schemat 4 albo 3, `firmSave.ts`) ustawia ją od razu. **Niezmiennik:** `econ`, `layout` i
    * `info` sesji to ten sam obiekt co w aktywnym sklepie firmy (`pointAtActive`), więc cały interfejs i scena czytają sesję jak dotąd.
    */
   firm?: FirmState;
@@ -137,7 +137,7 @@ const BROKEN_SUFFIX = ':broken';
 /**
  * Koperta zapisu jednego sklepu (spec §14.1: seed + wersja gry + pełny stan, łącznie z wygenerowanym światem). Układ sklepu jest w
  * zapisie, więc zmiana generatora nie podmienia graczowi sklepu pod postępem; po remoncie nowy układ zastępuje stary.
- * Schemat 1 to sam `EconomyState` (bez koperty): wczytujemy go i przy pierwszym zapisie zamieniamy na schemat 3. Schemat 2 pisze od
+ * Schemat 1 to sam `EconomyState` (bez koperty): wczytujemy go i przy pierwszym zapisie zamieniamy na kopertę firmy. Schemat 2 pisze od
  * Zadania 10 tylko zapis biegu rankingowego (`rankedRun.ts`); zwykła gra pisze kopertę firmy (`FIRM_SAVE_SCHEMA` w `firmSave.ts`).
  */
 export const SAVE_SCHEMA = 2;
@@ -161,7 +161,7 @@ export const envelopeOf = (s: GameSession): SaveEnvelope => ({
 });
 
 /**
- * Zapis w przeglądarce (localStorage): koperta firmy w schemacie 3 pod `traszka:save:<seed>`, także przy jednym sklepie (firma powstaje
+ * Zapis w przeglądarce (localStorage): koperta firmy w schemacie 4 (`FIRM_SAVE_SCHEMA`) pod `traszka:save:<seed>`, także przy jednym sklepie (firma powstaje
  * tu, jeśli jeszcze jej nie ma; gdy miasto się nie zbuduje, zapisu nie ma i stary zostaje). Błędy (tryb prywatny, brak miejsca) są ciche: gra działa dalej bez zapisu. Sesja rankingowa
  * (`mode: 'ranked'`) nie ma tu zapisu: jej bieg żyje pod własnym kluczem (`saveRanked` w `rankedRun.ts`, schemat 2), a zwykły sklep o tym
  * samym seedzie i `traszka:last` zostają, jak były.
@@ -277,7 +277,7 @@ type ReadResult =
   | { status: 'newer' }
   | { status: 'unbuildable' };
 
-/** Sesja z firmy odtworzonej z zapisu schematu 3: stan aktywnego sklepu, a cała firma w `firm`. */
+/** Sesja z firmy odtworzonej z koperty firmy (schemat 3 albo 4): stan aktywnego sklepu, a cała firma w `firm`. */
 function sessionOfFirm(f: FirmState): GameSession {
   const st = activeStore(f);
   return {
@@ -289,8 +289,9 @@ function sessionOfFirm(f: FirmState): GameSession {
 /**
  * Czyta zapis sklepu. Do kopii (`:broken`) idzie tylko to, co nie przeszło parsowania albo walidacji: takiego zapisu nie
  * naprawiamy na siłę, a wołający zaczyna nową grę. Zapis, który walidację przeszedł, a świat z niego się nie złożył
- * (generator, układ), jest dobry: zostaje na miejscu, a wołający dostaje `unbuildable`. Koperta firmy (schemat 3) wraca przez
- * `restoreFirmFrom`: sesja jest aktywnym sklepem, a cała firma leży w `session.firm`. Zapis z nowszej wersji (`isNewerSave`) zostaje nietknięty.
+ * (generator, układ), jest dobry: zostaje na miejscu, a wołający dostaje `unbuildable`. Koperta firmy (schemat 4 i, z migracją, 3 sprzed etapu
+ * 4b) wraca przez `restoreFirmFrom`: sesja jest aktywnym sklepem, a cała firma leży w `session.firm`. Zapis z nowszej wersji (`isNewerSave`)
+ * zostaje nietknięty.
  */
 function readSave(seed: string, partner?: EconomyState['partner']): ReadResult {
   let raw: string | null;
@@ -303,7 +304,7 @@ function readSave(seed: string, partner?: EconomyState['partner']): ReadResult {
   try {
     const data = JSON.parse(raw) as unknown;
     if (isNewerSave(data)) return { status: 'newer' };
-    if (isRec(data) && data.schema === FIRM_SAVE_SCHEMA) {
+    if (isFirmEnvelope(data)) {   // schemat 3 też: jako zapis jednego sklepu poszedłby do `:broken` (K1, etap 4b)
       const firm = restoreFirmFrom(data, seed, partner);
       if (firm.ok) return { status: 'ok', session: sessionOfFirm(firm.firm) };
       if (firm.reason === 'unbuildable') return { status: 'unbuildable' };

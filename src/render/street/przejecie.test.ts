@@ -27,7 +27,11 @@ const SEEDS: Record<LotKind, string[]> = {
   pawilon: ['traszka-1', 'traszka-3', 'traszka-7', 'traszka-9'],
 };
 const ALL = (Object.keys(SEEDS) as LotKind[]).flatMap((kind) => SEEDS[kind].map((seed): [LotKind, string] => [kind, seed]));
-const LEVELS = [0, 1, 2, 3];
+const LEVELS = [0, 1, 2, 3, 4, 5];
+/** Ostatni poziom, na którym zostaje jeszcze następny remont, więc kartka „DO WYNAJĘCIA” wisi (po piątym remoncie jej nie ma). */
+const LAST_SIGN_LEVEL = 4;
+/** Ciężkie testy siatki: lokalnie 2–4 s, a wolny runner CI (domyślne 5 s padło tam w nocy) potrzebuje co najmniej czterokrotnie więcej. */
+const HEAVY_MS = 30_000;
 
 /** Wiersz oczekiwanych wartości: x0, x1, kondygnacje, styl, kolor ściany. */
 type Row = [number, number, number, string, string];
@@ -131,13 +135,13 @@ describe('przejęcie lokalu: plan wiersza', () => {
     expect(ALL.filter(([, seed]) => cornerSide(layoutFor(seed, 0)) !== null).map(([, seed]) => seed)).toEqual(['kiełbasa-12', 'd']);
   });
 
-  it('poziomy 1–3: sąsiad po stronie przejęcia ma szerokość max(w0 − Δ, 4) i przylega, drugi ma szerokość z poziomu 0 i przylega, bryła nad sklepem obejmuje sklep', () => {
+  it('poziomy 1–5: sąsiad po stronie przejęcia ma szerokość max(w0 − Δ, 4) i przylega, drugi ma szerokość z poziomu 0 i przylega, bryła nad sklepem obejmuje sklep', () => {
     let clamped = 0;
     let shrunk = 0;
     for (const [, seed] of ALL) {
       const plan0 = planRow(layoutFor(seed, 0), seed);
       const taken = expectedTakenSide(seed);
-      for (const level of [1, 2, 3]) {
+      for (const level of [1, 2, 3, 4, 5]) {
         const layout = layoutFor(seed, level);
         const o = storeOuter(layout);
         const plan = planRow(layout, seed, level);
@@ -172,7 +176,7 @@ describe('przejęcie lokalu: plan wiersza', () => {
       }
     }
     expect(shrunk, 'sąsiad zjedzony przynajmniej raz').toBeGreaterThan(0);
-    expect(clamped, 'próg 4 m zadziałał przynajmniej raz (poziom 3)').toBeGreaterThan(0);
+    expect(clamped, 'próg 4 m zadziałał przynajmniej raz').toBeGreaterThan(0);
   });
 
   it('sąsiad po stronie przejęcia nigdy nie jest węższy niż 4 m, a bez remontu nie jest zjedzony', () => {
@@ -189,8 +193,8 @@ describe('przejęcie lokalu: plan wiersza', () => {
 });
 
 describe('przejęcie lokalu: kartka „DO WYNAJĘCIA”', () => {
-  it('jest u sąsiada po stronie przejęcia na poziomach 0–2, nie ma jej na 3 ani u drugiego sąsiada, bryły nad sklepem i bramy', () => {
-    expect(REMONTS).toHaveLength(3);
+  it('kartka „DO WYNAJĘCIA” jest na poziomach 0–4 (dopóki zostaje następny remont), nie ma jej na 5, nie ma jej u drugiego sąsiada, bryły nad sklepem i bramy', () => {
+    expect(REMONTS).toHaveLength(LAST_SIGN_LEVEL + 1);   // pięć remontów: kartka znika dopiero po ostatnim
     for (const [, seed] of ALL) {
       const taken = expectedTakenSide(seed);
       for (const level of LEVELS) {
@@ -198,7 +202,7 @@ describe('przejęcie lokalu: kartka „DO WYNAJĘCIA”', () => {
         const label = `${seed} poziom ${level}`;
         expect(plan.own.some((v) => v.rentSign || v.towardStore !== null), `${label} bryła i brama`).toBe(false);
         plan.neighbours.forEach((n, i) => {
-          const expected = taken === side(i) && level < REMONTS.length;
+          const expected = taken === side(i) && level <= LAST_SIGN_LEVEL;
           expect(n.rentSign, `${label} sąsiad ${i}`).toBe(expected);
           expect(n.towardStore, `${label} sąsiad ${i}`).toBe(i === 0 ? 'x1' : 'x0');
         });
@@ -254,7 +258,7 @@ describe('przejęcie lokalu: kartka „DO WYNAJĘCIA”', () => {
           plan.neighbours.forEach((n, i) => {
             const quads = quadsOf(meshOf(`neighbour:${i}`));
             const signs = quads.filter((q) => q.cell === 'witrynaWynajem');
-            if (!(taken === side(i) && level < REMONTS.length)) {
+            if (!(taken === side(i) && level <= LAST_SIGN_LEVEL)) {
               expect(signs, `${label} sąsiad ${i}`).toHaveLength(0);
               return;
             }
@@ -278,7 +282,7 @@ describe('przejęcie lokalu: kartka „DO WYNAJĘCIA”', () => {
         }
       }
     }
-  }, 30_000);   // siatka wszystkich seedów: na runnerze GitHuba ponad 6 s przy domyślnych 5 s
+  }, HEAVY_MS);
 
   it('gdy najbliższe przęsło jest wejściem do klatki, kartka wisi w najbliższej witrynie', () => {
     // blok z sąsiadem zjedzonym do 5,6 m od strony +x: dwa przęsła, wejście w przęśle 1, które stoi przy x0 (najbliżej sklepu)
@@ -336,7 +340,7 @@ describe('przejęcie lokalu: ulica z poziomem remontu', () => {
     return hits / 6;
   };
 
-  it('buildStreet(layout, seed, load, remontLevel) przekazuje poziom do planu: kartka na poziomach 0–2, brak na 3, domyślnie poziom 0', async () => {
+  it('buildStreet(layout, seed, load, remontLevel) przekazuje poziom do planu: kartka na poziomach 0–4, brak na 5, domyślnie poziom 0', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     for (const seed of ['kiełbasa-42', 'traszka-1', 'traszka-11']) {
       const taken = expectedTakenSide(seed)!;
@@ -344,14 +348,14 @@ describe('przejęcie lokalu: ulica z poziomem remontu', () => {
       for (const level of LEVELS) {
         const view = await buildStreet(layoutFor(seed, level), seed, failing, level);
         views.push(view);
-        expect(signsIn(view, `neighbour:${i}`), `${seed} poziom ${level}`).toBe(level < REMONTS.length ? 1 : 0);
+        expect(signsIn(view, `neighbour:${i}`), `${seed} poziom ${level}`).toBe(level <= LAST_SIGN_LEVEL ? 1 : 0);
         expect(signsIn(view, `neighbour:${1 - i}`), `${seed} poziom ${level} drugi sąsiad`).toBe(0);
       }
       const view = await buildStreet(layoutFor(seed, 0), seed, failing);
       views.push(view);
       expect(signsIn(view, `neighbour:${i}`), `${seed} domyślny poziom`).toBe(1);
     }
-  });
+  }, HEAVY_MS);
 
   it('kamienica narożna: na żadnym poziomie ulica nie ma kartki', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
@@ -362,7 +366,7 @@ describe('przejęcie lokalu: ulica z poziomem remontu', () => {
         for (const name of ['neighbour:0', 'neighbour:1']) expect(signsIn(view, name), `${seed} poziom ${level} ${name}`).toBe(0);
       }
     }
-  });
+  }, HEAVY_MS);
 });
 
 describe('przejęcie lokalu: takeoverSide z sim odtwarza planRow', () => {
@@ -397,9 +401,9 @@ describe('przejęcie lokalu: takeoverSide z sim odtwarza planRow', () => {
     expect([...kinds].sort()).toEqual(['blok', 'kamienica', 'pawilon']);
     expect(corners).toBeGreaterThan(5);
     expect([...kamienicaSides].sort()).toEqual(['maxX', 'minX']);
-  });
+  }, HEAVY_MS);
 
-  it('po remontach 1–3 strona przejęcia zostaje ta sama co w planie wiersza i co brama (układ się zmienia, losowania budynków nie)', () => {
+  it('po remontach 1–5 strona przejęcia zostaje ta sama co w planie wiersza i co brama (układ się zmienia, losowania budynków nie)', () => {
     for (const seed of SEEDS_200.slice(0, 40)) {
       for (const level of LEVELS) {
         const layout = layoutFor(seed, level);
@@ -407,7 +411,7 @@ describe('przejęcie lokalu: takeoverSide z sim odtwarza planRow', () => {
         expect(takeoverSide(layout, seed), `${seed} poziom ${level} (brama)`).toBe(expectedTakenSide(seed, level));
       }
     }
-  });
+  }, HEAVY_MS);
 });
 
 describe('przejęcie lokalu: sklep w lokalu miasta (baseLot)', () => {
@@ -435,7 +439,7 @@ describe('przejęcie lokalu: sklep w lokalu miasta (baseLot)', () => {
       const seed = storeSeedFor(CITY_SEED, lot.id);
       const base = storeOuter(layoutFor(seed, 0, lot.spec));
       expect(grownWidth(layoutFor(seed, 0, lot.spec), seed, lot.spec), `lokal ${lot.id} poziom 0`).toBe(0);
-      for (const level of [1, 2, 3]) {
+      for (const level of [1, 2, 3, 4, 5]) {
         const layout = layoutFor(seed, level, lot.spec);
         const o = storeOuter(layout);
         const delta = grownWidth(layout, seed, lot.spec);
@@ -452,7 +456,7 @@ describe('przejęcie lokalu: sklep w lokalu miasta (baseLot)', () => {
     for (const lot of differing.slice(0, 12)) {
       const seed = storeSeedFor(CITY_SEED, lot.id);
       const plan0 = planRow(layoutFor(seed, 0, lot.spec), seed, 0, lot.spec);
-      for (const level of [1, 2]) {
+      for (const level of [1, 2, 3, 4, 5]) {
         const layout = layoutFor(seed, level, lot.spec);
         const plan = planRow(layout, seed, level, lot.spec);
         const delta = grownWidth(layout, seed, lot.spec);
@@ -504,5 +508,5 @@ describe('przejęcie lokalu: sklep w lokalu miasta (baseLot)', () => {
     }
     expect(checked).toBeGreaterThan(0);
     expect(discriminating, 'w co najmniej jednym lokalu domyślny pickLot dałby inną szerokość sąsiada').toBeGreaterThan(0);
-  });
+  }, HEAVY_MS);
 });

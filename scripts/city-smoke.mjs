@@ -15,11 +15,22 @@
  *   2. (dopisek, telefon) pinezka „lokal obok” nie zasłania innych pinezek i nie ma napisu (390 px, fixture „przed statusem”);
  *   9. pinezka „po Traszce”, lista i karta z ceną `rentPrice`, blokiem wyposażenia i wykresem 17 słupków, ponowny wynajem (telefon na raty,
  *      komputer gotówką), okno „Traszka #2 znów otwarta” z poziomem 1, zaufaniem 65 i wyposażeniem z fixture'a, chip z trzema sklepami;
- *  10. karta innego wolnego lokalu: „Biorę lokal” zablokowany tekstem „Trzy placówki to …”;
+ *  10. karta innego wolnego lokalu: „Biorę lokal” zablokowany tekstem o progu obrotu sieci do czwartej placówki („Centrala zgodzi się na kolejną placówkę, gdy obrót sieci …”);
  *  11. koniec miesiąca: okno „Sieć” i trzy wyciągi (cztery zakładki), zaufanie przy każdym sklepie, ostrzeżenia zaufania na chipie;
  *  12. (telefon) szerokość 390 px na nowych ekranach (karta z wykresem, karta „po Traszce”, lista chipa z trzema sklepami, okno sieci
  *      z czterema zakładkami) po polsku i po angielsku (ponowny wynajem i miesiąc rozegrane od nowa w angielskim interfejsie).
  * Do tego jeden przebieg na telefonie z włączonymi dymkami (`tips: true`): `tip-miasto` i `tip-lokal` (Zadanie 14).
+ * Plan 4b (Zadanie 10) dokłada kroki `4b-a`…`4b-g` (komputer 1440×900, telefon 390×844), same: `--etap 4b`:
+ *  4b-a. kopia `save-v3-dwa-sklepy.json` (schemat 3) z remontem 5 i poziomem 34 sklepu #2: migracja firmy, sklep i ulica (zrzut z kadru i po oddaleniu);
+ *  4b-b. po otwarciu budowy #3: sekcja „Sieć: badania” (6 wierszy z opłatą koordynacyjną), kupno „Wspólnych dostaw” za 25 000 zł;
+ *  4b-c. limit 4 i 400 000 zł: dwa lokale za gotówkę, cztery otwarte sklepy na liście chipa;
+ *  4b-d. 999 500 zł i gra do „Milion!”: Galeria nieczynna przy przerwanym `/api/**`, zakładka Galerii, potem atrapa `/api/fame/*` w przeglądarce (wpis i lista);
+ *  4b-e. ta sama sekcja badań po angielsku;
+ *  4b-f. kopia „po Traszce” z remontem 4 sklepu startowego: sklep i ulica;
+ *  4b-g. „Zrzut Traszkomonów”: talia z kopii zapisu, w której jutro może wypaść tylko ta karta.
+ * Plan 4b (Zadanie 11), krok f (komputer, jakość „średnia”): zapis „przed statusem” z zrzutem Traszkomonów wymuszonym w kopercie (`saveWithCardDrop`: ruch +1,6
+ * od 6:00 do 10:00 następnej doby), przewinięcie do 7:30 i puszczenie czasu: przed wejściem staje kolejka 12 postaci, razem z salą mieści się w puli postaci
+ * presetu, zrzut kadru na chodnik, a po 10:00 kolejka się rozchodzi.
  *
  * Bezpieczeństwo: nic nie wychodzi poza `localhost` na porcie smoke'a. Zapytania do `/api/**` są przerywane (smoke niczego nie wysyła
  * do rankingu, ani lokalnego, ani prawdziwego), a każde inne zapytanie poza localhost jest blokowane i liczone. Zapisy gry i metę
@@ -66,6 +77,7 @@ export const FIXTURES = {
   stary: 'save-v2-remont2.json',
   przedStatusem: 'save-v3-przed-statusem.json',
   poTraszce: 'save-v3-po-traszce.json',
+  dwaSklepy: 'save-v3-dwa-sklepy.json',
 };
 /** Pamięć samouczka: przelot pominięty, dymki „pierwszy raz” wyłączone (albo włączone w przebiegu z dymkami). */
 export const tutorialMemory = (tips) => ({ v: 1, tour: 'skipped', seen: [], tips });
@@ -89,6 +101,47 @@ export const STEPS = [
 ];
 /** Dodatkowy przebieg z dymkami miasta (Zadanie 14): tylko telefon. */
 export const TIPS_STEP = { id: 'T', name: 'dymki miasta (tip-miasto, tip-lokal) na 390 px', sizes: ['telefon'] };
+/**
+ * Kroki etapu 4b (plan 4b, Zadanie 10): na kopii `save-v3-dwa-sklepy.json` (schemat 3, sklep #1 zamknięty, #2 aktywny, budowa #3 na jutro) z remontem 5
+ * i poziomem 34 sklepu #2 oraz na kopii „po Traszce” z remontem 4 sklepu startowego i talią, która jutro może dać tylko „Zrzut Traszkomonów”.
+ * Komputer w tych krokach ma 1440×900 (`DESKTOP_4B`), telefon 390×844 jak w całym smoke'u.
+ */
+export const STEPS_4B = [
+  { id: '4b-a', name: 'zapis schematu 3 z remontem 5 i poziomem 34: wczytany bez :broken, sklep i ulica bez błędów konsoli', sizes: ['telefon', 'desktop'] },
+  { id: '4b-b', name: 'dwa sklepy: „Sieć: badania” (6 wierszy, opłata koordynacyjna), kupno „Wspólne dostawy” za 25 000 zł', sizes: ['telefon', 'desktop'] },
+  { id: '4b-c', name: 'limit 4 i 400 000 zł: wynajem 3. i 4. lokalu za gotówkę, cztery sklepy na liście chipa', sizes: ['telefon', 'desktop'] },
+  { id: '4b-d', name: '999 500 zł do miliona: „Milion!”, Galeria nieczynna przy przerwanym /api/**, gra idzie dalej; atrapa /api/fame/*: wpis i lista', sizes: ['telefon', 'desktop'] },
+  { id: '4b-e', name: 'po angielsku: sekcja badań Sieci', sizes: ['telefon', 'desktop'] },
+  { id: '4b-f', name: 'zapis po Traszce z remontem 4 sklepu startowego: sklep i ulica bez błędów konsoli', sizes: ['telefon', 'desktop'] },
+  { id: '4b-g', name: 'karta „Zrzut Traszkomonów” z talii, w której jutro może wypaść tylko ona', sizes: ['telefon', 'desktop'] },
+];
+/** Rozmiar komputera w krokach 4b (plan 4b, Zadanie 10, Step 5). */
+export const DESKTOP_4B = { width: 1440, height: 900 };
+/** Cena pierwszego poziomu „Wspólnych dostaw” (spec 4b §5.3) i gotówka, limit placówek oraz portfel przed milionem z kroków 4b-c i 4b-d. */
+export const RESEARCH_DOSTAWY_COST = 25_000;
+export const WALLET_4B_RENT = 400_000;
+export const WALLET_4B_MILLION = 999_500;
+export const FAME_TITLE = 'Milion!';
+export const FAME_CLOSED = 'Galeria jest teraz nieczynna';
+/** Krok f (plan 4b, Zadanie 11): kolejka przed sklepem przy zrzucie Traszkomonów, karta wymuszona kopertą zapisu; tylko komputer. */
+export const QUEUE_STEP = { id: 'f', name: 'zrzut Traszkomonów: kolejka 6–12 postaci przed sklepem rano, po 10:00 pusto, w ramach puli postaci', sizes: ['desktop'] };
+
+/**
+ * Zapis z zrzutem Traszkomonów w toku, bez grania karty: do `econ.tycoon.cards.active` sklepu #1 dochodzi efekt ruchu `value`
+ * („Bez limitu” to +1,6) od 6:00 następnej doby przez `hours` godzin, jak po odpowiedzi gracza. Zapis wczytuje się zwykłą drogą
+ * (`sanitizeCards`), a smoke przewija grę do rana tej doby. Zwraca nowy tekst koperty, dobę efektu i jego minuty (`from`, `until`).
+ */
+export function saveWithCardDrop(saveText, { value = 1.6, hours = 4 } = {}) {
+  const save = JSON.parse(saveText);
+  const store = save.stores.find((s) => s.id === 1);
+  if (!store) throw new Error('zapis bez sklepu #1');
+  const cards = store.econ.tycoon.cards;
+  const day = Math.floor(store.econ.minute / 1440) + 1;
+  const from = day * 1440 + 6 * 60;
+  const until = from + hours * 60;
+  cards.active.push({ kind: 'traffic', value, from, until, seq: cards.seq });
+  return { text: JSON.stringify(save), day, from, until };
+}
 
 /** Opcje kontekstu Playwrighta dla rozmiaru okna: zawsze `pl-PL`, dotyk tylko na telefonie. */
 export function contextOptions(vp) {
@@ -172,6 +225,16 @@ export function chromiumExecutable(env = process.env, exists = existsSync, candi
   return candidates.find((c) => exists(c));
 }
 
+/** Czy adres to `/api/…` na localhost na porcie smoke'a (komunikat Chromium o przerwanym zapytaniu z kroków 4b). */
+export function isApiUrl(href, port) {
+  try {
+    const u = new URL(href);
+    return u.hostname === 'localhost' && u.port === String(port) && u.pathname.startsWith('/api/');
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Co zrobić z zapytaniem strony: `allow` (http na localhost i porcie smoke'a, `blob:` i `data:`), `api` (`/api/**`: przerywamy, ranking jest poza
  * smoke'em) albo `external` (każdy inny host: blokujemy i liczymy). Host liczy się ze sparsowanego adresu.
@@ -213,7 +276,7 @@ export const stepResult = (patch = {}) => ({ ok: true, failed: [], notes: [], na
  * Tabela wyników do raportu: wiersz na krok i rozmiar (`ok`, `FAIL`, `n/d`) z pierwszą przyczyną porażki. `results`: nazwa rozmiaru →
  * identyfikator kroku → `stepResult`.
  */
-export function summarize(results, steps = [...STEPS, TIPS_STEP]) {
+export function summarize(results, steps = [...STEPS, TIPS_STEP, ...STEPS_4B]) {
   const rows = [];
   for (const [size, byStep] of Object.entries(results)) {
     if (byStep.exception) rows.push({ size, step: '!', name: 'wyjątek poza krokiem', status: 'FAIL', detail: byStep.exception.failed[0] ?? '' });
@@ -229,22 +292,30 @@ export function summarize(results, steps = [...STEPS, TIPS_STEP]) {
 
 export const USAGE = `Smoke miasta i drugiego sklepu w headless Chromium (po \`npm run build\`).
 
-Użycie: node scripts/city-smoke.mjs [--only telefon|desktop]
+Użycie: node scripts/city-smoke.mjs [--only telefon|desktop] [--etap 4b]
         npm run city:smoke
 
-  --only <rozmiar>  tylko jeden rozmiar okna: telefon (390×844, dotyk) albo desktop (1280×800)
+  --only <rozmiar>  tylko jeden rozmiar okna: telefon (390×844, dotyk) albo desktop (1280×800; w krokach 4b 1440×900)
+  --etap 4b         tylko kroki etapu 4b (4b-a…4b-g) i konsola (krok 8); reszta „nie dotyczy”
   --help            ta pomoc
 
 Zmienne: PLAYWRIGHT_ROOT (domyślnie ${DEFAULT_PLAYWRIGHT_ROOT}), CITY_SMOKE_CHROMIUM, CITY_SMOKE_PORT (4318), CITY_SMOKE_OUT (.smoke/city).
 Zrzuty i smoke.json idą do katalogu wyjściowego (w .gitignore). Kod wyjścia: 0 (wszystkie kroki ok), 1 (porażka kroku), 2 (błąd uruchomienia).`;
 
-/** Argumenty polecenia: `--only telefon|desktop` ogranicza przebieg do jednego rozmiaru (do ponawiania pojedynczej porażki). */
+/**
+ * Argumenty polecenia: `--only telefon|desktop` ogranicza przebieg do jednego rozmiaru (do ponawiania pojedynczej porażki), `--etap 4b` do kroków
+ * etapu 4b (`stage`).
+ */
 export function parseArgs(argv) {
-  const args = { only: null, help: false };
+  const args = { only: null, help: false, stage: null };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--help' || a === '-h') args.help = true;
-    else if (a === '--only') {
+    else if (a === '--etap') {
+      const v = argv[++i];
+      if (v !== '4b') throw new Error(`--etap przyjmuje 4b, dostałem „${v ?? ''}”`);
+      args.stage = v;
+    } else if (a === '--only') {
       const v = argv[++i];
       const name = VIEWPORTS.find((vp) => vp.name === v || (v === 'phone' && vp.mobile))?.name;
       if (!name) throw new Error(`--only przyjmuje telefon albo desktop, dostałem „${v ?? ''}”`);
@@ -295,7 +366,7 @@ export const BACKGROUND_TRUST_WARN_BELOW = 40;
 /** Zaufanie ponownie otwartego sklepu (`TRUST.start`): okno „znów otwarta” je podaje, a dane sklepu mają je potwierdzić. */
 export const RELET_TRUST = 65;
 /** Dosłowne teksty z planu: odmowa limitu, tytuł okna ponownego otwarcia i podpis zniżki na karcie lokalu po Traszce. */
-export const LIMIT_TEXT = 'Trzy placówki to na tym etapie partnerstwa wszystko, na co Centrala jest gotowa się zgodzić.';
+export const LIMIT_TEXT = 'Centrala zgodzi się na kolejną placówkę, gdy obrót sieci w miesiącu przekroczy 1\u00a0000\u00a0000 zł.';   // limit 3 (`limitText`): próg obrotu sieci do czwartej placówki, z twardymi spacjami tysięcy
 export const RELET_TITLE = 'Traszka #2 znów otwarta';
 export const RELET_CAPTION = 'po Traszce: 30% ceny';
 
@@ -395,6 +466,46 @@ export function newScreenProblems(widths, prefix = '') {
     for (const w of mine.filter((x) => !x.ok)) out.push(`${w.label}: ${w.problems.join('; ')}`);
   }
   return out;
+}
+
+// ——— etap 4b (Zadanie 10): koperty zapisów do kroków 4b (testy: tests/citySmoke.test.ts) ———
+
+/** Kopia koperty zapisu firmy, w której sklep `storeId` ma remont `remontLevel` i poziom `level` (układ gra liczy przy wczytaniu z poziomu remontu). */
+export function withRemont(saveText, { storeId, remontLevel, level }) {
+  const save = JSON.parse(saveText);
+  const st = save.stores.find((x) => x.id === storeId);
+  if (!st || st.closed) throw new Error(`w zapisie nie ma otwartego sklepu #${storeId}`);
+  st.econ.remontLevel = remontLevel;
+  st.econ.level = level;
+  return JSON.stringify(save);
+}
+
+/** Identyfikatory kart talii dnia (`DECK`) z kodu `deck.ts`: wszystko między `export const DECK` a `export const CIRCULARS`. */
+export function deckIds(source) {
+  const from = source.indexOf('export const DECK');
+  const to = source.indexOf('export const CIRCULARS');
+  if (from < 0 || to < from) throw new Error('deck.ts: nie widzę DECK i CIRCULARS');
+  return [...source.slice(from, to).matchAll(/^ {4}id: '([a-z0-9-]+)',$/gm)].map((m) => m[1]);
+}
+
+/**
+ * Kopia koperty, w której talia sklepu `storeId` jutro może dać tylko kartę `cardId` (deterministycznie, bez losu): pusta kolejka i `seq` 1 (pierwsza karta
+ * gry, więc jutro co najmniej jedna karta), okólnik dopiero za tydzień, a każda inna karta talii „była dziś” (każda ma przerwę ≥ 2 dni). Dzień
+ * zapisu to dzień minuty sklepu; losowanie dnia w grze (`drawDayCards`) robi resztę, z prawdziwymi liczbami i szacunkami karty.
+ */
+export function withOnlyCardTomorrow(saveText, { storeId, cardId, ids }) {
+  const save = JSON.parse(saveText);
+  const st = save.stores.find((x) => x.id === storeId);
+  if (!st || st.closed) throw new Error(`w zapisie nie ma otwartego sklepu #${storeId}`);
+  if (!ids.includes(cardId)) throw new Error(`karty ${cardId} nie ma w talii`);
+  const day = Math.floor(st.econ.minute / 1440);
+  const cards = st.econ.tycoon.cards;
+  cards.pending = [];
+  cards.seq = 1;
+  cards.drawnDay = day;
+  cards.nextCircularDay = day + 7;
+  cards.lastSeen = Object.fromEntries(ids.filter((id) => id !== cardId).map((id) => [id, day]));
+  return JSON.stringify(save);
 }
 
 // ——— przeglądarka ———
@@ -505,7 +616,7 @@ async function windowsOf(page) {
     for (const m of document.querySelectorAll('.tt-modal-wrap .tt-modal')) {
       if (!vis(m)) continue;
       const cls = m.classList;
-      const kind = cls.contains('tt-deck') ? 'deck' : cls.contains('tt-story') ? 'story' : cls.contains('tt-remanent') ? 'remanent'
+      const kind = cls.contains('tt-deck') ? 'deck' : cls.contains('tt-story') ? 'story' : cls.contains('tt-remanent') ? 'remanent' : cls.contains('tt-fame') ? 'fame'
         : m.querySelector('h2[data-tut="report"]') ? 'report' : cls.contains('tt-tut-offer') ? 'offer' : cls.contains('tt-center') ? 'welcome' : 'other';
       dialogs.push({ kind, label: m.getAttribute('aria-label') ?? m.querySelector('h2')?.textContent ?? '', text: m.textContent ?? '', tabs: m.querySelectorAll('.tt-storetabs [role="tab"]').length });
     }
@@ -519,11 +630,13 @@ const CLOSE = {
   remanent: '.tt-remanent .tt-primary',
   report: '.tt-modal:has(h2[data-tut="report"]) .tt-modal-foot .tt-primary',
   welcome: '.tt-modal.tt-center .tt-primary',
+  // 4b: gratulacje za pierwszy milion („Zamknij”, bez wpisu do Galerii); stary zapis z gotówką ≥ 1 mln dostaje je zaraz po wczytaniu
+  fame: '.tt-fame .tt-finish-actions > .tt-btn:last-child',
 };
 
 /**
  * Zamyka to, co gra otworzyła w międzyczasie (okna modalne pauzują grę i łykają kliknięcia): kartę decyzji („Zatwierdź”), wpis „OK”, protokół
- * remanentu, raport („Dalej”), powitanie („Odbierz!”) i dymki „pierwszy raz” (poza `keepTips`). `stop`: wyrażenie, które zatrzymuje pętlę
+ * remanentu, raport („Dalej”), powitanie („Odbierz!”), gratulacje za milion („Zamknij”) i dymki „pierwszy raz” (poza `keepTips`). `stop`: wyrażenie, które zatrzymuje pętlę
  * na pierwszym oknie o pasującym tytule, zanim je zamknie (smoke chce je obejrzeć). Zwraca tytuły zamkniętych okien i tytuł okna, na którym stanęła.
  * Koniec gry w trakcie to błąd smoke'a: raport końca gry ma inny przycisk, a dalsze kroki nie mają sensu.
  */
@@ -677,18 +790,20 @@ async function main(argv) {
   const old = fixtureSave(FIXTURES.stary);
   const before = fixtureSave(FIXTURES.przedStatusem);
   const after = fixtureSave(FIXTURES.poTraszce);
+  const two = fixtureSave(FIXTURES.dwaSklepy);
 
   const errors = [];
   const warnings = [];
   const external = [];
   const apiBlocked = [];
+  const apiConsole = [];
   const dialogs = [];
   const results = {};
   const extras = {};
 
   // --- kontekst i strona ---
 
-  async function newPage(browser, vp, tag, { fixture, tips = false }) {
+  async function newPage(browser, vp, tag, { fixture, tips = false, quality = 'niska' }) {
     const ctx = await browser.newContext(contextOptions(vp));
     // najpierw ogólna blokada, potem `/api/**` (późniejsza trasa ma pierwszeństwo): niczego nie wysyłamy do rankingu
     await ctx.route('**/*', (route) => {
@@ -712,12 +827,14 @@ async function main(argv) {
     }, entries);
     const page = await ctx.newPage();
     page.on('console', (m) => {
-      if (m.type() === 'error') errors.push(`${vp.name}/${tag}: ${m.text()}`);
+      // przerwane przez smoke zapytanie do `/api/**` (Galeria i ranking w krokach 4b) Chromium sam zgłasza w konsoli: to nie jest błąd gry
+      if (m.type() === 'error' && /^Failed to load resource: net::ERR_FAILED$/.test(m.text()) && isApiUrl(m.location()?.url ?? '', port)) apiConsole.push(`${vp.name}/${tag}: ${m.location().url}`);
+      else if (m.type() === 'error') errors.push(`${vp.name}/${tag}: ${m.text()}`);
       else if (m.type() === 'warning') warnings.push(`${vp.name}/${tag}: ${m.text()}`);
     });
     page.on('pageerror', (e) => errors.push(`${vp.name}/${tag}: pageerror ${e.message}`));
     page.on('dialog', (d) => { dialogs.push(`${vp.name}/${tag}: ${d.type()} ${d.message().slice(0, 80)}`); void d.accept(); });
-    await page.goto(`${base}/?seed=${encodeURIComponent(fixture.seed)}&q=niska&debug=1`);
+    await page.goto(`${base}/?seed=${encodeURIComponent(fixture.seed)}&q=${quality}&debug=1`);
     return { ctx, page };
   }
 
@@ -1734,6 +1851,302 @@ async function main(argv) {
     ev.note(`po angielsku zmierzono: ${NEW_SCREENS.map((sc) => `${sc.name} ×${widths.filter((w) => w.label.startsWith(`angielski: ${sc.name}`)).length}`).join(', ')}`);
   }
 
+  // ——————— plan 4b, Zadanie 10: remonty 4–5, badania Sieci, cztery sklepy, milion i Galeria, karta „Zrzut Traszkomonów” (kroki 4b-a…4b-g) ———————
+
+  /** Sklep i ulica: zrzut w kadrze z gry, potem z kamerą oddaloną do granicy (`rig.zoomBy`), i powrót do kadru. Zwraca wymiary pawilonu i kadru. */
+  async function shopAndStreet(page, ev, name) {
+    await sleep(1500);   // scena po wczytaniu dociąga modele i ustawia kamerę
+    const frame = await page.evaluate(() => {
+      const g = window.traszkaGame;
+      const rig = g.ctx.rig;
+      const l = g.session.layout;
+      return { width: l.width, depth: l.depth, view: rig.viewSize, viewMax: rig.viewMax, aspect: innerWidth / innerHeight };
+    });
+    await ev.shot(`${name}-sklep`);
+    await page.evaluate(() => { window.traszkaGame.ctx.rig.zoomBy(0.01); });   // do granicy oddalenia (`viewMax`)
+    await sleep(900);
+    const far = await page.evaluate(() => window.traszkaGame.ctx.rig.viewSize);
+    await ev.shot(`${name}-ulica`);
+    await page.evaluate((v) => { const rig = window.traszkaGame.ctx.rig; rig.zoomBy(rig.viewSize / v); }, frame.view);
+    await sleep(300);
+    ev.note(`${name}: pawilon ${frame.width} × ${frame.depth} kratek; kadr ${frame.view.toFixed(1)} m wysokości (${(frame.view * frame.aspect).toFixed(1)} m szerokości ekranu), oddalony ${far.toFixed(1)} m (${(far * frame.aspect).toFixed(1)} m), granica ${frame.viewMax} m`);
+    return { ...frame, far };
+  }
+
+  /** Błędy konsoli i `pageerror` z kontekstu `tag` tego rozmiaru, od indeksu `from` (zapisany przed krokiem). */
+  const consoleSince = (vp, tag, from) => errors.slice(from).filter((e) => e.startsWith(`${vp.name}/${tag}:`));
+
+  async function scenario4b(browser, vp0) {
+    const vp = vp0.mobile ? vp0 : { ...vp0, size: DESKTOP_4B };
+    const phone = vp.mobile;
+    const fixture = { seed: two.seed, text: withRemont(two.text, { storeId: 2, remontLevel: 5, level: 34 }) };
+    const errorsFrom = errors.length;
+    const { ctx, page } = await newPage(browser, vp, '4b', { fixture });
+    const fame = { submits: [], lists: 0 };
+    try {
+      let go = await runStep(vp, '4b-a', page, async (ev) => {
+        await waitReady(page);
+        await pause(page);
+        await settle(page);
+        await pause(page);
+        const g = await readGame(page);
+        const s2 = g.stores.find((st) => st.id === 2);
+        ev.check(g.activeId === 2 && s2?.remont === 5 && s2.level === 34 && !s2.closed, `sklep #2: aktywny ${g.activeId}, remont ${s2?.remont}, poziom ${s2?.level}`);
+        const firm = await page.evaluate(() => {
+          const f = window.traszkaGame.session.firm;
+          return { research: f.research, storeLimit: f.storeLimit, goals: f.goals, fame: f.fame, broken: Object.keys(localStorage).filter((k) => k.includes(':broken')) };
+        });
+        // schemat 3 → 4 (spec 4b §5.8): bez badań, limit trzech placówek, puste cele firmy, bez wpisu do Galerii, nic w `:broken`
+        ev.check(JSON.stringify(firm.research) === '{}' && firm.storeLimit === 3 && firm.fame === null && firm.goals.claimed.length === 0, `firma po migracji: ${JSON.stringify(firm)}`);
+        ev.check(firm.broken.length === 0, `zapis w :broken: ${firm.broken.join(', ')}`);
+        ev.check(g.builds.length === 1 && g.stores.filter((st) => !st.closed).length === 1, `fixture: budowy ${g.builds.length}, otwarte ${g.stores.filter((st) => !st.closed).length}`);
+        ev.note(`zapis schematu 3 „dwa sklepy” (seed ${g.seed}, dzień ${g.day}): sklep #2 remont ${s2?.remont}, poziom ${s2?.level}; gotówka ${money(g.wallet)} zł; po migracji badania ${JSON.stringify(firm.research)}, limit ${firm.storeLimit}, cele ${JSON.stringify(firm.goals)}, Galeria ${firm.fame}`);
+        await shopAndStreet(page, ev, '4b-01-remont5');
+        const errs = consoleSince(vp, '4b', errorsFrom);
+        ev.check(errs.length === 0, `błędy konsoli przy remoncie 5: ${errs.slice(0, 3).join(' | ')}`);
+      });
+      if (!go) return;
+
+      go = await runStep(vp, '4b-b', page, async (ev) => {
+        const { stopped } = await advance(page, { stop: /^Traszka #3 otwarta$/, maxDays: 3, chunk: 720 });
+        if (!ev.check(!!stopped, 'okno „Traszka #3 otwarta” nie pojawiło się')) return;
+        await sleep(450);
+        await press(page, '.tt-story .tt-primary');
+        await settle(page);
+        const g0 = await readGame(page);
+        ev.check(g0.stores.filter((st) => !st.closed).length === 2, `otwarte sklepy po budowie: ${g0.stores.filter((st) => !st.closed).length}`);
+        await openTab(page, 'miasto');
+        await page.waitForSelector('.tt-research[open] [data-research]', { timeout: 30_000 });
+        const rows = await page.evaluate(() => [...document.querySelectorAll('.tt-research [data-research]')].map((el) => ({
+          id: el.dataset.research, fee: /w tym opłata koordynacyjna Centrali: /.test(el.textContent ?? ''), enabled: el.querySelector('.tt-buy')?.disabled === false,
+        })));
+        const head = await textOf(page, '.tt-research summary');
+        ev.check(/Sieć: badania/.test(head ?? ''), `nagłówek sekcji: „${head}”`);
+        ev.check(rows.length === 6 && rows.every((r) => r.fee && r.enabled), `wiersze badań: ${JSON.stringify(rows)}`);
+        const fee = await page.evaluate(() => [...document.querySelectorAll('.tt-research [data-research="dostawy"] .tt-muted')].map((d) => d.textContent).find((t) => /opłata koordynacyjna/.test(t ?? '')) ?? null);
+        ev.note(`sekcja „${head?.trim()}”: ${rows.length} wierszy (${rows.map((r) => r.id).join(', ')}), dostawy: „${fee}”`);
+        await page.evaluate(() => document.querySelector('.tt-research [data-research="dostawy"]')?.scrollIntoView({ block: 'center' }));
+        await sleep(250);
+        const w0 = (await readGame(page)).wallet;
+        await press(page, '.tt-research [data-research="dostawy"] .tt-buy');
+        await until(page, () => (window.traszkaGame.session.firm.research.dostawy ?? 0) === 1, null, 'badanie „Wspólne dostawy” na poziomie 1');
+        const w1 = (await readGame(page)).wallet;
+        ev.check(Math.abs(w0 - w1 - RESEARCH_DOSTAWY_COST) < 0.01, `portfel zszedł o ${money(w0 - w1)} zł zamiast ${money(RESEARCH_DOSTAWY_COST)} zł`);
+        const after = await page.evaluate(() => document.querySelector('.tt-research [data-research="dostawy"]')?.textContent ?? '');
+        ev.note(`kupione „Wspólne dostawy”: portfel ${money(w0)} → ${money(w1)} zł; wiersz po zakupie: „${after.replace(/\s+/g, ' ').slice(0, 220)}”`);
+        await sleep(300);
+        if (phone) await checkWidth(page, '4b: sekcja badań Sieci');
+        await ev.shot('4b-02-badania');
+      });
+      if (!go) return;
+
+      go = await runStep(vp, '4b-c', page, async (ev) => {
+        await page.evaluate((w) => {
+          const f = window.traszkaGame.session.firm;
+          f.storeLimit = 4;
+          f.person.wallet = w;
+          for (const st of f.stores) if (!st.closed) st.econ.cash = w;
+        }, WALLET_4B_RENT);
+        await closeTab(page, 'miasto');
+        await skip(page, 1);
+        await settle(page);
+        await openTab(page, 'miasto');
+        await page.waitForSelector('.tt-city .tt-lotrow', { timeout: 30_000 });
+        const rented = [];
+        for (let n = 0; n < 2; n++) {
+          const rows = (await readLots(page)).filter((r) => !r.relet).sort((a, b) => a.price - b.price || a.id - b.id);
+          const lot = rows[0];
+          if (!ev.check(!!lot, 'brak wolnego lokalu na liście')) return;
+          await pickLot(page, lot.id);
+          const payButton = page.locator('.tt-lotpay .tt-btn', { hasText: /gotówkę/ });
+          await payButton.click();
+          const rent = page.getByRole('button', { name: 'Biorę lokal', exact: true });
+          if (!ev.check(await rent.isEnabled(), `„Biorę lokal” zablokowany przy ${n + 3}. placówce: ${await textOf(page, '.tt-lockmsg')}`)) return;
+          const g1 = await readGame(page);
+          await rent.click();
+          await until(page, (k) => window.traszkaGame.session.firm.builds.length === k, g1.builds.length + 1, `budowa po „Biorę lokal” (${n + 3}. placówka)`);
+          const g2 = await readGame(page);
+          ev.check(Math.abs(g1.wallet - g2.wallet - lot.price) < 0.01, `gotówka zeszła o ${money(g1.wallet - g2.wallet)} zł zamiast ${money(lot.price)} zł`);
+          rented.push({ id: lot.id, price: lot.price, days: lot.buildDays, addr: `ul. ${lot.street} ${lot.number}`, district: lot.district });
+          if (await visible(page, '.tt-lotcard')) await press(page, '.tt-lotcard-close');
+          await sleep(300);
+        }
+        ev.note(`wynajęte za gotówkę: ${rented.map((r) => `${r.addr} (${r.district}, ${money(r.price)} zł, ${daysText(r.days)})`).join('; ')}`);
+        await closeTab(page, 'miasto');
+        const maxDays = Math.max(...rented.map((r) => r.days)) + 3;
+        const { game } = await advance(page, { maxDays, chunk: 720, done: (g) => g.builds.length === 0 && g.stores.filter((st) => !st.closed).length === 4 });
+        const g3 = game ?? await readGame(page);
+        ev.check(g3.builds.length === 0 && g3.stores.filter((st) => !st.closed).length === 4, `po budowach: otwarte ${g3.stores.filter((st) => !st.closed).length}, budowy ${g3.builds.length}`);
+        await page.click('[data-tut="store-switch"]');
+        await page.waitForSelector('.tt-stores-pop', { timeout: 10_000 });
+        const list = await page.evaluate(() => [...document.querySelectorAll('.tt-store-row')].map((r) => ({ text: (r.querySelector('.tt-store-name b')?.textContent ?? '').trim(), closed: r.classList.contains('closed') })));
+        ev.check(list.filter((r) => !r.closed).length === 4, `lista chipa: ${JSON.stringify(list)}`);
+        ev.note(`lista chipa: ${list.map((r) => `${r.text}${r.closed ? ' (zamknięty)' : ''}`).join(', ')}; dzień ${g3.day}, gotówka ${money(g3.wallet)} zł`);
+        if (phone) await checkWidth(page, '4b: lista sklepów (cztery)');
+        await ev.shot('4b-03-cztery-sklepy');
+        await tapOutside(page, '.tt-stores-backdrop');
+        await page.waitForSelector('.tt-stores-pop', { state: 'detached', timeout: 5_000 });
+      });
+      if (!go) return;
+
+      go = await runStep(vp, '4b-d', page, async (ev) => {
+        await page.evaluate((w) => {
+          const f = window.traszkaGame.session.firm;
+          f.person.wallet = w;
+          for (const st of f.stores) if (!st.closed) st.econ.cash = w;
+        }, WALLET_4B_MILLION);
+        const g0 = await readGame(page);
+        let { stopped } = await advance(page, { stop: /^Milion!$/, maxDays: 35 });
+        const g1 = await readGame(page);
+        ev.note(`portfel ${money(WALLET_4B_MILLION)} zł w dniu ${g0.day}; ${stopped ? `okno „${stopped.label}” w dniu ${g1.day} przy ${money(g1.wallet)} zł` : `bez okna do dnia ${g1.day}, portfel ${money(g1.wallet)} zł`}`);
+        if (!ev.check(!!stopped, 'okno „Milion!” nie pojawiło się do zamknięcia miesiąca')) return;
+        await sleep(450);
+        const title = await textOf(page, '.tt-fame h2');
+        ev.check(title === FAME_TITLE, `tytuł okna: „${title}”`);
+        if (phone) await checkWidth(page, '4b: okno Milion!');
+        await ev.shot('4b-04-milion');
+        await page.locator('.tt-fame').getByRole('button', { name: 'Wpisz mnie do Galerii sław' }).click();
+        await until(page, (t) => (document.querySelector('.tt-fame')?.textContent ?? '').includes(t), FAME_CLOSED, 'komunikat „Galeria jest teraz nieczynna”', 20_000);
+        const msg = await textOf(page, '.tt-fame .tt-finish-status');
+        ev.note(`po „Wpisz mnie do Galerii sław” przy przerwanym /api/**: „${msg?.trim()}”`);
+        await ev.shot('4b-04b-milion-nieczynna');
+        await page.locator('.tt-fame').getByRole('button', { name: 'Zamknij' }).click();
+        await page.waitForSelector('.tt-fame', { state: 'detached', timeout: 5_000 });
+        const m0 = (await readGame(page)).minute;
+        await skip(page, 120);
+        await settle(page);
+        const g2 = await readGame(page);
+        ev.check(g2.minute > m0 && g2.over === null && !g2.gameOver, `gra po zamknięciu okna: minuta ${m0} → ${g2.minute}, koniec ${g2.over}/${g2.gameOver}`);
+        // zakładka „Galeria sław” w panelu rankingu: komunikat i „Wyślij mój wpis”
+        await page.getByRole('button', { name: 'Ranking' }).click();
+        await page.waitForSelector('.tt-ranking', { timeout: 10_000 });
+        await page.locator('.tt-ranking').getByRole('tab', { name: 'Galeria sław' }).click();
+        await until(page, (t) => (document.querySelector('.tt-ranking')?.textContent ?? '').includes(t), FAME_CLOSED, 'zakładka Galerii z komunikatem', 20_000);
+        const tab = (await textOf(page, '.tt-ranking')) ?? '';
+        ev.check(tab.includes(FAME_CLOSED) && tab.includes('Wyślij mój wpis'), `zakładka Galerii: „${tab.replace(/\s+/g, ' ').slice(0, 200)}”`);
+        if (phone) await checkWidth(page, '4b: zakładka Galerii (nieczynna)');
+        await ev.shot('4b-05-galeria');
+        // atrapa /api/fame/* w przeglądarce (późniejsza trasa ma pierwszeństwo przed przerwaniem `/api/**`): nic nie idzie do żadnego serwera
+        await ctx.route('**/api/fame/**', (route) => {
+          const path = new URL(route.request().url()).pathname;
+          if (path === '/api/fame/list') {
+            fame.lists++;
+            return route.fulfill({ json: { ok: true, total: 3, rows: [
+              { place: 1, nick: 'Ala z Lipowej', at: Date.UTC(2026, 10, 2, 9) },
+              { place: 2, nick: 'Kasjer Roku', at: Date.UTC(2026, 10, 2, 13) },
+              { place: 3, nick: 'Smoke', at: Date.UTC(2026, 10, 3, 8) },
+            ] } });
+          }
+          if (path === '/api/fame/submit' && route.request().method() === 'POST') {
+            fame.submits.push(JSON.parse(route.request().postData() ?? '{}'));
+            return route.fulfill({ json: { ok: true, first: true, place: 3, entry: { nick: 'Smoke', at: Date.UTC(2026, 10, 3, 8) } } });
+          }
+          return route.abort();
+        });
+        await page.locator('.tt-ranking').getByRole('button', { name: 'Wyślij mój wpis' }).click();
+        await page.waitForSelector('.tt-fame', { timeout: 10_000 });
+        await page.locator('.tt-fame').getByRole('button', { name: 'Wpisz mnie do Galerii sław' }).click();
+        await until(page, () => /Jesteś w Galerii sław Traszki/.test(document.querySelector('.tt-fame')?.textContent ?? ''), null, 'wpis do Galerii przez atrapę', 20_000);
+        const sent = fame.submits[0] ?? {};
+        ev.check(fame.submits.length === 1 && sent.seed === two.seed && sent.simVersion === 7 && sent.cash >= 1_000_000 && Number.isInteger(sent.day) && typeof sent.key === 'string',
+          `wysłany wpis: ${JSON.stringify({ ...sent, key: sent.key ? '…' : sent.key })}`);
+        ev.note(`atrapa /api/fame/submit dostała: nick „${sent.nick}”, seed ${sent.seed}, dzień ${sent.day}, gotówka ${money(sent.cash ?? 0)} zł, SIM ${sent.simVersion}`);
+        await page.locator('.tt-fame').getByRole('button', { name: 'Zobacz Galerię' }).click();
+        await page.waitForSelector('.tt-fame-row', { timeout: 10_000 });
+        const rows = await page.evaluate(() => [...document.querySelectorAll('.tt-fame-row')].map((r) => r.textContent?.replace(/\s+/g, ' ').trim()));
+        ev.check(rows.length === 3 && /^1\. Ala z Lipowej/.test(rows[0] ?? ''), `lista Galerii z atrapy: ${JSON.stringify(rows)}`);
+        const meta = await page.evaluate(() => JSON.parse(localStorage.getItem('traszka:meta') ?? '{}').fameSent ?? null);
+        ev.check(Array.isArray(meta) && meta.includes(two.seed), `meta.fameSent: ${JSON.stringify(meta)}`);
+        ev.note(`lista z atrapy: ${rows.join(' | ')}; zapytania do atrapy: lista ${fame.lists}, wpis ${fame.submits.length}`);
+        if (phone) await checkWidth(page, '4b: Galeria sław (atrapa)');
+        await ev.shot('4b-05b-galeria-atrapa');
+        await press(page, '.tt-ranking .tt-card-close');
+        await page.waitForSelector('.tt-ranking', { state: 'detached', timeout: 5_000 });
+        extras.fame4b = { ...(extras.fame4b ?? {}), [vp.name]: { lists: fame.lists, submits: fame.submits.length } };
+      });
+      if (!go) return;
+
+      await runStep(vp, '4b-e', page, async (ev) => {
+        await settle(page);
+        await press(page, '.tt-gear');
+        await page.waitForSelector('[role="dialog"][aria-label="Ustawienia"]');
+        await Promise.all([
+          page.waitForEvent('load', { timeout: 120_000 }),
+          page.locator('[aria-label="Ustawienia"]').getByRole('button', { name: 'English', exact: true }).click(),
+        ]);
+        await waitReady(page);
+        await pause(page);
+        await settle(page);
+        await pause(page);
+        const again = await visible(page, '.tt-fame');
+        ev.check(!again, 'po przeładowaniu znów okno gratulacji (seed jest w meta.fameSent)');
+        if (again) await page.locator('.tt-fame').getByRole('button', { name: 'Close' }).click();
+        const lang = await page.evaluate(() => localStorage.getItem('traszka:lang'));
+        ev.check(lang === 'en', `język w pamięci: ${lang}`);
+        await openTab(page, 'miasto');
+        await page.waitForSelector('.tt-research[open] [data-research]', { timeout: 30_000 });
+        const head = await textOf(page, '.tt-research summary');
+        const rows = await page.evaluate(() => [...document.querySelectorAll('.tt-research [data-research]')].map((el) => ({
+          id: el.dataset.research, name: el.querySelector('b')?.textContent ?? '', fee: /coordination fee/.test(el.textContent ?? ''), pl: /opłata|Wspólne|Centrali/.test(el.textContent ?? ''),
+        })));
+        ev.check(/Network: research/.test(head ?? ''), `nagłówek po angielsku: „${head}”`);
+        ev.check(rows.length === 6 && rows.every((r) => !r.pl) && rows.filter((r) => r.fee).length >= 5, `wiersze po angielsku: ${JSON.stringify(rows)}`);
+        ev.note(`po angielsku: „${head?.trim()}”, ${rows.map((r) => r.name).join(' | ')}`);
+        await page.evaluate(() => document.querySelector('.tt-research [data-research="dostawy"]')?.scrollIntoView({ block: 'center' }));
+        await sleep(300);
+        if (phone) await checkWidth(page, 'angielski: 4b: sekcja badań Sieci');
+        await ev.shot('4b-06-angielski-badania');
+      });
+    } finally {
+      await ctx.close();
+    }
+  }
+
+  async function scenario4bZrzut(browser, vp0) {
+    const vp = vp0.mobile ? vp0 : { ...vp0, size: DESKTOP_4B };
+    const ids = deckIds(readFileSync(join(ROOT, 'src', 'sim', 'economy', 'tycoon', 'deck.ts'), 'utf8'));
+    const text = withOnlyCardTomorrow(withRemont(after.text, { storeId: 1, remontLevel: 4, level: 28 }), { storeId: 1, cardId: 'karty-zrzut', ids });
+    const errorsFrom = errors.length;
+    const { ctx, page } = await newPage(browser, vp, '4b-zrzut', { fixture: { seed: after.seed, text } });
+    try {
+      const go = await runStep(vp, '4b-f', page, async (ev) => {
+        await waitReady(page);
+        await pause(page);
+        await settle(page);
+        await pause(page);
+        const g = await readGame(page);
+        const s1 = g.stores.find((st) => st.id === 1);
+        ev.check(g.activeId === 1 && s1?.remont === 4 && s1.level === 28, `sklep #1: aktywny ${g.activeId}, remont ${s1?.remont}, poziom ${s1?.level}`);
+        ev.note(`zapis „po Traszce” (seed ${g.seed}, dzień ${g.day}): sklep startowy #1 z remontem ${s1?.remont} i poziomem ${s1?.level}; talia: ${ids.length} kart, jutro tylko „karty-zrzut”`);
+        await shopAndStreet(page, ev, '4b-07-remont4');
+        const errs = consoleSince(vp, '4b-zrzut', errorsFrom);
+        ev.check(errs.length === 0, `błędy konsoli przy remoncie 4: ${errs.slice(0, 3).join(' | ')}`);
+      });
+      if (!go) return;
+      await runStep(vp, '4b-g', page, async (ev) => {
+        const { stopped } = await advance(page, { stop: /Zrzut Traszkomonów/, maxDays: 2, chunk: 360 });
+        if (!ev.check(!!stopped, 'karta „Zrzut Traszkomonów” nie pojawiła się do jutra')) return;
+        await sleep(450);
+        const card = await page.evaluate(() => {
+          const m = document.querySelector('.tt-deck');
+          return { label: m?.getAttribute('aria-label') ?? '', text: (m?.textContent ?? '').replace(/\s+/g, ' ').trim(), answers: m ? m.querySelectorAll('[role="radio"], .tt-deck-answer, input[type="radio"]').length : 0 };
+        });
+        const g = await readGame(page);
+        ev.check(/Zrzut Traszkomonów/.test(card.label) && /Limit 2 saszetki/.test(card.text) && /Bez limitu/.test(card.text), `karta: ${card.label} — ${card.text.slice(0, 160)}`);
+        ev.note(`„${card.label}” w dniu ${g.day} o ${String(Math.floor((g.minute % 1440) / 60)).padStart(2, '0')}:${String(g.minute % 60).padStart(2, '0')}: ${card.text.slice(0, 260)}`);
+        if (vp.mobile) await checkWidth(page, '4b: karta Zrzut Traszkomonów');
+        await ev.shot('4b-08-zrzut-traszkomonow');
+        await press(page, '.tt-deck .tt-primary');
+        await settle(page);
+        const mods = await page.evaluate(() => window.traszkaGame.session.econ.tycoon.cards.active.map((m) => ({ kind: m.kind, value: m.value, from: m.from % 1440, minutes: m.until - m.from })));
+        ev.check(mods.some((m) => m.kind === 'traffic' && Math.abs(m.value - 0.9) < 1e-9 && m.from === 360 && m.minutes === 360), `efekty po „Limit 2 saszetki”: ${JSON.stringify(mods)}`);
+        ev.note(`po odpowiedzi domyślnej („Limit 2 saszetki”): ${JSON.stringify(mods)}`);
+      });
+    } finally {
+      await ctx.close();
+    }
+  }
+
   // --- krok 7 (telefon) ---
 
   async function phoneChecks(page, ev) {
@@ -1934,6 +2347,88 @@ async function main(argv) {
     }
   }
 
+  // --- zrzut Traszkomonów: kolejka przed sklepem (komputer) ---
+
+  /** Pula postaci presetu `srednia` (jak `CROWD_MAX` w scene.ts): agenci w sali i kolejka razem nie wychodzą ponad nią. */
+  const POOL_SREDNIA = 16;
+
+  async function queueRun(browser, vp) {
+    const drop = saveWithCardDrop(before.text);
+    const { ctx, page } = await newPage(browser, vp, 'kolejka', { fixture: { seed: before.seed, text: drop.text }, quality: 'srednia' });
+    const read = () => page.evaluate(() => {
+      const g = window.traszkaGame;
+      const root = g.ctx.scene.getObjectByName('crowd');
+      return {
+        minute: g.session.econ.minute,
+        queue: g.crowdView?.queueSize ?? -1,
+        // do puli liczą się ci, którzy jeszcze są w sali albo wchodzą: wychodzący (`leaving`) są już w drodze do zniknięcia
+        agents: g.world.crowd.agents.filter((a) => a.state !== 'gone' && a.state !== 'leaving').length,
+        states: g.world.crowd.agents.filter((a) => a.state !== 'gone').map((a) => a.state).join(','),
+        objects: root ? root.children.filter((o) => !o.isInstancedMesh).length : -1,
+      };
+    });
+    try {
+      await runStep(vp, 'f', page, async (ev) => {
+        await waitReady(page);
+        await pause(page);
+        await settle(page);
+        // doba zrzutu, 7:30: przewijanie staje na kartach decyzji, więc kawałkami i z zamykaniem okien
+        const start = drop.from + 90;
+        for (let i = 0; i < 40 && (await readGame(page)).minute < start; i++) {
+          await skip(page, Math.min(1440, start - (await readGame(page)).minute));
+          await settle(page);
+        }
+        const g0 = await readGame(page);
+        ev.check(g0.minute >= start && g0.minute < start + 30, `po przewinięciu minuta ${g0.minute}, oczekiwana ${start}`);
+        ev.note(`karta wymuszona w kopercie zapisu: ruch +1,6 od minuty ${drop.from} do ${drop.until} (doba ${drop.day}, 6:00–10:00); start 7:30, minuta ${g0.minute}`);
+        // czas rusza (×1), tłum wypełnia salę, a kolejka dochodzi po kilka postaci
+        await page.click('[data-tut="speed"] .tt-btn:nth-child(2)');
+        await until(page, () => (window.traszkaGame.crowdView?.queueSize ?? 0) >= 6, null, 'kolejka przed sklepem (co najmniej 6 postaci)', 90_000);
+        // tłum w sali dochodzi do tempa z kartą, a pula postaci (sala + kolejka) ma się ustalić w granicach presetu: agenci, którzy
+        // weszli, zanim kolejka urosła, wychodzą sami (nowych do puli nie przybywa), więc odczekujemy do ustalenia, najwyżej ~20 s
+        let maxLoad = 0;
+        let last = null;
+        let calm = 0;
+        for (let i = 0; i < 40 && calm < 3; i++) {
+          await sleep(500);
+          await settle(page);
+          last = await read();
+          maxLoad = Math.max(maxLoad, last.agents + last.queue);
+          calm = i >= 10 && last.queue === 12 && last.agents + last.queue <= POOL_SREDNIA ? calm + 1 : 0;
+        }
+        ev.check(last.minute < drop.until - 5, `zrzut jeszcze trwa (minuta ${last.minute}, koniec efektu ${drop.until})`);
+        ev.check(last.queue >= 6 && last.queue <= 12, `postaci w kolejce: ${last.queue} (oczekiwane 6–12)`);
+        ev.check(last.queue === 12, `ruch +1,6 daje pełną kolejkę 12, jest ${last.queue}`);
+        ev.check(last.agents + last.queue <= POOL_SREDNIA, `agenci w sali ${last.agents} + kolejka ${last.queue} ponad pulę postaci ${POOL_SREDNIA}`);
+        ev.note(`kolejka ${last.queue}, agenci w sali ${last.agents} (poza wychodzącymi; wszyscy: ${last.states}; po ustaleniu), razem najwyżej ${maxLoad} w trakcie narastania (pula presetu srednia: ${POOL_SREDNIA}), obiekty w grupie tłumu ${last.objects} (z kasjerem i załogą), minuta ${last.minute}`);
+        // kadr na chodnik przed wejściem: kolejka stoi po obu stronach drzwi
+        await page.evaluate(() => {
+          const g = window.traszkaGame;
+          const l = g.world.layout;
+          const e = l.entrance;
+          const cx = e.reduce((n, c) => n + c.x, 0) / e.length;
+          const rig = g.ctx.rig;
+          rig.panBy(((cx + 0.5 - l.width / 2) * 0.5) - rig.target.x, ((2 + 0.5 - l.depth / 2) * 0.5) - rig.target.z);
+          rig.zoomBy(1.6);
+        });
+        await sleep(1000);
+        await ev.shot('f1-kolejka-zrzut');
+        // po 10:00 efekt wygasa i kolejka się rozchodzi (po kilka postaci na raz)
+        await page.evaluate(() => { document.querySelector('[data-tut="speed"] .tt-btn:nth-child(1)')?.click(); });
+        await settle(page);
+        const gNow = await readGame(page);
+        await skip(page, Math.max(1, drop.until + 15 - gNow.minute));
+        await settle(page);
+        await page.click('[data-tut="speed"] .tt-btn:nth-child(2)');
+        await until(page, () => (window.traszkaGame.crowdView?.queueSize ?? 1) === 0, null, 'kolejka rozeszła się po 10:00', 60_000);
+        const after = await read();
+        ev.check(after.queue === 0 && after.minute >= drop.until, `po zrzucie: kolejka ${after.queue}, minuta ${after.minute}`);
+      });
+    } finally {
+      await ctx.close();
+    }
+  }
+
   const round = (r) => (r ? { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.w), h: Math.round(r.h) } : null);
 
   /** Powtarza odczyt co 300 ms, aż ten sam dymek stoi w tym samym miejscu przez 4 pomiary (swiftshader daje kilka klatek na sekundę). */
@@ -2014,25 +2509,29 @@ async function main(argv) {
         probed.add(key);
         await checkWidth(page, `okno: ${d.kind === 'deck' ? 'karta decyzji' : d.label}${d.tabs > 0 ? ` [${d.tabs} zakładki sklepów]` : ''}`);
       } : null;
-      try {
-        await scenarioOldSave(browser, vp);
-        await scenarioFlow(browser, vp);
-        await scenarioRelet(browser, vp);
-        if (vp.mobile) await tipsRun(browser, vp);
-      } catch (error) {
-        console.log(`  [${vp.name}] wyjątek poza krokiem: ${error instanceof Error ? error.stack : String(error)}`);
-        const r = (results[vp.name] ??= {});
-        r.exception = stepResult({ ok: false, failed: [`wyjątek: ${error instanceof Error ? error.message : String(error)}`] });
+      const scenarios = args.stage === '4b' ? [] : [scenarioOldSave, scenarioFlow, scenarioRelet, ...(vp.mobile ? [tipsRun] : [])];
+      // kroki 4b we własnym bloku: wyjątek w scenariuszach 4a nie zabiera im przebiegu (i odwrotnie)
+      for (const group of [scenarios, [scenario4b, scenario4bZrzut, ...(vp.mobile ? [] : [queueRun])]]) {   // kolejka przy zrzucie (Zadanie 11): tylko komputer
+        try {
+          for (const run of group) await run(browser, vp);
+        } catch (error) {
+          console.log(`  [${vp.name}] wyjątek poza krokiem: ${error instanceof Error ? error.stack : String(error)}`);
+          const r = (results[vp.name] ??= {});
+          r.exception = stepResult({ ok: false, failed: [`wyjątek: ${error instanceof Error ? error.message : String(error)}`] });
+        }
       }
-      for (const step of [...STEPS, TIPS_STEP]) {
+      for (const step of [...STEPS, TIPS_STEP, ...STEPS_4B, QUEUE_STEP]) {
         if (!step.sizes.includes(vp.name)) (results[vp.name] ??= {})[step.id] = stepResult({ na: true, notes: ['nie dotyczy tego rozmiaru'] });
+        else if (args.stage === '4b' && !STEPS_4B.includes(step) && step !== QUEUE_STEP && step.id !== 8) (results[vp.name] ??= {})[step.id] = stepResult({ na: true, notes: ['--etap 4b: tylko kroki 4b'] });
       }
       // 8: konsola i pageerror z całego rozmiaru
       const mine = errors.filter((e) => e.startsWith(`${vp.name}/`));
       const r8 = stepResult();
       if (mine.length > 0) { r8.ok = false; r8.failed.push(`błędy w konsoli: ${mine.length}`); r8.notes.push(...mine.slice(0, 5)); }
       const myApi = apiBlocked.filter((a) => a.startsWith(`${vp.name}/`));
-      r8.notes.push(`błędów konsoli i pageerror: ${mine.length}; przerwane zapytania do /api/**: ${myApi.length}${myApi.length ? ` (${[...new Set(myApi)].slice(0, 3).join(', ')})` : ''}`);
+      const myApiConsole = apiConsole.filter((a) => a.startsWith(`${vp.name}/`));
+      if (myApiConsole.length > myApi.length) { r8.ok = false; r8.failed.push(`komunikatów o przerwanym /api/** w konsoli (${myApiConsole.length}) więcej niż przerwanych zapytań (${myApi.length})`); }
+      r8.notes.push(`błędów konsoli i pageerror: ${mine.length}; przerwane zapytania do /api/**: ${myApi.length}${myApi.length ? ` (${[...new Set(myApi)].slice(0, 4).join(', ')})` : ''}; ich komunikaty „Failed to load resource” w konsoli (nie liczone jako błąd): ${myApiConsole.length}`);
       const myFallbacks = hooks.fallbacks.slice(fallbacksBefore);
       r8.notes.push(`awaryjne click() w DOM w pętli zamykania okien (settle/pause): ${myFallbacks.length}${myFallbacks.length ? ` (${[...new Set(myFallbacks)].slice(0, 3).join(' | ')})` : ''}`);
       (results[vp.name] ??= {})[8] = r8;
@@ -2046,11 +2545,11 @@ async function main(argv) {
     }
   }
   const seconds = Math.round((Date.now() - started) / 1000);
-  const summary = summarize(results);
+  const summary = summarize(results, [...STEPS, TIPS_STEP, ...STEPS_4B, QUEUE_STEP]);
   const extraFailures = [];
   if (external.length > 0) extraFailures.push(`zapytania poza localhost: ${external.length}`);
   if (extraFailures.length) summary.ok = false;
-  const report = { seconds, summary, results, widths, extras, errors, warnings: [...new Set(warnings)], external, apiBlocked, dialogs, fallbacks: hooks.fallbacks, extraFailures };
+  const report = { seconds, summary, results, widths, extras, errors, warnings: [...new Set(warnings)], external, apiBlocked, apiConsole, dialogs, fallbacks: hooks.fallbacks, extraFailures };
   writeFileSync(join(out, 'smoke.json'), `${JSON.stringify(report, null, 2)}\n`);
   console.log('');
   for (const row of summary.rows) console.log(`${row.size.padEnd(8)} ${String(row.step).padEnd(2)} ${row.status.padEnd(5)} ${row.name}${row.detail ? `  <- ${row.detail}` : ''}`);

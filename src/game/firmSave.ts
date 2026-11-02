@@ -7,7 +7,9 @@ import { computeStoreInfo, type StoreInfo } from '@/sim/economy/storeInfo';
 import { REMONTS } from '@/sim/economy/upgrades';
 import { lotRentable, rentPrice } from '@/sim/firm/commands';
 import { activeStore, createFirm, openStores, refreshSites, setPartner, storeSeedOf, syncWallet } from '@/sim/firm/firm';
-import { INBOX_MAX, type FirmBuild, type FirmNote, type FirmState, type FirmStore } from '@/sim/firm/types';
+import { FIRM_GOALS, isFirmGoalId } from '@/sim/firm/goals';
+import { RESEARCH_IDS, RESEARCH_MAX_LEVEL } from '@/sim/firm/research';
+import { BASE_STORE_LIMIT, INBOX_MAX, MAX_STORES, type FirmBuild, type FirmNote, type FirmState, type FirmStore } from '@/sim/firm/types';
 import { isNum, isRec, num, whole, type Rec } from '@/sim/guards';
 import { GENERATOR_VERSION } from '@/sim/store/generateStore';
 import { layoutFor } from '@/sim/store/layoutFor';
@@ -17,19 +19,30 @@ import { fitsStore, restoreSessionFrom } from './session';
 import { GAME_VERSION } from './version';
 
 /*
- * Zapis zwykłej gry z firmą (spec §7.4, §16): koperta schematu 3 pod `traszka:save:<seed>`. Zapisuje się to, czego nie da się policzyć z
+ * Zapis zwykłej gry z firmą (spec §7.4, §16): koperta schematu 4 pod `traszka:save:<seed>`. Zapisuje się to, czego nie da się policzyć z
  * seeda: osobę, skrzynkę, budowy i sklepy (`EconomyState` każdego otwartego, a zamkniętego tylko wyposażenie lokalu). Układ sklepu też jest
  * czystą funkcją seeda, lokalu i poziomu remontu, więc zapis niesie go tylko wtedy, gdy ta funkcja go nie odtworzy. Miasto jest czystą funkcją seeda i
  * `CITY_GENERATOR_VERSION`, więc nie leży w zapisie; `StoreInfo` (z dzielnicą sklepu) też powstaje od nowa z układu i miasta.
  * Schemat 1 i 2 (jeden sklep, każda wersja SIM) wczytuje się przez `restoreSessionFrom` jak dziś i staje się sklepem #1 firmy.
+ * Schemat 3 (4a.1–4a.2) to ta sama koperta bez pól etapu 4b w bloku firmy (`research`, `storeLimit`, `goals`, `fame`): wczytuje się tą samą
+ * drogą co schemat 4, a brakujące pola dostają wartości nowej firmy. Pierwszy zapis po wczytaniu to już schemat 4.
  * Biegu rankingowego to nie dotyczy: jego zapis (`traszka:ranked`) zostaje w schemacie 2 (`SAVE_SCHEMA`).
  *
  * Ten plik i `session.ts` importują się nawzajem: odczyt sesji woła `restoreFirmFrom`, a ta funkcja dla schematu 1 i 2 woła
  * `restoreSessionFrom`. Cykl jest bezpieczny, bo oba moduły używają cudzych eksportów dopiero w ciele funkcji, nie przy ładowaniu.
  */
 
-/** Schemat koperty firmy. `SAVE_SCHEMA` (2) zostaje, bo na nim stoi zapis biegu rankingowego. */
-export const FIRM_SAVE_SCHEMA = 3;
+/**
+ * Schemat koperty firmy. `SAVE_SCHEMA` (2) zostaje, bo na nim stoi zapis biegu rankingowego. 4 (etap 4b) mimo pól tylko dodanych: karta
+ * przeglądarki sprzed 4b, która *wczytuje* zapis schematu 4 (nowe otwarcie, odświeżenie, „Pobierz zapis”), czyta go jako zapis z nowszej wersji
+ * (`isNewerSave`: `schema > 3`): daje sklep tymczasowy i zapisu nie rusza. To nie chroni karty starej wersji, która była już otwarta w chwili
+ * wdrożenia: trzyma stan w pamięci i przy zamknięciu (`pagehide`) zapisze go schematem 3 na wierzch schematu 4. Nowa wersja wczyta taki zapis
+ * bez `:broken` (migracja 3 → 4), ale pola 4b (badania, limit placówek, cele firmy, Galeria) wrócą wtedy do wartości nowej firmy, a postęp
+ * z nowej wersji, którego stara karta nie widziała, przepadnie. Tak samo działały dotąd wszystkie zmiany zapisu przy kilku otwartych kartach.
+ */
+export const FIRM_SAVE_SCHEMA = 4;
+/** Schematy koperty firmy, które ta wersja czyta: 3 (przed 4b, migracja) i bieżący. */
+const FIRM_ENVELOPE_SCHEMAS: readonly number[] = [3, FIRM_SAVE_SCHEMA];
 /** Tyle bajtów paczki „Wyślij zapis” przyjmuje serwer (`SAVE_MAX_BYTES` w `src/server/config.ts`); test pilnuje zgodności. */
 export const SAVE_TRANSFER_MAX_BYTES = 64 * 1024;
 
@@ -118,7 +131,10 @@ function layoutIsRegenerable(f: FirmState, st: FirmStore): boolean {
 export function firmEnvelopeOf(f: FirmState): FirmSaveEnvelope {
   return {
     schema: FIRM_SAVE_SCHEMA, gameVersion: GAME_VERSION, cityGeneratorVersion: f.city.version, seed: f.seed,
-    firm: { person: f.person, activeId: f.activeId, builds: f.builds, monthInvest: f.monthInvest, inbox: f.inbox, weatherHash: f.weatherHash, over: f.over },
+    firm: {
+      person: f.person, activeId: f.activeId, builds: f.builds, monthInvest: f.monthInvest, inbox: f.inbox, weatherHash: f.weatherHash, over: f.over,
+      research: f.research, storeLimit: f.storeLimit, goals: f.goals, fame: f.fame,
+    },
     stores: f.stores.map((st): SavedStore => {
       const base = { id: st.id, lotId: st.lotId, generatorVersion: st.layout.generatorVersion, notice: st.notice, ...(st.reopened === true ? { reopened: true as const } : {}) };
       if (st.closed) return { ...base, closed: true, econ: fittingsOf(st.econ) };
@@ -127,14 +143,19 @@ export function firmEnvelopeOf(f: FirmState): FirmSaveEnvelope {
   };
 }
 
+/** Koperta firmy, którą ta wersja czyta (schemat 3 albo 4): idzie przez `restoreFirmFrom`, a nie przez odczyt jednego sklepu. */
+export function isFirmEnvelope(data: unknown): data is Rec {
+  return isRec(data) && typeof data.schema === 'number' && FIRM_ENVELOPE_SCHEMAS.includes(data.schema);
+}
+
 /**
- * Zapis z nowszej wersji gry: schemat wyższy niż koperta firmy albo miasto z nowszego generatora (inny kod rozstawiłby lokale
+ * Zapis z nowszej wersji gry: schemat wyższy niż koperta firmy albo koperta firmy z miastem z nowszego generatora (inny kod rozstawiłby lokale
  * inaczej). Nie wiemy, co w nim jest, więc go nie ruszamy. Wspólne dla odczytu sesji i dla przeniesienia zapisu.
  */
 export function isNewerSave(data: unknown): boolean {
   if (!isRec(data) || typeof data.schema !== 'number') return false;
   if (data.schema > FIRM_SAVE_SCHEMA) return true;
-  return data.schema === FIRM_SAVE_SCHEMA && typeof data.cityGeneratorVersion === 'number' && data.cityGeneratorVersion > CITY_GENERATOR_VERSION;
+  return isFirmEnvelope(data) && typeof data.cityGeneratorVersion === 'number' && data.cityGeneratorVersion > CITY_GENERATOR_VERSION;
 }
 
 export type FirmOpened = { ok: true; firm: FirmState } | { ok: false; reason: 'invalid' | 'unbuildable' };
@@ -143,14 +164,14 @@ const INVALID: FirmOpened = { ok: false, reason: 'invalid' };
 const UNBUILDABLE: FirmOpened = { ok: false, reason: 'unbuildable' };
 
 /**
- * Firma z zapisu w schemacie 3, 2 albo 1. Dwa rodzaje porażki jak w `restoreSessionFrom`: `invalid` (zapis nie przeszedł walidacji,
+ * Firma z zapisu w schemacie 4, 3, 2 albo 1. Dwa rodzaje porażki jak w `restoreSessionFrom`: `invalid` (zapis nie przeszedł walidacji,
  * wołający przenosi go do kopii) i `unbuildable` (zapis jest poprawny, ale świata z niego nie złożyliśmy: generator miasta albo
  * układu; zapis zostaje na miejscu). Niczego nie zapisuje i nie rzuca z powodu treści zapisu. `partner` to premia z sieci sklepów
  * (meta): aktualna przy każdym wczytaniu, nadpisuje zapisaną.
  */
 export function restoreFirmFrom(data: unknown, seed: string, partner?: EconomyState['partner']): FirmOpened {
   if (!isRec(data)) return INVALID;
-  if (data.schema === FIRM_SAVE_SCHEMA) return restoreEnvelope(data, seed, partner);
+  if (isFirmEnvelope(data)) return restoreEnvelope(data, seed, partner);
   const legacy = restoreSessionFrom(data, seed, partner);
   if (!legacy.ok) return legacy;
   const { econ, layout, info } = legacy.session;
@@ -221,8 +242,36 @@ const readInbox = (raw: unknown): FirmNote[] => (Array.isArray(raw) ? (raw as un
     ? [{ day: whole(n.day, 0), storeId: whole(n.storeId, 0), card: n.card, answer: whole(n.answer, 0) }] : []))
   .slice(-INBOX_MAX);
 
+/** Poziomy badań Sieci (4b): znane badania z poziomem przyciętym do `RESEARCH_MAX_LEVEL`, w kolejności `RESEARCH_IDS`; poziom 0 to brak klucza. */
+function readResearch(raw: unknown): FirmState['research'] {
+  const out: FirmState['research'] = {};
+  if (!isRec(raw)) return out;
+  for (const id of RESEARCH_IDS) {
+    const v = Object.hasOwn(raw, id) ? raw[id] : undefined;
+    const level = isNum(v) ? whole(v, 0, 0, RESEARCH_MAX_LEVEL[id]) : 0;
+    if (level > 0) out[id] = level;
+  }
+  return out;
+}
+
+/** Lista identyfikatorów celów firmy: tylko znane id (`FIRM_GOALS`), bez dubli, najwyżej tyle, ile jest celów. */
+const readGoalIds = (raw: unknown, skip: readonly string[] = []): string[] =>
+  (Array.isArray(raw) ? [...new Set((raw as unknown[]).filter(isFirmGoalId))] : [])
+    .filter((id) => !skip.includes(id)).slice(0, FIRM_GOALS.length);
+
+/** Cele firmy (4b): odebrane i gotowe do odbioru; cel odebrany nie czeka drugi raz na odbiór. */
+function readGoals(raw: unknown): FirmState['goals'] {
+  if (!isRec(raw)) return { ready: [], claimed: [] };
+  const claimed = readGoalIds(raw.claimed);
+  return { ready: readGoalIds(raw.ready, claimed), claimed };
+}
+
+/** Wpis do Galerii (4b): dzień gry liczbą całkowitą i skończona gotówka, inaczej brak wpisu. */
+const readFame = (raw: unknown): FirmState['fame'] =>
+  (isRec(raw) && Number.isInteger(raw.day) && isNum(raw.cash) ? { day: raw.day as number, cash: raw.cash } : null);
+
 /**
- * Koperta schematu 3. Miasto z `generateCity(seed)`, każdy sklep przez `sanitizeLayout` i `sanitizeEconomy` (brakujące pola z
+ * Koperta schematu 4 albo 3. Miasto z `generateCity(seed)`, każdy sklep przez `sanitizeLayout` i `sanitizeEconomy` (brakujące pola z
  * `createEconomy` sklepu), `info` od nowa i `refreshSites`, premia sieci przez `setPartner`. Zamknięty sklep nie ma w zapisie układu
  * ani pełnej ekonomii (`ClosedFittings`): układ powstaje z lokalu miasta i poziomu remontu, ekonomia z domyślnych z nałożonym
  * wyposażeniem i `gameOver`. Otwarty sklep bez `layout` dostaje układ tak samo, ale tylko gdy jego `generatorVersion` to bieżący
@@ -230,6 +279,10 @@ const readInbox = (raw: unknown): FirmNote[] => (Array.isArray(raw) ? (raw as un
  * `GENERATOR_VERSION` musi zachować stary generator albo zapis z układem), bez liczby całkowitej `invalid`. Sprawdzane: seed, wersja miasta, sklepy (rosnące `id`, różne lokale z miasta, #1 w lokalu startowym,
  * wszystkie otwarte w tej samej minucie), a naprawiane: `activeId` spoza otwartych sklepów (wraca najniższy
  * otwarty), portfel (w `LIMITS.money`), budowy, skrzynka. Gotówka i Ogonki otwartych sklepów to portfel osoby.
+ *
+ * Pola 4b (schemat 3 ich nie ma, więc dostaje wartości nowej firmy): badania przycięte do najwyższego poziomu, limit placówek w
+ * [`BASE_STORE_LIMIT`, `MAX_STORES`], podniesiony do liczby otwartych sklepów razem z budowami (zapis z gry nie mógł jej przekroczyć), cele firmy
+ * jako listy znanych identyfikatorów (`FIRM_GOALS`), wpis do Galerii z dniem i gotówką albo null. Badania i limit są w firmie przed `refreshSites`: `site` sklepów z nich powstaje.
  */
 function restoreEnvelope(data: Rec, seed: string, partner: EconomyState['partner'] | undefined): FirmOpened {
   if (data.seed !== seed) return INVALID;
@@ -275,6 +328,9 @@ function restoreEnvelope(data: Rec, seed: string, partner: EconomyState['partner
     person: { wallet: 0, ogonki: 0, partner: false, remanentKnown: false },
     stores: shells.map((s) => s.st), activeId: 1, builds: [], monthInvest: 0, inbox: [], over: null,
     weatherHash: whole(raw.weatherHash, shells[0]!.st.econ.seedHash, 0, 0xffff_ffff),   // przed `refreshSites`: dzielnica sklepu niesie pogodę miasta
+    // 4b, też przed `refreshSites`: `site` sklepów liczy się z badań i składu sieci
+    research: readResearch(raw.research), storeLimit: whole(raw.storeLimit, BASE_STORE_LIMIT, BASE_STORE_LIMIT, MAX_STORES),
+    goals: readGoals(raw.goals), fame: readFame(raw.fame),
   };
   const open = openStores(f);
   if (open.length === 0) return INVALID;
@@ -306,6 +362,8 @@ function restoreEnvelope(data: Rec, seed: string, partner: EconomyState['partner
   f.over = raw.over === 'debt' || raw.over === 'closed' ? raw.over : null;
   f.inbox = readInbox(raw.inbox);
   addBuilds(f, raw.builds);
+  // zapis z gry nie mógł mieć więcej placówek (z budowami), niż pozwalał limit: większa liczba to limit, który zapis zgubił
+  f.storeLimit = Math.max(f.storeLimit, Math.min(MAX_STORES, open.length + f.builds.length));
 
   try {
     if (partner) setPartner(f, partner);

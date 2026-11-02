@@ -64,6 +64,42 @@ describe('MemoryRedis: atrapa Upstash do testów (te same polecenia, te same ksz
       .toEqual([2, ['d', 'c'], 1, 1]);
   });
 
+  it('ZRANGE 0 1 WITHSCORES: rosnąco po wyniku, remis po członku (odwrotność ZREVRANGE); zakresy ujemne, brak klucza, zły typ', async () => {
+    const { redis } = redisAt();
+    await redis.exec([['ZADD', 'z', 3, 'd'], ['ZADD', 'z', 2, 'b'], ['ZADD', 'z', 1, 'c'], ['ZADD', 'z', 2, 'a']]);
+    expect(await redis.exec([
+      ['ZRANGE', 'z', 0, 1, 'WITHSCORES'], ['ZRANGE', 'z', 0, -1], ['ZRANGE', 'z', 1, 2], ['ZRANGE', 'z', -2, -1, 'WITHSCORES'],
+      ['ZRANGE', 'z', 0, 99, 'WITHSCORES'], ['ZRANGE', 'z', 5, 9], ['ZRANGE', 'brak', 0, -1, 'WITHSCORES'],
+    ])).toEqual([
+      ['c', '1', 'a', '2'], ['c', 'a', 'b', 'd'], ['a', 'b'], ['b', '2', 'd', '3'],
+      ['c', '1', 'a', '2', 'b', '2', 'd', '3'], [], [],
+    ]);
+    expect(asScored(await run(redis, ['ZRANGE', 'z', 0, 0, 'WITHSCORES']))).toEqual([{ member: 'c', score: 1 }]);
+    await redis.exec([['SET', 'tekst', 'x']]);
+    await expect(run(redis, ['ZRANGE', 'tekst', 0, -1])).rejects.toBeInstanceOf(RedisError);
+  });
+
+  it('ZRANK: miejsce od 0 w kolejności rosnącej (remis po członku), null dla nieznanego członka i braku klucza; zły typ to błąd', async () => {
+    const { redis } = redisAt();
+    await redis.exec([['ZADD', 'z', 3, 'd'], ['ZADD', 'z', 2, 'b'], ['ZADD', 'z', 1, 'c'], ['ZADD', 'z', 2, 'a']]);
+    expect(await redis.exec([
+      ['ZRANK', 'z', 'c'], ['ZRANK', 'z', 'a'], ['ZRANK', 'z', 'b'], ['ZRANK', 'z', 'd'], ['ZRANK', 'z', 'x'], ['ZRANK', 'brak', 'a'],
+    ])).toEqual([0, 1, 2, 3, null, null]);
+    expect(await run(redis, ['ZRANGE', 'z', 0, -1])).toEqual(['c', 'a', 'b', 'd']);   // te same miejsca co w ZRANGE
+    await redis.exec([['SET', 'tekst', 'x']]);
+    await expect(run(redis, ['ZRANK', 'tekst', 'a'])).rejects.toBeInstanceOf(RedisError);
+  });
+
+  it('ZADD NX: dopisuje tylko nowych członków (liczy dodanych), istniejącemu nie zmienia wyniku; z GT to błąd jak w Redisie', async () => {
+    const { redis } = redisAt();
+    expect(await redis.exec([
+      ['ZADD', 'z', 'NX', 100, 'a'], ['ZADD', 'z', 'NX', 50, 'a'], ['ZADD', 'z', 'NX', 200, 'a'], ['ZADD', 'z', 'NX', 70, 'b'],
+      ['ZSCORE', 'z', 'a'], ['ZSCORE', 'z', 'b'], ['ZRANGE', 'z', 0, -1, 'WITHSCORES'],
+    ])).toEqual([1, 0, 0, 1, '100', '70', ['b', '70', 'a', '100']]);
+    await expect(run(redis, ['ZADD', 'z', 'NX', 'GT', 1, 'c'])).rejects.toBeInstanceOf(RedisError);
+    expect(await run(redis, ['ZCARD', 'z'])).toBe(2);
+  });
+
   it('GETRANGE: przedział włącznie, ujemne indeksy od końca, koniec poza napisem przycięty, brak klucza i pusty przedział to pusty tekst', async () => {
     const { redis, clock } = redisAt(0);
     await redis.exec([['SET', 'k', '0123456789'], ['SET', 'ttl', 'abcdef', 'PX', 100]]);

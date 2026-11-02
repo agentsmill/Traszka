@@ -19,7 +19,8 @@ import {
 import {
   activeStore, applyStoreCommand, createFirm, emptyStepOut, openStoreAt, openStores, stepFirmMinute, syncWallet,
 } from './firm';
-import { MAX_STORES, type FirmBuild, type FirmRefusal, type FirmState, type FirmStepOut, type FirmStore } from './types';
+import { RESEARCH_BY_ID, RESEARCH_IDS, RESEARCH_MAX_LEVEL, researchCost, type ResearchId } from './research';
+import { BASE_STORE_LIMIT, MAX_STORES, type FirmBuild, type FirmRefusal, type FirmState, type FirmStepOut, type FirmStore } from './types';
 
 /*
  * Polecenia firmy (spec §10, §12): status Partnera Strategicznego, wynajem lokalu z pakietem otwarcia (gotówka albo 12 rat), budowa,
@@ -305,18 +306,42 @@ describe('rentRefusal i applyFirmCommand rentLot: każdy powód osobno, stan bez
     rent(f, rentable(f)[0]!);
     refused(f, { type: 'rentLot', lotId: rentable(f)[0]!, pay: 'raty' }, 'limit');
     refused(f, { type: 'rentLot', lotId: rentable(f)[0]!, pay: 'gotowka' }, 'limit');
-    expect(openStores(f).length + f.builds.length).toBe(MAX_STORES);
+    expect(openStores(f).length + f.builds.length).toBe(f.storeLimit);
+    expect(f.storeLimit).toBe(BASE_STORE_LIMIT);
   });
 
   it('limit: trzy otwarte sklepy to komplet, także bez budowy', () => {
     const f = partnerFirm();
     openStoreAt(f, freeLot(f), clockOf(f));
     openStoreAt(f, rentable(f)[0]!, clockOf(f));
-    expect(openStores(f)).toHaveLength(MAX_STORES);
+    expect(openStores(f)).toHaveLength(BASE_STORE_LIMIT);
     expect(f.builds).toEqual([]);
     refused(f, { type: 'rentLot', lotId: rentable(f)[0]!, pay: 'gotowka' }, 'limit');
     refused(f, { type: 'rentLot', lotId: rentable(f)[0]!, pay: 'raty' }, 'limit');
   });
+
+  it('rentRefusal: limit przy open + builds ≥ storeLimit; przy storeLimit 4 czwarty lokal przechodzi, piąty nie', () => {
+    const f = partnerFirm(SEED, 2_000_000);
+    openStoreAt(f, freeLot(f), clockOf(f));
+    openStoreAt(f, rentable(f)[0]!, clockOf(f));
+    expect(rentRefusal(f, rentable(f)[0]!, 'gotowka')).toBe('limit');   // trzy placówki: limit startowy
+    f.storeLimit = 4;
+    const fourth = rent(f, rentable(f)[0]!);   // czwarta placówka: budowa liczy się do limitu
+    expect(openStores(f).length + f.builds.length).toBe(4);
+    refused(f, { type: 'rentLot', lotId: rentable(f)[0]!, pay: 'gotowka' }, 'limit');
+    refused(f, { type: 'rentLot', lotId: rentable(f)[0]!, pay: 'raty' }, 'limit');
+    playTo(f, openMinute(fourth));
+    openDueBuilds(f, emptyStepOut());
+    expect(openStores(f)).toHaveLength(4);
+    expect(rentRefusal(f, rentable(f)[0]!, 'gotowka')).toBe('limit');   // cztery otwarte bez budowy: komplet przy limicie 4
+    f.storeLimit = 5;
+    rent(f, rentable(f)[0]!, 'raty');   // piąta przy limicie 5
+    refused(f, { type: 'rentLot', lotId: rentable(f)[0]!, pay: 'gotowka' }, 'limit');
+    expect(openStores(f).length + f.builds.length).toBe(MAX_STORES);
+    // limit z zapisu ponad twardy sufit nic nie zmienia: MAX_STORES to twardy limit
+    f.storeLimit = 9;
+    refused(f, { type: 'rentLot', lotId: rentable(f)[0]!, pay: 'gotowka' }, 'limit');
+  }, 20_000);
 
   it('limit: zamknięty sklep nie liczy się do trzech, więc po zamknięciu jednego z trzech wynajem znów przechodzi', () => {
     const f = partnerFirm();
@@ -702,8 +727,8 @@ describe('lotState', () => {
 // --- Kształt poleceń --------------------------------------------------------------------------------------------------
 
 describe('FirmCommand', () => {
-  it('FIRM_COMMAND_TYPES to rentLot, switchStore i terminateStore', () => {
-    expect([...FIRM_COMMAND_TYPES]).toEqual(['rentLot', 'switchStore', 'terminateStore']);
+  it('FIRM_COMMAND_TYPES to rentLot, switchStore, terminateStore, research i claimGoal', () => {
+    expect([...FIRM_COMMAND_TYPES]).toEqual(['rentLot', 'switchStore', 'terminateStore', 'research', 'claimGoal']);
   });
 
   it('isFirmCommand: poprawne kształty przechodzą', () => {
@@ -711,6 +736,10 @@ describe('FirmCommand', () => {
     expect(isFirmCommand({ type: 'rentLot', lotId: 0, pay: 'raty', extra: 1 })).toBe(true);
     expect(isFirmCommand({ type: 'switchStore', storeId: 2 })).toBe(true);
     expect(isFirmCommand({ type: 'terminateStore', storeId: 2 })).toBe(true);
+    for (const id of RESEARCH_IDS) expect(isFirmCommand({ type: 'research', id }), id).toBe(true);
+    expect(isFirmCommand({ type: 'research', id: 'media', extra: 1 })).toBe(true);
+    expect(isFirmCommand({ type: 'claimGoal', id: 'cash250k' })).toBe(true);
+    expect(isFirmCommand({ type: 'claimGoal', id: 'nieznany', extra: 1 })).toBe(true);   // kształt przechodzi, nieznane id odrzuca dopiero sam odbiór (odmowa `goal`)
   });
 
   it.each([
@@ -720,6 +749,9 @@ describe('FirmCommand', () => {
     { type: 'rentLot', lotId: 1, pay: 'karta' }, { type: 'rentLot', lotId: 1, pay: true }, { type: 'rentLot', lotId: 1, pay: ['raty'] },
     { type: 'switchStore' }, { type: 'switchStore', storeId: '2' }, { type: 'switchStore', storeId: 2.5 }, { type: 'switchStore', storeId: null },
     { type: 'terminateStore' }, { type: 'terminateStore', storeId: '2' }, { type: 'terminateStore', storeId: 2.5 }, { type: 'terminateStore', storeId: null },
+    { type: 'research' }, { type: 'research', id: 'nieznane' }, { type: 'research', id: 3 }, { type: 'research', id: null }, { type: 'research', id: ['media'] },
+    { type: 'research', id: 'toString' }, { type: 'research', id: '__proto__' }, { type: 'research', id: 'Media' },
+    { type: 'claimGoal' }, { type: 'claimGoal', id: 3 }, { type: 'claimGoal', id: null }, { type: 'claimGoal', id: ['cash250k'] },
   ])('isFirmCommand: %j nie przechodzi', (x) => {
     expect(isFirmCommand(x)).toBe(false);
   });
@@ -732,7 +764,100 @@ describe('FirmCommand', () => {
     expect(applyFirmCommand(f, { type: 'rentLot', lotId: 1, pay: 'karta' } as unknown as FirmCommand, out)).toEqual({ ok: false, reason: 'lot' });
     expect(applyFirmCommand(f, { type: 'switchStore' } as unknown as FirmCommand, out)).toEqual({ ok: false, reason: 'store' });
     expect(applyFirmCommand(f, null as unknown as FirmCommand, out)).toEqual({ ok: false, reason: 'store' });
+    expect(applyFirmCommand(f, { type: 'research', id: 'nieznane' } as unknown as FirmCommand, out)).toEqual({ ok: false, reason: 'store' });
     expect(digest(f)).toBe(before);
     expect(out).toEqual(emptyStepOut());
   });
+});
+
+// --- Badania Sieci (4b §5.3) -------------------------------------------------------------------------------------------
+
+describe('polecenie research', () => {
+  const buy = (f: FirmState, id: ResearchId, out: FirmStepOut = emptyStepOut()): void => {
+    expect(applyFirmCommand(f, { type: 'research', id }, out)).toEqual({ ok: true });
+  };
+
+  it('odmowy: ranked, siec (jeden otwarty sklep), max, gotowka, over; odmowa nie rusza stanu i nie zostawia zdarzenia', () => {
+    refused(newFirm(SEED, true), { type: 'research', id: 'dostawy' }, 'ranked');
+
+    const f = partnerFirm();
+    refused(f, { type: 'research', id: 'dostawy' }, 'siec');   // jeden otwarty sklep to jeszcze nie sieć
+    rentAndOpen(f);
+
+    f.person.wallet = researchCost(RESEARCH_BY_ID.marketing, 0) - 100;
+    syncWallet(f);
+    refused(f, { type: 'research', id: 'marketing' }, 'gotowka');
+
+    f.person.wallet = WALLET;
+    f.research = { magazyn: RESEARCH_MAX_LEVEL.magazyn };
+    syncWallet(f);
+    refused(f, { type: 'research', id: 'magazyn' }, 'max');
+
+    f.over = 'debt';
+    refused(f, { type: 'research', id: 'media' }, 'over');
+  });
+
+  it('sukces: cena schodzi z portfela i z kas sklepów, idzie do monthInvest, poziom rośnie o jeden, zdarzenie niesie id, level i price', () => {
+    const f = partnerFirm(SEED, 500_000);
+    rentAndOpen(f);
+    const wallet = f.person.wallet;
+    const invest = f.monthInvest;
+    const out = emptyStepOut();
+    const price = researchCost(RESEARCH_BY_ID.lojalnosc, 0);
+    buy(f, 'lojalnosc', out);
+    expect(price).toBe(80_000);
+    expect(f.person.wallet).toBe(wallet - price);
+    expect(f.monthInvest).toBe(invest + price);
+    expect(f.research).toEqual({ lojalnosc: 1 });
+    for (const st of openStores(f)) expect(st.econ.cash, `#${st.id}`).toBe(f.person.wallet);   // kasy sklepów to odbicie portfela
+    expect(ofKind(out.firm, 'research')).toEqual([{ kind: 'research', params: { id: 'lojalnosc', level: 1, price } }]);
+    expect(out.active).toEqual([]);
+    expect(out.background).toEqual([]);
+  });
+
+  it('kolejne poziomy kosztują coraz więcej i kończą się na maxLevel; po maksimum kolejne kupno to max', () => {
+    const f = partnerFirm(SEED, 5_000_000);
+    rentAndOpen(f);
+    const paid: number[] = [];
+    for (let level = 0; level < RESEARCH_MAX_LEVEL.obsada; level++) {
+      const before = f.person.wallet;
+      buy(f, 'obsada');
+      paid.push(before - f.person.wallet);
+    }
+    expect(paid).toEqual([60_000, 120_000, 240_000, 480_000]);
+    expect(f.research).toEqual({ obsada: 4 });
+    refused(f, { type: 'research', id: 'obsada' }, 'max');
+  });
+
+  it('klucze research w kolejności RESEARCH_IDS niezależnie od kolejności kupna (stan jak po zapisie i odczycie)', () => {
+    const f = partnerFirm(SEED, 1_000_000);
+    rentAndOpen(f);
+    for (const id of ['media', 'lojalnosc', 'dostawy', 'media'] as const) buy(f, id);
+    expect(Object.keys(f.research)).toEqual(['dostawy', 'lojalnosc', 'media']);
+    expect(f.research).toEqual({ dostawy: 1, lojalnosc: 1, media: 2 });
+  });
+
+  it('badanie nie przechodzi przez raty ani przez sklep: gotówka tylko z portfela, sklepy nie dostają zdarzeń, raty bez zmian', () => {
+    const f = partnerFirm(SEED, 500_000);
+    rentAndOpen(f, 'raty');
+    const installments = f.stores.map((s) => JSON.stringify(s.econ.franchisee.installments));
+    const out = emptyStepOut();
+    buy(f, 'magazyn', out);
+    expect(f.stores.map((s) => JSON.stringify(s.econ.franchisee.installments))).toEqual(installments);
+    expect(out.active).toEqual([]);
+    expect(out.background).toEqual([]);
+  });
+
+  it('wydatek na badania trafia do podsumowania sieci: monthInvest zeruje się przy network-report, a suma wchodzi do summary.invest', () => {
+    const f = partnerFirm(SEED, 1_000_000);
+    rentAndOpen(f);
+    const price = researchCost(RESEARCH_BY_ID.dostawy, 0);
+    buy(f, 'dostawy');
+    const out = playTo(f, OCT_CLOSE);
+    const reports = ofKind(out.firm, 'network-report');
+    expect(reports.length).toBeGreaterThan(0);
+    const summary = reports[0]!.summary!;
+    expect(summary.invest).toBeGreaterThanOrEqual(price);
+    expect(f.monthInvest).toBeLessThan(summary.invest);
+  }, 120_000);
 });

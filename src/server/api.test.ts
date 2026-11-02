@@ -5,6 +5,8 @@ import { RANKED_SEASON_END_MINUTE, RANKED_SEASON_MONTHS, seasonScore } from '@/s
 import { replayRun, type RunRecord } from '@/sim/run';
 import { SIM_VERSION } from '@/sim/simVersion';
 import { GENERATOR_VERSION } from '@/sim/store/generateStore';
+import { GET as fameList } from '../../api/fame/list';
+import { POST as fameSubmit } from '../../api/fame/submit';
 import { GET as leaderboard } from '../../api/leaderboard';
 import { POST as player } from '../../api/player';
 import { POST as runs } from '../../api/runs';
@@ -52,6 +54,7 @@ const post = (path: string, body: unknown): Request => new Request(`${ORIGIN}${p
 });
 /** Czy na dysku leży bundle sędziego (`npm run build:judge`): od tego zależy, który z dwóch testów `api/runs.ts` się wykonuje. */
 const bundleOnDisk = existsSync(resolve(__dirname, 'judgeBundle.js'));
+const fameEntry = { key: KEY, nick: 'Mateusz', seed: 'pierogi-731', day: 400, cash: 1_250_000, simVersion: SIM_VERSION };
 const run = { seed: 'pierogi-731', gameVersion: '0.0.0+abc123def456', generatorVersion: KNOWN_GENERATOR_VERSIONS[0], simVersion: 1, mode: 'ranked', log: [] };
 
 describe('api/** na Vercelu (atrapa Upstash przez fetch)', () => {
@@ -202,6 +205,21 @@ describe('api/** na Vercelu (atrapa Upstash przez fetch)', () => {
     expect((await upload(post('/api/save/upload', { key: KEY, save }))).status).toBe(200);
     expect(await (await download(post('/api/save/download', { key: KEY.toLowerCase() }))).json()).toMatchObject({ ok: true, save });
     expect(redis.keys().every((k) => /^tr:(save|rl|salt|budget):/.test(k))).toBe(true);
+  });
+
+  it('Galeria sław: wpis przez api/fame/submit (token zapisu) widać na api/fame/list (token do odczytu); w bazie tylko klucze Galerii, budżet i liczniki', async () => {
+    const res = await fameSubmit(post('/api/fame/submit', fameEntry));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, first: true, place: 1, entry: { nick: 'Mateusz', at: expect.any(Number) } });
+    expect(upstash.log.every((l) => l.token === 'rw')).toBe(true);
+    upstash.log.length = 0;
+    const listed = await fameList(new Request(`${ORIGIN}/api/fame/list`));
+    expect(listed.headers.get('cache-control')).toContain('s-maxage=30');
+    expect(await listed.json()).toEqual({ ok: true, total: 1, rows: [{ place: 1, nick: 'Mateusz', at: expect.any(Number) }] });
+    expect(upstash.log.length).toBeGreaterThan(0);
+    expect(upstash.log.every((l) => l.token === 'ro')).toBe(true);
+    expect(redis.keys().every((k) => /^tr:(fame|rl|salt|budget):/.test(k))).toBe(true);
+    expect(redis.keys()).toContain('tr:fame:list');
   });
 
   it('zapis pyta o nowszą kopię: 409 save-conflict z savedAt, bez zapisu i bez zużycia budżetu; zgodny expected i force przechodzą', async () => {
@@ -367,6 +385,8 @@ describe('RANKING_SALT: sekret limitu', () => {
     ['POST /api/runs', () => runs(post('/api/runs', { key: KEY, nick: 'Mateusz', run }))],
     ['POST /api/save/download', () => download(post('/api/save/download', { key: KEY }))],
     ['POST /api/save/upload', () => upload(post('/api/save/upload', { key: KEY, save }))],
+    ['GET /api/fame/list', () => fameList(new Request(`${ORIGIN}/api/fame/list`))],
+    ['POST /api/fame/submit', () => fameSubmit(post('/api/fame/submit', fameEntry))],
   ];
   const allValues = async (): Promise<string> => {
     const values = await Promise.all(redis.keys().map(async (k) => String((await redis.exec([['GET', k]]).catch(() => [''])).at(0))));
@@ -461,18 +481,20 @@ describe('RANKING_SALT: sekret limitu', () => {
 describe('wyłącznik RANKING_ENABLED: bez niego żaden endpoint nie dotyka bazy', () => {
   const OFF_MESSAGE = 'Ranking Centrali jeszcze nie ruszył.';
   const save = testBundle();
-  /** Każdy z pięciu endpointów z żądaniem, które po włączeniu rankingu poszłoby prosto do bazy (limit zgłoszeń to pierwsze polecenie). */
+  /** Każdy z siedmiu endpointów z żądaniem, które po włączeniu rankingu poszłoby prosto do bazy (limit zgłoszeń to pierwsze polecenie). */
   const endpoints: [string, () => Promise<Response>][] = [
     ['GET /api/leaderboard', () => leaderboard(new Request(`${ORIGIN}/api/leaderboard?board=global`))],
     ['POST /api/player', () => player(post('/api/player', { key: KEY, nick: 'Mateusz' }))],
     ['POST /api/runs', () => runs(post('/api/runs', { key: KEY, nick: 'Mateusz', run }))],
     ['POST /api/save/download', () => download(post('/api/save/download', { key: KEY }))],
     ['POST /api/save/upload', () => upload(post('/api/save/upload', { key: KEY, save }))],
+    ['GET /api/fame/list', () => fameList(new Request(`${ORIGIN}/api/fame/list`))],
+    ['POST /api/fame/submit', () => fameSubmit(post('/api/fame/submit', fameEntry))],
   ];
 
-  it('z ustawionymi KV_*, a bez RANKING_ENABLED: 503 ranking-off, bez cache i ani jednego fetch, dla każdego z pięciu endpointów', async () => {
+  it('z ustawionymi KV_*, a bez RANKING_ENABLED: 503 ranking-off, bez cache i ani jednego fetch, dla każdego z siedmiu endpointów', async () => {
     vi.stubEnv('RANKING_ENABLED', undefined);
-    expect(endpoints).toHaveLength(5);
+    expect(endpoints).toHaveLength(7);
     for (const [name, call] of endpoints) {
       const res = await call();
       expect(res.status, name).toBe(503);

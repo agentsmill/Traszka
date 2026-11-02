@@ -19,7 +19,9 @@ import type { AtlasCellName, FacadeAtlas } from './facadeAtlas';
  * Lokal narożny (`lot.corner`) ma po stronie drugiej witryny przecznicę zamiast sąsiada.
  *
  * Remont „dokupienie lokalu obok” poszerza sklep o lokal sąsiada: sąsiad po stronie przejęcia (patrz `planRow`) jest o tyle
- * węższy, o ile urósł sklep, a zanim sklep go przejmie (remonty 0–2), w jego witrynie przy granicy wisi kartka „DO WYNAJĘCIA”.
+ * węższy, o ile urósł sklep, a dopóki zostaje jeszcze następny remont (poziomy 0–4 z pięciu; po ostatnim jej nie ma), w jego witrynie
+ * przy granicy wisi kartka „DO WYNAJĘCIA”. Remonty 4 i 5 nie zajmują kolejnego lokalu: sklep rośnie po tej samej stronie, a zjedzony sąsiad
+ * zostaje co najmniej `MIN_TAKEN_NEIGHBOUR_W` szeroki.
  */
 
 export type V3 = [number, number, number];
