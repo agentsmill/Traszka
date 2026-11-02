@@ -34,6 +34,7 @@ const GOLDEN: Record<number, string> = {
   4: '16a2834398928b489f50dc3b39de8cf18a49e3c700a0e4fbfc058b3f381a2239',   // więcej klientów i fale, 6 palet, limit debetu, nowy balans opłaty i premii
   5: 'fc9c4c590639fc761f798d8711cc05c7cc5bc1bbcd43f18494fa9b7fa8ba232f',   // palety bez odsyłania, paleta 480 szt., debet −100 tys., cele „Odbierz”, 0,5 karty na dobę, urealniona ekonomia
   6: '5e9bf18c7a4f04ad3e55081aa2c7ee3fb8ad1ef5262ab0b4469d9be3cca08c0e',   // trzy kieszenie: saldo u Centrali, wyciąg, raty, remanent
+  7: 'f9a8ebfeaa5ea31ae3afabb113ab9dac3aa8f2a9a26bd049af25e47bca6dc504',   // etap 4b: remonty 4–5 i droższe 1–2 (35 tys. zł zamiast 25 tys. zł zmienia ten bieg), ulepszenia późnej gry, cele sklepu
 };
 
 const SEED = 'kiełbasa-42';
@@ -75,7 +76,7 @@ function mulberry32(seed: number): () => number {
  * polecenie poza zapasowymi było przyjęte, a bieg przetrwał sezon. Od SIM_VERSION 6 gotówka rośnie tylko przy przelewie od Centrali
  * na koniec miesiąca (marża idzie na saldo), więc za gotówkę idą małe zakupy, a kasa samoobsługowa, bankomat, piec i remont na raty
  * (`raty: true`: pole przechodzi przez dziennik i odtworzenie). Trzecia osoba przychodzi dopiero w październiku: od SIM_VERSION 4 sklep na
- * start ma ludzi akurat na swój ruch, więc etat od drugiego dnia zjadał gotówkę na opłatę. Remont 1 (25 tys. zł, poziom 8) ma dwie próby: dziś przyjmowana jest
+ * start ma ludzi akurat na swój ruch, więc etat od drugiego dnia zjadał gotówkę na opłatę. Remont 1 (35 tys. zł od SIM_VERSION 7, poziom 8) ma dwie próby: dziś przyjmowana jest
  * pierwsza, a druga jest zapasem na zmiany cen (rush bez trwającego remontu jest odrzucany, nie błędem).
  * Palety startowe mają numery 1 i 2; sloty `equipmentSlot-1…3` (pojemność 2) są od układu 0, `equipmentSlot-4` od remontu 1.
  */

@@ -36,7 +36,8 @@ export interface EnUpgrade { names: string[]; effect: string; flavor: string }
 
 export const EN_UPGRADES: Record<UpgradeId, EnUpgrade> = {
   szkolenie: {
-    names: ['Training: “Smiling Is a Procedure”', 'Training: “Scan From the Hip”', 'Course: “Change in Two Seconds”', 'Traszka Till Championships', 'Ninja cashier'],
+    names: ['Training: “Smiling Is a Procedure”', 'Training: “Scan From the Hip”', 'Course: “Change in Two Seconds”', 'Traszka Till Championships', 'Ninja cashier',
+      'Ninja cashier: black belt', 'Ninja cashier: sensei', 'Cashier who scans with their eyes'],
     effect: 'The till serves 15% faster',
     flavor: 'Certificate valid until the next change to the rulebook.',
   },
@@ -46,22 +47,25 @@ export const EN_UPGRADES: Record<UpgradeId, EnUpgrade> = {
     flavor: 'Head Office: “Two tills? And who’s paying for that? Oh, right. You.”',
   },
   scoSoft: {
-    names: ['SCO 2.0: fewer “unexpected items”', 'SCO 3.0: the scales understand bananas', 'SCO 4.0: apologises in Polish'],
+    names: ['SCO 2.0: fewer “unexpected items”', 'SCO 3.0: the scales understand bananas', 'SCO 4.0: apologises in Polish',
+      'SCO 5.0: remembers your name', 'SCO 6.0: apologises to itself'],
     effect: 'Self-checkouts: +15% speed and +8% more willing customers',
     flavor: 'Please place the item in the bagging area. Or don’t.',
   },
   klima: {
-    names: ['Air conditioning', 'Radio Traszka FM'],
+    names: ['Air conditioning', 'Radio Traszka FM', 'Air conditioning scented with fresh bread rolls'],
     effect: 'Customers queue for longer (+2 people)',
     flavor: 'Nobody walks out of the queue while “Always Close at Hand (Remix)” is playing.',
   },
   wozek: {
-    names: ['Pallet truck', 'Electric pallet truck', 'Turbo pallet truck'],
+    names: ['Pallet truck', 'Electric pallet truck', 'Turbo pallet truck',
+      'Autonomous pallet truck (sometimes drives off to the competition)', 'Rocket-powered pallet truck'],
     effect: 'Pallets unload 40% faster',
     flavor: 'The first pallet truck in the shop’s history with all of its wheels.',
   },
   regaly: {
-    names: ['Storage racking', 'Stockroom mezzanine', 'Stockroom Tetris master'],
+    names: ['Storage racking', 'Stockroom mezzanine', 'Stockroom Tetris master',
+      'High-bay racking', 'Stockroom in the fourth dimension'],
     effect: 'The stockroom holds 50% more stock and +1 pallet',
     flavor: 'You can finally see the floor. Almost.',
   },
@@ -86,17 +90,20 @@ export const EN_UPGRADES: Record<UpgradeId, EnUpgrade> = {
     flavor: 'Twice as many signatures on the delivery note.',
   },
   ulotki: {
-    names: ['Leaflets on the estate', 'Posters at the bus stop', 'Flyer through every letterbox', '“Always Close at Hand” billboard', 'Ad on the estate radio'],
+    names: ['Leaflets on the estate', 'Posters at the bus stop', 'Flyer through every letterbox', '“Always Close at Hand” billboard', 'Ad on the estate radio',
+      'Drone with a banner over the estate', 'Ad on a tram', 'Neon sign visible from space'],
     effect: 'Footfall +10%',
     flavor: '90% of leaflets go straight in the bin. The other 10% end up on the fridge as magnets.',
   },
   kawa: {
-    names: ['Premium coffee machine', 'Robo-barista', 'Latte art shaped like a newt'],
+    names: ['Premium coffee machine', 'Robo-barista', 'Latte art shaped like a newt',
+      'Speciality coffee from Head Office beans', 'Robot barista with a diploma'],
     effect: 'More coffee and hot dogs sold (+30% hot food sales)',
     flavor: 'Flat whites for people who don’t know what a flat white is.',
   },
   traszkapka: {
-    names: ['Traszkapp campaign', 'Coupons of the day', 'Double Ogonki Thursdays'],
+    names: ['Traszkapp campaign', 'Coupons of the day', 'Double Ogonki Thursdays',
+      '“Traszka Gold” programme', 'Push notifications at 4:58'],
     effect: 'Footfall +12% and more Ogonki',
     flavor: 'Push notification at 6:02. Everybody loves a 6:02 notification.',
   },
@@ -106,12 +113,14 @@ export const EN_UPGRADES: Record<UpgradeId, EnUpgrade> = {
     flavor: 'A cat was counted as three chocolate bars. Complaint under review.',
   },
   tasmociag: {
-    names: ['Conveyor made from a treadmill', 'Conveyor with a washing-machine motor', 'Industrial conveyor “from my brother-in-law”'],
+    names: ['Conveyor made from a treadmill', 'Conveyor with a washing-machine motor', 'Industrial conveyor “from my brother-in-law”',
+      'Airport conveyor (after a tender)', 'Magnetic conveyor from military surplus'],
     effect: 'Unloads pallets by itself, at night too (+4 items/min)',
     flavor: 'Nobody had used the treadmill since January anyway.',
   },
   wykladacz: {
-    names: ['3D-printed shelf stacker', 'Robot arm from a clearance sale', 'Stacker with an empty-shelf sensor'],
+    names: ['3D-printed shelf stacker', 'Robot arm from a clearance sale', 'Stacker with an empty-shelf sensor',
+      'AI stacker (arranges by feng shui)', 'Stacker that apologises to customers'],
     effect: 'Moves stock from the stockroom to the shelves by itself, at night too (+12 items/min)',
     flavor: 'Printed in 37 hours. Works three times out of four.',
   },
@@ -124,6 +133,32 @@ export const EN_UPGRADES: Record<UpgradeId, EnUpgrade> = {
     names: ['eDward the humanoid'],
     effect: 'eDward does the work of three, 24 hours a day, no wages',
     flavor: 'Built from a hoover, windscreen wipers and an old laptop. Says “dzień dobry” (good morning) at every hour of the day and night.',
+  },
+  kasaEkspres: {
+    names: ['Express till “up to 5 items” (nobody counts)', 'Express till “up to 10 items” (still nobody counts)', 'Express till “up to 20 items” (only Head Office counts)'],
+    effect: 'The till serves a further 10% faster',
+    flavor: 'The man in front of you has 23 items. Nobody says a word.',
+  },
+  ekrany: {
+    names: ['Screens with Head Office adverts (you pay the electricity)', 'Screens in every corner (the electricity is still yours)', 'Screens that watch the customer (and you)',
+      'A shop-window screen visible from across the street', 'Video wall: Head Office thanks you for the electricity'],
+    effect: 'Footfall +6%',
+    flavor: 'Head Office’s advert plays on a loop. So does the electricity bill.',
+  },
+  barHot: {
+    names: ['Hot-food bar with stools', 'Hot-food bar with a chalkboard menu', 'Hot-food bar open until 10 pm', 'Hot-food bar “Traszka Grill”'],
+    effect: 'Hot food sells better (+25% hot food sales)',
+    flavor: 'The stools are bolted down. The customers nearly are.',
+  },
+  magazynWys: {
+    names: ['High-bay storage', 'High-bay storage: a certified ladder', 'High-bay storage: a forklift in a corner shop'],
+    effect: 'The stockroom holds 40% more stock (on top of the racking)',
+    flavor: 'We ran out of ceiling, so we build upwards. Without a permit.',
+  },
+  dron: {
+    names: ['Stocktaking drone made from a hoover', 'Stocktaking drone with a phone camera', 'Stocktaking drone with Grandad’s binoculars'],
+    effect: 'Theft (self-checkouts too) is 12% lower',
+    flavor: 'Counts the tins from above. Sometimes gets lost in the brackets.',
   },
 };
 
@@ -139,6 +174,8 @@ export const EN_REMONTS: Record<number, string> = {
   1: 'Refit: take over the unit next door',
   2: 'Refit: Premium edition',
   3: 'Refit: Flagship',
+  4: 'Refit: Flagship Plus',
+  5: 'Refit: Traszka Max Pro Ultra',
 };
 
 export const EN_MILESTONES: Record<string, { label: string; hint: string }> = {
@@ -157,6 +194,9 @@ export const EN_MILESTONES: Record<string, { label: string; hint: string }> = {
   sco8: { label: 'Eight self-checkouts', hint: 'A refit gives you more slots' },
   flagowiec: { label: 'Flagship', hint: 'The third refit' },
   edward: { label: 'eDward takes over the shift', hint: 'The humanoid from the Workshop' },
+  remont4: { label: 'Flagship Plus', hint: 'The fourth refit' },
+  remont5: { label: 'Traszka Max Pro Ultra', hint: 'The fifth refit: no bigger shop to be had' },
+  earned1m: { label: 'A million in margin in one shop', hint: 'Scale up the shop, the refits and the late-game upgrades' },
 };
 
 export const EN_TRUST_TIERS: Record<TrustTier['id'], { label: string; flavor: string }> = {

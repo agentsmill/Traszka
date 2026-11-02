@@ -189,8 +189,8 @@ describe('przejęcie lokalu: plan wiersza', () => {
 });
 
 describe('przejęcie lokalu: kartka „DO WYNAJĘCIA”', () => {
-  it('jest u sąsiada po stronie przejęcia na poziomach 0–2, nie ma jej na 3 ani u drugiego sąsiada, bryły nad sklepem i bramy', () => {
-    expect(REMONTS).toHaveLength(3);
+  it('jest u sąsiada po stronie przejęcia, dopóki zostaje następny remont (poziomy 0–4), nie ma jej u drugiego sąsiada, bryły nad sklepem i bramy', () => {
+    expect(REMONTS).toHaveLength(5);   // od etapu 4b pięć remontów; poziomy 4–5 rozszerzy test renderu (zadanie 9)
     for (const [, seed] of ALL) {
       const taken = expectedTakenSide(seed);
       for (const level of LEVELS) {

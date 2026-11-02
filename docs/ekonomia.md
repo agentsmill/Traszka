@@ -62,10 +62,14 @@ Legendarna, potem gwiazdki co 10 poziomów.
   W sklepie widać tylko te, których wymagania są spełnione, żeby początek nie przytłaczał.
 - **Sprzęt do slotów**: kasa samoobsługowa, bankomat, Paczkownik 24h, piec do pizzy. Slot 2×2 mieści dwie
   kompaktowe kasy samoobsługowe albo jeden duży sprzęt.
-- **Remont generalny** (3 poziomy): sklep zamknięty na kilka dni, potem większy lokal z generatora z większą liczbą slotów.
+- **Remont generalny** (5 poziomów, od SIM_VERSION 7): sklep zamknięty na 2–6 dni, potem większy lokal z generatora z większą liczbą slotów.
+  Ceny 35 / 100 / 200 / 450 / 900 tys. zł; ruch rośnie o 10 pkt proc. na poziom do trzeciego, potem o 15 (×1,45 i ×1,6).
+- **Ulepszenia późnej gry** (od SIM_VERSION 7): wyższe `maxLevel` istniejących ulepszeń (szkolenie i ulotki do 8, reszta do 5, klimatyzacja do 3)
+  oraz pięć nowych (kasa ekspresowa, ekrany Centrali, bar hot-food, magazyn wysokiego składowania, dron-inwentaryzator) od remontu 3.
+  Koszt rośnie geometrycznie (×1,8…×2,5 na poziom w nowych i rozszerzonych), efekt liniowo.
 - **Warsztat złotej rączki** odsłania się na 10. poziomie albo po pierwszym remoncie: taśmociąg i wykładacz pracują
   całą dobę, a humanoid eDward (po drugim remoncie, od 25. poziomu) robi za trzech.
-- **Odblokowania poziomem**: bankomat 3, piec 4, druga kasa 5, Paczkownik 6, remonty 8 / 14 / 20.
+- **Odblokowania poziomem**: bankomat 3, piec 4, druga kasa 5, Paczkownik 6, remonty 8 / 14 / 20 / 28 / 34.
 - **Ogonki** za cele i obsłużonych klientów: kampania w aplikacji (+30% ruchu przez dobę), przyspieszenie remontu.
 
 ## Balans (boty na prawdziwej ekonomii, stan na 29.10.2026)

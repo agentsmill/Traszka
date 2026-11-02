@@ -16,7 +16,7 @@ import { rand01 } from './rand';
 import { activeSite, hourCurveOf, siteDayTraffic, type SiteMods } from './site';
 import type { PalletLoc, StoreInfo } from './storeInfo';
 import {
-  EQUIPMENT_BY_ID, REMONTS, UPGRADE_BY_ID, WORKSHOP_LEVEL, equipmentCost, upgradeCost,
+  EQUIPMENT_BY_ID, REMONTS, UPGRADE_BY_ID, WORKSHOP_LEVEL, equipmentCost, remontTrafficMult, upgradeCost,
   type EquipmentId, type UpgradeDef, type UpgradeId,
 } from './upgrades';
 import { MILESTONES } from './milestones';
@@ -219,6 +219,11 @@ export interface Effects {
   marginMult: number;
   /** Dzielnica sklepu (site.ts), tylko gdy zmienia ekonomię (`activeSite`); jej poprawka cierpliwości jest już w `patience`. */
   site?: SiteMods;
+  /**
+   * Mnożnik kradzieży (WUT `kradziez` ze sprzedaży i z SCO): kradzież dzielnicy razy dron-inwentaryzator. Brak pola, gdy sklep nie ma
+   * ani dzielnicy z mnożnikiem, ani drona (`wutFromSales` dostaje wtedy `undefined`, czyli dzisiejsze liczenie).
+   */
+  theft?: number;
 }
 
 export function activeEquipment(s: EconomyState, id: EquipmentId): number {
@@ -235,21 +240,21 @@ export function effects(s: EconomyState, info: StoreInfo): Effects {
   const humanoid = level(s, 'humanoid') > 0;
   const fx: Effects = {
     tills: 1 + level(s, 'drugaKasa'),
-    tillSpeed: 1 + 0.15 * level(s, 'szkolenie'),
+    tillSpeed: 1 + 0.15 * level(s, 'szkolenie') + 0.1 * level(s, 'kasaEkspres'),
     sco: activeEquipment(s, 'sco'),
     scoSpeed: 1 + 0.15 * level(s, 'scoSoft'),
     scoAccept: Math.min(0.95, SCO_ACCEPT + 0.08 * level(s, 'scoSoft')),
     patience: PATIENCE + 2 * level(s, 'klima') - Math.min(CLUTTER.patienceMax, hallPallets(s)),
     unloadMult: 1 + 0.4 * level(s, 'wozek'),
-    backroomCap: Math.round(info.backroomCap * (1 + 0.5 * regaly)),
+    backroomCap: Math.round(info.backroomCap * (1 + 0.5 * regaly + 0.4 * level(s, 'magazynWys'))),
     backroomSpots: Math.min(info.spots.backroom.length, 2 + regaly + s.remontLevel),
     overorder: [1.3, 1.15, 1.02][level(s, 'asystent')] ?? 1.02,
     deliveryAt: level(s, 'nocne') > 0 ? DELIVERY_AT_NIGHT : DELIVERY_AT,
     splitDelivery: level(s, 'dostawy2') > 0,
     rampa: level(s, 'rampa') > 0,
     traffic: (1 + 0.1 * level(s, 'ulotki') + 0.12 * level(s, 'traszkapka') + 0.04 * activeEquipment(s, 'bankomat')
-      + 0.07 * activeEquipment(s, 'paczkownik')) * (1 + 0.1 * s.remontLevel) * (1 + 0.03 * s.partner.points),
-    hotMult: 1 + 0.3 * level(s, 'kawa') + 0.4 * activeEquipment(s, 'piec'),
+      + 0.07 * activeEquipment(s, 'paczkownik') + 0.06 * level(s, 'ekrany')) * remontTrafficMult(s.remontLevel) * (1 + 0.03 * s.partner.points),
+    hotMult: 1 + 0.3 * level(s, 'kawa') + 0.4 * activeEquipment(s, 'piec') + 0.25 * level(s, 'barHot'),
     fineMult: 1 - 0.25 * level(s, 'kamery'),
     humanoid,
     ogonkiMult: 1 + 0.5 * level(s, 'traszkapka'),
@@ -260,6 +265,9 @@ export function effects(s: EconomyState, info: StoreInfo): Effects {
     fx.site = site;
     fx.patience += site.patience;   // Śródmieście: −4 osoby (liczby w `DISTRICTS`), Dworzec: +1
   }
+  const dron = level(s, 'dron');
+  const theft = dron > 0 ? (site?.theft ?? 1) * (1 - 0.12 * dron) : site?.theft;
+  if (theft !== undefined) fx.theft = theft;
   return fx;
 }
 
@@ -550,9 +558,9 @@ export function sell(s: EconomyState, fx: Effects, served: number, scoShare: num
   s.xp += served * XP.customer;
   // ubytki towarowe: naturalne od obrotu i „zapomniane” skany na SCO (kamery zmniejszają); do progu płaci Centrala, nadwyżkę franczyzobiorca
   // przy remanencie (limit liczy się od obrotu z okresu między remanentami)
-  wutFromSales(s.tycoon.wut, revenue, fx.site?.theft);
+  wutFromSales(s.tycoon.wut, revenue, fx.theft);
   s.franchisee.remanent.revenue += revenue;
-  wutFromSco(s.tycoon.wut, revenue * scoShare, 1 - 0.4 * level(s, 'kamery'), fx.site?.theft);
+  wutFromSco(s.tycoon.wut, revenue * scoShare, 1 - 0.4 * level(s, 'kamery'), fx.theft);
 
   const missing = want > 0 ? 1 - got / want : 0;
   s.reputation += served * (0.0025 * (1 - missing) - withRepPenalty(fx, 0.02 * missing));
@@ -1512,7 +1520,7 @@ export function nextRemont(s: EconomyState): (typeof REMONTS)[number] | null {
 /** Remont: zamyka sklep na kilka dni, a układ sklepu rośnie (nowy układ liczy warstwa gry, potem woła `relayout`). */
 export function startRemont(s: EconomyState, onCredit = false): CommandResult {
   const r = nextRemont(s);
-  if (!r) return { ok: false, text: 'Większego sklepu już nie będzie. To jest Flagowiec.' };
+  if (!r) return { ok: false, text: 'Większego sklepu już nie będzie. To jest Traszka Max Pro Ultra.' };
   if (isClosedForRemont(s)) return { ok: false, text: 'Remont już trwa.' };
   if (s.level < r.minLevel) return { ok: false, text: `Remont odblokujesz na ${r.minLevel}. poziomie.` };
   const paid = pay(s, r.cost, r.name, onCredit, 'Za mało gotówki na remont.');

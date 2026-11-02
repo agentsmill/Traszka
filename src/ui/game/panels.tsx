@@ -450,7 +450,7 @@ export function ShopPanel({ s, info, game }: { s: EconomyState; info: StoreInfo;
                 {buyButtons(s, info, remont.cost, s.level < remont.minLevel, (raty) => game.dispatch(raty ? { type: 'startRemont', raty: true } : { type: 'startRemont' }))}
               </div>
             )
-            : <p class="tt-hint">{t`To już Flagowiec. Większego sklepu nie będzie.`}</p>}
+            : <p class="tt-hint">{t`To już Traszka Max Pro Ultra. Większego sklepu nie będzie.`}</p>}
       </Section>
       <Section title="Za Ogonki">
         <div class="tt-item">

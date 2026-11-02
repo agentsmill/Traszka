@@ -12,7 +12,7 @@ import { visibleCards } from '@/sim/economy/tycoon/cards';
 import { newKpiWeek } from '@/sim/economy/tycoon/kpi';
 import { LIMITS } from '@/sim/economy/sanitize';
 import { computeStoreInfo, palletPlace } from '@/sim/economy/storeInfo';
-import { REMONTS } from '@/sim/economy/upgrades';
+import { REMONTS, UPGRADE_BY_ID } from '@/sim/economy/upgrades';
 import { SIM_VERSION } from '@/sim/simVersion';
 import { GENERATOR_VERSION, generateStore } from '@/sim/store/generateStore';
 import { layoutFor } from '@/sim/store/layoutFor';
@@ -763,7 +763,8 @@ describe('granice wartości z zapisu (LIMITS) nie schodzą poniżej tego, co pot
     const pallets = Math.max(...infos.map((i) => i.spots.sidewalk.length + i.spots.floor.length + i.spots.backroom.length));
     const equipment = Math.max(...infos.map((i) => i.slots.reduce((n, slot) => n + slot.capacity, 0)));
     const shelf = Math.max(...infos.flatMap((i) => CATS.map((c) => i.shelfCap[c])));
-    const backroom = Math.max(...infos.map((i) => i.backroomCap)) * 2.5;   // regały magazynowe na maksymalnym poziomie: +150%
+    // regały magazynowe i magazyn wysokiego składowania na maksymalnych poziomach: +250% i +120%
+    const backroom = Math.max(...infos.map((i) => i.backroomCap)) * (1 + 0.5 * UPGRADE_BY_ID.regaly.maxLevel + 0.4 * UPGRADE_BY_ID.magazynWys.maxLevel);
     expect(pallets * 2).toBeLessThanOrEqual(LIMITS.pallets);
     expect(equipment * 4).toBeLessThanOrEqual(LIMITS.equipment);
     expect(Math.max(shelf, backroom) * 4).toBeLessThanOrEqual(LIMITS.stockPerCat);

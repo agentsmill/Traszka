@@ -211,7 +211,7 @@ export const GAME_UI: Dict = {
   'Przyspiesz o dzień (40 🦎)': 'Speed up by a day (40 🦎)',
   'Większy lokal: więcej półek, slotów ({0} × 2×2) i miejsc na palety, więcej klientów. Sklep zamknięty {1} {2}.':
     'A bigger unit: more shelves, slots ({0} × 2×2) and pallet spots, more customers. The shop closes for {1} {2}.',
-  'To już Flagowiec. Większego sklepu nie będzie.': 'This is already the Flagship. The shop won’t get any bigger.',
+  'To już Traszka Max Pro Ultra. Większego sklepu nie będzie.': 'This is already the Traszka Max Pro Ultra. The shop won’t get any bigger.',
   'Za Ogonki': 'For Ogonki',
   'Kampania w Traszkapce': 'Traszkapp campaign',
   '+30% klientów przez dobę': '+30% customers for 24 hours',

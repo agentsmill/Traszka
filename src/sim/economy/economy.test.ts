@@ -11,7 +11,7 @@ import {
   DEBT_WARN, aislePallets, answerCard, arrivalRate, claimMilestone, deliverySpots, assistantSuggestion, awaitingDecision, buyEquipment, buyUpgrade, cardContext, changeTrust, checkDebt, createEconomy,
   crewPalletCap, debtWarningText, effects,
   estimatedDailyMargin, expectedDailyCustomers, fire, freeSpots, GOLDEN_PRIZE, isOpenForCustomers, kpiMetricsOf, kpiScaleOf, movePallet, orderedPallets, relayout,
-  robotFleet, sell, slotFree, startRemont, stepMinute, tapPallet, tapTill, unlocksAt, upgradeBlocker, waveAt, workshopUnlocked,
+  nextRemont, robotFleet, sell, slotFree, startRemont, stepMinute, tapPallet, tapTill, unlocksAt, upgradeBlocker, waveAt, workshopUnlocked,
   type CommandResult, type EconEvent, type EconomyState, type MonthReport,
 } from './economy';
 import { buildStatement } from './franchisee';
@@ -27,7 +27,10 @@ import { dateOfGameDay, isSunday, roundNice } from './tycoon/time';
 import { TRUST, trustTier, turnoverBonusShare } from './tycoon/trust';
 import { hallObstacle, palletBags } from './tycoon/waste';
 import { WUT, wutTotal } from './tycoon/wut';
-import { UPGRADE_BY_ID } from './upgrades';
+import { MILESTONES } from './milestones';
+import { REMONTS, UPGRADE_BY_ID, remontTrafficMult } from './upgrades';
+import { DISTRICTS } from '@/sim/city/districts';
+import { NEUTRAL_SITE } from './site';
 
 const SEED = 'kiełbasa-42';   // blok z 1 slotem SCO i 3 slotami 2×2
 const info = computeStoreInfo(generateStore(SEED));
@@ -2066,5 +2069,164 @@ describe('karty dnia i okólniki', () => {
       run(s, info, 1);
       expect(s.tycoon.cards.active).toEqual([]);
     });
+  });
+});
+
+describe('progresja 4b: ulepszenia późnej gry, remonty 4–5 i cele sklepu (SIM_VERSION 7)', () => {
+  const fresh = (): EconomyState => createEconomy(SEED, info);
+
+  it('bez nowych ulepszeń i bez remontu 4–5 efekty są bit w bit jak przed etapem', () => {
+    const s = fresh();
+    Object.assign(s.upgrades, { szkolenie: 3, ulotki: 4, traszkapka: 2, kawa: 2, regaly: 3 });
+    s.remontLevel = 3;
+    const fx = effects(s, info);
+    expect(fx.tillSpeed).toBe(1 + 0.15 * 3);
+    expect(fx.traffic).toBe((1 + 0.1 * 4 + 0.12 * 2 + 0.04 * 0 + 0.07 * 0) * (1 + 0.1 * 3) * (1 + 0.03 * 0));
+    expect(fx.hotMult).toBe(1 + 0.3 * 2 + 0.4 * 0);
+    expect(fx.backroomCap).toBe(Math.round(info.backroomCap * (1 + 0.5 * 3)));
+    expect(fx.theft).toBeUndefined();
+  });
+
+  it('effects: kasaEkspres 2 → tillSpeed 1 + 0.15 × szkolenie + 0.2; ekrany 3 → traffic sum + 0.18; barHot 1 → hotMult + 0.25', () => {
+    const s = fresh();
+    s.upgrades.szkolenie = 5;
+    const base = effects(s, info);
+    s.upgrades.kasaEkspres = 2;
+    s.upgrades.ekrany = 3;
+    s.upgrades.barHot = 1;
+    const fx = effects(s, info);
+    expect(fx.tillSpeed).toBeCloseTo(1 + 0.15 * 5 + 0.2, 12);
+    expect(fx.tillSpeed - base.tillSpeed).toBeCloseTo(0.2, 12);
+    expect(fx.traffic).toBeCloseTo(1 + 0.18, 12);   // remont 0 i brak punktów partnera: mnożniki są równe 1
+    expect(fx.hotMult).toBeCloseTo(base.hotMult + 0.25, 12);
+    // ekrany wchodzą do sumy ruchu (przed mnożnikiem remontu), nie obok niego
+    s.upgrades.ulotki = 2;
+    s.remontLevel = 4;
+    expect(effects(s, info).traffic).toBeCloseTo((1 + 0.2 + 0.18) * 1.45, 12);
+  });
+
+  it('effects: magazynWys 2 → backroomCap = round(info.backroomCap × (1 + 0.5 × regaly + 0.8))', () => {
+    const s = fresh();
+    s.upgrades.regaly = 3;
+    s.upgrades.magazynWys = 2;
+    expect(effects(s, info).backroomCap).toBe(Math.round(info.backroomCap * (1 + 0.5 * 3 + 0.8)));
+    s.upgrades.regaly = 0;
+    expect(effects(s, info).backroomCap).toBe(Math.round(info.backroomCap * (1 + 0.8)));
+  });
+
+  it('effects: remont 4 i 5 mnożą ruch przez 1.45 i 1.6 (remontTrafficMult), poziomy 0–3 jak dotąd', () => {
+    const s = fresh();
+    const sum = effects(s, info).traffic;   // remont 0
+    for (const l of [1, 2, 3, 4, 5]) {
+      s.remontLevel = l;
+      expect(effects(s, info).traffic, `remont ${l}`).toBe(sum * remontTrafficMult(l));
+    }
+  });
+
+  it('dron 2 bez dzielnicy: fx.theft = 0.76; bez drona i bez dzielnicy fx.theft undefined (wutFromSales dostaje undefined)', () => {
+    const s = fresh();
+    expect(effects(s, info).theft).toBeUndefined();
+    s.upgrades.dron = 2;
+    expect(effects(s, info).theft).toBeCloseTo(0.76, 12);
+    expect(effects(s, info).site).toBeUndefined();   // sam dron nie włącza gałęzi dzielnicy
+  });
+
+  it('dron z dzielnicą: kradzież dzielnicy × (1 − 0.12 × poziom); bez drona zostaje kradzież dzielnicy', () => {
+    const site = { ...NEUTRAL_SITE, district: 'dworzec' as const, theft: DISTRICTS.dworzec.theft };
+    const withSite: StoreInfo = { ...info, site };
+    const s = fresh();
+    expect(effects(s, withSite).theft).toBe(DISTRICTS.dworzec.theft);
+    s.upgrades.dron = 3;
+    expect(effects(s, withSite).theft).toBeCloseTo(DISTRICTS.dworzec.theft * (1 - 0.36), 12);
+  });
+
+  it('sell: dron obniża kradzieże w WUT (sprzedaż i SCO), pozostałe przyczyny bez zmian', () => {
+    const sold = (dron: number, scoShare: number): EconomyState['tycoon']['wut']['month'] => {
+      const s = fresh();
+      s.upgrades.dron = dron;
+      sell(s, effects(s, info), 40, scoShare);
+      return { ...s.tycoon.wut.month };
+    };
+    for (const scoShare of [0, 1]) {
+      const none = sold(0, scoShare);
+      const drone = sold(2, scoShare);
+      expect(drone.kradziez, `SCO ${scoShare}`).toBeCloseTo(none.kradziez * 0.76, 9);
+      expect(drone.termin).toBe(none.termin);
+      expect(drone.pomylki).toBe(none.pomylki);
+    }
+  });
+
+  it('upgradeBlocker: nowe ulepszenia czekają na remont i poprzednie ulepszenia', () => {
+    const s = fresh();
+    s.level = 40;
+    expect(upgradeBlocker(s, UPGRADE_BY_ID.ekrany)).toBe('Wymaga remontu (poziom 3)');
+    s.remontLevel = 3;
+    expect(upgradeBlocker(s, UPGRADE_BY_ID.ekrany)).toBeNull();
+    expect(upgradeBlocker(s, UPGRADE_BY_ID.kasaEkspres)).toMatch(/^Wymaga: /);
+    s.upgrades.szkolenie = 5;
+    expect(upgradeBlocker(s, UPGRADE_BY_ID.kasaEkspres)).toBeNull();
+    expect(upgradeBlocker(s, UPGRADE_BY_ID.magazynWys)).toBe('Wymaga remontu (poziom 4)');
+    expect(upgradeBlocker(s, UPGRADE_BY_ID.dron)).toMatch(/^Wymaga: /);
+    s.upgrades.wykladacz = 2;
+    expect(upgradeBlocker(s, UPGRADE_BY_ID.dron)).toBeNull();
+    s.upgrades.dron = 3;
+    expect(upgradeBlocker(s, UPGRADE_BY_ID.dron)).toBe('Maksymalny poziom');
+  });
+
+  it('buyUpgrade: nowe ulepszenie kosztuje baseCost, a kolejny poziom costMult razy więcej', () => {
+    const s = fresh();
+    s.level = 40;
+    s.remontLevel = 3;
+    s.cash = 1e6;
+    expect(buyUpgrade(s, 'ekrany').ok).toBe(true);
+    expect(s.cash).toBe(1e6 - 60_000);
+    expect(buyUpgrade(s, 'ekrany').ok).toBe(true);
+    expect(s.cash).toBe(1e6 - 60_000 - 126_000);   // 60 000 × 2,1
+    expect(s.upgrades.ekrany).toBe(2);
+  });
+
+  it('startRemont: poziom 4 kosztuje 450 000 zł od 28. poziomu i zamyka sklep na 5 dni', () => {
+    const s = fresh();
+    s.remontLevel = 3;
+    s.cash = 1e6;
+    s.level = 27;
+    expect(startRemont(s)).toEqual({ ok: false, text: 'Remont odblokujesz na 28. poziomie.' });
+    s.level = 28;
+    const before = s.minute;
+    expect(startRemont(s).ok).toBe(true);
+    expect(s.cash).toBe(1e6 - 450_000);
+    expect(s.remontLevel).toBe(4);
+    expect(s.remontUntil).toBe(before + 5 * MINUTES_PER_DAY);
+  });
+
+  it('startRemont na poziomie 5: odmowa „Większego sklepu już nie będzie. To jest Traszka Max Pro Ultra.”', () => {
+    const s = fresh();
+    s.remontLevel = 5;
+    s.level = 99;
+    s.cash = 5e6;
+    expect(startRemont(s)).toEqual({ ok: false, text: 'Większego sklepu już nie będzie. To jest Traszka Max Pro Ultra.' });
+    expect(s.cash).toBe(5e6);
+    expect(s.remontLevel).toBe(5);
+  });
+
+  it('cele remont4, remont5, earned1m spełniają się przy remontLevel 4, 5 i total.margin 1 000 000', () => {
+    const goal = (id: string) => MILESTONES.find((m) => m.id === id)!;
+    expect(MILESTONES.slice(-3).map((m) => [m.id, m.reward])).toEqual([['remont4', 80], ['remont5', 120], ['earned1m', 80]]);
+    const s = fresh();
+    expect([goal('remont4').done(s, info), goal('remont5').done(s, info), goal('earned1m').done(s, info)]).toEqual([false, false, false]);
+    s.remontLevel = 4;
+    expect([goal('remont4').done(s, info), goal('remont5').done(s, info)]).toEqual([true, false]);
+    s.remontLevel = 5;
+    expect([goal('remont4').done(s, info), goal('remont5').done(s, info)]).toEqual([true, true]);
+    s.total.margin = 999_999;
+    expect(goal('earned1m').done(s, info)).toBe(false);
+    s.total.margin = 1_000_000;
+    expect(goal('earned1m').done(s, info)).toBe(true);
+  });
+
+  it('REMONTS: nextRemont po poziomie 5 to null', () => {
+    const s = fresh();
+    s.remontLevel = REMONTS.length;
+    expect(nextRemont(s)).toBeNull();
   });
 });
