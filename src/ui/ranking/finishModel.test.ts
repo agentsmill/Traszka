@@ -106,7 +106,7 @@ function setup(over: { replies?: (ApiResult<RunAccepted> | (() => Promise<ApiRes
     const next = replies.length > 1 ? replies.shift()! : replies[0]!;
     return typeof next === 'function' ? next() : next;
   });
-  const client: RankingClient = { board: vi.fn(), player: vi.fn(), uploadSave: vi.fn(), downloadSave: vi.fn(), submitRun };
+  const client: RankingClient = { board: vi.fn(), player: vi.fn(), uploadSave: vi.fn(), downloadSave: vi.fn(), submitRun, fameList: vi.fn(), fameSubmit: vi.fn() };
   const player = { key: KEY as string | undefined, nick: 'Mateusz' as string | null };
   const clear = vi.fn(() => { clearFinished(); });
   const rememberNick = vi.fn((nick: string) => { player.nick = nick; });
@@ -181,7 +181,7 @@ describe('model okna końca sezonu', () => {
     const finished = vi.fn(pendingFinished);
     saveFinished(finishedRun());
     const player = { key: KEY as string | undefined, nick: 'Mateusz' as string | null };
-    const client: RankingClient = { board: vi.fn(), player: vi.fn(), uploadSave: vi.fn(), downloadSave: vi.fn(), submitRun: vi.fn(async () => failure('ranking-off')) };
+    const client: RankingClient = { board: vi.fn(), player: vi.fn(), uploadSave: vi.fn(), downloadSave: vi.fn(), submitRun: vi.fn(async () => failure('ranking-off')), fameList: vi.fn(), fameSubmit: vi.fn() };
     const model = createFinishModel({ client, finished, clear: vi.fn(), player: () => player, rememberNick: vi.fn() });
     model.open();
     await model.send();

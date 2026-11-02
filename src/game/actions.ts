@@ -15,6 +15,7 @@ import type { Sfx } from '@/ui/sfx';
 import * as ui from '@/ui/state';
 import { bootMeta } from './bootMeta';
 import type { CashierLook } from './cashier';
+import { offerFame } from './fameOffer';
 import { claimDaily, partnerOf, saveMeta, startupWindow, type Meta } from './meta';
 import { openStore } from './openStore';
 import {
@@ -640,6 +641,7 @@ export function createShell(deps: ShellDeps): GameShell {
     let refresh = false;
     const goals: FirmEvent[] = [];
     for (const e of out.firm) {
+      if (offerFame(e, session, shell.meta, fx)) continue;   // milion: gratulacje z wpisem do Galerii sław zamiast zwykłego okna „OK”
       switch (e.kind) {
         case 'deputy':
         case 'build':

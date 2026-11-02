@@ -1,8 +1,12 @@
 import type { ComponentChild, VNode } from 'preact';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { zl } from '../game/format';
 import { NETWORK_ERROR, UNAVAILABLE_ERROR, type ApiResult, type BoardResponse, type PlayerResponse, type RankingClient, type RankingTab } from './client';
-import { EMPTY_BOARD, LOADING, NO_PLAYER, NO_SEED, RankingPanel, TAB_LABELS, weekLeft } from './RankingPanel';
+import { DEFAULT_CASHIER_LOOK } from '@/game/cashier';
+import { loadMeta, type Meta } from '@/game/meta';
+import { lang } from '@/i18n';
+import { EMPTY_BOARD, FAME_EMPTY, FAME_TAB_LABEL, LOADING, NO_PLAYER, NO_SEED, RankingPanel, TAB_LABELS, weekLeft } from './RankingPanel';
+import { FAME_LIST_CLOSED_TEXT, createFameModel, fameDate } from './fameModel';
 import { createRankingModel, type RankingDeps } from './rankingModel';
 
 // --- Drzewo vnode bez DOM (jak w overlays.test.tsx) ----------------------------------------------------------------------
@@ -47,6 +51,8 @@ function fakeClient(boards: Partial<Record<RankingTab, ApiResult<BoardResponse>>
     uploadSave: vi.fn(),
     downloadSave: vi.fn(),
     submitRun: vi.fn(),
+    fameList: vi.fn(),
+    fameSubmit: vi.fn(),
   };
   return { client, calls };
 }
@@ -312,5 +318,138 @@ describe('ranking: serwer wyłączony albo nieosiągalny (panel działa dalej)',
     const text = textOf(RankingPanel({ model, onClose: () => undefined }));
     expect(text).toContain('Ranking Centrali jeszcze nie ruszył.');
     expect(text).toContain(NO_PLAYER);
+  });
+});
+
+describe('ranking: zakładka „Galeria sław”', () => {
+  const AT = Date.UTC(2026, 10, 2, 12);   // południe UTC: ten sam dzień w każdej strefie czasowej
+  const meta = (fameSent?: string[]): Meta => ({ ...loadMeta(), player: { nick: 'Mateusz', look: DEFAULT_CASHIER_LOOK, specialOutfits: true, key: KEY }, ...(fameSent ? { fameSent } : {}) });
+  const ENTRY = { seed: 'pierogi-731', day: 134, cash: 1_012_345 };
+
+  function setup(list: ApiResult<{ total: number; rows: { place: number; nick: string; at: number }[] }>, m: Meta = meta()) {
+    const { client } = fakeClient({});
+    (client.fameList as ReturnType<typeof vi.fn>).mockResolvedValue(list);
+    const model = createRankingModel(deps(client));
+    const fame = createFameModel({ client, meta: () => m, saveMeta: () => undefined });
+    const panel = (fameEntry: typeof ENTRY | null = null, onSendFame = vi.fn()) => RankingPanel({ model, onClose: () => undefined, fame, fameEntry, onSendFame });
+    return { client, model, fame, panel };
+  }
+  const tabsOf = (tree: ComponentChild) => walk(tree).filter((v) => v.props?.role === 'tab');
+
+  afterEach(() => { lang.value = 'pl'; });
+
+  it('bez modelu Galerii są trzy zakładki jak dotąd; z modelem czwarta „Galeria sław”, a wybranie jej ładuje listę', async () => {
+    const { client, panel, fame, model } = setup({ ok: true, total: 0, rows: [] });
+    const without = RankingPanel({ model, onClose: () => undefined });
+    expect(tabsOf(without).map(textOf)).toEqual([TAB_LABELS.global, TAB_LABELS.seed, TAB_LABELS.week]);
+
+    const tree = panel();
+    const tabs = tabsOf(tree);
+    expect(tabs.map(textOf)).toEqual([TAB_LABELS.global, TAB_LABELS.seed, TAB_LABELS.week, FAME_TAB_LABEL]);
+    click(tabs[3]!);
+    await vi.waitFor(() => expect(fame.list.value.status).toBe('ready'));
+    expect(client.fameList).toHaveBeenCalledTimes(1);
+    expect(fame.shown.value).toBe(true);
+    expect(tabsOf(panel()).map((t) => t.props['aria-selected'])).toEqual([false, false, false, true]);
+  });
+
+  it('wiersze „1. Nick — 2 listopada 2026” w kolejności z serwera (rosnąco po at); wybór rankingu wraca do wyników i chowa Galerię', async () => {
+    const { panel, fame, model } = setup({ ok: true, total: 2, rows: [{ place: 1, nick: 'Ala', at: AT }, { place: 2, nick: 'Mateusz', at: AT + 3 * 86_400_000 }] });
+    await fame.show();
+    const items = byClass(panel(), 'tt-fame-row');
+    expect(items.map(textOf)).toEqual(['1. Ala — 2 listopada 2026', '2. Mateusz — 5 listopada 2026']);
+    expect(byClass(panel(), 'tt-rank-row')).toHaveLength(0);
+    const select = vi.spyOn(model, 'select');
+    click(tabsOf(panel())[1]!);
+    expect(select).toHaveBeenCalledWith('seed');
+    expect(fame.shown.value).toBe(false);
+    expect(byClass(panel(), 'tt-fame-row')).toHaveLength(0);
+  });
+
+  it('po angielsku data i napisy są angielskie', async () => {
+    lang.value = 'en';
+    const { panel, fame } = setup({ ok: true, total: 1, rows: [{ place: 1, nick: 'Ala', at: AT }] });
+    await fame.show();
+    expect(textOf(byClass(panel(), 'tt-fame-row')[0])).toBe('1. Ala — 2 November 2026');
+    expect(tabsOf(panel()).map(textOf)[3]).toBe('Hall of Fame');
+  });
+
+  it('pusta Galeria i lista dłuższa niż pokazana (total > wierszy) mają swoje zdania', async () => {
+    const empty = setup({ ok: true, total: 0, rows: [] });
+    await empty.fame.show();
+    expect(textOf(empty.panel())).toContain(FAME_EMPTY);
+    const long = setup({ ok: true, total: 140, rows: [{ place: 1, nick: 'Ala', at: AT }] });
+    await long.fame.show();
+    expect(textOf(long.panel())).toContain('Na liście pierwsze 1 z 140 wpisów.');
+  });
+
+  it('lista przy błędzie sieci: „Galeria jest teraz nieczynna” i ponowienie, bez wyjątku; ranking nadal działa', async () => {
+    const { panel, fame, client } = setup({ ok: false, error: 'network', message: NETWORK_ERROR });
+    await expect(fame.show()).resolves.toBeUndefined();
+    const tree = panel();
+    expect(textOf(tree)).toContain('Galeria jest teraz nieczynna');
+    expect(fame.list.value.message).toBe(FAME_LIST_CLOSED_TEXT);
+    (client.fameList as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ ok: true, total: 1, rows: [{ place: 1, nick: 'Ala', at: AT }] });
+    click(buttons(tree).find((b) => textOf(b) === 'Spróbuj jeszcze raz')!);
+    await vi.waitFor(() => expect(fame.list.value.status).toBe('ready'));
+    expect(textOf(panel())).toContain('Ala');
+  });
+
+  it('odpowiedź spoza kształtu (ok bez wierszy) to też „nieczynna”, nie wyjątek', async () => {
+    const { panel, fame } = setup({ ok: true } as unknown as ApiResult<{ total: number; rows: [] }>);
+    await fame.show();
+    expect(textOf(panel())).toContain('Galeria jest teraz nieczynna');
+  });
+
+  it('„Wyślij mój wpis”: widoczny, gdy firma ma milion, a seed nie jest w fameSent; także przy błędzie listy; znika po wysłaniu seeda', async () => {
+    const down = setup({ ok: false, error: 'network', message: NETWORK_ERROR });
+    await down.fame.show();
+    const onSend = vi.fn();
+    const tree = down.panel(ENTRY, onSend);
+    click(buttons(tree).find((b) => textOf(b) === 'Wyślij mój wpis')!);
+    expect(onSend).toHaveBeenCalledTimes(1);
+    expect(textOf(down.panel(null))).not.toContain('Wyślij mój wpis');   // firma bez miliona
+
+    const sent = setup({ ok: true, total: 0, rows: [] }, meta(['pierogi-731']));
+    await sent.fame.show();
+    expect(textOf(sent.panel(ENTRY))).not.toContain('Wyślij mój wpis');
+    const other = setup({ ok: true, total: 0, rows: [] }, meta(['bigos-111']));
+    await other.fame.show();
+    expect(textOf(other.panel(ENTRY))).toContain('Wyślij mój wpis');
+  });
+
+  it('spóźniona odpowiedź listy po zmianie zakładki nie wraca na ekran', async () => {
+    const { client, fame } = setup({ ok: true, total: 0, rows: [] });
+    let late!: (r: ApiResult<{ total: number; rows: { place: number; nick: string; at: number }[] }>) => void;
+    (client.fameList as ReturnType<typeof vi.fn>).mockReturnValueOnce(new Promise((resolve) => { late = resolve; }));
+    const loading = fame.show();
+    fame.hide();
+    late({ ok: true, total: 1, rows: [{ place: 1, nick: 'Ala', at: AT }] });
+    await loading;
+    expect(fame.list.value.rows).toEqual([]);
+  });
+
+  it('wiersze o złym kształcie i `at` spoza zakresu Date są odrzucane, a panel nie rzuca w renderze', async () => {
+    const good = { place: 1, nick: 'Ala', at: AT };
+    const bad = [
+      null, 'x', 7, [], {}, { place: 2, nick: 'Bez daty' }, { place: 3, nick: 'Duża data', at: 1e20 }, { place: 4, nick: 'Ujemna', at: -1e20 },
+      { place: 5, nick: 'Nieskończona', at: Number.POSITIVE_INFINITY }, { place: 6, nick: 'NaN', at: Number.NaN }, { place: 7, nick: 'Tekst', at: '2026-11-02' },
+      { place: 'x', nick: 'Zły numer', at: AT }, { place: Number.NaN, nick: 'NaN numer', at: AT }, { place: 8, nick: 5, at: AT }, { place: 9, at: AT },
+    ];
+    const { panel, fame } = setup({ ok: true, total: 20, rows: [bad[0], good, ...bad.slice(1)] as never });
+    await fame.show();
+    let tree: ComponentChild = null;
+    expect(() => { tree = panel(); }).not.toThrow();
+    expect(fame.list.value.status).toBe('ready');
+    expect(fame.list.value.rows).toEqual([good]);
+    expect(byClass(tree, 'tt-fame-row').map(textOf)).toEqual(['1. Ala — 2 listopada 2026']);
+    expect(textOf(tree)).toContain('Na liście pierwsze 1 z 20 wpisów.');
+  });
+
+  it('data na skraju zakresu Date: fameDate nie rzuca (pusty napis poza zakresem), a najdalsza poprawna data się formatuje', () => {
+    expect(() => fameDate(1e20)).not.toThrow();
+    expect(fameDate(1e20)).toBe('');
+    expect(fameDate(Number.NaN)).toBe('');
+    expect(fameDate(8.64e15)).not.toBe('');
   });
 });

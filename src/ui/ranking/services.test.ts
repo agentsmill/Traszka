@@ -6,7 +6,7 @@ import { MemoryStorage } from '@/game/memoryStorage';
 import { loadMeta, saveMeta, type Meta } from '@/game/meta';
 import { RECOVERY_ERRORS, formatRecoveryCode } from '@/game/playerKey';
 import { createSession, saveSession } from '@/game/session';
-import { closePanel, openPanel, panel } from '../state';
+import { closePanel, fameOffer, openPanel, panel } from '../state';
 import type { ApiResult, BoardResponse, PlayerResponse, RankingClient, SaveDownloaded, SaveUploadResult } from './client';
 import * as rankingModelModule from './rankingModel';
 import { NO_SEED } from './rankingModel';
@@ -32,10 +32,12 @@ beforeEach(() => {
   storage = new MemoryStorage();
   vi.stubGlobal('localStorage', storage);
   panel.value = null;
+  fameOffer.value = null;
 });
 afterEach(() => {
   for (const services of created.splice(0)) services.dispose();
   panel.value = null;
+  fameOffer.value = null;
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -68,6 +70,8 @@ function fakeClient(over: Partial<RankingClient> = {}): RankingClient {
     uploadSave: vi.fn(async (): Promise<SaveUploadResult> => ({ ok: true, bytes: 2048, savedAt: 777 })),
     downloadSave: vi.fn(async (): Promise<ApiResult<SaveDownloaded>> => ({ ok: true, save: 'nie paczka', savedAt: 555 })),
     submitRun: vi.fn(),
+    fameList: vi.fn(async () => ({ ok: true as const, total: 0, rows: [] })),
+    fameSubmit: vi.fn(),
     ...over,
   };
 }
@@ -404,5 +408,53 @@ describe('createRankingServices: otwarcie panelu przygotowuje model (sygnał pan
     openPanel('ranking', 'global');
     expect(clientA.board).toHaveBeenCalledTimes(1);
     expect(clientB.board).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('createRankingServices: Galeria sław', () => {
+  const OFFER = { seed: SEED, day: 134, cash: 1_012_345 };
+
+  it('panel na zakładce Galerii ładuje listę, a nie ranking; otwarcie na rankingu chowa Galerię zostawioną przy poprzednim otwarciu', async () => {
+    const client = fakeClient();
+    const services = create({ shell: makeShell(), client });
+    openPanel('ranking', 'fame');
+    expect(client.fameList).toHaveBeenCalledTimes(1);
+    expect(client.board).not.toHaveBeenCalled();
+    expect(services.fameModel.shown.value).toBe(true);
+    openPanel('ranking', 'week');
+    expect(services.fameModel.shown.value).toBe(false);
+    expect(client.board).toHaveBeenCalledTimes(1);
+    openPanel('ranking');
+    expect(client.board).toHaveBeenCalledTimes(2);
+    expect(client.fameList).toHaveBeenCalledTimes(1);
+  });
+
+  it('otwarcie okna gratulacji odświeża model (nick z mety, czysty stan), a samo utworzenie usług niczego nie wysyła', async () => {
+    const shell = makeShell();
+    const client = fakeClient();
+    const services = create({ shell, client });
+    expect(client.fameSubmit).not.toHaveBeenCalled();
+    expect(client.fameList).not.toHaveBeenCalled();
+    services.fameModel.setNick('Inny');
+    fameOffer.value = OFFER;
+    expect(services.fameModel.nick.value).toBe('Mateusz');
+    shell.meta.player = { ...shell.meta.player!, nick: 'Nowy' };
+    fameOffer.value = null;
+    fameOffer.value = OFFER;
+    expect(services.fameModel.nick.value).toBe('Nowy');
+  });
+
+  it('wpis przyjęty przez serwer trafia do mety powłoki w pamięci i do przeglądarki, a persist przy zamknięciu karty go nie cofa', async () => {
+    const shell = makeShell();
+    saveMeta(shell.meta);
+    const client = fakeClient({ fameSubmit: vi.fn(async () => ({ ok: true as const, first: true, place: 2, entry: { nick: 'Mateusz', at: 1 } })) });
+    const services = create({ shell, client });
+    fameOffer.value = OFFER;
+    await services.fameModel.submit(OFFER);
+    expect(client.fameSubmit).toHaveBeenCalledWith(KEY_A, expect.objectContaining({ nick: 'Mateusz', seed: SEED, day: 134, cash: 1_012_345 }));
+    expect(shell.meta.fameSent).toEqual([SEED]);
+    expect(loadMeta().fameSent).toEqual([SEED]);
+    shell.persist();
+    expect(loadMeta().fameSent).toEqual([SEED]);
   });
 });
