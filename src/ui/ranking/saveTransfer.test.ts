@@ -8,14 +8,14 @@ import { NEWER_SAVE_NOTICE, createSession, hasStoredSave, lastSavedSeed, saveSes
 import { bootImport } from '@/game/boot';
 import { getPlayMode, setPlayMode } from '@/game/rankedRun';
 import { entrySeed } from '@/game/seeds';
-import { generateCity } from '@/sim/city/generateCity';
+import { FREE_LOTS, generateCity } from '@/sim/city/generateCity';
 import { storeSeedFor } from '@/sim/city/traffic';
 import { CITY_GENERATOR_VERSION } from '@/sim/city/types';
 import { MINUTES_PER_DAY, OPEN_FROM } from '@/sim/economy/catalog';
 import { awaitingDecision } from '@/sim/economy/economy';
 import { defaultAnswer } from '@/sim/economy/monthPreview';
 import { CARDS, visibleCards } from '@/sim/economy/tycoon/cards';
-import { EQUIPMENT, REMONTS, UPGRADES } from '@/sim/economy/upgrades';
+import { EQUIPMENT, EQUIPMENT_BY_ID, REMONTS, UPGRADES } from '@/sim/economy/upgrades';
 import { applyFirmCommand, lotState, rentPrice } from '@/sim/firm/commands';
 import { RESEARCH } from '@/sim/firm/research';
 import { closeStore } from '@/sim/firm/closure';
@@ -26,7 +26,7 @@ import { layoutFor } from '@/sim/store/layoutFor';
 import { SAVE_BUNDLE_FORMAT, SAVE_BUNDLE_VERSION, SAVE_MAX_BYTES } from '@/server/config';
 import { checkSave } from '@/server/saves';
 import {
-  IMPORT_KEY, SAVE_SYNC_KEY, TRANSFER_CARD_LOG, TRANSFER_CLOSED_STORES, TRANSFER_ERRORS, TRANSFER_FORMAT, TRANSFER_HISTORY_MONTHS, TRANSFER_INBOX, applyStagedImport, compactForTransfer,
+  IMPORT_KEY, SAVE_SYNC_KEY, TRANSFER_CLOSED_STORES, TRANSFER_ERRORS, TRANSFER_FORMAT, TRANSFER_HISTORY_MONTHS, TRANSFER_INBOX, applyStagedImport, compactForTransfer,
   exportTransfer, importTransfer, readSaveSync, stageImport, unpackTransfer, writeSaveSync, type PackedClosedStore, type TransferBundle,
 } from './saveTransfer';
 
@@ -287,16 +287,30 @@ function fitAll(f: FirmState, id: number): void {
   grantToFirm(f, (s) => { s.cash = wallet; });
 }
 
-/** Poziomy remontu otwartych sklepów #1–#5, czy dostają wszystkie ulepszenia i sprzęt i czy firma ma wszystkie badania Sieci na najwyższym poziomie. */
-interface FiveSetup { remonts: readonly number[]; fit: boolean; research: boolean }
-/** Scenariusz z briefu: #1 po pięciu remontach, #2 i #3 po trzech, bez dokupionych ulepszeń i sprzętu, bez badań. */
-const BRIEF_FIVE: FiveSetup = { remonts: [5, 3, 3, 0, 0], fit: false, research: false };
 /**
- * Najgorszy przypadek otwartych sklepów: wszystkie po pięciu remontach z pełnym wyposażeniem i wszystkie badania Sieci na najwyższym poziomie.
- * Bez zamkniętych sklepów: zamknięty sklep po remoncie 5 z pełnym wyposażeniem waży w paczce ok. 1,1 KB, a zapas do 62 000 B jest mniejszy
- * (pomiar w raporcie zadania 3, runda 2).
+ * Miasto (`seed`), poziomy remontu otwartych sklepów #1–#5, czy sklepy (też zamykane) dostają wszystkie ulepszenia i sprzęt, ile zamkniętych
+ * sklepów po remoncie 5 firma ma za sobą i czy ma wszystkie badania Sieci na najwyższym poziomie.
  */
-const WORST_FIVE: FiveSetup = { remonts: [5, 5, 5, 5, 5], fit: true, research: true };
+interface FiveSetup { seed: string; remonts: readonly number[]; fit: boolean; closed: number; research: boolean }
+/** Scenariusz z briefu: #1 po pięciu remontach, #2 i #3 po trzech, bez dokupionych ulepszeń i sprzętu, bez zamkniętych sklepów i badań. */
+const BRIEF_FIVE: FiveSetup = { seed: FIVE_SEED, remonts: [5, 3, 3, 0, 0], fit: false, closed: 0, research: false };
+
+/**
+ * Najwięcej zamkniętych sklepów przy pięciu otwartych. Wynająć da się tylko lokal wolny albo „po Traszce” (ponowny wynajem otwiera ten sam sklep),
+ * więc firma ma w mieście najwyżej `1 + FREE_LOTS[1]` sklepów (lokal startowy i wszystkie wolne), z czego `MAX_STORES` otwartych. Liczone z
+ * `FREE_LOTS`, a nie z ręki: gdy ktoś podniesie liczbę wolnych lokali, najgorszy przypadek przeliczy się sam (albo test nie znajdzie miasta i padnie).
+ */
+const MAX_CLOSED_WITH_FIVE_OPEN = 1 + FREE_LOTS[1] - MAX_STORES;
+
+let worstMemo: FiveSetup | null = null;
+/**
+ * Najgorszy osiągalny przypadek (rozstrzygnięcie koordynatora 4b, runda 3): miasto z największą liczbą wolnych lokali, wszystkie otwarte sklepy po
+ * pięciu remontach z pełnym wyposażeniem, zamknięte sklepy na wszystkich pozostałych wolnych lokalach (`MAX_CLOSED_WITH_FIVE_OPEN`, też po remoncie 5
+ * z pełnym wyposażeniem) i wszystkie badania Sieci na najwyższym poziomie.
+ */
+const worstFive = (): FiveSetup => (worstMemo ??= {
+  seed: seedWithFreeLots(FREE_LOTS[1]), remonts: [5, 5, 5, 5, 5], fit: true, closed: MAX_CLOSED_WITH_FIVE_OPEN, research: true,
+});
 
 /** Wolne lokale miasta od największego układu po trzecim remoncie (remis: niższy numer). */
 function freeLotsBySize(f: FirmState): number[] {
@@ -308,24 +322,38 @@ function freeLotsBySize(f: FirmState): number[] {
 /**
  * Pięć otwartych sklepów, cztery w największych wolnych lokalach (wynajem na raty i prawdziwa budowa), remonty z `setup` (kolejne poziomy co
  * 8 dni, bo remont zamyka sklep na kilka dni), do 6:00 ostatniego dnia drugiego roku (730 dni prawdziwych kroków; test gra jeszcze ten dzień).
- * Skróty jak w `firmSave.test.ts`: status Partnera i limit pięciu placówek od razu, poziom gracza i gotówka na zakupy z góry, zaufanie nie
- * spada poniżej 70.
+ * Zamknięte sklepy (`setup.closed`) stoją na pozostałych wolnych lokalach: otwiera je `openStoreAt` (jak otwarcie budowy, bo limit pięciu
+ * placówek nie pozwoliłby ich wynająć naraz), remonty do 5 razem z resztą, zakupy jak w `fitAll`, a zamyka `closeStore` (jak koniec
+ * wypowiedzenia, bez czekania na koniec miesiąca), co minutę jeden. Skróty jak w `firmSave.test.ts`: status Partnera i limit pięciu placówek od
+ * razu, poziom gracza i gotówka na zakupy z góry, zaufanie nie spada poniżej 70.
  */
 function playFiveStores(setup: FiveSetup): FirmState {
-  const { state, layout, info } = freshRun(FIVE_SEED);
-  const f = createFirm(FIVE_SEED, { econ: state, layout, info }, { ranked: false });
+  const { state, layout, info } = freshRun(setup.seed);
+  const f = createFirm(setup.seed, { econ: state, layout, info }, { ranked: false });
   f.person.partner = true;
   f.storeLimit = MAX_STORES;
   playHoldingTrust(f, 3 * DAY + OPEN_FROM);
   for (let i = 0; i < 4; i++) expect(applyFirmCommand(f, { type: 'rentLot', lotId: largestFreeLot(f), pay: 'raty' }, emptyStepOut())).toEqual({ ok: true });
   playHoldingTrust(f, Math.max(...f.builds.map((b) => b.readyDay)) * DAY + OPEN_FROM + 1);
   expect(openStores(f)).toHaveLength(5);
+  let closing: number[] = [];
+  if (setup.closed > 0) {
+    const lots = freeLotsBySize(f);
+    expect(lots, 'zamknięte sklepy zajmują wszystkie pozostałe wolne lokale miasta').toHaveLength(setup.closed);
+    closing = lots.map((lot) => openStoreAt(f, lot, clockOf(f)).id);
+  }
   for (let round = 0; round < 5; round++) {
     for (const [i, level] of setup.remonts.entries()) if (round < level) remontNext(f, i + 1);
+    for (const id of closing) remontNext(f, id);
     playHoldingTrust(f, clockOf(f) + 8 * DAY);
   }
-  expect(f.stores.map((s) => s.econ.remontLevel)).toEqual(setup.remonts);
+  expect(f.stores.slice(0, 5).map((s) => s.econ.remontLevel)).toEqual(setup.remonts);
   if (setup.fit) for (const st of openStores(f)) fitAll(f, st.id);
+  expect(applyFirmCommand(f, { type: 'switchStore', storeId: 1 }, emptyStepOut())).toEqual({ ok: true });
+  for (const id of closing) {
+    closeStore(f, id, 'notice', emptyStepOut());
+    playHoldingTrust(f, clockOf(f) + 1);
+  }
   if (setup.research) {
     f.research = Object.fromEntries(RESEARCH.map((d) => [d.id, d.maxLevel]));
     refreshSites(f);   // jak po zakupie badania: `site.net` sklepów od razu
@@ -345,9 +373,10 @@ const fiveStores = (setup: FiveSetup = BRIEF_FIVE): FirmState => {
 
 const bytes = (x: unknown): number => new TextEncoder().encode(typeof x === 'string' ? x : JSON.stringify(x)).length;
 
-/** Firma z tekstu koperty, jak przy wczytaniu w przeglądarce (do porównań z tym, co otworzy drugie urządzenie). */
+/** Firma z tekstu koperty (seed z koperty), jak przy wczytaniu w przeglądarce (do porównań z tym, co otworzy drugie urządzenie). */
 function opened(text: string): FirmState {
-  const r = restoreFirmFrom(JSON.parse(text) as unknown, FIVE_SEED);
+  const data = JSON.parse(text) as { seed: string };
+  const r = restoreFirmFrom(data, data.seed);
   if (!r.ok) throw new Error(`firma się nie otworzyła: ${r.reason}`);
   return r.firm;
 }
@@ -365,14 +394,14 @@ interface Largest { text: string; local: string; at: number; pallets: number }
  */
 function largestOfDay(f: FirmState): Largest {
   saveMeta(bigMeta());
-  storage.setItem('traszka:last', FIVE_SEED);
+  storage.setItem('traszka:last', f.seed);
   let best: Largest = { text: '', local: '', at: 0, pallets: 0 };
   let size = 0;
   for (let m = 0; m < DAY; m++) {
     const local = JSON.stringify(firmEnvelopeOf(f));
-    storage.setItem(`traszka:save:${FIVE_SEED}`, local);
+    storage.setItem(`traszka:save:${f.seed}`, local);
     const text = exportTransfer()!;
-    expect(storage.getItem(`traszka:save:${FIVE_SEED}`)).toBe(local);   // zapis lokalny bez zmian
+    expect(storage.getItem(`traszka:save:${f.seed}`)).toBe(local);   // zapis lokalny bez zmian
     if (bytes(text) > size) {
       size = bytes(text);
       best = { text, local, at: clockOf(f) % DAY, pallets: openStores(f).reduce((n, st) => n + st.econ.pallets.length, 0) };
@@ -384,19 +413,21 @@ function largestOfDay(f: FirmState): Largest {
 
 /** Drukuje pomiar paczki i zwraca jej bajty. */
 function report(label: string, { text, local, at, pallets }: Largest): number {
-  const full = bytes({ format: TRANSFER_FORMAT, version: 1, seed: FIVE_SEED, meta: JSON.parse(text).meta, save: JSON.parse(local) });
+  const full = bytes({ format: TRANSFER_FORMAT, version: 1, seed: (JSON.parse(text) as TransferBundle).seed, meta: JSON.parse(text).meta, save: JSON.parse(local) });
   const total = bytes(text);
   const save = (JSON.parse(text) as TransferBundle).save as unknown as FirmSaveEnvelope;
   console.log(`Paczka „Wyślij zapis”, ${label}, dzień 730, największa o ${Math.floor(at / 60)}:${String(at % 60).padStart(2, '0')} (palet ${pallets}): `
     + `${total} B z ${SAVE_TRANSFER_MAX_BYTES} B po kompaktowaniu (bez kompaktowania ${full} B); sklepy: ${save.stores.map((st) => bytes(st)).join(' + ')} B, `
     + `skrzynka ${save.firm.inbox.length} wpisów.`);
   expect(full, 'bez kompaktowania paczka by się nie zmieściła: test sprawdza to, po co jest compactForTransfer').toBeGreaterThan(SAVE_TRANSFER_MAX_BYTES);
-  expect(save.stores.map((st) => 'layout' in st)).toEqual([false, false, false, false, false]);   // układy odtwarzalne, także po remoncie 5
+  expect(save.stores.filter((st) => 'layout' in st)).toEqual([]);   // układy odtwarzalne, także po remoncie 5
+  // paczka nie niesie logu kart w żadnym sklepie (rozstrzygnięcie koordynatora 4b, runda 3)
+  for (const st of save.stores) if (!st.closed) expect(st.econ.tycoon.cards.log, `log kart #${st.id} w paczce`).toEqual([]);
   expect(checkSave(text)).toEqual({ ok: true, value: text });
   return total;
 }
 
-/** Log kart każdego otwartego sklepu (rosnąco po `id`; zamknięte sklepy wracają z zapisu bez logu). */
+/** Log kart każdego otwartego sklepu (rosnąco po `id`; zamknięte sklepy wracają z zapisu z logiem domyślnym). */
 const cardLogs = (f: FirmState): FirmState['stores'][number]['econ']['tycoon']['cards']['log'][] => openStores(f).map((st) => st.econ.tycoon.cards.log);
 /** Koperta bez logu kart: do porównań stanu, w którym log różni się długością. */
 const withoutCardLogs = (f: FirmState): unknown => {
@@ -434,60 +465,80 @@ describe('paczka „Wyślij zapis” przy pięciu sklepach (compactForTransfer)'
     expect(activeStore(g).econ.lastReport).toEqual(activeStore(localFirm).econ.lastReport);
     expect(openStores(g).filter((s) => s.id !== g.activeId).map((s) => s.econ.lastReport)).toEqual([null, null, null, null]);
     expect(openStores(g).map((s) => s.econ.history)).toEqual(openStores(localFirm).map((s) => s.econ.history.slice(-12)));
-    expect(cardLogs(g)).toEqual(openStores(localFirm).map((s) => (s.id === g.activeId ? s.econ.tycoon.cards.log : s.econ.tycoon.cards.log.slice(-TRANSFER_CARD_LOG))));
+    expect(cardLogs(g)).toEqual(openStores(localFirm).map(() => []));   // log kart nie jedzie w paczce: na drugim urządzeniu zaczyna się od pustego
+    expect(cardLogs(localFirm).every((log) => log.length > 0)).toBe(true);
   }, 400_000);
 
-  it('najgorszy przypadek otwartych sklepów: 5 po remoncie 5 z pełnym wyposażeniem i pełne badania Sieci, najgorsza minuta doby: paczka ≤ 62 000 B', () => {
-    const f = fiveStores(WORST_FIVE);
+  it('najgorszy osiągalny przypadek: 5 otwartych i 4 zamknięte sklepy po remoncie 5 z pełnym wyposażeniem, pełne badania Sieci, najgorsza minuta doby: paczka ≤ 62 000 B', () => {
+    expect(FREE_LOTS[1]).toBe(8);
+    expect(MAX_CLOSED_WITH_FIVE_OPEN).toBe(4);   // 1 + FREE_LOTS[1] − MAX_STORES; przy innym FREE_LOTS przelicz rozmiary w raporcie
+    const f = fiveStores(worstFive());
     const largest = largestOfDay(f);
     expect(f.over).toBeNull();
+    // stan jest największy, jaki gra dopuszcza: wszystkie wolne lokale miasta zajęte, 1 + FREE_LOTS[1] sklepów
+    expect(f.city.lots.filter((l) => l.state === 'wolny')).toHaveLength(FREE_LOTS[1]);
+    expect(f.city.lots.filter((l) => lotState(f, l.id) === 'wolny')).toEqual([]);
+    expect(f.stores).toHaveLength(1 + FREE_LOTS[1]);
     expect(openStores(f).map((s) => s.econ.remontLevel)).toEqual([5, 5, 5, 5, 5]);
-    for (const st of openStores(f)) {
-      expect(st.econ.equipment.length, `sprzęt #${st.id}`).toBeGreaterThanOrEqual(19);   // L5: 9 slotów 2×2 i kasa samoobsługowa
+    const closed = f.stores.filter((s) => s.closed);
+    expect(closed).toHaveLength(MAX_CLOSED_WITH_FIVE_OPEN);
+    for (const st of f.stores) {
+      expect(st.econ.remontLevel, `#${st.id}`).toBe(5);
+      // sprzęt w każdym miejscu: zajęta pojemność slotów = cała pojemność układu (mniejszy lokal ma po remoncie 5 mniej slotów niż największy)
+      const capacity = st.info.slots.reduce((n, slot) => n + slot.capacity, 0);
+      const used = st.econ.equipment.filter((e) => e.slot !== null).reduce((n, e) => n + EQUIPMENT_BY_ID[e.id].size, 0);
+      expect(used, `sprzęt #${st.id}`).toBe(capacity);
+      expect(st.econ.equipment.length, `sprzęt #${st.id}`).toBeGreaterThanOrEqual(15);
       for (const u of UPGRADES) expect(st.econ.upgrades[u.id] ?? 0, `#${st.id} ${u.id}`).toBe(u.maxLevel);
-      expect(st.econ.tycoon.cards.log.length, `log kart #${st.id} pełny`).toBe(CARDS.logMax);
     }
+    for (const st of openStores(f)) expect(st.econ.tycoon.cards.log.length, `log kart #${st.id} pełny w zapisie lokalnym`).toBe(CARDS.logMax);
     expect(f.research).toEqual(Object.fromEntries(RESEARCH.map((d) => [d.id, d.maxLevel])));
     expect(largest.pallets, 'najgorsza minuta to ta z paletami w sklepach').toBeGreaterThanOrEqual(20);
-    expect(((JSON.parse(largest.text) as TransferBundle).save as { firm: { research: unknown } }).firm.research).toEqual(f.research);
-    expect(report('najgorszy przypadek otwartych sklepów (5 po remoncie 5, pełne wyposażenie i badania)', largest)).toBeLessThanOrEqual(62_000);
+    const save = (JSON.parse(largest.text) as TransferBundle).save as unknown as { stores: Record<string, unknown>[]; firm: { research: unknown } };
+    expect(save.firm.research).toEqual(f.research);
+    expect(save.stores.filter((st) => st.closed === true).map((st) => Object.keys(st).sort())).toEqual(closed.map(() => ['closed', 'fit', 'id', 'lotId']));
+    expect(report(`najgorszy osiągalny przypadek (${f.seed}: 5 otwartych i ${closed.length} zamknięte po remoncie 5, pełne wyposażenie i badania)`, largest))
+      .toBeLessThanOrEqual(62_000);
+
+    // drugie urządzenie: ta paczka wczytuje się bez :broken, z pięcioma otwartymi i czterema lokalami „po Traszce”
+    const g = receive(largest.text, f.seed);
+    expect(g.stores.map((s) => [s.id, s.closed, s.econ.remontLevel])).toEqual(f.stores.map((s) => [s.id, s.closed, 5]));
+    for (const st of closed) expect(lotState(g, st.lotId)).toBe('po-traszce');
   }, 600_000);
 
-  it('log kart nie wpływa na grę: firma z logami skróconymi do 10 wpisów gra tydzień co do bajtu tak samo (poza samym logiem), też po przełączeniu sklepu', () => {
-    const local = JSON.stringify(firmEnvelopeOf(fiveStores(WORST_FIVE)));
+  it('log kart nie wpływa na grę: firma bez logu kart gra tydzień co do bajtu tak samo (poza samym logiem), też po przełączeniu sklepu', () => {
+    const local = JSON.stringify(firmEnvelopeOf(fiveStores(worstFive())));
     const full = opened(local);
     const env = JSON.parse(local) as { stores: { closed: boolean; econ: { tycoon: { cards: { log: unknown[] } } } }[] };
-    for (const st of env.stores) if (!st.closed) st.econ.tycoon.cards.log = st.econ.tycoon.cards.log.slice(-TRANSFER_CARD_LOG);
-    const short = opened(JSON.stringify(env));
-    expect(cardLogs(short).map((l) => l.length)).toEqual([10, 10, 10, 10, 10]);
-    expect(withoutCardLogs(short)).toEqual(withoutCardLogs(full));
-    for (const g of [full, short]) {
+    for (const st of env.stores) if (!st.closed) st.econ.tycoon.cards.log = [];
+    const empty = opened(JSON.stringify(env));
+    expect(cardLogs(empty).map((l) => l.length)).toEqual([0, 0, 0, 0, 0]);
+    expect(cardLogs(full).map((l) => l.length)).toEqual([CARDS.logMax, CARDS.logMax, CARDS.logMax, CARDS.logMax, CARDS.logMax]);
+    expect(withoutCardLogs(empty)).toEqual(withoutCardLogs(full));
+    for (const g of [full, empty]) {
       expect(applyFirmCommand(g, { type: 'switchStore', storeId: 3 }, emptyStepOut())).toEqual({ ok: true });
       playHoldingTrust(g, clockOf(g) + 7 * DAY);   // okólnik co 4–6 dni: każdy sklep dostaje w tydzień co najmniej jedną kartę
     }
-    expect(short.over).toBeNull();
-    expect(withoutCardLogs(short)).toEqual(withoutCardLogs(full));
-    // karty dalej przychodzą i trafiają do logu tak samo: skrócony log to końcówka pełnego
-    for (const [i, log] of cardLogs(short).entries()) {
+    expect(empty.over).toBeNull();
+    expect(withoutCardLogs(empty)).toEqual(withoutCardLogs(full));
+    // karty dalej przychodzą i trafiają do logu tak samo: log zaczęty od pustego to końcówka pełnego
+    for (const [i, log] of cardLogs(empty).entries()) {
       const whole = cardLogs(full)[i]!;
-      expect(log, `sklep #${i + 1}`).toEqual(whole.slice(-log.length));
-      expect(log.length).toBeGreaterThan(TRANSFER_CARD_LOG);
+      expect(log.length, `sklep #${i + 1}`).toBeGreaterThan(0);
+      expect(log).toEqual(whole.slice(-log.length));
     }
-  }, 400_000);
+  }, 600_000);
 
-  it('drugie urządzenie: najgorsza paczka wczytuje się, a sklep w tle ze skróconym logiem kart zostaje aktywnym i gra dalej', () => {
-    const f = fiveStores(WORST_FIVE);
-    saveMeta(bigMeta());
-    storage.setItem('traszka:last', FIVE_SEED);
-    storage.setItem(`traszka:save:${FIVE_SEED}`, JSON.stringify(firmEnvelopeOf(f)));
-    const text = exportTransfer()!;
-    switchDevice();
-    expect(importTransfer(text)).toEqual({ seed: FIVE_SEED });
-    const loaded = createSession(FIVE_SEED);
-    expect({ fromSave: loaded.fromSave, loadNotice: loaded.loadNotice }).toEqual({ fromSave: true, loadNotice: null });
-    expect(storage.getItem(`traszka:save:${FIVE_SEED}:broken`)).toBeNull();
-    const g = loaded.firm!;
-    expect(cardLogs(g).map((l) => l.length)).toEqual(openStores(g).map((s) => (s.id === g.activeId ? CARDS.logMax : TRANSFER_CARD_LOG)));
+  it('drugie urządzenie: najgorsza paczka wczytuje się, a sklepy bez logu kart (aktywny i w tle) grają dalej, także po przełączeniu', () => {
+    const f = fiveStores(worstFive());
+    const { text } = sendFrom(f);
+    const g = receive(text, f.seed);
+    expect(cardLogs(g).map((l) => l.length)).toEqual([0, 0, 0, 0, 0]);
+    // aktywny sklep (#1) gra dobę i dostaje karty do pustego logu
+    const first = activeStore(g);
+    expect(first.id).toBe(1);
+    playHoldingTrust(g, clockOf(g) + 7 * DAY);
+    expect(first.econ.tycoon.cards.log.length).toBeGreaterThan(0);
     for (const id of [2, 5]) {
       const st = g.stores.find((s) => s.id === id)!;
       const seq = st.econ.tycoon.cards.seq;
@@ -496,7 +547,7 @@ describe('paczka „Wyślij zapis” przy pięciu sklepach (compactForTransfer)'
       expect(g.over).toBeNull();
       expect(activeStore(g)).toBe(st);
       expect(st.econ.tycoon.cards.seq, `sklep #${id}: karty dalej przychodzą`).toBeGreaterThan(seq);
-      expect(st.econ.tycoon.cards.log.length).toBeGreaterThan(TRANSFER_CARD_LOG);
+      expect(st.econ.tycoon.cards.log.length).toBeGreaterThan(0);
       expect(st.econ.tycoon.cards.log.length).toBeLessThanOrEqual(CARDS.logMax);
     }
     // zapis z drugiego urządzenia wraca do pełnego kształtu i znów wczytuje się bez błędu
@@ -507,7 +558,6 @@ describe('paczka „Wyślij zapis” przy pięciu sklepach (compactForTransfer)'
   it('compactForTransfer: lastReport null poza aktywnym, history ≤ 12, inbox ≤ 10; zapis lokalny (firmEnvelopeOf) bez zmian', () => {
     expect(TRANSFER_HISTORY_MONTHS).toBe(12);
     expect(TRANSFER_INBOX).toBe(10);
-    expect(TRANSFER_CARD_LOG).toBe(10);
     const f = fiveStores();
     const env = firmEnvelopeOf(f);
     const before = JSON.stringify(env);
@@ -528,11 +578,11 @@ describe('paczka „Wyślij zapis” przy pięciu sklepach (compactForTransfer)'
       expect(st.econ.history).toEqual(orig.econ.history.slice(-12));
       expect(st.econ.history.length).toBeLessThanOrEqual(12);
       expect(st.econ.lastReport).toEqual(active ? orig.econ.lastReport : null);
-      expect(st.econ.tycoon.cards.log).toEqual(active ? orig.econ.tycoon.cards.log : orig.econ.tycoon.cards.log.slice(-10));
+      expect(st.econ.tycoon.cards.log).toEqual([]);   // log kart nie jedzie w żadnym sklepie, także w aktywnym
       expect(neutral(st)).toEqual(neutral(orig));   // reszta sklepu bez zmian
     }
     expect(env.stores.filter((st) => !st.closed && st.econ.lastReport !== null).length).toBe(5);   // test nie jest pusty: każdy sklep miał raport
-    expect(env.stores.filter((st) => !st.closed && st.econ.tycoon.cards.log.length > 10).length).toBe(5);   // i log dłuższy niż 10
+    expect(env.stores.filter((st) => !st.closed && st.econ.tycoon.cards.log.length > 0).length).toBe(5);   // i niepusty log kart
   }, 400_000);
 
   it('compactForTransfer nie rzuca na uszkodzonej kopercie (zapis z przeglądarki nie jest pewny); zamknięty sklep pakuje bez sprawdzania pól', () => {
@@ -546,7 +596,7 @@ describe('paczka „Wyślij zapis” przy pięciu sklepach (compactForTransfer)'
     const c = compactForTransfer(odd);
     expect(c.stores).toEqual([
       null, 7, { id: 1, closed: false, econ: { history: 'x', lastReport: { a: 1 } } }, { id: 2, closed: true, fit: { remontLevel: 1 } }, { id: 3, closed: false },
-      { id: 4, closed: false, econ: { tycoon: { cards: { log: 'x' } }, lastReport: null } }, { id: 5, closed: false, econ: { tycoon: 'x', lastReport: null } },
+      { id: 4, closed: false, econ: { tycoon: { cards: { log: [] } }, lastReport: null } }, { id: 5, closed: false, econ: { tycoon: 'x', lastReport: null } },
     ]);
     // zamknięty sklep bez ekonomii zostaje, jaki był (odczyt zapisu i tak go odrzuci)
     expect(compactForTransfer({ ...odd, stores: [{ id: 2, closed: true }] } as unknown as FirmSaveEnvelope).stores).toEqual([{ id: 2, closed: true }]);
@@ -609,13 +659,13 @@ function closedFittedFirm(): FirmState {
 let closedMemo: FirmState | null = null;
 const closedFirm = (): FirmState => structuredClone(closedMemo ??= closedFittedFirm());
 
-/** Pierwsze `n` miast `miasto-i` z ośmioma wolnymi lokalami (najwięcej, ile daje generator), czyli z największą liczbą zamkniętych sklepów. */
-function eightFreeSeed(): string {
-  for (let i = 0; i < 100; i++) {
+/** Pierwsze miasto `miasto-i` z `n` wolnymi lokalami (`FREE_LOTS[1]` to najwięcej, ile daje generator, czyli najwięcej zamkniętych sklepów). */
+function seedWithFreeLots(n: number): string {
+  for (let i = 0; i < 200; i++) {
     const seed = `miasto-${i}`;
-    if (generateCity(seed).lots.filter((l) => l.state === 'wolny').length === 8) return seed;
+    if (generateCity(seed).lots.filter((l) => l.state === 'wolny').length === n) return seed;
   }
-  throw new Error('żadne miasto nie ma ośmiu wolnych lokali');
+  throw new Error(`żadne z 200 miast nie ma ${n} wolnych lokali`);
 }
 
 describe('paczka „Wyślij zapis”: zamknięte sklepy (lokale „po Traszce”)', () => {
@@ -678,7 +728,7 @@ describe('paczka „Wyślij zapis”: zamknięte sklepy (lokale „po Traszce”
 
   it('najwyżej 6 zamkniętych sklepów: zostają #1 i lokal w budowie, potem ostatnio zamknięte; starsze lokale na drugim urządzeniu są wolne', () => {
     expect(TRANSFER_CLOSED_STORES).toBe(6);
-    const seed = eightFreeSeed();
+    const seed = seedWithFreeLots(8);
     const { state, layout, info } = freshRun(seed);
     const f = createFirm(seed, { econ: state, layout, info }, { ranked: false });
     f.person.partner = true;
@@ -739,7 +789,7 @@ describe('paczka „Wyślij zapis”: zamknięte sklepy (lokale „po Traszce”
     saveMeta(meta());
     storage.setItem(`traszka:save:${seed}`, raw);
     storage.setItem('traszka:last', seed);
-    const local = opened2(raw, seed);
+    const local = opened(raw);
     const g = receive(exportTransfer()!, seed);
     const lot = local.stores[1]!.lotId;
     expect(g.stores.map((s) => [s.id, s.closed])).toEqual([[1, false], [2, true], [3, false]]);
@@ -748,13 +798,6 @@ describe('paczka „Wyślij zapis”: zamknięte sklepy (lokale „po Traszce”
     expect(rentPrice(g, lot)).toBe(rentPrice(local, lot));
   });
 });
-
-/** Firma z tekstu koperty dowolnego seeda (jak `opened`). */
-function opened2(text: string, seed: string): FirmState {
-  const r = restoreFirmFrom(JSON.parse(text) as unknown, seed);
-  if (!r.ok) throw new Error(`firma się nie otworzyła: ${r.reason}`);
-  return r.firm;
-}
 
 describe('import przez klucz pośredni: odporny na zapis przy zamykaniu strony (pagehide)', () => {
   /** Drugie urządzenie z własnym sklepem „a”, kluczem B i zapisem w pamięci karty; do niego trafia paczka ze sklepu „b”. */

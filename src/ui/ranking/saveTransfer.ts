@@ -52,12 +52,6 @@ const parse = (text: string | null): unknown => {
 export const TRANSFER_HISTORY_MONTHS = 12;
 /** Tyle ostatnich wpisów skrzynki zastępcy niesie paczka (spec 4b §5.8). */
 export const TRANSFER_INBOX = 10;
-/**
- * Tyle ostatnich wpisów logu kart (`tycoon.cards.log`, w grze do `CARDS.logMax` = 40) niesie paczka w każdym sklepie poza aktywnym (rozstrzygnięcie
- * koordynatora 4b po pomiarze najgorszego przypadku). Log kart jest tylko dopisywany i przycinany (`resolveCard`, sanityzacja): nie czyta go ani
- * losowanie kart (przerwy liczą się z `lastSeen`), ani reszta symulacji, ani gra.
- */
-export const TRANSFER_CARD_LOG = 10;
 
 /**
  * Najwyżej tyle zamkniętych sklepów (lokali „po Traszce”) niesie paczka (rozstrzygnięcie koordynatora 4b, runda 2): zamknięte sklepy gromadzą
@@ -103,21 +97,26 @@ function keptClosed(stores: readonly unknown[], builds: unknown): Set<Rec> {
   return new Set([...forced, ...recent.slice(0, Math.max(0, TRANSFER_CLOSED_STORES - forced.length))]);
 }
 
-/** Ekonomia z logiem kart skróconym do `TRANSFER_CARD_LOG` wpisów; nierozpoznany kształt zostaje bez zmian. */
-function withShortCardLog(econ: Record<string, unknown>): Record<string, unknown> {
+/**
+ * Ekonomia bez logu kart (`tycoon.cards.log`, w grze do `CARDS.logMax` = 40 wpisów, ok. 2,7 KB na sklep): paczka nie niesie go w żadnym sklepie,
+ * a na drugim urządzeniu log zaczyna się od pustego (rozstrzygnięcie koordynatora 4b, runda 3). Log jest tylko dopisywany i przycinany
+ * (`resolveCard`, sanityzacja): nie czyta go losowanie kart (przerwy liczą się z `lastSeen`, numeracja z `seq`), reszta symulacji, gra ani żaden
+ * widok (`src/ui`, `src/render`). Nierozpoznany kształt zostaje bez zmian.
+ */
+function withoutCardLog(econ: Record<string, unknown>): Record<string, unknown> {
   const tycoon = econ.tycoon;
-  if (!isRec(tycoon) || !isRec(tycoon.cards) || !Array.isArray(tycoon.cards.log)) return econ;
-  return { ...econ, tycoon: { ...tycoon, cards: { ...tycoon.cards, log: (tycoon.cards.log as unknown[]).slice(-TRANSFER_CARD_LOG) } } };
+  if (!isRec(tycoon) || !isRec(tycoon.cards)) return econ;
+  return { ...econ, tycoon: { ...tycoon, cards: { ...tycoon.cards, log: [] } } };
 }
 
 /**
- * Otwarty sklep w paczce: historia do `TRANSFER_HISTORY_MONTHS` miesięcy, a ostatni raport i pełny log kart tylko w aktywnym (pozostałe: raport
- * null, log do `TRANSFER_CARD_LOG` wpisów). Reszta (i zamknięty sklep) bez zmian.
+ * Otwarty sklep w paczce: bez logu kart, historia do `TRANSFER_HISTORY_MONTHS` miesięcy, a ostatni raport tylko w aktywnym (pozostałe: null).
+ * Reszta bez zmian.
  */
 function compactStore(st: unknown, activeId: unknown): unknown {
   if (!isRec(st) || st.closed !== false || !isRec(st.econ)) return st;
   const active = st.id === activeId;
-  const econ = active ? st.econ : withShortCardLog(st.econ);
+  const econ = withoutCardLog(st.econ);
   return {
     ...st,
     econ: {
@@ -130,11 +129,11 @@ function compactStore(st: unknown, activeId: unknown): unknown {
 
 /**
  * Koperta firmy do paczki „Wyślij zapis” (spec 4b §5.8 Ruling i rozstrzygnięcia koordynatora po pomiarach): sklepy poza aktywnym bez ostatniego
- * raportu (`lastReport: null`) i z logiem kart do ostatnich 10 wpisów, historia każdego otwartego sklepu do ostatnich 12 miesięcy, skrzynka
+ * raportu (`lastReport: null`), każdy sklep bez logu kart, historia każdego otwartego sklepu do ostatnich 12 miesięcy, skrzynka
  * zastępcy do ostatnich 10 wpisów, a zamknięte sklepy jako `PackedClosedStore`, najwyżej `TRANSFER_CLOSED_STORES`. Pięć sklepów po dwóch latach
  * nie zmieściłoby się inaczej w 64 KB. Zapis lokalny zostaje pełny: funkcja nie zmienia `env`, tylko składa nową kopertę, którą przed zapisem
- * na drugim urządzeniu trzeba rozpakować (`unpackTransfer`). Na drugim urządzeniu znika ostatni raport sklepów w tle, starsze rozstrzygnięcia
- * kart w ich logu, historia starsza niż rok (limit rat i status Partnera patrzą na ostatnie miesiące) i najstarsze lokale „po Traszce”.
+ * na drugim urządzeniu trzeba rozpakować (`unpackTransfer`). Na drugim urządzeniu znika ostatni raport sklepów w tle, log rozstrzygniętych kart
+ * (zaczyna się od pustego), historia starsza niż rok (limit rat i status Partnera patrzą na ostatnie miesiące) i najstarsze lokale „po Traszce”.
  * Koperta przychodzi z przeglądarki, więc kształtu nie bierze na wiarę: czego nie rozpozna, przepisuje bez zmian.
  */
 export function compactForTransfer(env: FirmSaveEnvelope): FirmSaveEnvelope {
