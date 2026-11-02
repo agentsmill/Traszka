@@ -33,8 +33,11 @@ import { GAME_VERSION } from './version';
 
 /**
  * Schemat koperty firmy. `SAVE_SCHEMA` (2) zostaje, bo na nim stoi zapis biegu rankingowego. 4 (etap 4b) mimo pól tylko dodanych: karta
- * przeglądarki sprzed 4b czyta schemat 4 jako zapis z nowszej wersji (`isNewerSave`: `schema > 3`) i go nie nadpisze, więc zapis z remontem 5
- * i badaniami nie skurczy się do tego, co zna stara wersja.
+ * przeglądarki sprzed 4b, która *wczytuje* zapis schematu 4 (nowe otwarcie, odświeżenie, „Pobierz zapis”), czyta go jako zapis z nowszej wersji
+ * (`isNewerSave`: `schema > 3`): daje sklep tymczasowy i zapisu nie rusza. To nie chroni karty starej wersji, która była już otwarta w chwili
+ * wdrożenia: trzyma stan w pamięci i przy zamknięciu (`pagehide`) zapisze go schematem 3 na wierzch schematu 4. Nowa wersja wczyta taki zapis
+ * bez `:broken` (migracja 3 → 4), ale pola 4b (badania, limit placówek, cele firmy, Galeria) wrócą wtedy do wartości nowej firmy, a postęp
+ * z nowej wersji, którego stara karta nie widziała, przepadnie. Tak samo działały dotąd wszystkie zmiany zapisu przy kilku otwartych kartach.
  */
 export const FIRM_SAVE_SCHEMA = 4;
 /** Schematy koperty firmy, które ta wersja czyta: 3 (przed 4b, migracja) i bieżący. */

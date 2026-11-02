@@ -1,8 +1,10 @@
-import { isFirmEnvelope, isNewerSave, type FirmSaveEnvelope, type SavedStore } from '@/game/firmSave';
+import { isFirmEnvelope, isNewerSave, type ClosedFittings, type FirmSaveEnvelope, type SavedStore } from '@/game/firmSave';
 import { loadMeta, sanitizeMeta, saveMeta, type Meta } from '@/game/meta';
 import { setPlayMode } from '@/game/rankedRun';
 import { NEWER_SAVE_NOTICE, lastSavedSeed } from '@/game/session';
-import { isRec } from '@/sim/guards';
+import { storeSeedFor } from '@/sim/city/traffic';
+import { isNum, isRec, type Rec } from '@/sim/guards';
+import { GENERATOR_VERSION } from '@/sim/store/generateStore';
 
 /**
  * Paczka do „Wyślij zapis” i „Pobierz zapis” (spec §14.7): wszystko, czego gra potrzebuje, żeby na drugim urządzeniu wczytać
@@ -57,6 +59,50 @@ export const TRANSFER_INBOX = 10;
  */
 export const TRANSFER_CARD_LOG = 10;
 
+/**
+ * Najwyżej tyle zamkniętych sklepów (lokali „po Traszce”) niesie paczka (rozstrzygnięcie koordynatora 4b, runda 2): zamknięte sklepy gromadzą
+ * się z każdym wypowiedzeniem, a każdy po remoncie 5 z pełnym wyposażeniem to ponad 1 KB. Zostają zawsze sklep #1 (koperta zaczyna się od
+ * niego: lokal startowy i seed gry) i zamknięte sklepy, w których lokalu trwa budowa (ponowny wynajem w toku), a resztę miejsc biorą
+ * ostatnio zamknięte (minuta zamknięcia, przy remisie wyższe `id`). Starsze zamknięte sklepy w przeniesionej kopii znikają z listy: ich lokal
+ * wraca do stanu z generatora (wolny jak każdy, pełna cena pakietu, bez wyposażenia), a wpis skrzynki o takim sklepie mówi już samo „Traszka #n”.
+ * Zapis na pierwszym urządzeniu zostaje pełny.
+ */
+export const TRANSFER_CLOSED_STORES = 6;
+
+/**
+ * Zamknięty sklep w paczce: tylko to, czego potrzeba do ponownego wynajmu lokalu „po Traszce” (`reopenStoreAt`: ten sam `id` i lokal, układ
+ * z lokalu i poziomu remontu, wyposażenie jako `fittings` do `createEconomy`) i karty lokalu (poziom remontu, wyposażenie), plus minuta
+ * zamknięcia (kolejność „ostatnio zamkniętych” przy kolejnym wysłaniu). Resztę (`version`, seed sklepu, `gameOver`, wersja generatora,
+ * wypowiedzenie) `unpackTransfer` odtwarza przy rozpakowaniu jako wartości neutralne; flaga `reopened` zamkniętego sklepu niczego nie zmienia
+ * (ponowny wynajem ustawia ją znów), więc jej nie ma. Pole `fit` zamiast `econ`: nierozpakowana paczka nie wczyta się po cichu jako zła koperta.
+ */
+export interface PackedClosedStore {
+  id: number; lotId: number; closed: true; fit: Pick<ClosedFittings, 'minute' | 'remontLevel' | 'upgrades' | 'equipment'>;
+}
+
+/** Zamknięty sklep z koperty jako `PackedClosedStore`; nierozpoznany kształt zostaje bez zmian. */
+function packClosed(st: Rec): unknown {
+  if (!isRec(st.econ)) return st;
+  const { minute, remontLevel, upgrades, equipment } = st.econ;
+  return { id: st.id, lotId: st.lotId, closed: true, fit: { minute, remontLevel, upgrades, equipment } };
+}
+
+/** Minuta zamknięcia sklepu z koperty (pełnej albo spakowanej); bez niej sklep jest „najstarszy”. */
+const closedAt = (st: Rec): number => {
+  const fit = isRec(st.fit) ? st.fit : isRec(st.econ) ? st.econ : {};
+  return isNum(fit.minute) ? fit.minute : -Infinity;
+};
+
+/** Zamknięte sklepy, które paczka niesie (patrz `TRANSFER_CLOSED_STORES`). */
+function keptClosed(stores: readonly unknown[], builds: unknown): Set<Rec> {
+  const closed = stores.filter((st): st is Rec => isRec(st) && st.closed === true);
+  const building = new Set(Array.isArray(builds) ? (builds as unknown[]).filter(isRec).map((b) => b.lotId) : []);
+  const forced = closed.filter((st) => st.id === 1 || building.has(st.lotId));
+  const recent = closed.filter((st) => !forced.includes(st))
+    .sort((a, b) => closedAt(b) - closedAt(a) || (isNum(b.id) ? b.id : 0) - (isNum(a.id) ? a.id : 0));
+  return new Set([...forced, ...recent.slice(0, Math.max(0, TRANSFER_CLOSED_STORES - forced.length))]);
+}
+
 /** Ekonomia z logiem kart skróconym do `TRANSFER_CARD_LOG` wpisów; nierozpoznany kształt zostaje bez zmian. */
 function withShortCardLog(econ: Record<string, unknown>): Record<string, unknown> {
   const tycoon = econ.tycoon;
@@ -83,21 +129,51 @@ function compactStore(st: unknown, activeId: unknown): unknown {
 }
 
 /**
- * Koperta firmy do paczki „Wyślij zapis” (spec 4b §5.8 Ruling i rozstrzygnięcie koordynatora po pomiarze): sklepy poza aktywnym bez ostatniego
+ * Koperta firmy do paczki „Wyślij zapis” (spec 4b §5.8 Ruling i rozstrzygnięcia koordynatora po pomiarach): sklepy poza aktywnym bez ostatniego
  * raportu (`lastReport: null`) i z logiem kart do ostatnich 10 wpisów, historia każdego otwartego sklepu do ostatnich 12 miesięcy, skrzynka
- * zastępcy do ostatnich 10 wpisów. Pięć sklepów po dwóch latach nie zmieściłoby się inaczej w 64 KB. Zapis lokalny zostaje pełny: funkcja nie
- * zmienia `env`, tylko składa nową kopertę. Na drugim urządzeniu znika ostatni raport sklepów w tle, starsze rozstrzygnięcia kart w ich logu
- * i historia starsza niż rok (limit rat i status Partnera patrzą na ostatnie miesiące). Koperta przychodzi z przeglądarki, więc kształtu nie
- * bierze na wiarę: czego nie rozpozna, przepisuje bez zmian.
+ * zastępcy do ostatnich 10 wpisów, a zamknięte sklepy jako `PackedClosedStore`, najwyżej `TRANSFER_CLOSED_STORES`. Pięć sklepów po dwóch latach
+ * nie zmieściłoby się inaczej w 64 KB. Zapis lokalny zostaje pełny: funkcja nie zmienia `env`, tylko składa nową kopertę, którą przed zapisem
+ * na drugim urządzeniu trzeba rozpakować (`unpackTransfer`). Na drugim urządzeniu znika ostatni raport sklepów w tle, starsze rozstrzygnięcia
+ * kart w ich logu, historia starsza niż rok (limit rat i status Partnera patrzą na ostatnie miesiące) i najstarsze lokale „po Traszce”.
+ * Koperta przychodzi z przeglądarki, więc kształtu nie bierze na wiarę: czego nie rozpozna, przepisuje bez zmian.
  */
 export function compactForTransfer(env: FirmSaveEnvelope): FirmSaveEnvelope {
   const firm: unknown = env.firm;
   const activeId = isRec(firm) ? firm.activeId : undefined;
+  const stores: unknown = env.stores;
+  const kept = Array.isArray(stores) ? keptClosed(stores, isRec(firm) ? firm.builds : undefined) : new Set<Rec>();
   return {
     ...env,
     firm: isRec(firm) && Array.isArray(firm.inbox) ? { ...env.firm, inbox: env.firm.inbox.slice(-TRANSFER_INBOX) } : env.firm,
-    stores: Array.isArray(env.stores) ? env.stores.map((st) => compactStore(st, activeId) as SavedStore) : env.stores,
+    stores: Array.isArray(stores)
+      ? (stores as unknown[]).filter((st) => !isRec(st) || st.closed !== true || kept.has(st))
+        .map((st) => (isRec(st) && st.closed === true ? packClosed(st) : compactStore(st, activeId)) as SavedStore)
+      : env.stores,
   };
+}
+
+/** Zamknięty sklep z paczki (`PackedClosedStore`) jako sklep koperty z wyposażeniem (`ClosedFittings`); reszta bez zmian. */
+function unpackStore(st: unknown, seed: string): unknown {
+  if (!isRec(st) || st.closed !== true || st.econ !== undefined || !isRec(st.fit) || typeof st.lotId !== 'number') return st;
+  const { minute, upgrades, equipment, remontLevel } = st.fit;
+  // sklep #1 stoi w lokalu startowym i ma seed gry (koperta to sprawdza), każdy inny ma seed z lokalu (`storeSeedOf`)
+  const storeSeed = st.id === 1 ? seed : storeSeedFor(seed, st.lotId);
+  return {
+    id: st.id, lotId: st.lotId, generatorVersion: GENERATOR_VERSION, notice: null, closed: true,
+    econ: { version: 1, seed: storeSeed, minute, upgrades, equipment, remontLevel, gameOver: true },
+  };
+}
+
+/**
+ * Rozpakowanie koperty z paczki przed zapisem w przeglądarce drugiego urządzenia: zamknięte sklepy spakowane przez `compactForTransfer` wracają
+ * do kształtu z zapisu lokalnego (`ClosedFittings` z neutralnym seedem sklepu, `gameOver`, bieżącą wersją generatora i bez wypowiedzenia),
+ * więc odczyt zapisu (`restoreFirmFrom`) zostaje jeden dla obu dróg. Paczka bez spakowanych sklepów (jeden sklep, starsza wersja gry) przechodzi
+ * bez zmian; nierozpoznany kształt też.
+ */
+export function unpackTransfer(save: Record<string, unknown>): Record<string, unknown> {
+  if (!isFirmEnvelope(save) || !Array.isArray(save.stores) || typeof save.seed !== 'string') return save;
+  const seed = save.seed;
+  return { ...save, stores: (save.stores as unknown[]).map((st) => unpackStore(st, seed)) };
 }
 
 /**
@@ -145,8 +221,8 @@ function checkBundle(text: string): CheckedBundle | { error: string } {
 }
 
 /**
- * Wczytuje paczkę z drugiego urządzenia: zapis jej sklepu (pod jego seedem; inne sklepy tego urządzenia zostają), metę i „ostatni
- * sklep”. Klucz gracza zostaje tutejszy (paczka go nie ma, a to nim pobrano ją z serwera). Paczka albo meta tego urządzenia
+ * Wczytuje paczkę z drugiego urządzenia: zapis jej sklepu (pod jego seedem, koperta firmy rozpakowana przez `unpackTransfer`; inne sklepy tego
+ * urządzenia zostają), metę i „ostatni sklep”. Klucz gracza zostaje tutejszy (paczka go nie ma, a to nim pobrano ją z serwera). Paczka albo meta tego urządzenia
  * z nowszej wersji gry: nic nie zapisujemy. Zwraca seed sklepu do otwarcia albo komunikat. Woła się ją tylko na starcie, zanim gra
  * przeczyta metę (`applyStagedImport`): z działającej gry stan z pamięci karty nadpisałby wczytaną paczkę (patrz nagłówek pliku).
  */
@@ -158,7 +234,7 @@ export function importTransfer(text: string): ImportResult {
   const player = incoming.player && localKey !== undefined ? { ...incoming.player, key: localKey } : incoming.player ?? local.player;
   const meta: Meta = { ...incoming, ...(player ? { player } : {}) };
   try {
-    localStorage.setItem(SAVE_PREFIX + seed, JSON.stringify(save));
+    localStorage.setItem(SAVE_PREFIX + seed, JSON.stringify(unpackTransfer(save)));
     localStorage.setItem(LAST_KEY, seed);
   } catch {
     return { error: TRANSFER_ERRORS.storage };

@@ -1089,7 +1089,7 @@ export function createShell(deps: ShellDeps): GameShell {
         // zapis, którego nie da się przeczytać.
         // Firma, a z nią miasto z seeda, powstaje przed sceną: gdy generator miasta rzuci, to ta sama porażka budowy co zły świat, więc
         // działa cały łańcuch zastępstw `openStore` (zapis zostaje, gracz ma działający sklep i komunikat), a sesja bez firmy nie
-        // trafia do pętli klatek. Sesja z zapisu schematu 3 ma firmę od razu.
+        // trafia do pętli klatek. Sesja z koperty firmy (schemat 4 albo 3) ma firmę od razu.
         const build = (opening: GameSession): void => { firmOf(opening); shell.session = opening; scene.load(opening.econ.seed, opening); };
         const partner = partnerOf(shell.meta);
         session = openStore(choice

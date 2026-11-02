@@ -900,7 +900,7 @@ describe('etap 4b: nowe pola firmy, kanibalizacja i odblokowanie kolejnych plac�
     expect(Object.is(first.info.site!.traffic, alone.traffic)).toBe(true);
   });
 
-  it('jeden sklep startowy z dalekimi sklepami w mieście nie zmienia się co do bitu: ownLotsOf bez sklepu startowego jest pusta', () => {
+  it('jeden sklep startowy nie ma własnych sklepów do kanibalizacji: ownLotsOf bez niego jest pusta, a sklep nie ma site (co do bitu: traffic.test.ts, simGolden)', () => {
     const f = newFirm();
     expect(ownLotsOf(f)).toEqual([f.city.startLotId]);
     expect(ownLotsOf(f, 1)).toEqual([]);

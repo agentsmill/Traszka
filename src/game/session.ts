@@ -91,7 +91,7 @@ export interface GameSession {
   run: RunLog | null;
   /**
    * Firma gracza: wszystkie sklepy, osoba, budowy i skrzynka. Powstaje leniwie przy pierwszym użyciu (krok, polecenie, zapis) z bieżącego
-   * `econ`, `layout` i `info` (`firmOf`); odczyt zapisu schematu 3 (`firmSave.ts`) ustawia ją od razu. **Niezmiennik:** `econ`, `layout` i
+   * `econ`, `layout` i `info` (`firmOf`); odczyt koperty firmy (schemat 4 albo 3, `firmSave.ts`) ustawia ją od razu. **Niezmiennik:** `econ`, `layout` i
    * `info` sesji to ten sam obiekt co w aktywnym sklepie firmy (`pointAtActive`), więc cały interfejs i scena czytają sesję jak dotąd.
    */
   firm?: FirmState;
@@ -161,7 +161,7 @@ export const envelopeOf = (s: GameSession): SaveEnvelope => ({
 });
 
 /**
- * Zapis w przeglądarce (localStorage): koperta firmy w schemacie 3 pod `traszka:save:<seed>`, także przy jednym sklepie (firma powstaje
+ * Zapis w przeglądarce (localStorage): koperta firmy w schemacie 4 (`FIRM_SAVE_SCHEMA`) pod `traszka:save:<seed>`, także przy jednym sklepie (firma powstaje
  * tu, jeśli jeszcze jej nie ma; gdy miasto się nie zbuduje, zapisu nie ma i stary zostaje). Błędy (tryb prywatny, brak miejsca) są ciche: gra działa dalej bez zapisu. Sesja rankingowa
  * (`mode: 'ranked'`) nie ma tu zapisu: jej bieg żyje pod własnym kluczem (`saveRanked` w `rankedRun.ts`, schemat 2), a zwykły sklep o tym
  * samym seedzie i `traszka:last` zostają, jak były.

@@ -1557,7 +1557,9 @@ describe('schemat 4: badania, limit sklepów, cele firmy i Galeria w kopercie', 
     expect(isNewerSave({ schema: 4 })).toBe(false);
   });
 
-  it('zapis się nie kurczy: koperta 4 to dla starej karty (schemat 3, reguła `schema > 3`) zapis z nowszej wersji, więc go nie nadpisze', () => {
+  // Sprawdza tylko to, że koperta 4 spełnia regułę starej wersji przy wczytaniu (`isNewerSave` sprzed 4b: `schema > 3`, czyli zapis z nowszej
+  // wersji, sklep tymczasowy, zapis nietknięty). Karty starej wersji otwartej w chwili wdrożenia to nie chroni (komentarz przy FIRM_SAVE_SCHEMA).
+  it('koperta 4 przy wczytaniu w karcie sprzed 4b (reguła `schema > 3`) to zapis z nowszej wersji, a w tej wersji nie', () => {
     const f = structuredClone(scenario());
     f.storeLimit = 5;
     const env = firmEnvelopeOf(f);
