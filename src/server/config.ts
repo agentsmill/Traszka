@@ -86,13 +86,32 @@ export const UPSTASH_TIMEOUT_MS = 5_000;
 
 /** Okno limitu i liczba zgłoszeń w oknie: na klucz gracza i na adres (adres jako skrót z solą, która ginie razem z oknem). */
 export interface RateLimit { window: number; perKey: number; perAddress: number }
-export type RateAction = 'runs' | 'player' | 'saveUp' | 'saveDown';
+export type RateAction = 'runs' | 'player' | 'saveUp' | 'saveDown' | 'fame';
 export const RATE_LIMITS: Readonly<Record<RateAction, RateLimit>> = {
   runs: { window: 3_600, perKey: 12, perAddress: 30 },
   player: { window: 600, perKey: 60, perAddress: 120 },
   saveUp: { window: 3_600, perKey: 12, perAddress: 30 },
   saveDown: { window: 3_600, perKey: 30, perAddress: 60 },
+  fame: { window: 3_600, perKey: 5, perAddress: 20 },
 };
+
+/**
+ * Galeria sław (spec 4b §5.7): pierwszy milion gotówki firmy w zwykłej grze, wpis z nickiem, bez weryfikacji (świadoma decyzja
+ * właściciela: fałszywy wpis ograniczają tylko limity i budżet). Globalny budżet wpisów na dobę UTC, wspólny dla wszystkich
+ * kluczy i adresów (ponad niego 429 `fame-budget` do północy UTC); wpis waży kilkaset bajtów, więc 300 na dobę to rząd 100 KB.
+ */
+export const FAME_DAILY_BUDGET = 300;
+/**
+ * Granice wiarygodności wpisu `[od, do]` włącznie. Dzień gry: przed dniem 90 (status Partnera jest od dnia 60, potem dochodzi
+ * budowa drugiego sklepu) żadna strategia botów nie zbliża się do miliona (spec 4b §5.7). Gotówka: od progu miliona zł (to samo
+ * co próg wpisu w grze) do 1e12, górnej granicy rozsądku, żeby nie trafiło tu `1e308`. Wersja symulacji: od 7 (pierwsza z firmą
+ * i Galerią) do 999.
+ */
+export const FAME_DAY: readonly [number, number] = [90, 36_500];
+export const FAME_CASH: readonly [number, number] = [1_000_000, 1e12];
+export const FAME_SIM: readonly [number, number] = [7, 999];
+/** Ile wpisów oddaje `GET /api/fame/list` (najwcześniejsze; reszta jest w bazie, ale lista jej nie pokazuje). */
+export const FAME_LIST_MAX = 100;
 
 /**
  * Ile liczników najwyżej trzyma w pamięci jednej instancji bramka limitu (`createRateGate`); po przepełnieniu wypadają najstarsze.

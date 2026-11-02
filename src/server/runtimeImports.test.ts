@@ -60,6 +60,20 @@ describe('funkcje serwerowe: importy, które Vercel uruchomi', () => {
     expect([...seen].some((f) => f.includes(`${join('src', 'game', 'nick.ts')}`))).toBe(true);
   });
 
+  it('Galeria sław (api/fame/list.ts, api/fame/submit.ts, src/server/fame.ts) jest w grafie funkcji, a jej importy są względne z .js', () => {
+    // Pliki funkcji Galerii i jej moduł serwerowy muszą przejść ten sam graf co reszta `api/**`: nowy plik z importem bez `.js` albo
+    // z aliasem `@/` przeszedłby `vercel build`, a funkcja padłaby przy pierwszym wywołaniu.
+    const { seen, bad } = runtimeGraph();
+    const loaded = [...seen].map((f) => relative(ROOT, f));
+    expect(loaded).toEqual(expect.arrayContaining([join('api', 'fame', 'list.ts'), join('api', 'fame', 'submit.ts'), join('src', 'server', 'fame.ts')]));
+    expect(bad.filter((b) => /fame/.test(b))).toEqual([]);
+    for (const file of ['api/fame/list.ts', 'api/fame/submit.ts', 'src/server/fame.ts']) {
+      const specs = runtimeImports(readFileSync(join(ROOT, file), 'utf8'));
+      expect(specs.length, file).toBeGreaterThan(0);
+      expect(specs.every((s) => s.startsWith('.') && s.endsWith('.js')), file).toBe(true);
+    }
+  });
+
   it('typy biegu z gry (src/sim/run.ts, src/sim/economy/commands.ts) serwer bierze tylko przez import type: w czasie działania ich nie ma', () => {
     // `import type` znika przy kompilacji, więc plik z aliasem `@/` w środku (jak run.ts) nie trafia do funkcji i jej nie wywraca.
     const typeOnly = (file: string, from: string): boolean => {

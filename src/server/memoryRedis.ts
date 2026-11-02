@@ -134,6 +134,19 @@ export class MemoryRedis implements RedisExec {
         const slice = sorted.slice(a, b + 1);
         return text(args[3]).toUpperCase() === 'WITHSCORES' ? slice.flatMap(([m, s]) => [m, scoreText(s)]) : slice.map(([m]) => m);
       }
+      case 'ZRANGE': {
+        const z = this.typed(key, 'zset');
+        if (!z) return [];
+        const asc = this.sortedDesc(z.value).reverse();   // rosnąco po wyniku, remis po członku: dokładnie odwrotność ZREVRANGE
+        const [a, b] = range(asc.length, int(args[1]), int(args[2]));
+        const slice = asc.slice(a, b + 1);
+        return text(args[3]).toUpperCase() === 'WITHSCORES' ? slice.flatMap(([m, s]) => [m, scoreText(s)]) : slice.map(([m]) => m);
+      }
+      case 'ZRANK': {
+        const z = this.typed(key, 'zset');
+        const i = z ? this.sortedDesc(z.value).reverse().findIndex(([m]) => m === text(args[1])) : -1;
+        return i < 0 ? null : i;
+      }
       case 'ZREVRANK': {
         const z = this.typed(key, 'zset');
         const i = z ? this.sortedDesc(z.value).findIndex(([m]) => m === text(args[1])) : -1;
@@ -222,12 +235,15 @@ export class MemoryRedis implements RedisExec {
     let i = 0;
     let gt = false;
     let ch = false;
+    let nx = false;
     for (; i < rest.length; i++) {
       const o = text(rest[i]).toUpperCase();
       if (o === 'GT') gt = true;
       else if (o === 'CH') ch = true;
+      else if (o === 'NX') nx = true;
       else break;
     }
+    if (nx && gt) throw new RedisError('ERR GT, LT, and/or NX options at the same time are not compatible');
     const z = this.collection(key, 'zset');
     let changed = 0;
     for (; i + 1 < rest.length; i += 2) {
@@ -238,7 +254,7 @@ export class MemoryRedis implements RedisExec {
       if (old === undefined) {
         z.value.set(member, score);
         changed++;
-      } else if ((!gt || score > old) && score !== old) {
+      } else if (!nx && (!gt || score > old) && score !== old) {
         z.value.set(member, score);
         if (ch) changed++;
       }

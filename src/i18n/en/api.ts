@@ -28,6 +28,8 @@ export const EN_API_ERRORS: Record<ApiErrorCode, string> = {
   'save-budget': 'All of Head Office’s drawers are full for today. Send your save tomorrow.',
   'save-conflict': 'There’s a newer copy of the save on the server that this device hasn’t seen yet.',
   'no-save': 'There’s no save under this code in Head Office’s drawer.',
+  'fame-invalid': 'Head Office doesn’t believe in this million. The entry didn’t pass inspection.',
+  'fame-budget': 'The Hall of Fame is full for today. Sign up tomorrow.',
   'bad-board': 'No such leaderboard. Head Office runs global, seed and weekly ones.',
   'method': 'That method doesn’t work here.',
   'ranking-off': 'Head Office’s leaderboard hasn’t opened yet.',
