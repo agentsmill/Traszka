@@ -17,6 +17,7 @@ import { defaultAnswer } from '@/sim/economy/monthPreview';
 import { CARDS, visibleCards } from '@/sim/economy/tycoon/cards';
 import { EQUIPMENT, EQUIPMENT_BY_ID, REMONTS, UPGRADES } from '@/sim/economy/upgrades';
 import { applyFirmCommand, lotState, rentPrice } from '@/sim/firm/commands';
+import { FIRM_GOALS } from '@/sim/firm/goals';
 import { RESEARCH } from '@/sim/firm/research';
 import { closeStore } from '@/sim/firm/closure';
 import { activeStore, applyStoreCommand, createFirm, emptyStepOut, grantToFirm, openStoreAt, openStores, refreshSites, stepFirmMinute } from '@/sim/firm/firm';
@@ -357,6 +358,9 @@ function playFiveStores(setup: FiveSetup): FirmState {
   if (setup.research) {
     f.research = Object.fromEntries(RESEARCH.map((d) => [d.id, d.maxLevel]));
     refreshSites(f);   // jak po zakupie badania: `site.net` sklepów od razu
+    // pięć sklepów i wszystkie badania to komplet dziesięciu celów firmy (odebrane: najdłuższa lista) i wpis do Galerii z długą gotówką (4b, zadanie 5)
+    f.goals = { ready: [], claimed: FIRM_GOALS.map((g) => g.id) };
+    f.fame = { day: 365, cash: 1_234_567.891_234_5 };
   }
   expect(applyFirmCommand(f, { type: 'switchStore', storeId: 1 }, emptyStepOut())).toEqual({ ok: true });
   playHoldingTrust(f, 730 * DAY + OPEN_FROM);

@@ -727,8 +727,8 @@ describe('lotState', () => {
 // --- Kształt poleceń --------------------------------------------------------------------------------------------------
 
 describe('FirmCommand', () => {
-  it('FIRM_COMMAND_TYPES to rentLot, switchStore, terminateStore i research', () => {
-    expect([...FIRM_COMMAND_TYPES]).toEqual(['rentLot', 'switchStore', 'terminateStore', 'research']);
+  it('FIRM_COMMAND_TYPES to rentLot, switchStore, terminateStore, research i claimGoal', () => {
+    expect([...FIRM_COMMAND_TYPES]).toEqual(['rentLot', 'switchStore', 'terminateStore', 'research', 'claimGoal']);
   });
 
   it('isFirmCommand: poprawne kształty przechodzą', () => {
@@ -738,6 +738,8 @@ describe('FirmCommand', () => {
     expect(isFirmCommand({ type: 'terminateStore', storeId: 2 })).toBe(true);
     for (const id of RESEARCH_IDS) expect(isFirmCommand({ type: 'research', id }), id).toBe(true);
     expect(isFirmCommand({ type: 'research', id: 'media', extra: 1 })).toBe(true);
+    expect(isFirmCommand({ type: 'claimGoal', id: 'cash250k' })).toBe(true);
+    expect(isFirmCommand({ type: 'claimGoal', id: 'nieznany', extra: 1 })).toBe(true);   // kształt przechodzi, nieznane id odrzuca dopiero sam odbiór (odmowa `goal`)
   });
 
   it.each([
@@ -749,6 +751,7 @@ describe('FirmCommand', () => {
     { type: 'terminateStore' }, { type: 'terminateStore', storeId: '2' }, { type: 'terminateStore', storeId: 2.5 }, { type: 'terminateStore', storeId: null },
     { type: 'research' }, { type: 'research', id: 'nieznane' }, { type: 'research', id: 3 }, { type: 'research', id: null }, { type: 'research', id: ['media'] },
     { type: 'research', id: 'toString' }, { type: 'research', id: '__proto__' }, { type: 'research', id: 'Media' },
+    { type: 'claimGoal' }, { type: 'claimGoal', id: 3 }, { type: 'claimGoal', id: null }, { type: 'claimGoal', id: ['cash250k'] },
   ])('isFirmCommand: %j nie przechodzi', (x) => {
     expect(isFirmCommand(x)).toBe(false);
   });

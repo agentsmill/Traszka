@@ -9,25 +9,27 @@ import { layoutFor } from '@/sim/store/layoutFor';
 import { takeoverSide } from '@/sim/store/takeover';
 import { noticeEndDay } from './closure';
 import { activeStore, openStoreAt, openStores, refreshSites, reopenStoreAt, syncWallet } from './firm';
+import { FIRM_GOAL_BY_ID } from './goals';
 import { RESEARCH_BY_ID, RESEARCH_IDS, researchCost, researchRefusal, type ResearchId } from './research';
 import { MAX_STORES, type FirmRefusal, type FirmState, type FirmStepOut, type FirmStore } from './types';
 
 /*
  * Polecenia firmy (spec §10, §12, §13): status Partnera Strategicznego, wynajem lokalu z pakietem otwarcia (gotówka albo raty z `planFor`;
  * lokal „po Traszce” za ok. 30% pakietu), budowa, otwarcie sklepu o `OPEN_FROM` w dniu odbioru (zamknięty sklep wraca pod tym samym wpisem),
- * przełączanie aktywnego sklepu, wypowiedzenie umowy sklepu i badania Sieci (4b, za gotówkę, od dwóch otwartych sklepów). To osobny typ od `Command`
- * ze sklepu: `Command`, `COMMAND_TYPES` i `AFTER` się nie zmieniają, a pola zostają płaskie. Polskich zdań stąd nie ma: zdarzenia
- * i odmowy to identyfikatory i parametry, tekst składa interfejs (wyjątek: etykieta raty „Adaptacja lokalu: ul. …”, bo żyje
- * w `EconomyState` jak każda rata).
+ * przełączanie aktywnego sklepu, wypowiedzenie umowy sklepu, badania Sieci (4b, za gotówkę, od dwóch otwartych sklepów) i odbiór celu firmy
+ * (4b, Ogonki do portfela osoby). To osobny typ od `Command` ze sklepu: `Command`, `COMMAND_TYPES` i `AFTER` się nie zmieniają, a pola
+ * zostają płaskie. Polskich zdań stąd nie ma: zdarzenia i odmowy to identyfikatory i parametry, tekst składa interfejs (wyjątek: etykieta
+ * raty „Adaptacja lokalu: ul. …”, bo żyje w `EconomyState` jak każda rata).
  */
 
 export type FirmCommand =
   | { type: 'rentLot'; lotId: number; pay: 'gotowka' | 'raty' }
   | { type: 'switchStore'; storeId: number }
   | { type: 'terminateStore'; storeId: number }
-  | { type: 'research'; id: ResearchId };
+  | { type: 'research'; id: ResearchId }
+  | { type: 'claimGoal'; id: string };
 
-export const FIRM_COMMAND_TYPES: readonly FirmCommand['type'][] = ['rentLot', 'switchStore', 'terminateStore', 'research'];
+export const FIRM_COMMAND_TYPES: readonly FirmCommand['type'][] = ['rentLot', 'switchStore', 'terminateStore', 'research', 'claimGoal'];
 
 const PAYS: readonly string[] = ['gotowka', 'raty'];
 const isInt = (x: unknown): x is number => typeof x === 'number' && Number.isInteger(x);
@@ -39,6 +41,7 @@ const VALID = {
   switchStore: (c) => isInt(c.storeId),
   terminateStore: (c) => isInt(c.storeId),
   research: (c) => typeof c.id === 'string' && (RESEARCH_IDS as readonly string[]).includes(c.id),
+  claimGoal: (c) => typeof c.id === 'string',   // nieznany tekst przejdzie kształt i dostanie odmowę `goal` w `claimGoal`
 } satisfies Record<FirmCommand['type'], (c: Fields) => boolean>;
 
 /** Czy `x` ma kształt polecenia firmy. Zbędne klucze są dozwolone; `Object.hasOwn`, bo `in` przepuszczałby `toString` i `__proto__`. */
@@ -296,19 +299,41 @@ function buyResearch(f: FirmState, id: ResearchId, out: FirmStepOut): FirmComman
   return { ok: true };
 }
 
+// --- Cele firmy --------------------------------------------------------------------------------------------------
+
+/**
+ * Odbiór celu firmy (4b §5.6): nagroda w Ogonkach idzie do portfela osoby (bez XP, w przeciwieństwie do kamieni milowych sklepu), a `syncWallet`
+ * podaje ją od razu wszystkim otwartym sklepom. Cel przechodzi z `ready` do `claimed`, więc drugi odbiór i nieznany albo jeszcze niespełniony
+ * cel dostają odmowę `goal`. Poza tym: koniec gry (`over`) i bieg rankingowy (`ranked`, tam cele firmy nie istnieją).
+ */
+function claimGoal(f: FirmState, id: string): FirmCommandResult {
+  if (f.over !== null || activeStore(f).econ.gameOver) return refuse('over');
+  if (f.ranked) return refuse('ranked');
+  const goal = Object.hasOwn(FIRM_GOAL_BY_ID, id) ? FIRM_GOAL_BY_ID[id] : undefined;
+  if (!goal || !f.goals.ready.includes(id)) return refuse('goal');
+  f.goals = { ready: f.goals.ready.filter((x) => x !== id), claimed: [...f.goals.claimed, id] };
+  f.person.ogonki += goal.reward;
+  syncWallet(f);
+  return { ok: true };
+}
+
 /**
  * Polecenie gracza na poziomie firmy. Odmowa nie rusza stanu i nie rzuca; zdarzenia firmy trafiają do `out.firm`. Polecenie jest
  * kopiowane raz na początku (obiekt z getterem nie da innego `type` przy walidacji i w gałęzi). Zły kształt dostaje `lot` (wynajem)
- * albo `store`: `FirmRefusal` nie ma osobnego powodu, a przez typowany interfejs taki kształt nie przejdzie.
+ * albo `goal` (odbiór celu) albo `store`: `FirmRefusal` nie ma osobnego powodu, a przez typowany interfejs taki kształt nie przejdzie.
  */
 export function applyFirmCommand(f: FirmState, cmd: FirmCommand, out: FirmStepOut): FirmCommandResult {
   const c: unknown = typeof cmd === 'object' && cmd !== null && !Array.isArray(cmd) ? { ...cmd } : cmd;
-  if (!isFirmCommand(c)) return refuse((c as Fields | null)?.type === 'rentLot' ? 'lot' : 'store');
+  if (!isFirmCommand(c)) {
+    const type = (c as Fields | null)?.type;
+    return refuse(type === 'rentLot' ? 'lot' : type === 'claimGoal' ? 'goal' : 'store');
+  }
   switch (c.type) {
     case 'rentLot': return rentLot(f, c.lotId, c.pay, out);
     case 'switchStore': return switchStore(f, c.storeId);
     case 'terminateStore': return terminateStore(f, c.storeId, out);
     case 'research': return buyResearch(f, c.id, out);
+    case 'claimGoal': return claimGoal(f, c.id);
     default: {
       const unreachable: never = c;
       void unreachable;

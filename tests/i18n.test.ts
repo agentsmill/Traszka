@@ -36,6 +36,7 @@ import { STAFF_PROFILES, STAFF_TASKS } from '@/sim/economy/tycoon/staff';
 import { TRUST_REASONS, trustTier } from '@/sim/economy/tycoon/trust';
 import { WUT_REASONS } from '@/sim/economy/tycoon/wut';
 import { EQUIPMENT, GROUP_LABEL, REMONTS, UPGRADES } from '@/sim/economy/upgrades';
+import { FIRM_GOALS } from '@/sim/firm/goals';
 import { RESEARCH } from '@/sim/firm/research';
 import { freshRun } from '@/sim/run';
 import { deltaLines } from '@/ui/game/cardText';
@@ -103,6 +104,18 @@ describe('dane gry po identyfikatorach: każdy polski tekst ma angielski odpowie
         const en = tr(text);
         expect(en, `${d.id}: ${text}`).not.toBe(text);
         expect(PL_CHARS.test(en), `${d.id}: ${en}`).toBe(false);
+      }
+    }
+  });
+
+  it('cele firmy: nazwa i podpowiedź każdego celu tłumaczy tr na angielski bez polskich liter (poza „zł”)', () => {
+    lang.value = 'en';
+    expect(FIRM_GOALS).toHaveLength(10);
+    for (const g of FIRM_GOALS) {
+      for (const text of [g.label, g.hint]) {
+        const en = tr(text);
+        expect(en, `${g.id}: ${text}`).not.toBe(text);
+        expect(PL_CHARS.test(en.replace(/zł/g, '')), `${g.id}: ${en}`).toBe(false);
       }
     }
   });

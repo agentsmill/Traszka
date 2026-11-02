@@ -17,6 +17,7 @@ import { layoutFor } from '@/sim/store/layoutFor';
 import type { StoreLayout } from '@/sim/store/types';
 import { NOTICE_NO_CREDIT, closeDueStores, endedByTrust } from './closure';
 import { grantPartnerIfDue, openDueBuilds } from './commands';
+import { checkFame, checkFirmGoals } from './goals';
 import { netMods } from './research';
 import {
   BASE_STORE_LIMIT, INBOX_MAX, MAX_STORES, STORE_UNLOCK_TURNOVER, type FirmState, type FirmStepOut, type FirmStore,
@@ -252,7 +253,8 @@ function deputy(f: FirmState, st: FirmStore, events: EconEvent[], out: FirmStepO
  *    po `month` sklepu startowego;
  * 6. raport sieci przy zamknięciu miesiąca w kilku sklepach, a po nim odblokowanie kolejnej placówki obrotem sieci (4b, nie w rankingu);
  * 7. pierwszy remanent któregokolwiek sklepu to wiedza osoby;
- * 8. portfel do kas wszystkich sklepów.
+ * 8. cele firmy, potem próg miliona (4b, tylko zwykła gra, na portfelu po wszystkich krokach tej minuty);
+ * 9. portfel do kas wszystkich sklepów.
  */
 export function stepFirmMinute(f: FirmState, out: FirmStepOut): void {
   if (f.over !== null) return;
@@ -309,6 +311,9 @@ export function stepFirmMinute(f: FirmState, out: FirmStepOut): void {
   }
 
   if (!f.person.remanentKnown && stepped.some(({ st }) => st.econ.franchisee.remanent.known)) f.person.remanentKnown = true;
+
+  checkFirmGoals(f, out);
+  checkFame(f, out);
 
   syncWallet(f);
 }

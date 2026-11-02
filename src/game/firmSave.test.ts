@@ -17,6 +17,7 @@ import { RELET_BUILD_DAYS, RELET_SHARE, applyFirmCommand, lotState, openDueBuild
 import {
   activeStore, applyStoreCommand, createFirm, emptyStepOut, grantToFirm, openStoreAt, openStores, ownLotsOf, refreshSites, stepFirmMinute, syncWallet,
 } from '@/sim/firm/firm';
+import { FAME_CASH, FIRM_GOALS } from '@/sim/firm/goals';
 import { RESEARCH_IDS, RESEARCH_MAX_LEVEL, netMods } from '@/sim/firm/research';
 import { INBOX_MAX, type FirmState, type FirmStepOut } from '@/sim/firm/types';
 import { freshRun } from '@/sim/run';
@@ -433,7 +434,7 @@ describe('schemat 4: zapis i odczyt firmy', () => {
     expect(env).toMatchObject({ schema: 4, gameVersion: GAME_VERSION, cityGeneratorVersion: CITY_GENERATOR_VERSION, seed: SEED });
     expect(env.firm).toEqual({
       person: f.person, activeId: 2, builds: f.builds, monthInvest: f.monthInvest, inbox: f.inbox, weatherHash: f.weatherHash, over: null,
-      research: {}, storeLimit: 3, goals: { ready: [], claimed: [] }, fame: null,
+      research: {}, storeLimit: 3, goals: f.goals, fame: null,   // bot w scenariuszu zbiera po drodze ćwierć bańki: cele firmy to stan z gry, nie pusta lista
     });
     // układ odtwarzalny z lokalu miasta i poziomu remontu nie leży w kopercie (ani zamkniętego, ani otwartego sklepu)
     expect(env.stores.map((s) => Object.keys(s).sort())).toEqual(env.stores.map(() => ['closed', 'econ', 'generatorVersion', 'id', 'lotId', 'notice']));
@@ -1507,13 +1508,64 @@ describe('schemat 4: badania, limit sklepów, cele firmy i Galeria w kopercie', 
     expect(load({ fame: 'tak' }).fame).toBeNull();
     expect(load({ fame: { day: 120, cash: 1_000_001.25 } }).fame).toEqual({ day: 120, cash: 1_000_001.25 });
 
-    // cele firmy: na razie teksty (filtr id dokłada zadanie 5), bez dubli, najwyżej 20 w każdej liście; odebrany nie czeka na odbiór
-    const many = Array.from({ length: 30 }, (_, i) => `cel${i}`);
-    expect(load({ goals: { ready: ['a', 5, 'a', null, 'b'], claimed: ['b', 'c'] } }).goals).toEqual({ ready: ['a'], claimed: ['b', 'c'] });
-    expect(load({ goals: { ready: many, claimed: many } }).goals).toEqual({ ready: many.slice(20), claimed: many.slice(0, 20) });
-    expect(load({ goals: { ready: many } }).goals).toEqual({ ready: many.slice(0, 20), claimed: [] });
+    // cele firmy: tylko znane id z FIRM_GOALS, bez dubli, najwyżej tyle, ile jest celów; odebrany nie czeka na odbiór
+    const ids = FIRM_GOALS.map((g) => g.id);
+    expect(ids).toHaveLength(10);
+    expect(load({ goals: { ready: ['cash250k', 5, 'cash250k', null, 'cash500k'], claimed: ['cash500k', 'stores3'] } }).goals).toEqual({ ready: ['cash250k'], claimed: ['cash500k', 'stores3'] });
+    expect(load({ goals: { ready: ids, claimed: ids } }).goals).toEqual({ ready: [], claimed: ids });
+    expect(load({ goals: { ready: ids } }).goals).toEqual({ ready: ids, claimed: [] });
+    expect(load({ goals: { ready: [...ids, ...ids, 'cel10', 'cel11'] } }).goals).toEqual({ ready: ids, claimed: [] });
+    expect(load({ goals: { ready: [...ids].reverse() } }).goals).toEqual({ ready: [...ids].reverse(), claimed: [] });   // kolejność z zapisu zostaje
     for (const bad of [null, [], 'cele', { ready: 'a', claimed: 7 }]) expect(load({ goals: bad }).goals).toEqual({ ready: [], claimed: [] });
   }, 20_000);
+
+  it('odczyt: goals.ready z nieznanym id i duplikatem → przefiltrowane, bez duplikatów', () => {
+    const env = smallEnvelope();
+    env.firm.goals = {
+      ready: ['cash250k', 'nieznany', 'cash250k', 'toString', '__proto__', 'stores3', 7, null, 'cash1m'],
+      claimed: ['research1', 'research1', 'cel-z-przyszlosci'],
+    };
+    const f = opened(restoreFirmFrom(env, SEED));
+    expect(f.goals).toEqual({ ready: ['cash250k', 'stores3', 'cash1m'], claimed: ['research1'] });
+    // cel odebrany, który zapis ma też w ready, zostaje tylko w claimed
+    env.firm.goals = { ready: ['cash250k', 'stores3'], claimed: ['stores3'] };
+    expect(opened(restoreFirmFrom(env, SEED)).goals).toEqual({ ready: ['cash250k'], claimed: ['stores3'] });
+    // zapis → odczyt → zapis zostawia tę samą listę
+    const again = opened(viaJson(f));
+    expect(again.goals).toEqual(f.goals);
+  }, 20_000);
+
+  it('próg miliona nie pada drugi raz po wczytaniu zapisu: fame zostaje w kopercie, a zdarzenie million nie wraca', () => {
+    const f = smallFirm();
+    f.person.wallet = FAME_CASH + 50_000;
+    syncWallet(f);
+    const first = emptyStepOut();
+    answerActive(f);
+    stepFirmMinute(f, first);
+    expect(first.firm.filter((e) => e.kind === 'million')).toHaveLength(1);
+    expect(f.fame).toEqual({ day: Math.floor(clockOf(f) / DAY), cash: f.person.wallet });
+    const saved = JSON.parse(JSON.stringify(firmEnvelopeOf(f))) as { firm: { fame: unknown; goals: { ready: string[] } } };
+    expect(saved.firm.fame).toEqual(f.fame);
+    expect(saved.firm.goals.ready).toEqual(expect.arrayContaining(['cash250k', 'cash500k', 'cash1m']));
+
+    const back = opened(restoreFirmFrom(saved, SEED));
+    expect(back.fame).toEqual(f.fame);
+    const out = emptyStepOut();
+    answerActive(back);
+    stepFirmMinute(back, out);
+    expect(out.firm.filter((e) => e.kind === 'million' || e.kind === 'goal')).toEqual([]);
+    expect(back.fame).toEqual(f.fame);
+
+    // zapis, w którym wallet jest już ponad milionem, a fame jest null (np. sprzed 4b), dostaje wpis w pierwszej minucie po wczytaniu
+    saved.firm.fame = null;
+    const late = opened(restoreFirmFrom(saved, SEED));
+    expect(late.fame).toBeNull();
+    const lateOut = emptyStepOut();
+    answerActive(late);
+    stepFirmMinute(late, lateOut);
+    expect(lateOut.firm.filter((e) => e.kind === 'million')).toHaveLength(1);
+    expect(late.fame).not.toBeNull();
+  }, 30_000);
 
   it('research i storeLimit czytane przed refreshSites: site.net istnieje od razu po odczycie, od pierwszej minuty', () => {
     const env = smallEnvelope();

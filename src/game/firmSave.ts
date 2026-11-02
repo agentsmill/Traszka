@@ -7,6 +7,7 @@ import { computeStoreInfo, type StoreInfo } from '@/sim/economy/storeInfo';
 import { REMONTS } from '@/sim/economy/upgrades';
 import { lotRentable, rentPrice } from '@/sim/firm/commands';
 import { activeStore, createFirm, openStores, refreshSites, setPartner, storeSeedOf, syncWallet } from '@/sim/firm/firm';
+import { FIRM_GOALS, isFirmGoalId } from '@/sim/firm/goals';
 import { RESEARCH_IDS, RESEARCH_MAX_LEVEL } from '@/sim/firm/research';
 import { BASE_STORE_LIMIT, INBOX_MAX, MAX_STORES, type FirmBuild, type FirmNote, type FirmState, type FirmStore } from '@/sim/firm/types';
 import { isNum, isRec, num, whole, type Rec } from '@/sim/guards';
@@ -42,8 +43,6 @@ import { GAME_VERSION } from './version';
 export const FIRM_SAVE_SCHEMA = 4;
 /** Schematy koperty firmy, które ta wersja czyta: 3 (przed 4b, migracja) i bieżący. */
 const FIRM_ENVELOPE_SCHEMAS: readonly number[] = [3, FIRM_SAVE_SCHEMA];
-/** Najwyżej tyle wpisów każdej listy celów firmy czyta zapis (na razie bez filtra identyfikatorów). */
-const GOALS_MAX = 20;
 /** Tyle bajtów paczki „Wyślij zapis” przyjmuje serwer (`SAVE_MAX_BYTES` w `src/server/config.ts`); test pilnuje zgodności. */
 export const SAVE_TRANSFER_MAX_BYTES = 64 * 1024;
 
@@ -255,10 +254,10 @@ function readResearch(raw: unknown): FirmState['research'] {
   return out;
 }
 
-/** Lista identyfikatorów celów: same teksty, bez dubli, najwyżej `GOALS_MAX`. */
+/** Lista identyfikatorów celów firmy: tylko znane id (`FIRM_GOALS`), bez dubli, najwyżej tyle, ile jest celów. */
 const readGoalIds = (raw: unknown, skip: readonly string[] = []): string[] =>
-  (Array.isArray(raw) ? [...new Set((raw as unknown[]).filter((x): x is string => typeof x === 'string'))] : [])
-    .filter((id) => !skip.includes(id)).slice(0, GOALS_MAX);
+  (Array.isArray(raw) ? [...new Set((raw as unknown[]).filter(isFirmGoalId))] : [])
+    .filter((id) => !skip.includes(id)).slice(0, FIRM_GOALS.length);
 
 /** Cele firmy (4b): odebrane i gotowe do odbioru; cel odebrany nie czeka drugi raz na odbiór. */
 function readGoals(raw: unknown): FirmState['goals'] {
@@ -283,7 +282,7 @@ const readFame = (raw: unknown): FirmState['fame'] =>
  *
  * Pola 4b (schemat 3 ich nie ma, więc dostaje wartości nowej firmy): badania przycięte do najwyższego poziomu, limit placówek w
  * [`BASE_STORE_LIMIT`, `MAX_STORES`], podniesiony do liczby otwartych sklepów razem z budowami (zapis z gry nie mógł jej przekroczyć), cele firmy
- * jako listy tekstów, wpis do Galerii z dniem i gotówką albo null. Badania i limit są w firmie przed `refreshSites`: `site` sklepów z nich powstaje.
+ * jako listy znanych identyfikatorów (`FIRM_GOALS`), wpis do Galerii z dniem i gotówką albo null. Badania i limit są w firmie przed `refreshSites`: `site` sklepów z nich powstaje.
  */
 function restoreEnvelope(data: Rec, seed: string, partner: EconomyState['partner'] | undefined): FirmOpened {
   if (data.seed !== seed) return INVALID;
