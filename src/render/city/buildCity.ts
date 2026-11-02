@@ -4,21 +4,22 @@ import {
 } from 'three';
 import { BLOCK_M } from '@/sim/city/districts';
 import { SLOT_M, STREET_HALF_M } from '@/sim/city/generateCity';
-import { CITY_SIZE, type CityLot, type CityState, type DistrictId, type LotState, type StreetSegment } from '@/sim/city/types';
+import { CITY_SIZE, type CityLot, type CityState, type DistrictId, type LotState } from '@/sim/city/types';
 import type { LotKind } from '@/sim/store/types';
 import { ISO_PITCH_DEG } from '@/render/cameraRig';
 import type { TimeOfDay } from '@/render/lighting';
 import { createFacadeAtlas, type AtlasCellName } from '@/render/street/facadeAtlas';
 import { PALETTE } from '@/render/style';
 import { buildChunkGeometries, planCityBuildings, setFront, type ShopFront } from './cityBuildings';
-import { CITY_M, CITY_UNIT_M, cityToWorld, unit } from './cityCoords';
+import { CITY_M, CITY_UNIT_M, cityToWorld, streetRect, unit } from './cityCoords';
+import { buildCityProps, countShadowCasters, drawsOf, type CityProps } from './cityProps';
 
-export { CITY_UNIT_M, cityToWorld };
+export { CITY_UNIT_M, cityToWorld, countShadowCasters, streetRect };
 
 /**
- * Scena miasta (spec §9.1, §19): makieta 3D i dwie warstwy danych („Ruch”, „Dzielnice”) na jednej geometrii. Bez cieni, aut i drzew
- * (te dokłada Zadanie 12); cała scena to 2 siatki ziemi (tło kwartałów, ulice) i do 9 siatek z budynkami (chunk 2 × 2 kwartały), czyli
- * kilkanaście wywołań rysowania zamiast budżetu 60.
+ * Scena miasta (spec §9.1, §19): makieta 3D i dwie warstwy danych („Ruch”, „Dzielnice”) na jednej geometrii. Cała scena to 2 siatki
+ * ziemi (tło kwartałów, ulice) i do 9 siatek z budynkami (chunk 2 × 2 kwartały), a w makiecie `pelny` jeszcze drzewa i opcjonalnie auta
+ * (po jednej siatce instancjonowanej, `cityProps.ts`), czyli kilkanaście wywołań rysowania zamiast budżetu 60 (150 z cieniami).
  *
  * Dwie szczegółowości (`CityDetail`), w każdej chwili jedna geometria:
  * - `prosty` (4a.1): niskie, wybielone bryły postawione na slocie każdego lokalu, tylko warstwy. Kolory (ruch, dzielnice, stan lokalu)
@@ -27,6 +28,9 @@ export { CITY_UNIT_M, cityToWorld };
  *   chunków, a geometrii nie rusza: makieta ma `MeshStandardMaterial` z atlasem (jak budynki ulicy) i barwy budynków, warstwy ten sam
  *   materiał bez świateł co `prosty`, biel z barwą stanu lokalu i budynki spłaszczone do `FLAT_SCALE`. Witryna parteru każdego lokalu
  *   pokazuje jego stan (kartka „DO WYNAJĘCIA”, kartka „po Traszce”, barwa sklepu, tynk budowy; `setFront`).
+ *
+ * Cienie (opcja `shadows`, profil miasta): w makiecie chunki i drzewa rzucają cień, a ziemia go przyjmuje; mapa jest statyczna (renderer
+ * odświeża ją tylko na zlecenie, `RenderContext.setStaticShadows`). Warstwy cieni nie mają.
  *
  * Warstwy mają materiał bez świateł (`MeshBasicMaterial`, cieniowanie ścian wypieczone w kolorach): gra przełącza słońce i niebo wg
  * godziny (noc 20:00–6:00), a mapa danych ma wyglądać tak samo o każdej porze, żeby żółć i czerwień ruchu nie ciemniały ani nie
@@ -179,7 +183,26 @@ export interface CityView {
   fitHeight(): number;
   /** Pora dnia: nocą okna makiety świecą jak na ulicy; warstwy i `prosty` wyglądają tak samo o każdej porze. */
   setTimeOfDay(tod: TimeOfDay): void;
+  /**
+   * Cienie statyczne makiety (profil miasta): chunki i drzewa rzucają cień, ziemia go przyjmuje, ale tylko w „Makiecie” i tylko na `pelny`.
+   * Wołający zleca rendererowi odświeżenie mapy (`RenderContext.refreshShadows`).
+   */
+  setShadows(on: boolean): void;
+  /** Krok aut w makiecie (czas rzeczywisty `dtSec`, godzina i dzień gry); poza makietą i bez aut nic nie robi. */
+  tick(dtSec: number, hour: number, weekend: boolean): void;
+  /** Co scena rysuje teraz: szczegółowość, tryb, widoczne drzewa i auta, wywołania rysowania i rzucające cień (budżet §19). */
+  stats(): CityViewStats;
   dispose(): void;
+}
+
+/** Stan widoku do pomiaru (`SceneHost.cityStats`, smoke i bramka). `layer` to tryb faktycznie rysowany (`prosty` poproszony o makietę rysuje „Ruch”). */
+export interface CityViewStats {
+  detail: CityDetail;
+  layer: CityLayer;
+  trees: number;
+  cars: number;
+  drawCalls: number;
+  shadowCasters: number;
 }
 
 /** Kolory dachu i dwóch par ścian jednej bryły. */
@@ -242,15 +265,6 @@ function flat(m: Mesher, x0: number, y0: number, x1: number, y1: number, c: Colo
   m.quad([[a.x, 0, a.z], [a.x, 0, b.z], [b.x, 0, b.z], [b.x, 0, a.z]], [0, 1, 0], c);
 }
 
-/**
- * Prostokąt ulicy w metrach miasta. Odcinki poziome biegną przez całe skrzyżowania (na brzegu miasta o pół ulicy dalej), pionowe kończą
- * się przy skrzyżowaniach, więc prostokąty niczego nie pokrywają dwa razy (bez migotania) i nie zostawiają dziur.
- */
-function streetRect(s: StreetSegment): [number, number, number, number] {
-  if (s.ay === s.by) return [s.ax === 0 ? -STREET_HALF_M : s.ax, s.ay - STREET_HALF_M, s.bx === CITY_M ? CITY_M + STREET_HALF_M : s.bx, s.ay + STREET_HALF_M];
-  return [s.ax - STREET_HALF_M, s.ay + STREET_HALF_M, s.ax + STREET_HALF_M, s.by - STREET_HALF_M];
-}
-
 const clamp01 = (x: number): number => Math.min(1, Math.max(0, x));
 const meanOf = (xs: readonly number[]): number => (xs.length === 0 ? 0 : xs.reduce((a, b) => a + b, 0) / xs.length);
 
@@ -307,16 +321,6 @@ function paintRange(out: Float32Array, shade: Float32Array, first: number, count
   }
 }
 
-/** Obrys wierzchołków `[first, first + count)` (y od 0). */
-function rangeBox(g: BufferGeometry, first: number, count: number): Box3 {
-  const pos = g.getAttribute('position');
-  const box = new Box3();
-  const v = new Vector3();
-  for (let i = first; i < first + count; i++) box.expandByPoint(v.fromBufferAttribute(pos, i));
-  box.min.y = 0;
-  return box;
-}
-
 /** Biel budynku lokalu (0,95–1,0 bieli wg numeru), wspólna dla obu szczegółowości. */
 const baseWhite = (lot: CityLot): Color => new Color(BUILDING_WHITE).multiplyScalar(0.95 + 0.05 * unit(lot.id + 7919));
 /** Biel budynku z barwą stanu lokalu. */
@@ -325,7 +329,11 @@ function tinted(rec: LotBox, state: LotState): Color {
   return tint ? rec.base.clone().lerp(new Color(tint.color), tint.amount) : rec.base;
 }
 
-export function buildCity(city: CityState, states: Record<number, LotState>, opts: { detail?: CityDetail } = {}): CityView {
+/**
+ * `detail`: szczegółowość geometrii (domyślnie `prosty`). `cars`: auta na ulicach makiety (tylko `pelny`). `shadows`: cienie statyczne makiety
+ * (tylko `pelny`); można je też przełączyć później (`setShadows`). Drzewa ma każda makieta `pelny`.
+ */
+export function buildCity(city: CityState, states: Record<number, LotState>, opts: { detail?: CityDetail; cars?: boolean; shadows?: boolean } = {}): CityView {
   const detail: CityDetail = opts.detail ?? 'prosty';
   const full = detail === 'pelny';
   const root = new Group();
@@ -403,10 +411,11 @@ export function buildCity(city: CityState, states: Record<number, LotState>, opt
   const chunkColors: ChunkColors[] = [];
   /** Najwyższy wierzchołek wszystkich brył (bez skali): kadr makiety. */
   let sceneTop = 0;
+  const plans = atlas ? planCityBuildings(city) : [];
   if (atlas) {
     // `pelny`: bryły makiety; kolory makiety to kolory z budowy, kolory warstw liczą się z normalnych i stanów lokali
     const white = new Color(BUILDING_WHITE);
-    for (const c of buildChunkGeometries(city, planCityBuildings(city), atlas)) {
+    for (const c of buildChunkGeometries(city, plans, atlas)) {
       const g = c.geometry;
       const mesh = add(`chunk:${c.chunk}`, g);
       chunkMeshes.push(mesh);
@@ -420,11 +429,8 @@ export function buildCity(city: CityState, states: Record<number, LotState>, opt
       if (c.station) paintRange(colors.flat, shade, c.station.first, c.station.count, white);
       for (const b of c.boxes) {
         const lot = city.lots[b.lotId]!;
-        const box = rangeBox(g, b.first, b.count);
-        const rec: LotBox = {
-          lot, box, top: new Vector3((box.min.x + box.max.x) / 2, box.max.y, (box.min.z + box.max.z) / 2),
-          mesh, first: b.first, count: b.count, base: baseWhite(lot),
-        };
+        // obrys i dach z prawdziwych wierzchołków (cityBuildings.ts): jedno źródło prawdy o bryle lokalu
+        const rec: LotBox = { lot, box: b.box, top: b.top, mesh, first: b.first, count: b.count, base: baseWhite(lot) };
         boxes.push(rec);
         colors.lots.push(rec);
       }
@@ -460,10 +466,15 @@ export function buildCity(city: CityState, states: Record<number, LotState>, opt
     for (const { chunk, ...rec } of pending) boxes.push({ ...rec, mesh: byChunk.get(chunk)! });
   }
 
+  // rekwizyty makiety: drzewa (zawsze) i auta (opcja), w grupie korzenia; poza makietą ukryte
+  const props: CityProps | null = atlas ? buildCityProps(city, plans, { cars: opts.cars === true, shadows: opts.shadows === true }) : null;
+  if (props) root.add(props.root);
+
   // --- stan ---------------------------------------------------------------------------------------------------------
 
   let current: Record<number, LotState> = states;
   let layer: CityLayer = 'ruch';
+  let shadowsOn = opts.shadows === true;
   let disposed = false;
   const stateOf = (l: CityLot): LotState => current[l.id] ?? l.state;
   /** `scale.y` chunków w bieżącym trybie: warstwy `pelny` są spłaszczone. */
@@ -510,7 +521,16 @@ export function buildCity(city: CityState, states: Record<number, LotState>, opt
     streetMesh.geometry.getAttribute('color').array.set(streetColors[layer]);
     streetMesh.geometry.getAttribute('color').needsUpdate = true;
   };
-  /** Materiał, bufory kolorów budynków i spłaszczenie wg trybu (`pelny`); geometria zostaje ta sama. */
+  /** Cienie statyczne: tylko makieta `pelny` przy włączonych cieniach. Chunki i drzewa rzucają, ziemia przyjmuje (auta nigdy nie rzucają). */
+  const applyShadows = (): void => {
+    if (!full) return;
+    const casting = shadowsOn && layer === 'makieta';
+    for (const m of chunkMeshes) m.castShadow = casting;
+    blockMesh.receiveShadow = casting;
+    streetMesh.receiveShadow = casting;
+    props?.setShadows(shadowsOn);
+  };
+  /** Materiał, bufory kolorów budynków, spłaszczenie, cienie i rekwizyty wg trybu (`pelny`); geometria zostaje ta sama. */
   const applyMode = (): void => {
     if (!full) return;
     const material = layer === 'makieta' && lit ? lit : surface;
@@ -521,6 +541,8 @@ export function buildCity(city: CityState, states: Record<number, LotState>, opt
       attr.array.set(layer === 'makieta' ? ch.makieta : ch.flat);
       attr.needsUpdate = true;
     }
+    props?.setLayer(layer);
+    applyShadows();
   };
   paintGround();
   paintAll();
@@ -531,7 +553,9 @@ export function buildCity(city: CityState, states: Record<number, LotState>, opt
     detail,
     supports: (l) => full || l !== 'makieta',
     setLayer(next) {
-      layer = full || next !== 'makieta' ? next : 'ruch';
+      const wanted: CityLayer = full || next !== 'makieta' ? next : 'ruch';
+      if (wanted === layer) return;   // ten sam tryb: bufory kolorów (ok. 2,4 MB) i spłaszczenie już takie są
+      layer = wanted;
       paintGround();
       applyMode();
     },
@@ -566,10 +590,22 @@ export function buildCity(city: CityState, states: Record<number, LotState>, opt
     setTimeOfDay(tod) {
       if (lit) lit.emissiveIntensity = tod === 'night' ? WINDOW_GLOW.night : 0;
     },
+    setShadows(on) {
+      shadowsOn = on;
+      applyShadows();
+    },
+    tick(dtSec, hour, weekend) {
+      if (layer === 'makieta') props?.tick(dtSec, hour, weekend);
+    },
+    stats() {
+      const shown = props && root.visible ? props.stats() : { trees: 0, cars: 0 };
+      return { detail, layer, ...shown, drawCalls: countDrawCalls(root), shadowCasters: countShadowCasters(root) };
+    },
     dispose() {
       if (disposed) return;
       disposed = true;
       root.removeFromParent();
+      props?.dispose();
       for (const g of geometries) g.dispose();
       surface.dispose();
       lit?.dispose();
@@ -577,25 +613,14 @@ export function buildCity(city: CityState, states: Record<number, LotState>, opt
   };
 }
 
-/** Obiekt sceny, który renderer może narysować (siatka, linia, punkty, sprite). */
-type Drawable = Object3D & {
-  material?: Material | Material[]; geometry?: BufferGeometry;
-  isMesh?: boolean; isLine?: boolean; isPoints?: boolean; isSprite?: boolean;
-};
-
 /**
  * Liczba wywołań rysowania, które renderer wykona dla `root`: widoczna siatka (linia, punkty, sprite) to jedno, siatka z tablicą
- * materiałów to jedno na grupę, ukryta gałąź to zero. Budżet widoku miasta to poniżej 60.
+ * materiałów to jedno na grupę, ukryta gałąź to zero (siatka instancjonowana to jedno). Budżet widoku miasta to poniżej 60 (warstwy)
+ * i poniżej 150 razem z rzucającymi cień (`countShadowCasters`) w makiecie.
  */
 export function countDrawCalls(root: Object3D): number {
   if (!root.visible) return 0;
-  let n = 0;
-  const o = root as Drawable;
-  if (o.isMesh || o.isLine || o.isPoints || o.isSprite) {
-    const material = o.material;
-    if (Array.isArray(material)) n += (o.geometry?.groups ?? []).filter((g) => material[g.materialIndex ?? 0]?.visible).length;
-    else if (material?.visible !== false) n += 1;
-  }
+  let n = drawsOf(root);
   for (const child of root.children) n += countDrawCalls(child);
   return n;
 }

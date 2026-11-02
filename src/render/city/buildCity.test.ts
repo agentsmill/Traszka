@@ -1,18 +1,20 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { Color, Mesh, MeshBasicMaterial, MeshStandardMaterial, Raycaster, Vector3, type BufferGeometry, type Material, type Object3D } from 'three';
+import { Color, Mesh, MeshBasicMaterial, MeshStandardMaterial, Raycaster, Vector3, type BufferAttribute, type BufferGeometry, type Material, type Object3D } from 'three';
 import { generateCity } from '@/sim/city/generateCity';
 import { BLOCK_M } from '@/sim/city/districts';
 import { CITY_SIZE, type CityState, type LotState } from '@/sim/city/types';
 import { CameraRig, VIEW_SIZE_MAX } from '@/render/cameraRig';
+import { SHADOW_BOX_HEIGHT_M } from '@/render/lighting';
 import { createFacadeAtlas, type AtlasCellName } from '@/render/street/facadeAtlas';
 import { PALETTE, material } from '@/render/style';
 import {
-  CITY_BOUNDS, CITY_UNIT_M, DISTRICT_COLOR, FLAT_SCALE, buildCity, cityFitViewSize, cityToWorld, countDrawCalls,
+  CITY_BOUNDS, CITY_UNIT_M, DISTRICT_COLOR, FLAT_SCALE, buildCity, cityFitViewSize, cityToWorld, countDrawCalls, countShadowCasters,
   type CityLayer, type CityView,
 } from './buildCity';
 import { buildChunkGeometries, planCityBuildings, type ChunkGeometry } from './cityBuildings';
+import { TREE_SCALE_MAX } from './cityProps';
 
 /** Dziesięć seedów z testów generatora miasta. */
 const SEEDS = ['kiełbasa-42', 'kiełbasa-12', 'a', 'b', 'traszka-1', 'traszka-2', 'miasto-1', 'miasto-2', 'miasto-3', 'miasto-4'];
@@ -31,6 +33,8 @@ const meshesOf = (root: Object3D): Mesh[] => {
   root.traverse((o) => { if ((o as Mesh).isMesh) out.push(o as Mesh); });
   return out;
 };
+/** Siatki miasta bez rekwizytów (drzewa i auta to siatki instancjonowane z własnymi materiałami). */
+const cityMeshes = (root: Object3D): Mesh[] => meshesOf(root).filter((m) => !(m as unknown as { isInstancedMesh?: boolean }).isInstancedMesh);
 const meshNamed = (root: Object3D, name: string): Mesh => {
   const m = root.getObjectByName(name);
   if (!m) throw new Error(`brak siatki ${name}`);
@@ -503,7 +507,7 @@ describe('buildCity pelny: tryby na jednej geometrii', () => {
     for (const seed of SEEDS.slice(0, 3)) {
       const city = cityOf(seed);
       const view = buildCity(city, generated(city), { detail: 'pelny' });
-      const meshes = meshesOf(view.root);
+      const meshes = cityMeshes(view.root);
       const geoms = meshes.map((m) => m.geometry);
       const positions = geoms.map((g) => g.getAttribute('position'));
       const arrays = positions.map((p) => p.array);
@@ -800,13 +804,13 @@ describe('buildCity pelny: kotwice, wybór lokalu i kadr', () => {
 });
 
 describe('buildCity pelny: sprzątanie', () => {
-  it('dispose zwalnia wszystkie geometrie i oba materiały, ale nie tekstury atlasu (wspólny cache)', () => {
+  it('dispose zwalnia wszystkie geometrie i materiały (oba miasta i drzew), ale nie tekstury atlasu (wspólny cache)', () => {
     const city = cityOf(SEEDS[0]!);
     const view = buildCity(city, generated(city), { detail: 'pelny' });
     const geometries = new Set(meshesOf(view.root).map((m) => m.geometry));
     const materials = new Set<Material>();
     for (const layer of LAYERS) { view.setLayer(layer); for (const m of meshesOf(view.root)) materials.add(m.material as Material); }
-    expect(materials.size).toBe(2);
+    expect(materials.size).toBe(3);   // makieta, warstwy i drzewa
     let geometry = 0;
     let mat = 0;
     let texture = 0;
@@ -817,7 +821,7 @@ describe('buildCity pelny: sprzątanie', () => {
     parent.add(view.root);
     view.dispose();
     expect(geometry).toBe(geometries.size);
-    expect(mat).toBe(2);
+    expect(mat).toBe(3);
     expect(texture).toBe(0);
     expect(view.root.parent).toBeNull();
     expect(() => view.dispose()).not.toThrow();
@@ -854,5 +858,223 @@ describe('źródła: wspólna kartka „DO WYNAJĘCIA”', () => {
     expect(read('src/render/city/cityCoords.ts')).toMatch(def);
     for (const rel of ['src/render/city/buildCity.ts', 'src/render/city/cityBuildings.ts']) expect(read(rel), rel).not.toMatch(def);
     expect(read('src/render/city/cityBuildings.ts')).not.toMatch(/from '\.\/buildCity'/);
+  });
+});
+
+// --- 4a.2 zadanie 12: rekwizyty, cienie statyczne, setLayer bez pracy, jedno źródło prawdy o obrysach ---------------------------
+
+describe('buildCity: rekwizyty (drzewa i auta) w makiecie', () => {
+  const instancedIn = (root: Object3D): Mesh[] => meshesOf(root).filter((m) => (m as unknown as { isInstancedMesh?: boolean }).isInstancedMesh);
+
+  it('prosty nie ma rekwizytów, pelny ma drzewa (jedna siatka instancjonowana), a auta tylko przy cars: true', () => {
+    const city = cityOf(SEEDS[0]!);
+    const simple = buildCity(city, generated(city), { cars: true, shadows: true });
+    expect(instancedIn(simple.root)).toHaveLength(0);
+    expect(simple.stats()).toMatchObject({ detail: 'prosty', trees: 0, cars: 0 });
+    simple.dispose();
+
+    const noCars = buildCity(city, generated(city), { detail: 'pelny' });
+    noCars.setLayer('makieta');
+    noCars.tick(0, 8, false);
+    expect(instancedIn(noCars.root).map((m) => m.name)).toEqual(['trees']);
+    expect(noCars.stats().cars).toBe(0);
+    expect(noCars.stats().trees).toBeGreaterThan(30);
+    noCars.dispose();
+
+    const withCars = buildCity(city, generated(city), { detail: 'pelny', cars: true });
+    withCars.setLayer('makieta');
+    withCars.tick(0, 8, false);
+    expect(instancedIn(withCars.root).map((m) => m.name).sort()).toEqual(['cars', 'trees']);
+    expect(withCars.stats().cars).toBeGreaterThan(0);
+    withCars.dispose();
+  });
+
+  it('rekwizyty widać tylko w makiecie: warstwa je chowa i zeruje stats, tick w warstwie nie rusza aut, powrót je przywraca', () => {
+    const city = cityOf(SEEDS[0]!);
+    const view = buildCity(city, generated(city), { detail: 'pelny', cars: true });
+    view.setLayer('makieta');
+    view.tick(0, 8, false);
+    const before = view.stats();
+    expect(before.cars).toBeGreaterThan(0);
+    expect(before.trees).toBeGreaterThan(0);
+    for (const layer of ['ruch', 'dzielnice'] as const) {
+      view.setLayer(layer);
+      view.tick(3, 8, false);
+      expect(view.stats(), layer).toMatchObject({ layer, trees: 0, cars: 0 });
+      for (const m of instancedIn(view.root)) expect(m.visible && m.parent!.visible, `${layer} ${m.name}`).toBe(false);
+    }
+    view.setLayer('makieta');
+    view.tick(0, 8, false);
+    expect(view.stats()).toMatchObject({ layer: 'makieta', trees: before.trees, cars: before.cars });
+    view.dispose();
+  });
+
+  it('stats: szczegółowość, tryb, draw calle i rzucające cień liczone na widocznej scenie', () => {
+    const city = cityOf(SEEDS[0]!);
+    const view = buildCity(city, generated(city), { detail: 'pelny', cars: true, shadows: true });
+    view.setLayer('makieta');
+    view.tick(0, 8, false);
+    const s = view.stats();
+    expect(s.detail).toBe('pelny');
+    expect(s.layer).toBe('makieta');
+    expect(s.drawCalls).toBe(countDrawCalls(view.root));
+    expect(s.shadowCasters).toBe(countShadowCasters(view.root));
+    view.root.visible = false;
+    expect(view.stats()).toMatchObject({ drawCalls: 0, shadowCasters: 0 });
+    view.dispose();
+  });
+
+  it('dispose zwalnia też geometrie, materiały i bufory instancji drzew i aut', () => {
+    const city = cityOf(SEEDS[0]!);
+    const view = buildCity(city, generated(city), { detail: 'pelny', cars: true });
+    view.setLayer('makieta');
+    view.tick(0, 8, false);
+    const props = instancedIn(view.root);
+    expect(props).toHaveLength(2);
+    const events = { geometry: 0, material: 0, instances: 0 };
+    for (const m of props) {
+      m.geometry.addEventListener('dispose', () => { events.geometry++; });
+      (m.material as Material).addEventListener('dispose', () => { events.material++; });
+      (m as unknown as { addEventListener(t: string, f: () => void): void }).addEventListener('dispose', () => { events.instances++; });
+    }
+    view.dispose();
+    expect(events).toEqual({ geometry: 2, material: 2, instances: 2 });
+  });
+});
+
+describe('buildCity: cienie statyczne', () => {
+  const chunksAndGround = (view: CityView): { chunks: Mesh[]; ground: Mesh[] } => ({
+    chunks: chunkMeshes(view),
+    ground: ['blocks', 'streets'].map((n) => meshNamed(view.root, n)),
+  });
+
+  it('w makiecie przy shadows: true chunki i drzewa rzucają cień, ziemia go przyjmuje; auta nie rzucają; w warstwach nic', () => {
+    for (const seed of SEEDS.slice(0, 3)) {
+      const city = cityOf(seed);
+      const view = buildCity(city, generated(city), { detail: 'pelny', cars: true, shadows: true });
+      const { chunks, ground } = chunksAndGround(view);
+      view.setLayer('makieta');
+      view.tick(0, 8, false);
+      for (const m of chunks) expect(m.castShadow, `${seed} ${m.name}`).toBe(true);
+      for (const m of ground) expect(m.receiveShadow, `${seed} ${m.name}`).toBe(true);
+      const props = instancedIn(view.root);
+      expect(props.find((m) => m.name === 'trees')!.castShadow).toBe(true);
+      expect(props.find((m) => m.name === 'cars')!.castShadow).toBe(false);
+      expect(countShadowCasters(view.root), seed).toBe(chunks.length + 1);
+      for (const layer of ['ruch', 'dzielnice'] as const) {
+        view.setLayer(layer);
+        for (const m of meshesOf(view.root)) { expect(m.castShadow, `${seed} ${layer} ${m.name}`).toBe(false); expect(m.receiveShadow, `${seed} ${layer} ${m.name}`).toBe(false); }
+        expect(countShadowCasters(view.root), `${seed} ${layer}`).toBe(0);
+      }
+      view.setLayer('makieta');
+      for (const m of chunks) expect(m.castShadow, `${seed} po powrocie ${m.name}`).toBe(true);
+      view.dispose();
+    }
+  });
+
+  it('bez shadows (domyślnie) nic nie rzuca ani nie przyjmuje cienia, także w makiecie; setShadows włącza i wyłącza w locie', () => {
+    const city = cityOf(SEEDS[0]!);
+    const view = buildCity(city, generated(city), { detail: 'pelny', cars: true });
+    view.setLayer('makieta');
+    for (const m of meshesOf(view.root)) { expect(m.castShadow, m.name).toBe(false); expect(m.receiveShadow, m.name).toBe(false); }
+    expect(countShadowCasters(view.root)).toBe(0);
+    view.setShadows(true);
+    expect(countShadowCasters(view.root)).toBe(chunkMeshes(view).length + 1);
+    expect(meshNamed(view.root, 'streets').receiveShadow).toBe(true);
+    view.setShadows(false);
+    expect(countShadowCasters(view.root)).toBe(0);
+    expect(meshNamed(view.root, 'streets').receiveShadow).toBe(false);
+    view.dispose();
+  });
+
+  it('prosty nie rzuca cienia nigdy (wybielone bryły warstw, bez świateł)', () => {
+    const city = cityOf(SEEDS[0]!);
+    const view = buildCity(city, generated(city), { detail: 'prosty', shadows: true });
+    view.setShadows(true);
+    expect(countShadowCasters(view.root)).toBe(0);
+    view.dispose();
+  });
+
+  it('najwyższy wierzchołek makiety (z wieżami) mieści się w bryle kamery cienia (SHADOW_BOX_HEIGHT_M), liczony z prawdziwych geometrii', () => {
+    for (const seed of SEEDS) {
+      const city = cityOf(seed);
+      const view = buildCity(city, generated(city), { detail: 'pelny', shadows: true });
+      view.setLayer('makieta');
+      let top = 0;
+      for (const m of chunkMeshes(view)) top = Math.max(top, m.geometry.boundingBox!.max.y);
+      const trees = instancedIn(view.root).find((m) => m.name === 'trees')!;
+      trees.geometry.computeBoundingBox();
+      const treeTop = trees.geometry.boundingBox!.max.y * TREE_SCALE_MAX;
+      expect(top, seed).toBeGreaterThan(1);
+      expect(Math.max(top, treeTop), seed).toBeLessThan(SHADOW_BOX_HEIGHT_M);
+      expect(view.fitHeight(), seed).toBeCloseTo(top, 6);
+      view.dispose();
+    }
+  });
+
+  const instancedIn = (root: Object3D): Mesh[] => meshesOf(root).filter((m) => (m as unknown as { isInstancedMesh?: boolean }).isInstancedMesh);
+});
+
+describe('buildCity: setLayer bez zmiany trybu nie przepisuje buforów', () => {
+  it('ten sam tryb po raz drugi nie dotyka atrybutów koloru ani spłaszczenia (wersje atrybutów bez zmian), inny tryb tak', () => {
+    const city = cityOf(SEEDS[0]!);
+    for (const detail of ['pelny', 'prosty'] as const) {
+      const view = buildCity(city, generated(city), { detail });
+      const attrs = ['blocks', 'streets', ...chunkMeshes(view).map((m) => m.name)].map((n) => meshNamed(view.root, n).geometry.getAttribute('color') as BufferAttribute);
+      const versions = (): number[] => attrs.map((a) => a.version);
+      view.setLayer('ruch');   // tryb startowy (po budowie)
+      const start = versions();
+      view.setLayer('ruch');
+      expect(versions(), `${detail} ruch → ruch`).toEqual(start);
+      view.setLayer('dzielnice');
+      const dz = versions();
+      expect(dz, `${detail} ruch → dzielnice`).not.toEqual(start);
+      view.setLayer('dzielnice');
+      expect(versions(), `${detail} dzielnice → dzielnice`).toEqual(dz);
+      if (detail === 'pelny') {
+        view.setLayer('makieta');
+        const mk = versions();
+        expect(mk).not.toEqual(dz);
+        view.setLayer('makieta');
+        expect(versions(), 'makieta → makieta').toEqual(mk);
+      } else {
+        // prosty poproszony o makietę rysuje „Ruch”: z „Dzielnic” to zmiana, z „Ruchu” już nie
+        view.setLayer('makieta');
+        const ruch = versions();
+        view.setLayer('makieta');
+        expect(versions(), 'prosty makieta → makieta').toEqual(ruch);
+        expect(view.stats().layer).toBe('ruch');
+      }
+      view.dispose();
+    }
+  });
+});
+
+describe('źródła: jedna prawda o obrysach i o blasku okien', () => {
+  const read = (rel: string): string => readFileSync(join(__dirname, '..', '..', '..', rel), 'utf8');
+  const glowOf = (src: string): { color: string; night: number } => {
+    const m = /const WINDOW_GLOW = \{ color: '(#[0-9a-fA-F]{6})', night: ([0-9.]+) \} as const;/.exec(src);
+    if (!m) throw new Error('nie znaleziono WINDOW_GLOW');
+    return { color: m[1]!.toLowerCase(), night: Number(m[2]) };
+  };
+
+  it('WINDOW_GLOW w buildCity.ts to te same liczby co w street/buildings.ts (ulica jest wzorem, tam nieeksportowany)', () => {
+    expect(glowOf(read('src/render/city/buildCity.ts'))).toEqual(glowOf(read('src/render/street/buildings.ts')));
+  });
+
+  it('obrysy lokali (box, top) liczy tylko cityBuildings.ts z prawdziwych wierzchołków: buildCity.ts nie liczy ich drugi raz', () => {
+    expect(read('src/render/city/buildCity.ts')).not.toMatch(/rangeBox|expandByPoint/);
+    expect(read('src/render/city/cityBuildings.ts')).toMatch(/expandByPoint/);
+  });
+
+  it('streetRect i hash01 mają jedną definicję (cityCoords.ts)', () => {
+    const coords = read('src/render/city/cityCoords.ts');
+    expect(coords).toMatch(/export function streetRect/);
+    expect(coords).toMatch(/export function hash01/);
+    for (const rel of ['src/render/city/buildCity.ts', 'src/render/city/cityBuildings.ts', 'src/render/city/cityProps.ts']) {
+      const src = read(rel);
+      expect(src, rel).not.toMatch(/function streetRect/);
+      expect(src, rel).not.toMatch(/function hash01/);
+    }
   });
 });

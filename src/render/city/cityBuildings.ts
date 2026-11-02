@@ -6,7 +6,7 @@ import { CELL_SIZE_M } from '@/sim/grid';
 import { GeomBuilder, type V3 } from '@/render/street/buildings';
 import { createFacadeAtlas, type AtlasCellName, type FacadeAtlas } from '@/render/street/facadeAtlas';
 import { PALETTE } from '@/render/style';
-import { CITY_UNIT_M, cityToWorld, unit } from './cityCoords';
+import { CITY_UNIT_M, cityToWorld, hash01, unit } from './cityCoords';
 
 /**
  * Bryły makiety miasta (spec §7.1, §19 „4a.2”): proceduralne budynki w stylu ulicy przed sklepem, z fasadami z atlasu elewacji
@@ -60,7 +60,9 @@ export interface ChunkGeometry {
   fronts: ShopFront[];
   /**
    * Bryła każdego lokalu chunku: obrys do `pickLot`, środek dachu pod kotwicę pinezki i ciąg wierzchołków budynku
-   * (`[first, first + count)`, razem z witryną), żeby warstwy mogły barwić budynek według stanu lokalu.
+   * (`[first, first + count)`, razem z witryną), żeby warstwy mogły barwić budynek według stanu lokalu. To jedyne źródło obrysów
+   * lokali: `box` i `top` liczą się z prawdziwych wierzchołków (od y = 0 do najwyższego punktu, razem z nadbudówką na dachu), nie z
+   * wysokości planu, więc kotwica stoi nad wieżą, a wybór lokalu trafia w całą bryłę.
    */
   boxes: { lotId: number; box: Box3; top: Vector3; first: number; count: number }[];
   /** Ciąg wierzchołków dworca (budynek bez lokalu), tylko w chunku, w którym stoi. Budynki lokali i dworzec pokrywają cały chunk. */
@@ -140,19 +142,8 @@ const GARAGE_WALL = ST.curb[1]!;
 const GARAGE_DOORS = [PALETTE.clothes[4]!, PALETTE.clothes[3]!, PALETTE.clothes[9]!, PALETTE.clothes[8]!, PALETTE.clothes[0]!, PALETTE.fixture.wood, PALETTE.clothes[11]!] as const;
 const STATION_COLORS = { main: ST.kamienicaPlaster[1]!, accent: CREAM, roof: ST.kamienicaPlaster[5]!, spire: ST.kamienicaPlaster[3]!, hands: PALETTE.wall[4]! } as const;
 
-// --- Skróty (render nie losuje) --------------------------------------------------------------------------------
+// --- Skróty (render nie losuje; `hash01` i `unit` w cityCoords.ts) -------------------------------------------------------
 
-/** Skrót kilku liczb całkowitych do [0, 1): pozostałe warianty (obrys, barwy, które okno świeci). */
-function hash01(...xs: number[]): number {
-  let h = 0x811c9dc5;
-  for (const x of xs) {
-    h = Math.imul(h ^ (x | 0), 0x01000193);
-    h ^= h >>> 15;
-  }
-  h = Math.imul(h ^ (h >>> 16), 0x85ebca6b);
-  h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35);
-  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
-}
 const pickOf = <T>(pool: readonly T[], r: number): T => pool[Math.min(pool.length - 1, Math.floor(r * pool.length))]!;
 /** Dwa różne wpisy puli. */
 function twoOf<T>(pool: readonly T[], r1: number, r2: number): [T, T] {
@@ -546,6 +537,16 @@ function chunkOf(p: BuildingPlan): number {
   return Math.floor(by / CHUNK_BLOCKS) * CHUNKS_PER_SIDE + Math.floor(bx / CHUNK_BLOCKS);
 }
 
+/** Obrys wierzchołków `[first, first + count)` geometrii, od y = 0 (budynek stoi na ziemi) do najwyższego wierzchołka. */
+function vertexBox(g: BufferGeometry, first: number, count: number): Box3 {
+  const pos = g.getAttribute('position');
+  const box = new Box3();
+  const v = new Vector3();
+  for (let i = first; i < first + count; i++) box.expandByPoint(v.fromBufferAttribute(pos, i));
+  box.min.y = 0;
+  return box;
+}
+
 /** Atlas, z którego zbudowano geometrię chunku: `setFront` bierze z niego komórki. */
 const atlasOf = new WeakMap<BufferGeometry, Pick<FacadeAtlas, 'cell'>>();
 let fallbackAtlas: Pick<FacadeAtlas, 'cell'> | null = null;
@@ -574,7 +575,7 @@ export function buildChunkGeometries(city: CityState, plans: readonly BuildingPl
   for (const chunk of [...byChunk.keys()].sort((a, b) => a - b)) {
     const c: Ctx = { b: new GeomBuilder(flat), cell, flat: [flat[0], flat[1], flat[0], flat[1]], u: CITY_UNIT_M };
     const fronts: ShopFront[] = [];
-    const boxes: ChunkGeometry['boxes'] = [];
+    const lots: { lotId: number; first: number; count: number }[] = [];
     let station: ChunkGeometry['station'];
     for (const p of byChunk.get(chunk)!) {
       if (p.lotId === null) {
@@ -587,15 +588,13 @@ export function buildChunkGeometries(city: CityState, plans: readonly BuildingPl
       if (!lot || lot.id !== p.lotId) throw new RangeError(`buildChunkGeometries: brak lokalu ${p.lotId}`);
       const built = emitLot(c, p, lot);
       fronts.push(built.front);
-      boxes.push({
-        lotId: lot.id,
-        box: new Box3(new Vector3(p.x0, 0, p.z0), new Vector3(p.x1, p.height, p.z1)),
-        top: new Vector3((p.x0 + p.x1) / 2, p.height, (p.z0 + p.z1) / 2),
-        first: built.first,
-        count: built.count,
-      });
+      lots.push({ lotId: lot.id, first: built.first, count: built.count });
     }
     const geometry = c.b.toGeometry();
+    const boxes: ChunkGeometry['boxes'] = lots.map((l) => {
+      const box = vertexBox(geometry, l.first, l.count);
+      return { ...l, box, top: new Vector3((box.min.x + box.max.x) / 2, box.max.y, (box.min.z + box.max.z) / 2) };
+    });
     (geometry.getAttribute('uv') as BufferAttribute).setUsage(DynamicDrawUsage);
     (geometry.getAttribute('color') as BufferAttribute).setUsage(DynamicDrawUsage);
     geometry.computeBoundingBox();

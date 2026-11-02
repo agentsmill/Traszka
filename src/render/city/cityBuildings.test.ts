@@ -345,7 +345,7 @@ describe('buildChunkGeometries: witryny i bryły do wskazywania', () => {
     }
   });
 
-  it('każdy lokal ma jedną bryłę do wskazywania: obrys planu, dach na wysokości planu, wierzchołki budynku w niej', () => {
+  it('każdy lokal ma jedną bryłę do wskazywania: obrys planu, najwyższy wierzchołek (z nadbudówką) jako dach, wierzchołki budynku w niej', () => {
     for (const seed of SEEDS) {
       const { city, plans, chunks } = builtOf(seed);
       const seen = new Set<number>();
@@ -359,9 +359,14 @@ describe('buildChunkGeometries: witryny i bryły do wskazywania', () => {
           expect(b.box.max.x).toBeCloseTo(p.x1, 6);
           expect(b.box.min.z).toBeCloseTo(p.z0, 6);
           expect(b.box.max.z).toBeCloseTo(p.z1, 6);
+          // wysokość to prawdziwy najwyższy wierzchołek budynku (nadbudówka bloku i biurowca sięga ponad `plan.height`), nie wysokość planu
+          let highest = 0;
+          for (let i = b.first; i < b.first + b.count; i++) highest = Math.max(highest, pos.getY(i));
           expect(b.box.min.y).toBe(0);
-          expect(b.box.max.y).toBeCloseTo(p.height, 6);
-          expect(b.top.y).toBeCloseTo(p.height, 6);
+          expect(b.box.max.y).toBe(highest);
+          expect(b.box.max.y).toBeGreaterThanOrEqual(p.height - 1e-6);   // wierzchołki są float32
+          if (p.style === 'blok' || p.style === 'biurowiec') expect(b.box.max.y, `${seed} #${b.lotId} nadbudówka`).toBeGreaterThan(p.height + 1e-3);
+          expect(b.top.y).toBe(b.box.max.y);
           expect(b.top.x).toBeCloseTo((p.x0 + p.x1) / 2, 6);
           expect(b.top.z).toBeCloseTo((p.z0 + p.z1) / 2, 6);
           // zakres wierzchołków budynku obejmuje jego witrynę, a wierzchołki leżą w obrysie (dach z nadbudówką może wystawać w górę)

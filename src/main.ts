@@ -242,8 +242,11 @@ function startGame(
   };
   requestAnimationFrame(frame);
 
-  // uchwyt do ręcznych testów w konsoli (pola odczytywane na bieżąco); tylko w buildzie deweloperskim albo pod adresem z `?debug=1` (M11)
-  installDebugHandle(window, debugHandleOf({ ctx, shell, scene }), debugHandleEnabled(import.meta.env.DEV, params));
+  // uchwyt do ręcznych testów w konsoli (pola odczytywane na bieżąco); tylko w buildzie deweloperskim albo pod adresem z `?debug=1` (M11).
+  // `cityStats()` (smoke i bramka makiety): stan sceny miasta z licznikami rysowania, auto i cieni (spread uchwytu zamroziłby jego gettery, więc dopisek)
+  const debugHandle = debugHandleOf({ ctx, shell, scene });
+  Object.defineProperty(debugHandle, 'cityStats', { value: (): ReturnType<typeof scene.cityStats> => scene.cityStats(), enumerable: true });
+  installDebugHandle(window, debugHandle, debugHandleEnabled(import.meta.env.DEV, params));
 
   if (!benchMode) {
     // Panele rankingu i kodu odzyskiwania (🏆 w HUD-zie i ⚙): modele z powłoki gry i z tego samego klienta co ekran startowy i okno końca sezonu.

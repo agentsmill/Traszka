@@ -2,13 +2,14 @@ import { Group, Mesh, Raycaster, Vector2, Vector3, type BufferGeometry, type Mat
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { createRenderContext, type RenderContext } from '@/render/renderer';
 import { VIEW_SIZE_MAX } from '@/render/cameraRig';
-import { QUALITY, type QualityPresetId } from '@/render/quality';
+import { QUALITY, detectDeviceCaps, type QualityPresetId } from '@/render/quality';
 import type { TimeOfDay } from '@/render/lighting';
 import { BEVEL, PALETTE, material } from '@/render/style';
 import { cellToWorld } from '@/render/coords';
 import { attachCharacters, loadStore, unloadStore, type Loaded } from '@/render/game/loadedStore';
 import { buildStreet } from '@/render/street/buildStreet';
-import { CITY_BOUNDS, buildCity, cityFitViewSize, type CityLayer, type CityView } from '@/render/city/buildCity';
+import { CITY_BOUNDS, buildCity, cityFitViewSize, type CityDetail, type CityLayer, type CityView } from '@/render/city/buildCity';
+import { cityProfile } from '@/render/city/cityQuality';
 import type { CharacterFactory } from '@/render/characters/characterFactory';
 import { ANIM_SPEED_CAP } from '@/render/crowdView';
 import { createBlobShadows } from '@/render/characters/blobShadows';
@@ -22,7 +23,7 @@ import type { RobotsSync } from '@/render/robots/robotsView';
 import { EDWARD_ID } from '@/render/staff/types';
 import { SIM_STEP, crowdHeadcount, feedCrowdMirror, payLook, setCrowdExtras, setCrowdRate, stepCrowd, type CrowdOptions } from '@/sim/crowd/crowd';
 import { CATS } from '@/sim/economy/catalog';
-import { minuteOfDay } from '@/sim/economy/calendar';
+import { dateOfDay, dayOf, minuteOfDay } from '@/sim/economy/calendar';
 import { customersPerHour, effects, isClosedForRemont, isOpenForCustomers, slotUsage } from '@/sim/economy/economy';
 import { slotUnits } from '@/sim/economy/slots';
 import { staffOnShift } from '@/sim/economy/tycoon/shift';
@@ -151,6 +152,15 @@ export function timeOfDayAt(minute: number): TimeOfDay {
   return hour >= 20 || hour < 6 ? 'night' : 'day';
 }
 
+/**
+ * Zegar gry dla aut makiety: godzina (z ułamkiem) i czy to weekend (sobota i niedziela, jak w ekonomii: `weekday` 0 albo 6) w minucie gry.
+ * Dzień 0 gry to wtorek.
+ */
+export function cityClockOf(minute: number): { hour: number; weekend: boolean } {
+  const { weekday } = dateOfDay(dayOf(minute));
+  return { hour: minuteOfDay(minute) / 60, weekend: weekday === 0 || weekday === 6 };
+}
+
 /** Co jest pod punktem ekranu, o ile gra ma na to reakcję: paleta (rozładunek), kasa (obsługa klienta) albo slot (karta zakupu). */
 export type ScenePick = { kind: 'pallet'; id: number } | { kind: 'till' } | { kind: 'slot'; slotId: string };
 
@@ -172,6 +182,27 @@ export interface SceneDeps {
   zoomPinned: boolean;
   /** Nakładka z elementami HTML przyklejonymi do sceny (znaczniki, dymki); `null` w benchmarku. */
   overlay: WorldOverlay | null;
+  /**
+   * Telefon: profil miasta „telefon” wygrywa z presetem (Niska w mieście także przy wybranej Wysokiej, scena miasta zwalnia się po
+   * wyjściu z zakładki). Brak: `detectDeviceCaps().isMobile` czytane przy każdym `showCity` i `hideCity`.
+   */
+  isMobile?: boolean;
+}
+
+/**
+ * Stan sceny miasta do pomiaru (smoke, bramka `?bench=1`, uchwyt `traszkaGame.cityStats` pod `?debug=1`). `shown`: ekran Miasta jest na
+ * wierzchu; `built`: scena miasta istnieje w pamięci (Niska i telefon zwalniają ją po wyjściu z zakładki); `detail` i `layer` tej sceny
+ * (null, gdy jej nie ma); `cars`, `drawCalls` i `shadowCasters` to to, co renderer narysuje teraz (0, gdy miasto ukryte). Budżet §19:
+ * `drawCalls + shadowCasters` poniżej 150 w makiecie, `drawCalls` poniżej 60 w warstwach.
+ */
+export interface CityStats {
+  shown: boolean;
+  built: boolean;
+  detail: CityDetail | null;
+  layer: CityLayer | null;
+  cars: number;
+  drawCalls: number;
+  shadowCasters: number;
 }
 
 export interface SceneHost {
@@ -211,21 +242,29 @@ export interface SceneHost {
    * pokazanym mieście odświeża tylko stany lokali i tryb. Czas gry płynie dalej, scena sklepu nadal żyje pod spodem.
    * To samo miasto to ten sam obiekt `CityState` (porównanie po tożsamości, nie po seedzie ani zawartości): wołający trzyma jedną
    * instancję na grę, a inny obiekt (nawet o tym samym seedzie) wymienia scenę miasta na nową.
-   * Szczegółowość wybiera scena: pierwszy widok makiety to `pelny`, warstw `prosty`; `'makieta'` na widoku `prosty` buduje `pelny` od
-   * nowa (stary zwalnia), a warstwy zostają na bieżącym widoku (na `pelny` spłaszczone). W każdej chwili istnieje jedna geometria.
+   * Szczegółowość wybiera scena wg profilu miasta (`cityProfile(preset, telefon)`, `CityProfile.firstDetail`): pierwszy widok makiety to
+   * zawsze `pelny`, warstw `pelny` na Średniej i Wysokiej, a `prosty` na Niskiej i telefonie; `'makieta'` na widoku `prosty` buduje `pelny`
+   * od nowa (stary zwalnia), a warstwy zostają na bieżącym widoku (na `pelny` spłaszczone). W każdej chwili istnieje jedna geometria.
+   * Profil daje też auta i cienie statyczne makiety (`RenderContext.setStaticShadows`, odświeżane przy każdym wywołaniu, zmianie pory dnia
+   * i presetu); zmiana presetu pod pokazanym miastem buduje je od nowa przy następnym wywołaniu, jeśli zmieniły się auta.
    * `area`: prostokąt okna (px), który nie jest przykryty przez interfejs (pasek u góry, zakładki, arkusz miasta). Kamera ustawia w nim
    * całe miasto, także na telefonie w pionie, gdzie do tego trzeba oddalić ją poza `VIEW_SIZE_MAX` (limit zoomu rośnie na czas miasta).
    * Bez `area` to całe okno. Obowiązuje do `hideCity`. Zmiana trybu przy pokazanym mieście kadru nie przestawia, tylko podnosi limit
    * zoomu tak, żeby dało się oddalić do całej makiety z wieżami.
    */
   showCity(city: CityState, states: Record<number, LotState>, layer: CityLayer, area?: ScreenArea): void;
-  /** Wraca do sklepu: pokazuje go i oddaje kamerze granice, przesunięcie i zoom sprzed `showCity`. Na presecie `niska` zwalnia scenę miasta. */
+  /**
+   * Wraca do sklepu: pokazuje go, oddaje kamerze granice, przesunięcie i zoom sprzed `showCity` i przywraca cienie dynamiczne sklepu.
+   * Przy profilu z `releaseOnExit` (Niska i telefon) zwalnia scenę miasta (geometrie, materiały, drzewa), inaczej tylko ją chowa.
+   */
   hideCity(): void;
   readonly cityShown: boolean;
   /** Widok miasta, gdy jest pokazany (kotwice pinezek, wybór lokalu, stany lokali); inaczej null. */
   readonly cityView: CityView | null;
   /** Lokal miasta pod punktem ekranu (px) albo null; poza ekranem Miasta zawsze null. */
   pickCityLot(x: number, y: number): number | null;
+  /** Stan sceny miasta do pomiaru: co istnieje, w jakim trybie i ile kosztuje rysowanie. */
+  cityStats(): CityStats;
 }
 
 /** Prostokąt okna w px (początek w lewym górnym rogu). */
@@ -265,6 +304,10 @@ export function createSceneHost(deps: SceneDeps): SceneHost {
   let cityFrom: CityState | null = null; // miasto, z którego zbudowano `city`: to samo miasto nie buduje się drugi raz
   let cityOn = false;
   let cityArea: ScreenArea | null = null;   // gdzie na ekranie ma stać miasto (poza przykryciem interfejsu); null: całe okno
+  let cityCars = false;                  // czy `city` zbudowano z autami (profil z chwili budowy)
+  let cityShadows = false;               // cienie statyczne zlecone rendererowi przy pokazanym mieście
+  let cityClock = { hour: 12, weekend: false };   // godzina i dzień gry dla aut makiety (z ostatniego `syncVisuals`; bez sesji południe dnia roboczego)
+  const mobile = (): boolean => deps.isMobile ?? detectDeviceCaps().isMobile;
   let storeCamera: CameraFrame | null = null;
   let crowdWasVisible = true;            // benchmark chowa tłum sam, więc po powrocie oddajemy to, co było
 
@@ -344,9 +387,11 @@ export function createSceneHost(deps: SceneDeps): SceneHost {
     loaded?.view.setTimeOfDay(next);
     loaded?.street?.setTimeOfDay(next);
     city?.setTimeOfDay(next);
+    if (cityShadows) ctx.refreshShadows();   // słońce stoi gdzie indziej: cień statyczny trzeba przerysować (renderer też zleca to sam)
   }
 
   function syncVisuals(session: GameSession | null, force = false): void {
+    if (session) cityClock = cityClockOf(session.econ.minute);   // auta makiety jadą wg godziny i dnia gry, także bez wczytanego sklepu
     if (!session || !loaded) return;
     const now = performance.now();
     if (!force && now - lastVisual < 100) return;
@@ -496,6 +541,8 @@ export function createSceneHost(deps: SceneDeps): SceneHost {
     syncVisuals,
 
     animate(frameDt, realDt, paused) {
+      // auta makiety: czas rzeczywisty (nie przyspiesza z prędkością gry), pauza je zatrzymuje; miasto niepokazane nie liczy nic
+      if (cityOn && city) city.tick(paused ? 0 : realDt, cityClock.hour, cityClock.weekend);
       // maszyny z warsztatu nie potrzebują fabryki postaci, więc ruszają się, zanim dojdzie tłum
       if (loaded?.robots) loaded.robots.update(realDt * Math.min(paused ? 0 : loaded.world.speed, ANIM_SPEED_CAP));
       if (!loaded?.crowdView) return;
@@ -589,19 +636,31 @@ export function createSceneHost(deps: SceneDeps): SceneHost {
     },
 
     showCity(cityState, states, layer, area) {
+      const profile = cityProfile(ctx.preset, mobile());
+      const mode: CityLayer = layer === 'makieta' && !profile.mockup ? 'ruch' : layer;
       if (city && cityFrom !== cityState) dropCity();   // inne miasto (inny seed): stary widok precz
-      if (city && !city.supports(layer)) dropCity();    // makieta na prostej geometrii: pełna od nowa, prosta zwalnia się od razu
+      if (city && !city.supports(mode)) dropCity();     // makieta na prostej geometrii: pełna od nowa, prosta zwalnia się od razu
+      if (city && cityCars !== profile.cars) dropCity();   // preset zmieniony pod miastem: auta wg nowego profilu (rzadkie, więc budowa od nowa)
       if (!city) {
-        // pierwsza geometria: pełna dla makiety, prosta dla warstw (Zadanie 12 bierze ją z profilu miasta)
-        city = buildCity(cityState, states, { detail: layer === 'makieta' ? 'pelny' : 'prosty' });
+        // pierwsza geometria wg profilu (`firstDetail`): makieta zawsze pełna, warstwy pełna na Średniej i Wysokiej, prosta na Niskiej i telefonie
+        city = buildCity(cityState, states, {
+          detail: mode === 'makieta' ? 'pelny' : profile.firstDetail, cars: profile.cars, shadows: profile.shadows === 'static',
+        });
         cityFrom = cityState;
+        cityCars = profile.cars;
         city.setTimeOfDay(tod);
         ctx.scene.add(city.root);
       } else {
         city.setLots(states);
       }
       city.root.visible = true;
-      city.setLayer(layer);
+      city.setShadows(profile.shadows === 'static');
+      city.setLayer(mode);
+      city.tick(0, cityClock.hour, cityClock.weekend);   // auta stoją na ulicach od pierwszej klatki makiety
+      // cienie statyczne (tylko makieta rzuca cień; w warstwach mapa i tak niczego nie zawiera): jedno przerysowanie przy każdej zmianie sceny
+      cityShadows = profile.shadows === 'static';
+      ctx.setStaticShadows(cityShadows);
+      if (cityShadows) ctx.refreshShadows();
       if (cityOn) {
         // inny tryb przy pokazanym mieście: kadr gracza zostaje, a limit zoomu rośnie do całej makiety (i nie maleje do `hideCity`)
         ctx.rig.setViewMax(Math.max(ctx.rig.viewMax, cityFitSize()));
@@ -621,13 +680,15 @@ export function createSceneHost(deps: SceneDeps): SceneHost {
       if (!cityOn) return;
       cityOn = false;
       cityArea = null;
+      cityShadows = false;
+      ctx.setStaticShadows(false);   // cienie dynamiczne sklepu jak przed miastem
       if (storeCamera) restoreCamera(storeCamera);
       storeCamera = null;
       ctx.rig.setViewMax(VIEW_SIZE_MAX);   // zwykły limit zoomu sklepu wraca razem z jego kadrem
       setStoreVisible(true);
       if (city) {
-        if (ctx.preset === 'niska') dropCity();   // telefon i słaby sprzęt: scena miasta nie zajmuje pamięci poza zakładką
-        else city.root.visible = false;           // reszta zostawia ją na następne wejście
+        if (cityProfile(ctx.preset, mobile()).releaseOnExit) dropCity();   // telefon i słaby sprzęt: scena miasta nie zajmuje pamięci poza zakładką
+        else city.root.visible = false;                                    // reszta zostawia ją na następne wejście
       }
     },
 
@@ -638,6 +699,12 @@ export function createSceneHost(deps: SceneDeps): SceneHost {
       if (!cityOn || !city) return null;
       raycaster.setFromCamera(new Vector2((x / window.innerWidth) * 2 - 1, -(y / window.innerHeight) * 2 + 1), ctx.rig.camera);
       return city.pickLot(raycaster);
+    },
+
+    cityStats() {
+      if (!city) return { shown: cityOn, built: false, detail: null, layer: null, cars: 0, drawCalls: 0, shadowCasters: 0 };
+      const { detail, layer, cars, drawCalls, shadowCasters } = city.stats();
+      return { shown: cityOn, built: true, detail, layer, cars, drawCalls, shadowCasters };
     },
   };
 }

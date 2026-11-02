@@ -19,6 +19,14 @@ export interface RenderContext {
   readonly preset: QualityPresetId;
   setPreset(id: QualityPresetId): void;
   setTimeOfDay(t: TimeOfDay): void;
+  /**
+   * Cienie statyczne (makieta miasta): `true` wyłącza ciągłe odświeżanie mapy cienia (`shadowMap.autoUpdate`) i zleca jedno przerysowanie,
+   * `false` przywraca cienie dynamiczne sklepu dokładnie takie, jak przed miastem. Przy cieniach statycznych renderer sam zleca
+   * przerysowanie, gdy zmienia się to, od czego mapa zależy: pora dnia (słońce), preset (nowa mapa), granice kamery cienia.
+   */
+  setStaticShadows(on: boolean): void;
+  /** Zleca jedno przerysowanie mapy cienia przy następnej klatce (scena miasta się zmieniła). Przy cieniach dynamicznych jest nieszkodliwe. */
+  refreshShadows(): void;
   render(): void;
   dispose(): void;
 }
@@ -91,6 +99,12 @@ export function createRenderContext(canvas: HTMLCanvasElement, preset: QualityPr
     rig.resize(w / h);
   }
 
+  // Cienie statyczne (makieta miasta): mapa odświeża się tylko na zlecenie. Własne zdarzenia renderera, od których zależy (granice kamery
+  // cienia, pora dnia, preset), zlecają przerysowanie same, żeby nie dało się o tym zapomnieć po stronie sceny.
+  let staticShadows = false;
+  const refreshShadows = (): void => { renderer.shadowMap.needsUpdate = true; };
+  const refreshIfStatic = (): void => { if (staticShadows) refreshShadows(); };
+
   // Granice pana kamery są też granicami sklepu, które obejmuje kamera cienia.
   let fittedBounds = '';
   const offRig = rig.onChange(() => {
@@ -99,6 +113,7 @@ export function createRenderContext(canvas: HTMLCanvasElement, preset: QualityPr
     if (b && key !== fittedBounds) {
       fittedBounds = key;
       lighting.fitShadows(b.minX, b.minZ, b.maxX, b.maxZ);
+      refreshIfStatic();
     }
   });
 
@@ -107,6 +122,7 @@ export function createRenderContext(canvas: HTMLCanvasElement, preset: QualityPr
     lighting.setTimeOfDay(t);
     renderer.toneMappingExposure = p.exposure;
     post?.setBloomStrength(p.bloomStrength);
+    refreshIfStatic();   // słońce stoi gdzie indziej
   }
 
   function setPreset(id: QualityPresetId): void {
@@ -121,6 +137,7 @@ export function createRenderContext(canvas: HTMLCanvasElement, preset: QualityPr
     }
     current = next;
     lighting.setShadowMapSize(QUALITY[current].shadowMapSize);
+    refreshIfStatic();   // inny rozmiar to nowa, pusta mapa
     resize();
   }
 
@@ -148,6 +165,12 @@ export function createRenderContext(canvas: HTMLCanvasElement, preset: QualityPr
     get preset() { return current; },
     setPreset,
     setTimeOfDay,
+    setStaticShadows(on) {
+      staticShadows = on;
+      renderer.shadowMap.autoUpdate = !on;
+      if (on) refreshShadows();   // mapa sprzed trybu statycznego (sklep) nie może zostać pod miastem
+    },
+    refreshShadows,
     render() {
       if (post) post.render();
       else renderer.render(scene, rig.camera);
