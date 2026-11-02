@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -212,10 +212,30 @@ describe('chwilowe błędy sieci w vercel build', () => {
   });
 });
 
+describe('lista funkcji w skrypcie', () => {
+  const apiFiles = (dir: string): string[] => readdirSync(dir).flatMap((f) => {
+    const p = join(dir, f);
+    return statSync(p).isDirectory() ? apiFiles(p) : /\.ts$/.test(p) ? [p] : [];
+  });
+
+  it('to dokładnie siedem plików api/** z repozytorium (pięć rankingu i dwie Galerii sław), każdy z metodą, którą skrypt wywołuje', async () => {
+    const found = apiFiles(join(ROOT, 'api')).map((f) => `/${f.slice(ROOT.length + 1).replace(/\.ts$/, '')}`).sort();
+    expect(found).toEqual(FUNCTIONS.map((f) => f.path).sort());
+    expect(FUNCTIONS).toHaveLength(7);
+    expect(FUNCTIONS.filter((f) => f.path.startsWith('/api/fame/')).map((f) => `${f.method} ${f.path}`).sort()).toEqual(['GET /api/fame/list', 'POST /api/fame/submit']);
+    for (const f of FUNCTIONS) {
+      expect(f.dir).toBe(`${f.path.slice(1)}.func`);
+      expect(f.file).toBe(`${f.path.slice(1)}.js`);
+      const mod = await import(/* @vite-ignore */ join(ROOT, `${f.path.slice(1)}.ts`)) as Record<string, unknown>;
+      expect(typeof mod[f.method], f.path).toBe('function');
+    }
+  });
+});
+
 describe('ocena wyjścia .vercel/output', () => {
   const BUNDLE = Buffer.alloc(20_000, 'a');
 
-  /** Prawidłowe wyjście: pięć funkcji z konfiguracją i plikiem wejściowym, bundle w runs.func taki jak w kopii, index.html gry. */
+  /** Prawidłowe wyjście: siedem funkcji z konfiguracją i plikiem wejściowym, bundle w runs.func taki jak w kopii, index.html gry. */
   function validOutput(): { output: string; copy: string } {
     const root = fresh();
     const output = join(root, 'output');

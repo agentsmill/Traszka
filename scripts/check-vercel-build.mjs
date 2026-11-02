@@ -14,7 +14,7 @@
 //   2. Instaluje CLI Vercela do osobnego katalogu (`npm install --ignore-scripts`, domyślnie wersja z `DEFAULT_CLI_VERSION`).
 //   3. Wpisuje do kopii UDAWANY `.vercel/project.json` (fałszywe orgId/projectId; ustawienia projektu: framework vite, Node 24.x,
 //      bez nadpisanych komend) i uruchamia `vercel build`. Sprawdza w logu: poszło `npm run build`, `build:judge` przed kompilacją
-//      funkcji, build zakończony; w wyjściu `.vercel/output`: pięć funkcji, a w `runs.func` bundle sędziego bajt w bajt taki, jaki
+//      funkcji, build zakończony; w wyjściu `.vercel/output`: siedem funkcji, a w `runs.func` bundle sędziego bajt w bajt taki, jaki
 //      zbudował `build:judge`.
 //   4. Wywołuje zbudowane funkcje zwykłym Node (osobny proces, wejścia z `.vercel/output`), tak jak robi to runtime Vercela: serwer
 //      HTTP na 127.0.0.1 z adapterem `@edge-runtime/node-utils` z CLI (ten sam, którego używa `@vercel/node`), a gdy go zabraknie,
@@ -22,7 +22,7 @@
 //      JS); `fetch` poza atrapę jest blokowany i liczony. Scenariusze: ranking wyłączony (503 `ranking-off`, zero zapytań),
 //      prawdziwy bieg bierny na 3 miesiące z `RANKING_SALT` i bez niej (200, wynik równy `seasonScore(replayRun(...))` policzonemu
 //      osobno prosto z `src/sim`), bieg z inną `simVersion` (409 `old-version`), za krótka `RANKING_SALT` (503 `not-configured`),
-//      po jednym wywołaniu pozostałych czterech funkcji, brak bundla w funkcji (503 `replay-unavailable`, funkcja się ładuje).
+//      po jednym wywołaniu pozostałych sześciu funkcji (w tym wpis do Galerii sław i jej lista), brak bundla w funkcji (503 `replay-unavailable`, funkcja się ładuje).
 //      Mierzy czas odtwarzania (zimny start i ciepłe wywołania) oraz rozmiary funkcji.
 //
 // Kod wyjścia: 0 = wszystko przeszło; 1 = któryś warunek nie zachodzi (lista PASS/FAIL na końcu); 2 = zły argument.
@@ -69,13 +69,15 @@ export const FAKE_PROJECT = Object.freeze({
     framework: 'vite', nodeVersion: '24.x', buildCommand: null, devCommand: null, installCommand: null, outputDirectory: null, rootDirectory: null,
   },
 });
-/** Pięć funkcji rankingu: ścieżka w API, katalog `.func` w `.vercel/output/functions` i eksportowana metoda. */
+/** Siedem funkcji (pięć rankingu i dwie Galerii sław): ścieżka w API, katalog `.func` w `.vercel/output/functions` i eksportowana metoda. */
 export const FUNCTIONS = Object.freeze([
   { path: '/api/runs', dir: 'api/runs.func', file: 'api/runs.js', method: 'POST' },
   { path: '/api/leaderboard', dir: 'api/leaderboard.func', file: 'api/leaderboard.js', method: 'GET' },
   { path: '/api/player', dir: 'api/player.func', file: 'api/player.js', method: 'POST' },
   { path: '/api/save/upload', dir: 'api/save/upload.func', file: 'api/save/upload.js', method: 'POST' },
   { path: '/api/save/download', dir: 'api/save/download.func', file: 'api/save/download.js', method: 'POST' },
+  { path: '/api/fame/list', dir: 'api/fame/list.func', file: 'api/fame/list.js', method: 'GET' },
+  { path: '/api/fame/submit', dir: 'api/fame/submit.func', file: 'api/fame/submit.js', method: 'POST' },
 ]);
 /** Bundle sędziego w funkcji `runs` i skąd `build:judge` go bierze w kopii. */
 export const BUNDLE_IN_FUNC = 'src/server/judgeBundle.js';
@@ -91,6 +93,8 @@ const TOKEN_RO = 'atrapa-token-odczytu';
  */
 const SEED = 'szarlotka-380';
 const NICK = 'Probnik';
+/** Nick wpisu do Galerii sław w próbie (osobny od nicka biegu: Galeria nie rezerwuje nicków). */
+const FAME_NICK = 'Milioner';
 const GAME_VERSION = 'check-vercel-build';
 const SAVE_TEXT = JSON.stringify({
   format: 'traszka-przeniesienie', version: 1, seed: SEED, meta: { version: 1, partnerPoints: 0 }, save: { schema: 2, probe: GAME_VERSION },
@@ -271,7 +275,7 @@ export function dirSize(dir) {
 }
 
 /**
- * Wyjście `.vercel/output` kopii → sprawdzenia i fakty: pięć funkcji z `.vc-config.json` i plikiem wejściowym, statyczny
+ * Wyjście `.vercel/output` kopii → sprawdzenia i fakty: siedem funkcji z `.vc-config.json` i plikiem wejściowym, statyczny
  * `index.html` gry i, w `runs.func`, bundle sędziego bajt w bajt taki, jaki zbudował `build:judge` w kopii.
  */
 export function checkOutput(outputDir, copyDir) {
@@ -292,7 +296,7 @@ export function checkOutput(outputDir, copyDir) {
     if (typeof config.handler !== 'string' || !existsSync(join(dir, config.handler))) missing.push(`${f.dir}: brak pliku wejściowego ${String(config.handler)}`);
     facts.functions[f.path] = { bytes: dirSize(dir), handler: config.handler, runtime: config.runtime, launcher: config.launcherType };
   }
-  checks.push(verdict('functions', 'pięć funkcji w .vercel/output/functions (api/runs, leaderboard, player, save/upload, save/download)', missing.length === 0,
+  checks.push(verdict('functions', 'siedem funkcji w .vercel/output/functions (api/runs, leaderboard, player, save/upload, save/download, fame/list, fame/submit)', missing.length === 0,
     missing.length === 0 ? FUNCTIONS.map((f) => `${f.path} ${kb(facts.functions[f.path].bytes)}`).join(', ') : `brakuje: ${missing.join('; ')}`));
 
   const bundleFile = join(outputDir, 'functions', FUNCTIONS[0].dir, BUNDLE_IN_FUNC);
@@ -415,7 +419,7 @@ async function invokeWorker({ outputDir, atrapaFile, cliDir, simVersion, generat
     }
   }
   const loadMs = round(performance.now() - t0);
-  check('load', 'pięć funkcji ładuje się zwykłym import() i eksportuje oczekiwaną metodę (importy względne z .js)', loadErrors.length === 0,
+  check('load', 'siedem funkcji ładuje się zwykłym import() i eksportuje oczekiwaną metodę (importy względne z .js)', loadErrors.length === 0,
     loadErrors.length === 0 ? `${loadMs} ms razem` : loadErrors.join('; '));
   if (loadErrors.length > 0) return { checks, timings: {}, transport: 'brak' };
 
@@ -482,13 +486,14 @@ async function invokeWorker({ outputDir, atrapaFile, cliDir, simVersion, generat
   const ip = (n) => `203.0.113.${n}`;
   const run = (over = {}) => ({ seed: SEED, gameVersion: GAME_VERSION, generatorVersion, simVersion, mode: 'ranked', log: [], ...over });
   const submit = (key, nick, over) => ({ key, nick, run: run(over) });
+  const fameBody = (key, nick, over = {}) => ({ key, nick, seed: SEED, day: 400, cash: 1_250_000, simVersion, ...over });
   const dbCalls = () => up.log.length;
   const keys = { a: newPlayerKey(), b: newPlayerKey(), c: newPlayerKey(), d: newPlayerKey() };
   const salt = randomBytes(16).toString('hex');
   const live = { RANKING_ENABLED: '1', KV_REST_API_URL: ATRAPA_URL, KV_REST_API_TOKEN: TOKEN_RW, KV_REST_API_READ_ONLY_TOKEN: TOKEN_RO };
   const timings = { loadMs };
 
-  // 1. Ranking wyłączony: wszystkie pięć funkcji odpowiada 503 `ranking-off`, nie dotykając bazy (zmienne Upstash ustawione).
+  // 1. Ranking wyłączony: wszystkie siedem funkcji odpowiada 503 `ranking-off`, nie dotykając bazy (zmienne Upstash ustawione).
   setEnv({ KV_REST_API_URL: ATRAPA_URL, KV_REST_API_TOKEN: TOKEN_RW, KV_REST_API_READ_ONLY_TOKEN: TOKEN_RO });
   const before = dbCalls();
   const off = [
@@ -497,11 +502,13 @@ async function invokeWorker({ outputDir, atrapaFile, cliDir, simVersion, generat
     await call('/api/player', { body: { key: keys.a }, ip: ip(1) }),
     await call('/api/save/upload', { body: { key: keys.a, save: SAVE_TEXT }, ip: ip(1) }),
     await call('/api/save/download', { body: { key: keys.a }, ip: ip(1) }),
+    await call('/api/fame/list', { ip: ip(1) }),
+    await call('/api/fame/submit', { body: fameBody(keys.a, FAME_NICK), ip: ip(1) }),
   ];
   const offBad = off.filter((r) => r.status !== 503 || r.json?.error !== 'ranking-off');
-  check('off', 'bez RANKING_ENABLED wszystkie pięć funkcji odpowiada 503 ranking-off i nie robi żadnego zapytania do bazy',
+  check('off', 'bez RANKING_ENABLED wszystkie siedem funkcji odpowiada 503 ranking-off i nie robi żadnego zapytania do bazy',
     offBad.length === 0 && dbCalls() === before && redis.calls === 0,
-    offBad.length === 0 ? `5 × 503 ranking-off, zapytań do bazy: ${dbCalls() - before}` : `odpowiedzi: ${off.map((r) => `${r.status}/${r.json?.error}`).join(', ')}`);
+    offBad.length === 0 ? `${off.length} × 503 ranking-off, zapytań do bazy: ${dbCalls() - before}` : `odpowiedzi: ${off.map((r) => `${r.status}/${r.json?.error}`).join(', ')}`);
 
   // 2. Prawdziwy bieg bierny na 3 miesiące, z RANKING_SALT: zimny start (pierwsze wywołanie) i ciepłe.
   setEnv({ ...live, RANKING_SALT: salt });
@@ -547,6 +554,23 @@ async function invokeWorker({ outputDir, atrapaFile, cliDir, simVersion, generat
   const down = await call('/api/save/download', { body: { key: keys.a }, ip: ip(4) });
   check('save', 'POST /api/save/upload i /api/save/download: 200 i zapis wraca bajt w bajt',
     up1.status === 200 && down.status === 200 && down.json?.save === SAVE_TEXT, `upload ${up1.status}, download ${down.status}, zgodny: ${down.json?.save === SAVE_TEXT}`);
+
+  // 4b. Galeria sław: wpis przez zbudowaną funkcję (token zapisu), drugi wpis tego nicka nic nie zmienia, zły wpis to 422, a lista (token do odczytu).
+  const fameMark = up.log.length;
+  const fameIn = await call('/api/fame/submit', { body: fameBody(keys.a, FAME_NICK), ip: ip(4) });
+  const fameAgain = await call('/api/fame/submit', { body: fameBody(keys.b, FAME_NICK, { cash: 2_000_000 }), ip: ip(4) });
+  const fameBad = await call('/api/fame/submit', { body: fameBody(keys.a, FAME_NICK, { day: 5 }), ip: ip(4) });
+  const fameWriteTokens = up.log.slice(fameMark).map((e) => e.token);
+  const fameListMark = up.log.length;
+  const fameOut = await call('/api/fame/list', { ip: ip(4) });
+  const fameListTokens = up.log.slice(fameListMark).map((e) => e.token);
+  const fameRow = fameOut.json?.rows?.[0];
+  check('fame', 'Galeria sław: POST /api/fame/submit 200 (first), ten sam nick drugi raz first=false z tym samym at, dzień 5 to 422 fame-invalid; GET /api/fame/list 200, jeden wiersz (place, nick, at) czytany tokenem tylko do odczytu',
+    fameIn.status === 200 && fameIn.json?.first === true && fameAgain.status === 200 && fameAgain.json?.first === false
+      && fameAgain.json?.entry?.at === fameIn.json?.entry?.at && fameBad.status === 422 && fameBad.json?.error === 'fame-invalid'
+      && fameOut.status === 200 && fameOut.json?.total === 1 && fameRow?.nick === FAME_NICK && Object.keys(fameRow).sort().join() === 'at,nick,place'
+      && fameWriteTokens.includes('rw') && fameListTokens.length > 0 && fameListTokens.every((t) => t === 'ro'),
+    `submit ${fameIn.status}/${fameIn.json?.first}, drugi ${fameAgain.status}/${fameAgain.json?.first}, zły ${fameBad.status}/${fameBad.json?.error}; lista ${fameOut.status}, wpisów ${fameOut.json?.total}, wiersz ${JSON.stringify(fameRow)}, tokeny listy: ${[...new Set(fameListTokens)].join(',')}`);
 
   // 5. Bez RANKING_SALT: sól okna leży w bazie (więcej zapytań), wynik ten sam.
   setEnv(live);
@@ -744,7 +768,7 @@ export async function runCheck({ cliVersion = DEFAULT_CLI_VERSION, keep = false,
     if (facts.output?.bundleBytes) say(`  bundle sędziego w runs.func: ${kb(facts.output.bundleBytes)}`);
     if (facts.timings?.coldHandlerMs !== undefined) {
       const t = facts.timings;
-      say(`Czas odtworzenia 3 miesięcy w funkcji: zimny start ${t.coldHandlerMs} ms (z HTTP ${t.coldRoundTripMs} ms), ciepłe ${t.warmHandlerMs.join(', ')} ms (mediana ${t.warmMedianMs} ms); import 5 funkcji ${t.loadMs} ms`);
+      say(`Czas odtworzenia 3 miesięcy w funkcji: zimny start ${t.coldHandlerMs} ms (z HTTP ${t.coldRoundTripMs} ms), ciepłe ${t.warmHandlerMs.join(', ')} ms (mediana ${t.warmMedianMs} ms); import ${FUNCTIONS.length} funkcji ${t.loadMs} ms`);
     }
     if (!process.version.startsWith('v24.')) say(`Uwaga: lokalny Node to ${process.version}, a projekt na Vercelu działa na Node 24.x (runtime funkcji nodejs24.x); build i wywołania szły na lokalnym.`);
     say(failed.length === 0 ? `\nWYNIK: PASS (${results.length} sprawdzeń)` : `\nWYNIK: FAIL (${failed.length} z ${results.length}): ${failed.map((c) => c.id).join(', ')}`);
