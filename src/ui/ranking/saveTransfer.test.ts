@@ -1,20 +1,30 @@
+import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_CASHIER_LOOK } from '@/game/cashier';
-import { firmEnvelopeOf } from '@/game/firmSave';
+import { SAVE_TRANSFER_MAX_BYTES, firmEnvelopeOf, restoreFirmFrom, type FirmSaveEnvelope } from '@/game/firmSave';
 import { MemoryStorage } from '@/game/memoryStorage';
 import { loadMeta, saveMeta, type Meta } from '@/game/meta';
 import { NEWER_SAVE_NOTICE, createSession, hasStoredSave, lastSavedSeed, saveSession } from '@/game/session';
 import { bootImport } from '@/game/boot';
 import { getPlayMode, setPlayMode } from '@/game/rankedRun';
 import { entrySeed } from '@/game/seeds';
+import { storeSeedFor } from '@/sim/city/traffic';
 import { CITY_GENERATOR_VERSION } from '@/sim/city/types';
-import { createFirm } from '@/sim/firm/firm';
+import { MINUTES_PER_DAY, OPEN_FROM } from '@/sim/economy/catalog';
+import { awaitingDecision } from '@/sim/economy/economy';
+import { defaultAnswer } from '@/sim/economy/monthPreview';
+import { visibleCards } from '@/sim/economy/tycoon/cards';
+import { REMONTS } from '@/sim/economy/upgrades';
+import { applyFirmCommand, lotState } from '@/sim/firm/commands';
+import { activeStore, applyStoreCommand, createFirm, emptyStepOut, grantToFirm, openStores, stepFirmMinute } from '@/sim/firm/firm';
+import { INBOX_MAX, MAX_STORES, type FirmState } from '@/sim/firm/types';
 import { freshRun } from '@/sim/run';
+import { layoutFor } from '@/sim/store/layoutFor';
 import { SAVE_BUNDLE_FORMAT, SAVE_BUNDLE_VERSION, SAVE_MAX_BYTES } from '@/server/config';
 import { checkSave } from '@/server/saves';
 import {
-  IMPORT_KEY, SAVE_SYNC_KEY, TRANSFER_ERRORS, TRANSFER_FORMAT, applyStagedImport, exportTransfer, importTransfer, readSaveSync, stageImport,
-  writeSaveSync, type TransferBundle,
+  IMPORT_KEY, SAVE_SYNC_KEY, TRANSFER_ERRORS, TRANSFER_FORMAT, TRANSFER_HISTORY_MONTHS, TRANSFER_INBOX, applyStagedImport, compactForTransfer,
+  exportTransfer, importTransfer, readSaveSync, stageImport, writeSaveSync, type TransferBundle,
 } from './saveTransfer';
 
 let storage: MemoryStorage;
@@ -145,8 +155,8 @@ describe('przeniesienie zapisu: wszystko, czego gra potrzebuje do wczytania', ()
   });
 });
 
-describe('przeniesienie zapisu: koperta firmy (schemat 3)', () => {
-  /** Urządzenie A z zapisem zwykłej gry w schemacie 3 (firma z jednym sklepem i gotówką portfela osoby). */
+describe('przeniesienie zapisu: koperta firmy (schemat 4, a stary zapis schematu 3 też)', () => {
+  /** Urządzenie A z zapisem zwykłej gry w schemacie 4 (firma z jednym sklepem i gotówką portfela osoby). */
   function deviceAWithFirm(seed = 'pierogi-731') {
     saveMeta(meta());
     const { state, layout, info } = freshRun(seed);
@@ -157,14 +167,14 @@ describe('przeniesienie zapisu: koperta firmy (schemat 3)', () => {
     return firm;
   }
 
-  it('paczka niesie kopertę schematu 3 i przechodzi kontrolę serwera', () => {
+  it('paczka niesie kopertę schematu 4 i przechodzi kontrolę serwera', () => {
     deviceAWithFirm();
     const text = exportTransfer()!;
-    expect((JSON.parse(text) as TransferBundle).save).toMatchObject({ schema: 3, seed: 'pierogi-731', cityGeneratorVersion: CITY_GENERATOR_VERSION });
+    expect((JSON.parse(text) as TransferBundle).save).toMatchObject({ schema: 4, seed: 'pierogi-731', cityGeneratorVersion: CITY_GENERATOR_VERSION });
     expect(checkSave(text)).toEqual({ ok: true, value: text });
   });
 
-  it('saveTransfer przyjmuje schemat 3: na drugim urządzeniu gra otwiera firmę z tym samym portfelem', () => {
+  it('saveTransfer przyjmuje schemat 4: na drugim urządzeniu gra otwiera firmę z tym samym portfelem', () => {
     deviceAWithFirm();
     const text = exportTransfer()!;
     switchDevice();
@@ -177,19 +187,221 @@ describe('przeniesienie zapisu: koperta firmy (schemat 3)', () => {
     expect(loadMeta()).toEqual(meta());
   });
 
-  it('saveTransfer odrzuca schemat 4 i miasto z nowszego generatora (importTransfer i stageImport): nic nie zapisane', () => {
+  it('saveTransfer odrzuca schemat 5 i miasto z nowszego generatora (importTransfer i stageImport): nic nie zapisane', () => {
     deviceAWithFirm();
     const bundle = JSON.parse(exportTransfer()!) as Record<string, Record<string, unknown>>;
     switchDevice();
     const before = storage.keys().sort();
-    for (const newer of [{ schema: 4 }, { cityGeneratorVersion: CITY_GENERATOR_VERSION + 1 }]) {
+    for (const newer of [{ schema: 5 }, { cityGeneratorVersion: CITY_GENERATOR_VERSION + 1 }]) {
       const text = JSON.stringify({ ...bundle, save: { ...bundle.save, ...newer } });
       expect(importTransfer(text)).toEqual({ error: NEWER_SAVE_NOTICE });
       expect(stageImport(text)).toEqual({ error: NEWER_SAVE_NOTICE });
     }
     expect(storage.keys().sort()).toEqual(before);
     expect(hasStoredSave('pierogi-731')).toBe(false);
-    expect(importTransfer(JSON.stringify(bundle))).toEqual({ seed: 'pierogi-731' });   // ta sama paczka w schemacie 3 przechodzi
+    expect(importTransfer(JSON.stringify(bundle))).toEqual({ seed: 'pierogi-731' });   // ta sama paczka w schemacie 4 przechodzi
+  });
+
+  it('stary zapis schematu 3 (z ponownym wynajmem) przechodzi przez paczkę: drugie urządzenie otwiera tę samą firmę, bez :broken', () => {
+    const raw = readFileSync(new URL('../../game/fixtures/save-v3-ponowny-wynajem.json', import.meta.url), 'utf8');
+    const seed = (JSON.parse(raw) as { seed: string }).seed;
+    saveMeta(meta());
+    storage.setItem(`traszka:save:${seed}`, raw);
+    storage.setItem('traszka:last', seed);
+    const text = exportTransfer()!;
+    expect((JSON.parse(text) as TransferBundle).save).toMatchObject({ schema: 3, seed });
+    expect(storage.getItem(`traszka:save:${seed}`)).toBe(raw);   // wysłanie nie rusza zapisu lokalnego
+    switchDevice();
+    expect(importTransfer(text)).toEqual({ seed });
+    const loaded = createSession(seed);
+    expect({ fromSave: loaded.fromSave, loadNotice: loaded.loadNotice }).toEqual({ fromSave: true, loadNotice: null });
+    expect(storage.getItem(`traszka:save:${seed}:broken`)).toBeNull();
+    expect(loaded.firm!.stores.map((st) => [st.id, st.closed, st.reopened ?? null])).toEqual([[1, false, null], [2, false, true], [3, false, null]]);
+    expect(loaded.firm!.storeLimit).toBe(3);
+  });
+});
+
+// --- Pięć sklepów: paczka po kompaktowaniu ----------------------------------------------------------------------------------------------
+
+const DAY = MINUTES_PER_DAY;
+const clockOf = (f: FirmState): number => activeStore(f).econ.minute;
+
+/** Gracz klika „OK” na kartach aktywnego sklepu (odpowiedź zaznaczona z góry). */
+function answerActive(f: FirmState): void {
+  const st = activeStore(f);
+  while (awaitingDecision(st.econ)) {
+    const card = visibleCards(st.econ.tycoon.cards, st.econ.minute)[0]!;
+    expect(applyStoreCommand(f, { type: 'answerCard', seq: card.seq, answer: defaultAnswer(card) }).result.ok).toBe(true);
+  }
+}
+
+/**
+ * Gra do minuty `minute` prawdziwymi krokami firmy. Karty zaznaczone z góry potrafią wyzerować zaufanie sklepu w ciągu roku i Centrala
+ * zamyka go (§13.1), a ten test chce pięciu sklepów, które przetrwają: o północy zaufanie nie spada poniżej 70 (jak w `firmSave.test.ts`).
+ */
+function playHoldingTrust(f: FirmState, minute: number): void {
+  const out = emptyStepOut();
+  while (clockOf(f) < minute && f.over === null && !activeStore(f).econ.gameOver) {
+    if (clockOf(f) % DAY === 0) for (const st of openStores(f)) st.econ.tycoon.trust.value = Math.max(st.econ.tycoon.trust.value, 70);
+    answerActive(f);
+    stepFirmMinute(f, out);
+    out.active.length = 0;
+    out.background.length = 0;
+    out.firm.length = 0;
+  }
+}
+
+/** Remont sklepu `id` do kolejnego poziomu: poziom gracza i gotówka z góry (jak w testach firmy; debet z rat pakietów nie blokuje), potem prawdziwe polecenie. */
+function remontNext(f: FirmState, id: number): void {
+  expect(applyFirmCommand(f, { type: 'switchStore', storeId: id }, emptyStepOut())).toEqual({ ok: true });
+  const def = REMONTS[activeStore(f).econ.remontLevel]!;
+  grantToFirm(f, (s) => { s.level = Math.max(s.level, def.minLevel); s.cash = Math.max(s.cash, 0) + def.cost; });
+  const done = applyStoreCommand(f, { type: 'startRemont' }).result;
+  expect(done.ok, `sklep #${id} do poziomu ${def.level}: ${done.text}; gotówka ${f.person.wallet}`).toBe(true);
+}
+
+/** Wolny lokal z największym układem po trzecim remoncie (najcięższy sklep, jaki da się wynająć). */
+function largestFreeLot(f: FirmState): number {
+  const size = (id: number): number => layoutFor(storeSeedFor(f.seed, id), 3, f.city.lots[id]!.spec).cells.length;
+  const free = f.city.lots.filter((l) => lotState(f, l.id) === 'wolny');
+  return free.reduce((best, l) => (size(l.id) > size(best.id) ? l : best)).id;
+}
+
+const FIVE_SEED = 'pierogi-731';
+
+/**
+ * Pięć otwartych sklepów, cztery w największych wolnych lokalach (wynajem na raty i prawdziwa budowa), #1 po pięciu remontach, #2 i #3 po trzech,
+ * do 6:00 ostatniego dnia drugiego roku (730 dni prawdziwych kroków; test gra jeszcze ten dzień). Skróty jak w `firmSave.test.ts`: status Partnera
+ * i limit pięciu placówek od razu, poziom gracza i gotówka na remont z góry, zaufanie nie spada poniżej 70.
+ */
+function playFiveStores(): FirmState {
+  const { state, layout, info } = freshRun(FIVE_SEED);
+  const f = createFirm(FIVE_SEED, { econ: state, layout, info }, { ranked: false });
+  f.person.partner = true;
+  f.storeLimit = MAX_STORES;
+  playHoldingTrust(f, 3 * DAY + OPEN_FROM);
+  for (let i = 0; i < 4; i++) expect(applyFirmCommand(f, { type: 'rentLot', lotId: largestFreeLot(f), pay: 'raty' }, emptyStepOut())).toEqual({ ok: true });
+  playHoldingTrust(f, Math.max(...f.builds.map((b) => b.readyDay)) * DAY + OPEN_FROM + 1);
+  expect(openStores(f)).toHaveLength(5);
+  // remont trwa kilka dni (sklep zamknięty), więc kolejne poziomy co 8 dni
+  for (let round = 0; round < 5; round++) {
+    remontNext(f, 1);
+    if (round < 3) for (const id of [2, 3]) remontNext(f, id);
+    playHoldingTrust(f, clockOf(f) + 8 * DAY);
+  }
+  expect(f.stores.map((s) => s.econ.remontLevel)).toEqual([5, 3, 3, 0, 0]);
+  expect(applyFirmCommand(f, { type: 'switchStore', storeId: 1 }, emptyStepOut())).toEqual({ ok: true });
+  playHoldingTrust(f, 730 * DAY + OPEN_FROM);
+  return f;
+}
+
+let fiveMemo: FirmState | null = null;
+const fiveStores = (): FirmState => (fiveMemo ??= playFiveStores());
+
+const bytes = (x: unknown): number => new TextEncoder().encode(typeof x === 'string' ? x : JSON.stringify(x)).length;
+
+/** Firma z tekstu koperty, jak przy wczytaniu w przeglądarce (do porównań z tym, co otworzy drugie urządzenie). */
+function opened(text: string): FirmState {
+  const r = restoreFirmFrom(JSON.parse(text) as unknown, FIVE_SEED);
+  if (!r.ok) throw new Error(`firma się nie otworzyła: ${r.reason}`);
+  return r.firm;
+}
+
+describe('paczka „Wyślij zapis” przy pięciu sklepach (compactForTransfer)', () => {
+  /** Meta ze średnio rozbudowaną siecią sklepów (12 wpisów), jak w pomiarze rozmiaru w `firmSave.test.ts`. */
+  const bigMeta = (): Meta => meta({
+    partnerPoints: 120, network: Array.from({ length: 12 }, (_, n) => ({ seed: `stary-sklep-${n}`, income: 400, level: 21, margin: 90_000 })),
+  });
+
+  it('pięć otwartych sklepów (dwa po remoncie 3, jeden po 5), 24 miesiące prawdziwych kroków: paczka po compactForTransfer ≤ 65 536 B i wraca ok', () => {
+    const f = fiveStores();
+    saveMeta(bigMeta());
+    storage.setItem('traszka:last', FIVE_SEED);
+    // ostatnia doba drugiego roku co 5 minut: paczka jest największa w ciągu dnia, gdy palety z dostawy stoją w sklepach (o 6:00 ich nie ma)
+    let text = '';
+    let local = '';
+    let at = 0;
+    let pallets = 0;
+    for (let m = 0; m < DAY; m += 5) {
+      const envText = JSON.stringify(firmEnvelopeOf(f));
+      storage.setItem(`traszka:save:${FIVE_SEED}`, envText);
+      const sent = exportTransfer()!;
+      expect(storage.getItem(`traszka:save:${FIVE_SEED}`)).toBe(envText);   // zapis lokalny bez zmian
+      if (bytes(sent) > bytes(text)) {
+        [text, local, at] = [sent, envText, clockOf(f) % DAY];
+        pallets = openStores(f).reduce((n, st) => n + st.econ.pallets.length, 0);
+      }
+      playHoldingTrust(f, clockOf(f) + 5);
+    }
+    expect(f.over).toBeNull();
+    expect(openStores(f).map((s) => [s.id, s.econ.remontLevel])).toEqual([[1, 5], [2, 3], [3, 3], [4, 0], [5, 0]]);
+    expect(openStores(f).map((s) => s.econ.history.length)).toEqual([24, 24, 24, 24, 24]);   // #2–#5 otwarte przed końcem pierwszego miesiąca
+    expect(f.inbox).toHaveLength(INBOX_MAX);
+    expect(pallets, 'największa paczka to ta z paletami w sklepach').toBeGreaterThan(0);
+
+    const full = bytes({ format: TRANSFER_FORMAT, version: 1, seed: FIVE_SEED, meta: JSON.parse(text).meta, save: JSON.parse(local) });
+    const total = bytes(text);
+    const save = (JSON.parse(text) as TransferBundle).save as unknown as FirmSaveEnvelope;
+    console.log(`Paczka „Wyślij zapis”, pięć sklepów (remonty 5, 3, 3, 0, 0), dzień 730, największa o ${Math.floor(at / 60)}:${String(at % 60).padStart(2, '0')} `
+      + `(palet ${pallets}): ${total} B z ${SAVE_TRANSFER_MAX_BYTES} B po kompaktowaniu (bez kompaktowania ${full} B); sklepy: `
+      + `${save.stores.map((st) => bytes(st)).join(' + ')} B, skrzynka ${save.firm.inbox.length} wpisów.`);
+    expect(total).toBeLessThanOrEqual(SAVE_TRANSFER_MAX_BYTES);
+    expect(full, 'bez kompaktowania paczka by się nie zmieściła: test sprawdza to, po co jest compactForTransfer').toBeGreaterThan(SAVE_TRANSFER_MAX_BYTES);
+    expect(save.stores.map((st) => 'layout' in st)).toEqual([false, false, false, false, false]);   // układy odtwarzalne, także po remoncie 5
+    expect(checkSave(text)).toEqual({ ok: true, value: text });
+    storage.setItem(`traszka:save:${FIVE_SEED}`, local);
+    const localFirm = opened(local);
+
+    // drugie urządzenie: ta sama firma, pięć sklepów z tymi samymi remontami, ten sam portfel, bez :broken
+    switchDevice();
+    expect(importTransfer(text)).toEqual({ seed: FIVE_SEED });
+    const loaded = createSession(FIVE_SEED);
+    expect({ fromSave: loaded.fromSave, loadNotice: loaded.loadNotice, ephemeral: loaded.ephemeral }).toEqual({ fromSave: true, loadNotice: null, ephemeral: false });
+    expect(storage.getItem(`traszka:save:${FIVE_SEED}:broken`)).toBeNull();
+    const g = loaded.firm!;
+    expect(openStores(g).map((s) => [s.id, s.lotId, s.econ.remontLevel])).toEqual(openStores(localFirm).map((s) => [s.id, s.lotId, s.econ.remontLevel]));
+    expect(g.person).toEqual(localFirm.person);
+    expect(g.storeLimit).toBe(MAX_STORES);
+    expect(g.stores.map((s) => s.layout)).toEqual(localFirm.stores.map((s) => s.layout));
+    expect(g.stores.map((s) => s.econ.pallets)).toEqual(localFirm.stores.map((s) => s.econ.pallets));
+    expect(activeStore(g).econ.lastReport).toEqual(activeStore(localFirm).econ.lastReport);
+    expect(openStores(g).filter((s) => s.id !== g.activeId).map((s) => s.econ.lastReport)).toEqual([null, null, null, null]);
+    expect(openStores(g).map((s) => s.econ.history)).toEqual(openStores(localFirm).map((s) => s.econ.history.slice(-12)));
+  }, 400_000);
+
+  it('compactForTransfer: lastReport null poza aktywnym, history ≤ 12, inbox ≤ 10; zapis lokalny (firmEnvelopeOf) bez zmian', () => {
+    expect(TRANSFER_HISTORY_MONTHS).toBe(12);
+    expect(TRANSFER_INBOX).toBe(10);
+    const f = fiveStores();
+    const env = firmEnvelopeOf(f);
+    const before = JSON.stringify(env);
+    const c = compactForTransfer(env);
+    expect(JSON.stringify(env)).toBe(before);   // kompaktowanie nie zmienia koperty, z której powstaje
+    expect(JSON.stringify(firmEnvelopeOf(f))).toBe(before);
+    expect(c.firm.inbox).toEqual(env.firm.inbox.slice(-10));
+    expect(c.firm.inbox).toHaveLength(10);
+    expect({ ...c.firm, inbox: [] }).toEqual({ ...env.firm, inbox: [] });
+    expect([c.schema, c.seed, c.gameVersion, c.cityGeneratorVersion]).toEqual([env.schema, env.seed, env.gameVersion, env.cityGeneratorVersion]);
+    for (const [i, st] of c.stores.entries()) {
+      const orig = env.stores[i]!;
+      if (st.closed || orig.closed) { expect(st).toEqual(orig); continue; }
+      expect(st.econ.history).toEqual(orig.econ.history.slice(-12));
+      expect(st.econ.history.length).toBeLessThanOrEqual(12);
+      expect(st.econ.lastReport).toEqual(st.id === env.firm.activeId ? orig.econ.lastReport : null);
+      // reszta sklepu bez zmian
+      expect({ ...st, econ: { ...st.econ, history: [], lastReport: null } }).toEqual({ ...orig, econ: { ...orig.econ, history: [], lastReport: null } });
+    }
+    expect(env.stores.filter((st) => !st.closed && st.econ.lastReport !== null).length).toBe(5);   // test nie jest pusty: każdy sklep miał raport
+  }, 400_000);
+
+  it('compactForTransfer nie rzuca na uszkodzonej kopercie (zapis z przeglądarki nie jest pewny) i nie rusza zamkniętych sklepów', () => {
+    const odd = {
+      schema: 4, seed: 'x', gameVersion: 'v', cityGeneratorVersion: 1, firm: { activeId: 1, inbox: 'nic' },
+      stores: [null, 7, { id: 1, closed: false, econ: { history: 'x', lastReport: { a: 1 } } }, { id: 2, closed: true, econ: { remontLevel: 1 } }, { id: 3, closed: false }],
+    } as unknown as FirmSaveEnvelope;
+    const c = compactForTransfer(odd);
+    expect(c.stores).toEqual([null, 7, { id: 1, closed: false, econ: { history: 'x', lastReport: { a: 1 } } }, { id: 2, closed: true, econ: { remontLevel: 1 } }, { id: 3, closed: false }]);
+    expect(c.firm).toEqual({ activeId: 1, inbox: 'nic' });
   });
 });
 

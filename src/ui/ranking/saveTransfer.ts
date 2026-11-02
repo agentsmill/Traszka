@@ -1,4 +1,4 @@
-import { isNewerSave } from '@/game/firmSave';
+import { isFirmEnvelope, isNewerSave, type FirmSaveEnvelope, type SavedStore } from '@/game/firmSave';
 import { loadMeta, sanitizeMeta, saveMeta, type Meta } from '@/game/meta';
 import { setPlayMode } from '@/game/rankedRun';
 import { NEWER_SAVE_NOTICE, lastSavedSeed } from '@/game/session';
@@ -8,8 +8,10 @@ import { isRec } from '@/sim/guards';
  * Paczka do „Wyślij zapis” i „Pobierz zapis” (spec §14.7): wszystko, czego gra potrzebuje, żeby na drugim urządzeniu wczytać
  * się tak jak na pierwszym (decyzja właściciela gry, 2026-10-28): meta (gracz, sieć sklepów, Punkty Partnera, seria dni,
  * ustawienia), zapis bieżącego sklepu (ostatnio granego) i to, który sklep otworzyć. Zapis sklepu to schemat 2 (jeden sklep, ok. 10 KB po
- * pełnym sezonie) albo koperta firmy ze schematu 3 (`firmSave.ts`: trzy sklepy po dwóch remontach na koniec roku to ok. 36 KB, a dwa po trzech
- * remontach na koniec drugiego roku ok. 27 KB, bo odtwarzalne układy nie leżą w zapisie; test rozmiaru pilnuje 64 KB). Pozostałe sklepy zapisane na pierwszym urządzeniu zostają tam. Klucza gracza w paczce nie
+ * pełnym sezonie) albo koperta firmy ze schematu 4 albo 3 (`firmSave.ts`: trzy sklepy po dwóch remontach na koniec roku to ok. 36 KB, a dwa po
+ * trzech remontach na koniec drugiego roku ok. 27 KB, bo odtwarzalne układy nie leżą w zapisie). Od etapu 4b firma ma do pięciu sklepów, więc
+ * koperta w paczce jest kompaktowana (`compactForTransfer`); test rozmiaru pilnuje 64 KB przy pięciu sklepach po dwóch latach. Pozostałe sklepy
+ * zapisane na pierwszym urządzeniu zostają tam. Klucza gracza w paczce nie
  * ma: serwer trzyma paczkę pod skrótem klucza i samego klucza nie przechowuje (§14.7), a drugie urządzenie ma już ten klucz z kodu.
  *
  * Gra trzyma metę i sesję w pamięci i zapisuje je przy każdym zamknięciu karty (`visibilitychange`, `pagehide`), także wtedy, gdy
@@ -44,7 +46,46 @@ const parse = (text: string | null): unknown => {
   }
 };
 
-/** Paczka z tego urządzenia (tekst JSON) albo null, gdy nie ma czego wysłać: brak sklepu, uszkodzony zapis albo meta z nowszej wersji gry. */
+/** Tyle ostatnich zamkniętych miesięcy historii każdego otwartego sklepu niesie paczka (spec 4b §5.8). */
+export const TRANSFER_HISTORY_MONTHS = 12;
+/** Tyle ostatnich wpisów skrzynki zastępcy niesie paczka (spec 4b §5.8). */
+export const TRANSFER_INBOX = 10;
+
+/** Otwarty sklep w paczce: historia do `TRANSFER_HISTORY_MONTHS` miesięcy, a ostatni raport tylko w aktywnym. Reszta (i zamknięty sklep) bez zmian. */
+function compactStore(st: unknown, activeId: unknown): unknown {
+  if (!isRec(st) || st.closed !== false || !isRec(st.econ)) return st;
+  const econ = st.econ;
+  return {
+    ...st,
+    econ: {
+      ...econ,
+      ...(Array.isArray(econ.history) ? { history: (econ.history as unknown[]).slice(-TRANSFER_HISTORY_MONTHS) } : {}),
+      ...(st.id === activeId ? {} : { lastReport: null }),
+    },
+  };
+}
+
+/**
+ * Koperta firmy do paczki „Wyślij zapis” (spec 4b §5.8 Ruling): sklepy poza aktywnym bez ostatniego raportu (`lastReport: null`), historia
+ * każdego otwartego sklepu do ostatnich 12 miesięcy, skrzynka zastępcy do ostatnich 10 wpisów. Pięć sklepów po dwóch latach nie zmieściłoby
+ * się inaczej w 64 KB. Zapis lokalny zostaje pełny: funkcja nie zmienia `env`, tylko składa nową kopertę. Na drugim urządzeniu znika ostatni
+ * raport sklepów w tle i historia starsza niż rok (limit rat i status Partnera patrzą na ostatnie miesiące). Koperta przychodzi z przeglądarki,
+ * więc kształtu nie bierze na wiarę: czego nie rozpozna, przepisuje bez zmian.
+ */
+export function compactForTransfer(env: FirmSaveEnvelope): FirmSaveEnvelope {
+  const firm: unknown = env.firm;
+  const activeId = isRec(firm) ? firm.activeId : undefined;
+  return {
+    ...env,
+    firm: isRec(firm) && Array.isArray(firm.inbox) ? { ...env.firm, inbox: env.firm.inbox.slice(-TRANSFER_INBOX) } : env.firm,
+    stores: Array.isArray(env.stores) ? env.stores.map((st) => compactStore(st, activeId) as SavedStore) : env.stores,
+  };
+}
+
+/**
+ * Paczka z tego urządzenia (tekst JSON) albo null, gdy nie ma czego wysłać: brak sklepu, uszkodzony zapis albo meta z nowszej wersji gry.
+ * Koperta firmy (schemat 4 albo 3) idzie w paczce kompaktowana (`compactForTransfer`); zapis w przeglądarce zostaje taki, jaki był.
+ */
 export function exportTransfer(): string | null {
   const seed = lastSavedSeed();
   const meta = loadMeta();
@@ -56,9 +97,10 @@ export function exportTransfer(): string | null {
     return null;
   }
   if (!isRec(save)) return null;
+  const sent: Record<string, unknown> = isFirmEnvelope(save) ? { ...compactForTransfer(save as unknown as FirmSaveEnvelope) } : save;
   const { player, ...rest } = meta;
   const withoutKey: Meta = player ? { ...rest, player: { nick: player.nick, look: player.look, specialOutfits: player.specialOutfits } } : rest;
-  const bundle: TransferBundle = { format: TRANSFER_FORMAT, version: 1, seed, meta: withoutKey, save };
+  const bundle: TransferBundle = { format: TRANSFER_FORMAT, version: 1, seed, meta: withoutKey, save: sent };
   return JSON.stringify(bundle);
 }
 

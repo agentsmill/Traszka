@@ -10,7 +10,7 @@ import { planFor } from '@/sim/economy/franchisee';
 import { RELET_SHARE, applyFirmCommand, lotState, partnerProgress, rentPrice } from '@/sim/firm/commands';
 import { emptyStepOut } from '@/sim/firm/firm';
 import type { FirmCommand, FirmCommandResult } from '@/sim/firm/commands';
-import { MAX_STORES, type FirmRefusal, type FirmState } from '@/sim/firm/types';
+import { BASE_STORE_LIMIT, type FirmRefusal, type FirmState } from '@/sim/firm/types';
 import { cityLayer, firm, lotPay, selectedLot, tab, toasts, type GameActions } from '../state';
 import { percentOf, zl } from '../game/format';
 import { buttonAria, buttonLabelled, buttonsOf, click, labels, textOf, walk, type Vnode } from '../game/vnodeTree';
@@ -96,7 +96,9 @@ describe('pasek miasta (data-tut="city-status")', () => {
     const text = textOf(byTut(bar(f), 'city-status'));
     expect(text).toContain('Partner Strategiczny');
     expect(text).toContain(progressText({ kind: 'granted' }));
-    expect(textOf(bar(f))).toContain(`placówki 1/${MAX_STORES}`);
+    expect(textOf(bar(f))).toContain(`placówki 1/${BASE_STORE_LIMIT}`);   // limit firmy (3 na start), a nie twardy sufit pięciu
+    f.storeLimit = 4;
+    expect(textOf(bar(f))).toContain('placówki 1/4');
   });
 
   it('w rankingu pasek mówi tekst rankingowy Centrali, a nie „Partner Strategiczny”', () => {

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { createEconomy, expectedDailyCustomers, type StoreFittings } from '@/sim/economy/economy';
 import { NEUTRAL_SITE } from '@/sim/economy/site';
@@ -7,8 +8,8 @@ import { layoutFor } from '@/sim/store/layoutFor';
 import { DISTRICTS, siteHours } from './districts';
 import { generateCity, lotById } from './generateCity';
 import {
-  ESTIMATE_SHIFT, ESTIMATE_SPREAD, LOCAL_RANGE, RIVAL_FACTOR, RIVAL_RADIUS_M, lotEstimate, lotLocalFactor, lotTrafficMult,
-  rivalsNear, siteFor, sourceProfile, storeSeedFor, streetIntensity,
+  ESTIMATE_SHIFT, ESTIMATE_SPREAD, LOCAL_RANGE, OWN_FACTOR, OWN_RADIUS_M, RIVAL_FACTOR, RIVAL_RADIUS_M, lotEstimate, lotLocalFactor,
+  lotTrafficMult, ownNear, rivalsNear, siteFor, sourceProfile, storeSeedFor, streetIntensity,
 } from './traffic';
 import type { CityLot, CityState, SourceKind, StoreDistrict, TrafficSource } from './types';
 
@@ -441,4 +442,119 @@ describe('lotEstimate: widełki klientów na karcie lokalu', () => {
       expect(lotEstimate(seed, c, lot.id).who, seed).toEqual(expected);
     }
   });
+});
+
+// --- Własne sklepy w promieniu (kanibalizacja, etap 4b §5.4) -------------------------------------------------------------
+
+describe('własne sklepy w promieniu: kanibalizacja', () => {
+  const FLAGS = { extra: true, ownCosts: false, firmDebt: true, weatherHash: 12345 } as const;
+  const digest = (x: unknown): string => createHash('sha256').update(JSON.stringify(x)).digest('hex');
+
+  it('stałe [W] start: promień 150 m jak rywale, ×0,9 za każdy własny sklep (ręczne miasto ma lokale w 100 m i w 200 m)', () => {
+    expect(OWN_RADIUS_M).toBe(150);
+    expect(OWN_FACTOR).toBe(0.9);
+    expect(OWN_RADIUS_M).toBeGreaterThan(100);
+    expect(OWN_RADIUS_M).toBeLessThan(200);
+  });
+
+  it('ownNear: własne lokale bliżej niż 150 m, od najbliższego, bez siebie', () => {
+    const c = handCity([]);
+    expect(ownNear(c, 0, [])).toEqual([]);
+    // 3 (200 m) i 5 (dokładnie 150 m) są za daleko, 0 to sam lokal; remis odległości rozstrzyga numer lokalu
+    expect(ownNear(c, 0, [5, 3, 2, 1, 0])).toEqual([{ lotId: 1, meters: 100 }, { lotId: 2, meters: 100 }]);
+    expect(ownNear(c, 0, [0])).toEqual([]);
+    expect(ownNear(c, 4, [6, 0])).toEqual([{ lotId: 6, meters: 100 }]);
+    // rywal nie jest własnym sklepem i odwrotnie: ownNear patrzy tylko na listę `own`, nie na stan lokalu z generatora
+    expect(ownNear(handCity([1]), 0, [])).toEqual([]);
+    expect(ownNear(handCity([1]), 0, [1])).toEqual([{ lotId: 1, meters: 100 }]);
+  });
+
+  it('siteFor z own: traffic = bez own × 0.9^k (k własnych w promieniu), weekendTraffic tak samo; lokal startowy dalej NEUTRAL_SITE', () => {
+    const hand = handCity([]);
+    const base = siteFor(hand, 0, FLAGS);
+    expect(siteFor(hand, 0, FLAGS, [1]).traffic / base.traffic).toBeCloseTo(0.9, 12);
+    expect(siteFor(hand, 0, FLAGS, [1, 2]).traffic / base.traffic).toBeCloseTo(0.81, 12);
+    expect(siteFor(hand, 0, FLAGS, [3, 5, 0]).traffic).toBe(base.traffic);
+    // rywal i własny sklep naraz: 0,8 × 0,9
+    expect(siteFor(handCity([1]), 0, FLAGS, [2]).traffic / base.traffic).toBeCloseTo(0.72, 12);
+    // reszta lokalu (dzielnica, koszyk, kradzieże, flagi) bez zmian
+    const { traffic: _a, weekendTraffic: _b, ...rest } = siteFor(hand, 0, FLAGS, [1, 2]);
+    const { traffic: _c, weekendTraffic: _d, ...restBase } = base;
+    expect(rest).toEqual(restBase);
+
+    // prawdziwe miasto, Biurowce (mają ruch weekendowy): własne sklepy to inne lokale miasta w promieniu
+    let checked = 0;
+    for (const seed of SEEDS.slice(0, 12)) {
+      const c = cityOf(seed);
+      for (const l of nonStart(c).filter((x) => x.district === 'biurowce')) {
+        const near = c.lots.filter((o) => o.id !== l.id && (o.x - l.x) * (o.x - l.x) + (o.y - l.y) * (o.y - l.y) < OWN_RADIUS_M * OWN_RADIUS_M).map((o) => o.id);
+        const far = c.lots.filter((o) => o.id !== l.id && !near.includes(o.id)).map((o) => o.id).slice(0, 3);
+        if (near.length === 0) continue;
+        const without = siteFor(c, l.id, FLAGS);
+        const own = siteFor(c, l.id, FLAGS, [...far, ...near]);
+        let k = 1;
+        for (let i = 0; i < near.length; i++) k *= 0.9;
+        expect(ownNear(c, l.id, [...far, ...near]).map((o) => o.lotId).sort((a, b) => a - b)).toEqual([...near].sort((a, b) => a - b));
+        expect(own.traffic / without.traffic, `${seed} lokal ${l.id}`).toBeCloseTo(k, 12);
+        expect(own.weekendTraffic! / without.weekendTraffic!, `${seed} lokal ${l.id}: weekend`).toBeCloseTo(k, 12);
+        checked++;
+      }
+      // lokal startowy: własny sklep obok nie zmienia sklepu startowego (gra jak zatwierdzony balans 4a.1)
+      const beside = c.lots.filter((o) => o.id !== c.startLotId).map((o) => o.id);
+      expect(siteFor(c, c.startLotId, FLAGS, beside), seed).toEqual({ ...NEUTRAL_SITE, ...FLAGS });
+    }
+    expect(checked, 'zestaw seedów ma lokale Biurowców z sąsiadami w promieniu').toBeGreaterThan(5);
+    expect(siteFor(hand, 4, FLAGS, [6, 0])).toEqual({ ...NEUTRAL_SITE, ...FLAGS });
+  });
+
+  it('siteFor bez own ≡ dzisiejszy wynik co do bitu (Object.is na traffic)', () => {
+    const seeds = ['kiełbasa-42', 'kiełbasa-12', 'a', 'b', 'traszka-1', 'traszka-3', 'miasto-1', 'miasto-2'];
+    const sites = seeds.flatMap((seed) => cityOf(seed).lots.map((l) => siteFor(cityOf(seed), l.id, FLAGS)));
+    // skrót wyników `siteFor` z kodu sprzed etapu 4b (89149ab) na tych samych miastach: JSON liczb zmiennoprzecinkowych jest dokładny
+    expect(sites).toHaveLength(2168);
+    expect(digest(sites)).toBe('8a3adebc33fedfd2cf124aec95e1d83f23cb996ff7f8f68f9df3c0e74cbc6ffd');
+    for (const seed of seeds) {
+      const c = cityOf(seed);
+      for (const l of c.lots) {
+        const today = siteFor(c, l.id, FLAGS);
+        // pusta lista i własne sklepy poza promieniem nie mnożą przez 1: wynik to te same bity
+        const far = c.lots.filter((o) => o.id !== l.id && (o.x - l.x) * (o.x - l.x) + (o.y - l.y) * (o.y - l.y) >= OWN_RADIUS_M * OWN_RADIUS_M).map((o) => o.id);
+        for (const own of [[], far]) {
+          const site = siteFor(c, l.id, FLAGS, own);
+          expect(Object.is(site.traffic, today.traffic), `${seed} lokal ${l.id}`).toBe(true);
+          expect(Object.is(site.weekendTraffic, today.weekendTraffic)).toBe(true);
+          expect(site).toEqual(today);
+        }
+        if (l.id !== c.startLotId) expect(Object.is(today.traffic, lotTrafficMult(c, l.id))).toBe(true);
+      }
+    }
+  }, 20_000);
+
+  it('lotEstimate z own: trueDaily mniejsze niż bez own, gdy własny sklep jest w promieniu', () => {
+    // skrót widełek z kodu sprzed etapu 4b (89149ab): bez `own` nic się nie zmienia
+    const est = ['kiełbasa-42', 'traszka-1'].flatMap((seed) => cityOf(seed).lots.map((l) => lotEstimate(seed, cityOf(seed), l.id)));
+    expect(digest(est)).toBe('1c96bd570d37435b27c517659bb1d86cc0b31d8dcd748a220cbb78f1fb394e3f');
+
+    let checked = 0;
+    for (const seed of SEEDS.slice(0, 8)) {
+      const c = cityOf(seed);
+      for (const l of c.lots.filter((x) => x.state === 'wolny')) {
+        const near = c.lots.filter((o) => o.id !== l.id && (o.x - l.x) * (o.x - l.x) + (o.y - l.y) * (o.y - l.y) < OWN_RADIUS_M * OWN_RADIUS_M);
+        if (near.length === 0) continue;
+        const without = lotEstimate(seed, c, l.id);
+        const own = lotEstimate(seed, c, l.id, undefined, [near[0]!.id]);
+        expect(own.trueDaily, `${seed} lokal ${l.id}`).toBeLessThan(without.trueDaily);
+        expect(own.trueDaily).toBeGreaterThanOrEqual(own.lo);
+        expect(own.trueDaily).toBeLessThanOrEqual(own.hi);
+        expect(own.who).toEqual(without.who);
+        expect(lotEstimate(seed, c, l.id, undefined, [])).toEqual(without);
+        checked++;
+      }
+    }
+    expect(checked, 'wolne lokale z sąsiadem w promieniu').toBeGreaterThan(3);
+    // lokal startowy: widełki jak bez własnych sklepów (NEUTRAL_SITE)
+    const c = cityOf('kiełbasa-42');
+    const others = c.lots.filter((l) => l.id !== c.startLotId).map((l) => l.id);
+    expect(lotEstimate('kiełbasa-42', c, c.startLotId, undefined, others)).toEqual(lotEstimate('kiełbasa-42', c, c.startLotId));
+  }, 30_000);
 });

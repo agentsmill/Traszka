@@ -6,7 +6,7 @@ import { DEBT_LIMIT } from '@/sim/economy/catalog';
 import { MAX_MINUTES_PER_ADVANCE, gameMinutesPerSecond, type EconClock } from '@/sim/economy/clock';
 import { applyCommand, type Command, type CommandOutcome } from '@/sim/economy/commands';
 import {
-  DEBT_WARN, awaitingDecision, checkDebt, createEconomy, stepMinute, type EconEvent, type EconEventKind, type EconomyState,
+  DEBT_WARN, awaitingDecision, checkDebt, createEconomy, stepMinute, type EconEvent, type EconEventKind, type EconomyState, type MonthReport,
 } from '@/sim/economy/economy';
 import { MILESTONES } from '@/sim/economy/milestones';
 import { defaultAnswer } from '@/sim/economy/monthPreview';
@@ -17,7 +17,9 @@ import { layoutFor } from '@/sim/store/layoutFor';
 import type { StoreLayout } from '@/sim/store/types';
 import { NOTICE_NO_CREDIT, closeDueStores, endedByTrust } from './closure';
 import { grantPartnerIfDue, openDueBuilds } from './commands';
-import { INBOX_MAX, type FirmState, type FirmStepOut, type FirmStore } from './types';
+import {
+  BASE_STORE_LIMIT, INBOX_MAX, MAX_STORES, STORE_UNLOCK_TURNOVER, type FirmState, type FirmStepOut, type FirmStore,
+} from './types';
 
 /*
  * Firma (spec §11, §12, §14.1). Gotówka i Ogonki należą do osoby (`person`), a nie do sklepu: przed krokiem sklepu i przed każdym jego
@@ -29,7 +31,10 @@ import { INBOX_MAX, type FirmState, type FirmStepOut, type FirmStore } from './t
 /** Zdarzenia sklepu w tle, które czekają na „OK” z nazwą sklepu (§12); reszta zamyka się sama (poziom, remont i cel dostają w grze toast z nazwą sklepu, `BACKGROUND_TOAST`). */
 const IMPORTANT: readonly EconEventKind[] = ['month', 'remanent', 'trust-tier', 'gameover'];
 
-/** Firma z jednym sklepem: startowym (#1, w lokalu startowym miasta), na gotówce i Ogonkach tego sklepu. Miasto liczy się z seeda. */
+/**
+ * Firma z jednym sklepem: startowym (#1, w lokalu startowym miasta), na gotówce i Ogonkach tego sklepu. Miasto liczy się z seeda. Bez badań,
+ * z limitem trzech placówek, bez celów firmy i bez wpisu do Galerii (4b).
+ */
 export function createFirm(
   seed: string, start: { econ: EconomyState; layout: StoreLayout; info: StoreInfo }, opts: { ranked: boolean },
 ): FirmState {
@@ -41,6 +46,7 @@ export function createFirm(
     stores: [{ id: 1, lotId: city.startLotId, econ, layout: start.layout, info: start.info, closed: false, notice: null }],
     activeId: 1, builds: [], monthInvest: 0, inbox: [],
     weatherHash: econ.seedHash, over: null,
+    research: {}, storeLimit: BASE_STORE_LIMIT, goals: { ready: [], claimed: [] }, fame: null,
   };
   refreshSites(f);
   return f;
@@ -88,19 +94,29 @@ export function grantToFirm(f: FirmState, grant: (s: EconomyState) => void): voi
  */
 export const storeSeedOf = (seed: string, city: CityState, lotId: number): string => (lotId === city.startLotId ? seed : storeSeedFor(seed, lotId));
 
+/** Lokale otwartych sklepów firmy rosnąco po `id`, bez sklepu `exceptId`: własne sklepy, które podbierają mu klientów (4b §5.4). */
+export function ownLotsOf(f: FirmState, exceptId?: number): number[] {
+  return openStores(f).filter((s) => s.id !== exceptId).map((s) => s.lotId);
+}
+
 /**
  * Dzielnica i flagi sklepu w mieście (§11.2, §11.4). `openIds` to otwarte sklepy (rosnąco) razem z tym: ZUS i księgową płaci
  * najniższe `id`, debet sprawdza firma od dwóch sklepów, pogodę miasta losuje sklep startowy. `reopened`: sklep po ponownym wynajmie
- * (§13.3) jest dodatkowy także w lokalu startowym, więc nie ma gwarancji.
+ * (§13.3) jest dodatkowy także w lokalu startowym, więc nie ma gwarancji. Ruch lokalu liczy się z lokalami pozostałych otwartych sklepów
+ * (kanibalizacja, 4b); sklep w lokalu startowym ma `NEUTRAL_SITE`, więc go to nie dotyczy.
  */
 function siteOf(f: FirmState, lotId: number, id: number, openIds: readonly number[], reopened = false): SiteMods {
   const start = lotId === f.city.startLotId;
-  return siteFor(f.city, lotId, { extra: !start || reopened, ownCosts: id === openIds[0], firmDebt: openIds.length >= 2, weatherHash: start ? null : f.weatherHash });
+  return siteFor(
+    f.city, lotId, { extra: !start || reopened, ownCosts: id === openIds[0], firmDebt: openIds.length >= 2, weatherHash: start ? null : f.weatherHash },
+    ownLotsOf(f, id),
+  );
 }
 
 /**
  * Flagi z §11.2 i §11.4 po każdej zmianie składu. Jeden sklep startowy to sklep jak dziś: bez `site`, chyba że został wynajęty ponownie
- * (`reopened`): wtedy ma flagę dodatkowego sklepu (bez gwarancji) także sam.
+ * (`reopened`): wtedy ma flagę dodatkowego sklepu (bez gwarancji) także sam. Każda zmiana składu przelicza też kanibalizację (`ownLotsOf`):
+ * otwarcie, ponowne otwarcie i zamknięcie sklepu zmienia ruch sąsiednich własnych sklepów.
  */
 export function refreshSites(f: FirmState): void {
   const open = openStores(f);
@@ -176,6 +192,28 @@ export function reopenStoreAt(f: FirmState, st: FirmStore, minute: number): Firm
 
 export const emptyStepOut = (): FirmStepOut => ({ active: [], background: [], firm: [] });
 
+/** Obrót sieci w miesiącu (4b §5.4): suma obrotu (`counters.revenue`) raportów jednego zamknięcia miesiąca, w kolejności sklepów. */
+export function networkTurnover(reports: readonly MonthReport[]): number {
+  let sum = 0;
+  for (const r of reports) sum += r.counters.revenue;
+  return sum;
+}
+
+/**
+ * Odblokowanie kolejnej placówki przy zamknięciu miesiąca w kilku sklepach (4b §5.4): obrót sieci ≥ `STORE_UNLOCK_TURNOVER[storeLimit]`
+ * podnosi limit o jedną placówkę (najwyżej jedną na miesiąc, nigdy ponad `MAX_STORES`) i daje zdarzenie `unlock`. Tylko w zwykłej grze, która
+ * trwa: bieg rankingowy i firma po końcu gry tu w ogóle nie wchodzą.
+ */
+function unlockIfDue(f: FirmState, reports: readonly MonthReport[], out: FirmStepOut): void {
+  if (f.ranked || f.over !== null || f.storeLimit >= MAX_STORES) return;
+  const need = STORE_UNLOCK_TURNOVER[f.storeLimit];
+  if (need === undefined) return;
+  const turnover = networkTurnover(reports);
+  if (turnover < need) return;
+  f.storeLimit += 1;
+  out.firm.push({ kind: 'unlock', params: { limit: f.storeLimit, turnover } });
+}
+
 /** Koniec gry z debetu całej gotówki: każdy otwarty sklep dostaje `gameOver`, więc ekran końca pokazuje aktywny. */
 function endByDebt(f: FirmState): void {
   f.over = 'debt';
@@ -207,7 +245,7 @@ function deputy(f: FirmState, st: FirmStore, events: EconEvent[], out: FirmStepO
  * 4. debet całej gotówki raz po minucie wszystkich sklepów (§11.4), od dwóch sklepów;
  * 5. zamknięcia sklepów (zaufanie 0 przy zamknięciu miesiąca, koniec wypowiedzenia; nie po końcu gry z debetu), potem status Partnera
  *    po `month` sklepu startowego;
- * 6. raport sieci przy zamknięciu miesiąca w kilku sklepach;
+ * 6. raport sieci przy zamknięciu miesiąca w kilku sklepach, a po nim odblokowanie kolejnej placówki obrotem sieci (4b, nie w rankingu);
  * 7. pierwszy remanent któregokolwiek sklepu to wiedza osoby;
  * 8. portfel do kas wszystkich sklepów.
  */
@@ -262,6 +300,7 @@ export function stepFirmMinute(f: FirmState, out: FirmStepOut): void {
     });
     // pakiet zapłacony, gdy działał jeszcze jeden sklep (budowa przez koniec miesiąca), czeka na pierwsze podsumowanie sieci (§11.5)
     f.monthInvest = 0;
+    unlockIfDue(f, months.map((m) => m.report), out);
   }
 
   if (!f.person.remanentKnown && stepped.some(({ st }) => st.econ.franchisee.remanent.known)) f.person.remanentKnown = true;

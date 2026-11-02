@@ -2,7 +2,7 @@ import { t } from '@/i18n';
 import { DISTRICT_COLOR, TRAFFIC_BUSY, TRAFFIC_QUIET, type CityLayer } from '@/render/city/buildCity';
 import { partnerProgress } from '@/sim/firm/commands';
 import { openStores } from '@/sim/firm/firm';
-import { MAX_STORES, type FirmState } from '@/sim/firm/types';
+import type { FirmState } from '@/sim/firm/types';
 import { cityLayer, firm, selectedLot, type GameActions } from '../state';
 import { zl } from '../game/format';
 import { LotCard } from './LotCard';
@@ -52,7 +52,7 @@ export function CityBar({ f }: { f: FirmState; v: number }) {
       </div>
       <div class="tt-citytools">
         <span class="tt-cityname">{f.city.name}</span>
-        <span class="tt-muted">{t`placówki ${openStores(f).length + f.builds.length}/${MAX_STORES}`}</span>
+        <span class="tt-muted">{t`placówki ${openStores(f).length + f.builds.length}/${f.storeLimit}`}</span>
         <div class="tt-seg tt-layers" role="group" aria-label={t`Warstwa mapy`}>
           <button type="button" class={`tt-btn${layer === 'ruch' ? ' on' : ''}`} aria-pressed={layer === 'ruch'} onClick={() => { cityLayer.value = 'ruch'; }}>{t`Ruch`}</button>
           <button type="button" class={`tt-btn${layer === 'dzielnice' ? ' on' : ''}`} aria-pressed={layer === 'dzielnice'} onClick={() => { cityLayer.value = 'dzielnice'; }}>{t`Dzielnice`}</button>

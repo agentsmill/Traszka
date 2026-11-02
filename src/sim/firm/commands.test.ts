@@ -19,7 +19,7 @@ import {
 import {
   activeStore, applyStoreCommand, createFirm, emptyStepOut, openStoreAt, openStores, stepFirmMinute, syncWallet,
 } from './firm';
-import { MAX_STORES, type FirmBuild, type FirmRefusal, type FirmState, type FirmStepOut, type FirmStore } from './types';
+import { BASE_STORE_LIMIT, MAX_STORES, type FirmBuild, type FirmRefusal, type FirmState, type FirmStepOut, type FirmStore } from './types';
 
 /*
  * Polecenia firmy (spec §10, §12): status Partnera Strategicznego, wynajem lokalu z pakietem otwarcia (gotówka albo 12 rat), budowa,
@@ -305,18 +305,42 @@ describe('rentRefusal i applyFirmCommand rentLot: każdy powód osobno, stan bez
     rent(f, rentable(f)[0]!);
     refused(f, { type: 'rentLot', lotId: rentable(f)[0]!, pay: 'raty' }, 'limit');
     refused(f, { type: 'rentLot', lotId: rentable(f)[0]!, pay: 'gotowka' }, 'limit');
-    expect(openStores(f).length + f.builds.length).toBe(MAX_STORES);
+    expect(openStores(f).length + f.builds.length).toBe(f.storeLimit);
+    expect(f.storeLimit).toBe(BASE_STORE_LIMIT);
   });
 
   it('limit: trzy otwarte sklepy to komplet, także bez budowy', () => {
     const f = partnerFirm();
     openStoreAt(f, freeLot(f), clockOf(f));
     openStoreAt(f, rentable(f)[0]!, clockOf(f));
-    expect(openStores(f)).toHaveLength(MAX_STORES);
+    expect(openStores(f)).toHaveLength(BASE_STORE_LIMIT);
     expect(f.builds).toEqual([]);
     refused(f, { type: 'rentLot', lotId: rentable(f)[0]!, pay: 'gotowka' }, 'limit');
     refused(f, { type: 'rentLot', lotId: rentable(f)[0]!, pay: 'raty' }, 'limit');
   });
+
+  it('rentRefusal: limit przy open + builds ≥ storeLimit; przy storeLimit 4 czwarty lokal przechodzi, piąty nie', () => {
+    const f = partnerFirm(SEED, 2_000_000);
+    openStoreAt(f, freeLot(f), clockOf(f));
+    openStoreAt(f, rentable(f)[0]!, clockOf(f));
+    expect(rentRefusal(f, rentable(f)[0]!, 'gotowka')).toBe('limit');   // trzy placówki: limit startowy
+    f.storeLimit = 4;
+    const fourth = rent(f, rentable(f)[0]!);   // czwarta placówka: budowa liczy się do limitu
+    expect(openStores(f).length + f.builds.length).toBe(4);
+    refused(f, { type: 'rentLot', lotId: rentable(f)[0]!, pay: 'gotowka' }, 'limit');
+    refused(f, { type: 'rentLot', lotId: rentable(f)[0]!, pay: 'raty' }, 'limit');
+    playTo(f, openMinute(fourth));
+    openDueBuilds(f, emptyStepOut());
+    expect(openStores(f)).toHaveLength(4);
+    expect(rentRefusal(f, rentable(f)[0]!, 'gotowka')).toBe('limit');   // cztery otwarte bez budowy: komplet przy limicie 4
+    f.storeLimit = 5;
+    rent(f, rentable(f)[0]!, 'raty');   // piąta przy limicie 5
+    refused(f, { type: 'rentLot', lotId: rentable(f)[0]!, pay: 'gotowka' }, 'limit');
+    expect(openStores(f).length + f.builds.length).toBe(MAX_STORES);
+    // limit z zapisu ponad twardy sufit nic nie zmienia: MAX_STORES to twardy limit
+    f.storeLimit = 9;
+    refused(f, { type: 'rentLot', lotId: rentable(f)[0]!, pay: 'gotowka' }, 'limit');
+  }, 20_000);
 
   it('limit: zamknięty sklep nie liczy się do trzech, więc po zamknięciu jednego z trzech wynajem znów przechodzi', () => {
     const f = partnerFirm();

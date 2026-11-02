@@ -60,6 +60,18 @@ export const FIRM_UI: Dict = {
     'Cash {0}, below the debt limit of {1}: Head Office is terminating the agreements for all your branches. Thank you for your cooperation.',
   'Podsumowanie sieci': 'Network summary',
   'Zdarzenie firmy': 'Firm event',
+  // etap 4b: kolejna placówka z obrotu sieci, badania Sieci, cele sieci i pierwszy milion (teksty na start)
+  'Kolejna placówka': 'Another branch',
+  'Centrala zgadza się na czwartą placówkę. Obrót sieci {0} przekonał Dział Ekspansji, który zaraz potem wyszedł na lunch.':
+    'Head Office agrees to a fourth branch. A network turnover of {0} convinced the Expansion Department, which promptly went to lunch.',
+  'Centrala zgadza się na piątą placówkę. Obrót sieci {0} przekonał Dział Ekspansji, który zaraz potem wyszedł na lunch.':
+    'Head Office agrees to a fifth branch. A network turnover of {0} convinced the Expansion Department, which promptly went to lunch.',
+  'Badania Sieci': 'Network research',
+  'Badanie Sieci na poziomie {0}. Centrala pobrała {1}.': 'Network research at level {0}. Head Office has taken {1}.',
+  'Cel sieci': 'Network goal',
+  'Cel sieci spełniony. Nagroda czeka na odbiór w Celach.': 'Network goal reached. The reward is waiting for you in Goals.',
+  'Milion!': 'A million!',
+  'Centrala jest w szoku, księgowa w euforii.': 'Head Office is in shock, the accountant in raptures.',
   // odmowy poleceń firmy (§10.1, §10.2, §10.3)
   'W sezonie rankingowym Centrala ocenia jedną placówkę. Prosimy wrócić po sezonie.':
     'During a ranked season Head Office reviews a single branch. Please come back after the season.',
@@ -76,6 +88,11 @@ export const FIRM_UI: Dict = {
   'Centrala nie przyjmie wypowiedzenia, jeśli nie zostaje inna działająca placówka.':
     'Head Office will not accept a notice if no other branch is left trading.',
   'Gra skończona: Centrala wypowiedziała umowę.': 'Game over: Head Office has terminated your agreement.',
+  'Badania Sieci działają od dwóch placówek. Jeden sklep to dla Centrali jeszcze nie sieć.':
+    'Network research works from two branches up. To Head Office, one shop is not a network yet.',
+  'To badanie jest już na najwyższym poziomie. Centrala nie ma czego więcej badać.':
+    'This research is already at the top level. Head Office has nothing left to research.',
+  'Tego celu nie da się teraz odebrać.': 'This goal cannot be claimed right now.',
   'Centrala odmawia.': 'Head Office declines.',
   // dodatkowy sklep nie ma gwarancji (§11.2): tekst Centrali w wyciągu i w podglądzie miesiąca
   'Gwarancja przysługuje nowym partnerom. Pan/Pani jest już strategiczny/a.':

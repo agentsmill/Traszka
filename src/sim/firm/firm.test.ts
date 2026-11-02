@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { generateCity, lotById } from '@/sim/city/generateCity';
-import { siteFor, storeSeedFor } from '@/sim/city/traffic';
+import { OWN_RADIUS_M, ownNear, siteFor, storeSeedFor } from '@/sim/city/traffic';
 import { DEBT_LIMIT, GUARANTEE, MINUTES_PER_DAY, OPEN_FROM, OPEN_TO, OWN_COSTS, REMANENT, START_CASH } from '@/sim/economy/catalog';
 import { applyCommand, type Command, type CommandOutcome } from '@/sim/economy/commands';
 import {
@@ -18,10 +18,12 @@ import { dateOfGameDay } from '@/sim/economy/tycoon/time';
 import { freshRun } from '@/sim/run';
 import { layoutFor } from '@/sim/store/layoutFor';
 import {
-  activeStore, advanceFirm, applyStoreCommand, createFirm, emptyStepOut, grantToFirm, openStoreAt, openStores, refreshSites, setPartner,
-  stepFirmMinute, syncWallet,
+  activeStore, advanceFirm, applyStoreCommand, createFirm, emptyStepOut, grantToFirm, networkTurnover, openStoreAt, openStores, ownLotsOf,
+  refreshSites, setPartner, stepFirmMinute, syncWallet,
 } from './firm';
-import { INBOX_MAX, type FirmState, type FirmStepOut } from './types';
+import {
+  BASE_STORE_LIMIT, INBOX_MAX, MAX_STORES, STORE_UNLOCK_TURNOVER, type FirmEvent, type FirmState, type FirmStepOut,
+} from './types';
 
 /*
  * Firma: lista sklepów na wspólnej gotówce osoby, sklep w tle z zastępcą od kart i debet sprawdzany raz na firmę (spec §11, §12,
@@ -836,4 +838,141 @@ describe('trzy sklepy w firmie', () => {
     expect(hashes).toEqual(y.stores.map((s) => hashOf(s.econ)));
     expect(new Set(hashes).size).toBe(3);
   });
+});
+
+// --- Etap 4b: limit sklepów, odblokowanie obrotem sieci, kanibalizacja ------------------------------------------------------
+
+describe('etap 4b: nowe pola firmy, kanibalizacja i odblokowanie kolejnych placówek', () => {
+  it('stałe: twardy limit 5, na start 3, progi obrotu sieci 1 mln (czwarta) i 1,6 mln (piąta)', () => {
+    expect(MAX_STORES).toBe(5);
+    expect(BASE_STORE_LIMIT).toBe(3);
+    expect(STORE_UNLOCK_TURNOVER).toEqual({ 3: 1_000_000, 4: 1_600_000 });
+  });
+
+  it('createFirm: research {}, storeLimit 3, goals puste, fame null', () => {
+    for (const ranked of [false, true]) {
+      const f = newFirm(SEED, ranked);
+      expect(f.research).toEqual({});
+      expect(f.storeLimit).toBe(3);
+      expect(f.goals).toEqual({ ready: [], claimed: [] });
+      expect(f.fame).toBeNull();
+    }
+  });
+
+  /** Dwa wolne lokale niestartowe w promieniu własnych sklepów od siebie (seed i para), żeby kanibalizacja dała się sprawdzić na prawdziwym mieście. */
+  function nearPair(): { seed: string; a: number; b: number } {
+    for (const seed of [SEED, ...Array.from({ length: 40 }, (_, i) => `miasto-${i}`)]) {
+      const c = generateCity(seed);
+      const free = c.lots.filter((l) => l.state === 'wolny' && l.id !== c.startLotId);
+      for (const a of free) {
+        const b = free.find((o) => o.id !== a.id && (o.x - a.x) * (o.x - a.x) + (o.y - a.y) * (o.y - a.y) < OWN_RADIUS_M * OWN_RADIUS_M);
+        if (b) return { seed, a: a.id, b: b.id };
+      }
+    }
+    throw new Error('żaden seed nie ma dwóch wolnych lokali w promieniu własnych sklepów');
+  }
+
+  it('refreshSites przekazuje lokale innych otwartych sklepów: sklep niestartowy 100 m od innego własnego ma traffic × 0.9', () => {
+    const { seed, a, b } = nearPair();
+    const f = newFirm(seed);
+    const flags = { extra: true, ownCosts: false, firmDebt: true, weatherHash: f.weatherHash };
+    const first = openStoreAt(f, a, clockOf(f));
+    const alone = first.info.site!;
+    // do sklepu #2 liczy się tylko sklep startowy (gdy stoi w promieniu): lokal startowy to własny sklep jak każdy inny
+    expect(ownLotsOf(f, first.id)).toEqual([f.city.startLotId]);
+    expect(alone).toEqual(siteFor(f.city, a, flags, [f.city.startLotId]));
+    const second = openStoreAt(f, b, clockOf(f));
+    expect(ownLotsOf(f)).toEqual([f.city.startLotId, a, b]);
+    expect(ownLotsOf(f, second.id)).toEqual([f.city.startLotId, a]);
+    expect(ownNear(f.city, a, ownLotsOf(f, first.id)).map((o) => o.lotId)).toContain(b);
+    expect(first.info.site!.traffic / alone.traffic).toBeCloseTo(0.9, 12);
+    expect(first.info.site).toEqual(siteFor(f.city, a, flags, [f.city.startLotId, b]));
+    expect(second.info.site).toEqual(siteFor(f.city, b, flags, [f.city.startLotId, a]));
+    // nowy sklep startuje z tym samym mnożnikiem, z którym liczy go refreshSites (ekonomia powstaje z `info` sprzed dopisania do listy)
+    expect(second.info.site!.traffic).toBeLessThan(siteFor(f.city, b, flags).traffic);
+    // sklep startowy nie traci ruchu przez własne sklepy obok (NEUTRAL_SITE z flagami)
+    expect(f.stores[0]!.info.site).toEqual({ ...NEUTRAL_SITE, extra: false, ownCosts: true, firmDebt: true, weatherHash: null });
+
+    // zamknięty sklep nie podbiera klientów: po zamknięciu #3 sklep #2 wraca do ruchu bez niego
+    second.closed = true;
+    refreshSites(f);
+    expect(first.info.site).toEqual(alone);
+    expect(Object.is(first.info.site!.traffic, alone.traffic)).toBe(true);
+  });
+
+  it('jeden sklep startowy z dalekimi sklepami w mieście nie zmienia się co do bitu: ownLotsOf bez sklepu startowego jest pusta', () => {
+    const f = newFirm();
+    expect(ownLotsOf(f)).toEqual([f.city.startLotId]);
+    expect(ownLotsOf(f, 1)).toEqual([]);
+    expect(f.stores[0]!.info.site).toBeUndefined();
+  });
+
+  /** Raporty miesiąca z kroku zamknięcia: obrót sklepu #1 ustawiony tak, żeby suma obrotów raportów wyszła dokładnie `turnover`. */
+  function closeWithTurnover(f: FirmState, turnover: number): { out: FirmStepOut; reports: MonthReport[] } {
+    playTo(f, SEPT_CLOSE);
+    // ile obrotu dokłada sama minuta zamknięcia: ta sama minuta na kopii z zerowym obrotem miesiąca
+    const probe = structuredClone(f);
+    for (const st of openStores(probe)) st.econ.month.revenue = 0;
+    const probeReports = [...reportsOf(probe, tick(probe)).values()];
+    const added = networkTurnover(probeReports);
+    expect(added, 'minuta zamknięcia nie sprzedaje (obrót raportu to dokładnie obrót miesiąca)').toBe(0);
+    for (const st of openStores(f)) st.econ.month.revenue = 0;
+    f.stores[0]!.econ.month.revenue = turnover;
+    const out = tick(f);
+    const rep = reportsOf(f, out);
+    return { out, reports: [...rep.keys()].sort((x, y) => x - y).map((id) => rep.get(id)!) };
+  }
+
+  it('network-report z obrotem 1 000 000 podnosi storeLimit 3 → 4 i daje zdarzenie unlock {limit: 4, turnover}; 999 999 nie', () => {
+    const below = twoStoreFirm(SEED, 24);
+    const atBelow = closeWithTurnover(below, 999_999);
+    expect(networkTurnover(atBelow.reports)).toBe(999_999);
+    expect(ofKind(atBelow.out.firm, 'network-report')).toHaveLength(1);
+    expect(ofKind(atBelow.out.firm, 'unlock')).toEqual([]);
+    expect(below.storeLimit).toBe(3);
+
+    const at = twoStoreFirm(SEED, 24);
+    const { out, reports } = closeWithTurnover(at, 1_000_000);
+    expect(reports).toHaveLength(2);
+    expect(networkTurnover(reports)).toBe(reports.reduce((n, r) => n + r.counters.revenue, 0));
+    expect(networkTurnover(reports)).toBe(1_000_000);
+    expect(at.storeLimit).toBe(4);
+    const unlock = ofKind(out.firm, 'unlock');
+    expect(unlock).toEqual([{ kind: 'unlock', params: { limit: 4, turnover: 1_000_000 } } satisfies FirmEvent]);
+    // zdarzenie przychodzi po podsumowaniu sieci, z którego wynika
+    expect(out.firm.map((e) => e.kind).filter((k) => k === 'network-report' || k === 'unlock')).toEqual(['network-report', 'unlock']);
+
+    // bieg rankingowy nigdy nie dostaje odblokowania (gałąź pominięta, a nie limit przycięty)
+    const ranked = twoStoreFirm(SEED, 24);
+    ranked.ranked = true;
+    const r = closeWithTurnover(ranked, 5_000_000);
+    expect(ofKind(r.out.firm, 'unlock')).toEqual([]);
+    expect(ranked.storeLimit).toBe(3);
+  }, 30_000);
+
+  it('jeden miesiąc podnosi limit najwyżej o 1, a storeLimit nigdy nie przekracza 5', () => {
+    const f = twoStoreFirm(SEED, 24);
+    const sept = closeWithTurnover(f, 10_000_000);
+    expect(f.storeLimit).toBe(4);   // 10 mln to ponad oba progi, ale miesiąc daje jedną placówkę
+    expect(ofKind(sept.out.firm, 'unlock')).toEqual([{ kind: 'unlock', params: { limit: 4, turnover: 10_000_000 } }]);
+
+    // następny miesiąc: 1,6 mln odblokowuje piątą
+    const oct = playTo(f, 60 * DAY + OPEN_TO);   // zamknięcie października: następny krok
+    expect(ofKind(oct.firm, 'unlock')).toEqual([]);
+    for (const st of openStores(f)) st.econ.month.revenue = 0;
+    f.stores[0]!.econ.month.revenue = STORE_UNLOCK_TURNOVER[4]!;
+    const octClose = tick(f);
+    expect(ofKind(octClose.firm, 'network-report')).toHaveLength(1);
+    expect(ofKind(octClose.firm, 'unlock')).toEqual([{ kind: 'unlock', params: { limit: 5, turnover: 1_600_000 } }]);
+    expect(f.storeLimit).toBe(5);
+
+    // limit 5 to sufit: kolejny miesiąc z ogromnym obrotem nie daje ani zdarzenia, ani szóstej placówki
+    playTo(f, 90 * DAY + OPEN_TO);   // zamknięcie listopada: następny krok
+    for (const st of openStores(f)) st.econ.month.revenue = 0;
+    f.stores[0]!.econ.month.revenue = 50_000_000;
+    const novClose = tick(f);
+    expect(ofKind(novClose.firm, 'network-report')).toHaveLength(1);
+    expect(ofKind(novClose.firm, 'unlock')).toEqual([]);
+    expect(f.storeLimit).toBe(MAX_STORES);
+  }, 30_000);
 });

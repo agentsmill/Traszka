@@ -171,7 +171,8 @@ export function lotRentable(f: FirmState, lotId: number): boolean {
 }
 
 /**
- * Powód odmowy wynajmu albo null, po kolei: koniec gry, ranked, brak statusu, limit sklepów (otwarte plus budowy), lokal nieprzyjmujący
+ * Powód odmowy wynajmu albo null, po kolei: koniec gry, ranked, brak statusu, limit sklepów (otwarte plus budowy wobec `storeLimit` firmy, nigdy
+ * ponad twardy sufit `MAX_STORES`), lokal nieprzyjmujący
  * wynajmu (`lotRentable`), gotówka (po zapłacie nie mniej niż zero), rata ponad limit nowego sklepu (bez historii, zaufanie startowe:
  * 35% × 25 tys. zł). Cena to `rentPrice`.
  */
@@ -179,7 +180,7 @@ export function rentRefusal(f: FirmState, lotId: number, pay: 'gotowka' | 'raty'
   if (f.over !== null || activeStore(f).econ.gameOver) return 'over';
   if (f.ranked) return 'ranked';
   if (!f.person.partner) return 'status';
-  if (openStores(f).length + f.builds.length >= MAX_STORES) return 'limit';
+  if (openStores(f).length + f.builds.length >= Math.min(f.storeLimit, MAX_STORES)) return 'limit';
   if (!lotRentable(f, lotId)) return 'lot';
   const price = rentPrice(f, lotId);
   if (pay === 'gotowka' && f.person.wallet - price < 0) return 'gotowka';

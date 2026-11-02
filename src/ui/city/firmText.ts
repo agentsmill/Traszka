@@ -149,6 +149,22 @@ export function firmEventText(f: FirmState, e: FirmEvent): { title: string; text
       };
     case 'network-report':
       return { title: t`Podsumowanie sieci`, text: '' };
+    // etap 4b: teksty na start; zdarzenia `research`, `goal` i `million` składa w pełni UI badań, celów i Galerii
+    case 'unlock': {
+      const turnover = zl(num(e, 'turnover'));
+      return {
+        title: t`Kolejna placówka`,
+        text: num(e, 'limit') >= 5
+          ? t`Centrala zgadza się na piątą placówkę. Obrót sieci ${turnover} przekonał Dział Ekspansji, który zaraz potem wyszedł na lunch.`
+          : t`Centrala zgadza się na czwartą placówkę. Obrót sieci ${turnover} przekonał Dział Ekspansji, który zaraz potem wyszedł na lunch.`,
+      };
+    }
+    case 'research':
+      return { title: t`Badania Sieci`, text: t`Badanie Sieci na poziomie ${num(e, 'level')}. Centrala pobrała ${zl(num(e, 'price'))}.` };
+    case 'goal':
+      return { title: t`Cel sieci`, text: t`Cel sieci spełniony. Nagroda czeka na odbiór w Celach.` };
+    case 'million':
+      return { title: t`Milion!`, text: t`Centrala jest w szoku, księgowa w euforii.` };
     default: {
       const unreachable: never = e.kind;
       void unreachable;
@@ -169,6 +185,9 @@ export function refusalText(reason: FirmRefusal): string {
     case 'store': return t`Nie ma takiej placówki albo już nie działa.`;
     case 'single': return t`Centrala nie przyjmie wypowiedzenia, jeśli nie zostaje inna działająca placówka.`;
     case 'over': return t`Gra skończona: Centrala wypowiedziała umowę.`;
+    case 'siec': return t`Badania Sieci działają od dwóch placówek. Jeden sklep to dla Centrali jeszcze nie sieć.`;
+    case 'max': return t`To badanie jest już na najwyższym poziomie. Centrala nie ma czego więcej badać.`;
+    case 'goal': return t`Tego celu nie da się teraz odebrać.`;
     default: {
       const unreachable: never = reason;
       void unreachable;
