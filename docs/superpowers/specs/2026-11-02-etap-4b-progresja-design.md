@@ -76,6 +76,8 @@ Mnożnik ruchu z remontu to dziś `1 + 0.1 × remontLevel`. Zastępuje go `remon
 
 `Ruling: przy poziomie ≥ 4, gdy generator nie złoży układu żadną skalą, layoutFor zwraca układ poziomu niższego, nie poziomu 0 — sklep po remoncie nigdy się nie zmniejsza; poziomy 1–3 zachowują dzisiejszy fallback, więc GENERATOR_VERSION zostaje — koszt: rzadki sklep L5 wygląda jak L4 (tylko wygląd, mnożnik ruchu i tak liczy się z poziomu).`
 
+`Ruling: układ poziomu ≥ 4 jest przyjęty tylko wtedy, gdy nie jest węższy, płytszy ani uboższy w sloty sprzętu niż układ poziomu niższego (kolejne próby generatora, potem mniejszy przyrost, na końcu układ poziomu niższego) — generator stawia tyle slotów, ile się zmieści, więc większy lokal bywa uboższy w sloty, a gracz po drogim remoncie nie może dostać sklepu gorszego niż miał — koszt: czasem wypada układ nieco mniejszy od idealnego (przyrost 0,75 albo 0,5 zamiast 1); test na 200 seedach i trzech rodzajach lokalu pilnuje szerokości, głębokości i slotów L5 ≥ L4 ≥ L3.`
+
 `Ruling: poziomy 4–5 nie zajmują kolejnego lokalu na mapie miasta (lotState bez zmian), a na ulicy rosną po tej samej stronie przejęcia; zjedzony sąsiad dalej ma co najmniej MIN_TAKEN_NEIGHBOUR_W (4 m), a kartka „DO WYNAJĘCIA” wisi do poziomu 4 — przejęcie drugiego sąsiada to nowa geometria ulicy i miasta — koszt: przy L5 sąsiad bywa wąski (4 m).`
 
 Po poziomie 5 tekst brzmi „Większego sklepu już nie będzie. To jest Traszka Max Pro Ultra.” (także w panelu).
