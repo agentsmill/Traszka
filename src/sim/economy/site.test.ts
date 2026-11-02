@@ -783,6 +783,16 @@ describe('badania Sieci (SiteMods.net, spec 4b §5.3)', () => {
     expect(fee(net, PALLETS_FREE)).toBe(0);
   });
 
+  it('haki: logistics 0.5 → komunikat zamówienia pokazuje opłatę po zniżce Sieci, nie nominalną', () => {
+    const info = infoOf(SEED, netSite({ logistics: 0.5 }));
+    const s = createEconomy(SEED, info);
+    s.cash = 1e6;
+    setOrder(s, false, PALLETS_FREE + 3);
+    const { events } = playTo({ s, info, events: [] }, ORDER_DEADLINE + 1);
+    const order = events.find((e) => e.kind === 'order' && 'text' in e && e.text.includes('opłata logistyczna'));
+    expect(order && 'text' in order ? order.text : '').toContain(`(opłata logistyczna ${Math.round(3 * PALLET_FEE * 0.5)} zł)`);
+  });
+
   it('wszystkie pola net naraz: sklep z badaniami zarabia więcej na kliencie i płaci mniej za płace, media i palety niż ten sam sklep bez nich (7 dni)', () => {
     const run = (site?: SiteMods): EconomyState => {
       const info = infoOf(SEED, site);

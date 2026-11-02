@@ -966,7 +966,7 @@ function placeOrder(s: EconomyState, info: StoreInfo, fx: Effects, out: EconEven
     s.deliveries.push({ at: tomorrow + fx.deliveryAt, count });
   }
   const who = s.order.auto ? 'Asystent Traszki zamówił' : 'Zamówienie ręczne:';
-  out.push({ kind: 'order', text: `${who} ${count} ${plPallets(count)} na jutro${fee > 0 ? ` (opłata logistyczna ${fee} zł)` : ''}.` });
+  out.push({ kind: 'order', text: `${who} ${count} ${plPallets(count)} na jutro${owed > 0 ? ` (opłata logistyczna ${owed} zł)` : ''}.` });
 }
 
 /** Straż Miejska (`STRAZ`): obchód, upomnienie, a przy powtórce tego samego dnia mandat. */
