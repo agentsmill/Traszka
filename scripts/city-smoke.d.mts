@@ -92,5 +92,14 @@ export const BENCH_CALLS_LIMIT: number;
 export const CITY_BUDGET: Readonly<Record<string, number>>;
 export function guardNetwork(ctx: RouteHost, port: number | string, label: string, sink: NetworkSink): Promise<void>;
 /** Wady biegu benchmarku z `window.__benchResult` i `window.__benchExtra` (pusta lista: bieg ważny). */
-export function benchProblems(result: unknown, extra: unknown): string[];
+export function benchProblems(result: unknown, extra: unknown, opts?: { mobile?: boolean }): string[];
+export const BENCH_GATE_COLUMNS: readonly string[];
+/** Pomiar karty benchmarku (`.tt-bench`) po końcu biegu: czy dostaje zdarzenia wskaźnika i gdzie leżą kolumny tabeli „Miasto”. */
+export interface OverlayMeasure {
+  card: { left: number; right: number; scroll: number; client: number } | null;
+  hit?: boolean; hitTag?: string; viewport?: number;
+  columns?: readonly { name: string; left: number; right: number }[];
+}
+export function overlayProblems(m: OverlayMeasure): string[];
+export function outDirFor(bench: boolean, env?: Record<string, string | undefined>): string;
 export function benchTableLines(result: unknown, extra: unknown): string[];

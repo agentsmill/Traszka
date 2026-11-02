@@ -103,7 +103,13 @@ export interface BenchPresetDetail extends SampleStats { preset: QualityPresetId
  */
 export interface BenchCityRow extends SampleStats {
   preset: QualityPresetId;
+  /** Widok zamówiony: tożsamość wiersza w bramce („makieta”, „ruch”). */
   layer: CityLayer;
+  /**
+   * Widok, który scena faktycznie narysowała (`stats.layer`); `null` bez migawki. Różni się od `layer` tylko wtedy, gdy profil nie ma makiety
+   * (`mockup: false`, szczebel drabiny dla telefonu): wiersz „makieta” rysuje wtedy „Ruch”, i tabela ma to pokazać.
+   */
+  drawn: CityLayer | null;
   applied: QualityPresetId;
   stats: CityStats | null;
   profile: CityProfile | null;
@@ -599,7 +605,7 @@ export class BenchRun {
       case 'cityMeasure': {
         const snapshot = this.host.citySnapshot?.() ?? null;
         this.cityRows.push({
-          preset: step.preset!, layer: step.layer!, applied: this.applied, ...summarize(this.samples),
+          preset: step.preset!, layer: step.layer!, drawn: snapshot?.stats.layer ?? null, applied: this.applied, ...summarize(this.samples),
           stats: snapshot?.stats ?? null, profile: snapshot?.profile ?? null,
         });
         break;
@@ -710,8 +716,8 @@ export function createBenchSession(
     const extra = { ...run.extra, env: readEnvironment(ctx, opts.quick) };
     console.table(extra.presets.map(({ preset, avgFps, p95FrameMs, maxFrameMs, frames, calls, tris }) => ({ preset, avgFps, p95FrameMs, maxFrameMs, frames, calls, tris })));
     console.table(extra.probes.map(({ preset, probe, avgFps, p95FrameMs, maxFrameMs, frames, calls, tris, cpuMs }) => ({ preset, probe, avgFps, p95FrameMs, maxFrameMs, frames, calls, tris, cpuMs })));
-    console.table(extra.city.map(({ preset, layer, avgFps, p95FrameMs, maxFrameMs, frames, calls, tris, cpuMs, stats }) => ({
-      preset, layer, avgFps, p95FrameMs, maxFrameMs, frames, calls, tris, cpuMs, detail: stats?.detail ?? null, cars: stats?.cars ?? null, casters: stats?.shadowCasters ?? null,
+    console.table(extra.city.map(({ preset, layer, drawn, avgFps, p95FrameMs, maxFrameMs, frames, calls, tris, cpuMs, stats }) => ({
+      preset, layer, drawn, avgFps, p95FrameMs, maxFrameMs, frames, calls, tris, cpuMs, detail: stats?.detail ?? null, cars: stats?.cars ?? null, casters: stats?.shadowCasters ?? null,
     })));
     if (extra.warnings.length > 0) console.warn('Ostrzeżenia benchmarku:', extra.warnings);
     window.__benchExtra = extra;

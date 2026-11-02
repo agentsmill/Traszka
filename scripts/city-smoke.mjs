@@ -28,7 +28,9 @@
  * Plan 4a.2 (Zadanie 13) dokłada przełącznik `--bench`: sam bieg `?bench=1&quick=1` (benchmark z miastem, bramka makiety) na obu rozmiarach okna,
  * na tym samym `vite preview`, z tą samą blokadą sieci i `locale: 'pl-PL'`. Sprawdza, że bieg się kończy, że `__benchExtra.city` ma cztery wiersze
  * z `calls` < 150, że każdy wiersz mierzył się pod profilem swojego presetu (`cityStats()` zgodne z profilem) i że `?bench=1` nie próbował
- * niczego wysłać do `/api/**` (licznik przerwanych zapytań musi być zerem). Liczby z headless (swiftshader) niczego nie rozstrzygają.
+ * niczego wysłać do `/api/**` (licznik przerwanych zapytań musi być zerem). Sprawdza też kartę wyników na telefonie: dostaje zdarzenia wskaźnika
+ * (nie jest „przezroczysta” dla dotyku) i mieści w widocznej części kolumny bramki (FPS, p95, Wywołania). Wynik idzie do `.smoke/city-bench/`, osobno
+ * od pełnego smoke'a. Liczby z headless (swiftshader) niczego nie rozstrzygają.
  *
  * Użycie: `npm run build`, potem `npm run city:smoke` (albo `node scripts/city-smoke.mjs [--only phone|desktop] [--bench]`). Zrzuty i `smoke.json` idą do
  * `.smoke/city/` (katalog jest w .gitignore); wybrane zrzuty do raportu kopiuje się ręcznie do `docs/superpowers/reports/`.
@@ -232,6 +234,11 @@ export function summarize(results, steps = [...STEPS, TIPS_STEP]) {
   return { rows, ok: rows.every((r) => r.status !== 'FAIL') };
 }
 
+/** Katalog wyjściowy: `CITY_SMOKE_OUT`, a bez niego `.smoke/city` (pełny smoke) albo `.smoke/city-bench` (`--bench`, żeby nie kasować wyników pełnego smoke'a). */
+export function outDirFor(bench, env = process.env) {
+  return env.CITY_SMOKE_OUT ?? join(ROOT, '.smoke', bench ? 'city-bench' : 'city');
+}
+
 export const USAGE = `Smoke miasta i drugiego sklepu w headless Chromium (po \`npm run build\`).
 
 Użycie: node scripts/city-smoke.mjs [--only telefon|desktop] [--bench]
@@ -242,7 +249,7 @@ Użycie: node scripts/city-smoke.mjs [--only telefon|desktop] [--bench]
   --help            ta pomoc
 
 Zmienne: PLAYWRIGHT_ROOT (domyślnie ${DEFAULT_PLAYWRIGHT_ROOT}), CITY_SMOKE_CHROMIUM, CITY_SMOKE_PORT (4318), CITY_SMOKE_OUT (.smoke/city).
-Zrzuty i smoke.json idą do katalogu wyjściowego (w .gitignore). Kod wyjścia: 0 (wszystkie kroki ok), 1 (porażka kroku), 2 (błąd uruchomienia).`;
+Zrzuty i smoke.json idą do katalogu wyjściowego (w .gitignore; \`--bench\` pisze do .smoke/city-bench z bench.json, żeby nie kasować wyników pełnego smoke'a). Kod wyjścia: 0 (wszystkie kroki ok), 1 (porażka kroku), 2 (błąd uruchomienia).`;
 
 /**
  * Argumenty polecenia: `--only telefon|desktop` ogranicza przebieg do jednego rozmiaru (do ponawiania pojedynczej porażki), a `--bench`
@@ -674,15 +681,22 @@ export const CITY_BUDGET = { makieta: 150, ruch: 60, dzielnice: 60 };
 /**
  * Wady biegu benchmarku z `window.__benchResult` i `window.__benchExtra` (pusta lista: bieg jest ważny). Sprawdza kształt wyniku sklepu,
  * cztery wiersze miasta w kolejności biegu z `calls` < 150 i niezerową liczbą klatek oraz to, że każdy wiersz mierzył się pod profilem
- * swojego presetu: auta, cienie i szczegółowość geometrii ze `stats` (`cityStats()` z końca pomiaru) zgadzają się z `profile`, czyli z tym,
- * co profil miasta każe dla presetu, który renderer faktycznie miał. Tabeli profili tu nie ma (zmienia ją tylko `CITY_PROFILES`), więc
- * porażka oznacza, że scena nie zastosowała profilu, a nie że profil się zmienił. Na urządzeniu mobilnym (`env.isMobile`) profil „telefon”
- * wygrywa z presetem: wszystkie cztery wiersze mają ten sam profil (Rozstrzygnięcie 12), także Średnia i Wysoka.
+ * swojego presetu: widok, auta, cienie i szczegółowość geometrii ze `stats` (`cityStats()` z końca pomiaru) zgadzają się z `profile`, czyli z tym,
+ * co profil miasta każe dla presetu, który renderer faktycznie miał. Tabeli profili tu nie ma (po porażce progu zmienia się tylko `CITY_PROFILES`),
+ * więc porażka oznacza, że scena nie zastosowała profilu, a nie że profil się zmienił; dotyczy to wszystkich szczebli drabiny, także `mockup: false`
+ * (wiersz „makieta” rysuje wtedy „Ruch”, budżet 60 i prosta geometria). Na urządzeniu mobilnym (`env.isMobile`) profil „telefon” wygrywa z presetem:
+ * wszystkie cztery wiersze mają ten sam profil (Rozstrzygnięcie 12), także Średnia i Wysoka. `opts.mobile` (rozmiar okna „telefon” albo „komputer”)
+ * musi zgadzać się z `env.isMobile`, inaczej zepsuty User-Agent po cichu testowałby profil komputera na biegu telefonu.
  */
-export function benchProblems(result, extra) {
+export function benchProblems(result, extra, opts = {}) {
   const out = [];
   if (!Array.isArray(result)) return ['brak window.__benchResult'];
   if (!extra || typeof extra !== 'object') return ['brak window.__benchExtra'];
+  if (opts.mobile !== undefined && extra.env?.isMobile !== opts.mobile) {
+    out.push(opts.mobile
+      ? `środowisko: isMobile ${extra.env?.isMobile}, a rozmiar okna to telefon (User-Agent nie zadziałał, miasto dostało profil komputera)`
+      : `środowisko: isMobile ${extra.env?.isMobile}, a rozmiar okna to komputer`);
+  }
   const presets = result.map((r) => r.preset).join(',');
   if (result.length !== 3 || presets !== 'niska,srednia,wysoka') out.push(`__benchResult: wiersze ${result.length} (${presets}), oczekiwane niska,srednia,wysoka`);
   for (const row of result) {
@@ -703,14 +717,51 @@ export function benchProblems(result, extra) {
     const { stats, profile } = row;
     if (!stats || !profile) { out.push(`${id}: brak migawki sceny (stats/profile)`); continue; }
     if (!stats.shown || !stats.built) out.push(`${id}: miasto nie było pokazane (shown ${stats.shown}, built ${stats.built})`);
-    if (stats.layer !== row.layer) out.push(`${id}: scena rysowała widok ${stats.layer}`);
-    if ((stats.cars > 0) !== profile.cars) out.push(`${id}: auta ${stats.cars}, a profil ${profile.cars ? 'je daje' : 'ich nie daje'}`);
-    const wantCasters = row.layer === 'makieta' && profile.shadows === 'static';
+    // Co profil każe dla wiersza, bez tabeli profili: bez makiety (`mockup: false`, szczebel drabiny dla telefonu) scena rysuje „Ruch” w miejsce „makiety”
+    const drawn = row.layer === 'makieta' && !profile.mockup ? 'ruch' : row.layer;
+    if (stats.layer !== drawn) out.push(`${id}: scena rysowała widok ${stats.layer}, oczekiwany ${drawn}${drawn !== row.layer ? ' (profil bez makiety)' : ''}`);
+    const mockup = drawn === 'makieta';
+    if ((stats.cars > 0) !== (mockup && profile.cars)) out.push(`${id}: auta ${stats.cars}, a profil ${mockup && profile.cars ? 'je daje' : 'ich nie daje'}`);
+    const wantCasters = mockup && profile.shadows === 'static';
     if ((stats.shadowCasters > 0) !== wantCasters) out.push(`${id}: rzucających cień ${stats.shadowCasters}, a profil ${wantCasters ? 'daje cienie' : 'nie daje cieni'}`);
-    const wantDetail = row.layer === 'makieta' ? 'pelny' : profile.firstDetail;
-    if (stats.detail !== wantDetail) out.push(`${id}: geometria ${stats.detail}, oczekiwana ${wantDetail}`);
-    const budget = CITY_BUDGET[row.layer] ?? 60;
+    // geometria: makieta zawsze pełna; warstwa na świeżo zbudowanej scenie ma pierwszą geometrię z profilu (profil zwalniający scenę przy wyjściu buduje ją od nowa
+    // przy każdym wierszu; zostawione miasto mogłoby mieć inną, więc tam nie sprawdzamy)
+    const wantDetail = mockup ? 'pelny' : (profile.releaseOnExit ? profile.firstDetail : null);
+    if (wantDetail !== null && stats.detail !== wantDetail) out.push(`${id}: geometria ${stats.detail}, oczekiwana ${wantDetail}`);
+    const budget = CITY_BUDGET[drawn] ?? 60;
     if (!(stats.drawCalls + stats.shadowCasters < budget)) out.push(`${id}: scena ${stats.drawCalls} + ${stats.shadowCasters} wywołań (budżet ${budget})`);
+  }
+  return out;
+}
+
+/** Kolumny tabeli „Miasto”, które muszą być widoczne bez przewijania na telefonie: wszystkie trzy liczby bramki (FPS, p95, Wywołania). */
+export const BENCH_GATE_COLUMNS = ['FPS', 'p95 ms', 'Wywołania'];
+
+/**
+ * Wady karty wyników benchmarku z pomiaru strony po końcu biegu (`m`: ramka karty `.tt-bench` z `scrollWidth` i `clientWidth`, to, co leży w jej środku
+ * (`hit`: element z `elementFromPoint` jest kartą albo jej potomkiem, `hitTag`: jego znacznik), szerokość okna i ramki nagłówków tabeli „Miasto”).
+ * Karta musi dostawać zdarzenia wskaźnika (inaczej `.tt-ui { pointer-events: none }` przepuszcza dotyk do płótna i właściciel nie przewinie tabeli), mieścić się
+ * w oknie, a kolumny bramki (`BENCH_GATE_COLUMNS`) leżeć w jej widocznej części bez przewijania. Reszta kolumn może się przewijać.
+ */
+export function overlayProblems(m) {
+  if (!m.card) return ['brak karty benchmarku (.tt-bench)'];
+  const out = [];
+  const { card } = m;
+  const vw = m.viewport ?? Infinity;
+  if (card.left < -0.5 || card.right > vw + 0.5) out.push(`karta wystaje poza okno (${Math.round(card.left)}–${Math.round(card.right)} px w oknie ${vw} px)`);
+  if (!m.hit) out.push(`karta nie dostaje zdarzeń wskaźnika (w jej środku leży ${m.hitTag ?? '?'})`);
+  const columns = m.columns ?? [];
+  if (columns.length === 0) {
+    out.push('brak tabeli „Miasto” w karcie');
+    return out;
+  }
+  const limit = Math.min(card.right, vw);
+  for (const name of BENCH_GATE_COLUMNS) {
+    const col = columns.find((c) => c.name === name);
+    if (!col) { out.push(`brak kolumny „${name}” w tabeli „Miasto”`); continue; }
+    if (col.left < card.left - 0.5 || col.right > limit + 0.5) {
+      out.push(`kolumna „${name}” wystaje poza widoczną część karty (${Math.round(col.left)}–${Math.round(col.right)} px, karta ${Math.round(card.left)}–${Math.round(card.right)} px, okno ${vw} px)`);
+    }
   }
   return out;
 }
@@ -718,10 +769,12 @@ export function benchProblems(result, extra) {
 /** Linie tabeli do konsoli i raportu: wiersze sklepu i miasta jednego rozmiaru (preset, widok, FPS, p95, calls, geometria, auta, cienie). */
 export function benchTableLines(result, extra) {
   const pad = (v, n) => String(v ?? '–').padEnd(n);
-  const lines = [`${pad('wiersz', 20)}${pad('FPS', 8)}${pad('p95 ms', 8)}${pad('calls', 7)}${pad('geom.', 8)}${pad('auta', 6)}cienie`];
-  for (const r of result ?? []) lines.push(`${pad(`${r.preset} (sklep)`, 20)}${pad(r.avgFps, 8)}${pad(r.p95FrameMs, 8)}${pad(r.calls, 7)}${pad('', 8)}${pad('', 6)}`);
+  const lines = [`${pad('wiersz', 24)}${pad('FPS', 8)}${pad('p95 ms', 8)}${pad('calls', 7)}${pad('geom.', 8)}${pad('auta', 6)}cienie`];
+  for (const r of result ?? []) lines.push(`${pad(`${r.preset} (sklep)`, 24)}${pad(r.avgFps, 8)}${pad(r.p95FrameMs, 8)}${pad(r.calls, 7)}${pad('', 8)}${pad('', 6)}`);
   for (const r of extra?.city ?? []) {
-    lines.push(`${pad(`${r.preset} ${r.layer}`, 20)}${pad(r.avgFps, 8)}${pad(r.p95FrameMs, 8)}${pad(r.calls, 7)}${pad(r.stats?.detail, 8)}${pad(r.stats?.cars, 6)}${r.stats?.shadowCasters ?? '–'}`);
+    const drawn = r.drawn ?? r.stats?.layer;
+    const label = drawn && drawn !== r.layer ? `${r.layer}→${drawn}` : r.layer;   // widok faktycznie narysowany, gdy profil nie ma makiety
+    lines.push(`${pad(`${r.preset} ${label}`, 24)}${pad(r.avgFps, 8)}${pad(r.p95FrameMs, 8)}${pad(r.calls, 7)}${pad(r.stats?.detail, 8)}${pad(r.stats?.cars, 6)}${r.stats?.shadowCasters ?? '–'}`);
   }
   return lines;
 }
@@ -813,8 +866,23 @@ async function runBench({ args, chromium, executablePath, port, base, out }) {
         const { result, extra } = await page.evaluate(() => ({ result: window.__benchResult, extra: window.__benchExtra }));
         r.result = result;
         r.extra = extra;
-        r.failed.push(...benchProblems(result, extra));
+        r.failed.push(...benchProblems(result, extra, { mobile: vp.mobile }));
         r.table = benchTableLines(result, extra);
+        // karta wyników: po wyrenderowaniu czterech wierszy miasta; dostaje dotyk (inaczej `.tt-ui { pointer-events: none }` przepuszcza go do płótna) i ma kolumny bramki w widocznej części
+        await page.waitForFunction(() => document.querySelectorAll('.tt-bench table')[2]?.querySelectorAll('tbody tr').length === 4, null, { timeout: 30_000 });
+        r.overlay = await page.evaluate(() => {
+          const card = document.querySelector('.tt-bench');
+          if (!card) return { card: null };
+          const box = card.getBoundingClientRect();
+          const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+          const table = [...card.querySelectorAll('table')].find((t) => t.querySelector('th')?.textContent === 'Miasto');
+          const columns = [...(table?.querySelectorAll('th') ?? [])].map((th) => { const b = th.getBoundingClientRect(); return { name: th.textContent, left: b.left, right: b.right }; });
+          return {
+            card: { left: box.left, right: box.right, scroll: card.scrollWidth, client: card.clientWidth },
+            hit: !!hit && card.contains(hit), hitTag: hit?.tagName ?? null, viewport: window.innerWidth, columns,
+          };
+        });
+        r.failed.push(...overlayProblems(r.overlay));
         await page.screenshot({ path: join(out, `${vp.name}-bench.jpg`), type: 'jpeg', quality: 80, timeout: 120_000 });
       } catch (error) {
         r.failed.push(`wyjątek: ${error instanceof Error ? error.message : String(error)}`);
@@ -871,7 +939,7 @@ async function main(argv) {
   }
   const port = Number(process.env.CITY_SMOKE_PORT ?? 4318);
   const base = `http://localhost:${port}`;
-  const out = process.env.CITY_SMOKE_OUT ?? join(ROOT, '.smoke', 'city');
+  const out = outDirFor(args.bench);
   if (!existsSync(join(ROOT, 'dist', 'index.html'))) throw new Error('Brak dist/: najpierw `npm run build`.');
   const { chromium } = loadPlaywright();
   const executablePath = chromiumExecutable();

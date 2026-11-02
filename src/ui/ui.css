@@ -165,18 +165,14 @@
   width: 560px;
   max-width: calc(100vw - 24px);
   max-height: calc(100vh - 24px);
+  max-height: calc(100dvh - 24px);
   box-sizing: border-box;
   line-height: 1.4;
   /* bramka makiety czyta liczby z tej karty na telefonie: wiele ostrzeżeń nie może wypchnąć tabel poza ekran */
   overflow: auto;
   overscroll-behavior: contain;
-}
-
-@media (max-width: 600px) {
-  /* osiem kolumn nie mieści się w 390 px (nagłówki zlewały się w jedno): karta przewija się w bok zamiast ściskać kolumny */
-  .tt-bench table {
-    min-width: 520px;
-  }
+  /* `.tt-ui` ma `pointer-events: none` i karta go dziedziczy: bez tego dotyk przechodzi do płótna i nie da się jej przewinąć */
+  pointer-events: auto;
 }
 
 .tt-bench h2 {
@@ -230,6 +226,26 @@
 .tt-bench td:first-child {
   padding-left: 0;
   text-align: left;
+}
+
+@media (max-width: 600px) {
+  /*
+   * Osiem kolumn nie mieści się w 390 px (nagłówki zlewały się w jedno): tabele są szersze od karty i karta przewija się w bok, ale
+   * pierwsza kolumna jest wąska, a liczby bramki (FPS, p95, Wywołania) stoją zaraz za nią, więc mieszczą się bez przewijania.
+   */
+  .tt-bench table {
+    min-width: 560px;
+  }
+
+  .tt-bench th:first-child {
+    width: 30%;
+  }
+
+  .tt-bench th,
+  .tt-bench td {
+    padding-left: 4px;
+    font-size: 10px;
+  }
 }
 
 

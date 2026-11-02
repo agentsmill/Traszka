@@ -1,11 +1,12 @@
 import { Scene } from 'three';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CameraRig } from '@/render/cameraRig';
-import { cityProfile } from '@/render/city/cityQuality';
+import { cityProfile, type CityProfile } from '@/render/city/cityQuality';
 import type { QualityPresetId } from '@/render/quality';
 import type { RenderContext } from '@/render/renderer';
 import { createSceneHost, type SceneHost } from '@/game/scene';
 import { generateCity } from '@/sim/city/generateCity';
+import { benchProblems } from '../../scripts/city-smoke.mjs';
 import {
   BENCH_SEED, BenchRun, createBenchCityScene, createBenchHost,
   type BenchCityRow, type BenchTimings, type FrameInfo,
@@ -16,6 +17,22 @@ import {
  * na sztucznym zegarze przechodzi przez presety, a każdy wiersz miasta ma mierzyć się pod profilem własnego presetu (Rozstrzygnięcie 13:
  * liczby bramki z prawdziwych urządzeń nie mogą pochodzić z profilu poprzedniego wiersza). Dowód to `cityStats()` zapisane w wierszu.
  */
+
+/**
+ * Szczeble drabiny profilu (Rozstrzygnięcie 13) bez zmiany `CITY_PROFILES` (jest zamrożona): `override` podmienia wynik `cityProfile`
+ * dla sceny i dla benchmarku naraz (oba czytają go z tego modułu), więc test widzi to, co zobaczyłby bieg po zmianie profilu.
+ */
+const profileOverride = vi.hoisted(() => ({ fn: null as null | ((preset: string, mobile: boolean, base: unknown) => unknown) }));
+vi.mock('@/render/city/cityQuality', async (original) => {
+  const mod = await original<typeof import('@/render/city/cityQuality')>();
+  return {
+    ...mod,
+    cityProfile: (preset: Parameters<typeof mod.cityProfile>[0], mobile: boolean) => {
+      const base = mod.cityProfile(preset, mobile);
+      return profileOverride.fn ? (profileOverride.fn(preset, mobile, base) as CityProfile) : base;
+    },
+  };
+});
 
 /** Bez sieci: ulica dostaje same grupy rekwizytów, a prawdziwy loader nie trzyma w Node niedokończonych żądań. */
 vi.mock('@/render/assets', async (original) => ({
@@ -65,15 +82,30 @@ function runToEnd(run: BenchRun): void {
   expect(run.done).toBe(true);
 }
 
+/** Komunikaty konsoli z testu: połykamy tylko te, których się spodziewamy (brak sieci przy GLB), reszta ma oblać test. */
+const EXPECTED_NOISE = /brak sieci/;
+let consoleNoise: string[] = [];
+
 beforeEach(() => {
+  consoleNoise = [];
   vi.stubGlobal('window', { innerWidth: 1280, innerHeight: 800 });
-  vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-  vi.spyOn(console, 'error').mockImplementation(() => undefined);
+  const collect = (...args: unknown[]): void => { consoleNoise.push(args.map((a) => (a instanceof Error ? a.message : String(a))).join(' ')); };
+  vi.spyOn(console, 'warn').mockImplementation(collect);
+  vi.spyOn(console, 'error').mockImplementation(collect);
 });
 afterEach(() => {
+  profileOverride.fn = null;
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+  expect(consoleNoise.filter((m) => !EXPECTED_NOISE.test(m))).toEqual([]);
 });
+
+/** Co profil każe dla wiersza (niezależnie od skryptu smoke'a): widok faktycznie rysowany, geometria, auta i cienie. */
+function expectedOf(row: BenchCityRow): { layer: string; detail: string; cars: boolean; casters: boolean } {
+  const p = row.profile!;
+  const layer = row.layer === 'makieta' && !p.mockup ? 'ruch' : row.layer;   // bez makiety scena rysuje „Ruch” (scene.ts: showCity)
+  return { layer, detail: layer === 'makieta' ? 'pelny' : p.firstDetail, cars: layer === 'makieta' && p.cars, casters: layer === 'makieta' && p.shadows === 'static' };
+}
 
 const rowOf = (rows: readonly BenchCityRow[], preset: string, layer: string): BenchCityRow =>
   rows.find((r) => r.preset === preset && r.layer === layer)!;
@@ -112,7 +144,8 @@ describe('createBenchCityScene', () => {
 });
 
 describe('bench z prawdziwą sceną: każdy wiersz miasta pod profilem własnego presetu', () => {
-  async function fullRun(isMobile: boolean, initial: QualityPresetId = 'srednia') {
+  async function fullRun(isMobile: boolean, initial: QualityPresetId = 'srednia', override: typeof profileOverride.fn = null) {
+    profileOverride.fn = override;
     const b = benchOn(initial, isMobile);
     b.scene.load(BENCH_SEED, null);
     await vi.waitFor(() => expect(b.scene.loaded?.street).toBeTruthy(), { timeout: 4000, interval: 10 });
@@ -140,13 +173,15 @@ describe('bench z prawdziwą sceną: każdy wiersz miasta pod profilem własnego
   it('komputer: dla każdego wiersza auta, cienie i szczegółowość zgadzają się z profilem jego presetu (nie poprzedniego wiersza)', async () => {
     const { run } = await fullRun(false);
     for (const row of run.city) {
-      const profile = cityProfile(row.preset, false);
-      expect(row.profile).toBe(profile);
+      const id = `${row.preset}/${row.layer}`;
+      const want = expectedOf(row);
+      expect(row.profile, id).toBe(cityProfile(row.preset, false));
       expect(row.applied).toBe(row.preset);
-      expect(row.stats!.cars > 0, `${row.preset}/${row.layer}: auta`).toBe(profile.cars);
-      expect(row.stats!.shadowCasters > 0, `${row.preset}/${row.layer}: cienie`).toBe(profile.shadows === 'static');
-      expect(row.stats!.detail, `${row.preset}/${row.layer}: geometria`).toBe(row.layer === 'makieta' ? 'pelny' : profile.firstDetail);
-      expect(row.stats!.layer).toBe(row.layer);
+      expect(row.stats!.cars > 0, `${id}: auta`).toBe(want.cars);
+      expect(row.stats!.shadowCasters > 0, `${id}: cienie`).toBe(want.casters);
+      expect(row.stats!.detail, `${id}: geometria`).toBe(want.detail);
+      expect(row.stats!.layer, `${id}: widok`).toBe(want.layer);
+      expect(row.drawn, `${id}: drawn`).toBe(want.layer);
     }
   });
 
@@ -154,8 +189,9 @@ describe('bench z prawdziwą sceną: każdy wiersz miasta pod profilem własnego
     const { run } = await fullRun(true, 'niska');
     expect(run.city).toHaveLength(4);
     for (const row of run.city) {
+      const want = expectedOf(row);
       expect(row.profile).toBe(cityProfile(row.preset, true));
-      expect(row.stats).toMatchObject({ cars: 0, shadowCasters: 0, detail: row.layer === 'makieta' ? 'pelny' : 'prosty' });
+      expect(row.stats).toMatchObject({ cars: 0, shadowCasters: 0, detail: want.detail, layer: want.layer });
     }
   });
 
@@ -165,6 +201,38 @@ describe('bench z prawdziwą sceną: każdy wiersz miasta pod profilem własnego
       const { drawCalls, shadowCasters } = row.stats!;
       expect(drawCalls + shadowCasters, `${row.preset}/${row.layer}`).toBeLessThan(row.layer === 'makieta' ? 150 : 60);
     }
+  });
+
+  /**
+   * Drabina z Rozstrzygnięcia 13: po porażce progu zmienia się tylko `CITY_PROFILES`. Każdy szczebel to tu podmiana profilu (bez edycji
+   * tabeli); bieg, jego wiersze i sprawdzenie z `--bench` (`benchProblems`) mają dalej mówić prawdę, bez poprawek skryptu ani testów.
+   */
+  const LADDER: { name: string; mobile: boolean; initial: QualityPresetId; override: (preset: string, mobile: boolean, base: CityProfile) => CityProfile }[] = [
+    { name: 'Średnia: cars: false', mobile: false, initial: 'srednia', override: (p, _m, base) => (p === 'srednia' ? { ...base, cars: false } : base) },
+    { name: 'Średnia: cars: false, shadows: off', mobile: false, initial: 'srednia', override: (p, _m, base) => (p === 'srednia' ? { ...base, cars: false, shadows: 'off' } : base) },
+    { name: 'telefon: mockup: false', mobile: true, initial: 'niska', override: (_p, m, base) => (m ? { ...base, mockup: false } : base) },
+  ];
+
+  it.each(LADDER)('drabina profilu, szczebel „$name”: każdy wiersz pod zmienionym profilem, a sprawdzenie biegu (--bench) nie ma uwag', async ({ mobile, initial, override }) => {
+    const { run } = await fullRun(mobile, initial, override as typeof profileOverride.fn);
+    expect(run.city.map((r) => `${r.preset}/${r.layer}`)).toEqual(['niska/makieta', 'niska/ruch', 'srednia/makieta', 'wysoka/makieta']);
+    for (const row of run.city) {
+      const id = `${row.preset}/${row.layer}`;
+      const want = expectedOf(row);
+      expect(row.stats!.layer, `${id}: widok`).toBe(want.layer);
+      expect(row.stats!.detail, `${id}: geometria`).toBe(want.detail);
+      expect(row.stats!.cars > 0, `${id}: auta`).toBe(want.cars);
+      expect(row.stats!.shadowCasters > 0, `${id}: cienie`).toBe(want.casters);
+      expect(row.drawn, `${id}: drawn`).toBe(want.layer);
+    }
+    expect(benchProblems(run.rows, { city: run.city, env: { isMobile: mobile } }, { mobile })).toEqual([]);
+  });
+
+  it('szczebel „telefon: mockup: false”: makieta nie istnieje, więc wiersze „makieta” rysują „Ruch” na prostej geometrii, a etykieta wiersza zostaje', async () => {
+    const { run } = await fullRun(true, 'niska', ((_p: string, m: boolean, base: CityProfile) => (m ? { ...base, mockup: false } : base)) as typeof profileOverride.fn);
+    for (const row of run.city) expect(row.stats).toMatchObject({ layer: 'ruch', detail: 'prosty', cars: 0, shadowCasters: 0 });
+    expect(run.city.map((r) => r.layer)).toEqual(['makieta', 'ruch', 'makieta', 'makieta']);
+    expect(run.city.map((r) => r.drawn)).toEqual(['ruch', 'ruch', 'ruch', 'ruch']);
   });
 
   it('po biegu sklep wraca: miasto schowane, preset sprzed biegu, a każdy ustawiony preset zgłoszony nakładce', async () => {

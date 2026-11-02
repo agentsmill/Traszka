@@ -317,6 +317,7 @@ describe('BenchRun: miasto', () => {
       expect(row.frames).toBeGreaterThanOrEqual(TIMINGS.cityMeasureMs / FRAME_MS - 2);
       expect(row.frames).toBeLessThanOrEqual(TIMINGS.cityMeasureMs / FRAME_MS);
       expect(row.applied).toBe(row.preset);
+      expect(row.drawn).toBe(row.layer);   // widok faktycznie narysowany (ze `stats.layer`) to ten zamówiony, gdy profil ma makietę
       expect(row.stats).toEqual(cityStatsOf(row.layer));
       expect(row.profile).toBe(CITY_PROFILES.srednia);
     }
@@ -328,7 +329,20 @@ describe('BenchRun: miasto', () => {
     const run = new BenchRun(host, TIMINGS);
     drive(run, host);
     expect(run.city).toHaveLength(4);
-    expect(run.city.every((r) => r.stats === null && r.profile === null && r.frames > 0)).toBe(true);
+    expect(run.city.every((r) => r.stats === null && r.profile === null && r.drawn === null && r.frames > 0)).toBe(true);
+  });
+
+  it('wiersz niesie widok faktycznie narysowany: profil bez makiety rysuje „makietę” jako „ruch”, a wiersz zostaje „makieta” (to jego tożsamość w bramce)', () => {
+    const host = fakeHost();
+    host.citySnapshot = () => (host.layer === null ? null : {
+      stats: { ...cityStatsOf(host.layer === 'makieta' ? 'ruch' : host.layer), detail: 'prosty' },
+      profile: { ...CITY_PROFILES.telefon, mockup: false },
+    });
+    const run = new BenchRun(host, TIMINGS);
+    drive(run, host);
+    expect(run.city.map((r) => [r.preset, r.layer, r.drawn])).toEqual([
+      ['niska', 'makieta', 'ruch'], ['niska', 'ruch', 'ruch'], ['srednia', 'makieta', 'ruch'], ['wysoka', 'makieta', 'ruch'],
+    ]);
   });
 
   it('wynik sklepu (`__benchResult`) zostaje w starym kształcie: trzy wiersze po pięć pól, bez pól miasta', () => {
@@ -694,8 +708,8 @@ describe('createBenchSession', () => {
     for (const row of win.__benchResult as object[]) expect(Object.keys(row).sort()).toEqual(['avgFps', 'calls', 'p95FrameMs', 'preset', 'tris']);
     // konsola: tabela presetów, prób i miasta (cztery wiersze z autami, cieniami i szczegółowością)
     expect(table).toHaveBeenCalledTimes(3);
-    const cityTable = table.mock.calls[2]![0] as { preset: string; layer: string; cars: number; casters: number; detail: string }[];
+    const cityTable = table.mock.calls[2]![0] as { preset: string; layer: string; drawn: string; cars: number; casters: number; detail: string }[];
     expect(cityTable).toHaveLength(4);
-    expect(cityTable[2]).toMatchObject({ preset: 'srednia', layer: 'makieta', detail: 'pelny' });
+    expect(cityTable[2]).toMatchObject({ preset: 'srednia', layer: 'makieta', drawn: 'makieta', detail: 'pelny' });
   });
 });
