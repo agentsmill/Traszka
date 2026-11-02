@@ -25,7 +25,12 @@
  * do rankingu, ani lokalnego, ani prawdziwego), a każde inne zapytanie poza localhost jest blokowane i liczone. Zapisy gry i metę
  * wstawia skrypt do `localStorage` czystego kontekstu; nic nie trafia do prawdziwej przeglądarki użytkownika.
  *
- * Użycie: `npm run build`, potem `npm run city:smoke` (albo `node scripts/city-smoke.mjs [--only phone|desktop]`). Zrzuty i `smoke.json` idą do
+ * Plan 4a.2 (Zadanie 13) dokłada przełącznik `--bench`: sam bieg `?bench=1&quick=1` (benchmark z miastem, bramka makiety) na obu rozmiarach okna,
+ * na tym samym `vite preview`, z tą samą blokadą sieci i `locale: 'pl-PL'`. Sprawdza, że bieg się kończy, że `__benchExtra.city` ma cztery wiersze
+ * z `calls` < 150, że każdy wiersz mierzył się pod profilem swojego presetu (`cityStats()` zgodne z profilem) i że `?bench=1` nie próbował
+ * niczego wysłać do `/api/**` (licznik przerwanych zapytań musi być zerem). Liczby z headless (swiftshader) niczego nie rozstrzygają.
+ *
+ * Użycie: `npm run build`, potem `npm run city:smoke` (albo `node scripts/city-smoke.mjs [--only phone|desktop] [--bench]`). Zrzuty i `smoke.json` idą do
  * `.smoke/city/` (katalog jest w .gitignore); wybrane zrzuty do raportu kopiuje się ręcznie do `docs/superpowers/reports/`.
  * Playwright nie jest zależnością projektu: skrypt bierze go z `PLAYWRIGHT_ROOT` (domyślnie `/opt/node-tools`, jak `scripts/tutorial-smoke.mjs`; może to
  * być katalog pakietu `playwright-core`, katalog `node_modules` albo katalog, w którego `node_modules` leży `playwright`), a gdy tam go nie ma,
@@ -229,21 +234,26 @@ export function summarize(results, steps = [...STEPS, TIPS_STEP]) {
 
 export const USAGE = `Smoke miasta i drugiego sklepu w headless Chromium (po \`npm run build\`).
 
-Użycie: node scripts/city-smoke.mjs [--only telefon|desktop]
+Użycie: node scripts/city-smoke.mjs [--only telefon|desktop] [--bench]
         npm run city:smoke
 
   --only <rozmiar>  tylko jeden rozmiar okna: telefon (390×844, dotyk) albo desktop (1280×800)
+  --bench           zamiast kroków 1–12 sam bieg \`?bench=1&quick=1\` (benchmark z miastem) na obu rozmiarach; zero zapytań do /api/** to warunek
   --help            ta pomoc
 
 Zmienne: PLAYWRIGHT_ROOT (domyślnie ${DEFAULT_PLAYWRIGHT_ROOT}), CITY_SMOKE_CHROMIUM, CITY_SMOKE_PORT (4318), CITY_SMOKE_OUT (.smoke/city).
 Zrzuty i smoke.json idą do katalogu wyjściowego (w .gitignore). Kod wyjścia: 0 (wszystkie kroki ok), 1 (porażka kroku), 2 (błąd uruchomienia).`;
 
-/** Argumenty polecenia: `--only telefon|desktop` ogranicza przebieg do jednego rozmiaru (do ponawiania pojedynczej porażki). */
+/**
+ * Argumenty polecenia: `--only telefon|desktop` ogranicza przebieg do jednego rozmiaru (do ponawiania pojedynczej porażki), a `--bench`
+ * zamienia kroki 1–12 na sam bieg benchmarku z miastem (`?bench=1&quick=1`).
+ */
 export function parseArgs(argv) {
-  const args = { only: null, help: false };
+  const args = { only: null, help: false, bench: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--help' || a === '-h') args.help = true;
+    else if (a === '--bench') args.bench = true;
     else if (a === '--only') {
       const v = argv[++i];
       const name = VIEWPORTS.find((vp) => vp.name === v || (v === 'phone' && vp.mobile))?.name;
@@ -625,6 +635,97 @@ async function advance(page, { stop = null, maxDays, chunk = 1440, done = null }
   throw new Error('advance: gra nie posuwa się naprzód');
 }
 
+// ——— plan 4a.2 (Zadanie 13): blokada sieci i sprawdzenia biegu `--bench` (testy: tests/citySmoke.test.ts) ———
+
+/**
+ * Blokada sieci kontekstu Playwrighta, wspólna dla kroków 1–12 i biegu `--bench`: najpierw ogólna (każdy host poza localhost na porcie
+ * smoke'a jest blokowany i liczony w `sink.external`), potem `/api/**` (późniejsza trasa ma pierwszeństwo): przerywane i liczone w
+ * `sink.apiBlocked` z etykietą (`<rozmiar>/<znacznik>: METODA /ścieżka`). Smoke niczego nie wysyła do rankingu, ani lokalnego, ani prawdziwego.
+ */
+export async function guardNetwork(ctx, port, label, sink) {
+  await ctx.route('**/*', (route) => {
+    const verdict = requestVerdict(route.request().url(), port);
+    if (verdict === 'allow') return route.continue();
+    sink.external.push(route.request().url());
+    return route.abort();
+  });
+  await ctx.route('**/api/**', (route) => {
+    sink.apiBlocked.push(`${label}: ${route.request().method()} ${new URL(route.request().url()).pathname}`);
+    return route.abort();
+  });
+}
+
+/**
+ * Nagłówek User-Agent telefonu w biegu `--bench` (rozmiar „telefon”): `detectDeviceCaps().isMobile` czyta go, a bez niego kontekst z dotykiem na Macu
+ * nadal wygląda jak komputer i miasto dostałoby profil presetu zamiast profilu „telefon” (Rozstrzygnięcie 12). Poza tym kontekst jest ten sam co w krokach 1–12.
+ */
+export const BENCH_MOBILE_UA = 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36';
+/** Adres biegu benchmarku w smoke'u: ten sam, który właściciel otwiera na produkcji, w wersji `quick` (liczby z niej niczego nie rozstrzygają). */
+export const BENCH_PATH = '/?bench=1&quick=1';
+/** Wiersze miasta w kolejności biegu: makieta na każdym presecie, a na Niskiej jeszcze „Ruch” (widok telefonu po otwarciu zakładki). */
+export const BENCH_CITY_ORDER = [['niska', 'makieta'], ['niska', 'ruch'], ['srednia', 'makieta'], ['wysoka', 'makieta']];
+/** Wiersze sklepu w `__benchResult`: ten sam kształt co przed Zadaniem 13 (pięć pól, trzy presety). */
+export const BENCH_SHOP_KEYS = ['avgFps', 'calls', 'p95FrameMs', 'preset', 'tris'];
+/** Próg bramki dla każdego wiersza: `calls` (średnie z klatki, wszystkie przebiegi) poniżej 150. */
+export const BENCH_CALLS_LIMIT = 150;
+/** Budżet §19 dla samej sceny miasta: wywołania rysowania i rzucające cień poniżej 150 w makiecie, poniżej 60 w warstwach. */
+export const CITY_BUDGET = { makieta: 150, ruch: 60, dzielnice: 60 };
+
+/**
+ * Wady biegu benchmarku z `window.__benchResult` i `window.__benchExtra` (pusta lista: bieg jest ważny). Sprawdza kształt wyniku sklepu,
+ * cztery wiersze miasta w kolejności biegu z `calls` < 150 i niezerową liczbą klatek oraz to, że każdy wiersz mierzył się pod profilem
+ * swojego presetu: auta, cienie i szczegółowość geometrii ze `stats` (`cityStats()` z końca pomiaru) zgadzają się z `profile`, czyli z tym,
+ * co profil miasta każe dla presetu, który renderer faktycznie miał. Tabeli profili tu nie ma (zmienia ją tylko `CITY_PROFILES`), więc
+ * porażka oznacza, że scena nie zastosowała profilu, a nie że profil się zmienił. Na urządzeniu mobilnym (`env.isMobile`) profil „telefon”
+ * wygrywa z presetem: wszystkie cztery wiersze mają ten sam profil (Rozstrzygnięcie 12), także Średnia i Wysoka.
+ */
+export function benchProblems(result, extra) {
+  const out = [];
+  if (!Array.isArray(result)) return ['brak window.__benchResult'];
+  if (!extra || typeof extra !== 'object') return ['brak window.__benchExtra'];
+  const presets = result.map((r) => r.preset).join(',');
+  if (result.length !== 3 || presets !== 'niska,srednia,wysoka') out.push(`__benchResult: wiersze ${result.length} (${presets}), oczekiwane niska,srednia,wysoka`);
+  for (const row of result) {
+    const keys = Object.keys(row).sort().join(',');
+    if (keys !== BENCH_SHOP_KEYS.join(',')) out.push(`__benchResult[${row.preset}]: pola ${keys}, oczekiwane ${BENCH_SHOP_KEYS.join(',')}`);
+  }
+  const city = Array.isArray(extra.city) ? extra.city : [];
+  if (extra.env?.isMobile === true && city.some((r) => JSON.stringify(r.profile) !== JSON.stringify(city[0]?.profile))) {
+    out.push('urządzenie mobilne: wiersze miasta nie mają jednego profilu „telefon” (telefon ma wygrywać z presetem)');
+  }
+  const order = city.map((r) => `${r.preset}/${r.layer}`).join(' ');
+  const want = BENCH_CITY_ORDER.map(([p, l]) => `${p}/${l}`).join(' ');
+  if (order !== want) out.push(`__benchExtra.city: wiersze „${order}”, oczekiwane „${want}”`);
+  for (const row of city) {
+    const id = `${row.preset}/${row.layer}`;
+    if (!(row.frames > 0)) out.push(`${id}: brak klatek w pomiarze`);
+    if (!(row.calls < BENCH_CALLS_LIMIT)) out.push(`${id}: calls ${row.calls} (limit ${BENCH_CALLS_LIMIT})`);
+    const { stats, profile } = row;
+    if (!stats || !profile) { out.push(`${id}: brak migawki sceny (stats/profile)`); continue; }
+    if (!stats.shown || !stats.built) out.push(`${id}: miasto nie było pokazane (shown ${stats.shown}, built ${stats.built})`);
+    if (stats.layer !== row.layer) out.push(`${id}: scena rysowała widok ${stats.layer}`);
+    if ((stats.cars > 0) !== profile.cars) out.push(`${id}: auta ${stats.cars}, a profil ${profile.cars ? 'je daje' : 'ich nie daje'}`);
+    const wantCasters = row.layer === 'makieta' && profile.shadows === 'static';
+    if ((stats.shadowCasters > 0) !== wantCasters) out.push(`${id}: rzucających cień ${stats.shadowCasters}, a profil ${wantCasters ? 'daje cienie' : 'nie daje cieni'}`);
+    const wantDetail = row.layer === 'makieta' ? 'pelny' : profile.firstDetail;
+    if (stats.detail !== wantDetail) out.push(`${id}: geometria ${stats.detail}, oczekiwana ${wantDetail}`);
+    const budget = CITY_BUDGET[row.layer] ?? 60;
+    if (!(stats.drawCalls + stats.shadowCasters < budget)) out.push(`${id}: scena ${stats.drawCalls} + ${stats.shadowCasters} wywołań (budżet ${budget})`);
+  }
+  return out;
+}
+
+/** Linie tabeli do konsoli i raportu: wiersze sklepu i miasta jednego rozmiaru (preset, widok, FPS, p95, calls, geometria, auta, cienie). */
+export function benchTableLines(result, extra) {
+  const pad = (v, n) => String(v ?? '–').padEnd(n);
+  const lines = [`${pad('wiersz', 20)}${pad('FPS', 8)}${pad('p95 ms', 8)}${pad('calls', 7)}${pad('geom.', 8)}${pad('auta', 6)}cienie`];
+  for (const r of result ?? []) lines.push(`${pad(`${r.preset} (sklep)`, 20)}${pad(r.avgFps, 8)}${pad(r.p95FrameMs, 8)}${pad(r.calls, 7)}${pad('', 8)}${pad('', 6)}`);
+  for (const r of extra?.city ?? []) {
+    lines.push(`${pad(`${r.preset} ${r.layer}`, 20)}${pad(r.avgFps, 8)}${pad(r.p95FrameMs, 8)}${pad(r.calls, 7)}${pad(r.stats?.detail, 8)}${pad(r.stats?.cars, 6)}${r.stats?.shadowCasters ?? '–'}`);
+  }
+  return lines;
+}
+
 // ——— serwer ———
 
 /**
@@ -657,6 +758,109 @@ function stopPreview(proc) {
   try { process.kill(-proc.pid, 'SIGTERM'); } catch { try { proc.kill(); } catch { /* już zamknięty */ } }
 }
 
+// ——— bieg `--bench` ———
+
+/** Najdłużej czekamy na koniec biegu `?bench=1&quick=1` (ms): wczytanie sceny, napełnienie sklepu na trzech presetach, próby i miasto, na swiftshaderze z zapasem. */
+const BENCH_TIMEOUT_MS = 480_000;
+
+/**
+ * Sam bieg benchmarku z miastem (`?bench=1&quick=1`) na obu rozmiarach okna (albo jednym z `--only`): ten sam `vite preview`, ta sama blokada
+ * sieci (`guardNetwork`) i `locale: 'pl-PL'`, czysty kontekst na rozmiar, pamięć samouczka wstawiona przed pierwszym wczytaniem. Strona dostaje
+ * dokładnie ten adres, który właściciel otwiera na produkcji (z `quick=1`). Warunki: bieg się kończy, `benchProblems` nic nie znajduje, a zapytań
+ * do `/api/**` i poza localhost jest zero (przerywamy je mimo to, więc nic nie mogłoby wyjść z maszyny). Liczby FPS z headless nie rozstrzygają bramki.
+ */
+async function runBench({ args, chromium, executablePath, port, base, out }) {
+  const sink = { external: [], apiBlocked: [] };
+  const sizes = VIEWPORTS.filter((vp) => !args.only || vp.name === args.only);
+  const results = {};
+  const server = await startPreview(port);
+  let browser = null;
+  const onSignal = (code) => () => {
+    void (async () => {
+      try { await browser?.close(); } catch { /* i tak kończymy */ }
+      stopPreview(server);
+      process.exit(code);
+    })();
+  };
+  process.on('SIGINT', onSignal(130));
+  process.on('SIGTERM', onSignal(143));
+  const started = Date.now();
+  try {
+    browser = await chromium.launch({ ...(executablePath ? { executablePath } : {}), args: LAUNCH_ARGS });
+    for (const vp of sizes) {
+      console.log(`${vp.name} (${vp.size.width}×${vp.size.height}${vp.mobile ? ', dotyk' : ''}): ${BENCH_PATH}`);
+      const ctx = await browser.newContext({ ...contextOptions(vp), ...(vp.mobile ? { userAgent: BENCH_MOBILE_UA } : {}) });
+      await guardNetwork(ctx, port, `${vp.name}/bench`, sink);
+      await ctx.addInitScript((tutorial) => {
+        try { localStorage.setItem('traszka:tutorial', tutorial); } catch { /* bez magazynu bench i tak ruszy */ }
+      }, JSON.stringify(tutorialMemory(false)));
+      const page = await ctx.newPage();
+      const errors = [];
+      const warnings = [];
+      const requests = [];
+      page.on('console', (m) => {
+        if (m.type() === 'error') errors.push(m.text());
+        else if (m.type() === 'warning') warnings.push(m.text());
+      });
+      page.on('pageerror', (e) => errors.push(`pageerror ${e.message}`));
+      page.on('request', (r) => requests.push(new URL(r.url()).pathname));
+      const r = { ok: true, failed: [], seconds: 0, requests: 0, apiPaths: [] };
+      results[vp.name] = r;
+      const t0 = Date.now();
+      try {
+        await page.goto(`${base}${BENCH_PATH}`);
+        await page.waitForFunction(() => window.__benchResult !== undefined && window.__benchExtra !== undefined, null, { timeout: BENCH_TIMEOUT_MS, polling: 1000 });
+        const { result, extra } = await page.evaluate(() => ({ result: window.__benchResult, extra: window.__benchExtra }));
+        r.result = result;
+        r.extra = extra;
+        r.failed.push(...benchProblems(result, extra));
+        r.table = benchTableLines(result, extra);
+        await page.screenshot({ path: join(out, `${vp.name}-bench.jpg`), type: 'jpeg', quality: 80, timeout: 120_000 });
+      } catch (error) {
+        r.failed.push(`wyjątek: ${error instanceof Error ? error.message : String(error)}`);
+        try { await page.screenshot({ path: join(out, `${vp.name}-bench-fail.jpg`), type: 'jpeg', quality: 80, timeout: 30_000 }); } catch { /* strona mogła paść */ }
+      }
+      r.seconds = Math.round((Date.now() - t0) / 1000);
+      r.requests = requests.length;
+      r.apiPaths = requests.filter((p) => p === '/api' || p.startsWith('/api/'));
+      r.paths = [...new Set(requests)];   // dowód dla raportu: z czego składa się ruch strony (tu ma nie być `/api`)
+      r.errors = errors;
+      r.warnings = [...new Set(warnings)];
+      if (errors.length > 0) r.failed.push(`błędy w konsoli: ${errors.length} (${errors.slice(0, 2).join(' | ')})`);
+      r.ok = r.failed.length === 0;
+      await ctx.close();
+    }
+  } finally {
+    try {
+      await browser?.close();
+    } finally {
+      stopPreview(server);
+    }
+  }
+  const seconds = Math.round((Date.now() - started) / 1000);
+  // zapytania do /api/** są poza kontrolą strony: licznik trasy przerywającej musi zostać zerem (przerwane zapytanie to porażka, nie „zabezpieczenie zadziałało”)
+  const apiFailures = [];
+  if (sink.apiBlocked.length > 0) apiFailures.push(`przerwane zapytania do /api/**: ${sink.apiBlocked.length} (${[...new Set(sink.apiBlocked)].slice(0, 3).join(', ')})`);
+  if (sink.external.length > 0) apiFailures.push(`zapytania poza localhost: ${sink.external.length} (${[...new Set(sink.external)].slice(0, 3).join(', ')})`);
+  const ok = Object.values(results).every((r) => r.ok) && apiFailures.length === 0 && Object.keys(results).length > 0;
+  const report = {
+    mode: 'bench', path: BENCH_PATH, note: 'headless (swiftshader), niediagnostyczne: nie rozstrzygają bramki makiety', seconds, ok,
+    results, apiBlocked: sink.apiBlocked, external: sink.external, apiFailures,
+  };
+  writeFileSync(join(out, 'bench.json'), `${JSON.stringify(report, null, 2)}\n`);
+  console.log('');
+  for (const [name, r] of Object.entries(results)) {
+    console.log(`${name}: ${r.ok ? 'ok' : 'FAIL'} (${r.seconds} s, zapytań ${r.requests}, z tego /api/**: ${r.apiPaths.length}, błędów konsoli ${r.errors?.length ?? 0})`);
+    for (const line of r.table ?? []) console.log(`  ${line}`);
+    for (const f of r.failed) console.log(`  <- ${f}`);
+    for (const w of r.extra?.warnings ?? []) console.log(`  uwaga benchmarku: ${w}`);
+  }
+  for (const f of apiFailures) console.log(`<- ${f}`);
+  console.log(`\nbench: ${ok ? 'ok' : 'FAIL'}; przerwane /api/**: ${sink.apiBlocked.length}, poza localhost: ${sink.external.length}, ${seconds} s, wynik: ${out}/bench.json`);
+  console.log('Liczby: headless (swiftshader), niediagnostyczne, nie rozstrzygają bramki makiety (decyduje właściciel na laptopie i telefonie, na produkcji).');
+  return ok ? 0 : 1;
+}
+
 // ——— bieg ———
 
 async function main(argv) {
@@ -673,6 +877,7 @@ async function main(argv) {
   const executablePath = chromiumExecutable();
   rmSync(out, { recursive: true, force: true });
   mkdirSync(out, { recursive: true });
+  if (args.bench) return runBench({ args, chromium, executablePath, port, base, out });
 
   const old = fixtureSave(FIXTURES.stary);
   const before = fixtureSave(FIXTURES.przedStatusem);
@@ -691,16 +896,7 @@ async function main(argv) {
   async function newPage(browser, vp, tag, { fixture, tips = false }) {
     const ctx = await browser.newContext(contextOptions(vp));
     // najpierw ogólna blokada, potem `/api/**` (późniejsza trasa ma pierwszeństwo): niczego nie wysyłamy do rankingu
-    await ctx.route('**/*', (route) => {
-      const verdict = requestVerdict(route.request().url(), port);
-      if (verdict === 'allow') return route.continue();
-      external.push(route.request().url());
-      return route.abort();
-    });
-    await ctx.route('**/api/**', (route) => {
-      apiBlocked.push(`${vp.name}/${tag}: ${route.request().method()} ${new URL(route.request().url()).pathname}`);
-      return route.abort();
-    });
+    await guardNetwork(ctx, port, `${vp.name}/${tag}`, { external, apiBlocked });
     const entries = storageEntries({ seed: fixture.seed, saveText: fixture.text, tips, now: Date.now() });
     // wstawiamy raz na kartę (sessionStorage przeżywa przeładowanie ze zmianą języka, a zapis gry nie może wrócić do fixture'a)
     await ctx.addInitScript((e) => {

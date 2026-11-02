@@ -164,8 +164,19 @@
 .tt-bench {
   width: 560px;
   max-width: calc(100vw - 24px);
+  max-height: calc(100vh - 24px);
   box-sizing: border-box;
   line-height: 1.4;
+  /* bramka makiety czyta liczby z tej karty na telefonie: wiele ostrzeżeń nie może wypchnąć tabel poza ekran */
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+@media (max-width: 600px) {
+  /* osiem kolumn nie mieści się w 390 px (nagłówki zlewały się w jedno): karta przewija się w bok zamiast ściskać kolumny */
+  .tt-bench table {
+    min-width: 520px;
+  }
 }
 
 .tt-bench h2 {
