@@ -41,6 +41,9 @@ export default defineConfig(({ mode }) => ({
   },
   test: {
     environment: 'node',
+    // CI GitHuba w pełnym biegu bywa 5–8× wolniejsze niż lokalnie, więc testy po 0,6 s przekraczały tam domyślne 5 s. Lokalnie limit
+    // zostaje domyślny, żeby test, który naprawdę zwolnił, dalej było widać.
+    testTimeout: process.env.CI ? 30_000 : 5_000,
     exclude: [...configDefaults.exclude, '.claude/**'],
   },
 }));
