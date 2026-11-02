@@ -142,6 +142,11 @@ export class MemoryRedis implements RedisExec {
         const slice = asc.slice(a, b + 1);
         return text(args[3]).toUpperCase() === 'WITHSCORES' ? slice.flatMap(([m, s]) => [m, scoreText(s)]) : slice.map(([m]) => m);
       }
+      case 'ZRANK': {
+        const z = this.typed(key, 'zset');
+        const i = z ? this.sortedDesc(z.value).reverse().findIndex(([m]) => m === text(args[1])) : -1;
+        return i < 0 ? null : i;
+      }
       case 'ZREVRANK': {
         const z = this.typed(key, 'zset');
         const i = z ? this.sortedDesc(z.value).findIndex(([m]) => m === text(args[1])) : -1;

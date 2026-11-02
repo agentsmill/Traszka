@@ -65,11 +65,13 @@ export function parseFameEntry(raw: string | null): FameEntry | null {
  * Wpisuje nick do Galerii. `SET NX` zapisuje wpis tylko wtedy, gdy tego nicka jeszcze w Galerii nie ma (`first: true`). Gdy już był,
  * wpis zostaje bez zmian (inny klucz gracza, inna kwota, nowsza chwila nic nie zmieniają), a `entry` to wpis z bazy (`first: false`).
  * Na końcu `ZADD NX` z chwilą `at` tego wpisu: przy pierwszym wpisie dopisuje go do listy, przy kolejnym naprawia listę, gdy
- * pierwsze zgłoszenie zdążyło zapisać wpis, a do listy nie dotarło (NX nie rusza wyniku, który już jest). Zapis i odczyt idą jednym
- * zapytaniem (`SET NX`, `GET`), a lista drugim, bo jej wynik zależy od tego, co zwróciła baza. Uszkodzony wpis w bazie to błąd bazy
+ * pierwsze zgłoszenie zdążyło zapisać wpis, a do listy nie dotarło (NX nie rusza wyniku, który już jest). W tym samym zapytaniu
+ * `ZRANK` oddaje miejsce wpisu na liście: `place` = pozycja + 1, to samo liczenie co w `readFame`, więc zgodne z listą także
+ * poza pierwszą setką; przy `first: false` to miejsce istniejącego wpisu tego nicka. Zapis i odczyt idą jednym zapytaniem
+ * (`SET NX`, `GET`), a lista drugim, bo jej wynik zależy od tego, co zwróciła baza. Uszkodzony wpis w bazie to błąd bazy
  * (500): serwer niczego nie nadpisuje, a uszkodzenia sam nie wytwarza. Wpis, który zniknął między poleceniami, dostaje drugą próbę.
  */
-export async function recordFame(redis: RedisExec, nickKey: string, e: FameEntry): Promise<{ first: boolean; entry: FameEntry }> {
+export async function recordFame(redis: RedisExec, nickKey: string, e: FameEntry): Promise<{ first: boolean; entry: FameEntry; place: number }> {
   const key = KEYS.fameEntry(nickKey);
   for (let attempt = 0; attempt < 2; attempt++) {
     const [set, current] = await redis.exec([['SET', key, JSON.stringify(e), 'NX'], ['GET', key]]);
@@ -80,8 +82,10 @@ export async function recordFame(redis: RedisExec, nickKey: string, e: FameEntry
       if (stored === null) continue;
       throw new RedisError('Fame: wpis w bazie jest nieczytelny');
     }
-    await run(redis, ['ZADD', KEYS.fameList, 'NX', entry.at, nickKey]);
-    return { first, entry };
+    const [, rank] = await redis.exec([['ZADD', KEYS.fameList, 'NX', entry.at, nickKey], ['ZRANK', KEYS.fameList, nickKey]]);
+    const index = asNumber(rank);
+    if (index === null) throw new RedisError('Fame: wpisu nie ma na liście po zapisie');
+    return { first, entry, place: index + 1 };
   }
   throw new RedisError('Fame: wpis zniknął z bazy podczas zapisu');
 }

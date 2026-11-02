@@ -345,7 +345,9 @@ export const handleSaveDownload: Handler = async (request, deps) => {
  * `POST /api/fame/submit` z `{ key, nick, seed, day, cash, simVersion }`: wpis do Galerii sław (pierwszy milion gotówki firmy w zwykłej
  * grze). Serwer niczego nie odtwarza, więc wpis jest do sfałszowania; granicą są sprawdzenia wiarygodności, limit i budżet dzienny.
  * Pierwszy wpis nicka zapisuje chwilę serwera i dopisuje go na koniec listy; kolejny wpis tego nicka (dowolny klucz i kwota) niczego
- * nie zmienia i zwraca ten pierwszy (`first: false`, `entry.at` pierwszego wpisu). Nick wolny nie jest rezerwowany (rezerwuje go
+ * nie zmienia i zwraca ten pierwszy (`first: false`, `entry.at` pierwszego wpisu). `place` to miejsce tego nicka na liście (od 1,
+ * także poza pierwszą setką, którą pokazuje `GET /api/fame/list`): lista leży w pamięci podręcznej, więc klient nie wyczyta swojego
+ * miejsca z niej zaraz po wpisie. Nick wolny nie jest rezerwowany (rezerwuje go
  * tylko przyjęty bieg rankingu), ale nick cudzy (`nick-taken`) nie przejdzie: Galeria nie ma zmieniać rankingu.
  *
  * Kolejność kontroli jak w `POST /api/runs`: metoda, wczesny limit po adresie, ciało (do `SMALL_BODY_BYTES`), kształt, klucz, nick
@@ -371,19 +373,20 @@ export const handleFameSubmit: Handler = async (request, deps) => {
   if (await nickStatus(deps.redis, nickKey, owner, now) === 'taken') return apiError('nick-taken');
   const budget = await checkBudget(deps.redis, 'fame', FAME_DAILY_BUDGET, now);
   if (!budget.ok) return apiError('fame-budget', undefined, { 'retry-after': String(budget.retryAfter) });
-  const { first, entry } = await recordFame(deps.redis, nickKey, { nick, seed, day, cash, simVersion, at: now });
-  return json({ ok: true, first, entry: { nick: entry.nick, at: entry.at } });
+  const { first, entry, place } = await recordFame(deps.redis, nickKey, { nick, seed, day, cash, simVersion, at: now });
+  return json({ ok: true, first, place, entry: { nick: entry.nick, at: entry.at } });
 };
 
 /**
  * `GET /api/fame/list`: pierwsze `FAME_LIST_MAX` wpisów Galerii od najwcześniejszego (`place`, `nick`, `at`; seed i gotówka zostają
  * w bazie) i liczba wszystkich wpisów. Publiczne i jednakowe dla wszystkich, więc odpowiedź leży chwilę w pamięci podręcznej Vercela
- * (`BOARD_CACHE`). Ta pamięć kluczuje adresem z zapytaniem, więc każdy parametr to 400 `bad-request`, bez zapytania do bazy.
+ * (`BOARD_CACHE`). Ta pamięć kluczuje adresem z zapytaniem, więc każde zapytanie poza gołym adresem (parametr, ale też same `?&`,
+ * `?&&`…, których `searchParams` nie widzi) to 400 `bad-request`, bez zapytania do bazy. Goły `?` na końcu adresu ma puste `search`.
  */
 export const handleFameList: Handler = async (request, deps) => {
   const bad = wrongMethod(request, 'GET');
   if (bad) return bad;
-  if ([...new URL(request.url).searchParams.keys()].length > 0) return apiError('bad-request');
+  if (new URL(request.url).search !== '') return apiError('bad-request');
   const { total, rows } = await readFame(deps.readRedis);
   return json({ ok: true, total, rows }, 200, { 'cache-control': BOARD_CACHE });
 };

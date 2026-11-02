@@ -565,12 +565,12 @@ async function invokeWorker({ outputDir, atrapaFile, cliDir, simVersion, generat
   const fameOut = await call('/api/fame/list', { ip: ip(4) });
   const fameListTokens = up.log.slice(fameListMark).map((e) => e.token);
   const fameRow = fameOut.json?.rows?.[0];
-  check('fame', 'Galeria sław: POST /api/fame/submit 200 (first), ten sam nick drugi raz first=false z tym samym at, dzień 5 to 422 fame-invalid; GET /api/fame/list 200, jeden wiersz (place, nick, at) czytany tokenem tylko do odczytu',
-    fameIn.status === 200 && fameIn.json?.first === true && fameAgain.status === 200 && fameAgain.json?.first === false
-      && fameAgain.json?.entry?.at === fameIn.json?.entry?.at && fameBad.status === 422 && fameBad.json?.error === 'fame-invalid'
+  check('fame', 'Galeria sław: POST /api/fame/submit 200 (first, place 1), ten sam nick drugi raz first=false z tym samym at i place 1, dzień 5 to 422 fame-invalid; GET /api/fame/list 200, jeden wiersz (place, nick, at) czytany tokenem tylko do odczytu',
+    fameIn.status === 200 && fameIn.json?.first === true && fameIn.json?.place === 1 && fameAgain.status === 200 && fameAgain.json?.first === false
+      && fameAgain.json?.place === 1 && fameAgain.json?.entry?.at === fameIn.json?.entry?.at && fameBad.status === 422 && fameBad.json?.error === 'fame-invalid'
       && fameOut.status === 200 && fameOut.json?.total === 1 && fameRow?.nick === FAME_NICK && Object.keys(fameRow).sort().join() === 'at,nick,place'
       && fameWriteTokens.includes('rw') && fameListTokens.length > 0 && fameListTokens.every((t) => t === 'ro'),
-    `submit ${fameIn.status}/${fameIn.json?.first}, drugi ${fameAgain.status}/${fameAgain.json?.first}, zły ${fameBad.status}/${fameBad.json?.error}; lista ${fameOut.status}, wpisów ${fameOut.json?.total}, wiersz ${JSON.stringify(fameRow)}, tokeny listy: ${[...new Set(fameListTokens)].join(',')}`);
+    `submit ${fameIn.status}/${fameIn.json?.first}/place ${fameIn.json?.place}, drugi ${fameAgain.status}/${fameAgain.json?.first}/place ${fameAgain.json?.place}, zły ${fameBad.status}/${fameBad.json?.error}; lista ${fameOut.status}, wpisów ${fameOut.json?.total}, wiersz ${JSON.stringify(fameRow)}, tokeny listy: ${[...new Set(fameListTokens)].join(',')}`);
 
   // 5. Bez RANKING_SALT: sól okna leży w bazie (więcej zapytań), wynik ten sam.
   setEnv(live);

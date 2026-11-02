@@ -210,7 +210,7 @@ describe('api/** na Vercelu (atrapa Upstash przez fetch)', () => {
   it('Galeria sław: wpis przez api/fame/submit (token zapisu) widać na api/fame/list (token do odczytu); w bazie tylko klucze Galerii, budżet i liczniki', async () => {
     const res = await fameSubmit(post('/api/fame/submit', fameEntry));
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true, first: true, entry: { nick: 'Mateusz', at: expect.any(Number) } });
+    expect(await res.json()).toEqual({ ok: true, first: true, place: 1, entry: { nick: 'Mateusz', at: expect.any(Number) } });
     expect(upstash.log.every((l) => l.token === 'rw')).toBe(true);
     upstash.log.length = 0;
     const listed = await fameList(new Request(`${ORIGIN}/api/fame/list`));

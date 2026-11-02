@@ -79,6 +79,17 @@ describe('MemoryRedis: atrapa Upstash do testów (te same polecenia, te same ksz
     await expect(run(redis, ['ZRANGE', 'tekst', 0, -1])).rejects.toBeInstanceOf(RedisError);
   });
 
+  it('ZRANK: miejsce od 0 w kolejności rosnącej (remis po członku), null dla nieznanego członka i braku klucza; zły typ to błąd', async () => {
+    const { redis } = redisAt();
+    await redis.exec([['ZADD', 'z', 3, 'd'], ['ZADD', 'z', 2, 'b'], ['ZADD', 'z', 1, 'c'], ['ZADD', 'z', 2, 'a']]);
+    expect(await redis.exec([
+      ['ZRANK', 'z', 'c'], ['ZRANK', 'z', 'a'], ['ZRANK', 'z', 'b'], ['ZRANK', 'z', 'd'], ['ZRANK', 'z', 'x'], ['ZRANK', 'brak', 'a'],
+    ])).toEqual([0, 1, 2, 3, null, null]);
+    expect(await run(redis, ['ZRANGE', 'z', 0, -1])).toEqual(['c', 'a', 'b', 'd']);   // te same miejsca co w ZRANGE
+    await redis.exec([['SET', 'tekst', 'x']]);
+    await expect(run(redis, ['ZRANK', 'tekst', 'a'])).rejects.toBeInstanceOf(RedisError);
+  });
+
   it('ZADD NX: dopisuje tylko nowych członków (liczy dodanych), istniejącemu nie zmienia wyniku; z GT to błąd jak w Redisie', async () => {
     const { redis } = redisAt();
     expect(await redis.exec([

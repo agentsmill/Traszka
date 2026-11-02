@@ -41,12 +41,12 @@ const body = async (res: Response): Promise<Record<string, unknown>> => (await r
 const dataKeys = (redis: MemoryRedis): string[] => redis.keys().filter((k) => !k.startsWith('tr:rl:') && !k.startsWith('tr:salt:'));
 
 describe('POST /api/fame/submit: wpis do Galerii sław', () => {
-  it('pierwszy wpis: 200 { first: true, entry: { nick, at = chwila serwera } }, a ZSCORE listy to ta sama chwila', async () => {
+  it('pierwszy wpis: 200 { first: true, place: 1, entry: { nick, at = chwila serwera } }, a ZSCORE listy to ta sama chwila', async () => {
     const { deps, redis } = setup();
     const res = await submit(deps, { nick: ' Mateusz ' });
     expect(res.status).toBe(200);
     expect(res.headers.get('cache-control')).toBe('no-store');
-    expect(await body(res)).toEqual({ ok: true, first: true, entry: { nick: 'Mateusz', at: NOW } });
+    expect(await body(res)).toEqual({ ok: true, first: true, place: 1, entry: { nick: 'Mateusz', at: NOW } });
     expect(await run(redis, ['ZSCORE', KEYS.fameList, 'mateusz'])).toBe(String(NOW));
     const stored = parseFameEntry((await run(redis, ['GET', KEYS.fameEntry('mateusz')])) as string);
     expect(stored).toEqual({ nick: 'Mateusz', seed: SEED, day: 412, cash: 1_034_500.5, simVersion: SIM_VERSION, at: NOW } satisfies FameEntry);
@@ -55,7 +55,7 @@ describe('POST /api/fame/submit: wpis do Galerii sław', () => {
   it('czas to chwila serwera: pola `at` z ciała zgłoszenia serwer nie czyta', async () => {
     const { deps } = setup();
     const res = await submit(deps, { at: 1, savedAt: 2 });
-    expect(await body(res)).toEqual({ ok: true, first: true, entry: { nick: 'Mateusz', at: NOW } });
+    expect(await body(res)).toEqual({ ok: true, first: true, place: 1, entry: { nick: 'Mateusz', at: NOW } });
   });
 
   it('drugi wpis tego nicka (inny klucz, inna kwota, później): first false, entry.at to pierwszy at, a wpis i lista bez zmian', async () => {
@@ -65,7 +65,7 @@ describe('POST /api/fame/submit: wpis do Galerii sław', () => {
     clock.now = NOW + 3_600_000;
     const res = await submit(deps, { key: KEY_B, nick: 'MATEUSZ', cash: 5_000_000, day: 700, seed: 'inny-1', simVersion: SIM_VERSION + 1 });
     expect(res.status).toBe(200);
-    expect(await body(res)).toEqual({ ok: true, first: false, entry: { nick: 'Mateusz', at: NOW } });
+    expect(await body(res)).toEqual({ ok: true, first: false, place: 1, entry: { nick: 'Mateusz', at: NOW } });
     expect(await redis.exec([['GET', KEYS.fameEntry('mateusz')], ['ZRANGE', KEYS.fameList, 0, -1, 'WITHSCORES']])).toEqual(before);
     expect(await run(redis, ['ZCARD', KEYS.fameList])).toBe(1);
   });
@@ -74,7 +74,29 @@ describe('POST /api/fame/submit: wpis do Galerii sław', () => {
     const { deps, clock } = setup();
     await submit(deps);
     clock.now += 5_000;
-    expect(await body(await submit(deps))).toEqual({ ok: true, first: false, entry: { nick: 'Mateusz', at: NOW } });
+    expect(await body(await submit(deps))).toEqual({ ok: true, first: false, place: 1, entry: { nick: 'Mateusz', at: NOW } });
+  });
+
+  it('place: pierwszy nick 1, drugi 2, powtórka pierwszego nicka (inny klucz) znów 1 z first false, a powtórka drugiego 2; poza setką numer rośnie dalej', async () => {
+    const { deps, redis, clock } = setup();
+    const place = async (over: Record<string, unknown>): Promise<unknown> => {
+      const res = await submit(deps, over);
+      expect(res.status).toBe(200);
+      const data = await body(res);
+      return [data.first, data.place, (data.entry as { at: number }).at];
+    };
+    expect(await place({ nick: 'Pierwszy' })).toEqual([true, 1, NOW]);
+    clock.now = NOW + 10_000;
+    expect(await place({ nick: 'Drugi' })).toEqual([true, 2, NOW + 10_000]);
+    clock.now = NOW + 20_000;
+    expect(await place({ nick: 'PIERWSZY', key: KEY_B })).toEqual([false, 1, NOW]);   // miejsce istniejącego wpisu, nie nowe
+    expect(await place({ nick: 'Drugi' })).toEqual([false, 2, NOW + 10_000]);
+    expect(await run(redis, ['ZCARD', KEYS.fameList])).toBe(2);
+    // sto kolejnych wpisów wprost w bazie: nowy nick jest 103., choć lista pokazuje tylko pierwsze sto
+    await redis.exec(Array.from({ length: 100 }, (_, i) => ['ZADD', KEYS.fameList, NOW + 30_000 + i, `wstawiony${i}`]));
+    clock.now = NOW + 40_000;
+    expect(await place({ nick: 'Spozniony', key: KEY_C })).toEqual([true, 103, NOW + 40_000]);
+    expect((await body(await list(deps))).rows).toHaveLength(100);
   });
 
   it('wpis zapisany bez wpisu na liście (zerwane zgłoszenie): kolejne zgłoszenie naprawia listę chwilą PIERWSZEGO wpisu', async () => {
@@ -83,7 +105,7 @@ describe('POST /api/fame/submit: wpis do Galerii sław', () => {
     await run(redis, ['SET', KEYS.fameEntry('mateusz'), JSON.stringify(e)]);
     expect(await run(redis, ['ZCARD', KEYS.fameList])).toBe(0);
     clock.now = NOW;
-    expect(await body(await submit(deps, { cash: 9_999_999 }))).toEqual({ ok: true, first: false, entry: { nick: 'Mateusz', at: NOW - 86_400_000 } });
+    expect(await body(await submit(deps, { cash: 9_999_999 }))).toEqual({ ok: true, first: false, place: 1, entry: { nick: 'Mateusz', at: NOW - 86_400_000 } });
     expect(await run(redis, ['ZSCORE', KEYS.fameList, 'mateusz'])).toBe(String(NOW - 86_400_000));
     expect(parseFameEntry((await run(redis, ['GET', KEYS.fameEntry('mateusz')])) as string)).toEqual(e);
   });
@@ -280,7 +302,8 @@ describe('GET /api/fame/list: lista Galerii', () => {
 
   it('inny parametr zapytania (także limit, board, pusty klucz) to 400 bez zapytania do bazy; sam znak zapytania przechodzi', async () => {
     const { deps, redis } = setup();
-    for (const query of ['?limit=10', '?board=global', '?a=1&b=2', '?=', '?seed=x']) {
+    // `?&`, `?&&`… nie mają nazw parametrów, ale to inne adresy w pamięci podręcznej Vercela, więc też są odrzucane
+    for (const query of ['?limit=10', '?board=global', '?a=1&b=2', '?=', '?seed=x', '?&', '?&&', '?&&&']) {
       const res = await list(deps, query);
       expect(res.status, query).toBe(400);
       expect((await body(res)).error, query).toBe('bad-request');
@@ -337,10 +360,10 @@ describe('readFame i recordFame', () => {
 
   it('recordFame: pierwszy zapis dwoma zapytaniami, a wpis, który już jest, zostaje bez zmian', async () => {
     const redis = new MemoryRedis(() => NOW);
-    expect(await recordFame(redis, 'mateusz', entry(NOW))).toEqual({ first: true, entry: entry(NOW) });
+    expect(await recordFame(redis, 'mateusz', entry(NOW))).toEqual({ first: true, entry: entry(NOW), place: 1 });
     expect(redis.calls).toBe(2);
     const later = { ...entry(NOW + 1), cash: 7_000_000, seed: 'inny-2' };
-    expect(await recordFame(redis, 'mateusz', later)).toEqual({ first: false, entry: entry(NOW) });
+    expect(await recordFame(redis, 'mateusz', later)).toEqual({ first: false, entry: entry(NOW), place: 1 });
     expect(asScored(await run(redis, ['ZRANGE', KEYS.fameList, 0, -1, 'WITHSCORES']))).toEqual([{ member: 'mateusz', score: NOW }]);
   });
 
@@ -362,7 +385,7 @@ describe('readFame i recordFame', () => {
       }
       return exec(commands);
     });
-    expect(await recordFame(flaky, 'mateusz', entry(NOW))).toEqual({ first: true, entry: entry(NOW) });
+    expect(await recordFame(flaky, 'mateusz', entry(NOW))).toEqual({ first: true, entry: entry(NOW), place: 1 });
     expect(await run(flaky, ['ZSCORE', KEYS.fameList, 'mateusz'])).toBe(String(NOW));
   });
 
