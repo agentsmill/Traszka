@@ -174,6 +174,8 @@ w `saveTransfer.test.ts` 600 s (lokalnie ok. 25 s).
    - zostawić (Galeria jest nagrodą za to, że ktoś przestał kupować, a to też jest wybór);
    - tańsze lub krótsze raty w późnej grze, żeby rok rozbudowy nie ciągnął się przez kolejny rok spłat;
    - milion liczony inaczej, np. jako suma „Zostaje Ci” (wtedy m. 11–16, mediana 14). To zmienia spec i serwer Galerii.
+
+   **Decyzja właściciela (2026-11-02): zostaje jak jest.** Milion w portfelu po 16–18 miesiącach przy 5 sklepach; B1 świadomie niespełniona.
 2. **Remonty 4 i 5 bez weryfikacji na botach.** Boty ich nie kupują. Do polerki balansu: bot, który stawia remont przed ulepszeniami.
 3. **Jeden sklep i ulepszenia późnej gry.** Gracz, który kupuje wszystko, ma w drugim roku znacznie mniej gotówki niż przed 4b (punkt 3), choć sklep zarabia więcej. Jeśli to ma być mniej bolesne: krótsza lista ulepszeń późnej gry albo ich ceny.
 4. **Kadr telefonu przy remontach 3–5.** Pawilon nie mieści się w pionie nawet po oddaleniu (punkt 8). Można podnieść granicę oddalenia na telefonie w pionie, tak jak robi to panel Miasta.
