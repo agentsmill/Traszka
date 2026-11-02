@@ -17,16 +17,25 @@ miesiąca albo gotówka poniżej −100 000 zł. Zarobek idzie w ulepszenia, spr
 startowym gra proponuje krótki samouczek (ok. 3 min); pełna instrukcja, słowniczek pojęć i ponowny samouczek są pod „?” w pasku
 gry i w ⚙. Pierwsze dymki „pierwszy raz” (miasto, karta lokalu, dwa sklepy, podsumowanie sieci) wyskakują przy pierwszych zdarzeniach.
 
-**Miasto, do trzech sklepów i lokal po Traszce.** Zakładka **Miasto** pokazuje mapę miasta (warstwy „Ruch” i „Dzielnice”), listę wolnych lokali i kartę
+**Miasto, do pięciu sklepów i lokal po Traszce.** Zakładka **Miasto** pokazuje mapę miasta (warstwy „Ruch” i „Dzielnice”), listę wolnych lokali i kartę
 lokalu: widełki klientów dziennie, kto przychodzi, konkurencja obok, czas budowy i pakiet otwarcia. Lokal wynajmiesz dopiero ze statusem
 Partnera Strategicznego, który Centrala nadaje, gdy sklep startowy ma zysk dwa miesiące z rzędu, a zaufanie przy zamknięciu miesiąca
 wynosi co najmniej 75. Pakiet otwarcia płacisz od razu z gotówki albo w 12 ratach z przelewów nowego sklepu; po budowie (5–8 dni) sklep
-otwiera się sam, a nowy sklep nie ma gwarancji 25 tys. zł. Do trzech sklepów naraz, wliczając budowę. Lokal po zamkniętym sklepie („po Traszce”,
+otwiera się sam, a nowy sklep nie ma gwarancji 25 tys. zł. Na start trzy placówki naraz, wliczając budowę; czwartą Centrala daje, gdy obrót sieci
+w miesiącu przekroczy 1 mln zł, piątą od 1,6 mln zł. Własne sklepy bliżej niż 150 m podbierają sobie klientów (−10% ruchu za każdy, poza sklepem
+startowym). Lokal po zamkniętym sklepie („po Traszce”,
 włącznie ze startowym) wynajmiesz znów za 30% pakietu (zwykle w 6 ratach) i dwa dni budowy: wyposażenie, czyli remont, sprzęt i ulepszenia, zostaje, a poziom
 i zaufanie Centrali zaczynają od nowa, bez gwarancji. Dzielnice mają własny rytm dnia i własnych trudnych klientów. Chip w pasku przełącza sklepy: sklep
 w tle pracuje sam, a jego karty rozstrzyga zastępca (odpowiedzią zaznaczoną z góry, wpisy trafiają do skrzynki). Gotówka jest jedna,
 a koniec miesiąca daje wyciąg każdego sklepu i podsumowanie sieci. Sklep można wypowiedzieć (miesiąc wypowiedzenia i rozliczenie
 końcowe). W sezonie rankingowym miasto tylko oglądasz: gra zostaje na jednym sklepie.
+
+**Badania Sieci, cele i Galeria sław.** Od dwóch otwartych sklepów panel Miasto ma sekcję **Sieć: badania**: sześć badań (wspólne dostawy, wspólna
+obsada, wspólny marketing, centralny magazyn, program lojalnościowy, grupa zakupowa prądu), płatnych z gotówki, z efektem na wszystkie sklepy,
+który rośnie z liczbą sklepów coraz wolniej (cena zawiera satyryczną opłatę koordynacyjną Centrali). Przy jednym sklepie badania nie działają.
+Sklep rośnie do remontu 5 („Traszka Max Pro Ultra”), a ulepszenia mają wyższe poziomy i pięć pozycji późnej gry. Cele sieci (gotówka, liczba
+sklepów, badania) dają Ogonki po kliknięciu „Odbierz”. Pierwszy milion na koncie w zwykłej grze otwiera okno gratulacji z wpisem do
+**Galerii sław Traszki** (lista graczy po pierwszym milionie, w panelu rankingu); gdy Galeria nie odpowiada, wpis wyślesz później z panelu.
 
 Miasto zastąpiło przycisk „Otwórz kolejną Traszkę” (po drugim remoncie albo na 20. poziomie). Punkty Partnera i dochód z sieci zostają.
 

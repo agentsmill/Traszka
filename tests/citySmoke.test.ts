@@ -5,7 +5,8 @@ import { resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   FIXTURES, HOUR_BARS, LAUNCH_ARGS, LIMIT_TEXT, NEW_SCREENS, OPEN_MINUTE, PHONE_WIDTH, RELET_BUILD_DAYS as SMOKE_RELET_BUILD_DAYS, RELET_CAPTION, RELET_SHARE,
-  RELET_TITLE, RELET_TRUST, STEPS, TIPS_STEP,
+  RELET_TITLE, RELET_TRUST, STEPS, STEPS_4B, TIPS_STEP, DESKTOP_4B, RESEARCH_DOSTAWY_COST, WALLET_4B_MILLION, FAME_TITLE, FAME_CLOSED,
+  deckIds, isApiUrl, withOnlyCardTomorrow, withRemont,
   BACKGROUND_TRUST_WARN_BELOW, USAGE, VIEWPORTS, DEFAULT_PLAYWRIGHT_ROOT, chromiumCandidates, chromiumExecutable, closedFittings,
   contextOptions, daysText, digitsOf, fixtureSave, loadPlaywright, median, metaFor, newScreenProblems, overlapArea, parseArgs, parseInstallmentButton, parsePerf,
   pinProblems, previewReady, requestVerdict, reletBlockText, reletPrice, stepResult, storageEntries, summarize, trustRowValues, tutorialMemory,
@@ -14,9 +15,18 @@ import {
 } from '../scripts/city-smoke.mjs';
 import { MemoryStorage } from '@/game/memoryStorage';
 import { loadMeta, needsStartScreen } from '@/game/meta';
-import { createSession, firmOf, hasStoredSave } from '@/game/session';
+import { createSession, firmOf, hasStoredSave, type GameSession } from '@/game/session';
 import { OPEN_FROM, OPEN_TO } from '@/sim/economy/catalog';
 import { TRUST } from '@/sim/economy/tycoon/trust';
+import { visibleCards } from '@/sim/economy/tycoon/cards';
+import { DECK } from '@/sim/economy/tycoon/deck';
+import { awaitingDecision } from '@/sim/economy/economy';
+import { activeStore, emptyStepOut, stepFirmMinute } from '@/sim/firm/firm';
+import { FAME_CASH } from '@/sim/firm/goals';
+import { RESEARCH_BY_ID, researchCost } from '@/sim/firm/research';
+import { layoutFor } from '@/sim/store/layoutFor';
+import { lotById } from '@/sim/city/generateCity';
+import { FAME_CLOSED_TEXT, FAME_LIST_CLOSED_TEXT } from '@/ui/ranking/fameModel';
 import { RELET_BUILD_DAYS, RELET_SHARE as SIM_RELET_SHARE, lotState, partnerProgress, rentPrice } from '@/sim/firm/commands';
 import { percentOf } from '@/ui/game/format';
 import { lotCardModel } from '@/ui/city/cityModel';
@@ -33,6 +43,8 @@ import { BACKGROUND_TRUST_WARN_BELOW as SWITCHER_TRUST_WARN_BELOW } from '@/ui/c
 
 const ROOT = resolve(__dirname, '..');
 const SOURCE = readFileSync(resolve(ROOT, 'scripts/city-smoke.mjs'), 'utf8');
+const SOURCE_FAME = readFileSync(resolve(ROOT, 'src/ui/ranking/FameWindow.tsx'), 'utf8');
+const DAY = 24 * 60;
 
 describe('plan smoke\'a (Zadanie 16)', () => {
   it('dwanaście kroków (1–8 z 4a.1, 9–12 z 4a.2) i przebieg z dymkami; 6 tylko na komputerze, 7 i 12 tylko na telefonie, reszta na obu', () => {
@@ -247,16 +259,17 @@ describe('licznik wydajności i tabela wyników', () => {
     const out: Record<string, Record<string, StepResult>> = {};
     for (const vp of VIEWPORTS) {
       out[vp.name] = {};
-      for (const step of [...STEPS, TIPS_STEP]) out[vp.name]![step.id] = step.sizes.includes(vp.name) ? stepResult() : stepResult({ na: true });
+      for (const step of [...STEPS, TIPS_STEP, ...STEPS_4B]) out[vp.name]![step.id] = step.sizes.includes(vp.name) ? stepResult() : stepResult({ na: true });
     }
     return out;
   };
 
-  it('summarize: wiersz na krok i rozmiar, który go dotyczy (telefon 12, komputer 10), wszystko ok daje ok', () => {
+  it('summarize: wiersz na krok i rozmiar, który go dotyczy (telefon 12 + 7 kroków 4b, komputer 10 + 7), wszystko ok daje ok', () => {
     const s = summarize(allOk());
     expect(s.ok).toBe(true);
-    expect(s.rows.filter((r) => r.size === 'telefon').map((r) => r.step)).toEqual([1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 12, 'T']);
-    expect(s.rows.filter((r) => r.size === 'desktop').map((r) => r.step)).toEqual([1, 2, 3, 4, 5, 6, 8, 9, 10, 11]);
+    const k4b = ['4b-a', '4b-b', '4b-c', '4b-d', '4b-e', '4b-f', '4b-g'];
+    expect(s.rows.filter((r) => r.size === 'telefon').map((r) => r.step)).toEqual([1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 12, 'T', ...k4b]);
+    expect(s.rows.filter((r) => r.size === 'desktop').map((r) => r.step)).toEqual([1, 2, 3, 4, 5, 6, 8, 9, 10, 11, ...k4b]);
     expect(s.rows.every((r) => r.status === 'ok')).toBe(true);
   });
 
@@ -282,10 +295,13 @@ describe('licznik wydajności i tabela wyników', () => {
     expect(summarize(allOk()).rows.some((r) => r.status === 'n/d')).toBe(false);   // kroki spoza rozmiaru w ogóle nie trafiają do tabeli
   });
 
-  it('parseArgs: --help to pomoc (main drukuje USAGE i kończy kodem 0), --only telefon|phone|desktop, błędy', () => {
-    expect(parseArgs([])).toEqual({ only: null, help: false });
-    expect(parseArgs(['--only', 'desktop'])).toEqual({ only: 'desktop', help: false });
-    expect(parseArgs(['--only', 'phone'])).toEqual({ only: 'telefon', help: false });
+  it('parseArgs: --help to pomoc (main drukuje USAGE i kończy kodem 0), --only telefon|phone|desktop, --etap 4b, błędy', () => {
+    expect(parseArgs([])).toEqual({ only: null, help: false, stage: null });
+    expect(parseArgs(['--only', 'desktop'])).toEqual({ only: 'desktop', help: false, stage: null });
+    expect(parseArgs(['--only', 'phone'])).toEqual({ only: 'telefon', help: false, stage: null });
+    expect(parseArgs(['--etap', '4b', '--only', 'telefon'])).toEqual({ only: 'telefon', help: false, stage: '4b' });
+    expect(() => parseArgs(['--etap', '4a'])).toThrow(/--etap przyjmuje 4b/);
+    expect(USAGE).toMatch(/--etap 4b/);
     expect(parseArgs(['--help']).help).toBe(true);
     expect(parseArgs(['-h']).help).toBe(true);
     expect(USAGE).toMatch(/--only/);
@@ -560,5 +576,105 @@ describe('plan 4a.2 (Zadanie 9): nowe ekrany na 390 px', () => {
     expect(SOURCE).toContain('card.relet !== reletBlockText(fit)');
     expect(SOURCE).toContain('free.lock !== LIMIT_TEXT');
     expect(SOURCE).toMatch(/playUntilTrustWarning\(page, ev, \{ stop, prefix, phone, maxMonths = 12 \}\)/);
+  });
+});
+
+describe('plan 4b (Zadanie 10): kroki 4b-a…4b-g i koperty zapisów', () => {
+  let storage: MemoryStorage;
+  beforeEach(() => {
+    storage = new MemoryStorage();
+    vi.stubGlobal('localStorage', storage);
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  /** Wstawia kopertę `text` (seed z koperty) jak skrypt i wczytuje sesję zwykłej gry. */
+  const loadText = (text: string): GameSession => {
+    const seed = JSON.parse(text).seed as string;
+    for (const [k, v] of Object.entries(storageEntries({ seed, saveText: text, tips: false, now: Date.now() }))) storage.setItem(k, v);
+    return createSession(seed);
+  };
+
+  it('siedem kroków 4b na obu rozmiarach, komputer 1440×900', () => {
+    expect(STEPS_4B.map((s) => s.id)).toEqual(['4b-a', '4b-b', '4b-c', '4b-d', '4b-e', '4b-f', '4b-g']);
+    for (const s of STEPS_4B) {
+      expect(s.sizes).toEqual(['telefon', 'desktop']);
+      expect(s.name.length).toBeGreaterThan(10);
+    }
+    expect(DESKTOP_4B).toEqual({ width: 1440, height: 900 });
+  });
+
+  it('stałe kroków są liczbami i tekstami gry: cena „Wspólnych dostaw”, próg miliona, tytuł okna i komunikat Galerii', () => {
+    expect(RESEARCH_DOSTAWY_COST).toBe(researchCost(RESEARCH_BY_ID.dostawy, 0));
+    expect(WALLET_4B_MILLION).toBeLessThan(FAME_CASH);
+    expect(FAME_CASH - WALLET_4B_MILLION).toBe(500);
+    expect(FAME_TITLE).toBe('Milion!');
+    expect(SOURCE_FAME).toContain(`{t\`${FAME_TITLE}\`}`);
+    expect(FAME_CLOSED_TEXT.startsWith(FAME_CLOSED)).toBe(true);
+    expect(FAME_LIST_CLOSED_TEXT.startsWith(FAME_CLOSED)).toBe(true);
+  });
+
+  it('withRemont: zapis schematu 3 „dwa sklepy” z remontem 5 i poziomem 34 wczytuje się bez komunikatu, z migracją firmy do schematu 4', () => {
+    const two = fixtureSave(FIXTURES.dwaSklepy);
+    expect(JSON.parse(two.text)).toMatchObject({ schema: 3 });
+    const s = loadText(withRemont(two.text, { storeId: 2, remontLevel: 5, level: 34 }));
+    expect(s.fromSave).toBe(true);
+    expect(s.loadNotice).toBeNull();
+    const f = firmOf(s);
+    const st = f.stores.find((x) => x.id === 2)!;
+    expect([f.activeId, st.econ.remontLevel, st.econ.level, st.closed]).toEqual([2, 5, 34, false]);
+    const spec = lotById(f.city, st.lotId).spec;
+    expect(st.layout.width).toBe(layoutFor(st.econ.seed, 5, spec).width);   // układ z poziomu remontu z zapisu
+    expect(st.layout.width).toBeGreaterThanOrEqual(layoutFor(st.econ.seed, 3, spec).width);
+    expect([f.research, f.storeLimit, f.fame, f.builds.length]).toEqual([{}, 3, null, 1]);
+    expect(storage.keys().filter((k) => k.includes(':broken'))).toEqual([]);
+    expect(() => withRemont(two.text, { storeId: 1, remontLevel: 5, level: 34 })).toThrow(/otwartego sklepu #1/);   // #1 w tym zapisie jest zamknięty
+  });
+
+  it('deckIds czyta z deck.ts dokładnie identyfikatory talii dnia, a każda karta ma przerwę ≥ 2 dni (na tym stoi withOnlyCardTomorrow)', () => {
+    const ids = deckIds(readFileSync(resolve(ROOT, 'src/sim/economy/tycoon/deck.ts'), 'utf8'));
+    expect(ids).toEqual(DECK.map((d) => d.id));
+    expect(ids).toContain('karty-zrzut');
+    expect(Math.min(...DECK.map((d) => d.cooldown))).toBeGreaterThanOrEqual(2);
+  });
+
+  it('withOnlyCardTomorrow: w zapisie „po Traszce” z remontem 4 sklep startowy dostaje jutro o 6:00 tylko „Zrzut Traszkomonów”', () => {
+    const after = fixtureSave(FIXTURES.poTraszce);
+    const ids = deckIds(readFileSync(resolve(ROOT, 'src/sim/economy/tycoon/deck.ts'), 'utf8'));
+    const text = withOnlyCardTomorrow(withRemont(after.text, { storeId: 1, remontLevel: 4, level: 28 }), { storeId: 1, cardId: 'karty-zrzut', ids });
+    const s = loadText(text);
+    expect(s.loadNotice).toBeNull();
+    const f = firmOf(s);
+    const st = activeStore(f);
+    expect([st.id, st.econ.remontLevel, st.econ.level]).toEqual([1, 4, 28]);
+    const end = (Math.floor(st.econ.minute / DAY) + 1) * DAY + 6 * 60;
+    while (activeStore(f).econ.minute < end && !awaitingDecision(activeStore(f).econ)) stepFirmMinute(f, emptyStepOut());
+    const shown = visibleCards(activeStore(f).econ.tycoon.cards, activeStore(f).econ.minute);
+    expect(shown.map((c) => c.id)).toEqual(['karty-zrzut']);
+    expect(activeStore(f).econ.minute % DAY).toBe(6 * 60);
+    expect(() => withOnlyCardTomorrow(after.text, { storeId: 1, cardId: 'nie-ma-takiej', ids })).toThrow(/nie ma w talii/);
+  });
+
+  it('isApiUrl: tylko /api/… na localhost i porcie smoke\'a (komunikat Chromium o przerwanym zapytaniu nie jest błędem gry)', () => {
+    expect(isApiUrl('http://localhost:4318/api/fame/submit', 4318)).toBe(true);
+    expect(isApiUrl('http://localhost:4318/api/leaderboard?x=1', '4318')).toBe(true);
+    expect(isApiUrl('http://localhost:4319/api/fame/list', 4318)).toBe(false);
+    expect(isApiUrl('http://localhost:4318/assets/index.js', 4318)).toBe(false);
+    expect(isApiUrl('https://traszka.example/api/fame/list', 4318)).toBe(false);
+    expect(isApiUrl('nie adres', 4318)).toBe(false);
+    expect(SOURCE).toMatch(/Failed to load resource: net::ERR_FAILED\$\/\.test\(m\.text\(\)\) && isApiUrl\(/);
+  });
+
+  it('pętla zamykania okien zamyka też gratulacje za milion („Zamknij”): stary zapis z gotówką ≥ 1 mln dostaje je zaraz po wczytaniu', () => {
+    expect(SOURCE).toMatch(/cls\.contains\('tt-fame'\) \? 'fame'/);
+    expect(SOURCE).toContain("fame: '.tt-fame .tt-finish-actions > .tt-btn:last-child'");
+    expect(SOURCE_FAME).toMatch(/<button type="button" class="tt-btn" onClick=\{onClose\}>\{t`Zamknij`\}<\/button>\s*<\/div>/);
+    expect(JSON.parse(fixtureSave(FIXTURES.stary).text).econ?.cash ?? 0).toBeGreaterThanOrEqual(FAME_CASH);
+  });
+
+  it('źródło: kroki 4b przerywają /api/** jak cały smoke, a atrapę /api/fame/* stawiają w przeglądarce po sprawdzeniu „nieczynnej” Galerii', () => {
+    const at = (needle: string): number => SOURCE.indexOf(needle);
+    expect(at("ctx.route('**/api/fame/**'")).toBeGreaterThan(at('4b-05-galeria'));
+    expect(SOURCE).toMatch(/route\.fulfill\(\{ json: \{ ok: true, first: true/);
+    expect(SOURCE).not.toMatch(/traszka\.vercel\.app/);
   });
 });

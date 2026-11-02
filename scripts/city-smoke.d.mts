@@ -12,7 +12,7 @@ export interface TutorialMemory { v: 1; tour: 'skipped'; seen: string[]; tips: b
 export interface StepResult { ok: boolean; failed: string[]; notes: string[]; na: boolean; seconds?: number }
 export interface SummaryRow { size: string; step: number | string; name: string; status: 'ok' | 'FAIL' | 'n/d'; detail: string }
 export interface Summary { rows: SummaryRow[]; ok: boolean }
-export interface SmokeArgs { only: string | null; help: boolean }
+export interface SmokeArgs { only: string | null; help: boolean; stage: '4b' | null }
 /** Pomiar szerokości strony: `scroll` dokumentu i widoczne okna, arkusze, karty (ramka, `scrollWidth`, `clientWidth`). */
 export interface WidthBox { name: string; left: number; right: number; scroll: number; client: number; culprits?: string[] }
 export interface WidthMeasure { scroll: number; boxes?: readonly WidthBox[] }
@@ -23,9 +23,16 @@ export type MakeRequire = (from: string) => (id: string) => unknown;
 export const DEFAULT_PLAYWRIGHT_ROOT: string;
 export const LAUNCH_ARGS: readonly string[];
 export const VIEWPORTS: readonly Viewport[];
-export const FIXTURES: { readonly stary: string; readonly przedStatusem: string; readonly poTraszce: string };
+export const FIXTURES: { readonly stary: string; readonly przedStatusem: string; readonly poTraszce: string; readonly dwaSklepy: string };
 export const STEPS: readonly StepDef[];
 export const TIPS_STEP: StepDef;
+export const STEPS_4B: readonly StepDef[];
+export const DESKTOP_4B: { width: number; height: number };
+export const RESEARCH_DOSTAWY_COST: number;
+export const WALLET_4B_RENT: number;
+export const WALLET_4B_MILLION: number;
+export const FAME_TITLE: string;
+export const FAME_CLOSED: string;
 export const PHONE_WIDTH: number;
 export const USAGE: string;
 
@@ -38,6 +45,7 @@ export function loadPlaywright(root?: string, makeRequire?: MakeRequire): Playwr
 export function chromiumCandidates(home?: string, list?: (dir: string) => string[]): string[];
 export function chromiumExecutable(env?: Record<string, string | undefined>, exists?: (path: string) => boolean, candidates?: string[]): string | undefined;
 export function requestVerdict(href: string, port: number | string): RequestVerdict;
+export function isApiUrl(href: string, port: number | string): boolean;
 export function parsePerf(rows: readonly (readonly [string, string])[]): { fps: number; ms: number; calls: number; tris: number };
 export function median(xs: readonly number[]): number;
 export function stepResult(patch?: Partial<StepResult>): StepResult;
@@ -77,3 +85,8 @@ export function trustRowValues(rows: readonly string[], word?: string): number[]
 export function overlapArea(a: PinBox, b: PinBox): number;
 export function pinProblems(m: { width: number; pins: readonly PinMeasure[] }, narrow?: number): PinReport;
 export function newScreenProblems(widths: readonly WidthEntry[], prefix?: string): string[];
+
+// Plan 4b (Zadanie 10): koperty zapisów do kroków 4b.
+export function withRemont(saveText: string, patch: { storeId: number; remontLevel: number; level: number }): string;
+export function deckIds(source: string): string[];
+export function withOnlyCardTomorrow(saveText: string, opts: { storeId: number; cardId: string; ids: readonly string[] }): string;
