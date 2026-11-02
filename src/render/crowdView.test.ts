@@ -6,7 +6,9 @@ import { generateStore } from '@/sim/store/generateStore';
 import type { CharacterFactory, CharacterInstance } from './characters/characterFactory';
 import { cellToWorld } from './coords';
 import { BLOB_RADIUS, createBlobShadows } from './characters/blobShadows';
-import { ANIM_SPEED_CAP, CrowdView, TURN_RATE_MAX, headingToYaw, turnTowards } from './crowdView';
+import { FRONT_WALL_Y } from '@/sim/store/types';
+import { isWalkable } from '@/sim/store/validate';
+import { ANIM_SPEED_CAP, CrowdView, QUEUE_MAX, TURN_RATE_MAX, headingToYaw, queueOutside, queueSizeFor, turnTowards } from './crowdView';
 
 /** Fabryka-atrapa: postać to pusta grupa, a wywołania zapisujemy. `walkSpeedMps` to prędkość stopy w klipie (jedyne źródło dla tłumu). */
 function fakeFactory(scale = 1, walkSpeedMps = 1.15) {
@@ -374,5 +376,162 @@ describe('turnTowards (obrót wspólny dla tłumu i kasjera)', () => {
   it('headingToYaw: heading 0 (+x siatki) to obrót π/2, a π/2 (+z) to obrót 0', () => {
     expect(headingToYaw(0)).toBeCloseTo(Math.PI / 2, 12);
     expect(headingToYaw(Math.PI / 2)).toBeCloseTo(0, 12);
+  });
+});
+
+describe('kolejka przed sklepem przy zrzucie Traszkomonów (zadanie 11)', () => {
+  const SEEDS = ['kielbasa-42', 'traszka-1', 'osiedle-7', 'rynek-3', 'pasaz-9', 'kamienica-5', 'narozne-2', 'blok-11'];
+  const idx = (l: typeof layout, c: { x: number; y: number }): number => c.x + c.y * l.width;
+  /** Odległość kwadratu od środka wejścia (środek dwóch kratek, wiersz ściany frontowej): miara „najbliżej wejścia”. */
+  const door = (l: typeof layout, c: { x: number; y: number }): number => {
+    const mx = l.entrance.reduce((n, e) => n + e.x, 0) / l.entrance.length;
+    return (c.x - mx) ** 2 + (c.y - FRONT_WALL_Y) ** 2;
+  };
+
+  it('queueOutside(layout, 8): 8 różnych kratek y ≤ FRONT_WALL_Y, poza strefą palet, najbliżej wejścia', () => {
+    for (const seed of SEEDS) {
+      const l = generateStore(seed);
+      const cells = queueOutside(l, 8);
+      expect(cells, seed).toHaveLength(8);
+      expect(new Set(cells.map((c) => idx(l, c))).size, seed).toBe(8);
+      const pallets = new Set(l.palletZoneOutside.map((c) => idx(l, c)));
+      const lane = new Set(l.entrance.map((e) => e.x));
+      for (const c of cells) {
+        expect(c.y, seed).toBeLessThanOrEqual(FRONT_WALL_Y);
+        expect(isWalkable(l, c.x, c.y), seed).toBe(true);
+        expect(pallets.has(idx(l, c)), seed).toBe(false);
+        expect(lane.has(c.x), `${seed}: przejście przed drzwiami zostaje wolne`).toBe(false);
+      }
+      // najbliżej wejścia: odległości nie maleją, a każda kratka dalej na liście jest nie bliżej niż ostatnia z ośmiu
+      for (let i = 1; i < cells.length; i++) expect(door(l, cells[i]!), seed).toBeGreaterThanOrEqual(door(l, cells[i - 1]!));
+      expect(queueOutside(l, 20).slice(0, 8), seed).toEqual(cells);   // prefiks: dłuższa kolejka dokłada na końcu
+    }
+  });
+
+  it('queueOutside: ma miejsce na pełną kolejkę (QUEUE_MAX) w każdym układzie, a count ≤ 0 daje pustą listę', () => {
+    for (const seed of SEEDS) {
+      const l = generateStore(seed);
+      expect(queueOutside(l, QUEUE_MAX), seed).toHaveLength(QUEUE_MAX);
+      expect(queueOutside(l, 0)).toEqual([]);
+      expect(queueOutside(l, -3)).toEqual([]);
+      expect(queueOutside(l, 500).length, seed).toBeGreaterThanOrEqual(QUEUE_MAX);   // więcej niż jest miejsca: tyle, ile jest
+    }
+  });
+
+  it('queueSizeFor: ruch z kart ≥ 1,8 między 6:00 a 12:00 daje 6–12 postaci, poza tym 0', () => {
+    const at = (h: number, m = 0): number => h * 60 + m;
+    expect(queueSizeFor(1.79, at(8))).toBe(0);
+    expect(queueSizeFor(1, at(8))).toBe(0);
+    expect(queueSizeFor(1.8, at(8))).toBe(6);
+    expect(queueSizeFor(1.9, at(8))).toBe(6);        // „Limit 2 saszetki”: 1 + 0,9
+    expect(queueSizeFor(2.2, at(8))).toBe(10);       // 6 + floor((2,2 − 1,8) · 10)
+    expect(queueSizeFor(2.6, at(8))).toBe(12);       // „Bez limitu”: 1 + 1,6, przycięte do 12
+    expect(queueSizeFor(9, at(8))).toBe(12);
+    expect(queueSizeFor(2.6, at(5, 59))).toBe(0);    // przed 6:00
+    expect(queueSizeFor(2.6, at(6))).toBe(12);
+    expect(queueSizeFor(2.6, at(11, 59))).toBe(12);
+    expect(queueSizeFor(2.6, at(12))).toBe(0);       // od 12:00 już nie
+    expect(queueSizeFor(Number.NaN, at(8))).toBe(0);
+  });
+
+  /** Woła `setQueue` aż kolejka się ustali (postacie dochodzą po kilka na raz). */
+  function settle(view: CrowdView, traffic: number, minute: number, cap?: number): number {
+    let n = -1;
+    for (let i = 0; i < 20 && view.queueSize !== n; i++) { n = view.queueSize; view.setQueue(traffic, minute, cap); }
+    return view.queueSize;
+  }
+
+  it('crowdView: gdy traffic z kart ≥ 1.8 między 6:00 a 12:00 → 6–12 postaci w kolejce; poza tym 0', () => {
+    const { factory, made } = fakeFactory();
+    const parent = new Group();
+    const view = new CrowdView(factory, layout, parent);
+    expect(settle(view, 1, 8 * 60)).toBe(0);
+    expect(parent.children).toHaveLength(0);
+    expect(settle(view, 1.9, 8 * 60)).toBe(6);
+    expect(parent.children).toHaveLength(6);
+    expect(view.size).toBe(0);                       // to nie są agenci symulacji
+    expect(settle(view, 2.6, 8 * 60)).toBe(12);
+    expect(parent.children).toHaveLength(12);
+    expect(made).toHaveLength(12);                   // 6 dotychczasowych zostaje, dochodzi 6 (nic nie powstaje od nowa)
+    expect(settle(view, 2.6, 12 * 60)).toBe(0);      // południe: kolejka się rozchodzi
+    expect(parent.children).toHaveLength(0);
+    expect(made.every((m) => m.dispose.mock.calls.length === 1)).toBe(true);
+  });
+
+  it('setQueue dokłada postacie po kilka na raz (fala, a nie 12 naraz w jednej klatce) i tak samo zdejmuje', () => {
+    const { factory } = fakeFactory();
+    const view = new CrowdView(factory, layout, new Group());
+    view.setQueue(2.6, 8 * 60);
+    expect(view.queueSize).toBeGreaterThan(0);
+    expect(view.queueSize).toBeLessThan(12);
+    const first = view.queueSize;
+    view.setQueue(2.6, 8 * 60);
+    expect(view.queueSize).toBeGreaterThan(first);
+    settle(view, 2.6, 8 * 60);
+    expect(view.queueSize).toBe(12);
+    view.setQueue(1, 8 * 60);
+    expect(view.queueSize).toBeLessThan(12);
+    expect(view.queueSize).toBeGreaterThan(0);
+  });
+
+  it('pula postaci presetu: kolejka nie przekracza podanego limitu (cap), nawet gdy karta chce więcej', () => {
+    const { factory } = fakeFactory();
+    const view = new CrowdView(factory, layout, new Group());
+    expect(settle(view, 2.6, 8 * 60, 6)).toBe(6);
+    expect(settle(view, 2.6, 8 * 60, 0)).toBe(0);
+    expect(settle(view, 2.6, 8 * 60, -4)).toBe(0);
+    expect(settle(view, 2.6, 8 * 60)).toBe(12);      // domyślny limit to QUEUE_MAX
+  });
+
+  it('rozstawienie jest deterministyczne (z numeru, bez losowania): te same pozycje, wygląd i obroty w dwóch widokach', () => {
+    const run = (): { seeds: string[]; pos: number[][]; yaw: number[] } => {
+      const { factory, made } = fakeFactory();
+      const view = new CrowdView(factory, layout, new Group());
+      settle(view, 2.6, 8 * 60);
+      return {
+        seeds: made.map((m) => m.seed),
+        pos: made.map((m) => [m.character.object.position.x, m.character.object.position.z]),
+        yaw: made.map((m) => m.character.object.rotation.y),
+      };
+    };
+    const a = run();
+    const b = run();
+    expect(a).toEqual(b);
+    expect(new Set(a.seeds).size).toBe(12);          // każdy ma własny wygląd
+  });
+
+  it('postać stoi na swojej kratce chodnika (z drobnym rozrzutem), przodem do wejścia, y = 0', () => {
+    const { factory, made } = fakeFactory();
+    const view = new CrowdView(factory, layout, new Group());
+    settle(view, 2.6, 8 * 60);
+    const cells = queueOutside(layout, 12);
+    made.forEach((m, i) => {
+      const at = cellToWorld(layout, cells[i]!.x, cells[i]!.y);
+      const o = m.character.object;
+      expect(Math.abs(o.position.x - at.x)).toBeLessThanOrEqual(CELL_SIZE_M * 0.25);
+      expect(Math.abs(o.position.z - at.z)).toBeLessThanOrEqual(CELL_SIZE_M * 0.25);
+      expect(o.position.y).toBe(0);
+      // przód postaci (+z po obrocie) ma składową „do sklepu”: wejście leży dalej od ulicy (większe z) niż chodnik
+      expect(Math.cos(o.rotation.y)).toBeGreaterThan(0);
+      expect(m.setAnim).not.toHaveBeenCalledWith('walk', expect.anything());
+    });
+  });
+
+  it('kolejka żyje razem z widokiem: animacja idzie (update), cień z presetu i plamy cienia obejmują ją, dispose zwalnia', () => {
+    const { factory, made } = fakeFactory();
+    const blobs = createBlobShadows(32);
+    const parent = new Group();
+    const view = new CrowdView(factory, layout, parent, blobs);
+    settle(view, 1.9, 8 * 60);
+    view.sync(crowdOf(0, agent({ id: 1 })), 0, 0.02);
+    expect(blobs.mesh.count).toBe(7);                // 6 z kolejki + 1 agent
+    for (const m of made.slice(0, 6)) expect(m.update).toHaveBeenLastCalledWith(0.02);
+    view.sync(crowdOf(0), 0, 0);
+    expect(blobs.mesh.count).toBe(6);
+    view.dispose();
+    expect(parent.children).toHaveLength(0);
+    expect(made.every((m) => m.dispose.mock.calls.length === 1)).toBe(true);
+    expect(view.setQueue(2.6, 8 * 60)).toBe(0);      // po dispose nic nie powstaje
+    blobs.dispose();
   });
 });

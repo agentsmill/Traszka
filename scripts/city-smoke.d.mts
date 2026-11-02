@@ -26,6 +26,9 @@ export const VIEWPORTS: readonly Viewport[];
 export const FIXTURES: { readonly stary: string; readonly przedStatusem: string; readonly poTraszce: string };
 export const STEPS: readonly StepDef[];
 export const TIPS_STEP: StepDef;
+export const QUEUE_STEP: StepDef;
+/** Zapis z zrzutem Traszkomonów w toku (efekt ruchu w `cards.active` sklepu #1): tekst koperty, doba efektu i jego minuty. */
+export function saveWithCardDrop(saveText: string, opts?: { value?: number; hours?: number }): { text: string; day: number; from: number; until: number };
 export const PHONE_WIDTH: number;
 export const USAGE: string;
 

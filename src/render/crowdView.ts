@@ -1,7 +1,9 @@
 import { MathUtils, type Object3D } from 'three';
 import { SIM_STEP, type Agent, type Crowd } from '@/sim/crowd/crowd';
-import { CELL_SIZE_M } from '@/sim/grid';
-import type { StoreLayout } from '@/sim/store/types';
+import { CELL_SIZE_M, type Cell } from '@/sim/grid';
+import { createRng, subSeed } from '@/sim/rng';
+import { FRONT_WALL_Y, type StoreLayout } from '@/sim/store/types';
+import { isWalkable } from '@/sim/store/validate';
 import { characterBlobRadii, setCharacterShadowCasting, type BlobShadows } from './characters/blobShadows';
 import type { CharacterFactory, CharacterInstance } from './characters/characterFactory';
 import { walkTimeScale } from './characters/walkSpeed';
@@ -22,6 +24,51 @@ export const IDLE_DELAY_S = 0.15;
 export const ANIM_SPEED_CAP = 4;
 
 type Anim = 'idle' | 'walk';
+
+/** Ruch z kart od tej wartości (1 + modyfikator, np. „Bez limitu” w zrzucie Traszkomonów daje 2,6) stawia przed sklepem kolejkę. */
+export const QUEUE_TRAFFIC_MIN = 1.8;
+/** Kolejka stoi rano: od 6:00 (minuta doby 360) do 12:00 (720, bez tej minuty). */
+export const QUEUE_FROM_MINUTE = 6 * 60;
+export const QUEUE_TO_MINUTE = 12 * 60;
+export const QUEUE_MIN = 6;
+export const QUEUE_MAX = 12;
+/** Tyle postaci kolejka dokłada albo zdejmuje przy jednym `setQueue` (co ~100 ms): fala dochodzi w kilka klatek, a nie w jednej. */
+const QUEUE_STEP = 2;
+/** Rozrzut postaci w obrębie kratki (część kratki w każdą stronę) i kąt, o jaki odchyla się od kierunku na wejście (rad). */
+const QUEUE_JITTER = 0.2;
+const QUEUE_YAW_JITTER = 0.35;
+
+/**
+ * Ile postaci ma stać w kolejce przed sklepem: `min(12, 6 + floor((traffic − 1,8) · 10))` przy ruchu z kart ≥ 1,8 między 6:00
+ * a 12:00 (`minuteOfDay` w minutach doby), inaczej 0. Czyta tylko mnożnik z kart (`cardModifiers(...).traffic`), nie stan ekonomii.
+ */
+export function queueSizeFor(traffic: number, minuteOfDay: number): number {
+  if (!(traffic >= QUEUE_TRAFFIC_MIN) || minuteOfDay < QUEUE_FROM_MINUTE || minuteOfDay >= QUEUE_TO_MINUTE) return 0;
+  return Math.min(QUEUE_MAX, QUEUE_MIN + Math.floor((traffic - QUEUE_TRAFFIC_MIN) * 10));
+}
+
+/**
+ * Kratki chodnika, na których stoi kolejka przed wejściem: pierwsze `count` z listy ułożonej od najbliższej środka wejścia.
+ * Bierze wiersze przed ścianą frontową (y < FRONT_WALL_Y), tylko chodliwe, bez strefy palet (`palletZoneOutside`) i bez
+ * kolumn samego wejścia: przejście do drzwi zostaje wolne, a kolejka stoi po obu stronach. Remisy rozstrzyga bliższy wiersz
+ * ściany, potem mniejsze x, więc wynik jest stały, a dłuższa kolejka to ta sama lista z dopisanym końcem.
+ */
+export function queueOutside(layout: StoreLayout, count: number): Cell[] {
+  const n = Math.max(0, Math.floor(count));
+  if (n === 0) return [];
+  const pallets = new Set(layout.palletZoneOutside.map((c) => c.x + c.y * layout.width));
+  const lane = new Set(layout.entrance.map((e) => e.x));
+  const midX = layout.entrance.reduce((sum, e) => sum + e.x, 0) / Math.max(1, layout.entrance.length);
+  const out: { cell: Cell; d: number }[] = [];
+  for (let y = 0; y < FRONT_WALL_Y; y++) {
+    for (let x = 0; x < layout.width; x++) {
+      if (!isWalkable(layout, x, y) || pallets.has(x + y * layout.width) || lane.has(x)) continue;
+      out.push({ cell: { x, y }, d: (x - midX) * (x - midX) + (y - FRONT_WALL_Y) * (y - FRONT_WALL_Y) });
+    }
+  }
+  out.sort((a, b) => a.d - b.d || b.cell.y - a.cell.y || a.cell.x - b.cell.x);
+  return out.slice(0, n).map((o) => o.cell);
+}
 
 /** Postać jednego agenta wraz z tym, co potrzebne do płynnego rysowania między krokami symulacji. */
 interface Tracked {
@@ -71,6 +118,8 @@ export class CrowdView {
   private lastTime = 0;
   private disposed = false;
   private castShadows = true;
+  /** Kolejka przed wejściem przy zrzucie kart: postacie z tej samej fabryki co tłum, nieruchome, w kolejności kratek `queueOutside`. */
+  private readonly queue: CharacterInstance[] = [];
 
   /** `shadows`: wspólne plamy cienia pod postaciami (main.ts trzyma je w grupie tłumu); bez nich postacie są bez plam. */
   constructor(
@@ -88,7 +137,30 @@ export class CrowdView {
     if (on === this.castShadows) return;
     this.castShadows = on;
     for (const t of this.tracked.values()) setCharacterShadowCasting(t.character.object, on);
+    for (const q of this.queue) setCharacterShadowCasting(q.object, on);
     if (this.warm) setCharacterShadowCasting(this.warm.object, on);
+  }
+
+  /** Liczba postaci w kolejce przed sklepem (do diagnostyki, testów i pula postaci w scenie). */
+  get queueSize(): number { return this.queue.length; }
+
+  /**
+   * Dopasowuje kolejkę przed wejściem do ruchu z kart (`traffic` = `cardModifiers(...).traffic`) i minuty doby; `cap` to ile
+   * postaci wolno jej mieć (pula postaci presetu grafiki, domyślnie `QUEUE_MAX`). Postacie dochodzą i odchodzą po `QUEUE_STEP`
+   * na wywołanie. Rozstawienie bierze się z numeru postaci w kolejce (kratka z `queueOutside`, rozrzut i obrót z jego skrótu),
+   * bez losowania. Zwraca liczbę postaci, które teraz stoją.
+   */
+  setQueue(traffic: number, minuteOfDay: number, cap: number = QUEUE_MAX): number {
+    if (this.disposed) return 0;
+    const want = Math.min(queueSizeFor(traffic, minuteOfDay), Math.max(0, Math.floor(cap)));
+    if (want > this.queue.length) {
+      const cells = queueOutside(this.layout, want);
+      const to = Math.min(cells.length, want, this.queue.length + QUEUE_STEP);
+      for (let i = this.queue.length; i < to; i++) this.queue.push(this.spawnQueued(i, cells[i]!));
+    } else {
+      for (let k = 0; k < QUEUE_STEP && this.queue.length > want; k++) this.release(this.queue.pop()!);
+    }
+    return this.queue.length;
   }
 
   /** Liczba postaci w scenie (do diagnostyki i testów). */
@@ -125,6 +197,7 @@ export class CrowdView {
       this.tracked.delete(id);
     }
     this.retire(left);
+    for (const q of this.queue) q.update(animDt);
     this.placeShadows();
   }
 
@@ -139,11 +212,12 @@ export class CrowdView {
   private placeShadows(): void {
     if (!this.shadows) return;
     let i = 0;
-    for (const t of this.tracked.values()) {
-      const o = t.character.object;
+    const put = (o: Object3D): void => {
       const [rx, rz] = characterBlobRadii(o);
-      this.shadows.set(i++, o.position.x, o.position.z, rx, rz);
-    }
+      this.shadows!.set(i++, o.position.x, o.position.z, rx, rz);
+    };
+    for (const t of this.tracked.values()) put(t.character.object);
+    for (const q of this.queue) put(q.object);
     this.shadows.commit(i);
   }
 
@@ -211,6 +285,24 @@ export class CrowdView {
     }
   }
 
+  /** Postać nr `index` w kolejce na kratce `cell`: wygląd i rozrzut z numeru, przodem do wejścia, w postoju. */
+  private spawnQueued(index: number, cell: Cell): CharacterInstance {
+    const seed = subSeed(this.layout.seed, `queue:${index}`);
+    const rng = createRng(seed);
+    const character = this.factory.create(seed);
+    if (!this.castShadows) setCharacterShadowCasting(character.object, false);
+    const at = cellToWorld(this.layout, cell.x, cell.y);
+    const e = this.layout.entrance;
+    const doorX = e.reduce((sum, c) => sum + c.x, 0) / Math.max(1, e.length);
+    const heading = Math.atan2(FRONT_WALL_Y - cell.y, doorX - cell.x) + rng.range(-QUEUE_YAW_JITTER, QUEUE_YAW_JITTER);
+    character.object.position.set(
+      at.x + rng.range(-QUEUE_JITTER, QUEUE_JITTER) * CELL_SIZE_M, 0, at.z + rng.range(-QUEUE_JITTER, QUEUE_JITTER) * CELL_SIZE_M,
+    );
+    character.object.rotation.y = headingToYaw(heading);
+    this.parent.add(character.object);
+    return character;
+  }
+
   private release(character: CharacterInstance): void {
     character.dispose();
     character.object.removeFromParent();
@@ -219,6 +311,8 @@ export class CrowdView {
   private clear(): void {
     for (const t of this.tracked.values()) this.release(t.character);
     this.tracked.clear();
+    for (const q of this.queue) this.release(q);
+    this.queue.length = 0;
     if (this.warm) this.release(this.warm);
     this.warm = null;
   }
