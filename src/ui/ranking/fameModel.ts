@@ -41,7 +41,10 @@ export interface FameModel {
   nick: ReadonlySignal<string>;
   /** Komunikat okna (polski, okno tłumaczy `tr`): wysyłanie albo powód odmowy; null, gdy nie ma czego mówić. */
   message: ReadonlySignal<string | null>;
-  /** Po przyjęciu: czy to pierwszy wpis tego nicka i jego miejsce na liście (bywa większe niż 100). */
+  /**
+   * Odpowiedź serwera na wpis: czy to pierwszy wpis tego nicka i jego miejsce na liście (bywa większe niż 100). `first: false` to „ten nick już
+   * jest w Galerii” (stan zostaje `idle`, seed nie jest znaczony jako wysłany, nick w mecie się nie zmienia); `first: true` kończy się `sent`.
+   */
   placed: ReadonlySignal<{ first: boolean; place: number } | null>;
   list: ReadonlySignal<FameListView>;
   /** Czy zakładka „Galeria sław” jest wybrana w panelu rankingu. */
@@ -87,13 +90,26 @@ function isPlaced(res: { ok: true } & Partial<FameSubmitted>): res is { ok: true
   return typeof res.first === 'boolean' && typeof res.place === 'number' && Number.isFinite(res.place) && res.place >= 1 && typeof res.entry?.nick === 'string';
 }
 
+/** Najdalszy czas, jaki rozumie `Date` (ms, w obie strony): `at` spoza tego zakresu to nie data (`format` i `toISOString` rzucają `RangeError`). */
+const DATE_MAX_MS = 8.64e15;
+/** Czy `at` to chwila, którą da się pokazać jako datę (liczba skończona w zakresie `Date`). */
+export const isFameTime = (at: unknown): at is number => typeof at === 'number' && Math.abs(at) <= DATE_MAX_MS;
+
+/** Wiersz listy z serwera bez zaufania: miejsce (liczba skończona), nick (tekst) i chwila wpisu, którą da się pokazać. Inny kształt wypada z listy. */
+function isFameRow(r: unknown): r is FameRow {
+  if (typeof r !== 'object' || r === null) return false;
+  const { place, nick, at } = r as Record<string, unknown>;
+  return typeof place === 'number' && Number.isFinite(place) && typeof nick === 'string' && isFameTime(at);
+}
+
 const formatters = new Map<string, Intl.DateTimeFormat>();
-/** Data wpisu w języku gry: „2 listopada 2026” albo „2 November 2026”. Dzień według zegara gracza. */
+/** Data wpisu w języku gry: „2 listopada 2026” albo „2 November 2026”. Dzień według zegara gracza; chwila spoza zakresu `Date` daje pusty napis. */
 export function fameDate(at: number): string {
+  if (!isFameTime(at)) return '';
   const locale = numberLocale();
   let f = formatters.get(locale);
   if (!f) formatters.set(locale, f = new Intl.DateTimeFormat(locale, { day: 'numeric', month: 'long', year: 'numeric' }));
-  return Number.isFinite(at) ? f.format(at) : '';
+  return f.format(at);
 }
 
 export function createFameModel(deps: FameDeps): FameModel {
@@ -124,6 +140,7 @@ export function createFameModel(deps: FameDeps): FameModel {
 
     state.value = 'sending';
     message.value = SENDING_TEXT;
+    placed.value = null;
     let result: ApiResult<FameSubmitted>;
     try {
       result = await deps.client.fameSubmit(key, { nick: checked.nick, ...entry });
@@ -131,13 +148,19 @@ export function createFameModel(deps: FameDeps): FameModel {
       result = { ok: false, error: 'network', message: NETWORK_ERROR };   // klient sam łapie sieć; to pas bezpieczeństwa, żeby stan nie zawisł
     }
     if (result.ok && isPlaced(result)) {
+      placed.value = { first: result.first, place: result.place };
+      message.value = null;
+      if (!result.first) {
+        // Ten nick już jest w Galerii, ale serwer nie rezerwuje nicków przez Galerię, więc to niekoniecznie wpis tego gracza: nie znaczymy
+        // seeda jako wysłanego ani nie ruszamy nicka w mecie, a gracz może wpisać się pod innym nickiem (pole i przycisk zostają).
+        state.value = 'idle';
+        return;
+      }
       const meta = deps.meta();
       markFameSent(meta, offer.seed);
       const { player } = meta;
       if (player && player.nick !== checked.nick) meta.player = { ...player, nick: checked.nick };   // nick, pod którym Galeria cię zna (klucz zostaje)
       deps.saveMeta(meta);
-      placed.value = { first: result.first, place: result.place };
-      message.value = null;
       state.value = 'sent';
       return;
     }
@@ -156,9 +179,12 @@ export function createFameModel(deps: FameDeps): FameModel {
       res = { ok: false, error: 'network', message: NETWORK_ERROR };
     }
     if (gen !== generation) return;
-    list.value = res.ok && Array.isArray(res.rows)
-      ? { status: 'ready', rows: res.rows, total: Number.isFinite(res.total) ? res.total : res.rows.length, message: null }
-      : { status: 'error', rows: [], total: 0, message: FAME_LIST_CLOSED_TEXT };
+    if (!res.ok || !Array.isArray(res.rows)) {
+      list.value = { status: 'error', rows: [], total: 0, message: FAME_LIST_CLOSED_TEXT };
+      return;
+    }
+    const rows = res.rows.filter(isFameRow);   // wiersz o złym kształcie albo z datą spoza `Date` wypada, zamiast wywrócić render panelu
+    list.value = { status: 'ready', rows, total: Number.isFinite(res.total) ? res.total : rows.length, message: null };
   }
 
   return {
@@ -172,7 +198,8 @@ export function createFameModel(deps: FameDeps): FameModel {
     },
     setNick(text) {
       nick.value = text;
-      if (state.value === 'error') { state.value = 'idle'; message.value = null; }   // błąd poprzedniej próby nie zostaje przy już poprawionym nicku
+      // błąd albo „ten nick już jest w Galerii” z poprzedniej próby nie zostaje przy już poprawionym nicku
+      if (state.value === 'error' || (state.value === 'idle' && placed.value !== null)) { state.value = 'idle'; message.value = null; placed.value = null; }
     },
     sendable,
     pending: (seed, fame) => fame !== null && !alreadySent(seed) && sendable({ seed, day: fame.day, cash: fame.cash }),

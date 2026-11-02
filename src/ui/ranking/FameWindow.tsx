@@ -28,10 +28,10 @@ export function FameWindow({ model, offer, onClose, onOpenGallery }: FameWindowP
   const done = state === 'sent';
   const canSend = model.sendable(offer);
   const send = (): void => { void model.submit(offer); };
-  const text = done && placed
+  const text = placed
     ? (placed.first
       ? t`Jesteś w Galerii sław Traszki (miejsce ${placed.place}).`
-      : t`Ten nick już jest w Galerii sław Traszki (miejsce ${placed.place}). Mógł go wpisać ktoś inny.`)
+      : t`Ten nick już jest w Galerii sław Traszki (miejsce ${placed.place}). Mógł go wpisać ktoś inny: jeśli to nie Ty, wpisz się pod innym nickiem.`)
     : tr(model.message.value ?? '');
 
   return (

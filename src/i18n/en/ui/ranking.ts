@@ -100,8 +100,8 @@ export const RANKING_UI: Dict = {
   'Wpisz mnie do Galerii sław': 'Put me in the Hall of Fame',
   'Zobacz Galerię': 'See the Hall of Fame',
   'Jesteś w Galerii sław Traszki (miejsce {0}).': 'You’re in the Traszka Hall of Fame (place {0}).',
-  'Ten nick już jest w Galerii sław Traszki (miejsce {0}). Mógł go wpisać ktoś inny.':
-    'That name is already in the Traszka Hall of Fame (place {0}). Someone else may have signed it.',
+  'Ten nick już jest w Galerii sław Traszki (miejsce {0}). Mógł go wpisać ktoś inny: jeśli to nie Ty, wpisz się pod innym nickiem.':
+    'That name is already in the Traszka Hall of Fame (place {0}). Someone else may have signed it: if that wasn’t you, sign under another name.',
   'Wysyłamy wpis do Galerii…': 'Sending your entry to the Hall of Fame…',
   'Galeria jest teraz nieczynna. Wpis wyślesz później z panelu rankingu.': 'The Hall of Fame is closed right now. You can send your entry later from the leaderboard panel.',
   'Galeria jest teraz nieczynna. Zajrzyj później.': 'The Hall of Fame is closed right now. Check back later.',

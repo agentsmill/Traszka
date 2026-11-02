@@ -6,7 +6,7 @@ import { DEFAULT_CASHIER_LOOK } from '@/game/cashier';
 import { loadMeta, type Meta } from '@/game/meta';
 import { lang } from '@/i18n';
 import { EMPTY_BOARD, FAME_EMPTY, FAME_TAB_LABEL, LOADING, NO_PLAYER, NO_SEED, RankingPanel, TAB_LABELS, weekLeft } from './RankingPanel';
-import { FAME_LIST_CLOSED_TEXT, createFameModel } from './fameModel';
+import { FAME_LIST_CLOSED_TEXT, createFameModel, fameDate } from './fameModel';
 import { createRankingModel, type RankingDeps } from './rankingModel';
 
 // --- Drzewo vnode bez DOM (jak w overlays.test.tsx) ----------------------------------------------------------------------
@@ -427,5 +427,29 @@ describe('ranking: zakładka „Galeria sław”', () => {
     late({ ok: true, total: 1, rows: [{ place: 1, nick: 'Ala', at: AT }] });
     await loading;
     expect(fame.list.value.rows).toEqual([]);
+  });
+
+  it('wiersze o złym kształcie i `at` spoza zakresu Date są odrzucane, a panel nie rzuca w renderze', async () => {
+    const good = { place: 1, nick: 'Ala', at: AT };
+    const bad = [
+      null, 'x', 7, [], {}, { place: 2, nick: 'Bez daty' }, { place: 3, nick: 'Duża data', at: 1e20 }, { place: 4, nick: 'Ujemna', at: -1e20 },
+      { place: 5, nick: 'Nieskończona', at: Number.POSITIVE_INFINITY }, { place: 6, nick: 'NaN', at: Number.NaN }, { place: 7, nick: 'Tekst', at: '2026-11-02' },
+      { place: 'x', nick: 'Zły numer', at: AT }, { place: Number.NaN, nick: 'NaN numer', at: AT }, { place: 8, nick: 5, at: AT }, { place: 9, at: AT },
+    ];
+    const { panel, fame } = setup({ ok: true, total: 20, rows: [bad[0], good, ...bad.slice(1)] as never });
+    await fame.show();
+    let tree: ComponentChild = null;
+    expect(() => { tree = panel(); }).not.toThrow();
+    expect(fame.list.value.status).toBe('ready');
+    expect(fame.list.value.rows).toEqual([good]);
+    expect(byClass(tree, 'tt-fame-row').map(textOf)).toEqual(['1. Ala — 2 listopada 2026']);
+    expect(textOf(tree)).toContain('Na liście pierwsze 1 z 20 wpisów.');
+  });
+
+  it('data na skraju zakresu Date: fameDate nie rzuca (pusty napis poza zakresem), a najdalsza poprawna data się formatuje', () => {
+    expect(() => fameDate(1e20)).not.toThrow();
+    expect(fameDate(1e20)).toBe('');
+    expect(fameDate(Number.NaN)).toBe('');
+    expect(fameDate(8.64e15)).not.toBe('');
   });
 });

@@ -16,12 +16,16 @@ import type { RankingServices } from './services';
  *
  * Niewysłany bieg (`unsent`) ma w panelu rankingu baner z przyciskiem „Wyślij”: panel zamyka się, a okno końca sezonu otwiera się
  * w jego miejsce (`openFinish`).
+ *
+ * Galeria sław (4b §5.7): okno gratulacji `FameWindow` pokazuje się, gdy sygnał `fameOffer` ma wartość (zdarzenie `million` albo „Wyślij mój
+ * wpis” w zakładce Galerii) i ma pierwszeństwo przed panelami; zakładka „Galeria sław” jest częścią panelu rankingu.
  */
 export function PanelHost({ game, services }: { game: Pick<GameActions, 'openFinish'>; services: RankingServices | null }) {
   const open = panel.value;
   const offer = fameOffer.value;
   if (!services || (!open && !offer)) return null;
-  // Gratulacje za milion leżą nad panelami: gra stoi, a zdarzenie `million` przychodzi zawsze przy zamkniętych panelach.
+  // Gratulacje za milion mają pierwszeństwo: gdy `fameOffer` jest ustawiony, host pokazuje samo okno (panel nie jest wtedy montowany, a jego stan
+  // leży w modelach, więc wraca po zamknięciu okna). Zdarzenie `million` i tak przychodzi przy zamkniętych panelach, bo otwarty panel zatrzymuje grę.
   if (offer) {
     return (
       <FameWindow

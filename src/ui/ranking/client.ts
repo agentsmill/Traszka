@@ -74,22 +74,35 @@ export const UNAVAILABLE_ERROR = 'Ranking jest teraz nieczynny. Centrala robi in
 
 const DEFAULT_LIMIT = 20;
 
+/**
+ * Ile (ms) czekamy na odpowiedź Galerii sław, zanim przerwiemy zapytanie (`AbortController`): wiszące połączenie nie ma trzymać okna
+ * gratulacji w „Wysyłamy wpis…” ani listy w „Centrala liczy słupki…”. Przerwane zapytanie to zwykły błąd sieci (`network`), więc wpis
+ * czeka, a gracz może spróbować jeszcze raz. Reszta zapytań klienta zostaje bez limitu, jak dotąd.
+ */
+export const FAME_TIMEOUT_MS = 10_000;
+
 export function createRankingClient(fetchFn: typeof fetch = (input, init) => fetch(input, init), base = '/api'): RankingClient {
-  async function call<T, E extends object = object>(path: string, init?: RequestInit): Promise<ApiResult<T, E>> {
-    let res: Response;
+  async function call<T, E extends object = object>(path: string, init?: RequestInit, timeoutMs?: number): Promise<ApiResult<T, E>> {
+    const controller = timeoutMs === undefined ? null : new AbortController();
+    const timer = controller === null ? null : setTimeout(() => controller.abort(), timeoutMs);
     try {
-      res = await fetchFn(`${base}${path}`, init);
-    } catch {
-      return { ok: false, error: 'network', message: NETWORK_ERROR };
+      let res: Response;
+      try {
+        res = await fetchFn(`${base}${path}`, controller === null ? init : { ...init, signal: controller.signal });
+      } catch {
+        return { ok: false, error: 'network', message: NETWORK_ERROR };
+      }
+      const data: unknown = await res.json().catch(() => null);
+      if (typeof data !== 'object' || data === null || Array.isArray(data) || typeof (data as { ok?: unknown }).ok !== 'boolean') {
+        return { ok: false, error: 'unavailable', message: UNAVAILABLE_ERROR };
+      }
+      return data as ApiResult<T, E>;
+    } finally {
+      if (timer !== null) clearTimeout(timer);   // zegar nie przeżywa odpowiedzi (przerwanie po niej niczego by nie przerwało)
     }
-    const data: unknown = await res.json().catch(() => null);
-    if (typeof data !== 'object' || data === null || Array.isArray(data) || typeof (data as { ok?: unknown }).ok !== 'boolean') {
-      return { ok: false, error: 'unavailable', message: UNAVAILABLE_ERROR };
-    }
-    return data as ApiResult<T, E>;
   }
-  const post = <T, E extends object = object>(path: string, body: Record<string, unknown>): Promise<ApiResult<T, E>> =>
-    call<T, E>(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  const post = <T, E extends object = object>(path: string, body: Record<string, unknown>, timeoutMs?: number): Promise<ApiResult<T, E>> =>
+    call<T, E>(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, timeoutMs);
 
   return {
     board(tab, seed, limit = DEFAULT_LIMIT) {
@@ -103,7 +116,7 @@ export function createRankingClient(fetchFn: typeof fetch = (input, init) => fet
     }),
     downloadSave: (key) => post<SaveDownloaded>('/save/download', { key }),
     submitRun: (key, nick, run) => post<RunAccepted>('/runs', { key, nick, run }),
-    fameList: () => call<FameList>('/fame/list'),
-    fameSubmit: (key, e) => post<FameSubmitted>('/fame/submit', { key, nick: e.nick, seed: e.seed, day: e.day, cash: e.cash, simVersion: e.simVersion }),
+    fameList: () => call<FameList>('/fame/list', undefined, FAME_TIMEOUT_MS),
+    fameSubmit: (key, e) => post<FameSubmitted>('/fame/submit', { key, nick: e.nick, seed: e.seed, day: e.day, cash: e.cash, simVersion: e.simVersion }, FAME_TIMEOUT_MS),
   };
 }

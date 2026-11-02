@@ -149,7 +149,7 @@ describe('PanelHost: Galeria sław', () => {
     expect(fameOffer.value).toEqual({ seed: 'pierogi-731', day: 134, cash: 1_012_345 });
   });
 
-  it('ustawiony fameOffer to FameWindow z modelem Galerii (nad panelem, który zostaje pod spodem); modelu rankingu host nie rusza', () => {
+  it('ustawiony fameOffer to FameWindow z modelem Galerii zamiast panelu (panel wraca po zamknięciu okna); modelu rankingu host nie rusza', () => {
     const { services, reads, fame } = countingServices();
     openPanel('ranking', 'global');
     fameOffer.value = { seed: 'pierogi-731', day: 134, cash: 1_012_345 };

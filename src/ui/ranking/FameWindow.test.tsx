@@ -6,7 +6,7 @@ import { lang } from '@/i18n';
 import { SIM_VERSION } from '@/sim/simVersion';
 import { buttonLabelled, click, labels, textOf, walk, type Vnode } from '../game/vnodeTree';
 import { fameOffer, type FameOffer } from '../state';
-import { NETWORK_ERROR, UNAVAILABLE_ERROR, type ApiResult, type FameSubmitted, type RankingClient } from './client';
+import { FAME_TIMEOUT_MS, NETWORK_ERROR, UNAVAILABLE_ERROR, createRankingClient, type ApiResult, type FameSubmitted, type RankingClient } from './client';
 import { FameWindow } from './FameWindow';
 import { FAME_CLOSED_TEXT, createFameModel } from './fameModel';
 
@@ -85,22 +85,41 @@ describe('FameWindow: gratulacje i wysłanie wpisu', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it('first: false nie mówi „jesteś w Galerii”, tylko że ten nick już w niej jest (mógł go wpisać ktoś inny); seed i tak trafia do fameSent', async () => {
-    const { view, model, meta } = setup(sent({ first: false, place: 2 }));
+  it('first: false: komunikat z miejscem (bez „jesteś w Galerii”), seed i nick w mecie bez zmian, pole i przycisk zostają; udany wpis pod innym nickiem oznacza seed i zapisuje nick', async () => {
+    const { view, model, meta, saveMeta, fameSubmit } = setup(sent({ first: false, place: 2 }));
     click(buttonLabelled(view(), SEND));
-    await vi.waitFor(() => expect(model.state.value).toBe('sent'));
+    await vi.waitFor(() => expect(model.placed.value).not.toBeNull());
+    expect(model.state.value).toBe('idle');
     const text = textOf(liveRegion(view()));
     expect(text).not.toContain('Jesteś w Galerii');
     expect(text).toContain('Ten nick już jest w Galerii sław Traszki (miejsce 2)');
     expect(text).toContain('Mógł go wpisać ktoś inny');
+    expect(meta.fameSent).toBeUndefined();
+    expect(meta.player?.nick).toBe('Mateusz');
+    expect(saveMeta).not.toHaveBeenCalled();
+    expect(labels(view())).toEqual([SEND, 'Zamknij']);   // wysyłka nadal dostępna, bez „Zobacz Galerię”
+    expect(nickInput(view())).toBeDefined();
+    expect(model.pending('pierogi-731', { day: 134, cash: 1_012_345 })).toBe(true);
+
+    // gracz poprawia nick: stary komunikat znika, wpis pod innym nickiem przechodzi
+    fameSubmit.mockResolvedValueOnce(sent({ first: true, place: 5 }));
+    (nickInput(view())!.props.onInput as (e: unknown) => void)({ currentTarget: { value: 'Kasjer Roku' } });
+    expect(textOf(liveRegion(view()))).not.toContain('Ten nick już jest');
+    click(buttonLabelled(view(), SEND));
+    await vi.waitFor(() => expect(model.state.value).toBe('sent'));
+    expect(fameSubmit).toHaveBeenLastCalledWith(KEY, expect.objectContaining({ nick: 'Kasjer Roku' }));
+    expect(textOf(liveRegion(view()))).toContain('Jesteś w Galerii sław Traszki (miejsce 5)');
     expect(meta.fameSent).toEqual(['pierogi-731']);
+    expect(meta.player?.nick).toBe('Kasjer Roku');
+    expect(meta.player?.key).toBe(KEY);
+    expect(saveMeta).toHaveBeenCalledTimes(1);
   });
 
   it('miejsce poza pierwszą setką też jest pokazane', async () => {
     for (const first of [true, false]) {
       const { view, model } = setup(sent({ first, place: 140 }));
       click(buttonLabelled(view(), SEND));
-      await vi.waitFor(() => expect(model.state.value).toBe('sent'));
+      await vi.waitFor(() => expect(model.placed.value).not.toBeNull());
       expect(textOf(liveRegion(view()))).toContain('(miejsce 140)');
     }
   });
@@ -216,13 +235,59 @@ describe('FameWindow: gratulacje i wysłanie wpisu', () => {
     expect(textOf(liveRegion(view()))).toContain('(place 3)');
   });
 
-  it('open() odświeża nick z mety i czyści poprzedni wynik, ale w trakcie wysyłania niczego nie rusza', async () => {
-    const { model, meta } = setup();
+  it('open() odświeża nick z mety i czyści poprzedni wynik', async () => {
+    const { model, meta } = setup(sent({ first: false, place: 2 }));
+    await model.submit(OFFER);
+    expect(model.placed.value).not.toBeNull();
     model.setNick('Inny');
     meta.player!.nick = 'Nowy';
     model.open();
     expect(model.nick.value).toBe('Nowy');
     expect(model.state.value).toBe('idle');
+    expect(model.placed.value).toBeNull();
+    expect(model.message.value).toBeNull();
+  });
+
+  it('open() w trakcie wysyłania niczego nie rusza: stan „sending”, komunikat i nick zostają, a wynik i tak dochodzi', async () => {
+    let finishSend!: (r: ApiResult<FameSubmitted>) => void;
+    const { model, meta } = setup(() => new Promise<ApiResult<FameSubmitted>>((resolve) => { finishSend = resolve; }));
+    const sending = model.submit(OFFER);
+    meta.player!.nick = 'Nowy';
+    model.open();
+    expect(model.state.value).toBe('sending');
+    expect(model.message.value).toBe('Wysyłamy wpis do Galerii…');
+    expect(model.nick.value).toBe('Mateusz');
+    finishSend(sent());
+    await sending;
+    expect(model.state.value).toBe('sent');
+  });
+
+  it('zawieszone połączenie: po limicie czasu stan błędu „Galeria nieczynna” (zamiast wiecznego „Wysyłamy…”), a ponowienie działa', async () => {
+    vi.useFakeTimers();
+    try {
+      let hang = true;
+      const fetchFn = vi.fn((_url: unknown, init?: RequestInit) => (hang
+        ? new Promise<Response>((_resolve, reject) => { init?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError'))); })
+        : Promise.resolve(Response.json({ ok: true, first: true, place: 3, entry: { nick: 'Mateusz', at: 1 } })))) as unknown as typeof fetch;
+      const meta: Meta = { ...loadMeta(), player: { nick: 'Mateusz', look: DEFAULT_CASHIER_LOOK, specialOutfits: true, key: KEY } };
+      const model = createFameModel({ client: createRankingClient(fetchFn), meta: () => meta, saveMeta: vi.fn() });
+      model.open();
+      const sending = model.submit(OFFER);
+      expect(model.state.value).toBe('sending');
+      await vi.advanceTimersByTimeAsync(FAME_TIMEOUT_MS - 1);
+      expect(model.state.value).toBe('sending');
+      await vi.advanceTimersByTimeAsync(1);
+      await sending;
+      expect(model.state.value).toBe('error');
+      expect(model.message.value).toBe(FAME_CLOSED_TEXT);
+      expect(meta.fameSent).toBeUndefined();
+      hang = false;
+      await model.submit(OFFER);
+      expect(model.state.value).toBe('sent');
+      expect(meta.fameSent).toEqual(['pierogi-731']);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

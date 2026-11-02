@@ -92,7 +92,7 @@ function FameBoard({ fame, entry, onSend }: { fame: FameModel; entry: FameOffer 
             <li key={`${r.place}:${r.nick}`} class="tt-fame-row">
               <span class="tt-rank-pos">{r.place}.</span>{' '}
               <span class="tt-fame-nick">{r.nick}</span>{' '}
-              <span class="tt-fame-when">{'— '}<time dateTime={Number.isFinite(r.at) ? new Date(r.at).toISOString().slice(0, 10) : undefined}>{fameDate(r.at)}</time></span>
+              <span class="tt-fame-when">{'— '}<time dateTime={new Date(r.at).toISOString()}>{fameDate(r.at)}</time></span>
             </li>
           ))}
         </ol>
