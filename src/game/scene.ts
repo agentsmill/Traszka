@@ -268,8 +268,8 @@ export interface SceneHost {
    * i presetu); zmiana presetu pod pokazanym miastem buduje je od nowa przy następnym wywołaniu, jeśli zmieniły się auta.
    * `area`: prostokąt okna (px), który nie jest przykryty przez interfejs (pasek u góry, zakładki, arkusz miasta). Kamera ustawia w nim
    * całe miasto, także na telefonie w pionie, gdzie do tego trzeba oddalić ją poza `VIEW_SIZE_MAX` (limit zoomu rośnie na czas miasta).
-   * Bez `area` to całe okno. Obowiązuje do `hideCity`. Zmiana trybu przy pokazanym mieście kadru nie przestawia, tylko podnosi limit
-   * zoomu tak, żeby dało się oddalić do całej makiety z wieżami.
+   * Bez `area` to całe okno. Obowiązuje do `hideCity`. Zmiana trybu przy pokazanym mieście zostawia kadr gracza i podnosi limit zoomu
+   * tak, żeby dało się oddalić do całej makiety z wieżami; wyjątek: przejście z warstwy do makiety kadruje całe miasto z wieżami od nowa.
    */
   showCity(city: CityState, states: Record<number, LotState>, layer: CityLayer, area?: ScreenArea): void;
   /**
@@ -324,6 +324,7 @@ export function createSceneHost(deps: SceneDeps): SceneHost {
   let cityOn = false;
   let cityArea: ScreenArea | null = null;   // gdzie na ekranie ma stać miasto (poza przykryciem interfejsu); null: całe okno
   let cityCars = false;                  // czy `city` zbudowano z autami (profil z chwili budowy)
+  let cityMode: CityLayer | null = null; // tryb ostatniego `showCity` przy pokazanym mieście (null: miasto nie jest pokazane); wejście w makietę kadruje całość raz
   let cityShadows = false;               // cienie statyczne zlecone rendererowi przy pokazanym mieście
   let cityClock = { hour: 12, weekend: false };   // godzina i dzień gry dla aut makiety (z ostatniego `syncVisuals`; bez sesji południe dnia roboczego)
   const mobile = (): boolean => deps.isMobile ?? detectDeviceCaps().isMobile;
@@ -660,6 +661,8 @@ export function createSceneHost(deps: SceneDeps): SceneHost {
     showCity(cityState, states, layer, area) {
       const profile = cityProfile(ctx.preset, mobile());
       const mode: CityLayer = layer === 'makieta' && !profile.mockup ? 'ruch' : layer;
+      const intoMockup = cityOn && mode === 'makieta' && cityMode !== 'makieta';   // z warstwy do makiety przy pokazanym mieście
+      cityMode = mode;
       if (city && cityFrom !== cityState) dropCity();   // inne miasto (inny seed): stary widok precz
       if (city && !city.supports(mode)) dropCity();     // makieta na prostej geometrii: pełna od nowa, prosta zwalnia się od razu
       if (city && cityCars !== profile.cars) dropCity();   // preset zmieniony pod miastem: auta wg nowego profilu (rzadkie, więc budowa od nowa)
@@ -684,8 +687,10 @@ export function createSceneHost(deps: SceneDeps): SceneHost {
       ctx.setStaticShadows(cityShadows);
       if (cityShadows) ctx.refreshShadows();
       if (cityOn) {
-        // inny tryb przy pokazanym mieście: kadr gracza zostaje, a limit zoomu rośnie do całej makiety (i nie maleje do `hideCity`)
+        // inny tryb przy pokazanym mieście: limit zoomu rośnie do całej makiety (i nie maleje do `hideCity`); kadr gracza zostaje, a do makiety
+        // staje na całym mieście z wieżami (raz, przy wejściu w makietę: ruch ↔ dzielnice i wyjście z makiety go nie ruszają)
         ctx.rig.setViewMax(Math.max(ctx.rig.viewMax, cityFitSize()));
+        if (intoMockup) frameCity();
         return;
       }
       cityOn = true;
@@ -701,6 +706,7 @@ export function createSceneHost(deps: SceneDeps): SceneHost {
     hideCity() {
       if (!cityOn) return;
       cityOn = false;
+      cityMode = null;
       cityArea = null;
       cityShadows = false;
       ctx.setStaticShadows(false);   // cienie dynamiczne sklepu jak przed miastem

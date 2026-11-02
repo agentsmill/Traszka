@@ -1,6 +1,8 @@
 import { effect } from '@preact/signals';
 import type { Camera, Vector3 } from 'three';
 import { createCityPins, screenPosition, type CityPin, type CityPins } from '@/render/city/cityPins';
+import { cityProfile } from '@/render/city/cityQuality';
+import type { QualityPresetId } from '@/render/quality';
 import type { RenderContext } from '@/render/renderer';
 import type { CityState } from '@/sim/city/types';
 import { lotState } from '@/sim/firm/commands';
@@ -15,6 +17,9 @@ import type { ScreenArea, SceneHost } from './scene';
  * albo, przy własnym sklepie, przełącza go (`switchStore`). Wszystko idzie z sygnałów interfejsu (`tab`, `firm`, `cityLayer`,
  * `selectedLot`), więc ta warstwa nie ma własnego stanu poza tym, co już narysowała (żeby nie budować sceny co 200 ms publikacji).
  * Kamerę ustawia scena (`showCity` z prostokątem widocznym spod interfejsu); tu tylko dosuwamy wybrany lokal, gdy leży pod arkuszem.
+ * Tryb mapy (`cityLayer`) wybiera gracz; profil sprzętu (`CITY_PROFILES`) mówi tylko, od czego zacząć (`applyCityProfile` przy starcie gry)
+ * i czy „Makieta” w ogóle jest (`cityMockup`). Zmiana presetu w ⚙ nie przestawia wybranego trybu, ale scena dostaje wtedy `showCity` jeszcze raz,
+ * żeby miasto dostało auta i cienie nowego profilu bez wychodzenia z zakładki.
  */
 
 /** Prawa kolumna arkusza na komputerze (≥ 900 px): szerokość 390 px, 12 px od krawędzi i 12 px odstępu od mapy (ui.css, `.tt-sheet`). */
@@ -32,6 +37,17 @@ const MIN_BAND_PX = 120;
 export function visibleArea(width: number, height: number, hudBottom: number, tabsTop: number): ScreenArea {
   if (width >= WIDE_FROM_PX) return { left: 0, top: hudBottom, right: width - SHEET_WIDE_PX, bottom: tabsTop };
   return { left: 0, top: hudBottom, right: width, bottom: Math.max(hudBottom + MIN_BAND_PX, tabsTop - Math.round(height * SHEET_PHONE_SHARE)) };
+}
+
+/**
+ * Profil miasta dla presetu i sprzętu przechodzi do interfejsu: `cityMockup` (czy jest przycisk „Makieta”) przy starcie gry i przy każdej zmianie
+ * presetu, a tryb mapy (`cityLayer`) tylko na starcie gry (`atStart`): Średnia i Wysoka zaczynają w makiecie, Niska i telefon w „Ruchu”. Późniejsza
+ * zmiana presetu zostawia wybór gracza. Sprzęt (`isMobile`) bierze wołający z tego samego wykrywania, którego używa scena.
+ */
+export function applyCityProfile(preset: QualityPresetId, isMobile: boolean, atStart = false): void {
+  const profile = cityProfile(preset, isMobile);
+  ui.cityMockup.value = profile.mockup;
+  if (atStart) ui.cityLayer.value = profile.defaultLayer;
 }
 
 export interface CityScreenDeps {
@@ -75,7 +91,8 @@ export function createCityScreen(deps: CityScreenDeps): CityScreen {
 
   const stop = effect(() => {
     const view = ui.firm.value;
-    const layer = ui.cityLayer.value;
+    const layer = ui.shownCityLayer(ui.cityLayer.value, ui.cityMockup.value);   // bez makiety w profilu „makieta” idzie do sceny jako „ruch”
+    const preset = ui.preset.value;   // nowy preset to nowy profil sceny (auta, cienie): `showCity` jeszcze raz, ten sam tryb
     if (view && view.f.city !== knownCity) {
       // inna gra („Nowy sklep”, „Zacznij od nowa”, wczytanie): numery lokali i wybór sposobu zapłaty należały do poprzedniego miasta
       if (knownCity !== null) {
@@ -99,7 +116,7 @@ export function createCityScreen(deps: CityScreenDeps): CityScreen {
     }
     const { f } = view;
     const states = cityLotStates(f);
-    const key = `${layer}|${Object.values(states).join(',')}`;
+    const key = `${layer}|${preset}|${Object.values(states).join(',')}`;
     if (!scene.cityShown || f.city !== shownCity || key !== stateKey) {
       scene.showCity(f.city, states, layer, deps.area());
       shownCity = f.city;

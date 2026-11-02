@@ -74,6 +74,14 @@ export const tab: Signal<TabId | null> = signal<TabId | null>(null);
  * a scena sama wybiera do trybu szczegółowość geometrii. Nie są częścią zapisu.
  */
 export const cityLayer: Signal<CityLayer> = signal<CityLayer>('ruch');
+/**
+ * Czy profil sprzętu ma tryb „Makieta” (`cityProfile(preset, telefon).mockup`): od tego zależy przycisk w pasku miasta i to, czy wybór
+ * „makieta” dociera do sceny. Ustawia go `applyCityProfile` (game/cityScreen.ts) przy starcie gry i przy każdej zmianie presetu, żeby panel
+ * nie importował wykrywania sprzętu. Domyślnie jak w `CITY_PROFILES` (wszystkie profile mają makietę). Nie jest częścią zapisu.
+ */
+export const cityMockup: Signal<boolean> = signal(true);
+/** Tryb mapy, który naprawdę się pokazuje: bez makiety w profilu zapamiętany wybór „makieta” działa jak „ruch” (sam wybór gracza zostaje). */
+export const shownCityLayer = (layer: CityLayer, mockup: boolean): CityLayer => (layer === 'makieta' && !mockup ? 'ruch' : layer);
 export const selectedLot: Signal<number | null> = signal<number | null>(null);
 export const lotPay: Signal<'gotowka' | 'raty'> = signal<'gotowka' | 'raty'>('gotowka');
 
