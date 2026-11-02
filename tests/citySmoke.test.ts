@@ -7,7 +7,8 @@ import {
   BENCH_CALLS_LIMIT, BENCH_CITY_ORDER, BENCH_GATE_COLUMNS, BENCH_MOBILE_UA, BENCH_PATH, BENCH_SHOP_KEYS, CITY_BUDGET, benchProblems, benchTableLines, guardNetwork,
   outDirFor, overlayProblems,
   FIXTURES, HOUR_BARS, LAUNCH_ARGS, LIMIT_TEXT, NEW_SCREENS, OPEN_MINUTE, PHONE_WIDTH, RELET_BUILD_DAYS as SMOKE_RELET_BUILD_DAYS, RELET_CAPTION, RELET_SHARE,
-  QUEUE_STEP, RELET_TITLE, RELET_TRUST, STEPS, STEPS_4B, TIPS_STEP, DESKTOP_4B, RESEARCH_DOSTAWY_COST, WALLET_4B_MILLION, FAME_TITLE, FAME_CLOSED,
+  QUEUE_STEP, RELET_TITLE, RELET_TRUST, STEPS, STEPS_4B, STEPS_MAKIETA, STAGES, TIPS_STEP, DESKTOP_4B, RESEARCH_DOSTAWY_COST, WALLET_4B_MILLION, FAME_TITLE, FAME_CLOSED,
+  CITY_M as SMOKE_CITY_M, CITY_UNIT_M as SMOKE_CITY_UNIT_M, LAYER_LABELS, cityStatsProblems, cityWorld, geometryProblems, layerBarProblems, nextWorkdayNoon, perfHint, pinCoversPoint,
   deckIds, isApiUrl, withOnlyCardTomorrow, withRemont,
   BACKGROUND_TRUST_WARN_BELOW, USAGE, VIEWPORTS, DEFAULT_PLAYWRIGHT_ROOT, chromiumCandidates, chromiumExecutable, closedFittings,
   contextOptions, daysText, digitsOf, fixtureSave, loadPlaywright, median, metaFor, newScreenProblems, overlapArea, parseArgs, parseInstallmentButton, parsePerf,
@@ -16,6 +17,8 @@ import {
   type MakeRequire, type StepResult, type WidthBox,
 } from '../scripts/city-smoke.mjs';
 import { MemoryStorage } from '@/game/memoryStorage';
+import { cityClockOf } from '@/game/scene';
+import { CITY_M as GAME_CITY_M, CITY_UNIT_M as GAME_CITY_UNIT_M, cityToWorld } from '@/render/city/cityCoords';
 import { loadMeta, needsStartScreen } from '@/game/meta';
 import { createSession, firmOf, hasStoredSave, type GameSession } from '@/game/session';
 import { queueSizeFor } from '@/render/crowdView';
@@ -51,13 +54,15 @@ const SOURCE_FAME = readFileSync(resolve(ROOT, 'src/ui/ranking/FameWindow.tsx'),
 const DAY = 24 * 60;
 
 describe('plan smoke\'a (Zadanie 16)', () => {
-  it('dwanaście kroków (1–8 z 4a.1, 9–12 z 4a.2) i przebieg z dymkami; 6 tylko na komputerze, 7 i 12 tylko na telefonie, reszta na obu', () => {
-    expect(STEPS.map((s) => s.id)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+  it('piętnaście kroków (1–8 z 4a.1, 9–12 z 4a.2, 13–15 makieta) i przebieg z dymkami; 6 i 13 tylko na komputerze, 7, 12 i 14 tylko na telefonie, reszta na obu', () => {
+    expect(STEPS.map((s) => s.id)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
     const sizes = (id: number | string): string[] => [...[...STEPS, TIPS_STEP].find((s) => s.id === id)!.sizes];
-    for (const id of [1, 2, 3, 4, 5, 8, 9, 10, 11]) expect(sizes(id), `krok ${id}`).toEqual(['telefon', 'desktop']);
+    for (const id of [1, 2, 3, 4, 5, 8, 9, 10, 11, 15]) expect(sizes(id), `krok ${id}`).toEqual(['telefon', 'desktop']);
     expect(sizes(6)).toEqual(['desktop']);
+    expect(sizes(13)).toEqual(['desktop']);
     expect(sizes(7)).toEqual(['telefon']);
     expect(sizes(12)).toEqual(['telefon']);
+    expect(sizes(14)).toEqual(['telefon']);
     expect(sizes('T')).toEqual(['telefon']);
     for (const s of STEPS) expect(s.name.length).toBeGreaterThan(10);
   });
@@ -268,12 +273,12 @@ describe('licznik wydajności i tabela wyników', () => {
     return out;
   };
 
-  it('summarize: wiersz na krok i rozmiar, który go dotyczy (telefon 12 + 7 kroków 4b, komputer 10 + 7), wszystko ok daje ok', () => {
+  it('summarize: wiersz na krok i rozmiar, który go dotyczy (telefon 14 + 7 kroków 4b, komputer 12 + 7), wszystko ok daje ok', () => {
     const s = summarize(allOk());
     expect(s.ok).toBe(true);
     const k4b = ['4b-a', '4b-b', '4b-c', '4b-d', '4b-e', '4b-f', '4b-g'];
-    expect(s.rows.filter((r) => r.size === 'telefon').map((r) => r.step)).toEqual([1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 12, 'T', ...k4b]);
-    expect(s.rows.filter((r) => r.size === 'desktop').map((r) => r.step)).toEqual([1, 2, 3, 4, 5, 6, 8, 9, 10, 11, ...k4b]);
+    expect(s.rows.filter((r) => r.size === 'telefon').map((r) => r.step)).toEqual([1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 12, 14, 15, 'T', ...k4b]);
+    expect(s.rows.filter((r) => r.size === 'desktop').map((r) => r.step)).toEqual([1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 13, 15, ...k4b]);
     expect(s.rows.every((r) => r.status === 'ok')).toBe(true);
   });
 
@@ -304,7 +309,11 @@ describe('licznik wydajności i tabela wyników', () => {
     expect(parseArgs(['--only', 'desktop'])).toEqual({ only: 'desktop', help: false, bench: false, stage: null });
     expect(parseArgs(['--only', 'phone'])).toEqual({ only: 'telefon', help: false, bench: false, stage: null });
     expect(parseArgs(['--etap', '4b', '--only', 'telefon'])).toEqual({ only: 'telefon', help: false, bench: false, stage: '4b' });
-    expect(() => parseArgs(['--etap', '4a'])).toThrow(/--etap przyjmuje 4b/);
+    expect(parseArgs(['--etap', 'makieta'])).toEqual({ only: null, help: false, bench: false, stage: 'makieta' });
+    expect(parseArgs(['--etap', 'makieta', '--only', 'phone'])).toEqual({ only: 'telefon', help: false, bench: false, stage: 'makieta' });
+    expect(() => parseArgs(['--etap', '4a'])).toThrow(/--etap przyjmuje 4b albo makieta/);
+    expect(() => parseArgs(['--etap'])).toThrow(/--etap przyjmuje 4b albo makieta/);
+    expect(USAGE).toMatch(/--etap makieta/);
     expect(USAGE).toMatch(/--etap 4b/);
     expect(parseArgs(['--help']).help).toBe(true);
     expect(parseArgs(['-h']).help).toBe(true);
@@ -376,6 +385,11 @@ describe('kliknięcia w sterowanie nie omijają kontroli Playwrighta', () => {
     expect(SOURCE.slice(from, to)).toContain('el.click()');
     expect(SOURCE.slice(from, to)).toContain('hooks.fallbacks.push');
     expect(SOURCE).toMatch(/fallbacks: hooks\.fallbacks/);
+    // wpis mówi, na której karcie i w którym kroku okno nie dało się zamknąć zwykłym kliknięciem (karta z `newPage`, krok z `runStep`)
+    expect(SOURCE.slice(from, to)).toContain('page.smokeTag');
+    expect(SOURCE.slice(from, to)).toContain('hooks.step');
+    expect(SOURCE).toContain('page.smokeTag = `${vp.name}/${tag}`;');
+    expect(SOURCE).toMatch(/hooks\.step = id;[\s\S]*hooks\.step = null;/);
     // `press` (sterowanie sprawdzane w krokach) to samo kliknięcie Playwrighta, bez przechwytywania błędu
     const press = SOURCE.slice(SOURCE.indexOf('async function press('), SOURCE.indexOf('const hooks'));
     expect(press).toContain('await page.click(sel');
@@ -599,14 +613,14 @@ describe('plan 4a.2 (Zadanie 13): przełącznik --bench', () => {
 
   it('rozmiar „telefon” w biegu --bench dostaje User-Agent telefonu (inaczej profil „telefon” w ogóle by się nie sprawdził), komputer nie', () => {
     expect(BENCH_MOBILE_UA).toMatch(/Android.*Mobile/);
-    const body = SOURCE.slice(SOURCE.indexOf('async function runBench'), SOURCE.indexOf('async function main'));
+    const body = SOURCE.slice(SOURCE.indexOf('async function benchPass'), SOURCE.indexOf('async function main'));
     expect(body).toContain('{ ...contextOptions(vp), ...(vp.mobile ? { userAgent: BENCH_MOBILE_UA } : {}) }');
     // ten sam wzorzec co `detectDeviceCaps` (src/render/quality.ts)
     expect(/Android|iPhone|iPad|iPod|Mobi/i.test(BENCH_MOBILE_UA)).toBe(true);
   });
 
   it('źródło: --bench używa tego samego vite preview, tej samej blokady sieci i locale z contextOptions co kroki 1–12', () => {
-    const body = SOURCE.slice(SOURCE.indexOf('async function runBench'), SOURCE.indexOf('async function main'));
+    const body = SOURCE.slice(SOURCE.indexOf('async function benchPass'), SOURCE.indexOf('async function main'));
     expect(body).toContain('await startPreview(port)');
     expect(body).toContain('contextOptions(vp)');
     expect(body).toContain('await guardNetwork(ctx, port,');
@@ -622,7 +636,7 @@ describe('plan 4a.2 (Zadanie 13): przełącznik --bench', () => {
   });
 
   it('źródło: zapytanie do /api/** albo poza localhost w biegu --bench to porażka (przerwanie nie jest „zabezpieczeniem, które zadziałało”)', () => {
-    const body = SOURCE.slice(SOURCE.indexOf('async function runBench'), SOURCE.indexOf('async function main'));
+    const body = SOURCE.slice(SOURCE.indexOf('async function benchPass'), SOURCE.indexOf('async function main'));
     expect(body).toContain('sink.apiBlocked.length > 0');
     expect(body).toContain('sink.external.length > 0');
     expect(body).toContain('apiFailures.length === 0');
@@ -859,7 +873,7 @@ describe('karta benchmarku na telefonie (Zadanie 13, poprawka 1)', () => {
   });
 
   it('źródło: rozmiar „telefon” i komputer mierzą kartę po końcu biegu, po wyrenderowaniu czterech wierszy miasta', () => {
-    const body = SOURCE.slice(SOURCE.indexOf('async function runBench'), SOURCE.indexOf('async function main'));
+    const body = SOURCE.slice(SOURCE.indexOf('async function benchPass'), SOURCE.indexOf('async function main'));
     expect(body).toContain('overlayProblems(');
     expect(body).toContain('elementFromPoint');
     expect(body).toContain('benchProblems(result, extra, { mobile: vp.mobile })');
@@ -1021,5 +1035,197 @@ describe('krok f (plan 4b, Zadanie 11): kolejka przed sklepem przy zrzucie Trasz
     expect(queueSizeFor(at(drop.from + 90), 7 * 60 + 30)).toBe(12);
     expect(at(drop.until)).toBe(1);
     expect(queueSizeFor(at(drop.until), 10 * 60)).toBe(0);
+  });
+});
+
+describe('plan 4a.2 (Zadanie 15): kroki makiety 13–15', () => {
+  const BODY = (from: string, to: string): string => SOURCE.slice(SOURCE.indexOf(from), SOURCE.indexOf(to));
+
+  it('--etap makieta biegnie same kroki 13–15 (13 komputer, 14 telefon, 15 oba), a wartości --etap to 4b i makieta', () => {
+    expect(STEPS_MAKIETA.map((s) => s.id)).toEqual([13, 14, 15]);
+    expect(STEPS_MAKIETA.map((s) => [...s.sizes])).toEqual([['desktop'], ['telefon'], ['telefon', 'desktop']]);
+    for (const step of STEPS_MAKIETA) expect(STEPS).toContain(step);
+    expect([...STAGES]).toEqual(['4b', 'makieta']);
+    // tabela wyników z samych kroków makiety: komputer 13 + 15, telefon 14 + 15
+    const results: Record<string, Record<string, StepResult>> = { telefon: { 14: stepResult(), 15: stepResult() }, desktop: { 13: stepResult(), 15: stepResult() } };
+    const s = summarize(results, STEPS_MAKIETA);
+    expect(s.ok).toBe(true);
+    expect(s.rows.map((r) => `${r.size}/${r.step}`)).toEqual(['telefon/14', 'telefon/15', 'desktop/13', 'desktop/15']);
+    delete results.desktop![15];
+    expect(summarize(results, STEPS_MAKIETA).rows.find((r) => r.size === 'desktop' && r.step === 15)).toMatchObject({ status: 'FAIL', detail: 'krok się nie wykonał' });   // krok 15 bez wyniku biegu to porażka
+  });
+
+  it('layerBarProblems: trzy przyciski w kolejności Makieta / Ruch / Dzielnice (Model / Footfall / Districts) i dokładnie jeden wciśnięty', () => {
+    expect([...LAYER_LABELS.pl]).toEqual(['Makieta', 'Ruch', 'Dzielnice']);
+    expect([...LAYER_LABELS.en]).toEqual(['Model', 'Footfall', 'Districts']);
+    const bar = (lang: 'pl' | 'en', on: number) => LAYER_LABELS[lang].map((text, i) => ({ text, pressed: i === on }));
+    for (const [i, name] of LAYER_LABELS.pl.entries()) expect(layerBarProblems(bar('pl', i), name)).toEqual([]);
+    for (const [i, name] of LAYER_LABELS.en.entries()) expect(layerBarProblems(bar('en', i), name, 'en')).toEqual([]);
+    expect(layerBarProblems(bar('pl', 1), 'Makieta')[0]).toMatch(/oczekiwany „Makieta”/);                     // wciśnięty inny przycisk
+    expect(layerBarProblems(bar('pl', 0).map((b) => ({ ...b, pressed: false })), 'Makieta')[0]).toMatch(/żaden/);
+    expect(layerBarProblems(bar('pl', 0).map((b) => ({ ...b, pressed: true })), 'Makieta')[0]).toMatch(/wciśnięte: Makieta, Ruch, Dzielnice/);
+    expect(layerBarProblems(bar('pl', 1).slice(1), 'Ruch')[0]).toMatch(/przyciski „Ruch \/ Dzielnice”/);        // bez „Makiety” (profil bez makiety) to wada tego kroku
+    expect(layerBarProblems(bar('pl', 0), 'Makieta', 'en')[0]).toMatch(/oczekiwane „Model \/ Footfall \/ Districts”/);   // polski interfejs tam, gdzie ma być angielski
+  });
+
+  it('napisy przycisków to teksty gry: „Makieta”, „Ruch”, „Dzielnice” i angielskie „Model”, „Footfall”, „Districts”', () => {
+    const city = readFileSync(resolve(ROOT, 'src/i18n/en/ui/city.ts'), 'utf8');
+    expect(city).toContain("'Makieta': 'Model'");
+    expect(city).toContain("'Ruch': 'Footfall'");
+    expect(city).toContain("'Dzielnice': 'Districts'");
+    const panel = readFileSync(resolve(ROOT, 'src/ui/city/CityPanel.tsx'), 'utf8');
+    for (const label of LAYER_LABELS.pl) expect(panel, label).toContain(`t\`${label}\``);
+  });
+
+  it('cityWorld zgadza się z cityToWorld z gry (jednostka sceny i bok miasta), więc zbliżenie staje na wejściu lokalu', () => {
+    expect(SMOKE_CITY_M).toBe(GAME_CITY_M);
+    expect(SMOKE_CITY_UNIT_M).toBe(GAME_CITY_UNIT_M);
+    for (const lot of [{ x: 0, y: 0 }, { x: 330, y: 330 }, { x: 107, y: 593 }, { x: 660, y: 12 }]) {
+      const w = cityToWorld(lot.x, lot.y);
+      expect(cityWorld(lot).x).toBeCloseTo(w.x, 12);
+      expect(cityWorld(lot).z).toBeCloseTo(w.z, 12);
+    }
+    expect(cityWorld({ x: 330, y: 330 })).toEqual({ x: 0, z: 0 });   // środek miasta w początku układu
+  });
+
+  const stats = (patch: Record<string, unknown> = {}) => ({ shown: true, built: true, detail: 'pelny', layer: 'makieta', cars: 63, drawCalls: 13, shadowCasters: 10, ...patch });
+
+  it('cityStatsProblems: makieta z autami w budżecie 150 jest w porządku, a każda wada ma swój komunikat', () => {
+    const want = { layer: 'makieta', detail: 'pelny', cars: true };
+    expect(cityStatsProblems(stats(), want)).toEqual([]);
+    expect(cityStatsProblems(null, want)).toEqual(['brak cityStats()']);
+    expect(cityStatsProblems(stats({ cars: 0 }), want)[0]).toMatch(/auta 0, oczekiwane więcej niż 0/);
+    expect(cityStatsProblems(stats({ detail: 'prosty' }), want)[0]).toMatch(/geometria prosty, oczekiwana pelny/);
+    expect(cityStatsProblems(stats({ layer: 'ruch' }), want)[0]).toMatch(/widok ruch, oczekiwany makieta/);
+    expect(cityStatsProblems(stats({ shown: false }), want)[0]).toMatch(/nie jest pokazane/);
+    expect(cityStatsProblems(stats({ built: false }), want)[0]).toMatch(/sceny miasta nie ma/);
+    // budżet §19: wywołania sceny razem z rzucającymi cień poniżej 150
+    expect(cityStatsProblems(stats({ drawCalls: 100, shadowCasters: 49 }), want)).toEqual([]);
+    expect(cityStatsProblems(stats({ drawCalls: 100, shadowCasters: 50 }), want)[0]).toMatch(/scena 100 \+ 50 wywołań \(budżet 150 dla makieta\)/);
+  });
+
+  it('cityStatsProblems: warstwy bez aut i poniżej 60 wywołań, a telefon bez aut także w makiecie', () => {
+    const layer = { layer: 'ruch', detail: 'pelny', cars: false };
+    expect(cityStatsProblems(stats({ layer: 'ruch', cars: 0, shadowCasters: 0, drawCalls: 11 }), layer)).toEqual([]);
+    expect(cityStatsProblems(stats({ layer: 'dzielnice', cars: 0, shadowCasters: 0, drawCalls: 59 }), { ...layer, layer: 'dzielnice' })).toEqual([]);
+    expect(cityStatsProblems(stats({ layer: 'ruch', cars: 0, shadowCasters: 0, drawCalls: 60 }), layer)[0]).toMatch(/budżet 60 dla ruch/);
+    expect(cityStatsProblems(stats({ layer: 'ruch', cars: 3, shadowCasters: 0, drawCalls: 11 }), layer)[0]).toMatch(/auta 3, oczekiwane 0/);
+    expect(cityStatsProblems(stats({ cars: 0, shadowCasters: 0 }), { layer: 'makieta', detail: 'pelny', cars: false })).toEqual([]);
+    expect(CITY_BUDGET).toMatchObject({ makieta: 150, ruch: 60, dzielnice: 60 });
+  });
+
+  it('cityStatsProblems: `built: false` to scena zwolniona i miasto niepokazane (wyjście z zakładki na telefonie)', () => {
+    const gone = { shown: false, built: false, detail: null, layer: null, cars: 0, drawCalls: 0, shadowCasters: 0 };
+    expect(cityStatsProblems(gone, { built: false })).toEqual([]);
+    expect(cityStatsProblems(stats(), { built: false })).toEqual(['miasto nadal pokazane (shown true)', 'scena miasta nadal istnieje (built true)']);
+    expect(cityStatsProblems({ ...gone, shown: true }, { built: false })).toEqual(['miasto nadal pokazane (shown true)']);
+  });
+
+  it('geometryProblems: miasto coś dodaje, spłaszczenie niczego nie przebudowuje, wyjście zwalnia scenę, powrót daje to samo co pierwsze wejście', () => {
+    const ok = { before: 120, open: 168, mockup: 171, flat: 171, exited: 120, again: 168 };
+    expect(geometryProblems(ok)).toEqual([]);
+    expect(geometryProblems({ ...ok, open: 120 })[0]).toMatch(/niczego nie dodało/);
+    expect(geometryProblems({ ...ok, flat: 240 })[0]).toMatch(/spłaszczenie przebudowało scenę/);
+    expect(geometryProblems({ ...ok, exited: 171 })[0]).toMatch(/nie została zwolniona/);   // scena nie zwolniona po wyjściu (wyciek)
+    expect(geometryProblems({ ...ok, again: 339 })[0]).toMatch(/wyciek albo przebudowa/);    // stara plus nowa po powrocie
+    expect(geometryProblems({ ...ok, exited: 122 })).toHaveLength(1);                         // bez zapasu każda nadwyżka to wada
+    expect(geometryProblems({ ...ok, exited: 122 }, 2)).toEqual([]);                          // z zapasem na rzeczy sklepu powstające w tle
+  });
+
+  it('nextWorkdayNoon: południe najbliższego dnia roboczego zgodne z zegarem miasta (`cityClockOf`: dzień 0 to wtorek, weekend to sobota i niedziela)', () => {
+    // fixture „po Traszce”: niedziela 6:00 (dzień 187) → poniedziałek 12:00
+    const sunday = 187 * DAY + 6 * 60;
+    expect(cityClockOf(sunday).weekend).toBe(true);
+    expect(nextWorkdayNoon(sunday)).toBe(188 * DAY + 12 * 60);
+    expect(cityClockOf(nextWorkdayNoon(sunday))).toEqual({ hour: 12, weekend: false });
+    // dzień roboczy przed południem zostaje, po południu przechodzi na następny dzień roboczy, piątek po południu na poniedziałek
+    expect(nextWorkdayNoon(0)).toBe(12 * 60);                               // wtorek 0:00
+    expect(nextWorkdayNoon(12 * 60)).toBe(12 * 60);                         // dokładnie południe zostaje
+    expect(nextWorkdayNoon(12 * 60 + 1)).toBe(DAY + 12 * 60);               // wtorek 12:01 → środa
+    expect(nextWorkdayNoon(3 * DAY + 13 * 60)).toBe(6 * DAY + 12 * 60);     // piątek po południu → poniedziałek (dzień 6)
+    for (let minute = 0; minute < 21 * DAY; minute += 97) {
+      const noon = nextWorkdayNoon(minute);
+      expect(noon).toBeGreaterThanOrEqual(minute);
+      expect(cityClockOf(noon)).toEqual({ hour: 12, weekend: false });
+    }
+  });
+
+  it('pinCoversPoint: punkt w ramce pinezki (z zapasem) jest zasłonięty, poza nią nie, brak pinezki to brak zasłonięcia', () => {
+    const pin = { l: 100, t: 50, r: 150, b: 90 };
+    expect(pinCoversPoint(pin, { x: 120, y: 70 })).toBe(true);
+    expect(pinCoversPoint(pin, { x: 100, y: 50 })).toBe(true);     // brzeg ramki
+    expect(pinCoversPoint(pin, { x: 154, y: 70 })).toBe(false);
+    expect(pinCoversPoint(pin, { x: 154, y: 70 }, 4)).toBe(true);  // zapas 4 px
+    expect(pinCoversPoint(pin, { x: 120, y: 95 }, 4)).toBe(false);
+    expect(pinCoversPoint(null, { x: 120, y: 70 })).toBe(false);
+  });
+
+  it('perfHint podsumowuje licznik F3 w jednym zdaniu notatki', () => {
+    expect(perfHint({ fps: 12.34, minFps: 9, maxFps: 15, ms: 83.33, calls: 41, tris: 98_765 })).toBe('12.3 FPS (min 9, max 15), klatka 83 ms, 41 wywołań rysowania, 99 tys. trójkątów');
+  });
+
+  it('źródło: krok 13 otwiera grę bez ?q= (preset domyślny), krok 14 z mobilnym User-Agentem, a bez ?q= nie ma parametru w adresie', () => {
+    const desktop = BODY('async function scenarioMakieta', 'async function scenarioTelefon');
+    const phone = BODY('async function scenarioTelefon', '// ——————— plan 4b, Zadanie 10');
+    expect(desktop).toContain("newPage(browser, vp, 'makieta', { fixture: after, quality: null })");
+    expect(desktop).toContain("gpu0.preset === 'srednia'");
+    expect(phone).toContain("newPage(browser, vp, 'telefon-profil', { fixture: after, quality: null, userAgent: BENCH_MOBILE_UA })");
+    expect(phone).toContain("gpu0.preset === 'niska'");
+    expect(SOURCE).toContain("${quality ? `&q=${quality}` : ''}");
+    expect(SOURCE).toContain('{ ...contextOptions(vp), ...(userAgent ? { userAgent } : {}) }');
+    expect(contextOptions(VIEWPORTS[0]!).locale).toBe('pl-PL');   // oba nowe konteksty idą przez `contextOptions`, więc locale pl-PL i blokada sieci jak w krokach 1–12
+    expect(BODY('async function newPage', 'const shot = async')).toContain('await guardNetwork(ctx, port,');
+  });
+
+  it('źródło: krok 13 sprawdza makietę (pełna geometria, auta, budżet), warstwy bez aut, kadr po powrocie i zbliżenia lokali w czterech obrotach', () => {
+    const body = BODY('async function scenarioMakieta', 'async function scenarioTelefon');
+    expect(body).toContain("{ layer: 'makieta', detail: 'pelny', cars: true }");
+    expect(body).toContain("{ layer: 'ruch', detail: 'pelny', cars: false }");
+    expect(body).toContain("{ layer: 'dzielnice', detail: 'pelny', cars: false }");
+    expect(body).toContain('nextWorkdayNoon(');
+    expect(body).toContain('Math.abs(back.view - open.view) < 0.01');
+    expect(body).toContain("closeUps(page, ev, free, 'wolny')");
+    expect(body).toContain("closeUps(page, ev, relet, 'po-traszce')");
+    expect(BODY('async function closeUps', 'async function scenarioMakieta')).toContain('for (let k = 0; k < 4; k++)');
+    expect(BODY('async function closeUps', 'async function scenarioMakieta')).toContain("page.keyboard.press('e')");
+  });
+
+  it('źródło: krok 14 sprawdza prostą geometrię na starcie, makietę bez aut, zwolnienie sceny, powrót bez wycieku, trzy przyciski po polsku i angielsku', () => {
+    const body = BODY('async function scenarioTelefon', '// ——————— plan 4b, Zadanie 10');
+    expect(body).toContain("{ layer: 'ruch', detail: 'prosty', cars: false }");
+    expect(body).toContain("{ layer: 'makieta', detail: 'pelny', cars: false }");
+    expect(body).toContain("{ built: false }");
+    expect(body).toContain('geometryProblems(geo)');
+    expect(body).toContain("layerBarProblems(await layerBar(page), 'Footfall', 'en')");
+    expect(body).toContain("layerBarProblems(await layerBar(page), 'Model', 'en')");
+    expect(body).toContain('layerBarWidth(page,');
+    expect(body).toContain('F3');   // FPS warstwy i makiety z licznika wydajności (perfOf włącza F3)
+    expect(BODY('async function perfOf', 'async function layerBarWidth')).toContain("press('F3')");
+  });
+
+  it('źródło: krok 15 woła ten sam rdzeń `benchPass` co `--bench` (jedna kopia biegu), tylko poza `--etap 4b`, a liczniki sieci biegu trafiają do liczników przebiegu', () => {
+    expect(SOURCE.match(/async function benchPass\(/g)).toHaveLength(1);
+    expect(SOURCE.match(/window\.__benchResult !== undefined/g)).toHaveLength(1);   // bieg benchmarku jest w kodzie raz
+    expect(SOURCE.match(/await benchPass\(\{ browser, args, port, base, out \}\)/g)).toHaveLength(2);   // `runBench` (--bench) i pełny przebieg
+    const run = BODY('async function runBench', 'async function main');
+    expect(run).toContain('await benchPass({ browser, args, port, base, out })');
+    expect(run).toContain('await startPreview(port)');   // `--bench` nadal sam stawia serwer i przeglądarkę
+    const main = BODY('async function main', 'function isMain');
+    expect(main).toContain("if (args.stage !== '4b') {");
+    expect(main).toContain('benchPass({ browser, args, port, base, out })');
+    expect(main).toContain('external.push(...bench.external)');
+    expect(main).toContain('apiBlocked.push(...bench.apiBlocked)');
+    expect(main).toContain('bench.apiFailures');
+    // bieg 15 jest po pętli rozmiarów, na tej samej przeglądarce, a jego krok dostaje wynik na każdym rozmiarze
+    expect(main.indexOf('benchPass({ browser, args, port, base, out })')).toBeGreaterThan(main.indexOf('(results[vp.name] ??= {})[8] = r8;'));
+    expect(main).toContain('(results[vp.name] ??= {})[15] = step;');
+  });
+
+  it('źródło: porażka kroku 9 nie przekreśla kroków 13–15 (osobne scenariusze), a `--etap makieta` pomija kroki 4b i 4a', () => {
+    expect(BODY('function failRelet', 'async function englishChecks')).toContain('step.id > 12');
+    const main = BODY('async function main', 'function isMain');
+    expect(main).toContain("args.stage === 'makieta' ? [makieta]");
+    expect(main).toContain("args.stage === 'makieta' ? [] : [scenario4b");
+    expect(main).toContain("'--etap makieta: tylko kroki 13–15'");
   });
 });
