@@ -50,27 +50,45 @@ const parse = (text: string | null): unknown => {
 export const TRANSFER_HISTORY_MONTHS = 12;
 /** Tyle ostatnich wpisów skrzynki zastępcy niesie paczka (spec 4b §5.8). */
 export const TRANSFER_INBOX = 10;
+/**
+ * Tyle ostatnich wpisów logu kart (`tycoon.cards.log`, w grze do `CARDS.logMax` = 40) niesie paczka w każdym sklepie poza aktywnym (rozstrzygnięcie
+ * koordynatora 4b po pomiarze najgorszego przypadku). Log kart jest tylko dopisywany i przycinany (`resolveCard`, sanityzacja): nie czyta go ani
+ * losowanie kart (przerwy liczą się z `lastSeen`), ani reszta symulacji, ani gra.
+ */
+export const TRANSFER_CARD_LOG = 10;
 
-/** Otwarty sklep w paczce: historia do `TRANSFER_HISTORY_MONTHS` miesięcy, a ostatni raport tylko w aktywnym. Reszta (i zamknięty sklep) bez zmian. */
+/** Ekonomia z logiem kart skróconym do `TRANSFER_CARD_LOG` wpisów; nierozpoznany kształt zostaje bez zmian. */
+function withShortCardLog(econ: Record<string, unknown>): Record<string, unknown> {
+  const tycoon = econ.tycoon;
+  if (!isRec(tycoon) || !isRec(tycoon.cards) || !Array.isArray(tycoon.cards.log)) return econ;
+  return { ...econ, tycoon: { ...tycoon, cards: { ...tycoon.cards, log: (tycoon.cards.log as unknown[]).slice(-TRANSFER_CARD_LOG) } } };
+}
+
+/**
+ * Otwarty sklep w paczce: historia do `TRANSFER_HISTORY_MONTHS` miesięcy, a ostatni raport i pełny log kart tylko w aktywnym (pozostałe: raport
+ * null, log do `TRANSFER_CARD_LOG` wpisów). Reszta (i zamknięty sklep) bez zmian.
+ */
 function compactStore(st: unknown, activeId: unknown): unknown {
   if (!isRec(st) || st.closed !== false || !isRec(st.econ)) return st;
-  const econ = st.econ;
+  const active = st.id === activeId;
+  const econ = active ? st.econ : withShortCardLog(st.econ);
   return {
     ...st,
     econ: {
       ...econ,
       ...(Array.isArray(econ.history) ? { history: (econ.history as unknown[]).slice(-TRANSFER_HISTORY_MONTHS) } : {}),
-      ...(st.id === activeId ? {} : { lastReport: null }),
+      ...(active ? {} : { lastReport: null }),
     },
   };
 }
 
 /**
- * Koperta firmy do paczki „Wyślij zapis” (spec 4b §5.8 Ruling): sklepy poza aktywnym bez ostatniego raportu (`lastReport: null`), historia
- * każdego otwartego sklepu do ostatnich 12 miesięcy, skrzynka zastępcy do ostatnich 10 wpisów. Pięć sklepów po dwóch latach nie zmieściłoby
- * się inaczej w 64 KB. Zapis lokalny zostaje pełny: funkcja nie zmienia `env`, tylko składa nową kopertę. Na drugim urządzeniu znika ostatni
- * raport sklepów w tle i historia starsza niż rok (limit rat i status Partnera patrzą na ostatnie miesiące). Koperta przychodzi z przeglądarki,
- * więc kształtu nie bierze na wiarę: czego nie rozpozna, przepisuje bez zmian.
+ * Koperta firmy do paczki „Wyślij zapis” (spec 4b §5.8 Ruling i rozstrzygnięcie koordynatora po pomiarze): sklepy poza aktywnym bez ostatniego
+ * raportu (`lastReport: null`) i z logiem kart do ostatnich 10 wpisów, historia każdego otwartego sklepu do ostatnich 12 miesięcy, skrzynka
+ * zastępcy do ostatnich 10 wpisów. Pięć sklepów po dwóch latach nie zmieściłoby się inaczej w 64 KB. Zapis lokalny zostaje pełny: funkcja nie
+ * zmienia `env`, tylko składa nową kopertę. Na drugim urządzeniu znika ostatni raport sklepów w tle, starsze rozstrzygnięcia kart w ich logu
+ * i historia starsza niż rok (limit rat i status Partnera patrzą na ostatnie miesiące). Koperta przychodzi z przeglądarki, więc kształtu nie
+ * bierze na wiarę: czego nie rozpozna, przepisuje bez zmian.
  */
 export function compactForTransfer(env: FirmSaveEnvelope): FirmSaveEnvelope {
   const firm: unknown = env.firm;
