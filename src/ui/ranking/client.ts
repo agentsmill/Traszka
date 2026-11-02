@@ -26,6 +26,18 @@ export interface RunAccepted { nick: string; score: number; best: number; improv
 export interface SaveUploaded { bytes: number; savedAt: number }
 export interface SaveDownloaded { save: string; savedAt: number }
 
+/** Wiersz Galerii sław (`GET /api/fame/list`): miejsce od 1 w kolejności wpisów, nick i chwila pierwszego wpisu (ms serwera). */
+export interface FameRow { place: number; nick: string; at: number }
+/** Galeria sław: liczba wszystkich wpisów i pierwsza setka od najwcześniejszego (`total` bywa większe niż `rows.length`). */
+export interface FameList { total: number; rows: FameRow[] }
+/** Wpis do wysłania (`POST /api/fame/submit`): serwer niczego nie odtwarza, więc to, co mówi gra, jest tylko sprawdzane na wiarygodność. */
+export interface FameEntryBody { nick: string; seed: string; day: number; cash: number; simVersion: number }
+/**
+ * Odpowiedź na wpis: `first` to pierwszy wpis tego nicka, a `false` znaczy, że nick już był w Galerii (wpis zostaje, jaki był, i `entry` to on);
+ * `place` to miejsce nicka na liście (od 1, także poza pierwszą setką, którą pokazuje lista).
+ */
+export interface FameSubmitted { first: boolean; place: number; entry: { nick: string; at: number } }
+
 export interface ApiError { ok: false; error: string; message: string }
 /** `E` to pola, które błąd niesie poza `error` i `message` (domyślnie żadne). */
 export type ApiResult<T, E extends object = object> = ({ ok: true } & T) | (ApiError & E);
@@ -51,6 +63,10 @@ export interface RankingClient {
    * spoza API to `network` i `unavailable`, jak przy innych zapytaniach.
    */
   submitRun(key: string, nick: string, run: RunRecord): Promise<ApiResult<RunAccepted>>;
+  /** Galeria sław: pierwsza setka wpisów. Serwer przyjmuje tylko goły adres (każdy parametr to 400), więc klient żadnego nie wysyła. */
+  fameList(): Promise<ApiResult<FameList>>;
+  /** Wpis do Galerii sław po pierwszym milionie. Klucz idzie w ciele, nigdy w adresie. Błędy: `nick-taken`, `fame-invalid` (422), `fame-budget` (429), `rate-limited`. */
+  fameSubmit(key: string, entry: FameEntryBody): Promise<ApiResult<FameSubmitted>>;
 }
 
 export const NETWORK_ERROR = 'Brak połączenia z Centralą. Sprawdź internet i spróbuj jeszcze raz.';
@@ -87,5 +103,7 @@ export function createRankingClient(fetchFn: typeof fetch = (input, init) => fet
     }),
     downloadSave: (key) => post<SaveDownloaded>('/save/download', { key }),
     submitRun: (key, nick, run) => post<RunAccepted>('/runs', { key, nick, run }),
+    fameList: () => call<FameList>('/fame/list'),
+    fameSubmit: (key, e) => post<FameSubmitted>('/fame/submit', { key, nick: e.nick, seed: e.seed, day: e.day, cash: e.cash, simVersion: e.simVersion }),
   };
 }

@@ -1,4 +1,5 @@
-import { closePanel, panel, unsent, type GameActions } from '../state';
+import { closeFameOffer, closePanel, fameOffer, firm, openPanel, panel, seed, unsent, type FameOffer, type GameActions } from '../state';
+import { FameWindow } from './FameWindow';
 import { RankingPanel } from './RankingPanel';
 import { RecoveryPanel } from './RecoveryPanel';
 import type { RankingServices } from './services';
@@ -18,12 +19,32 @@ import type { RankingServices } from './services';
  */
 export function PanelHost({ game, services }: { game: Pick<GameActions, 'openFinish'>; services: RankingServices | null }) {
   const open = panel.value;
-  if (!open || !services) return null;
+  const offer = fameOffer.value;
+  if (!services || (!open && !offer)) return null;
+  // Gratulacje za milion leżą nad panelami: gra stoi, a zdarzenie `million` przychodzi zawsze przy zamkniętych panelach.
+  if (offer) {
+    return (
+      <FameWindow
+        model={services.fameModel} offer={offer} onClose={closeFameOffer}
+        onOpenGallery={() => { closeFameOffer(); openPanel('ranking', 'fame'); }}
+      />
+    );
+  }
+  if (!open) return null;
   if (open.id === 'recovery') return <RecoveryPanel model={services.recoveryModel} onClose={closePanel} />;
+  const mine = fameEntryOfFirm();
   return (
     <RankingPanel
       model={services.rankingModel} onClose={closePanel} unsent={unsent.value}
       onSendUnsent={() => { closePanel(); game.openFinish(); }}
+      fame={services.fameModel} fameEntry={mine}
+      onSendFame={() => { closePanel(); if (mine) fameOffer.value = mine; }}
     />
   );
+}
+
+/** Milion firmy z zapisu (`fame`: dzień i gotówka z chwili przekroczenia) z seedem otwartej gry albo null, gdy firma jeszcze go nie ma. */
+function fameEntryOfFirm(): FameOffer | null {
+  const fame = firm.value?.f.fame;
+  return fame ? { seed: seed.value, day: fame.day, cash: fame.cash } : null;
 }

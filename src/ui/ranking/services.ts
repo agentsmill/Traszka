@@ -1,8 +1,10 @@
 import type { GameShell } from '@/game/actions';
 import { saveMeta } from '@/game/meta';
 import { adoptRecoveryCode } from '@/game/playerKey';
-import { panel } from '../state';
+import { fameOffer, panel } from '../state';
 import { createRankingClient, type RankingClient } from './client';
+import { createFameModel, type FameModel } from './fameModel';
+import { bindFinishOpen } from './finishModel';
 import { createRankingModel, type RankingModel } from './rankingModel';
 import { createRecoveryModel, type RecoveryModel } from './recoveryModel';
 import { exportTransfer, readSaveSync, stageImport, writeSaveSync } from './saveTransfer';
@@ -23,6 +25,8 @@ import { exportTransfer, readSaveSync, stageImport, writeSaveSync } from './save
 export interface RankingServices {
   readonly rankingModel: RankingModel;
   readonly recoveryModel: RecoveryModel;
+  /** Galeria sław: okno gratulacji (`fameOffer`) i zakładka listy w panelu rankingu. */
+  readonly fameModel: FameModel;
   /** Odpina nasłuch sygnału `panel`; kolejne otwarcia panelu niczego już nie przygotowują. Wołanie drugi raz nic nie psuje. */
   dispose(): void;
 }
@@ -88,15 +92,26 @@ export function createRankingServices({ shell, client = createRankingClient(), r
     reload,
     sync: { get: readSaveSync, set: writeSaveSync },
   }));
+  // Meta powłoki w pamięci (nie kopia z przeglądarki): wysłany seed dopisuje się do niej w miejscu, więc zapis przy zamknięciu karty go nie cofa.
+  const fame = once(() => createFameModel({ client, meta: () => shell.meta, saveMeta }));
   // Każde otwarcie panelu to nowa wartość sygnału. Model powstaje dopiero tu (albo przy pierwszym odczycie z zewnątrz).
-  const stop = panel.subscribe((open) => {
+  const stopPanel = panel.subscribe((open) => {
     if (!open) return;
-    if (open.id === 'ranking') void ranking().select(open.tab ?? 'global');
-    else resetRecovery(recovery());
+    if (open.id !== 'ranking') {
+      resetRecovery(recovery());
+    } else if (open.tab === 'fame') {
+      void fame().show();
+    } else {
+      fame().hide();   // panel otwiera się na rankingu, nie na Galerii zostawionej przy poprzednim otwarciu
+      void ranking().select(open.tab ?? 'global');
+    }
   });
+  // Okno gratulacji odświeża się przy każdym otwarciu (nick z mety, czysty stan), tak jak okno końca sezonu.
+  const stopFame = bindFinishOpen({ open: () => fame().open() }, fameOffer);
   return {
     get rankingModel() { return ranking(); },
     get recoveryModel() { return recovery(); },
-    dispose: stop,
+    get fameModel() { return fame(); },
+    dispose: () => { stopPanel(); stopFame(); },
   };
 }

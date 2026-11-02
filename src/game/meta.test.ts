@@ -6,8 +6,8 @@ import { computeStoreInfo } from '@/sim/economy/storeInfo';
 import { MemoryStorage } from './memoryStorage';
 import { DEFAULT_CASHIER_LOOK, isCashierLook } from './cashier';
 import {
-  addToNetwork, claimDaily, dailyReward, loadMeta, needsStartScreen, offlineEarnings, partnerOf, pendingDaily, prestigePoints, saveMeta,
-  startupWindow, welcomeOffer, type Meta, type Player,
+  FAME_SENT_MAX, addToNetwork, claimDaily, dailyReward, loadMeta, markFameSent, needsStartScreen, offlineEarnings, partnerOf, pendingDaily,
+  prestigePoints, saveMeta, startupWindow, welcomeOffer, type Meta, type Player,
 } from './meta';
 import { createSession } from './session';
 
@@ -602,5 +602,51 @@ describe('klucz gracza w meta (ranking, spec §14.7)', () => {
 
   it('klucz zostaje także przy uszkodzonym nicku (ekran startowy zapyta o nick, a nicki w rankingu dalej należą do gracza)', () => {
     expect(withPlayer({ ...PLAYER, nick: 'Centrala', key: KEY }).player).toEqual({ ...PLAYER, nick: null, key: KEY });
+  });
+});
+
+describe('meta: fameSent (Galeria sław, 4b §5.7)', () => {
+  const base = { version: 1, partnerPoints: 4, network: [], daily: { date: '', streak: 0 }, lastSeen: 0, sound: true, vibration: true };
+  const load = (patch: Record<string, unknown>): Meta => {
+    storage.setItem(META_KEY, JSON.stringify({ ...base, ...patch }));
+    return loadMeta();
+  };
+
+  it('stara meta bez pola działa jak dotąd: pola nie ma, a zapis i odczyt niczego nie dodają', () => {
+    const meta = load({});
+    expect('fameSent' in meta).toBe(false);
+    saveMeta(meta);
+    expect(loadMeta()).toEqual(meta);
+    expect(JSON.parse(storage.getItem(META_KEY)!)).not.toHaveProperty('fameSent');
+  });
+
+  it('sanityzacja zostawia teksty, wyrzuca resztę i duplikaty, kolejność zostaje', () => {
+    const meta = load({ fameSent: ['pierogi-731', 7, null, 'bigos-111', {}, 'pierogi-731', ['x'], 'żurek 🥣'] });
+    expect(meta.fameSent).toEqual(['pierogi-731', 'bigos-111', 'żurek 🥣']);
+  });
+
+  it('ucina do 50 wpisów, zostają najnowsze (końcówka listy)', () => {
+    const seeds = Array.from({ length: 80 }, (_, i) => `seed-${i}`);
+    const meta = load({ fameSent: seeds });
+    expect(FAME_SENT_MAX).toBe(50);
+    expect(meta.fameSent).toHaveLength(50);
+    expect(meta.fameSent![0]).toBe('seed-30');
+    expect(meta.fameSent![49]).toBe('seed-79');
+  });
+
+  it('pole, które nie jest listą, albo lista bez tekstów daje metę bez pola', () => {
+    for (const fameSent of ['pierogi', 5, null, {}, [], [1, 2, null]]) expect('fameSent' in load({ fameSent }), JSON.stringify(fameSent)).toBe(false);
+  });
+
+  it('markFameSent dopisuje seed w miejscu (powłoka trzyma ten sam obiekt), bez duplikatu, z limitem 50; zapis i odczyt zachowują listę', () => {
+    const meta = fresh();
+    markFameSent(meta, 'pierogi-731');
+    markFameSent(meta, 'pierogi-731');
+    expect(meta.fameSent).toEqual(['pierogi-731']);
+    for (let i = 0; i < 60; i++) markFameSent(meta, `seed-${i}`);
+    expect(meta.fameSent).toHaveLength(50);
+    expect(meta.fameSent![49]).toBe('seed-59');
+    saveMeta(meta);
+    expect(loadMeta().fameSent).toEqual(meta.fameSent);
   });
 });

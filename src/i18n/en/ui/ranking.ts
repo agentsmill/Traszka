@@ -92,6 +92,29 @@ export const RANKING_UI: Dict = {
   'Centrala odrzuciła ten bieg. Możesz go odrzucić albo spróbować jeszcze raz.': 'Head Office rejected this run. You can discard it or try again.',
   'Brak klucza gracza. Odśwież stronę i spróbuj jeszcze raz.': 'No player key. Refresh the page and try again.',
   'Nie ma biegu do wysłania.': 'There’s no run to send.',
+  // FameWindow.tsx, fameModel.ts: gratulacje za milion i wpis do Galerii sław (4b §5.7)
+  'Na koncie:': 'In the account:',
+  'Wpisz się do Galerii sław Traszki: lista graczy, którzy doszli do pierwszego miliona.':
+    'Sign the Traszka Hall of Fame: the list of players who reached their first million.',
+  'Nick w Galerii': 'Hall of Fame name',
+  'Wpisz mnie do Galerii sław': 'Put me in the Hall of Fame',
+  'Zobacz Galerię': 'See the Hall of Fame',
+  'Jesteś w Galerii sław Traszki (miejsce {0}).': 'You’re in the Traszka Hall of Fame (place {0}).',
+  'Ten nick już jest w Galerii sław Traszki (miejsce {0}). Mógł go wpisać ktoś inny.':
+    'That name is already in the Traszka Hall of Fame (place {0}). Someone else may have signed it.',
+  'Wysyłamy wpis do Galerii…': 'Sending your entry to the Hall of Fame…',
+  'Galeria jest teraz nieczynna. Wpis wyślesz później z panelu rankingu.': 'The Hall of Fame is closed right now. You can send your entry later from the leaderboard panel.',
+  'Galeria jest teraz nieczynna. Zajrzyj później.': 'The Hall of Fame is closed right now. Check back later.',
+  'Ten nick jest zajęty. Wybierz inny i spróbuj jeszcze raz.': 'That name is taken. Pick another and try again.',
+  'Tego wpisu Galeria nie przyjmie.': 'The Hall of Fame won’t accept this entry.',
+  // RankingPanel.tsx: zakładka Galerii sław
+  'Galeria sław': 'Hall of Fame',
+  'Galeria sław Traszki: gracze, którzy w zwykłej grze doszli do pierwszego miliona. Lista idzie od najwcześniejszego wpisu.':
+    'The Traszka Hall of Fame: players who reached their first million in a regular game. The list runs from the earliest entry.',
+  'Galeria czeka na pierwszego milionera.': 'The Hall of Fame is waiting for its first millionaire.',
+  'Masz milion, ale Twojego wpisu nie ma jeszcze w Galerii.': 'You have a million, but your entry isn’t in the Hall of Fame yet.',
+  'Wyślij mój wpis': 'Send my entry',
+  'Na liście pierwsze {0} z {1} wpisów.': 'The list shows the first {0} of {1} entries.',
 };
 
 export const RANKING_PLURALS: Plurals = {};

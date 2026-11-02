@@ -4047,6 +4047,48 @@ describe('gra prowadzi firmę (powłoka)', () => {
       expect(ui.story.value[0]!.text).toBe(text);
     });
 
+    describe('milion (Galeria sław, 4b §5.7): gratulacje zamiast zwykłego okna „OK”', () => {
+      const million = (): FirmStepOut => stepOut({ firm: [{ kind: 'million', params: { day: 134, cash: 1_012_345 } }] });
+      beforeEach(() => { ui.fameOffer.value = null; });
+      afterEach(() => { ui.fameOffer.value = null; });
+
+      it('zwykła gra: otwiera ui.fameOffer z seedem sesji, a wpisu „Milion!” w kolejce okien „OK” nie ma', () => {
+        const h = harness();
+        const s = open(h);
+        h.shell.handleFirmEvents(million());
+        expect(ui.fameOffer.value).toEqual({ seed: s.seed, day: 134, cash: 1_012_345 });
+        expect(ui.story.value).toEqual([]);
+        expect(ui.isWindowOpen()).toBe(true);   // gra stoi pod gratulacjami
+        expect(h.calls).toEqual([['play', 'coins'], ['confetti', undefined, undefined, undefined]]);
+      });
+
+      it('bieg rankingowy: ani gratulacji, ani okna „OK”', () => {
+        const h = harness();
+        expect(h.shell.startRanked('kielbasa-42')).toBe(true);
+        ui.story.value = [];
+        h.shell.handleFirmEvents(million());
+        expect(ui.fameOffer.value).toBeNull();
+        expect(ui.story.value).toEqual([]);
+      });
+
+      it('seed z meta.fameSent: bez drugich gratulacji (karta ze starszej wersji zgubiła `fame`), bez okna „OK”', () => {
+        const h = harness({ meta: { ...loadMeta(), fameSent: [SEED] } });
+        open(h);
+        h.shell.handleFirmEvents(million());
+        expect(ui.fameOffer.value).toBeNull();
+        expect(ui.story.value).toEqual([]);
+        expect(h.calls).toEqual([]);
+      });
+
+      it('inne zdarzenia firmy w tej samej klatce idą swoją drogą (okno „OK”), a milion obok nich otwiera gratulacje', () => {
+        const h = harness();
+        open(h);
+        h.shell.handleFirmEvents(stepOut({ firm: [{ kind: 'debt', params: { cash: -50_000 } }, { kind: 'million', params: { day: 134, cash: 1_012_345 } }] }));
+        expect(ui.fameOffer.value).not.toBeNull();
+        expect(ui.story.value.map((e) => e.title)).toEqual(['Blisko granicy debetu']);
+      });
+    });
+
     it('gameover z tła: okno „OK” z nazwą sklepu', () => {
       const h = harness();
       const { f } = twoStores(h);
