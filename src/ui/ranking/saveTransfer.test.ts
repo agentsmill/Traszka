@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { keepPlansEasy } from '../../../tests/firmKit';
 import { DEFAULT_CASHIER_LOOK } from '@/game/cashier';
 import { FIRM_SAVE_SCHEMA, SAVE_TRANSFER_MAX_BYTES, firmEnvelopeOf, restoreFirmFrom, type FirmSaveEnvelope } from '@/game/firmSave';
 import { MemoryStorage } from '@/game/memoryStorage';
@@ -247,6 +248,7 @@ function playHoldingTrust(f: FirmState, minute: number): void {
   const out = emptyStepOut();
   while (clockOf(f) < minute && f.over === null && !activeStore(f).econ.gameOver) {
     if (clockOf(f) % DAY === 0) for (const st of openStores(f)) st.econ.tycoon.trust.value = Math.max(st.econ.tycoon.trust.value, 70);
+    if (clockOf(f) % DAY === 0) keepPlansEasy(f);   // plan Centrali do trafienia: sklepy mają przetrwać dwa lata
     answerActive(f);
     stepFirmMinute(f, out);
     out.active.length = 0;

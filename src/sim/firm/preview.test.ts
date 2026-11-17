@@ -500,7 +500,7 @@ describe('podgląd końca miesiąca dla sieci: koniec okresu wypowiedzenia', () 
 // --- Prognoza paska ------------------------------------------------------------------------------------------------------
 
 describe('forecastFirm', () => {
-  const NUMERIC: Exclude<keyof Statement, 'cashAfter' | 'partial'>[] = [
+  const NUMERIC: Exclude<keyof Statement, 'cashAfter' | 'partial' | 'plan'>[] = [
     'margin', 'bonus', 'guarantee', 'transfer', 'installments', 'pallets', 'remanent', 'deductions', 'wages', 'media', 'zus', 'vat',
     'accounting', 'costs', 'net', 'result', 'spent', 'fines', 'other',
   ];

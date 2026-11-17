@@ -7,6 +7,7 @@ import {
 } from './economy';
 import { xpToNext } from './progress';
 import { sanitizeFranchisee, sanitizeStatement } from './franchisee';
+import type { PlanMonth } from './plan';
 import { sanitizeHall } from './tycoon/cleanliness';
 import { sanitizeReport } from './tycoon/report';
 import { sanitizeShift } from './tycoon/shift';
@@ -297,8 +298,25 @@ function counters(v: unknown): Counters {
 /** Ostatni raport miesiąca. Raport ze starego zapisu nie ma szczegółów tycoona (`detail`): wczytuje się jako `null`, reszta zostaje. */
 function report(v: unknown): MonthReport | null {
   if (!isRec(v) || typeof v.label !== 'string' || typeof v.comment !== 'string' || !isRec(v.counters)) return null;
-  return {
+  const out: MonthReport = {
     label: v.label, counters: counters(v.counters), profit: money(v.profit, 0), cash: money(v.cash, 0), comment: v.comment,
     detail: sanitizeReport(v.detail), statement: sanitizeStatement(v.statement),
   };
+  const plan = planMonth(v.plan);
+  if (plan) out.plan = plan;
+  return out;
+}
+
+/** Pola rozliczenia planu w kolejności `settlePlan` (raport ma wracać z zapisu bajt w bajt); `hit` osobno, reszta to liczby. */
+const PLAN_MONTH_FIELDS = [
+  'target', 'due', 'turnover', 'bought', 'cost', 'share', 'hit', 'bonus', 'fine', 'trust', 'stage', 'streak', 'nextTarget', 'nextBase',
+  'nextGrowth',
+] as const satisfies readonly (keyof PlanMonth)[];
+
+/** Rozliczenie planu z raportu w zapisie; raport bez rozliczenia (albo z czymś innym w tym miejscu) nie ma klucza. */
+function planMonth(v: unknown): PlanMonth | undefined {
+  if (!isRec(v)) return undefined;
+  const out = {} as Record<string, number | boolean>;
+  for (const k of PLAN_MONTH_FIELDS) out[k] = k === 'hit' ? v.hit === true : money(v[k], 0);
+  return out as unknown as PlanMonth;
 }

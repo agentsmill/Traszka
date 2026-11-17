@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { keepPlansEasy } from '../../tests/firmKit';
 import { generateCity, lotNeighbour } from '@/sim/city/generateCity';
 import { CITY_GENERATOR_VERSION } from '@/sim/city/types';
 import { MINUTES_PER_DAY, OPEN_FROM } from '@/sim/economy/catalog';
@@ -1246,6 +1247,7 @@ function twoOpenStores(seed = SEED, lot: (f: FirmState) => number = freeLot): Fi
 function playHoldingTrust(f: FirmState, minute: number): void {
   while (clockOf(f) < minute && f.over === null && !activeStore(f).econ.gameOver) {
     if (clockOf(f) % DAY === 0) for (const st of openStores(f)) st.econ.tycoon.trust.value = Math.max(st.econ.tycoon.trust.value, 70);
+    if (clockOf(f) % DAY === 0) keepPlansEasy(f);   // plan Centrali do trafienia: sklepy mają przetrwać dwa lata
     tick(f);
   }
 }
@@ -1287,24 +1289,32 @@ function playThreeOpenStores(): FirmState {
  * Zamknięte sklepy gromadzą się (zamknięcie i ponowny wynajem), więc lista sklepów w zapisie bywa dłuższa niż limit sklepów: #1 z
  * wyposażeniem i dwoma remontami wypowiedziany i zamknięty, potem #2 i #3 otwarte, każdy po dwóch remontach, koniec roku.
  */
+/** Jak `playTo`, ale co dobę plan Centrali każdego otwartego sklepu do trafienia (`keepPlansEasy`): sklepy mają przetrwać rok bez gracza. */
+function playKeepingPlans(f: FirmState, minute: number): void {
+  while (clockOf(f) < minute && f.over === null && !activeStore(f).econ.gameOver) {
+    if (clockOf(f) % DAY === 0) keepPlansEasy(f);
+    tick(f);
+  }
+}
+
 function playWithClosedStore(): FirmState {
   const f = twoOpenStores();
   fit(f);
   remontEach(f, [1, 2], 8);
-  playTo(f, 20 * DAY + OPEN_FROM);
+  playKeepingPlans(f, 20 * DAY + OPEN_FROM);
   remontEach(f, [1, 2], 14);
-  playTo(f, 25 * DAY + OPEN_FROM);
+  playKeepingPlans(f, 25 * DAY + OPEN_FROM);
   expect(command(f, { type: 'switchStore', storeId: 2 })).toEqual({ ok: true });
   expect(command(f, { type: 'terminateStore', storeId: 1 })).toEqual({ ok: true });
   for (let guard = 0; !f.stores[0]!.closed && guard < 90 * DAY; guard++) tick(f);
   expect(f.stores[0]!.closed).toBe(true);
   expect(command(f, { type: 'rentLot', lotId: freeLot(f), pay: 'raty' })).toEqual({ ok: true });
-  playTo(f, f.builds[0]!.readyDay * DAY + OPEN_FROM + 1);
+  playKeepingPlans(f, f.builds[0]!.readyDay * DAY + OPEN_FROM + 1);
   expect(f.stores).toHaveLength(3);
   remontEach(f, [3], 8);
-  playTo(f, clockOf(f) + 10 * DAY);
+  playKeepingPlans(f, clockOf(f) + 10 * DAY);
   remontEach(f, [3], 14);
-  playTo(f, 365 * DAY + OPEN_FROM);
+  playKeepingPlans(f, 365 * DAY + OPEN_FROM);
   return f;
 }
 

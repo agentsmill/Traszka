@@ -1,6 +1,7 @@
-import { isRec, num, whole } from '@/sim/guards';
+import { isNum, isRec, num, whole } from '@/sim/guards';
 import { GUARANTEE, INSTALLMENTS, OWN_COSTS, REMANENT } from './catalog';
 import { isLastDayOfMonth } from './calendar';
+import { sanitizePlan, type PlanState } from './plan';
 import { monthIndexOf } from './tycoon/time';
 import { WUT_REASONS, type WutReason } from './tycoon/wut';
 
@@ -77,6 +78,8 @@ export interface FranchiseeState {
   installments: Installment[];
   nextInstallmentId: number;
   remanent: RemanentState;
+  /** Plan sprzedaży Centrali (plan.ts). Klucza nie ma, dopóki plan nie powstał (zamknięcie pierwszego dnia po gwarancji). */
+  plan?: PlanState;
 }
 
 /** Wyciąg od Centrali za miesiąc: przelew, potrącenia, koszty franczyzobiorcy i co z tego zostaje. Kwoty w zł. */
@@ -107,6 +110,8 @@ export interface Statement {
   cashAfter: number;
   /** Miesiąc wejścia nowych zasad (zapis sprzed SIM_VERSION 6): przelew i naliczenia tylko od chwili migracji. */
   partial: boolean;
+  /** Kara za niewykonany plan Centrali (w `deductions`). Klucz tylko przy karze > 0. */
+  plan?: number;
 }
 
 export const emptySettleMonth = (): SettleMonth => ({ margin: 0, bonus: 0, pallets: 0, wages: 0, media: 0 });
@@ -202,25 +207,29 @@ export interface StatementInput {
   partial: boolean;
   /** Czy ten sklep płaci ZUS i księgową; `false` (dodatkowy sklep, `site.ts`) daje oba koszty 0. Brak = płaci. */
   ownCosts?: boolean;
+  /** Kara za niewykonany plan Centrali (potrącenie). Brak albo 0 = bez kary i bez klucza w wyciągu. */
+  plan?: number;
 }
 
 /** Wyciąg z naliczeń miesiąca. Jedno miejsce tej arytmetyki: zamknięcie miesiąca, prognoza paska i podgląd liczą przez nie. */
 export function buildStatement(i: StatementInput): Statement {
   const m = i.month;
   const transfer = m.margin + m.bonus + i.guarantee;
-  const deductions = i.installments + m.pallets + i.remanent;
+  const deductions = i.installments + m.pallets + i.remanent + (i.plan ?? 0);
   const vat = vatOf(transfer);
   const zus = i.ownCosts === false ? 0 : OWN_COSTS.zus;
   const accounting = i.ownCosts === false ? 0 : OWN_COSTS.accounting;
   const costs = m.wages + m.media + zus + accounting + vat;
   const net = transfer - deductions - costs;
-  return {
+  const st: Statement = {
     margin: m.margin, bonus: m.bonus, guarantee: i.guarantee, transfer,
     installments: i.installments, pallets: m.pallets, remanent: i.remanent, deductions,
     wages: m.wages, media: m.media, zus, vat, accounting, costs,
     net, result: net + i.installments + i.other - i.fines,
     spent: i.spent, fines: i.fines, other: i.other, cashAfter: i.cashBefore + net, partial: i.partial,
   };
+  if (i.plan !== undefined && i.plan > 0) st.plan = i.plan;   // po `partial`: wyciąg bez kary jest co do bajta jak dawniej
+  return st;
 }
 
 // --- Zapis -----------------------------------------------------------------------------------------------
@@ -264,7 +273,7 @@ export function sanitizeFranchisee(raw: unknown, minute: number, monthRevenue: n
     ? raw.installments.map(installment).filter((x): x is Installment => x !== null).slice(0, 64)
     : [];
   const day = Math.floor(minute / 1440);
-  return {
+  const out: FranchiseeState = {
     month: { margin: money(m.margin), bonus: money(m.bonus), pallets: money(m.pallets), wages: plus(m.wages), media: plus(m.media) },
     installments,
     nextInstallmentId: Math.max(whole(raw.nextInstallmentId, 1, 1, 1e9), 1 + Math.max(0, ...installments.map((x) => x.id))),
@@ -278,6 +287,9 @@ export function sanitizeFranchisee(raw: unknown, minute: number, monthRevenue: n
       last: protocol(r.last),
     },
   };
+  const plan = sanitizePlan(raw.plan);
+  if (plan) out.plan = plan;
+  return out;
 }
 
 const STATEMENT_FIELDS = [
@@ -292,5 +304,6 @@ export function sanitizeStatement(raw: unknown): Statement | null {
   const out = {} as Statement;
   for (const k of STATEMENT_FIELDS) out[k] = money(raw[k]);
   out.partial = raw.partial === true;
+  if (isNum(raw.plan) && raw.plan > 0) out.plan = money(raw.plan);
   return out;
 }

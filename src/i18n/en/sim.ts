@@ -114,6 +114,31 @@ export function simRules(sub: (pl: string) => string): Rule[] {
       pl: 'Centrala wypowiada umowę franczyzową: zaufanie spadło do zera. Dziękujemy za współpracę.',
       en: 'Head Office is terminating your franchise agreement: trust has fallen to zero. Thank you for your cooperation.',
     },
+    // --- plan sprzedaży Centrali (5a) ---
+    {
+      pl: 'Gwarancja się skończyła. Od dziś Centrala przysyła plan sprzedaży: {} zł w tym miesiącu. „Wierzymy w Ciebie. Liczbowo.”',
+      en: (x) => `The guarantee is over. From today Head Office sends you a sales plan: ${plNum(x!)} zł this month. “We believe in you. Numerically.”`,
+    },
+    {
+      pl: 'Od przyszłego miesiąca ten sklep ma plan sprzedaży Centrali. W tym miesiącu jeszcze bez rozliczenia.',
+      en: 'From next month this shop has a Head Office sales plan. This month it isn’t settled yet.',
+    },
+    {
+      pl: 'Do planu brakuje ok. {} zł. Dobicie z kieszeni: ok. {} zł. {}',
+      en: (missing, cost, tail) => {
+        const m = /^Bez dobicia: kara (.+) zł i stopień (\d+)\.$/.exec(tail!);
+        const rest = m
+          ? `Without a top-up: a ${plNum(m[1]!)} zł fine and stage ${m[2]}.`
+          : tail === 'Bez dobicia: Centrala wypowie umowę na tę placówkę.' ? 'Without a top-up: Head Office will terminate the agreement for this shop.' : tail;
+        return `About ${plNum(missing!)} zł short of the plan. Topping up out of pocket: about ${plNum(cost!)} zł. ${rest}`;
+      },
+    },
+    { pl: 'Bez dobicia: kara {} zł i stopień {}.', fragment: true },
+    { pl: 'Bez dobicia: Centrala wypowie umowę na tę placówkę.', fragment: true },
+    {
+      pl: 'Centrala wypowiada umowę franczyzową: trzeci miesiąc z rzędu bez planu sprzedaży. Dziękujemy za współpracę.',
+      en: 'Head Office is terminating your franchise agreement: the third month in a row without hitting the sales plan. Thank you for your cooperation.',
+    },
     // --- remanent (SIM 6) ---
     { pl: 'Centrala dziękuje za rzetelne liczenie. Rzetelność Centrali nie podlega liczeniu.', en: 'Head Office thanks you for counting so thoroughly. Head Office’s own thoroughness is not subject to counting.' },
     { pl: 'Towar nie ginie, tylko zmienia właściciela. Na Ciebie.', en: 'Stock never goes missing. It just changes owner. To you.' },

@@ -187,7 +187,7 @@ export const DECK: readonly CardDef[] = [
     kind: 'zdarzenie',
     title: 'Zapowiedź audytu',
     text: 'Centrala zapowiada audyt na jutro. Sprawdzą planogram, czystość i to, czy uśmiech kasjera jest zgodny z procedurą 4.2.1. Przy obecnym stanie sali ryzyko wpadki to {p}%.',
-    at: h(9), weight: (c) => 0.6 * auditWeight(c.trust), cooldown: 5,
+    at: h(9), weight: (c) => 0.6 * auditWeight(c.trust) * (c.planStage !== undefined && c.planStage >= 2 ? 2 : 1), cooldown: 5,
     defaultAnswer: 2,
     when: (c) => c.day >= 3,
     trustReason: 'audyt',
