@@ -579,7 +579,7 @@ describe('plan Centrali w podglądzie i prognozie sieci', () => {
     expect(fc.planFirst).toBeNull();
     expect(fc.stores[0]!.f.plan).toBeNull();
     expect(fc.stores[1]!.f.plan).toMatchObject({ verdict: 'miss', stageAfter: 1 });
-    expect(fc.statement.plan).toBeUndefined();   // klucz `plan` nie wchodzi do sumy sieci (SUMMED go nie zna)
+    expect(fc.statement.plan).toBe(fc.stores[1]!.f.statement.plan);   // kara w sumie sieci to suma kar sklepów (tu tylko sklepu #2)
     expect(fc.stores[1]!.f.statement.plan).toBe(fc.stores[1]!.f.plan!.fine);
   });
 
