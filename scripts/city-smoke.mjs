@@ -563,6 +563,8 @@ export function withOnlyCardTomorrow(saveText, { storeId, cardId, ids }) {
 /** Prognoza planu, na którą smoke ustawia cel sklepu (poniżej 100%, ale nad progiem dobicia 90%), i dopuszczalny rozrzut przy strojeniu. */
 export const PLAN_FORECAST_TARGET = 0.95;
 export const PLAN_FORECAST_TOLERANCE = 0.006;
+/** Okno, wiersz i raport planu, które sprawdza `polishProblems`, muszą mieć choć tyle znaków: pusty tekst nie ma polskich słów, więc przeszedłby. */
+const MIN_TEXT = 20;
 /** Tytuły okien zdarzeń planu po polsku i po angielsku (`planEventTitle` i `EN_UI`: zapowiedź, „brakuje do progu”). */
 export const PLAN_TITLES = {
   pl: { announce: 'Plan sprzedaży Centrali', short: 'Plan: brakuje do progu', net: /^Wyciągi od Centrali/, switchLabel: /Dobij plan z własnej kieszeni/, topUp: /dobiciem z kieszeni/ },
@@ -3109,6 +3111,7 @@ async function main(argv) {
     await sleep(450);
     const text = await dialogText(page, '.tt-story');
     ev.note(`okno „${stopped.label}”: ${text.slice(0, 200)}`);
+    ev.check(text.length > MIN_TEXT, `okno zapowiedzi bez tekstu: „${text}”`);
     if (lang === 'en') ev.check(polishProblems(text).length === 0, `polskie słowa w oknie zapowiedzi: ${polishProblems(text).join(', ')}`);
     else ev.check(/Od przyszłego miesiąca ten sklep ma plan sprzedaży Centrali/.test(text), `tekst zapowiedzi: ${text.slice(0, 160)}`);
     if (phone) await widthOk(page, ev, `${lang === 'en' ? 'angielski: ' : ''}5a: okno zapowiedzi planu`);
@@ -3131,6 +3134,7 @@ async function main(argv) {
     await sleep(250);
     const text = await dialogText(page, '.tt-preview');
     ev.check(/Plan Centrali|Head Office plan/.test(text), `podgląd miesiąca bez wiersza planu: ${text.slice(0, 200)}`);
+    ev.check(text.length > MIN_TEXT, `podgląd miesiąca bez tekstu: „${text}”`);
     if (lang === 'en') ev.check(polishProblems(text).length === 0, `polskie słowa w podglądzie: ${polishProblems(text).join(', ')}`);
     ev.note(`podgląd miesiąca (${lang}): ${before.length} → ${text.length} znaków, wiersz planu jest`);
     if (phone) await widthOk(page, ev, `${lang === 'en' ? 'angielski: ' : ''}5a: podgląd miesiąca`);
@@ -3169,9 +3173,11 @@ async function main(argv) {
         ev.check(g.activeId === 1 && g.stores.filter((s) => !s.closed).length === 2, `sieć: aktywny #${g.activeId}, otwarte ${g.stores.filter((s) => !s.closed).length}`);
         await page.waitForSelector('.tt-hud-plan', { timeout: 30_000 });
         const forecast = await calibratePlan(page);
+        ev.check(Math.abs(forecast - PLAN_FORECAST_TARGET) <= PLAN_FORECAST_TOLERANCE, `kalibracja planu: prognoza ${forecast}, ma być ${PLAN_FORECAST_TARGET} ± ${PLAN_FORECAST_TOLERANCE}`);
         const m0 = await hudCheck(page, ev, `${pre}5a: wiersz planu przy prognozie ${Math.round(forecast * 1000) / 10}%, przełącznik wyłączony`);
         ev.check(m0.net, 'pasek nie ma klasy tt-net mimo dwóch sklepów');
         ev.check(t.switchLabel.test(m0.text), `napis przełącznika: ${m0.text.slice(0, 200)}`);
+        ev.check(m0.text.length > MIN_TEXT, `wiersz planu bez tekstu: „${m0.text}”`);
         if (en) ev.check(polishProblems(m0.text).length === 0, `polskie słowa w wierszu planu: ${polishProblems(m0.text).join(', ')}`);
         if (phone) await widthOk(page, ev, `${pre}5a: wiersz planu (sieć)`);
         await ev.shot(en ? '5a-10-angielski-pasek-95' : '5a-03-pasek-sieci-95-wylaczony');
@@ -3214,12 +3220,14 @@ async function main(argv) {
         await skip(page, 360);
         await settle(page);
         const late = await calibratePlan(page);
+        ev.check(Math.abs(late - PLAN_FORECAST_TARGET) <= PLAN_FORECAST_TOLERANCE, `kalibracja planu w przedostatnim dniu: prognoza ${late}, ma być ${PLAN_FORECAST_TARGET} ± ${PLAN_FORECAST_TOLERANCE}`);
         ev.note(`przedostatni dzień miesiąca: prognoza paska ${Math.round(late * 1000) / 10}%, cel ${money(pLate.target)} → ${money((await planOf5a(page)).target)} zł`);
         const short = await advance(page, { stop: new RegExp(`^${t.short}$`), maxDays: 1, chunk: 360 });
         if (ev.check(!!short.stopped, `okno „${t.short}” nie pojawiło się w przedostatnim dniu`)) {
           await sleep(450);
           const text = await dialogText(page, '.tt-story');
           ev.note(`okno „${short.stopped.label}”: ${text.slice(0, 220)}`);
+          ev.check(text.length > MIN_TEXT, `okno „brakuje do progu” bez tekstu: „${text}”`);
           if (en) ev.check(polishProblems(text).length === 0, `polskie słowa w oknie „brakuje do progu”: ${polishProblems(text).join(', ')}`);
           else ev.check(/Dobicie z kieszeni: ok\./.test(text), `tekst okna: ${text.slice(0, 160)}`);
           if (phone) await widthOk(page, ev, `${pre}5a: okno brakuje do progu`);
@@ -3235,6 +3243,7 @@ async function main(argv) {
         const rep = await dialogText(page, '.tt-storereport');
         ev.check(t.topUp.test(rep), `raport sklepu #1 bez dobicia: ${rep.slice(0, 400)}`);
         ev.check(/(Nowy plan|New plan)/.test(rep), 'raport sklepu #1 bez zdania o nowym planie');
+        ev.check(rep.length > MIN_TEXT, `raport sklepu #1 bez tekstu: „${rep}”`);
         if (en) ev.check(polishProblems(rep).length === 0, `polskie słowa w raporcie: ${polishProblems(rep).join(', ')}`);
         const plan = rep.match(en ? /Plan met with[^.]*\./ : /Plan zaliczony[^.]*\./)?.[0] ?? '';
         ev.note(`raport sklepu #1: ${plan}`);
