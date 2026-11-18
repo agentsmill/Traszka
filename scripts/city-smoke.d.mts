@@ -27,6 +27,8 @@ export const FIXTURES: { readonly stary: string; readonly przedStatusem: string;
 export const STEPS: readonly StepDef[];
 export const TIPS_STEP: StepDef;
 export const STEPS_4B: readonly StepDef[];
+/** Kroki etapu 5a (plan Centrali): `--etap 5a`. */
+export const STEPS_5A: readonly StepDef[];
 /** Kroki 13–15 (Zadanie 15): same biegną z `--etap makieta`. */
 export const STEPS_MAKIETA: readonly StepDef[];
 export const STAGES: readonly string[];
@@ -122,6 +124,28 @@ export function benchTableLines(result: unknown, extra: unknown): string[];
 export function withRemont(saveText: string, patch: { storeId: number; remontLevel: number; level: number }): string;
 export function deckIds(source: string): string[];
 export function withOnlyCardTomorrow(saveText: string, opts: { storeId: number; cardId: string; ids: readonly string[] }): string;
+
+// Etap 5a (plan Centrali, Zadanie 6): koperty zapisów i pomiary kroków 5a.
+export const PLAN_FORECAST_TARGET: number;
+export const PLAN_FORECAST_TOLERANCE: number;
+export const SWITCH_MIN_PX: number;
+export const HUD_SLACK_MAX_PX: number;
+export const PLAN_TITLES: {
+  readonly pl: { announce: string; short: string; net: RegExp; switchLabel: RegExp; topUp: RegExp };
+  readonly en: { announce: string; short: string; net: RegExp; switchLabel: RegExp; topUp: RegExp };
+};
+export const PLAN_WORST_TEXTS: Record<'pl' | 'en', { head: string; progress: string; verdicts: readonly string[] }>;
+export function withReports(saveText: string, opts: { storeId: number; months: number; noBuilds?: boolean }): string;
+export function withPlanBlock(saveText: string, opts: { storeId: number; target: number; base: number; recent: readonly number[]; streak?: number; openDays: number }): string;
+export function parsePercents(text: string): number[];
+export function retargetFor(target: number, forecast: number, want?: number): number;
+export interface HudBox { l: number; t: number; r: number; b: number }
+export interface HudMeasure {
+  hudRaw: string; hudH: number; hud: HudBox | null; plan: HudBox | null; textBox?: HudBox | null; sw: HudBox | null;
+  swText?: { scroll: number; client: number } | null; planScroll: number; planClient: number;
+}
+export function hudProblems(m: HudMeasure, width: number): string[];
+export function polishProblems(text: string): string[];
 
 // Plan 4a.2 (Zadanie 15): kroki makiety (13 komputer, 14 telefon, 15 bieg benchmarku w pełnym przebiegu).
 export type LayerLang = 'pl' | 'en';

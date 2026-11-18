@@ -7,13 +7,14 @@ import {
   BENCH_CALLS_LIMIT, BENCH_CITY_ORDER, BENCH_GATE_COLUMNS, BENCH_MOBILE_UA, BENCH_PATH, BENCH_SHOP_KEYS, CITY_BUDGET, benchProblems, benchTableLines, guardNetwork,
   outDirFor, overlayProblems,
   FIXTURES, HOUR_BARS, LAUNCH_ARGS, LIMIT_TEXT, NEW_SCREENS, OPEN_MINUTE, PHONE_WIDTH, RELET_BUILD_DAYS as SMOKE_RELET_BUILD_DAYS, RELET_CAPTION, RELET_SHARE,
-  QUEUE_STEP, RELET_TITLE, RELET_TRUST, STEPS, STEPS_4B, STEPS_MAKIETA, STAGES, TIPS_STEP, DESKTOP_4B, RESEARCH_DOSTAWY_COST, WALLET_4B_MILLION, FAME_TITLE, FAME_CLOSED,
+  QUEUE_STEP, RELET_TITLE, RELET_TRUST, STEPS, STEPS_4B, STEPS_5A, STEPS_MAKIETA, STAGES, TIPS_STEP, DESKTOP_4B, RESEARCH_DOSTAWY_COST, WALLET_4B_MILLION, FAME_TITLE, FAME_CLOSED,
   CITY_M as SMOKE_CITY_M, CITY_UNIT_M as SMOKE_CITY_UNIT_M, LAYER_LABELS, cityStatsProblems, cityWorld, geometryProblems, layerBarProblems, nextWorkdayNoon, perfHint, pinCoversPoint,
   deckIds, isApiUrl, withOnlyCardTomorrow, withRemont,
   BACKGROUND_TRUST_WARN_BELOW, USAGE, VIEWPORTS, DEFAULT_PLAYWRIGHT_ROOT, chromiumCandidates, chromiumExecutable, closedFittings,
   contextOptions, daysText, digitsOf, fixtureSave, loadPlaywright, median, metaFor, newScreenProblems, overlapArea, parseArgs, parseInstallmentButton, parsePerf,
   pinProblems, previewReady, requestVerdict, reletBlockText, reletPrice, saveWithCardDrop, stepResult, storageEntries, summarize, trustRowValues, tutorialMemory,
   widthProblems,
+  HUD_SLACK_MAX_PX, PLAN_FORECAST_TARGET, PLAN_TITLES, PLAN_WORST_TEXTS, SWITCH_MIN_PX, hudProblems, parsePercents, polishProblems, retargetFor, withPlanBlock, withReports,
   type MakeRequire, type StepResult, type WidthBox,
 } from '../scripts/city-smoke.mjs';
 import { MemoryStorage } from '@/game/memoryStorage';
@@ -28,7 +29,10 @@ import { TRUST } from '@/sim/economy/tycoon/trust';
 import { visibleCards } from '@/sim/economy/tycoon/cards';
 import { DECK } from '@/sim/economy/tycoon/deck';
 import { awaitingDecision } from '@/sim/economy/economy';
-import { activeStore, emptyStepOut, stepFirmMinute } from '@/sim/firm/firm';
+import { defaultAnswer } from '@/sim/economy/monthPreview';
+import { lang, tr } from '@/i18n';
+import { planEventTitle } from '@/ui/game/planText';
+import { activeStore, applyStoreCommand, emptyStepOut, stepFirmMinute } from '@/sim/firm/firm';
 import { FAME_CASH } from '@/sim/firm/goals';
 import { RESEARCH_BY_ID, researchCost } from '@/sim/firm/research';
 import { layoutFor } from '@/sim/store/layoutFor';
@@ -268,15 +272,15 @@ describe('licznik wydajności i tabela wyników', () => {
     const out: Record<string, Record<string, StepResult>> = {};
     for (const vp of VIEWPORTS) {
       out[vp.name] = {};
-      for (const step of [...STEPS, TIPS_STEP, ...STEPS_4B]) out[vp.name]![step.id] = step.sizes.includes(vp.name) ? stepResult() : stepResult({ na: true });
+      for (const step of [...STEPS, TIPS_STEP, ...STEPS_4B, ...STEPS_5A]) out[vp.name]![step.id] = step.sizes.includes(vp.name) ? stepResult() : stepResult({ na: true });
     }
     return out;
   };
 
-  it('summarize: wiersz na krok i rozmiar, który go dotyczy (telefon 14 + 7 kroków 4b, komputer 12 + 7), wszystko ok daje ok', () => {
+  it('summarize: wiersz na krok i rozmiar, który go dotyczy (telefon 14 + 7 kroków 4b + 3 kroki 5a, komputer 12 + 7 + 3), wszystko ok daje ok', () => {
     const s = summarize(allOk());
     expect(s.ok).toBe(true);
-    const k4b = ['4b-a', '4b-b', '4b-c', '4b-d', '4b-e', '4b-f', '4b-g'];
+    const k4b = ['4b-a', '4b-b', '4b-c', '4b-d', '4b-e', '4b-f', '4b-g', '5a-a', '5a-b', '5a-c'];
     expect(s.rows.filter((r) => r.size === 'telefon').map((r) => r.step)).toEqual([1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 12, 14, 15, 'T', ...k4b]);
     expect(s.rows.filter((r) => r.size === 'desktop').map((r) => r.step)).toEqual([1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 13, 15, ...k4b]);
     expect(s.rows.every((r) => r.status === 'ok')).toBe(true);
@@ -311,8 +315,10 @@ describe('licznik wydajności i tabela wyników', () => {
     expect(parseArgs(['--etap', '4b', '--only', 'telefon'])).toEqual({ only: 'telefon', help: false, bench: false, stage: '4b' });
     expect(parseArgs(['--etap', 'makieta'])).toEqual({ only: null, help: false, bench: false, stage: 'makieta' });
     expect(parseArgs(['--etap', 'makieta', '--only', 'phone'])).toEqual({ only: 'telefon', help: false, bench: false, stage: 'makieta' });
-    expect(() => parseArgs(['--etap', '4a'])).toThrow(/--etap przyjmuje 4b albo makieta/);
-    expect(() => parseArgs(['--etap'])).toThrow(/--etap przyjmuje 4b albo makieta/);
+    expect(() => parseArgs(['--etap', '4a'])).toThrow(/--etap przyjmuje 4b, 5a albo makieta/);
+    expect(parseArgs(['--etap', '5a', '--only', 'phone'])).toEqual({ only: 'telefon', help: false, bench: false, stage: '5a' });
+    expect(() => parseArgs(['--etap'])).toThrow(/--etap przyjmuje 4b, 5a albo makieta/);
+    expect(USAGE).toMatch(/--etap 5a/);
     expect(USAGE).toMatch(/--etap makieta/);
     expect(USAGE).toMatch(/--etap 4b/);
     expect(parseArgs(['--help']).help).toBe(true);
@@ -1041,11 +1047,11 @@ describe('krok f (plan 4b, Zadanie 11): kolejka przed sklepem przy zrzucie Trasz
 describe('plan 4a.2 (Zadanie 15): kroki makiety 13–15', () => {
   const BODY = (from: string, to: string): string => SOURCE.slice(SOURCE.indexOf(from), SOURCE.indexOf(to));
 
-  it('--etap makieta biegnie same kroki 13–15 (13 komputer, 14 telefon, 15 oba), a wartości --etap to 4b i makieta', () => {
+  it('--etap makieta biegnie same kroki 13–15 (13 komputer, 14 telefon, 15 oba), a wartości --etap to 4b, 5a i makieta', () => {
     expect(STEPS_MAKIETA.map((s) => s.id)).toEqual([13, 14, 15]);
     expect(STEPS_MAKIETA.map((s) => [...s.sizes])).toEqual([['desktop'], ['telefon'], ['telefon', 'desktop']]);
     for (const step of STEPS_MAKIETA) expect(STEPS).toContain(step);
-    expect([...STAGES]).toEqual(['4b', 'makieta']);
+    expect([...STAGES]).toEqual(['4b', '5a', 'makieta']);
     // tabela wyników z samych kroków makiety: komputer 13 + 15, telefon 14 + 15
     const results: Record<string, Record<string, StepResult>> = { telefon: { 14: stepResult(), 15: stepResult() }, desktop: { 13: stepResult(), 15: stepResult() } };
     const s = summarize(results, STEPS_MAKIETA);
@@ -1211,7 +1217,7 @@ describe('plan 4a.2 (Zadanie 15): kroki makiety 13–15', () => {
     expect(run).toContain('await benchPass({ browser, args, port, base, out })');
     expect(run).toContain('await startPreview(port)');   // `--bench` nadal sam stawia serwer i przeglądarkę
     const main = BODY('async function main', 'function isMain');
-    expect(main).toContain("if (args.stage !== '4b') {");
+    expect(main).toContain("if (args.stage !== '4b' && args.stage !== '5a') {");
     expect(main).toContain('benchPass({ browser, args, port, base, out })');
     expect(main).toContain('external.push(...bench.external)');
     expect(main).toContain('apiBlocked.push(...bench.apiBlocked)');
@@ -1225,7 +1231,144 @@ describe('plan 4a.2 (Zadanie 15): kroki makiety 13–15', () => {
     expect(BODY('function failRelet', 'async function englishChecks')).toContain('step.id > 12');
     const main = BODY('async function main', 'function isMain');
     expect(main).toContain("args.stage === 'makieta' ? [makieta]");
-    expect(main).toContain("args.stage === 'makieta' ? [] : [scenario4b");
+    expect(main).toContain("args.stage === 'makieta' || args.stage === '5a' ? [] : [scenario4b");
     expect(main).toContain("'--etap makieta: tylko kroki 13–15'");
+  });
+});
+
+describe('etap 5a (plan Centrali, Zadanie 6): kroki 5a-a…5a-c', () => {
+  const MAIN = SOURCE.slice(SOURCE.indexOf('async function main'), SOURCE.indexOf('function isMain'));
+  const CSS = readFileSync(resolve(ROOT, 'src/ui/ui.css'), 'utf8');
+  let storage: MemoryStorage;
+  beforeEach(() => {
+    storage = new MemoryStorage();
+    vi.stubGlobal('localStorage', storage);
+  });
+  afterEach(() => { lang.value = 'pl'; vi.unstubAllGlobals(); });
+
+  const loadText = (text: string): GameSession => {
+    const seed = JSON.parse(text).seed as string;
+    for (const [k, v] of Object.entries(storageEntries({ seed, saveText: text, tips: false, now: Date.now() }))) storage.setItem(k, v);
+    return createSession(seed);
+  };
+
+  it('trzy kroki na obu rozmiarach, --etap 5a pomija pozostałe kroki, bieg benchmarku i scenariusze 4a/4b/makiety', () => {
+    expect(STEPS_5A.map((s) => s.id)).toEqual(['5a-a', '5a-b', '5a-c']);
+    for (const s of STEPS_5A) {
+      expect([...s.sizes]).toEqual(['telefon', 'desktop']);
+      expect(s.name.length).toBeGreaterThan(10);
+    }
+    expect(MAIN).toContain("args.stage === '4b' || args.stage === '5a' ? [] : args.stage === 'makieta' ? [makieta]");
+    expect(MAIN).toContain("args.stage === 'makieta' || args.stage === '4b' ? [] : [scenario5a, scenario5aEnglish]");
+    expect(MAIN).toContain("'--etap 5a: tylko kroki 5a'");
+    expect(MAIN).toContain("if (args.stage !== '4b' && args.stage !== '5a') {");   // bez biegu benchmarku
+    expect(MAIN).toContain('...STEPS_5A');
+    const results: Record<string, Record<string, StepResult>> = {
+      telefon: { '5a-a': stepResult(), '5a-b': stepResult(), '5a-c': stepResult() }, desktop: { '5a-a': stepResult(), '5a-b': stepResult(), '5a-c': stepResult({ ok: false, failed: ['x'] }) },
+    };
+    const sum = summarize(results, STEPS_5A);
+    expect(sum.ok).toBe(false);
+    expect(sum.rows.filter((r) => r.status === 'FAIL').map((r) => `${r.size}/${r.step}`)).toEqual(['desktop/5a-c']);
+  });
+
+  it('tytuły okien planu w smoke są tytułami gry po polsku i po angielsku', () => {
+    expect(PLAN_TITLES.pl.announce).toBe(planEventTitle({ reason: 'announce' }));
+    expect(PLAN_TITLES.pl.short).toBe(planEventTitle({ reason: 'short', missing: 1, cost: 1, fine: 1 }));
+    lang.value = 'en';
+    expect(PLAN_TITLES.en.announce).toBe(tr(planEventTitle({ reason: 'announce' })));
+    expect(PLAN_TITLES.en.short).toBe(tr(planEventTitle({ reason: 'short', missing: 1, cost: 1, fine: 1 })));
+  });
+
+  it('withReports: jeden sklep z czterema raportami i bez bloku planu wczytuje się czysto, a po jednym dniu gry daje zapowiedź planu (cel 0)', () => {
+    const two = fixtureSave(FIXTURES.dwaSklepy);
+    const text = withReports(two.text, { storeId: 2, months: 4, noBuilds: true });
+    const s = loadText(text);
+    expect(s.loadNotice).toBeNull();
+    const f = firmOf(s);
+    expect(f.builds).toEqual([]);
+    expect(f.stores.filter((x) => !x.closed).map((x) => x.id)).toEqual([2]);
+    const st = activeStore(f);
+    expect(st.econ.history).toHaveLength(4);
+    expect(st.econ.franchisee.plan).toBeUndefined();
+    const events: { kind: string; plan?: { reason: string } }[] = [];
+    const end = (Math.floor(st.econ.minute / DAY) + 1) * DAY + 60;
+    while (activeStore(f).econ.minute < end) {
+      while (awaitingDecision(activeStore(f).econ)) {
+        const card = visibleCards(activeStore(f).econ.tycoon.cards, activeStore(f).econ.minute)[0]!;
+        expect(applyStoreCommand(f, { type: 'answerCard', seq: card.seq, answer: defaultAnswer(card) }).result.ok).toBe(true);
+      }
+      const out = emptyStepOut();
+      stepFirmMinute(f, out);
+      events.push(...out.active);
+    }
+    expect(events.filter((e) => e.kind === 'plan').map((e) => e.plan?.reason)).toEqual(['announce']);
+    expect(activeStore(f).econ.franchisee.plan?.target).toBe(0);
+    // krótsza historia niż 4 nie jest dopisywana ponad życzenie, a nieistniejący sklep to błąd
+    expect(JSON.parse(withReports(two.text, { storeId: 2, months: 2 })).stores.find((x: { id: number }) => x.id === 2).econ.history).toHaveLength(2);
+    expect(() => withReports(two.text, { storeId: 1, months: 4 })).toThrow(/nie ma otwartego sklepu #1/);
+  });
+
+  it('withPlanBlock: blok planu sieci „po Traszce” wczytuje się bez zmian, sklep #1 jest aktywny, a #3 bez planu', () => {
+    const after = fixtureSave(FIXTURES.poTraszce);
+    const s = loadText(withPlanBlock(after.text, { storeId: 1, target: 355_000, base: 10_300, recent: [9_900, 10_100, 10_944], streak: 2, openDays: 6 }));
+    expect(s.loadNotice).toBeNull();
+    const f = firmOf(s);
+    expect(f.activeId).toBe(1);
+    expect(f.stores.find((x) => x.id === 1)!.econ.franchisee.plan).toEqual({ target: 355_000, base: 10_300, recent: [9_900, 10_100, 10_944], streak: 2, stage: 0, openDays: 6, topUp: false });
+    expect(f.stores.find((x) => x.id === 3)!.econ.franchisee.plan).toBeUndefined();
+    expect(() => withPlanBlock(after.text, { storeId: 2, target: 1, base: 1, recent: [], openDays: 0 })).toThrow(/nie ma otwartego sklepu #2/);
+  });
+
+  it('parsePercents i retargetFor: prognozę z napisu paska po polsku i po angielsku zamienia na nowy cel planu', () => {
+    expect(parsePercents('wykonane 31,5% · prognoza 95%')).toEqual([31.5, 95]);
+    expect(parsePercents('achieved 31.5% · forecast 114%')).toEqual([31.5, 114]);
+    expect(parsePercents('brak liczb')).toEqual([]);
+    expect(PLAN_FORECAST_TARGET).toBe(0.95);
+    // prognoza 114% przy celu 274 500 zł: wyższy cel ściąga ją na 95%
+    expect(retargetFor(274_500, 1.14)).toBe(329_400);
+    expect(retargetFor(355_000, 0.95)).toBe(355_000);
+    expect(retargetFor(1, 0.01)).toBe(100);
+  });
+
+  it('hudProblems: pasek ma mieścić się w --hud-h bez dużego zapasu, wiersz planu w pasku, przełącznik nie przecina tekstu i ma cel dotyku', () => {
+    const ok = {
+      hudRaw: '242px', hudH: 242, hud: { l: 0, t: 0, r: 390, b: 241 }, plan: { l: 10, t: 77, r: 380, b: 174 }, textBox: { l: 20, t: 82, r: 370, b: 130 },
+      sw: { l: 20, t: 134, r: 370, b: 170 }, swText: { scroll: 300, client: 300 }, planScroll: 370, planClient: 370,
+    };
+    expect(hudProblems(ok, 390)).toEqual([]);
+    expect(hudProblems({ ...ok, hud: { ...ok.hud, b: 256 } }, 390).join('|')).toMatch(/pasek kończy się na 256 px, a --hud-h ma 242 px/);
+    expect(hudProblems({ ...ok, hudH: 242 + HUD_SLACK_MAX_PX + 5 }, 390).join('|')).toMatch(/zapas/);
+    expect(hudProblems({ ...ok, hudH: NaN }, 390).join('|')).toMatch(/nie jest liczbą/);
+    expect(hudProblems({ ...ok, sw: { ...ok.sw, b: ok.sw.t + SWITCH_MIN_PX - 4 } }, 390).join('|')).toMatch(/wysokości/);
+    expect(hudProblems({ ...ok, textBox: { l: 20, t: 120, r: 370, b: 150 } }, 390).join('|')).toMatch(/przecina tekst/);
+    expect(hudProblems({ ...ok, plan: { ...ok.plan, r: 400 } }, 390).join('|')).toMatch(/poza oknem 390/);
+    expect(hudProblems({ ...ok, planScroll: 500 }, 390).join('|')).toMatch(/zawartość 500 px w 370 px/);
+    expect(hudProblems({ ...ok, swText: { scroll: 400, client: 300 } }, 390).join('|')).toMatch(/napis przełącznika/);
+    expect(hudProblems({ ...ok, sw: null }, 390)).toEqual(['brak przełącznika w wierszu planu']);
+    expect(hudProblems({ ...ok, plan: null }, 390)).toEqual(['brak wiersza planu albo paska']);
+  });
+
+  it('SWITCH_MIN_PX to min-height przełącznika z CSS, a najdłuższe zdania paska to zdania z planText (dosłownie)', () => {
+    expect(CSS).toMatch(new RegExp(`\\.tt-plan-switch \\{[^}]*min-height: ${SWITCH_MIN_PX}px;`));
+    const text = readFileSync(resolve(ROOT, 'src/ui/game/planText.ts'), 'utf8');
+    const en = readFileSync(resolve(ROOT, 'src/i18n/en/ui/hud.ts'), 'utf8');
+    for (const v of PLAN_WORST_TEXTS.pl.verdicts.filter((x) => !/\d/.test(x))) expect(text).toContain(v);
+    for (const v of PLAN_WORST_TEXTS.en.verdicts.filter((x) => !/\d/.test(x))) expect(en).toContain(v);
+  });
+
+  it('polishProblems: polskie litery i słowa poza „zł” i nazwami ulic; czysty angielski nic nie zgłasza', () => {
+    expect(polishProblems('Head Office plan: 355,000 zł · streak: 2 mo.')).toEqual([]);
+    expect(polishProblems('Słoneczna 12 Cash')).toEqual([]);
+    expect(polishProblems('Plan Centrali: kara za wpadkę')).toEqual(expect.arrayContaining(['Centrali', 'kara']));
+    expect(polishProblems('Dobicie z kieszeni')).toEqual(['Dobicie']);
+    expect(polishProblems('Wyciąg')).toEqual(['Wyciąg']);
+  });
+
+  it('źródło: zrzuty planu idą do 5a-*, a krok sprawdza pasek, przełącznik, okno zapowiedzi, raport z dobiciem i brak polskich zdań po angielsku', () => {
+    const body = SOURCE.slice(SOURCE.indexOf('async function networkPlanRun'), SOURCE.indexOf('// --- krok 7 (telefon) ---'));
+    for (const frag of ['hudCheck(', 'calibratePlan(', 'previewCheck(', 'announceCheck(', "'.tt-hud-plan .tt-plan-switch'", 't.short', 't.topUp', 'polishProblems(rep)', 'planOf5a(page)']) expect(body).toContain(frag);
+    for (const shot of ['5a-01-zapowiedz', '5a-02-pasek-jeden-sklep', '5a-03-pasek-sieci-95-wylaczony', '5a-04-pasek-sieci-95-wlaczony', '5a-05-podglad-miesiaca', '5a-07-brakuje-do-progu', '5a-08-raport-dobicie']) {
+      expect(SOURCE).toContain(shot);
+    }
   });
 });
