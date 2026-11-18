@@ -13,7 +13,9 @@ import { FREE_LOTS, generateCity } from '@/sim/city/generateCity';
 import { storeSeedFor } from '@/sim/city/traffic';
 import { CITY_GENERATOR_VERSION } from '@/sim/city/types';
 import { MINUTES_PER_DAY, OPEN_FROM } from '@/sim/economy/catalog';
-import { awaitingDecision } from '@/sim/economy/economy';
+import { DEBT_WARN, awaitingDecision } from '@/sim/economy/economy';
+import { settlePlan, type PlanMonth, type PlanState } from '@/sim/economy/plan';
+import { roundNice } from '@/sim/economy/tycoon/time';
 import { defaultAnswer } from '@/sim/economy/monthPreview';
 import { CARDS, visibleCards } from '@/sim/economy/tycoon/cards';
 import { EQUIPMENT, EQUIPMENT_BY_ID, REMONTS, UPGRADES } from '@/sim/economy/upgrades';
@@ -244,11 +246,11 @@ function answerActive(f: FirmState): void {
  * Gra do minuty `minute` prawdziwymi krokami firmy. Karty zaznaczone z góry potrafią wyzerować zaufanie sklepu w ciągu roku i Centrala
  * zamyka go (§13.1), a ten test chce pięciu sklepów, które przetrwają: o północy zaufanie nie spada poniżej 70 (jak w `firmSave.test.ts`).
  */
-function playHoldingTrust(f: FirmState, minute: number): void {
+function playHoldingTrust(f: FirmState, minute: number, easyPlans = true): void {
   const out = emptyStepOut();
   while (clockOf(f) < minute && f.over === null && !activeStore(f).econ.gameOver) {
     if (clockOf(f) % DAY === 0) for (const st of openStores(f)) st.econ.tycoon.trust.value = Math.max(st.econ.tycoon.trust.value, 70);
-    if (clockOf(f) % DAY === 0) keepPlansEasy(f);   // plan Centrali do trafienia: sklepy mają przetrwać dwa lata
+    if (easyPlans && clockOf(f) % DAY === 0) keepPlansEasy(f);   // plan Centrali do trafienia: sklepy mają przetrwać dwa lata
     answerActive(f);
     stepFirmMinute(f, out);
     out.active.length = 0;
@@ -397,8 +399,9 @@ interface Largest { text: string; local: string; at: number; pallets: number }
 /**
  * Największa paczka „Wyślij zapis” z kolejnej doby gry, sprawdzana co minutę: zapis lokalny pod kluczem sklepu, paczka z `exportTransfer`
  * (zapis lokalny zostaje bez zmian). Paczka jest największa w ciągu dnia, gdy palety z dostawy stoją w sklepach (o 6:00 ich nie ma).
+ * `easyPlans: false`: w tej dobie plan Centrali zostaje taki, jaki jest (bez `keepPlansEasy`), więc liczby planu nie wracają do 1 000 zł.
  */
-function largestOfDay(f: FirmState): Largest {
+function largestOfDay(f: FirmState, easyPlans = true): Largest {
   saveMeta(bigMeta());
   storage.setItem('traszka:last', f.seed);
   let best: Largest = { text: '', local: '', at: 0, pallets: 0 };
@@ -412,9 +415,31 @@ function largestOfDay(f: FirmState): Largest {
       size = bytes(text);
       best = { text, local, at: clockOf(f) % DAY, pallets: openStores(f).reduce((n, st) => n + st.econ.pallets.length, 0) };
     }
-    playHoldingTrust(f, clockOf(f) + 1);
+    playHoldingTrust(f, clockOf(f) + 1, easyPlans);
   }
   return best;
+}
+
+/** Sześciocyfrowa baza i dzienny obrót do planu: najdłuższe liczby, jakie blok planu niesie w najgorszym przypadku. */
+const BIG_DAILY = [123_456, 123_457, 123_458] as const;
+
+/**
+ * Najgorszy przypadek planu Centrali (rozstrzygnięcie koordynatora 5a, Zadanie 6): w każdym otwartym sklepie blok planu z sześciocyfrowym
+ * celem, bazą i obrotem dziennym, stopień 1 (wpadka w zamykanym dziś miesiącu przesunie go na 2, bez końca umowy), a ostatni raport sklepu
+ * niesie rozliczenie wpadki (`settlePlan` na celu 5% ponad obrót tamtego miesiąca) i karę w wyciągu (`statement.plan`). Cel bieżącego
+ * miesiąca to 5% ponad obrót do dziś (rano ostatniego dnia), więc wieczorne zamknięcie to prawdziwa wpadka z karą, a nie koniec gry z debetu.
+ */
+function withMissedPlans(f: FirmState): void {
+  for (const st of openStores(f)) {
+    const e = st.econ;
+    const plan = e.franchisee.plan!;
+    const report = e.lastReport!;
+    const prev: PlanState = { target: roundNice(report.counters.revenue * 1.05), base: BIG_DAILY[1], recent: [...BIG_DAILY], streak: 0, stage: 0, openDays: 30, topUp: false };
+    const settled = settlePlan(prev, { revenue: report.counters.revenue, monthDays: 30, nextMonthDays: 31, cash: e.cash, debtWarn: DEBT_WARN })!;
+    report.plan = settled;
+    report.statement!.plan = settled.fine;
+    Object.assign(plan, { target: roundNice(Math.max(100_000, e.month.revenue * 1.05)), base: BIG_DAILY[1], recent: [...BIG_DAILY], streak: 0, stage: 1, topUp: false });
+  }
 }
 
 /** Drukuje pomiar paczki i zwraca jej bajty. */
@@ -479,8 +504,26 @@ describe('paczka „Wyślij zapis” przy pięciu sklepach (compactForTransfer)'
     expect(FREE_LOTS[1]).toBe(8);
     expect(MAX_CLOSED_WITH_FIVE_OPEN).toBe(4);   // 1 + FREE_LOTS[1] − MAX_STORES; przy innym FREE_LOTS przelicz rozmiary w raporcie
     const f = fiveStores(worstFive());
-    const largest = largestOfDay(f);
+    withMissedPlans(f);
+    const largest = largestOfDay(f, false);
     expect(f.over).toBeNull();
+    // plan Centrali w najgorszym przypadku: sześciocyfrowe liczby w każdym otwartym sklepie, raport aktywnego z wpadką i karą w wyciągu
+    {
+      type Packed = { closed: boolean; id: number; econ: { franchisee: { plan: PlanState }; lastReport: { plan?: PlanMonth; statement: { plan?: number } } | null } };
+      const packed = ((JSON.parse(largest.text) as TransferBundle).save as unknown as { stores: Packed[]; firm: { activeId: number } });
+      const open = packed.stores.filter((st) => !st.closed);
+      expect(open).toHaveLength(5);
+      for (const st of open) {
+        const p = st.econ.franchisee.plan;
+        expect(p.target, `cel planu #${st.id}`).toBeGreaterThanOrEqual(100_000);
+        expect(p.base, `baza planu #${st.id}`).toBeGreaterThanOrEqual(100_000);
+        expect(p.recent.filter((v) => v >= 100_000).length, `obrót dzienny #${st.id}`).toBeGreaterThanOrEqual(2);
+      }
+      const active = open.find((st) => st.id === packed.firm.activeId)!.econ.lastReport!;
+      expect(active.plan).toMatchObject({ hit: false });
+      expect(active.plan!.fine).toBeGreaterThan(0);
+      expect(active.statement.plan).toBe(active.plan!.fine);
+    }
     // stan jest największy, jaki gra dopuszcza: wszystkie wolne lokale miasta zajęte, 1 + FREE_LOTS[1] sklepów
     expect(f.city.lots.filter((l) => l.state === 'wolny')).toHaveLength(FREE_LOTS[1]);
     expect(f.city.lots.filter((l) => lotState(f, l.id) === 'wolny')).toEqual([]);
