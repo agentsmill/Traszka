@@ -158,7 +158,7 @@ pasek po angielsku (`10`). Pozostałe zrzuty kroków (przełącznik włączony, 
 |---|---|---|---|
 | 5a-a | jeden sklep, cztery raporty, bez bloku planu: przed zapowiedzią nie ma wiersza planu; po jednym dniu okno „Plan sprzedaży Centrali” (cel 0, miesiąc bez rozliczenia); po końcu miesiąca pierwszy plan z celem i wiersz planu; pasek wobec `--hud-h`; podgląd końca miesiąca z wierszem planu; bez błędów konsoli | ok | ok |
 | 5a-b | sieć, plan sklepu #1 przy prognozie 95%: wiersz planu i przełącznik (stan, cel dotyku, brak przecięć); włączenie zmienia stan gry i werdykt na „dobicie z kieszeni”; podgląd; arkusz Miasta nie wchodzi pod pasek; w przedostatnim dniu okno „Plan: brakuje do progu” z kosztem dobicia; po zamknięciu miesiąca wyciąg sklepu #1 z „Plan zaliczony z dobiciem z kieszeni”, nowym planem i „dlaczego tyle” | ok | ok |
-| 5a-c | to samo po angielsku: tytuły okien, wiersz planu, przełącznik, podgląd, ostrzeżenie, raport z dobiciem i okno zapowiedzi, żaden tekst bez polskich liter i polskich słów (poza „zł” i nazwami ulic) | ok | ok |
+| 5a-c | to samo po angielsku: tytuły okien, wiersz planu, przełącznik, podgląd, ostrzeżenie, raport z dobiciem i okno zapowiedzi; w żadnym tekście nie ma polskich liter ani polskich słów (poza „zł” i nazwami ulic) | ok | ok |
 
 Pomiar paska robi sam smoke (`getBoundingClientRect` wobec `--hud-h`), także przy najdłuższych zdaniach planu (wstawianych na chwilę do wiersza) i, na komputerze, przy 768 px.
 
@@ -228,7 +228,7 @@ Pełne brzmienie jest w specu, w raportach zadań i w `.superpowers/sdd/2026-11-
 
 ## 11. Do decyzji właściciela
 
-Nic nie blokuje scalenia z punktu widzenia testów. Poniżej rzeczy, które zależą od Ciebie; liczby z punktów 4–6.
+Bramki techniczne (build, testy, smoke) są zielone, a dwie bramki balansu (P5 i P6) nie są spełnione. Poniżej rzeczy, które zależą od Ciebie; liczby z punktów 4–6.
 
 1. **P5: „na każdym seedzie” czy mediana?**
    - Liczby: pierwsza wpadka `siec12` w m. 13, 11, 11, 14, 13. Medianą (13) bramka przechodzi, na każdym seedzie pada na dwóch (m. 11 przy 98,3% i 98,5% planu).
@@ -270,6 +270,7 @@ Nic nie blokuje scalenia z punktu widzenia testów. Poniżej rzeczy, które zale
 - **Wiersz planu ma `data-tut="plan"`, ale nie ma kroku samouczka.** Gracz dowiaduje się o planie z okna „Koniec okresu wdrożenia”.
 - **Wiersz planu w sieci liczy prognozę sieci drugi raz na odświeżenie.** Nie mierzyłem, ile to kosztuje.
 - **Powód końca gry w podglądzie** przy karze planu, która spycha portfel poniżej progu długu, mówi „debet”, choć zdarzenie dotyczy planu.
+- **Na telefonie pasek z planem zajmuje dużo ekranu:** 228 px w jednym sklepie i 256 px w sieci z 844 px wysokości (bez planu 112 i 146 px). Sklep i arkusze mieszczą się pod nim, ale widok sklepu jest o 110–116 px niższy.
 - **Smoke planu na tablecie** sprawdza tylko jedną szerokość (768 px) i tylko w przebiegu komputerowym.
 - **Pomiar `siec12` na seedzie makieta daje milion dopiero w m. 25**, czyli poza oknem 24 miesięcy pomiaru; tabela liczy go „po biegu”.
 
