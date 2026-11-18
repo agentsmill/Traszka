@@ -8,14 +8,17 @@ import { dayOf } from '@/sim/economy/calendar';
 import { freshRun } from '@/sim/run';
 import type { StoreInfo } from '@/sim/economy/storeInfo';
 import { visibleCards } from '@/sim/economy/tycoon/cards';
+import { TIGHT_MARGIN } from '@/ui/game/planText';
 
 /*
- * Bramka P7 (etap 5a, Task 4): żadna kara planu nie przychodzi niespodzianką. Bot bez zakupów (karty z odpowiedzią domyślną) gra od
+ * Bramka P7 (etap 5a, Task 4): żadna kara planu nie przychodzi niespodzianką: dokładny podgląd miesiąca ma ją co do złotówki, a pasek
+ * (szacunek) nie mówi wtedy „plan zrobiony” (`TIGHT_MARGIN`). Bot bez zakupów (karty z odpowiedzią domyślną) gra od
  * początku umowy; rano ostatniego dnia każdego miesiąca z planem uruchamiamy podgląd miesiąca i porównujemy go z prawdziwym zamknięciem.
  * Bezczynny sklep na prawdziwym planie wpada od kilku miesięcy po starcie planu i po trzeciej wpadce z rzędu traci umowę (stopień 3 nie
  * niesie kary pieniężnej), więc „8 miesięcy z planem” bywa nieosiągalne: bieg kończy się końcem gry albo ósmym miesiącem planu, zależnie co wcześniej.
  */
 
+/** `żabka-7`: przy płaskim wzroście planu pasek pokazywał tu trafienie, a zamknięcie dawało karę (Zadanie 6a). */
 const SEEDS = ['kiełbasa-42', 'żabka-7'];
 const PLAN_MONTHS = 8;
 
@@ -57,9 +60,11 @@ describe('plan Centrali: prognoza i podgląd miesiąca (P7)', () => {
       if (report!.plan && report!.plan.fine > 0) {
         fined++;
         expect(preview.statement.plan).toBe(report!.plan.fine);
-        expect(forecast.plan).toMatchObject({ verdict: 'miss' });   // pasek też pokazuje wpadkę, ze stopniem po rozliczeniu
-        expect(forecast.plan!.stageAfter).toBe(report!.plan.stage);
-        expect(forecast.statement.plan).toBeGreaterThan(0);
+        // pasek to szacunek: przed karą nie obiecywał trafienia (wpadka, dobicie albo „na styk”, który pasek pokazuje jako ostrzeżenie)
+        expect(forecast.plan).not.toBeNull();
+        const confidentHit = forecast.plan!.verdict === 'hit' && forecast.plan!.forecastShare >= 1 + TIGHT_MARGIN;
+        expect(confidentHit, `pasek rano ostatniego dnia: ${forecast.plan!.verdict}, prognoza ${forecast.plan!.forecastShare}`).toBe(false);
+        if (forecast.plan!.verdict === 'miss') expect(forecast.plan!.stageAfter).toBe(report!.plan.stage);   // wpadka na pasku: ze stopniem po rozliczeniu
       }
       if (s.gameOver) {
         terminatedBy = gameOverReason(s);

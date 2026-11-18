@@ -12,7 +12,7 @@ import { PL_CHARS } from '../../../tests/i18nScan';
 import { firm, type GameActions } from '../state';
 import { zl } from './format';
 import { HudPlan, PlanRow, activePlan } from './plan';
-import { STAGE_NAME, planFirstText, planLines } from './planText';
+import { STAGE_NAME, TIGHT_MARGIN, planFirstText, planLines } from './planText';
 import { click, textOf, walk, type Vnode } from './vnodeTree';
 
 /*
@@ -39,6 +39,19 @@ describe('planLines: zdania paska', () => {
     const l = planLines(outlook({ verdict: 'hit', forecastShare: 1.03, fine: 0, stageAfter: 0 }));
     expect(l.verdict).toBe('Prognoza: plan zrobiony.');
     expect(l.tone).toBe('ok');
+  });
+
+  it('trafienie na styk: poniżej 103% prognozy ostrzeżenie zamiast „plan zrobiony”, 103% już zrobiony', () => {
+    const hit = (forecastShare: number, stage = 0): ReturnType<typeof planLines> =>
+      planLines(outlook({ verdict: 'hit', forecastShare, fine: 0, stage, stageAfter: Math.max(0, stage - 1) }));
+    for (const share of [1.005, 1.029]) {
+      expect(hit(share).verdict).toBe('Prognoza: plan na styk. Jeśli zabraknie choć trochę, będzie kara.');
+      expect(hit(share).tone).toBe('warn');
+      expect(hit(share, 1).tone).toBe('danger');   // wpadka ze stopnia 1 dałaby stopień 2
+    }
+    expect(hit(1 + TIGHT_MARGIN).verdict).toBe('Prognoza: plan zrobiony.');
+    expect(hit(1.03).tone).toBe('ok');
+    expect(hit(1.03, 1).tone).toBe('ok');
   });
 
   it('werdykt „dobicie z kieszeni” z kosztem, ton warn', () => {
@@ -107,7 +120,7 @@ describe('PlanRow: pasek planu z przełącznikiem', () => {
     const cls = (o: PlanOutlook): string => String((PlanRow({ plan: o, first: null, storeId: 1, game: fakeGame() }) as Vnode).props.class);
     expect(cls(outlook())).toContain('warn');
     expect(cls(outlook({ stageAfter: 2 }))).toContain('danger');
-    expect(cls(outlook({ verdict: 'hit', fine: 0, stageAfter: 0 }))).toContain('ok');
+    expect(cls(outlook({ verdict: 'hit', forecastShare: 1.08, fine: 0, stageAfter: 0 }))).toContain('ok');
   });
 
   it('kliknięcie przełącznika wysyła planTopUp z włączeniem (i z wyłączeniem, gdy już włączony)', () => {

@@ -20,14 +20,25 @@ const stageName = (stage: number): string => tr(STAGE_NAME[Math.max(0, Math.min(
 
 export type PlanTone = 'ok' | 'warn' | 'danger';
 
-/** Trzy zdania paska planu i jego ton: `danger` przy stopniu po wpadce ≥ 2, `warn` przy dobiciu albo wpadce, inaczej `ok`. */
+/**
+ * Prognoza trafienia poniżej `1 + TIGHT_MARGIN` to „plan na styk”: pasek (`forecastMonth`) jest szacunkiem, a miesiąc kończący się przy 99–101%
+ * potrafi wypaść po drugiej stronie kreski. Wtedy pasek nie obiecuje trafienia, tylko ostrzega przed karą.
+ */
+export const TIGHT_MARGIN = 0.03;
+
+/**
+ * Trzy zdania paska planu i jego ton: `danger` przy stopniu po wpadce ≥ 2, `warn` przy dobiciu albo wpadce, inaczej `ok`. Trafienie „na styk”
+ * (prognoza poniżej `1 + TIGHT_MARGIN`) ma ton `warn`, a `danger`, gdy wpadka z obecnego stopnia dałaby stopień ≥ 2.
+ */
 export function planLines(o: PlanOutlook): { head: string; progress: string; verdict: string; tone: PlanTone } {
+  const tight = o.verdict === 'hit' && o.forecastShare < 1 + TIGHT_MARGIN;
   let verdict: string;
-  if (o.verdict === 'hit') verdict = t`Prognoza: plan zrobiony.`;
+  if (tight) verdict = t`Prognoza: plan na styk. Jeśli zabraknie choć trochę, będzie kara.`;
+  else if (o.verdict === 'hit') verdict = t`Prognoza: plan zrobiony.`;
   else if (o.verdict === 'topup') verdict = t`Jeśli nic się nie zmieni: dobicie z kieszeni ok. ${zl(o.cost)}.`;
   else if (o.stageAfter >= PLAN.stageMax) verdict = t`Jeśli nic się nie zmieni: Centrala wypowie umowę na tę placówkę.`;
   else verdict = t`Jeśli nic się nie zmieni: kara ${zl(o.fine)}, stopień ${o.stageAfter} (${stageName(o.stageAfter)}).`;
-  const tone: PlanTone = o.stageAfter >= 2 ? 'danger' : o.verdict === 'hit' ? 'ok' : 'warn';
+  const tone: PlanTone = tight ? (o.stage + 1 >= 2 ? 'danger' : 'warn') : o.stageAfter >= 2 ? 'danger' : o.verdict === 'hit' ? 'ok' : 'warn';
   return {
     head: t`Plan Centrali: ${zl(o.target)} · seria: ${o.streak} mies.`,
     progress: t`wykonane ${pctOf(o.share)} · prognoza ${pctOf(o.forecastShare)}`,
