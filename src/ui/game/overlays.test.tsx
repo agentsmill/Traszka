@@ -2,9 +2,12 @@ import type { VNode } from 'preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEBT_LIMIT } from '@/sim/economy/catalog';
 import type { Command } from '@/sim/economy/commands';
-import { DEBT_WARN, createEconomy, debtWarningText, emptyCounters, type CommandResult, type EconomyState, type MonthReport } from '@/sim/economy/economy';
+import { DEBT_WARN, PLAN_GAMEOVER_TEXT, createEconomy, debtWarningText, emptyCounters, type CommandResult, type EconomyState, type MonthReport } from '@/sim/economy/economy';
 import { formatDate } from '@/sim/economy/calendar';
 import { buildStatement, type RemanentProtocol, type Statement } from '@/sim/economy/franchisee';
+import { PLAN, firstPlanPreview, planTarget, type PlanMonth, type PlanState } from '@/sim/economy/plan';
+import { lastDayOfMonthFrom } from '@/sim/economy/monthPreview';
+import { noticeLevel } from '@/sim/economy/tycoon/notices';
 import { WUT, WUT_LABEL, WUT_REASONS } from '@/sim/economy/tycoon/wut';
 import { EQUIPMENT } from '@/sim/economy/upgrades';
 import { computeStoreInfo, type StoreInfo } from '@/sim/economy/storeInfo';
@@ -30,6 +33,7 @@ import { App } from '../App';
 import { lang } from '@/i18n';
 import { ClaimChip, Hud, RankingButton, TrustChip } from './Hud';
 import { int, minusZl, money, percentOf, signedZl, zl } from './format';
+import { planEventTitle, type PlanCtx } from './planText';
 import { Bar, PalletItem } from './panels';
 import { ENERGY_TITLE } from './tapBlock';
 import {
@@ -1851,3 +1855,164 @@ describe('prestiż zniknął (spec §15): ani okna, ani sygnału, ani przycisku 
     expect(root()).toBe('tt-ui tt-net');
   });
 });
+
+describe('plan Centrali: zdarzenie „OK”, raport miesiąca i koniec gry', () => {
+  const plainText = (text: string): string => text.replace(/[\s  ]/g, ' ');
+  const planMonth = (over: Partial<PlanMonth> = {}): PlanMonth => ({
+    target: 412_000, due: 412_000, turnover: 380_000, bought: 0, cost: 0, share: 380_000 / 412_000, hit: false, bonus: 0, fine: 1_240, trust: -2,
+    stage: 1, streak: 0, nextTarget: planTarget(12_900, 31, 0), nextBase: 12_900, nextGrowth: 0.02, ...over,
+  });
+  const planState = (over: Partial<PlanState> = {}): PlanState => ({ target: 400_000, base: 12_900, recent: [12_900, 12_900, 12_900], streak: 0, stage: 1, openDays: 0, topUp: false, ...over });
+  const history = (n: number): { revenue: number }[] => Array.from({ length: n }, (_, i) => ({ revenue: 400_000 + i * 1_000 }));
+  const ctxOf = (n: number, plan?: PlanState, day = lastDayOfMonthFrom(40)): PlanCtx => ({ history: history(n), day, plan });
+  const body = (r: MonthReport, planCtx?: PlanCtx): Vnode => ReportBody({ r, planCtx }) as Vnode;
+  const withPlan = (plan?: PlanMonth, over: Partial<MonthReport> = {}): MonthReport => monthReport(detailed(), { statement: statementOf(plan?.fine ? { plan: plan.fine } : {}), ...(plan ? { plan } : {}), ...over });
+  const quotes = (t: Vnode): string[] => walk(t).filter((v) => String(v.props.class ?? '').includes('tt-plan-letter')).map((v) => plainText(textOf(v)));
+
+  describe('zdarzenie planu', () => {
+    it('zatrzymuje grę: wpis w kolejce `story` ma tytuł „Koniec okresu wdrożenia”, jedyny przycisk „OK” i tekst ze zdarzenia', () => {
+      expect(noticeLevel('plan')).toBe('story');
+      const text = 'Gwarancja się skończyła. Od dziś Centrala przysyła plan sprzedaży: 412 000 zł w tym miesiącu. „Wierzymy w Ciebie. Liczbowo.”';
+      expect(isWindowOpen()).toBe(false);
+      pushStory(planEventTitle({ reason: 'start', target: 412_000 }), text);
+      expect(isWindowOpen()).toBe(true);
+      const tree = StoryModal() as Vnode;
+      expect(walk(tree).find((v) => v.props.role === 'dialog')!.props['aria-label']).toBe('Koniec okresu wdrożenia');
+      expect(textOf(byClass(tree, 'tt-story-text'))).toBe(text);
+      expect(labels(tree)).toEqual(['OK']);
+    });
+
+    it('tytuły pozostałych zdarzeń planu: zapowiedź i ostrzeżenie o braku', () => {
+      expect(planEventTitle({ reason: 'start' })).toBe('Koniec okresu wdrożenia');
+      expect(planEventTitle({ reason: 'announce' })).toBe('Plan sprzedaży Centrali');
+      expect(planEventTitle({ reason: 'short' })).toBe('Plan: brakuje do progu');
+      expect(planEventTitle(undefined)).toBe('Plan sprzedaży Centrali');
+    });
+  });
+
+  describe('sekcja planu w raporcie', () => {
+    it('bez planu w raporcie nie ma sekcji ani listu', () => {
+      const t = body(withPlan(undefined), ctxOf(5));
+      expect(textOf(t)).not.toContain('Plan Centrali');
+      expect(quotes(t)).toEqual([]);
+    });
+
+    it('wpadka: list partnera regionalnego z nazwą nowego stopnia, wiersze planu i wynik z karą', () => {
+      const t = body(withPlan(planMonth()), ctxOf(6, planState()));
+      expect(quotes(t)).toEqual(['Partner regionalny: „Widzimy spadek zaangażowania. Od dziś: Rozmowa z partnerem regionalnym.”']);
+      const sec = byClass(t, 'tt-plan-report');
+      expect(walk(sec).find((v) => v.type === 'h3')!.props.children).toBe('Plan Centrali');
+      const rows = rowsOf(sec);
+      expect(rows).toContainEqual(['Plan miesiąca', z(412_000)]);
+      expect(rows).toContainEqual(['Obrót w miesiącu', z(380_000)]);
+      expect(rows).toContainEqual(['Wykonanie', percentOf(380_000 / 412_000)]);
+      expect(plainText(textOf(sec))).toContain(plainText(`Plan niewykonany (92%): kara ${zl(1_240)}, stopień 1 (Rozmowa z partnerem regionalnym).`));
+      expect(textOf(t)).toContain('Plan Centrali');   // także wiersz kary w potrąceniach wyciągu
+      expect(plainText(textOf(byClass(t, 'tt-statement')))).toContain(plainText(`Plan Centrali${minusZl(1_240)}`));
+    });
+
+    it('trafienie po wpadce (stopień w dół): list z podziękowaniem; zwykłe trafienie bez listu', () => {
+      const down = planMonth({ hit: true, share: 1.02, fine: 0, stage: 1, streak: 1, trust: 2, bonus: 3_800 });
+      expect(quotes(body(withPlan(down), ctxOf(6, planState({ streak: 1 }))))).toEqual(['Partner regionalny: „Dziękujemy za powrót do standardu. Na razie.”']);
+      // stopień 1 → 0 przy serii 1 (poprzedni miesiąc był wpadką), nie pierwsze rozliczenie planu
+      const back = planMonth({ hit: true, share: 1.02, fine: 0, stage: 0, streak: 1, trust: 2, bonus: 3_800 });
+      expect(quotes(body(withPlan(back), ctxOf(6, planState({ streak: 1, stage: 0 }))))).toEqual(['Partner regionalny: „Dziękujemy za powrót do standardu. Na razie.”']);
+      // pierwsze rozliczenie (historia = miesiące gwarancji + 1): seria 1 bez wpadki przed nią
+      expect(quotes(body(withPlan(back), ctxOf(PLAN.startMonths + 1, planState({ streak: 1, stage: 0 }))))).toEqual([]);
+      // kolejne trafienie z rzędu
+      const streak = planMonth({ hit: true, share: 1.02, fine: 0, stage: 0, streak: 4, trust: 2, bonus: 3_800 });
+      expect(quotes(body(withPlan(streak), ctxOf(8, planState({ streak: 4, stage: 0 }))))).toEqual([]);
+    });
+
+    it('wynik z dobiciem: koszt i kupiony towar, bez premii', () => {
+      const topped = planMonth({ hit: true, share: 0.95, bought: 18_400, cost: 15_272, fine: 0, stage: 0, streak: 4, trust: 2 });
+      const sec = byClass(body(withPlan(topped), ctxOf(8, planState({ streak: 4, stage: 0 }))), 'tt-plan-report');
+      expect(plainText(textOf(sec))).toContain(plainText(`Plan zaliczony z dobiciem z kieszeni: towar za ${zl(18_400)}, koszt ${zl(15_272)}.`));
+    });
+
+    it('„dlaczego tyle”: nowy plan, średni obrót dzienny, dni miesiąca i wzrost za serię', () => {
+      const next = planTarget(13_290, 31, 3);
+      const hit = planMonth({ hit: true, share: 1.02, fine: 0, stage: 0, streak: 3, trust: 2, nextBase: 13_290, nextTarget: next, nextGrowth: 0.035 });
+      const t = body(withPlan(hit), ctxOf(9, planState({ recent: [13_290, 13_290, 13_290], base: 13_290, streak: 3, stage: 0 })));
+      expect(plainText(textOf(byClass(t, 'tt-plan-report')))).toContain(plainText(`Nowy plan: ${zl(next)}. Średni obrót dzienny z trzech miesięcy ${zl(13_290)} × 31 dni, plus ${percentOf(0.035)} za serię 3 trafień.`));
+    });
+
+    it('po wpadce baza spada najwyżej o 5%: zdanie o łaskawości Centrali, gdy zapadka zadziałała', () => {
+      const next = planTarget(12_000, 30, 0);
+      const miss = planMonth({ nextBase: 12_000, nextTarget: next, nextGrowth: 0.02 });
+      const t = body(withPlan(miss), ctxOf(9, planState({ recent: [11_000, 11_000, 11_000], base: 12_000 })));
+      expect(plainText(textOf(byClass(t, 'tt-plan-report')))).toContain(plainText(`Nowy plan: ${zl(next)}. Centrala łaskawie obniża bazę o 5%: ${zl(12_000)} dziennie × 30 dni, plus ${percentOf(0.02)} wzrostu.`));
+    });
+
+    it('trzeci miesiąc umowy: wiersz o końcu okresu wdrożenia z pierwszym planem na jutro', () => {
+      const day = lastDayOfMonthFrom(40);
+      const first = firstPlanPreview(history(PLAN.startMonths), day + 1);
+      expect(first).not.toBeNull();
+      const t = body(withPlan(undefined), ctxOf(PLAN.startMonths, undefined, day));
+      expect(plainText(textOf(t))).toContain(plainText(`Koniec okresu wdrożenia. Od jutra obowiązuje plan sprzedaży Centrali: ${zl(first!)}.`));
+      // inny miesiąc umowy: wiersza nie ma
+      expect(textOf(body(withPlan(undefined), ctxOf(PLAN.startMonths - 1, undefined, day)))).not.toContain('Koniec okresu wdrożenia');
+    });
+  });
+
+  describe('koniec gry z powodu planu', () => {
+    const planOver = (history: number, plan: PlanMonth | undefined = planMonth({ stage: 3, fine: 0, share: 0.74 })): ReturnType<typeof base> => {
+      const b = base();
+      b.s.gameOver = true;
+      b.s.cash = 12_345;
+      b.s.history = Array.from({ length: history }, (_, i) => ({ label: `m${i}`, profit: 1_000, revenue: 400_000 }));
+      b.s.franchisee.plan = planState({ stage: 3 });
+      b.s.lastReport = withPlan(plan);
+      publishState(b.s, b.info);
+      return b;
+    };
+    const modalText = (): string => plainText(textOf(ReportModal({ game: fakeGame() })));
+
+    it('powód: trzeci miesiąc z rzędu bez planu; przeżyte miesiące, gotówka i ostatni plan z wykonaniem', () => {
+      const { s } = planOver(7);
+      expect(terminationReason(s)).toBe('Powód: trzeci miesiąc z rzędu bez planu sprzedaży.');
+      expect(modalText()).toContain('Powód: trzeci miesiąc z rzędu bez planu sprzedaży.');
+      expect(modalText()).toContain(plainText(`Przeżyte miesiące: 7 · gotówka: ${money(12_345)}`));
+      expect(modalText()).toContain(plainText(`Ostatni plan: ${zl(412_000)}, wykonane 74%.`));
+    });
+
+    it('zamykający cytat Centrali to tekst o planie, nie ogólne podziękowanie', () => {
+      planOver(7);
+      const body = walk(ReportModal({ game: fakeGame() }) as Vnode).find((v) => v.type === ReportBody)!;
+      expect(body.props.closing).toBe(PLAN_GAMEOVER_TEXT);
+      expect(PLAN_GAMEOVER_TEXT).toBe('Centrala wypowiada umowę franczyzową: trzeci miesiąc z rzędu bez planu sprzedaży. Dziękujemy za współpracę.');
+      // ogólne podziękowanie zostaje dla pozostałych powodów
+      ended0();
+      expect(walk(ReportModal({ game: fakeGame() }) as Vnode).find((v) => v.type === ReportBody)).toBeUndefined();
+    });
+
+    it('bez raportu z planem (stary zapis): przeżyte miesiące i gotówka są, ostatniego planu nie ma', () => {
+      const { s } = planOver(4, undefined);
+      s.lastReport = null;
+      publishState(s, base().info);
+      expect(modalText()).toContain('Przeżyte miesiące: 4');
+      expect(modalText()).not.toContain('Ostatni plan');
+    });
+
+    it('debet ma pierwszeństwo przed planem (jeden powód)', () => {
+      const { s } = planOver(7);
+      s.cash = DEBT_LIMIT - 1;
+      expect(terminationReason(s)).toContain('za duży debet');
+    });
+
+    it('zwykła gra bez planu: powodu o planie nie ma', () => {
+      const { s } = ended0();
+      expect(terminationReason(s)).toBeNull();
+    });
+  });
+});
+
+/** Gra zakończona bez długu, bez zera zaufania i bez planu (stary zapis): nic nie podaje powodu. */
+function ended0(): ReturnType<typeof base> {
+  const b = base();
+  b.s.gameOver = true;
+  b.s.cash = 1_000;
+  b.s.tycoon.trust.value = 55;
+  publishState(b.s, b.info);
+  return b;
+}

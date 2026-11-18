@@ -97,6 +97,9 @@ export const CITY_UI: Dict = {
   'Do Ulepszeń': 'To Upgrades',
   'Stan': 'Status',
   'Marka': 'Brand',
+  // plan sprzedaży Centrali na liście sklepów (ui/city/StoreSwitcher.tsx)
+  'plan: stopień {0} ({1})': 'plan: stage {0} ({1})',
+  'Plan': 'Plan',
 };
 
 export const CITY_PLURALS: Plurals = {};

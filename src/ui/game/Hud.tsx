@@ -11,6 +11,7 @@ import { forecastNow, isNetwork } from '../city/storeSwitcherModel';
 import { econ, firm, openHowTo, openMonthPreview, openRanking, showSettings, speed, tab, type Controls, type EconView, type FirmView, type GameActions } from '../state';
 import { forecastLabel, forecastTitle } from './forecastText';
 import { int, plural, signedZl, zl } from './format';
+import { HudPlan } from './plan';
 
 /** Przyciski prędkości w pasku (pierwszy to pauza); „Jak grać” podaje z nich zakres tempa. */
 export const SPEEDS: { value: Speed; label: string; title: string }[] = [
@@ -157,6 +158,7 @@ export function Hud({ controls, game, ranking = false }: { controls: Controls; g
         </span>
       </div>
       <ForecastRow view={view} firmView={firm.value} />
+      <HudPlan view={view} firmView={firm.value} game={game} />
       <StoreSwitcher game={game} />
       <div class="tt-hud-row">
         <span class="tt-clock">

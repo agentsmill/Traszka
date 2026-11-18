@@ -5,6 +5,7 @@ import { lotById } from '@/sim/city/generateCity';
 import { dayOf } from '@/sim/economy/calendar';
 import { CATS } from '@/sim/economy/catalog';
 import { forecastMonth } from '@/sim/economy/forecast';
+import type { PlanState } from '@/sim/economy/plan';
 import { trustTier } from '@/sim/economy/tycoon/trust';
 import { forecastFirm } from '@/sim/firm/forecast';
 import { openSecond, partnerSession } from '../../../tests/firmKit';
@@ -203,5 +204,39 @@ describe('networkOn: sygnał sieci dla układu paska', () => {
     firmOf(session).stores[1]!.closed = true;
     firm.value = { f: firmOf(session), v: 3 };
     expect(networkOn.value).toBe(false);
+  });
+});
+
+describe('storeMinis: plan Centrali sklepu', () => {
+  const planState = (stage: number): PlanState => ({ target: 400_000, base: 12_900, recent: [12_900], streak: 0, stage, openDays: 10, topUp: false });
+
+  it('sklep ze stopniem drabiny ≥ 1 ma znak „plan”, stopień 0 i brak planu go nie mają; znak idzie na końcu', () => {
+    const { f } = twoStores();
+    const second = f.stores[1]!;
+    second.econ.franchisee.plan = planState(0);
+    expect(storeMinis(f)[1]!.warnings).toEqual([]);
+    second.econ.franchisee.plan = planState(1);
+    expect(storeMinis(f)[1]!.warnings).toEqual(['plan']);
+    expect(storeMinis(f)[0]!.warnings).toEqual([]);   // pierwszy sklep nie ma planu
+    second.econ.tycoon.trust.value = 32;
+    second.econ.pallets[0]!.loc = 'aisle';
+    expect(storeMinis(f)[1]!.warnings).toEqual(['paleta', 'zaufanie', 'plan']);
+  });
+
+  it('mini-stan niesie prognozę planu sklepu (ta sama liczba co forecastMonth), a sklep bez planu `null`', () => {
+    const { f } = twoStores();
+    const second = f.stores[1]!;
+    second.econ.franchisee.plan = planState(1);
+    const mini = storeMinis(f)[1]!;
+    expect(mini.plan).toEqual(forecastMonth(second.econ, second.info).plan);
+    expect(mini.plan?.stage).toBe(1);
+    expect(storeMinis(f)[0]!.plan).toBeNull();
+  });
+
+  it('zamknięty sklep nie ma planu ani znaku', () => {
+    const { f } = twoStores();
+    f.stores[1]!.econ.franchisee.plan = planState(2);
+    f.stores[1]!.closed = true;
+    expect(storeMinis(f)[1]).toMatchObject({ warnings: [], plan: null });
   });
 });

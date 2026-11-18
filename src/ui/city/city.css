@@ -507,6 +507,16 @@
   .tt-net .tt-hud-due .tt-due { max-width: 720px; }   /* na szerokim ekranie trzy kieszenie nie rozjeżdżają się po całym pasku */
 }
 
+/* wiersz planu pod paskiem prognozy przy sieci: wyższy pasek, więc okna pod nim niżej (`:has` tylko, gdy wiersz planu jest w drzewie) */
+@media (max-width: 819px) {
+  .tt-ui.tt-net:has(.tt-hud-plan) { --hud-h: 242px; }
+}
+
+@media (min-width: 820px) {
+  .tt-ui.tt-net:has(.tt-hud-plan) { --hud-h: 126px; }
+  .tt-net .tt-hud-plan { grid-column: 1 / -1; }
+}
+
 .tt-stores-chip {
   display: flex;
   align-items: center;
@@ -617,6 +627,15 @@
   flex: 1 1 100%;
   font-variant-numeric: tabular-nums;
 }
+
+.tt-store-plan {
+  flex: 1 1 100%;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.tt-store-plan.warn { color: #c2410c; }
+.tt-store-plan.danger { color: #b91c1c; }
 
 .tt-store-warn {
   flex: none;

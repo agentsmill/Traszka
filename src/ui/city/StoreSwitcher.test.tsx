@@ -162,6 +162,19 @@ describe('lista sklepów z mini-stanem', () => {
     expect(walk(row2).filter((v) => v.props['data-warn'] === 'zaufanie')).toHaveLength(1);
   });
 
+  it('plan Centrali na stopniu ≥ 1: znak „plan” z nazwą stopnia i wiersz z wykonaniem planu', () => {
+    const { f } = setup();
+    f.stores[1]!.econ.franchisee.plan = { target: 400_000, base: 12_900, recent: [12_900], streak: 0, stage: 1, openDays: 10, topUp: false };
+    expect(withClass(render()!, 'tt-stores-alert')).toHaveLength(1);
+    storeList.value = true;
+    const row2 = rows(render()!)[1]!;
+    expect(walk(row2).filter((v) => v.props['data-warn'] === 'plan')).toHaveLength(1);
+    const text = plain(textOf(row2));
+    expect(text).toContain('⚠ plan: stopień 1 (Rozmowa z partnerem regionalnym)');
+    expect(text).toMatch(/Plan: wykonane \d+% · prognoza \d+%/);
+    expect(plain(textOf(rows(render()!)[0]!))).not.toContain('Plan:');
+  });
+
   it('po angielsku: ostrzeżenie o zaufaniu z tą samą etykietą progu co w grze', () => {
     const { f } = setup();
     f.stores[1]!.econ.tycoon.trust.value = 32;

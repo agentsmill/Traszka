@@ -47,6 +47,23 @@ export const HUD_UI: Dict = {
     'From the transfer Head Office deducts instalments ({0}) and pallets over the free allowance, and you pay wages, utilities, ZUS (Polish social security), VAT and your accountant.',
   'Po zamknięciu miesiąca zostanie Ci {0}, czyli gotówka {1} (teraz {2}).{3}': 'After the month closes you’ll keep {0}, leaving you {1} in cash (now {2}).{3}',
   'To szybki szacunek z dotychczasowego obrotu. Dokładny wyciąg: stuknij.': 'This is a quick estimate based on turnover so far. Tap for the exact statement.',
+  // plan sprzedaży Centrali: pasek, przełącznik i zdania o planie (ui/game/planText.ts, plan.tsx)
+  'Prognoza: plan zrobiony.': 'Forecast: plan met.',
+  'Jeśli nic się nie zmieni: dobicie z kieszeni ok. {0}.': 'If nothing changes: top-up from your own pocket, approx. {0}.',
+  'Jeśli nic się nie zmieni: Centrala wypowie umowę na tę placówkę.': 'If nothing changes: Head Office will terminate the agreement for this branch.',
+  'Jeśli nic się nie zmieni: kara {0}, stopień {1} ({2}).': 'If nothing changes: penalty {0}, stage {1} ({2}).',
+  'Plan Centrali: {0} · seria: {1} mies.': 'Head Office plan: {0} · streak: {1} mo.',
+  'wykonane {0} · prognoza {1}': 'achieved {0} · forecast {1}',
+  'Od dziś obowiązuje plan Centrali: {0} w tym miesiącu.': 'From today the Head Office plan applies: {0} this month.',
+  'Dobij plan z własnej kieszeni, jeśli zabraknie do {0}': 'Top up the plan from your own pocket if you fall short by up to {0}',
+  'Kupujesz brakujący towar sam. Miesiąc jest zaliczony, ale następny plan rośnie.': 'You buy the missing goods yourself. The month counts as met, but next month’s plan goes up.',
+  'W planie': 'On plan',
+  'Rozmowa z partnerem regionalnym': 'Talk with the regional partner',
+  'Program naprawczy': 'Recovery programme',
+  'Wypowiedzenie placówki': 'Branch termination',
+  'Koniec okresu wdrożenia': 'End of the onboarding period',
+  'Plan sprzedaży Centrali': 'Head Office sales plan',
+  'Plan: brakuje do progu': 'Plan: short of the threshold',
 };
 
 export const HUD_PLURALS: Plurals = {
