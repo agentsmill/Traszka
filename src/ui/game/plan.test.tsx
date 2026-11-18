@@ -54,6 +54,16 @@ describe('planLines: zdania paska', () => {
     expect(hit(1.03, 1).tone).toBe('ok');
   });
 
+  it('na styk przy stopniu 2: wpadka kończy umowę (bez kary), zdanie mówi o wypowiedzeniu, ton danger; po angielsku bez polskich liter', () => {
+    const l = planLines(outlook({ verdict: 'hit', forecastShare: 1.01, fine: 0, stage: 2, stageAfter: 1 }));
+    expect(l.verdict).toBe('Prognoza: plan na styk. Jeśli zabraknie choć trochę, Centrala wypowie umowę na tę placówkę.');
+    expect(l.tone).toBe('danger');
+    lang.value = 'en';
+    const en = planLines(outlook({ verdict: 'hit', forecastShare: 1.01, fine: 0, stage: 2, stageAfter: 1 })).verdict;
+    expect(en).toBe('Forecast: plan only just met. Fall even slightly short and Head Office will terminate the agreement for this branch.');
+    expect(en).not.toMatch(PL_CHARS);
+  });
+
   it('werdykt „dobicie z kieszeni” z kosztem, ton warn', () => {
     const l = planLines(outlook({ verdict: 'topup', cost: 9_960, fine: 0, stageAfter: 0, topUp: true }));
     expect(plain(l.verdict)).toBe(plain(`Jeśli nic się nie zmieni: dobicie z kieszeni ok. ${zl(9_960)}.`));

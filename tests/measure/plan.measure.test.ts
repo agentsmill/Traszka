@@ -67,7 +67,10 @@ describe.skipIf(!process.env.MEASURE)('pomiar planu Centrali 5a', () => {
     }
 
     const complete = MONTHS >= 24 && PLAN_STRATEGIES.every((s) => of(s).length === ALL_SEEDS.length && of(s).every((r) => r.months.length >= 24 || r.over !== null));
-    if (!complete) return;
+    if (!complete) {
+      console.log('Bramki P3–P6 NIE zostały ocenione: pomiar częściowy (SEEDS, MONTHS albo MERGE nie obejmują wszystkich botów, seedów i 24 miesięcy).');
+      return;
+    }
     const verdicts: { gate: string; ok: boolean; detail: string }[] = [];
     {
       const runs = of('mistrz');

@@ -33,7 +33,8 @@ export const TIGHT_MARGIN = 0.03;
 export function planLines(o: PlanOutlook): { head: string; progress: string; verdict: string; tone: PlanTone } {
   const tight = o.verdict === 'hit' && o.forecastShare < 1 + TIGHT_MARGIN;
   let verdict: string;
-  if (tight) verdict = t`Prognoza: plan na styk. Jeśli zabraknie choć trochę, będzie kara.`;
+  if (tight && o.stage + 1 >= PLAN.stageMax) verdict = t`Prognoza: plan na styk. Jeśli zabraknie choć trochę, Centrala wypowie umowę na tę placówkę.`;
+  else if (tight) verdict = t`Prognoza: plan na styk. Jeśli zabraknie choć trochę, będzie kara.`;
   else if (o.verdict === 'hit') verdict = t`Prognoza: plan zrobiony.`;
   else if (o.verdict === 'topup') verdict = t`Jeśli nic się nie zmieni: dobicie z kieszeni ok. ${zl(o.cost)}.`;
   else if (o.stageAfter >= PLAN.stageMax) verdict = t`Jeśli nic się nie zmieni: Centrala wypowie umowę na tę placówkę.`;

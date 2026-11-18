@@ -338,7 +338,7 @@ export function playProgresja(strategy: ProgStrategy, seed: string, months: numb
   else if (activeStore(f).econ.gameOver) { r.over = 'trust'; r.overMonth = r.months.length + 1; }
   // ostatni sklep nie dostaje zdarzenia `closed`: trzecia wpadka kończy grę (zaufanie zero ma pierwszeństwo, wtedy to nie plan)
   const last = activeStore(f);
-  if (r.over !== null && planTerminates(last.econ.franchisee.plan) && !trustTerminates(last.econ.tycoon.trust.value)
+  if (r.over !== null && r.over !== 'debt' && planTerminates(last.econ.franchisee.plan) && !trustTerminates(last.econ.tycoon.trust.value)
     && !r.closedByPlan.some((c) => c.storeId === last.id)) r.closedByPlan.push({ storeId: last.id, month: r.months.length });
   r.finalWallet = Math.round(f.person.wallet);
   r.unboughtEnd = unboughtTotal(f);

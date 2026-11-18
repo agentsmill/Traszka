@@ -161,7 +161,7 @@ export function settlePlan(p: PlanState, i: {
   p.openDays = 0;
   return {
     // do raportu w pełnych złotych i z wykonaniem do 4 miejsc: o trafieniu, karze i koszcie zdecydowały liczby bez zaokrągleń
-    target: settledTarget, due, turnover: Math.round(i.revenue), bought, cost, share: Math.round(share * 10_000) / 10_000, hit, bonus, fine, trust,
+    target: settledTarget, due, turnover: Math.round(i.revenue), bought, cost, share: Math.floor(share * 10_000) / 10_000, hit, bonus, fine, trust,
     stage: p.stage, stageBefore, streak: p.streak, nextTarget: p.target, nextBase: p.base, nextGrowth: planGrowth(p.streak),
   };
 }

@@ -50,6 +50,8 @@ export const HUD_UI: Dict = {
   // plan sprzedaży Centrali: pasek, przełącznik i zdania o planie (ui/game/planText.ts, plan.tsx)
   'Prognoza: plan zrobiony.': 'Forecast: plan met.',
   'Prognoza: plan na styk. Jeśli zabraknie choć trochę, będzie kara.': 'Forecast: plan only just met. Fall even slightly short and there will be a penalty.',
+  'Prognoza: plan na styk. Jeśli zabraknie choć trochę, Centrala wypowie umowę na tę placówkę.':
+    'Forecast: plan only just met. Fall even slightly short and Head Office will terminate the agreement for this branch.',
   'Jeśli nic się nie zmieni: dobicie z kieszeni ok. {0}.': 'If nothing changes: top-up from your own pocket, approx. {0}.',
   'Jeśli nic się nie zmieni: Centrala wypowie umowę na tę placówkę.': 'If nothing changes: Head Office will terminate the agreement for this branch.',
   'Jeśli nic się nie zmieni: kara {0}, stopień {1} ({2}).': 'If nothing changes: penalty {0}, stage {1} ({2}).',
