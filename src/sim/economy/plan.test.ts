@@ -35,6 +35,16 @@ describe('plan sprzedaży Centrali', () => {
     expect(settlePlan(p, i)).toMatchObject({ fine: 0, stage: 3, stageBefore: 2 });
     expect(planTerminates(p)).toBe(true);
   });
+  it('raport: obrót w pełnych złotych, wykonanie do 4 miejsc, ale trafienie i kara z liczb bez zaokrągleń', () => {
+    const mk = (): PlanState => ({ target: 300_000, base: 10_000, recent: [], streak: 0, stage: 0, openDays: 30, topUp: false });
+    const i = { monthDays: 30, nextMonthDays: 30, cash: 0, debtWarn: -50_000 };
+    const r = settlePlan(mk(), { ...i, revenue: 299_999.6 })!;
+    expect(r).toMatchObject({ turnover: 300_000, share: 1, hit: false, fine: 0 });   // 0,4 zł brakuje: wpadka, kara 10% z 0,4 zł = 0
+    const q = settlePlan(mk(), { ...i, revenue: 212_345.678_9 })!;
+    expect(q.turnover).toBe(212_346);
+    expect(q.share).toBe(0.7078);
+    expect(q.fine).toBe(Math.round(0.1 * (300_000 - 212_345.678_9)));
+  });
   it('baza po wpadce spada najwyżej o 5%', () => {
     const p: PlanState = { target: 400_000, base: 13_000, recent: [13_000, 13_000, 13_000], streak: 0, stage: 0, openDays: 30, topUp: false };
     settlePlan(p, { revenue: 30_000, monthDays: 30, nextMonthDays: 30, cash: 0, debtWarn: -50_000 });

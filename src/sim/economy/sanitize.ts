@@ -7,7 +7,7 @@ import {
 } from './economy';
 import { xpToNext } from './progress';
 import { sanitizeFranchisee, sanitizeStatement } from './franchisee';
-import type { PlanMonth } from './plan';
+import { PLAN, type PlanMonth } from './plan';
 import { sanitizeHall } from './tycoon/cleanliness';
 import { sanitizeReport } from './tycoon/report';
 import { sanitizeShift } from './tycoon/shift';
@@ -307,16 +307,27 @@ function report(v: unknown): MonthReport | null {
   return out;
 }
 
-/** Pola rozliczenia planu w kolejności `settlePlan` (raport ma wracać z zapisu bajt w bajt); `hit` osobno, reszta to liczby. */
+/** Pola rozliczenia planu w kolejności `settlePlan` (raport ma wracać z zapisu bajt w bajt). */
 const PLAN_MONTH_FIELDS = [
   'target', 'due', 'turnover', 'bought', 'cost', 'share', 'hit', 'bonus', 'fine', 'trust', 'stage', 'stageBefore', 'streak', 'nextTarget', 'nextBase',
   'nextGrowth',
 ] as const satisfies readonly (keyof PlanMonth)[];
 
-/** Rozliczenie planu z raportu w zapisie; raport bez rozliczenia (albo z czymś innym w tym miejscu) nie ma klucza. */
+/**
+ * Rozliczenie planu z raportu w zapisie. Klucz wraca tylko z rekordu, który ma skończony liczbowy `target` i logiczne `hit`; wszystko inne
+ * (brak, `{}`, śmieci) daje raport bez rozliczenia, a nie wyzerowane rozliczenie. `stage` i `stageBefore` to całe liczby 0–3 (raport bez
+ * `stageBefore` dostaje `stage`: bez zmiany stopnia), `streak` całe 0–1000, `hit` przepisane, reszta to kwoty przycięte jak inne pieniądze.
+ */
 function planMonth(v: unknown): PlanMonth | undefined {
-  if (!isRec(v)) return undefined;
+  if (!isRec(v) || !isNum(v.target) || typeof v.hit !== 'boolean') return undefined;
+  const stage = whole(v.stage, 0, 0, PLAN.stageMax);
   const out = {} as Record<string, number | boolean>;
-  for (const k of PLAN_MONTH_FIELDS) out[k] = k === 'hit' ? v.hit === true : k === 'stageBefore' && !isNum(v.stageBefore) ? money(v.stage, 0) : money(v[k], 0);   // raport bez `stageBefore`: bez zmiany stopnia
+  for (const k of PLAN_MONTH_FIELDS) {
+    if (k === 'hit') out[k] = v.hit;
+    else if (k === 'stage') out[k] = stage;
+    else if (k === 'stageBefore') out[k] = whole(v.stageBefore, stage, 0, PLAN.stageMax);
+    else if (k === 'streak') out[k] = whole(v.streak, 0, 0, 1000);
+    else out[k] = money(v[k], 0);
+  }
   return out as unknown as PlanMonth;
 }

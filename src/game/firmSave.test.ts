@@ -1300,10 +1300,6 @@ function playThreeOpenStores(): FirmState {
   return f;
 }
 
-/**
- * Zamknięte sklepy gromadzą się (zamknięcie i ponowny wynajem), więc lista sklepów w zapisie bywa dłuższa niż limit sklepów: #1 z
- * wyposażeniem i dwoma remontami wypowiedziany i zamknięty, potem #2 i #3 otwarte, każdy po dwóch remontach, koniec roku.
- */
 /** Jak `playTo`, ale co dobę plan Centrali każdego otwartego sklepu do trafienia (`keepPlansEasy`): sklepy mają przetrwać rok bez gracza. */
 function playKeepingPlans(f: FirmState, minute: number): void {
   while (clockOf(f) < minute && f.over === null && !activeStore(f).econ.gameOver) {
@@ -1312,6 +1308,10 @@ function playKeepingPlans(f: FirmState, minute: number): void {
   }
 }
 
+/**
+ * Zamknięte sklepy gromadzą się (zamknięcie i ponowny wynajem), więc lista sklepów w zapisie bywa dłuższa niż limit sklepów: #1 z
+ * wyposażeniem i dwoma remontami wypowiedziany i zamknięty, potem #2 i #3 otwarte, każdy po dwóch remontach, koniec roku.
+ */
 function playWithClosedStore(): FirmState {
   const f = twoOpenStores();
   fit(f);

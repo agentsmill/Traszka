@@ -271,4 +271,23 @@ describe('plan Centrali w ekonomii sklepu', () => {
     expect(roundTrip(atSeasonEnd)).toBe(JSON.stringify(atSeasonEnd));
     expect(roundTrip(atSeasonEnd)).not.toContain('"plan"');
   });
+
+  it('zapis: wrogi raport planu nie staje się wyzerowanym rozliczeniem, stopnie i seria całe i przycięte', () => {
+    const defaults = freshRun(SEED).state;
+    const s = clone(atDec2);
+    s.franchisee.plan!.target = 1_000;
+    runTo(s, info, 122 * DAY);
+    const load = (plan: unknown): EconomyState['lastReport'] => {
+      const raw = JSON.parse(JSON.stringify(s));
+      raw.lastReport.plan = plan;
+      return sanitizeEconomy(raw, defaults, info)!.lastReport;
+    };
+    for (const junk of [{}, { hit: true }, { target: 400_000 }, { target: 'x', hit: true }, { target: null, hit: false }, { target: 1, hit: 1 }, [], 'plan']) {
+      expect('plan' in load(junk)!).toBe(false);
+    }
+    const good = s.lastReport!.plan!;
+    expect(load({ ...good, stage: 2.6, stageBefore: -4, streak: 5000.4 })!.plan).toMatchObject({ stage: 3, stageBefore: 0, streak: 1000 });
+    expect(load({ ...good, stage: 9, stageBefore: 7.2, streak: 2.5 })!.plan).toMatchObject({ stage: 3, stageBefore: 3, streak: 3 });
+    expect(load({ ...good, stage: 1.4, stageBefore: 'x' })!.plan).toMatchObject({ stage: 1, stageBefore: 1 });
+  });
 });
