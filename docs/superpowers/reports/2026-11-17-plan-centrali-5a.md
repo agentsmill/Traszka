@@ -245,6 +245,7 @@ Bramki techniczne (build, testy, smoke) są zielone, a dwie bramki balansu (P5 i
    - Liczby: `rozsadny` traszka-1: −613 tys. zł po zamknięciu sklepu #3 w m. 23 (na początku strojenia −1 553 tys.); `siec12` kopytka-541 na starcie −465 tys. Raty pakietu spadają na wspólny portfel naraz.
    - Opcje: (a) zostawić (zgodne ze specem §6.3: jeden sklep z pięciu kończy całą grę, jeśli portfel jest cienki). (b) rozłożyć rozliczenie końcowe, np. raty ze zwolnionego sklepu dalej miesięcznie, albo ograniczyć je do gotówki sklepu.
    - Koszt: (a) gracz traci całą grę przez jeden sklep. (b) zmiana kodu zamykania sklepu z 4a.2 i nowy pomiar; spec tego nie przewiduje.
+   - Dodatkowo (z recenzji końcowej): gracz dostaje okno o zamknięciu sklepu za plan i o rozliczeniu końcowym, ale ekran końca gry mówi wtedy tylko „za duży debet”, bez związku z zamkniętym sklepem. Jeśli zostaje opcja (a), warto dopisać to zdanie.
 4. **Pasek prognozy a kreska 100%.**
    - Liczby: przy łagodnym wzroście miesiące kończą się przy 99,x%, a pasek rano ostatniego dnia potrafił pokazać „plan zrobiony”, gdy zamknięcie dawało wpadkę (seed `żabka-7`). Teraz pasek mówi „na styk” poniżej 103%;
      dokładny podgląd miesiąca ma rację.
@@ -274,7 +275,21 @@ Bramki techniczne (build, testy, smoke) są zielone, a dwie bramki balansu (P5 i
 - **Smoke planu na tablecie** sprawdza tylko jedną szerokość (768 px) i tylko w przebiegu komputerowym.
 - **Pomiar `siec12` na seedzie makieta daje milion dopiero w m. 25**, czyli poza oknem 24 miesięcy pomiaru; tabela liczy go „po biegu”.
 
-## 13. Do opisu wdrożenia
+## 13. Recenzja całej gałęzi i ostatnie poprawki
+
+Po Zadaniu 6 całą gałąź przeczytał osobny recenzent. Uwag krytycznych nie było, była jedna ważna i kilka drobnych; wszystkie poprawione w jednej fali (commity `8a97e92`…`6fc4a37`) i sprawdzone drugą, krótką recenzją.
+
+- **Ważna: raport zamykający sezon rankingowy zapowiadał plan, którego nie będzie.** Bieg rankingowy kończy się po listopadzie, a raport miał wtedy trzy miesiące historii, więc pokazywał „Koniec okresu wdrożenia. Od jutra obowiązuje plan…”. Wynik rankingu był nietknięty, błędne było tylko zdanie. W zwykłej grze zdanie zostaje.
+- **Suma sieci w prognozie** niosła w polu kary za plan tylko karę sklepu #1, choć potrącenia sumowały kary wszystkich sklepów. Teraz to suma. Żaden ekran nie pokazywał dotąd tego pola, więc gracz tego nie widział.
+- **Testy:** angielskie wersje zdań planu, których bot nie wywołuje w biegu (zapowiedź, „brakuje do progu” z karą i z wypowiedzeniem, koniec gry); luty 28 i 29 dni; smoke planu psuje krok, gdy kalibracja prognozy nie trafi w 95% albo gdy sprawdzany tekst jest pusty.
+
+Recenzent potwierdził neutralność (`SIM_VERSION` 7, `GOLDEN`, `FIRM_SAVE_SCHEMA` 4, próg 62 000 B, brak nowych kluczy przed startem planu), determinizm nowego kodu symulacji i to, że starsza wersja gry wczyta nowy zapis.
+
+Bramki na ostatnim commicie (`6fc4a37`): `npm run build` OK; `npm test` 211 plików przeszło, 8 pominiętych, 6286 testów przeszło, 15 pominiętych, 161 s; `check:vercel-build` PASS (26 sprawdzeń); smoke planu `--etap 5a` zielony na telefonie i komputerze (260 s). Pełny `city:smoke` (47 z 47) szedł na `01554cd`; po nim zmieniły się tylko komentarz w CSS i strażniki w krokach 5a.
+
+Świadomie zostawione: reguły wysokości paska używają `:has()`, bez zastępczej klasy. W przeglądarce bez `:has()` (Firefox przed 121, Safari przed 15.4) okna nachodziłyby na wiersz planu.
+
+## 14. Do opisu wdrożenia
 
 Nie ma zmian w schemacie zapisu ani w `SIM_VERSION`, więc ranking się nie resetuje, a starsza wersja gry wczyta zapis bez bloku planu (pole jest opcjonalne i nowa wersja odtworzy plan od zapowiedzi). Mimo to
 zapis z blokiem planu ma w najgorszym przypadku 61 248 B (zapas do progu testu 752 B): przy kolejnym polu w zapisie sklepu trzeba policzyć paczkę „Wyślij zapis”.
