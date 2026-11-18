@@ -103,6 +103,7 @@ function nextMonthDays(p: PlanMonth): number {
 
 /** „Dlaczego tyle”: skąd wzięła się nowa kwota planu. Zapadka bazy (−5%) po tym, jak średnia z trzech miesięcy wypadła niżej niż baza. */
 export function planReasonText(p: PlanMonth, state?: PlanState): string {
+  // Raport to zawsze `lastReport`, a żywe `PlanState.recent` równa się wartości rozliczonego miesiąca do następnego zamknięcia; „× N dni” wynika z celu planu (`nextMonthDays`).
   const days = nextMonthDays(p);
   const growth = percentOf(p.nextGrowth);
   const tail = p.streak <= 0 ? t`wzrostu` : p.streak === 1 ? t`za pierwsze trafienie` : t`za serię ${p.streak} trafień`;

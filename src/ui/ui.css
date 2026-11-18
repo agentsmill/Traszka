@@ -669,6 +669,7 @@
 .tt-plan-switch-text { display: flex; flex-direction: column; min-width: 0; font-weight: 600; }
 .tt-plan-note { display: none; font-weight: 400; opacity: 0.85; }
 
+/* Bez obsługi `:has()` `--hud-h` zostaje przy wartości bazowej (przyjęte dla obecnych przeglądarek). */
 .tt-ui:has(.tt-hud-plan) { --hud-h: 228px; }   /* 112 px trzech wierszy paska plus wiersz planu; werdykt w dwóch liniach */
 
 /* podgląd miesiąca i lista sklepów: ten sam opis na jasnym tle okna */
