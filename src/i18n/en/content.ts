@@ -216,6 +216,7 @@ export const EN_TRUST_REASONS: Record<TrustReason, string> = {
   mandaty: 'Fines',
   palety: 'Returned pallets',
   wynik: 'Month’s result',
+  plan: 'Head Office sales plan',
   inne: 'Other',
 };
 

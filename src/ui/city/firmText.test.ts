@@ -120,6 +120,17 @@ describe('firmEventText', () => {
     expect(trust.text).not.toBe(ended.text);
   });
 
+  it('zamknięcie z powodu planu: trzeci miesiąc bez planu, nazwa sklepu, inny tekst niż przy zaufaniu i wygaśnięciu', () => {
+    const plan = firmEventText(f, { kind: 'closed', storeId: 2, params: { reason: 'plan' } });
+    expect(plan.title).toBe(`Umowa zakończona: ${name2}`);
+    expect(plan.text).toBe(`Trzeci miesiąc z rzędu ${name2} nie zrealizowała planu sprzedaży, więc Centrala wypowiedziała umowę. Lokal wraca na mapę jako „po Traszce”, z wyposażeniem. Pozostałe placówki działają dalej.`);
+    for (const reason of ['trust', 'notice']) expect(plan.text).not.toBe(firmEventText(f, { kind: 'closed', storeId: 2, params: { reason } }).text);
+    lang.value = 'en';
+    const en = firmEventText(f, { kind: 'closed', storeId: 2, params: { reason: 'plan' } });
+    expect(PL_CHARS.test(en.text.replace(name2, ''))).toBe(false);
+    expect(en.text).toContain('sales plan');
+  });
+
   it('ponowne otwarcie lokalu „po Traszce” (opened z reopened): „znów otwarta”, wyposażenie zostało, Centrala zaczyna od nowa: poziom 1 i zaufanie z TRUST.start', () => {
     const e: FirmEvent = { kind: 'opened', storeId: 2, params: { lotId: f.stores[1]!.lotId, reopened: 1 } };
     const pl = firmEventText(f, e);
@@ -183,7 +194,7 @@ describe('firmEventText', () => {
 });
 
 describe('refusalText', () => {
-  const reasons: FirmRefusal[] = ['ranked', 'status', 'limit', 'lot', 'gotowka', 'raty', 'store', 'single', 'over'];
+  const reasons: FirmRefusal[] = ['ranked', 'status', 'limit', 'lot', 'gotowka', 'raty', 'store', 'single', 'over', 'plan'];
 
   it('każda odmowa ma tekst, ranking i limit dosłownie z §10', () => {
     for (const r of reasons) expect(refusalText(r).length, r).toBeGreaterThan(0);
@@ -191,6 +202,7 @@ describe('refusalText', () => {
     // odmowa limitu mówi o limicie firmy (próg obrotu sieci do kolejnej placówki), a bez firmy ogólnie
     expect(refusalText('limit', twoStoreFirm())).toBe(`Centrala zgodzi się na kolejną placówkę, gdy obrót sieci w miesiącu przekroczy ${zl(1_000_000)}.`);
     expect(refusalText('limit')).toBe('Centrala nie zgadza się teraz na kolejną placówkę. Limit rośnie wraz z obrotem sieci.');
+    expect(refusalText('plan')).toBe('Ta placówka nie ma jeszcze planu sprzedaży. Centrala przysyła go od czwartego miesiąca umowy.');
   });
 
   it('po angielsku każda odmowa jest po angielsku', () => {

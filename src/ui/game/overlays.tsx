@@ -2,7 +2,8 @@ import { computed, signal, untracked, type ReadonlySignal } from '@preact/signal
 import { useEffect, useState } from 'preact/hooks';
 import { DEBT_LIMIT } from '@/sim/economy/catalog';
 import { dateText, numberLocale, t, tr } from '@/i18n';
-import { effects, slotFree, slotUsage, tapCombo, tillTapBlock, type EconomyState } from '@/sim/economy/economy';
+import { PLAN_GAMEOVER_TEXT, effects, planOf, slotFree, slotUsage, tapCombo, tillTapBlock, type EconomyState } from '@/sim/economy/economy';
+import { planTerminates } from '@/sim/economy/plan';
 import { visibleCards } from '@/sim/economy/tycoon/cards';
 import { FATIGUE } from '@/sim/economy/tycoon/fatigue';
 import { trustTerminates } from '@/sim/economy/tycoon/trust';
@@ -21,6 +22,7 @@ import { Bar, PalletItem } from './panels';
 import { LanguageSwitch, setLangAndReload } from '../LanguageSwitch';
 import { buyButtons, buyNotes } from './spend';
 import { ReportBody, centralaQuote } from './reportBody';
+import { planCtxOf, planOverLines, planOverReason } from './planText';
 import { NetworkReportBody } from '../city/NetworkReport';
 import { noGuarantee } from '../city/firmText';
 import { StoreTabs } from '../city/StoreTabs';
@@ -155,7 +157,7 @@ const TERMINATION = 'Centrala dziękuje za współpracę. Rozliczenie końcowe: 
 /**
  * Dlaczego Centrala wypowiedziała umowę, odczytane ze stanu (okno wraca po przeładowaniu, a toast z powodem nie): za duży debet,
  * czyli gotówka poniżej `DEBT_LIMIT` (gra staje w tej minucie, więc gotówka w stanie to ta z chwili końca; w firmie to wspólna gotówka),
- * zaufanie zero albo koniec okresu wypowiedzenia ostatniej placówki (`f`: firma; sklep `s` ma wtedy wypowiedzenie, a gra jest skończona).
+ * zaufanie zero, trzecia wpadka planu sprzedaży (stopień 3 drabiny) albo koniec okresu wypowiedzenia ostatniej placówki (`f`: firma; sklep `s` ma wtedy wypowiedzenie, a gra jest skończona).
  * Gdy zachodzi debet i zaufanie zero, nie zgadujemy, które rozstrzygnęło: tekst mówi o obu; wypowiedzenie ustępuje obu, bo to
  * one kończą grę wcześniej. Bez żadnego z nich (stary zapis) null.
  */
@@ -166,8 +168,14 @@ export function terminationReason(s: EconomyState, f?: FirmState | null): string
   if (debt && distrust) return t`Powód: zaufanie Centrali spadło do zera, a gotówka spadła poniżej granicy debetu ${floor}.`;
   if (debt) return t`Powód: za duży debet. Gotówka spadła do ${signedZl(s.cash)}, poniżej granicy ${floor}, a wtedy Centrala od razu kończy współpracę.`;
   if (distrust) return t`Powód: zaufanie Centrali spadło do zera.`;
+  if (planEndedGame(s)) return planOverReason();
   if (s.gameOver && f?.stores.some((st) => st.econ === s && st.notice !== null)) return t`Powód: umowa ostatniej placówki wygasła po wypowiedzeniu.`;
   return null;
+}
+
+/** Koniec gry, którego powodem `terminationReason` jest plan: trzecia wpadka, ale bez debetu i bez zaufania zero (te mają pierwszeństwo). */
+function planEndedGame(s: EconomyState): boolean {
+  return s.gameOver && s.cash >= DEBT_LIMIT && !trustTerminates(s.tycoon.trust.value) && planTerminates(planOf(s));
 }
 
 /**
@@ -187,6 +195,7 @@ export function ReportModal({ game }: { game: GameActions }) {
   if (!r && !net && !over) return null;
   const title = over ? t`Koniec współpracy` : net ? t`Wyciągi od Centrali: ${tr(net.summary.label)}` : r!.statement ? t`Wyciąg od Centrali: ${tr(r!.label)}` : t`Raport: ${tr(r!.label)}`;
   const reason = over && view ? terminationReason(view.s, firm.value?.f) : null;
+  const planOver = over && !!view && !net && planEndedGame(view.s);   // koniec gry za plan (powód z `terminationReason`): przeżyte miesiące, gotówka i ostatni plan
   const bankrupt = over && !!view && seasonBankrupt(view.s);   // koniec gry przed ostatnim raportem: poza rankingiem
   const seasonEnd = ranked.value?.phase === 'over' && !bankrupt;   // sezon doigrany (też z debetem z ostatniego zamknięcia): za raportem czeka okno z wynikiem
   const dismiss = (): void => { report.value = null; closeNetworkReport(); };
@@ -195,8 +204,9 @@ export function ReportModal({ game }: { game: GameActions }) {
       <div class="tt-modal" role="dialog" aria-modal="true" aria-label={title}>
         <h2 data-tut="report">{title}</h2>
         {reason && <p class="tt-end-reason" role="note"><b>{reason}</b></p>}
+        {planOver && view && planOverLines(view.s).map((line) => <p key={line} class="tt-end-reason tt-end-plan" role="note">{line}</p>)}
         {bankrupt && ranked.value && <p class="tt-end-reason" role="note">{tr(RANKED_BANKRUPT_TEXT)}</p>}
-        {net ? <NetworkReportBody view={net} /> : r ? <ReportBody r={r} closing={over ? TERMINATION : undefined} noGuarantee={!!view && noGuarantee(view.info, view.s.history.length)} /> : centralaQuote(TERMINATION)}
+        {net ? <NetworkReportBody view={net} /> : r ? <ReportBody r={r} closing={over ? (planOver ? PLAN_GAMEOVER_TEXT : TERMINATION) : undefined} noGuarantee={!!view && noGuarantee(view.info, view.s.history.length)} planCtx={view ? planCtxOf(view.s, !!ranked.value) : undefined} /> : centralaQuote(planOver ? PLAN_GAMEOVER_TEXT : TERMINATION)}
         {net && over && centralaQuote(TERMINATION)}
         <div class="tt-modal-foot">
           {over

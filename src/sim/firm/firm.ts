@@ -15,7 +15,7 @@ import { computeStoreInfo, type StoreInfo } from '@/sim/economy/storeInfo';
 import { visibleCards } from '@/sim/economy/tycoon/cards';
 import { layoutFor } from '@/sim/store/layoutFor';
 import type { StoreLayout } from '@/sim/store/types';
-import { NOTICE_NO_CREDIT, closeDueStores, endedByTrust } from './closure';
+import { NOTICE_NO_CREDIT, closeDueStores, endedByPlan, endedByTrust } from './closure';
 import { grantPartnerIfDue, openDueBuilds } from './commands';
 import { checkFame, checkFirmGoals } from './goals';
 import { netMods } from './research';
@@ -33,7 +33,7 @@ import {
  */
 
 /** Zdarzenia sklepu w tle, które czekają na „OK” z nazwą sklepu (§12); reszta zamyka się sama (poziom, remont i cel dostają w grze toast z nazwą sklepu, `BACKGROUND_TOAST`). */
-const IMPORTANT: readonly EconEventKind[] = ['month', 'remanent', 'trust-tier', 'gameover'];
+const IMPORTANT: readonly EconEventKind[] = ['month', 'remanent', 'trust-tier', 'gameover', 'plan'];
 
 /**
  * Firma z jednym sklepem: startowym (#1, w lokalu startowym miasta), na gotówce i Ogonkach tego sklepu. Miasto liczy się z seeda. Bez badań,
@@ -274,10 +274,10 @@ export function stepFirmMinute(f: FirmState, out: FirmStepOut): void {
     stepped.push({ st, events });
   }
 
-  // zaufanie 0 przy zamknięciu miesiąca, gdy inny sklep gra dalej: sklep zamknie krok 5, więc jego `gameover` nie idzie do gracza
+  // zaufanie 0 albo trzecia wpadka planu przy zamknięciu miesiąca, gdy inny sklep gra dalej: sklep zamknie krok 5, więc jego `gameover` nie idzie do gracza
   const survivor = openStores(f).some((s) => !s.econ.gameOver);
   for (const { st, events } of stepped) {
-    const shown = survivor && endedByTrust(st, events) ? events.filter((e) => e.kind !== 'gameover') : events;
+    const shown = survivor && (endedByTrust(st, events) || endedByPlan(st, events)) ? events.filter((e) => e.kind !== 'gameover') : events;
     if (st.id === f.activeId) out.active.push(...shown);
     else for (const event of shown) out.background.push({ storeId: st.id, event, important: IMPORTANT.includes(event.kind) });
   }

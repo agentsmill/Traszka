@@ -6,7 +6,7 @@ import type { FirmState } from './types';
 /**
  * Prognoza paska dla sieci (spec §11.3): `forecastMonth` każdego otwartego sklepu (czysta, bez symulacji, niczego nie zmienia) i ich
  * suma. Debet dotyczy wspólnej gotówki, więc „Zostanie” i ostrzeżenia przy zakupach liczą sumę, a każdy sklep ma w `stores` własną
- * prognozę do osobnej części wyciągu. Dokładny wynik daje podgląd końca miesiąca (`preview.ts`).
+ * prognozę do osobnej części wyciągu (w niej też plan Centrali sklepu; suma sieci planu nie ma: `plan` i `planFirst` są wtedy `null`). Dokładny wynik daje podgląd końca miesiąca (`preview.ts`).
  *
  * Sklepy w budowie i rozliczenie końcowe sklepu, któremu kończy się wypowiedzenie, nie wchodzą do prognozy: ich pieniądze nie są
  * jeszcze naliczone w wyciągach (pakiet za gotówkę już zszedł z portfela, rata pakietu wejdzie do wyciągu nowego sklepu).
@@ -40,5 +40,9 @@ export function forecastFirm(f: FirmState): FirmForecast {
     ...list[0]!.statement, cashAfter, partial: list.some((m) => m.statement.partial),
     ...Object.fromEntries(SUMMED.map((k) => [k, sum(list, (m) => m.statement[k])])),
   };
-  return { saldo: sum(list, (m) => m.saldo), installments: sum(list, (m) => m.installments), statement, net, cashAfter, stores };
+  // kara za plan (opcjonalny klucz, część `deductions`): suma po sklepach; bez kar klucza nie ma, jak w wyciągu jednego sklepu
+  const planFine = sum(list, (m) => m.statement.plan ?? 0);
+  if (planFine > 0) statement.plan = planFine;
+  else delete statement.plan;
+  return { saldo: sum(list, (m) => m.saldo), installments: sum(list, (m) => m.installments), statement, net, cashAfter, plan: null, planFirst: null, stores };
 }

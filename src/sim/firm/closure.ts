@@ -2,6 +2,7 @@ import { dayOf, isLastDayOfMonth } from '@/sim/economy/calendar';
 import { DEBT_LIMIT } from '@/sim/economy/catalog';
 import { DEBT_WARN, type EconEvent } from '@/sim/economy/economy';
 import { outstandingDebt, type RemanentProtocol } from '@/sim/economy/franchisee';
+import { planTerminates } from '@/sim/economy/plan';
 import { trustTerminates } from '@/sim/economy/tycoon/trust';
 import { WUT, closeWutMonth, wutTotal } from '@/sim/economy/tycoon/wut';
 import { switchStore } from './commands';
@@ -53,6 +54,14 @@ export function noticeEndDay(day: number): number {
 export const endedByTrust = (st: FirmStore, events: readonly EconEvent[]): boolean =>
   st.econ.gameOver && trustTerminates(st.econ.tycoon.trust.value) && events.some((e) => e.kind === 'month');
 
+/**
+ * Czy sklep w tej minucie stracił umowę przez trzecią wpadkę planu Centrali: `gameOver` z planu ustawia tylko zamknięcie miesiąca, więc to
+ * zdarzenie `month` razem z `gameOver`, stopniem planu na trzecim i zaufaniem powyżej zera (zaufanie 0 ma pierwszeństwo: powód `trust`).
+ */
+export const endedByPlan = (st: FirmStore, events: readonly EconEvent[]): boolean =>
+  st.econ.gameOver && planTerminates(st.econ.franchisee.plan) && !trustTerminates(st.econ.tycoon.trust.value)
+  && events.some((e) => e.kind === 'month');
+
 /** Czy w tej minucie sklep zamknął miesiąc w dniu końca wypowiedzenia (albo po nim). */
 const noticeEnded = (st: FirmStore, events: readonly EconEvent[]): boolean =>
   st.notice !== null && events.some((e) => e.kind === 'month') && dayOf(st.econ.minute - 1) >= st.notice.endDay;
@@ -65,6 +74,7 @@ function settle(st: FirmStore, day: number): void {
   fr.remanent.pending = 0;
   fr.remanent.revenue = 0;
   fr.remanent.fromDay = day;
+  delete fr.plan;   // plan należy do umowy: ponowny wynajem lokalu zaczyna nową umowę, więc nowy plan od jej czwartego miesiąca
 }
 
 /**
@@ -74,9 +84,9 @@ function settle(st: FirmStore, day: number): void {
  * `settlement` z kwotami, `closed` z powodem i, gdy rozliczenie przekroczyło próg ostrzeżenia o debecie, `debt`.
  *
  * Gdy to ostatni sklep (inne są zamknięte albo właśnie stracą umowę), gra się kończy bez rozliczenia, jak dziś: `over = 'closed'`.
- * Zaufanie 0 niesie już `gameover` sklepu, więc zdarzeń nie dokładamy; koniec wypowiedzenia ustawia `gameOver` i wysyła `gameover` z `notice`.
+ * Zaufanie 0 i trzecia wpadka planu niosą już `gameover` sklepu, więc zdarzeń nie dokładamy; koniec wypowiedzenia ustawia `gameOver` i wysyła `gameover` z `notice`.
  */
-export function closeStore(f: FirmState, id: number, reason: 'trust' | 'notice', out: FirmStepOut): void {
+export function closeStore(f: FirmState, id: number, reason: 'trust' | 'notice' | 'plan', out: FirmStepOut): void {
   const st = f.stores.find((s) => s.id === id);
   if (!st || st.closed || f.over !== null) return;
   const staying = openStores(f).filter((s) => s.id !== id && !s.econ.gameOver);
@@ -111,10 +121,10 @@ export function closeStore(f: FirmState, id: number, reason: 'trust' | 'notice',
   syncWallet(f);
 }
 
-/** Zamknięcia po minucie firmy, w kolejności `id`: zaufanie 0 przy zamknięciu miesiąca (ma pierwszeństwo) albo koniec wypowiedzenia. */
+/** Zamknięcia po minucie firmy, w kolejności `id`: zaufanie 0 przy zamknięciu miesiąca (ma pierwszeństwo), trzecia wpadka planu albo koniec wypowiedzenia. */
 export function closeDueStores(f: FirmState, stepped: readonly { st: FirmStore; events: readonly EconEvent[] }[], out: FirmStepOut): void {
   for (const { st, events } of stepped) {
-    const reason = endedByTrust(st, events) ? 'trust' : noticeEnded(st, events) ? 'notice' : null;
+    const reason = endedByTrust(st, events) ? 'trust' : endedByPlan(st, events) ? 'plan' : noticeEnded(st, events) ? 'notice' : null;
     if (reason !== null) closeStore(f, st.id, reason, out);
   }
 }

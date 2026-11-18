@@ -148,6 +148,8 @@ export interface CardContext {
    */
   district?: SiteMods['district'];
   difficult?: number;
+  /** Stopień drabiny wpadek planu Centrali (plan.ts). Tylko przy aktywnym planie (`target > 0`); bez niego talia jak przed 5a. */
+  planStage?: number;
 }
 
 export function createCards(day: number): CardsState {

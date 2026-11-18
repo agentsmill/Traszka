@@ -500,7 +500,7 @@ describe('podgląd końca miesiąca dla sieci: koniec okresu wypowiedzenia', () 
 // --- Prognoza paska ------------------------------------------------------------------------------------------------------
 
 describe('forecastFirm', () => {
-  const NUMERIC: Exclude<keyof Statement, 'cashAfter' | 'partial'>[] = [
+  const NUMERIC: Exclude<keyof Statement, 'cashAfter' | 'partial' | 'plan'>[] = [
     'margin', 'bonus', 'guarantee', 'transfer', 'installments', 'pallets', 'remanent', 'deductions', 'wages', 'media', 'zus', 'vat',
     'accounting', 'costs', 'net', 'result', 'spent', 'fines', 'other',
   ];
@@ -550,5 +550,89 @@ describe('forecastFirm', () => {
     const fc = forecastFirm(f);
     expect(fc.stores.map((s) => s.id)).toEqual([1]);
     expect(fc).toEqual({ ...forecastMonth(st.econ, st.info), stores: [{ id: 1, f: forecastMonth(st.econ, st.info) }] });
+  });
+});
+
+// --- Plan Centrali w podglądzie i prognozie sieci -------------------------------------------------------------------------
+
+describe('plan Centrali w podglądzie i prognozie sieci', () => {
+  /**
+   * Plan sklepu ponad jego prawdziwy obrót z tego miesiąca (podgląd bez planu; udział ok. 77%, poniżej progu dobicia), z dniami otwartymi
+   * tak, by do zamknięcia we wrześniu (30 dni) wyszedł pełny miesiąc: dni 0–11 już za nami. Prognoza paska tu nie służy: sklep po
+   * otwarciu ma obrót dużo wyższy od tempa z kilku pierwszych dni.
+   */
+  function armMiss(f: FirmState, storeId: number, stage = 0): void {
+    const revenue = runPreview(f)!.stores.find((s) => s.id === storeId)!.preview.revenue;
+    f.stores.find((s) => s.id === storeId)!.econ.franchisee.plan = {
+      target: Math.round(revenue * 1.3), base: 0, recent: [], streak: 0, stage, openDays: 12, topUp: false,
+    };
+  }
+
+  it('prognoza sieci niesie plan każdego sklepu w `stores`, a suma sieci planu nie ma', () => {
+    const f = twoStores('raty');
+    const st2 = f.stores[1]!;
+    st2.econ.franchisee.plan = { target: 1_000_000, base: 0, recent: [], streak: 0, stage: 0, openDays: 12, topUp: false };
+    const paced = forecastMonth(st2.econ, st2.info).plan!.forecastShare * 1_000_000;   // prognoza obrotu paska
+    st2.econ.franchisee.plan.target = Math.round(paced * 1.3);
+    const fc = forecastFirm(f);
+    expect(fc.plan).toBeNull();
+    expect(fc.planFirst).toBeNull();
+    expect(fc.stores[0]!.f.plan).toBeNull();
+    expect(fc.stores[1]!.f.plan).toMatchObject({ verdict: 'miss', stageAfter: 1 });
+    expect(fc.statement.plan).toBe(fc.stores[1]!.f.statement.plan);   // kara w sumie sieci to suma kar sklepów (tu tylko sklepu #2)
+    expect(fc.stores[1]!.f.statement.plan).toBe(fc.stores[1]!.f.plan!.fine);
+  });
+
+  it('wyciąg sumy sieci: kara za plan to suma kar sklepów (jak `deductions`), a bez kar klucza nie ma', () => {
+    const f = twoStores('raty');
+    expect(forecastFirm(f).statement.plan).toBeUndefined();
+    const factors = [1.3, 1.6];   // dwa różne cele, więc dwie różne kary
+    f.stores.forEach((st, i) => {
+      st.econ.franchisee.plan = { target: 1_000_000, base: 0, recent: [], streak: 0, stage: 0, openDays: 12, topUp: false };
+      const paced = forecastMonth(st.econ, st.info).plan!.forecastShare * 1_000_000;
+      st.econ.franchisee.plan.target = Math.round(paced * factors[i]!);
+    });
+    const fc = forecastFirm(f);
+    const fines = fc.stores.map((x) => x.f.statement.plan ?? 0);
+    expect(fines[0]).toBeGreaterThan(0);
+    expect(fines[1]).toBeGreaterThan(0);
+    expect(fines[0]).not.toBe(fines[1]);
+    expect(fc.statement.plan).toBe(fines[0]! + fines[1]!);
+  });
+
+  it('podgląd niesie rozliczenie planu sklepów, a kara w wyciągu sklepu zgadza się z zamknięciem miesiąca', () => {
+    const f = twoStores('raty');
+    armMiss(f, 2);
+    const preview = runPreview(f)!;
+    expect(preview.plans.map((p) => p.storeId)).toEqual([2]);   // sklep #1 nie ma planu
+    const real = playToClose(f);
+    expect(preview.plans[0]!.plan).toEqual(real.reports.get(2)!.plan);
+    expect(preview.plans[0]!.plan.fine).toBeGreaterThan(0);
+    expect(preview.stores[1]!.preview.statement.plan).toBe(preview.plans[0]!.plan.fine);
+    expectSameAsReal(preview, real);
+  });
+
+  it('sklep bez planu: `plans` puste', () => {
+    expect(runPreview(twoStores('raty'))!.plans).toEqual([]);
+  });
+
+  it('powód końca gry firmy podaje sklep, którego zamknięcie skończyło grę (zaufanie w sklepie 1 i plan w sklepie 2 w tej samej minucie)', () => {
+    const f = twoStores('raty');
+    loseTrust(f, 1);
+    armMiss(f, 2, 2);   // trzecia wpadka: stopień 2 → 3
+    const preview = runPreview(f)!;
+    expect(preview.stores.map((s) => s.preview.gameOver)).toEqual(['trust', 'plan']);
+    expect(preview.gameOver).toBe('trust');   // sklep 1 zamknięty pierwszy kończy firmę; wcześniej wychodziło `plan`
+    playToClose(f);
+    expect(f.over).toBe('closed');
+  });
+
+  it('i na odwrót: zaufanie w sklepie 2, plan w sklepie 1 daje powód `plan`', () => {
+    const f = twoStores('raty');
+    armMiss(f, 1, 2);
+    loseTrust(f, 2);
+    const preview = runPreview(f)!;
+    expect(preview.stores.map((s) => s.preview.gameOver)).toEqual(['plan', 'trust']);
+    expect(preview.gameOver).toBe('plan');
   });
 });

@@ -24,6 +24,7 @@ const LEVEL: Partial<Record<EconEventKind | TycoonNoticeKind, NoticeLevel>> = {
   gameover: 'story',
   debt: 'story',
   'trust-tier': 'story',
+  plan: 'story',
 };
 
 /**

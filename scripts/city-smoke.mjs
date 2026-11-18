@@ -28,6 +28,12 @@
  *  4b-e. ta sama sekcja badań po angielsku;
  *  4b-f. kopia „po Traszce” z remontem 4 sklepu startowego: sklep i ulica;
  *  4b-g. „Zrzut Traszkomonów”: talia z kopii zapisu, w której jutro może wypaść tylko ta karta.
+ * Etap 5a (plan Centrali, Zadanie 6) dokłada kroki `5a-a`…`5a-c` (komputer 1440×900, telefon 390×844), same: `--etap 5a`:
+ *  5a-a. zapis jednego sklepu z czterema raportami i bez bloku planu: okno zapowiedzi planu po jednym dniu gry, potem pierwszy plan w nowym miesiącu,
+ *        pomiar paska (wysokość wobec `--hud-h`, przełącznik), podgląd miesiąca;
+ *  5a-b. sieć z aktywnym planem i prognozą ok. 95%: wiersz planu, przełącznik „dobij z własnej kieszeni”, okno „Plan: brakuje do progu”,
+ *        po zamknięciu miesiąca raport z dobiciem;
+ *  5a-c. te same powierzchnie po angielsku, bez polskich zdań.
  * Plan 4b (Zadanie 11), krok f (komputer, jakość „średnia”): zapis „przed statusem” z zrzutem Traszkomonów wymuszonym w kopercie (`saveWithCardDrop`: ruch +1,6
  * od 6:00 do 10:00 następnej doby), przewinięcie do 7:30 i puszczenie czasu: przed wejściem staje kolejka 12 postaci, razem z salą mieści się w puli postaci
  * presetu, zrzut kadru na chodnik, a po 10:00 kolejka się rozchodzi.
@@ -53,7 +59,7 @@
  *  15. pełny bieg zawiera bieg `--bench` (ten sam rdzeń `benchPass` co `npm run city:smoke -- --bench`) na tej samej przeglądarce: `?bench=1&quick=1` kończy się,
  *      `__benchExtra.city` ma cztery wiersze z `calls` < 150, a zapytań do `/api/**` i poza localhost jest zero.
  *
- * Użycie: `npm run build`, potem `npm run city:smoke` (albo `node scripts/city-smoke.mjs [--only phone|desktop] [--etap 4b|makieta] [--bench]`). Zrzuty i `smoke.json` idą do
+ * Użycie: `npm run build`, potem `npm run city:smoke` (albo `node scripts/city-smoke.mjs [--only phone|desktop] [--etap 4b|5a|makieta] [--bench]`). Zrzuty i `smoke.json` idą do
  * `.smoke/city/` (katalog jest w .gitignore); wybrane zrzuty do raportu kopiuje się ręcznie do `docs/superpowers/reports/`.
  * Playwright nie jest zależnością projektu: skrypt bierze go z `PLAYWRIGHT_ROOT` (domyślnie `/opt/node-tools`, jak `scripts/tutorial-smoke.mjs`; może to
  * być katalog pakietu `playwright-core`, katalog `node_modules` albo katalog, w którego `node_modules` leży `playwright`), a gdy tam go nie ma,
@@ -137,6 +143,15 @@ export const STEPS_4B = [
   { id: '4b-e', name: 'po angielsku: sekcja badań Sieci', sizes: ['telefon', 'desktop'] },
   { id: '4b-f', name: 'zapis po Traszce z remontem 4 sklepu startowego: sklep i ulica bez błędów konsoli', sizes: ['telefon', 'desktop'] },
   { id: '4b-g', name: 'karta „Zrzut Traszkomonów” z talii, w której jutro może wypaść tylko ona', sizes: ['telefon', 'desktop'] },
+];
+/**
+ * Kroki etapu 5a (plan Centrali, Zadanie 6): jedno-sklepowy zapis z czterema raportami (zapowiedź planu i pierwszy plan), sieć z planem na ok. 95% prognozy
+ * (przełącznik dobicia, ostrzeżenie, raport z dobiciem) i to samo po angielsku. Komputer ma tu 1440×900 (`DESKTOP_4B`), telefon 390×844.
+ */
+export const STEPS_5A = [
+  { id: '5a-a', name: 'jeden sklep, cztery raporty i brak bloku planu: okno zapowiedzi po jednym dniu, pierwszy plan w nowym miesiącu, pasek wobec --hud-h', sizes: ['telefon', 'desktop'] },
+  { id: '5a-b', name: 'sieć z planem na ok. 95% prognozy: wiersz planu, przełącznik dobicia, okno „brakuje do progu”, raport miesiąca z dobiciem', sizes: ['telefon', 'desktop'] },
+  { id: '5a-c', name: 'po angielsku: okno zapowiedzi, wiersz planu, podgląd i raport z dobiciem bez polskich zdań', sizes: ['telefon', 'desktop'] },
 ];
 /** Rozmiar komputera w krokach 4b (plan 4b, Zadanie 10, Step 5). */
 export const DESKTOP_4B = { width: 1440, height: 900 };
@@ -299,7 +314,7 @@ export const stepResult = (patch = {}) => ({ ok: true, failed: [], notes: [], na
  * Tabela wyników do raportu: wiersz na krok i rozmiar (`ok`, `FAIL`, `n/d`) z pierwszą przyczyną porażki. `results`: nazwa rozmiaru →
  * identyfikator kroku → `stepResult`.
  */
-export function summarize(results, steps = [...STEPS, TIPS_STEP, ...STEPS_4B]) {
+export function summarize(results, steps = [...STEPS, TIPS_STEP, ...STEPS_4B, ...STEPS_5A]) {
   const rows = [];
   for (const [size, byStep] of Object.entries(results)) {
     if (byStep.exception) rows.push({ size, step: '!', name: 'wyjątek poza krokiem', status: 'FAIL', detail: byStep.exception.failed[0] ?? '' });
@@ -320,11 +335,12 @@ export function outDirFor(bench, env = process.env) {
 
 export const USAGE = `Smoke miasta i drugiego sklepu w headless Chromium (po \`npm run build\`).
 
-Użycie: node scripts/city-smoke.mjs [--only telefon|desktop] [--etap 4b|makieta] [--bench]
+Użycie: node scripts/city-smoke.mjs [--only telefon|desktop] [--etap 4b|5a|makieta] [--bench]
         npm run city:smoke
 
   --only <rozmiar>  tylko jeden rozmiar okna: telefon (390×844, dotyk) albo desktop (1280×800; w krokach 4b 1440×900)
   --etap 4b         tylko kroki etapu 4b (4b-a…4b-g) i konsola (krok 8); reszta „nie dotyczy”
+  --etap 5a         tylko kroki etapu 5a (5a-a…5a-c, plan Centrali) i konsola (krok 8); reszta „nie dotyczy”
   --etap makieta    tylko kroki 13–15 (makieta na komputerze, profil „telefon”, bieg benchmarku) i konsola (krok 8); reszta „nie dotyczy”
   --bench           zamiast kroków sam bieg \`?bench=1&quick=1\` (benchmark z miastem) na obu rozmiarach; zero zapytań do /api/** to warunek
   --help            ta pomoc
@@ -332,8 +348,8 @@ Użycie: node scripts/city-smoke.mjs [--only telefon|desktop] [--etap 4b|makieta
 Zmienne: PLAYWRIGHT_ROOT (domyślnie ${DEFAULT_PLAYWRIGHT_ROOT}), CITY_SMOKE_CHROMIUM, CITY_SMOKE_PORT (4318), CITY_SMOKE_OUT (.smoke/city).
 Zrzuty i smoke.json idą do katalogu wyjściowego (w .gitignore; \`--bench\` pisze do .smoke/city-bench z bench.json, żeby nie kasować wyników pełnego smoke'a). Kod wyjścia: 0 (wszystkie kroki ok), 1 (porażka kroku), 2 (błąd uruchomienia).`;
 
-/** Wartości `--etap`: kroki etapu 4b albo kroki makiety z Zadania 15 (13–15). */
-export const STAGES = ['4b', 'makieta'];
+/** Wartości `--etap`: kroki etapu 4b, kroki etapu 5a (plan Centrali) albo kroki makiety z Zadania 15 (13–15). */
+export const STAGES = ['4b', '5a', 'makieta'];
 
 /**
  * Argumenty polecenia: `--only telefon|desktop` ogranicza przebieg do jednego rozmiaru (do ponawiania pojedynczej porażki), `--etap 4b|makieta` do kroków
@@ -347,7 +363,7 @@ export function parseArgs(argv) {
     else if (a === '--bench') args.bench = true;
     else if (a === '--etap') {
       const v = argv[++i];
-      if (!STAGES.includes(v)) throw new Error(`--etap przyjmuje 4b albo makieta, dostałem „${v ?? ''}”`);
+      if (!STAGES.includes(v)) throw new Error(`--etap przyjmuje 4b, 5a albo makieta, dostałem „${v ?? ''}”`);
       args.stage = v;
     } else if (a === '--only') {
       const v = argv[++i];
@@ -540,6 +556,112 @@ export function withOnlyCardTomorrow(saveText, { storeId, cardId, ids }) {
   cards.nextCircularDay = day + 7;
   cards.lastSeen = Object.fromEntries(ids.filter((id) => id !== cardId).map((id) => [id, day]));
   return JSON.stringify(save);
+}
+
+// ——— etap 5a (plan Centrali, Zadanie 6): koperty zapisów i pomiary kroków 5a (testy: tests/citySmoke.test.ts) ———
+
+/** Prognoza planu, na którą smoke ustawia cel sklepu (poniżej 100%, ale nad progiem dobicia 90%), i dopuszczalny rozrzut przy strojeniu. */
+export const PLAN_FORECAST_TARGET = 0.95;
+export const PLAN_FORECAST_TOLERANCE = 0.006;
+/** Okno, wiersz i raport planu, które sprawdza `polishProblems`, muszą mieć choć tyle znaków: pusty tekst nie ma polskich słów, więc przeszedłby. */
+const MIN_TEXT = 20;
+/** Tytuły okien zdarzeń planu po polsku i po angielsku (`planEventTitle` i `EN_UI`: zapowiedź, „brakuje do progu”). */
+export const PLAN_TITLES = {
+  pl: { announce: 'Plan sprzedaży Centrali', short: 'Plan: brakuje do progu', net: /^Wyciągi od Centrali/, switchLabel: /Dobij plan z własnej kieszeni/, topUp: /dobiciem z kieszeni/ },
+  en: { announce: 'Head Office sales plan', short: 'Plan: short of the threshold', net: /^Head Office statements/, switchLabel: /Top up the plan from your own pocket/, topUp: /out-of-pocket top-up/ },
+};
+/** Najmniejszy dopuszczalny cel dotyku przełącznika (px, jak `min-height` w `.tt-plan-switch`) i największy zapas paska nad jego treścią wobec `--hud-h` (px). */
+export const SWITCH_MIN_PX = 36;
+export const HUD_SLACK_MAX_PX = 32;
+
+/** Kopia koperty, w której sklep `storeId` ma `months` raportów w historii (brakujące kopie najstarszego dopisane od początku), a firma nie ma budów w toku. */
+export function withReports(saveText, { storeId, months, noBuilds = false }) {
+  const save = JSON.parse(saveText);
+  const st = save.stores.find((x) => x.id === storeId);
+  if (!st || st.closed) throw new Error(`w zapisie nie ma otwartego sklepu #${storeId}`);
+  const h = st.econ.history;
+  if (!Array.isArray(h) || h.length === 0) throw new Error(`sklep #${storeId} nie ma historii do skopiowania`);
+  const labels = ['czerwiec 2026', 'lipiec 2026', 'sierpień 2026'];
+  while (h.length < months) h.unshift({ ...h[0], label: labels[(months - h.length - 1) % labels.length] });
+  delete st.econ.franchisee.plan;
+  if (noBuilds) save.firm.builds = [];
+  return JSON.stringify(save);
+}
+
+/** Kopia koperty z blokiem planu sklepu `storeId` (stopień 0, seria `streak`, `openDays` dni miesiąca już zamkniętych); cel ma strój smoke'a (`calibratePlan`). */
+export function withPlanBlock(saveText, { storeId, target, base, recent, streak = 2, openDays }) {
+  const save = JSON.parse(saveText);
+  const st = save.stores.find((x) => x.id === storeId);
+  if (!st || st.closed) throw new Error(`w zapisie nie ma otwartego sklepu #${storeId}`);
+  st.econ.franchisee.plan = { target, base, recent, streak, stage: 0, openDays, topUp: false };
+  return JSON.stringify(save);
+}
+
+/** Procenty z napisu paska planu („wykonane 31,5% · prognoza 95%”, po angielsku „achieved 31.5% · forecast 95%”) jako liczby, w kolejności napisu. */
+export function parsePercents(text) {
+  return [...String(text).matchAll(/(\d+(?:[.,]\d+)?)\s*%/g)].map((m) => Number(m[1].replace(',', '.')));
+}
+
+/** Nowy cel planu, przy którym prognoza paska (`forecast`, 0–2) wypadnie na `want`: udział jest odwrotnie proporcjonalny do celu, cel zaokrąglony do 100 zł. */
+export const retargetFor = (target, forecast, want = PLAN_FORECAST_TARGET) => Math.max(100, Math.round((target * forecast) / want / 100) * 100);
+
+/**
+ * Wady paska planu z pomiaru strony (`m`: `hudH` z `--hud-h` w px, `hud` ramka `.tt-hud2`, `plan` ramka wiersza planu, `text`, `sw` przełącznik z ramką,
+ * `swText` jego napis z `scrollWidth`/`clientWidth`, `planScroll`/`planClient`). Pasek ma kończyć się w granicach `--hud-h` (okna pod nim używają tej zmiennej),
+ * ale nie zostawiać po sobie więcej niż `HUD_SLACK_MAX_PX` pustego miejsca; wiersz planu leży w pasku, przełącznik nie przecina tekstu i ma cel dotyku
+ * co najmniej `SWITCH_MIN_PX` na wysokość, a nic nie wystaje poza szerokość okna `width`.
+ */
+export function hudProblems(m, width) {
+  const out = [];
+  if (!m.plan || !m.hud) return ['brak wiersza planu albo paska'];
+  if (!Number.isFinite(m.hudH)) out.push(`--hud-h nie jest liczbą: „${m.hudRaw}”`);
+  else {
+    if (m.hud.b > m.hudH + 0.5) out.push(`pasek kończy się na ${Math.round(m.hud.b)} px, a --hud-h ma ${m.hudH} px: okna pod paskiem wchodzą pod niego`);
+    if (m.hudH - m.hud.b > HUD_SLACK_MAX_PX) out.push(`--hud-h ${m.hudH} px, pasek kończy się na ${Math.round(m.hud.b)} px: zapas ${Math.round(m.hudH - m.hud.b)} px (limit ${HUD_SLACK_MAX_PX})`);
+  }
+  if (m.plan.t < m.hud.t - 0.5 || m.plan.b > m.hud.b + 0.5) out.push('wiersz planu wystaje z paska');
+  if (m.plan.r > width + 0.5 || m.plan.l < -0.5 || m.hud.r > width + 0.5) out.push(`pasek albo wiersz planu poza oknem ${width} px`);
+  if (m.planScroll > m.planClient + 1) out.push(`wiersz planu: zawartość ${m.planScroll} px w ${m.planClient} px`);
+  if (m.sw) {
+    if (m.sw.b - m.sw.t < SWITCH_MIN_PX - 0.5) out.push(`przełącznik ma ${Math.round(m.sw.b - m.sw.t)} px wysokości (min. ${SWITCH_MIN_PX})`);
+    if (m.sw.l < m.plan.l - 0.5 || m.sw.r > m.plan.r + 0.5 || m.sw.t < m.plan.t - 0.5 || m.sw.b > m.plan.b + 0.5) out.push('przełącznik wystaje z wiersza planu');
+    if (m.textBox && overlapArea(m.textBox, m.sw) > 0) out.push(`przełącznik przecina tekst planu: ${overlapArea(m.textBox, m.sw)} px²`);
+    if (m.swText && m.swText.scroll > m.swText.client + 1) out.push(`napis przełącznika: ${m.swText.scroll} px w ${m.swText.client} px`);
+  } else out.push('brak przełącznika w wierszu planu');
+  return out;
+}
+
+/**
+ * Najdłuższe zdania wiersza planu (`planLines`): głowa z siedmiocyfrowym planem i dwucyfrową serią, postęp, a werdykt: „na styk” przy stopniu 2 (wypowiedzenie), kara
+ * sześciocyfrowa ze stopniem 1 (najdłuższa nazwa stopnia) i wypowiedzenie placówki. Smoke wstawia je kolejno do wiersza i sprawdza, czy pasek wciąż mieści się w `--hud-h`.
+ */
+export const PLAN_WORST_TEXTS = {
+  pl: {
+    head: 'Plan Centrali: 1 234 567 zł · seria: 12 mies.', progress: 'wykonane 100% · prognoza 100%',
+    verdicts: [
+      'Prognoza: plan na styk. Jeśli zabraknie choć trochę, Centrala wypowie umowę na tę placówkę.',
+      'Jeśli nic się nie zmieni: kara 123 456 zł, stopień 1 (Rozmowa z partnerem regionalnym).',
+      'Jeśli nic się nie zmieni: Centrala wypowie umowę na tę placówkę.',
+    ],
+  },
+  en: {
+    head: 'Head Office plan: 1,234,567 zł · streak: 12 mo.', progress: 'achieved 100% · forecast 100%',
+    verdicts: [
+      'Forecast: plan only just met. Fall even slightly short and Head Office will terminate the agreement for this branch.',
+      'If nothing changes: penalty 123,456 zł, stage 1 (Talk with the regional partner).',
+      'If nothing changes: Head Office will terminate the agreement for this branch.',
+    ],
+  },
+};
+
+/** Polskie litery i słowa w tekście, który ma być po angielsku (bez „zł”, jedynego polskiego napisu, który zostaje przy kwotach). Pusta lista: czysto. */
+export function polishProblems(text) {
+  const clean = String(text).replace(/zł/g, ' PLN ');
+  const found = new Set();
+  // nazwy ulic z miasta gry (np. „Słoneczna”) zostają po polsku w każdym języku: to nazwy własne, nie zdania
+  for (const m of clean.matchAll(/[A-Za-zĄĆĘŁŃÓŚŹŻąćęłńóśźż]*[ąćęłńóśźżĄĆĘŁŃÓŚŹŻ][A-Za-zĄĆĘŁŃÓŚŹŻąćęłńóśźż]*/g)) if (!/^Słoneczna/.test(m[0])) found.add(m[0]);
+  for (const m of clean.matchAll(/\b(Centrala|Centrali|Centralę|plan niewykonany|kara|stopień|dobicie|dobij)\b/gi)) found.add(m[0]);
+  return [...found];
 }
 
 // ——— plan 4a.2 (Zadanie 15): kroki makiety (testy: tests/citySmoke.test.ts) ———
@@ -1226,12 +1348,13 @@ async function main(argv) {
 
   // --- kontekst i strona ---
 
-  async function newPage(browser, vp, tag, { fixture, tips = false, quality = 'niska', userAgent = null }) {
+  async function newPage(browser, vp, tag, { fixture, tips = false, quality = 'niska', userAgent = null, lang = null }) {
     // `quality: null` to adres bez `?q=`: gra wybiera preset sama (Średnia na komputerze, Niska na telefonie); `userAgent` daje kontekstowi telefonu mobilny nagłówek (profil „telefon”)
     const ctx = await browser.newContext({ ...contextOptions(vp), ...(userAgent ? { userAgent } : {}) });
     // najpierw ogólna blokada, potem `/api/**` (późniejsza trasa ma pierwszeństwo): niczego nie wysyłamy do rankingu
     await guardNetwork(ctx, port, `${vp.name}/${tag}`, { external, apiBlocked });
     const entries = storageEntries({ seed: fixture.seed, saveText: fixture.text, tips, now: Date.now() });
+    if (lang) entries['traszka:lang'] = lang;   // język gry od pierwszego wczytania (kroki 5a-c)
     // wstawiamy raz na kartę (sessionStorage przeżywa przeładowanie ze zmianą języka, a zapis gry nie może wrócić do fixture'a)
     await ctx.addInitScript((e) => {
       try {
@@ -2855,6 +2978,375 @@ async function main(argv) {
     }
   }
 
+  // ——————— etap 5a: plan sprzedaży Centrali (kroki 5a-a…5a-c) ———————
+
+  /** Pomiar paska z wierszem planu: `--hud-h` z korzenia interfejsu, ramki paska, wiersza, przełącznika i jego napisu (px) oraz tekst wiersza. */
+  async function hudMeasure(page) {
+    return page.evaluate(() => {
+      const box = (el) => { if (!el) return null; const b = el.getBoundingClientRect(); return b.width > 0 && b.height > 0 ? { l: b.left, t: b.top, r: b.right, b: b.bottom } : null; };
+      const ui = document.querySelector('.tt-ui');
+      const raw = ui ? getComputedStyle(ui).getPropertyValue('--hud-h').trim() : '';
+      const plan = document.querySelector('.tt-hud-plan');
+      const sw = plan?.querySelector('.tt-plan-switch') ?? null;
+      const swText = plan?.querySelector('.tt-plan-switch-text') ?? null;
+      return {
+        hudRaw: raw, hudH: Number.parseFloat(raw), net: !!ui?.classList.contains('tt-net'), width: innerWidth,
+        hud: box(document.querySelector('.tt-hud2')), plan: box(plan), textBox: box(plan?.querySelector('.tt-plan-text') ?? null), sw: box(sw),
+        swText: swText ? { scroll: swText.scrollWidth, client: swText.clientWidth } : null, planScroll: plan?.scrollWidth ?? 0, planClient: plan?.clientWidth ?? 0,
+        text: (plan?.textContent ?? '').replace(/\s+/g, ' ').trim(),
+      };
+    });
+  }
+
+  /**
+   * Najgorszy przypadek paska: do wiersza planu wstawiamy po kolei najdłuższe zdania języka (`PLAN_WORST_TEXTS`), mierzymy, gdzie kończy się pasek,
+   * i przywracamy tekst. Zwraca dół paska (px) dla każdego zdania; gra odświeży wiersz sama przy najbliższym kroku zegara.
+   */
+  async function hudWorst(page, lang) {
+    return page.evaluate((w) => {
+      const row = document.querySelector('.tt-hud-plan');
+      // tekst zmieniamy w istniejącym węźle tekstowym (`data`), a nie przez `textContent`: węzła, który zna Preact, nie wolno wymienić, bo wiersz przestałby się odświeżać
+      const set = (sel, text) => { const node = row?.querySelector(sel)?.firstChild; if (node && node.nodeType === 3) node.data = text; };
+      const keep = ['.tt-plan-head', '.tt-plan-progress', '.tt-plan-verdict'].map((q) => [q, row?.querySelector(q)?.textContent ?? '']);
+      set('.tt-plan-head', w.head);
+      set('.tt-plan-progress', w.progress);
+      const out = [];
+      for (const v of w.verdicts) {
+        set('.tt-plan-verdict', v);
+        out.push({ text: v, bottom: document.querySelector('.tt-hud2').getBoundingClientRect().bottom });
+      }
+      for (const [q, t] of keep) set(q, t);
+      return out;
+    }, PLAN_WORST_TEXTS[lang]);
+  }
+
+  /** Zapis pomiaru paska do notatek kroku i sprawdzenie `hudProblems`; zwraca pomiar. */
+  async function hudCheck(page, ev, label) {
+    const m = await hudMeasure(page);
+    const problems = hudProblems(m, m.width);
+    ev.check(problems.length === 0, `${label}: ${problems.join(' | ')}`);
+    const r = (b) => (b ? `${Math.round(b.t)}–${Math.round(b.b)} px` : 'brak');
+    ev.note(`${label} (${m.width} px, ${m.net ? 'sieć' : 'jeden sklep'}): --hud-h ${m.hudRaw}, pasek ${r(m.hud)}, wiersz planu ${r(m.plan)} (${m.plan ? Math.round(m.plan.b - m.plan.t) : 0} px), przełącznik ${m.sw ? `${Math.round(m.sw.r - m.sw.l)} × ${Math.round(m.sw.b - m.sw.t)} px` : 'brak'}`);
+    // pasek ma też mieścić się w `--hud-h` przy najdłuższych zdaniach planu (zmiana tekstu nie może wsunąć okien pod pasek)
+    const worst = await hudWorst(page, label.startsWith('angielski') ? 'en' : 'pl');
+    const bad = worst.filter((w) => w.bottom > m.hudH + 0.5);
+    ev.check(bad.length === 0, `${label}: przy najdłuższym zdaniu pasek kończy się niżej niż --hud-h ${m.hudH} px: ${bad.map((w) => `${Math.round(w.bottom)} px („${w.text.slice(0, 40)}…”)`).join('; ')}`);
+    ev.note(`${label}: najdłuższe zdania planu → dół paska ${worst.map((w) => `${Math.round(w.bottom)}`).join(' / ')} px`);
+    return m;
+  }
+
+  /**
+   * Ten sam pomiar paska przy pośrednich szerokościach okna (tablet 640–819 px ma własne reguły `--hud-h`, a ani telefon, ani komputer smoke'a go nie dotykają):
+   * okno zmienia rozmiar, pasek się układa na nowo, pomiar, powrót do rozmiaru kroku.
+   */
+  async function hudAtWidths(page, ev, vp, widths, label) {
+    for (const w of widths) {
+      await page.setViewportSize({ width: w, height: vp.size.height });
+      await sleep(500);
+      await hudCheck(page, ev, `${label} przy ${w} px`);
+    }
+    await page.setViewportSize(vp.size);
+    await sleep(300);
+  }
+
+  /** Pomiar szerokości okna (`checkWidth`) z wynikiem w kroku: wylew w poziomie w oknie planu to porażka kroku, a nie tylko wpis w `widths`. */
+  async function widthOk(page, ev, label) {
+    const w = await checkWidth(page, label);
+    ev.check(w.ok, `${label}: ${w.problems.join(' | ')}`);
+    return w;
+  }
+
+  /** Sklep aktywny firmy (albo jedyny) z żywego stanu gry: tu stoi blok planu. */
+  const planOf5a = (page) => page.evaluate(() => {
+    const s = window.traszkaGame.session;
+    const f = s.firm ?? null;
+    const st = f ? f.stores.find((x) => x.id === f.activeId) : null;
+    const econ = st ? st.econ : s.econ;
+    const p = econ.franchisee.plan ?? null;
+    return p ? { ...p, recent: [...p.recent], history: econ.history.length, cash: econ.cash, revenue: econ.month.revenue } : null;
+  });
+
+  /**
+   * Ustawia cel planu aktywnego sklepu tak, żeby prognoza paska wyszła na `PLAN_FORECAST_TARGET` (± `PLAN_FORECAST_TOLERANCE`): czyta ją z napisu wiersza,
+   * przelicza cel (`retargetFor`), wpisuje go w żywy stan gry i przesuwa zegar o minutę, żeby pasek się odświeżył. Zwraca prognozę po ostatniej poprawce.
+   */
+  async function calibratePlan(page) {
+    let forecast = NaN;
+    for (let i = 0; i < 5; i++) {
+      const read = await page.evaluate(() => ({ text: document.querySelector('.tt-plan-progress')?.textContent ?? '', target: null }));
+      const pcts = parsePercents(read.text);
+      forecast = (pcts.at(-1) ?? NaN) / 100;
+      const p = await planOf5a(page);
+      if (!Number.isFinite(forecast) || !p) throw new Error(`nie widzę prognozy planu: „${read.text}”`);
+      if (Math.abs(forecast - PLAN_FORECAST_TARGET) <= PLAN_FORECAST_TOLERANCE) return forecast;
+      const target = retargetFor(p.target, forecast);
+      await page.evaluate((t) => {
+        const s = window.traszkaGame.session;
+        const f = s.firm ?? null;
+        const st = f ? f.stores.find((x) => x.id === f.activeId) : null;
+        for (const econ of new Set([s.econ, ...(st ? [st.econ] : [])])) if (econ.franchisee.plan) econ.franchisee.plan.target = t;
+      }, target);
+      await skip(page, 1);
+      await settle(page);
+    }
+    return forecast;
+  }
+
+  /** Czeka na nowy napis wiersza planu (po `skip` pasek odświeża się przy następnym kroku zegara). */
+  const planRowText = (page) => page.evaluate(() => (document.querySelector('.tt-hud-plan')?.textContent ?? '').replace(/\s+/g, ' ').trim());
+
+  /** Tekst widocznego okna `sel` (puste, gdy go nie ma). */
+  const dialogText = (page, sel) => page.evaluate((q) => (document.querySelector(q)?.textContent ?? '').replace(/\s+/g, ' ').trim(), sel);
+
+  /**
+   * Jeden dzień gry do okna zapowiedzi planu (`announce`) w zapisie z czterema raportami: sprawdza tytuł, tekst i szerokość, robi zrzut i zamyka okno.
+   * Zwraca stan bloku planu po oknie (cel 0 = miesiąc zapowiedzi).
+   */
+  async function announceCheck(page, ev, { lang, shotName, phone }) {
+    const t = PLAN_TITLES[lang];
+    const p0 = await planOf5a(page);
+    ev.check(p0 === null && !(await visible(page, '.tt-hud-plan')), `przed zapowiedzią: blok planu ${JSON.stringify(p0)}, wiersz widoczny ${await visible(page, '.tt-hud-plan')}`);
+    const { stopped } = await advance(page, { stop: new RegExp(`^${t.announce}$`), maxDays: 2, chunk: 360 });
+    if (!ev.check(!!stopped, `okno „${t.announce}” nie pojawiło się po jednym dniu gry`)) return null;
+    await sleep(450);
+    const text = await dialogText(page, '.tt-story');
+    ev.note(`okno „${stopped.label}”: ${text.slice(0, 200)}`);
+    ev.check(text.length > MIN_TEXT, `okno zapowiedzi bez tekstu: „${text}”`);
+    if (lang === 'en') ev.check(polishProblems(text).length === 0, `polskie słowa w oknie zapowiedzi: ${polishProblems(text).join(', ')}`);
+    else ev.check(/Od przyszłego miesiąca ten sklep ma plan sprzedaży Centrali/.test(text), `tekst zapowiedzi: ${text.slice(0, 160)}`);
+    if (phone) await widthOk(page, ev, `${lang === 'en' ? 'angielski: ' : ''}5a: okno zapowiedzi planu`);
+    await ev.shot(shotName);
+    await press(page, '.tt-story .tt-primary');
+    await settle(page);
+    const p1 = await planOf5a(page);
+    ev.check(!!p1 && p1.target === 0, `po zapowiedzi blok planu ma cel 0 (miesiąc bez rozliczenia): ${JSON.stringify(p1)}`);
+    ev.check(!(await visible(page, '.tt-hud-plan')), 'w miesiącu zapowiedzi pasek nie pokazuje jeszcze planu');
+    return p1;
+  }
+
+  /** Okno „Wyciąg na koniec miesiąca”: liczy podgląd i zwraca jego tekst; po zrzucie zamyka okno. */
+  async function previewCheck(page, ev, { lang, shotName, phone }) {
+    await press(page, '.tt-due');
+    await page.waitForSelector('.tt-preview', { timeout: 10_000 });
+    const before = await dialogText(page, '.tt-preview');
+    await press(page, '.tt-preview .tt-primary.big');
+    await page.waitForSelector('.tt-preview-result', { timeout: 60_000 });
+    await sleep(250);
+    const text = await dialogText(page, '.tt-preview');
+    ev.check(/Plan Centrali|Head Office plan/.test(text), `podgląd miesiąca bez wiersza planu: ${text.slice(0, 200)}`);
+    ev.check(text.length > MIN_TEXT, `podgląd miesiąca bez tekstu: „${text}”`);
+    if (lang === 'en') ev.check(polishProblems(text).length === 0, `polskie słowa w podglądzie: ${polishProblems(text).join(', ')}`);
+    ev.note(`podgląd miesiąca (${lang}): ${before.length} → ${text.length} znaków, wiersz planu jest`);
+    if (phone) await widthOk(page, ev, `${lang === 'en' ? 'angielski: ' : ''}5a: podgląd miesiąca`);
+    await page.evaluate(() => document.querySelector('.tt-plan-results')?.scrollIntoView({ block: 'center' }));   // w sieci zdanie o wyniku planu leży niżej: ma być na zrzucie
+    await sleep(250);
+    await ev.shot(shotName);
+    await press(page, '.tt-preview .tt-modal-foot .tt-btn');
+    await page.waitForSelector('.tt-preview', { state: 'detached', timeout: 5_000 });
+    return text;
+  }
+
+  /**
+   * Sieć z planem jednego sklepu na ok. 95% prognozy (`po Traszce`: sklepy #1 i #3 otwarte; blok planu w #1): wiersz planu na wąskim i szerokim pasku, przełącznik,
+   * podgląd miesiąca, ostrzeżenie przedostatniego dnia i raport miesiąca z dobiciem. `lang` zmienia język (`pl` albo `en`), reszta jest ta sama.
+   */
+  async function networkPlanRun(browser, vp0, { lang, id }) {
+    const vp = vp0.mobile ? vp0 : { ...vp0, size: DESKTOP_4B };
+    const phone = vp.mobile;
+    const t = PLAN_TITLES[lang];
+    const en = lang === 'en';
+    const pre = en ? 'angielski: ' : '';
+    const tag = en ? '5a-c' : '5a-b';
+    const fixture = {
+      seed: after.seed,
+      text: withPlanBlock(after.text, { storeId: 1, target: 355_000, base: 10_300, recent: [9_900, 10_100, 10_944], streak: 2, openDays: 6 }),
+    };
+    const errorsFrom = errors.length;
+    const { ctx, page } = await newPage(browser, vp, tag, { fixture, lang: en ? 'en' : null });
+    try {
+      await runStep(vp, id, page, async (ev) => {
+        await waitReady(page);
+        await pause(page);
+        await settle(page);
+        await pause(page);
+        const g = await readGame(page);
+        ev.check(g.activeId === 1 && g.stores.filter((s) => !s.closed).length === 2, `sieć: aktywny #${g.activeId}, otwarte ${g.stores.filter((s) => !s.closed).length}`);
+        await page.waitForSelector('.tt-hud-plan', { timeout: 30_000 });
+        const forecast = await calibratePlan(page);
+        ev.check(Math.abs(forecast - PLAN_FORECAST_TARGET) <= PLAN_FORECAST_TOLERANCE, `kalibracja planu: prognoza ${forecast}, ma być ${PLAN_FORECAST_TARGET} ± ${PLAN_FORECAST_TOLERANCE}`);
+        const m0 = await hudCheck(page, ev, `${pre}5a: wiersz planu przy prognozie ${Math.round(forecast * 1000) / 10}%, przełącznik wyłączony`);
+        ev.check(m0.net, 'pasek nie ma klasy tt-net mimo dwóch sklepów');
+        ev.check(t.switchLabel.test(m0.text), `napis przełącznika: ${m0.text.slice(0, 200)}`);
+        ev.check(m0.text.length > MIN_TEXT, `wiersz planu bez tekstu: „${m0.text}”`);
+        if (en) ev.check(polishProblems(m0.text).length === 0, `polskie słowa w wierszu planu: ${polishProblems(m0.text).join(', ')}`);
+        if (phone) await widthOk(page, ev, `${pre}5a: wiersz planu (sieć)`);
+        await ev.shot(en ? '5a-10-angielski-pasek-95' : '5a-03-pasek-sieci-95-wylaczony');
+        const sw = page.locator('.tt-hud-plan .tt-plan-switch');
+        ev.check((await sw.getAttribute('aria-checked')) === 'false', 'przełącznik na starcie włączony');
+        await sw.click();
+        await until(page, () => window.traszkaGame.session.firm.stores.find((x) => x.id === 1)?.econ.franchisee.plan?.topUp === true, null, 'plan.topUp w stanie gry po kliknięciu przełącznika', 15_000);
+        await skip(page, 1);
+        await settle(page);
+        ev.check((await sw.getAttribute('aria-checked')) === 'true', 'przełącznik nie pokazuje stanu włączonego po kliknięciu');
+        // pasek odświeża się przy następnym kroku zegara: czekamy na werdykt z dobiciem, zamiast czytać go od razu
+        try {
+          await until(page, (re) => new RegExp(re).test(document.querySelector('.tt-hud-plan')?.textContent ?? ''), en ? 'top-up from your own pocket' : 'dobicie z kieszeni', 'werdykt z dobiciem w wierszu planu', 10_000);
+        } catch { /* poniżej sprawdzenie z tekstem, który faktycznie stoi */ }
+        const on = await planRowText(page);
+        ev.check(en ? /top-up from your own pocket/.test(on) : /dobicie z kieszeni/.test(on), `werdykt po włączeniu: ${on}`);
+        ev.note(`wiersz planu po włączeniu: ${on}`);
+        await hudCheck(page, ev, `${pre}5a: wiersz planu, przełącznik włączony`);
+        if (!en) await ev.shot('5a-04-pasek-sieci-95-wlaczony');
+        if (!phone && !en) await hudAtWidths(page, ev, vp, [768], '5a: wiersz planu (sieć)');
+        await previewCheck(page, ev, { lang, shotName: en ? '5a-11-angielski-podglad' : '5a-05-podglad-miesiaca', phone });
+        // okna pod paskiem: arkusz Miasta nie wchodzi pod pasek z wierszem planu
+        await openTab(page, 'miasto');
+        await page.waitForSelector('.tt-sheet', { timeout: 15_000 });
+        const under = await page.evaluate(() => ({ hud: document.querySelector('.tt-hud2').getBoundingClientRect().bottom, sheet: document.querySelector('.tt-sheet').getBoundingClientRect().top }));
+        ev.check(under.sheet >= under.hud - 0.5, `arkusz Miasta (góra ${Math.round(under.sheet)} px) wchodzi pod pasek (dół ${Math.round(under.hud)} px)`);
+        ev.note(`arkusz Miasta zaczyna się ${Math.round(under.sheet)} px, pasek kończy ${Math.round(under.hud)} px`);
+        if (!en) await ev.shot('5a-06-miasto-pod-paskiem');
+        await closeTab(page, 'miasto');
+
+        // do przedostatniego dnia miesiąca: cel jeszcze raz na ok. 95% (prognoza liczy się z obrotu do dziś, więc rano tego dnia wychodzi blisko końcowego wyniku)
+        for (let i = 0; i < 40; i++) {
+          const p = await planOf5a(page);
+          if (!p || p.openDays >= 29) break;
+          await skip(page, 1440);
+          await settle(page);
+        }
+        const pLate = await planOf5a(page);
+        if (!ev.check(!!pLate && pLate.openDays >= 29 && pLate.topUp === true, `przed końcem miesiąca: plan ${JSON.stringify(pLate)}`)) return;
+        await skip(page, 360);
+        await settle(page);
+        const late = await calibratePlan(page);
+        ev.check(Math.abs(late - PLAN_FORECAST_TARGET) <= PLAN_FORECAST_TOLERANCE, `kalibracja planu w przedostatnim dniu: prognoza ${late}, ma być ${PLAN_FORECAST_TARGET} ± ${PLAN_FORECAST_TOLERANCE}`);
+        ev.note(`przedostatni dzień miesiąca: prognoza paska ${Math.round(late * 1000) / 10}%, cel ${money(pLate.target)} → ${money((await planOf5a(page)).target)} zł`);
+        const short = await advance(page, { stop: new RegExp(`^${t.short}$`), maxDays: 1, chunk: 360 });
+        if (ev.check(!!short.stopped, `okno „${t.short}” nie pojawiło się w przedostatnim dniu`)) {
+          await sleep(450);
+          const text = await dialogText(page, '.tt-story');
+          ev.note(`okno „${short.stopped.label}”: ${text.slice(0, 220)}`);
+          ev.check(text.length > MIN_TEXT, `okno „brakuje do progu” bez tekstu: „${text}”`);
+          if (en) ev.check(polishProblems(text).length === 0, `polskie słowa w oknie „brakuje do progu”: ${polishProblems(text).join(', ')}`);
+          else ev.check(/Dobicie z kieszeni: ok\./.test(text), `tekst okna: ${text.slice(0, 160)}`);
+          if (phone) await widthOk(page, ev, `${pre}5a: okno brakuje do progu`);
+          await ev.shot(en ? '5a-12-angielski-brakuje' : '5a-07-brakuje-do-progu');
+          await press(page, '.tt-story .tt-primary');
+        }
+        // koniec miesiąca: wyciągi sieci, zakładka sklepu #1 z planem zaliczonym z dobiciem
+        const net = await advance(page, { stop: t.net, maxDays: 2, chunk: 720 });
+        if (!ev.check(!!net.stopped, 'okno z wyciągami sieci nie pojawiło się do końca miesiąca')) return;
+        await sleep(450);
+        await page.locator('.tt-storetabs [role="tab"]').nth(1).click();
+        await page.waitForSelector('.tt-storereport', { timeout: 10_000 });
+        const rep = await dialogText(page, '.tt-storereport');
+        ev.check(t.topUp.test(rep), `raport sklepu #1 bez dobicia: ${rep.slice(0, 400)}`);
+        ev.check(/(Nowy plan|New plan)/.test(rep), 'raport sklepu #1 bez zdania o nowym planie');
+        ev.check(rep.length > MIN_TEXT, `raport sklepu #1 bez tekstu: „${rep}”`);
+        if (en) ev.check(polishProblems(rep).length === 0, `polskie słowa w raporcie: ${polishProblems(rep).join(', ')}`);
+        const plan = rep.match(en ? /Plan met with[^.]*\./ : /Plan zaliczony[^.]*\./)?.[0] ?? '';
+        ev.note(`raport sklepu #1: ${plan}`);
+        if (phone) await widthOk(page, ev, `${pre}5a: raport miesiąca z planem`);
+        await page.evaluate(() => document.querySelector('.tt-plan-report')?.scrollIntoView({ block: 'center' }));
+        await sleep(300);
+        await ev.shot(en ? '5a-13-angielski-raport-dobicie' : '5a-08-raport-dobicie');
+        await page.locator('.tt-storetabs [role="tab"]').nth(0).click();
+        await press(page, '.tt-modal:has(h2[data-tut="report"]) .tt-modal-foot .tt-primary');
+        await settle(page);
+        const after1 = await planOf5a(page);
+        ev.check(!!after1 && after1.stage === 0 && after1.streak >= 1 && after1.topUp === true, `po rozliczeniu (przełącznik jest ustawieniem stałym: zostaje włączony na następny miesiąc): ${JSON.stringify(after1 && { stage: after1.stage, streak: after1.streak, topUp: after1.topUp, target: after1.target })}`);
+        const errs = consoleSince(vp, tag, errorsFrom);
+        ev.check(errs.length === 0, `błędy konsoli: ${errs.slice(0, 3).join(' | ')}`);
+      });
+    } finally {
+      await ctx.close();
+    }
+  }
+
+  /** Jeden sklep z czterema raportami i bez bloku planu (zapis „dwa sklepy”, sklep #2, bez budowy w toku): zapowiedź i pierwszy plan, pasek jednego sklepu. */
+  async function singlePlanRun(browser, vp0, { lang, id }) {
+    const vp = vp0.mobile ? vp0 : { ...vp0, size: DESKTOP_4B };
+    const phone = vp.mobile;
+    const en = lang === 'en';
+    const pre = en ? 'angielski: ' : '';
+    const tag = en ? '5a-c-zapowiedz' : '5a-a';
+    const fixture = { seed: two.seed, text: withReports(two.text, { storeId: 2, months: 4, noBuilds: true }) };
+    const errorsFrom = errors.length;
+    const { ctx, page } = await newPage(browser, vp, tag, { fixture, lang: en ? 'en' : null });
+    try {
+      await runStep(vp, id, page, async (ev) => {
+        await waitReady(page);
+        await pause(page);
+        await settle(page);
+        await pause(page);
+        const g = await readGame(page);
+        ev.check(g.activeId === 2 && g.stores.filter((s) => !s.closed).length === 1 && g.history.length === 4, `jeden sklep: aktywny #${g.activeId}, otwarte ${g.stores.filter((s) => !s.closed).length}, raporty ${g.history.length}`);
+        const p1 = await announceCheck(page, ev, { lang, shotName: en ? '5a-09-angielski-zapowiedz' : '5a-01-zapowiedz', phone });
+        if (!p1 || en) {
+          const errs = consoleSince(vp, tag, errorsFrom);
+          ev.check(errs.length === 0, `błędy konsoli: ${errs.slice(0, 3).join(' | ')}`);
+          return;
+        }
+        // pierwszy prawdziwy plan: koniec miesiąca zapowiedzi (raport bez planu) i kilka dni nowego miesiąca
+        let started = false;
+        for (let i = 0; i < 45; i++) {
+          await skip(page, 1440);
+          await settle(page);
+          if (((await planOf5a(page))?.target ?? 0) > 0) { started = true; break; }
+        }
+        if (!ev.check(started, 'po miesiącu zapowiedzi plan nie dostał celu')) return;
+        for (let i = 0; i < 3; i++) { await skip(page, 1440); await settle(page); }
+        await page.waitForSelector('.tt-hud-plan', { timeout: 30_000 });
+        const p2 = await planOf5a(page);
+        ev.note(`pierwszy plan: cel ${money(p2.target)} zł, baza ${money(p2.base)} zł dziennie, seria ${p2.streak}, dni otwarte ${p2.openDays}, historia ${p2.history} raportów`);
+        const m = await hudCheck(page, ev, '5a: wiersz planu przy jednym sklepie');
+        ev.check(!m.net, 'pasek ma klasę tt-net przy jednym sklepie');
+        ev.note(`wiersz planu: ${m.text}`);
+        if (phone) await widthOk(page, ev, '5a: wiersz planu (jeden sklep)');
+        await ev.shot('5a-02-pasek-jeden-sklep');
+        if (!phone) await hudAtWidths(page, ev, vp, [768], '5a: wiersz planu przy jednym sklepie');
+        await previewCheck(page, ev, { lang, shotName: '5a-05b-podglad-jeden-sklep', phone });
+        const errs = consoleSince(vp, tag, errorsFrom);
+        ev.check(errs.length === 0, `błędy konsoli: ${errs.slice(0, 3).join(' | ')}`);
+      });
+    } finally {
+      await ctx.close();
+    }
+  }
+
+  async function scenario5a(browser, vp0) {
+    await singlePlanRun(browser, vp0, { lang: 'pl', id: '5a-a' });
+    await networkPlanRun(browser, vp0, { lang: 'pl', id: '5a-b' });
+  }
+
+  /** 5a-c: sieć z planem po angielsku (pasek, przełącznik, podgląd, ostrzeżenie, raport) i jednodniowy przebieg zapowiedzi w osobnej karcie; wynik to jeden krok. */
+  async function scenario5aEnglish(browser, vp0) {
+    const vp = vp0.mobile ? vp0 : { ...vp0, size: DESKTOP_4B };
+    await networkPlanRun(browser, vp0, { lang: 'en', id: '5a-c' });
+    // zapowiedź po angielsku: dopisuje wynik do tego samego kroku (porażka też go przekreśla)
+    const before = results[vp.name]['5a-c'];
+    const fixture = { seed: two.seed, text: withReports(two.text, { storeId: 2, months: 4, noBuilds: true }) };
+    const { ctx, page } = await newPage(browser, vp, '5a-c-zapowiedz', { fixture, lang: 'en' });
+    try {
+      await runStep(vp, '5a-c-zapowiedz', page, async (ev) => {
+        await waitReady(page);
+        await pause(page);
+        await settle(page);
+        await pause(page);
+        await announceCheck(page, ev, { lang: 'en', shotName: '5a-09-angielski-zapowiedz', phone: vp.mobile });
+      });
+    } finally {
+      await ctx.close();
+    }
+    const extra = results[vp.name]['5a-c-zapowiedz'];
+    delete results[vp.name]['5a-c-zapowiedz'];
+    if (before && extra) {
+      before.notes.push(...extra.notes);
+      if (!extra.ok) { before.ok = false; before.failed.push(...extra.failed); }
+    }
+  }
+
   // --- krok 7 (telefon) ---
 
   async function phoneChecks(page, ev) {
@@ -3208,10 +3700,11 @@ async function main(argv) {
       } : null;
       // makieta (Zadanie 15): krok 13 tylko na komputerze, krok 14 tylko na telefonie; `--etap makieta` biegnie same kroki 13–15
       const makieta = vp.mobile ? scenarioTelefon : scenarioMakieta;
-      const scenarios = args.stage === '4b' ? [] : args.stage === 'makieta' ? [makieta] : [scenarioOldSave, scenarioFlow, scenarioRelet, makieta, ...(vp.mobile ? [tipsRun] : [])];
-      const scenarios4b = args.stage === 'makieta' ? [] : [scenario4b, scenario4bZrzut, ...(vp.mobile ? [] : [queueRun])];   // kolejka przy zrzucie (Zadanie 11): tylko komputer
+      const scenarios = args.stage === '4b' || args.stage === '5a' ? [] : args.stage === 'makieta' ? [makieta] : [scenarioOldSave, scenarioFlow, scenarioRelet, makieta, ...(vp.mobile ? [tipsRun] : [])];
+      const scenarios4b = args.stage === 'makieta' || args.stage === '5a' ? [] : [scenario4b, scenario4bZrzut, ...(vp.mobile ? [] : [queueRun])];   // kolejka przy zrzucie (Zadanie 11): tylko komputer
       // kroki 4b we własnym bloku: wyjątek w scenariuszach 4a nie zabiera im przebiegu (i odwrotnie)
-      for (const group of [scenarios, scenarios4b]) {
+      const scenarios5a = args.stage === 'makieta' || args.stage === '4b' ? [] : [scenario5a, scenario5aEnglish];   // plan Centrali (etap 5a): własny blok, jak 4b
+      for (const group of [scenarios, scenarios4b, scenarios5a]) {
         try {
           for (const run of group) await run(browser, vp);
         } catch (error) {
@@ -3220,9 +3713,12 @@ async function main(argv) {
           r.exception = stepResult({ ok: false, failed: [`wyjątek: ${error instanceof Error ? error.message : String(error)}`] });
         }
       }
-      for (const step of [...STEPS, TIPS_STEP, ...STEPS_4B, QUEUE_STEP]) {
+      for (const step of [...STEPS, TIPS_STEP, ...STEPS_4B, QUEUE_STEP, ...STEPS_5A]) {
         if (!step.sizes.includes(vp.name)) (results[vp.name] ??= {})[step.id] = stepResult({ na: true, notes: ['nie dotyczy tego rozmiaru'] });
         else if (args.stage === '4b' && !STEPS_4B.includes(step) && step !== QUEUE_STEP && step.id !== 8) (results[vp.name] ??= {})[step.id] = stepResult({ na: true, notes: ['--etap 4b: tylko kroki 4b'] });
+        else if (args.stage === '5a' && !STEPS_5A.includes(step) && step.id !== 8) (results[vp.name] ??= {})[step.id] = stepResult({ na: true, notes: ['--etap 5a: tylko kroki 5a'] });
+        else if (args.stage === '4b' && STEPS_5A.includes(step)) (results[vp.name] ??= {})[step.id] = stepResult({ na: true, notes: ['--etap 4b: tylko kroki 4b'] });
+        else if (args.stage === 'makieta' && STEPS_5A.includes(step)) (results[vp.name] ??= {})[step.id] = stepResult({ na: true, notes: ['--etap makieta: tylko kroki 13–15'] });
         else if (args.stage === 'makieta' && !STEPS_MAKIETA.includes(step) && step.id !== 8) (results[vp.name] ??= {})[step.id] = stepResult({ na: true, notes: ['--etap makieta: tylko kroki 13–15'] });
       }
       // 8: konsola i pageerror z całego rozmiaru
@@ -3239,7 +3735,7 @@ async function main(argv) {
       console.log(`  [${vp.name}] krok 8: ${r8.ok ? 'ok' : 'FAIL'}`);
     }
     // 15: ten sam bieg, co `npm run city:smoke -- --bench` (rdzeń `benchPass`), na przeglądarce i serwerze kroków 1–14; kroki 4b same go nie dotyczą
-    if (args.stage !== '4b') {
+    if (args.stage !== '4b' && args.stage !== '5a') {
       console.log('krok 15: bieg ?bench=1&quick=1');
       let bench = null;
       let benchError = null;
@@ -3279,7 +3775,7 @@ async function main(argv) {
     }
   }
   const seconds = Math.round((Date.now() - started) / 1000);
-  const summary = summarize(results, [...STEPS, TIPS_STEP, ...STEPS_4B, QUEUE_STEP]);
+  const summary = summarize(results, [...STEPS, TIPS_STEP, ...STEPS_4B, QUEUE_STEP, ...STEPS_5A]);
   const extraFailures = [];
   if (external.length > 0) extraFailures.push(`zapytania poza localhost: ${external.length}`);
   if (extraFailures.length) summary.ok = false;

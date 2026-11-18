@@ -44,6 +44,7 @@ export function statementView(st: Statement, tone: CashTone = cashTone(st.cashAf
       {row(t`Raty`, minusZl(st.installments))}
       {row(t`Palety ponad darmowe`, minusZl(st.pallets))}
       {st.remanent > 0 && row(t`Remanent`, minusZl(st.remanent))}
+      {st.plan !== undefined && st.plan > 0 && row(t`Plan Centrali`, minusZl(st.plan))}
       {row(t`Razem`, minusZl(st.deductions), true)}
       <h3>{t`Twoje koszty`}</h3>
       {row(t`Pensje`, minusZl(st.wages))}

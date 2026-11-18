@@ -7,7 +7,7 @@ import { defaultAnswer } from '@/sim/economy/monthPreview';
 import { visibleCards } from '@/sim/economy/tycoon/cards';
 import { closeStore } from '@/sim/firm/closure';
 import { applyFirmCommand, lotState, openDueBuilds, rentRefusal, switchStore } from '@/sim/firm/commands';
-import { activeStore, applyStoreCommand, emptyStepOut, grantToFirm, stepFirmMinute, syncWallet } from '@/sim/firm/firm';
+import { activeStore, applyStoreCommand, emptyStepOut, grantToFirm, openStores, stepFirmMinute, syncWallet } from '@/sim/firm/firm';
 import type { FirmState, FirmStepOut, FirmStore } from '@/sim/firm/types';
 
 /*
@@ -147,6 +147,19 @@ export function reopenLot(s: GameSession, lotId: number): FirmStore {
   expect(st.closed).toBe(false);
   pointAtActive(s);
   return st;
+}
+
+/**
+ * Plan Centrali (etap 5a) do trafienia w każdym otwartym sklepie: aktywny plan dostaje cel 1 000 zł. Dla długich biegów bez gracza
+ * (testy rozmiaru zapisu), które chcą sklepów żywych przez dwa lata: bez tego trzecia wpadka z rzędu zamyka sklep. Blok planu
+ * i raport z rozliczeniem zostają, więc zapis ma ich prawdziwy rozmiar. Wołane co dobę, przed zamknięciem miesiąca.
+ */
+export const EASY_PLAN_TARGET = 1_000;
+export function keepPlansEasy(f: FirmState): void {
+  for (const st of openStores(f)) {
+    const plan = st.econ.franchisee.plan;
+    if (plan && plan.target > 0) plan.target = EASY_PLAN_TARGET;
+  }
 }
 
 /** Sklep, któremu Centrala wypowie umowę przy najbliższym zamknięciu miesiąca: zaufanie przy zerze i strata miesiąca. */

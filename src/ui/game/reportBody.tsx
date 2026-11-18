@@ -2,7 +2,8 @@ import { hintTextOf, t, tr } from '@/i18n';
 import { DEBT_WARN, debtWarningText, type MonthReport } from '@/sim/economy/economy';
 import { REPORT_LINE_LABEL, reportCommentText } from '@/sim/economy/tycoon/report';
 import { TRUST_REASON_LABEL } from '@/sim/economy/tycoon/trust';
-import { int, signedPts, signedZl, zl } from './format';
+import { int, percentOf, signedPts, signedZl, zl } from './format';
+import { STAGE_NAME, planLetter, planReasonText, planResultText, planStartText, type PlanCtx } from './planText';
 import { statementView } from './statement';
 
 /*
@@ -24,6 +25,34 @@ const lineAmount = (amount: number): string => {
 export const centralaQuote = (text: string) => <p class="tt-quote">{t`„${tr(text)}”`}<br /><span class="tt-muted">{t`— Centrala`}</span></p>;
 
 /**
+ * Sekcja planu Centrali w raporcie (zwykła funkcja, nie komponent: testy `vnodeTree` widzą jej wiersze): zaczyna się listem partnera regionalnego,
+ * gdy zmienił się stopień drabiny, potem plan, obrót i wykonanie, wynik zdaniem (kara albo dobicie) i „dlaczego tyle” o nowym planie. W raporcie
+ * trzeciego miesiąca umowy (bez rozliczenia planu) jest tylko wiersz o końcu okresu wdrożenia z pierwszym planem na jutro. Bez planu i bez `ctx` nic.
+ */
+function planSection(r: MonthReport, ctx?: PlanCtx) {
+  const p = r.plan;
+  if (!p) {
+    const start = ctx ? planStartText(ctx) : null;
+    return start ? <p class="tt-hint tt-plan-report tt-plan-start" role="note">{start}</p> : null;
+  }
+  const letter = planLetter(p);
+  return (
+    <section class="tt-plan-report" aria-label={t`Plan Centrali`}>
+      {letter && <p class="tt-quote tt-plan-letter">{letter}</p>}
+      <h3>{t`Plan Centrali`}</h3>
+      <div class="tt-row"><span>{t`Plan miesiąca`}</span><span>{zl(p.target)}</span></div>
+      {p.due !== p.target && <div class="tt-row"><span>{t`Plan za dni otwarte`}</span><span>{zl(p.due)}</span></div>}
+      <div class="tt-row"><span>{t`Obrót w miesiącu`}</span><span>{zl(p.turnover)}</span></div>
+      <div class="tt-row"><span>{t`Wykonanie`}</span><span>{percentOf(p.share)}</span></div>
+      <div class="tt-row"><span>{t`Stopień`}</span><span>{tr(STAGE_NAME[Math.max(0, Math.min(STAGE_NAME.length - 1, p.stage))]!)}</span></div>
+      <p class={`tt-hint tt-plan-result${p.hit ? '' : ' warn'}`}>{planResultText(p)}</p>
+      {p.bonus > 0 && <div class="tt-row"><span>{t`Premia za plan`}</span><span>{zl(p.bonus)}</span></div>}
+      <p class="tt-hint">{planReasonText(p, ctx?.plan)}</p>
+    </section>
+  );
+}
+
+/**
  * Treść raportu miesięcznego. Z wyciągiem (`statement`, od SIM_VERSION 6): na górze wyciąg od Centrali (`statementView`: przelew,
  * potrącenia, Twoje koszty, „Zostaje Ci”), pod nim obrót i klienci, a dalej reszta raportu tycoona (zaufanie, komentarz, wskazówka, KPI).
  * Bez wyciągu, z danymi tycoona (`detail`): wynik dużą liczbą i pozycje z `REPORT_LINE_LABEL` (koszty ze znakiem minus). Raport ze starego
@@ -32,7 +61,7 @@ export const centralaQuote = (text: string) => <p class="tt-quote">{t`„${tr(te
  * przy końcu gry). `noGuarantee`: sklep dodatkowy w oknie gwarancji (`city/firmText.noGuarantee`), więc wyciąg mówi tekstem Centrali, że
  * gwarancji nie ma.
  */
-export function ReportBody({ r, closing, noGuarantee = false }: { r: MonthReport; closing?: string; noGuarantee?: boolean }) {
+export function ReportBody({ r, closing, noGuarantee = false, planCtx }: { r: MonthReport; closing?: string; noGuarantee?: boolean; planCtx?: PlanCtx }) {
   const c = r.counters;
   const d = r.detail;
   const st = r.statement;
@@ -42,6 +71,7 @@ export function ReportBody({ r, closing, noGuarantee = false }: { r: MonthReport
         <>
           {statementView(st, undefined, noGuarantee)}
           <p class="tt-muted tt-st-meta">{t`Obrót ${zl(c.revenue)} · klienci ${int(c.customers)} (utraceni: ${int(c.lost)})`}</p>
+          {planSection(r, planCtx)}
           {r.cash < DEBT_WARN && <p class="tt-hint warn">{tr(debtWarningText(r.cash))}</p>}
           {centralaQuote(closing ?? r.comment)}
         </>
@@ -78,6 +108,7 @@ export function ReportBody({ r, closing, noGuarantee = false }: { r: MonthReport
           <>
             {statementView(st, undefined, noGuarantee)}
             <p class="tt-muted tt-st-meta">{t`Obrót ${zl(d.revenue)} · klienci ${int(c.customers)} (utraceni: ${int(c.lost)})`}</p>
+            {planSection(r, planCtx)}
             {r.cash < DEBT_WARN && <p class="tt-hint warn">{tr(debtWarningText(r.cash))}</p>}
           </>
         )

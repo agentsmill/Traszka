@@ -3,8 +3,9 @@ import { t } from '@/i18n';
 import { lotById } from '@/sim/city/generateCity';
 import { dayOf } from '@/sim/economy/calendar';
 import { CATS } from '@/sim/economy/catalog';
-import { aislePallets } from '@/sim/economy/economy';
+import { aislePallets, planOf } from '@/sim/economy/economy';
 import { forecastMonth, type MonthForecast } from '@/sim/economy/forecast';
+import type { PlanOutlook } from '@/sim/economy/plan';
 import { trustTierFrom } from '@/sim/economy/tycoon/trust';
 import { forecastFirm } from '@/sim/firm/forecast';
 import { openStores } from '@/sim/firm/firm';
@@ -17,8 +18,8 @@ import { plural, zl } from '../game/format';
  * która od dwóch otwartych sklepów liczy całą sieć. Czyste funkcje bez interfejsu, więc testuje się je bez DOM.
  */
 
-/** Znak ostrzegawczy przy sklepie: paleta w przejściu, pusta półka, karta rozstrzygnięta dziś przez zastępcę, niskie zaufanie (kolejność jest stała). */
-export type StoreWarning = 'paleta' | 'polka' | 'zastepca' | 'zaufanie';
+/** Znak ostrzegawczy przy sklepie: paleta w przejściu, pusta półka, karta rozstrzygnięta dziś przez zastępcę, niskie zaufanie, stopień planu Centrali ≥ 1 (kolejność jest stała). */
+export type StoreWarning = 'paleta' | 'polka' | 'zastepca' | 'zaufanie' | 'plan';
 
 /** Zaufanie sklepu w tle poniżej tej wartości daje znak „zaufanie”: sklep w tle może po cichu spaść do zera, a gracz nie zagląda do jego listy.
  * Wartość to dolna granica poziomu „Pod obserwacją” (40, `trust.ts`): ostrzegamy, gdy sklep z niego wypada. Inny próg niż `TRUST_WARN_BELOW`
@@ -40,6 +41,8 @@ export interface StoreMini {
   closed: boolean;
   /** Sklep ma wypowiedzenie (działa do końca okresu). */
   notice: boolean;
+  /** Prognoza planu sprzedaży Centrali sklepu (`forecastMonth`); `null` bez planu, w miesiącu zapowiedzi i dla zamkniętego sklepu. */
+  plan: PlanOutlook | null;
 }
 
 /** Półka jest „pusta”, gdy w kategorii, którą sklep ma, nie zostało nawet pełnej sztuki. */
@@ -52,6 +55,7 @@ function warningsOf(f: FirmState, st: FirmStore): StoreWarning[] {
   const today = dayOf(st.econ.minute);
   if (f.inbox.some((n) => n.storeId === st.id && n.day === today)) out.push('zastepca');
   if (st.econ.tycoon.trust.value < BACKGROUND_TRUST_WARN_BELOW) out.push('zaufanie');
+  if ((planOf(st.econ)?.stage ?? 0) >= 1) out.push('plan');   // sklep po wpadce planu: stopień drabiny ≥ 1
   return out;
 }
 
@@ -60,13 +64,14 @@ export function storeMinis(f: FirmState): StoreMini[] {
   return f.stores.map((st) => {
     const lot = lotById(f.city, st.lotId);
     const c = st.econ.today;
+    const forecast = st.closed ? null : forecastMonth(st.econ, st.info);
     return {
       id: st.id, number: lot.number, street: lot.street,
       todayProfit: c.margin + c.bonus + c.other - c.fines - c.logistics,
-      net: st.closed ? 0 : forecastMonth(st.econ, st.info).net,
+      net: forecast?.net ?? 0,
       trust: st.econ.tycoon.trust.value,
       warnings: st.closed ? [] : warningsOf(f, st),
-      active: st.id === f.activeId, closed: st.closed, notice: st.notice !== null,
+      active: st.id === f.activeId, closed: st.closed, notice: st.notice !== null, plan: forecast?.plan ?? null,
     };
   });
 }

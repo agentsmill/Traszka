@@ -1519,6 +1519,19 @@ describe('powłoka gry (createShell)', () => {
       expect(isModalOpen()).toBe(true);
     });
 
+    it('handleEvents: zdarzenia planu Centrali czekają na „OK” z własnym tytułem, w kolejności przyjścia, i nie są toastami', () => {
+      const h = harness();
+      open(h);
+      h.shell.handleEvents([
+        { kind: 'plan', plan: { reason: 'start', target: 412_000 }, text: 'Gwarancja się skończyła.' },
+        { kind: 'plan', plan: { reason: 'announce' }, text: 'Od przyszłego miesiąca ten sklep ma plan sprzedaży Centrali.' },
+        { kind: 'plan', plan: { reason: 'short', missing: 18_400, cost: 15_270, fine: 1_840 }, text: 'Do planu brakuje ok. 18 400 zł.' },
+      ]);
+      expect(ui.story.value.map((e) => e.title)).toEqual(['Koniec okresu wdrożenia', 'Plan sprzedaży Centrali', 'Plan: brakuje do progu']);
+      expect(ui.toasts.value).toEqual([]);
+      expect(isModalOpen()).toBe(true);
+    });
+
     it('handleEvents: raport miesiąca ma własne okno, koniec gry też (okno końca współpracy), więc żadne nie trafia do story', () => {
       const h = harness();
       const s = open(h);
@@ -4087,6 +4100,17 @@ describe('gra prowadzi firmę (powłoka)', () => {
         expect(ui.fameOffer.value).not.toBeNull();
         expect(ui.story.value.map((e) => e.title)).toEqual(['Blisko granicy debetu']);
       });
+    });
+
+    it('plan z tła (ostrzeżenie „brakuje do planu”): okno „OK” z nazwą sklepu i tytułem planu, tekst Centrali bez zmian', () => {
+      const h = harness();
+      const { f } = twoStores(h);
+      const text = 'Do planu brakuje ok. 18 400 zł. Dobicie z kieszeni: ok. 15 270 zł. Bez dobicia: kara 1 840 zł i stopień 1.';
+      h.shell.handleFirmEvents(stepOut({ background: [bg(2, { kind: 'plan', plan: { reason: 'short', missing: 18_400, cost: 15_270, fine: 1_840 }, text })] }));
+      expect(ui.story.value).toHaveLength(1);
+      expect(ui.story.value[0]!.title).toContain(storeName(f, 2));
+      expect(ui.story.value[0]!.title).toContain('Plan: brakuje do progu');
+      expect(ui.story.value[0]!.text).toBe(text);
     });
 
     it('gameover z tła: okno „OK” z nazwą sklepu', () => {

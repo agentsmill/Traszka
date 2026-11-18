@@ -4,6 +4,7 @@ import type { FirmState } from '@/sim/firm/types';
 import { trustTier } from '@/sim/economy/tycoon/trust';
 import { firm, type GameActions } from '../state';
 import { signedZl } from '../game/format';
+import { STAGE_NAME, planLines } from '../game/planText';
 import { firmEventText, storeName, storeStateText } from './firmText';
 import { isNetwork, storeMinis, type StoreMini, type StoreWarning } from './storeSwitcherModel';
 
@@ -25,6 +26,7 @@ const WARNING_TEXT: Record<StoreWarning, (m: StoreMini) => string> = {
   polka: () => t`pusta półka`,
   zastepca: () => t`zastępca odpowiedział na kartę`,
   zaufanie: (m) => t`zaufanie ${Math.round(m.trust)} (${tr(trustTier(m.trust).label)})`,
+  plan: (m) => t`plan: stopień ${m.plan?.stage ?? 0} (${tr(STAGE_NAME[m.plan?.stage ?? 0]!)})`,
 };
 
 const close = (): void => { storeList.value = false; };
@@ -42,6 +44,7 @@ function storeRow(f: FirmState, m: StoreMini, game: GameActions) {
       {!m.closed && (
         <span class="tt-store-stats">{`${t`Dziś ${signedZl(m.todayProfit)}`} · ${t`Zostanie ${signedZl(m.net)}`} · 🤝 ${Math.round(m.trust)}`}</span>
       )}
+      {m.plan && <span class={`tt-store-plan ${planLines(m.plan).tone}`}>{`${t`Plan`}: ${planLines(m.plan).progress}`}</span>}
       {m.warnings.map((w) => <span key={w} class="tt-store-warn" data-warn={w}>{`⚠ ${WARNING_TEXT[w](m)}`}</span>)}
     </button>
   );

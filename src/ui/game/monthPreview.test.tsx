@@ -4,6 +4,7 @@ import { DEBT_LIMIT } from '@/sim/economy/catalog';
 import { DEBT_WARN, createEconomy, type EconomyState } from '@/sim/economy/economy';
 import { forecastMonth } from '@/sim/economy/forecast';
 import { buildStatement } from '@/sim/economy/franchisee';
+import type { PlanMonth, PlanState } from '@/sim/economy/plan';
 import type { MonthPreview } from '@/sim/economy/monthPreview';
 import { computeStoreInfo, type StoreInfo } from '@/sim/economy/storeInfo';
 import { layoutFor } from '@/sim/store/layoutFor';
@@ -16,6 +17,7 @@ import { storeName } from '../city/firmText';
 import { forecastNow, shortStoreName } from '../city/storeSwitcherModel';
 import { closeMonthPreview, econ, firm, isWindowOpen, monthPreview, openMonthPreview } from '../state';
 import { MonthPreviewModal, PREVIEW_ASSUMPTION, previewWarning } from './monthPreview';
+import { planLines } from './planText';
 import { BUDGET_MS, CHUNK_MINUTES, runMonthPreview, type RunDeps } from './monthPreviewRun';
 import { minusZl, money, signedZl, zl } from './format';
 import { buttonLabelled, buttonsOf, click, textOf, walk, type Vnode } from './vnodeTree';
@@ -453,7 +455,7 @@ describe('podgląd końca miesiąca przy firmie', () => {
       id, preview: { label: 'wrzesień 2026', cashNow: 5_000, cashAfter: statement.cashAfter, lowestCash: 5_000, revenue: 90_000, customers: 800, statement, profit: statement.result, gameOver: null, endedEarly: false },
     });
     const withSettlement: FirmPreview = {
-      label: 'wrzesień 2026', cashNow: 5_000, cashAfter: 40_000, lowestCash: 5_000, stores: [part(1), part(2)], invest: 0, settlement: 12_300, gameOver: null, endedEarly: false,
+      label: 'wrzesień 2026', cashNow: 5_000, cashAfter: 40_000, lowestCash: 5_000, stores: [part(1), part(2)], plans: [], invest: 0, settlement: 12_300, gameOver: null, endedEarly: false,
     };
     monthPreview.value = { phase: 'done', result: withSettlement.stores[0]!.preview, ms: 1, firm: withSettlement };
     const text = plain(textOf(shown()));
@@ -481,7 +483,7 @@ describe('podgląd końca miesiąca przy firmie', () => {
     const part = (id: number): FirmPreview['stores'][number] => ({
       id, preview: { label: '', cashNow: 5_000, cashAfter: -150_000, lowestCash: -150_000, revenue: 0, customers: 0, statement, profit: 0, gameOver: 'debt', endedEarly: true },
     });
-    const early: FirmPreview = { label: '', cashNow: 5_000, cashAfter: -150_000, lowestCash: -150_000, stores: [part(1), part(2)], invest: 0, settlement: 0, gameOver: 'debt', endedEarly: true };
+    const early: FirmPreview = { label: '', cashNow: 5_000, cashAfter: -150_000, lowestCash: -150_000, stores: [part(1), part(2)], plans: [], invest: 0, settlement: 0, gameOver: 'debt', endedEarly: true };
     monthPreview.value = { phase: 'done', result: early.stores[0]!.preview, ms: 1, firm: early };
     const times = (): number => plain(textOf(shown())).split('To naliczenia do chwili końca gry').length - 1;
     expect(times()).toBe(1);   // zakładka „Sieć”
@@ -554,5 +556,91 @@ describe('podgląd końca miesiąca przy firmie', () => {
     expect(all.net).toBeCloseTo(parts.reduce((n, x) => n + x.f.net, 0), 5);
     expect(text).toContain(plain(`Zostaje Ci po zamknięciu (sieć)${signedZl(all.net)}`));
     for (const x of parts) expect(text).toContain(plain(`${storeName(f, x.id)}${signedZl(x.f.net)}`));
+  });
+});
+
+describe('plan Centrali w podglądzie miesiąca', () => {
+  const plain = (x: string): string => x.replace(/[\s  ]/g, ' ');
+  const planState = (over: Partial<PlanState> = {}): PlanState => ({ target: 412_000, base: 13_290, recent: [13_000, 13_200, 13_290], streak: 3, stage: 0, openDays: 10, topUp: false, ...over });
+  const planMonth = (over: Partial<PlanMonth> = {}): PlanMonth => ({
+    target: 412_000, due: 412_000, turnover: 380_000, bought: 0, cost: 0, share: 0.922, hit: false, bonus: 0, fine: 1_240, trust: -2,
+    stage: 1, stageBefore: 0, streak: 0, nextTarget: 400_000, nextBase: 12_900, nextGrowth: 0.02, ...over,
+  });
+  const noExtras = { month: { margin: 9_000, bonus: 0, pallets: 0, wages: 4_000, media: 0 }, guarantee: 0, installments: 0, remanent: 0, spent: 0, fines: 0, other: 0, cashBefore: 5_000, partial: false } as const;
+  const previewOf = (over: Partial<MonthPreview> = {}, plan = 0): MonthPreview => {
+    const statement = buildStatement({ ...noExtras, ...(plan > 0 ? { plan } : {}) });
+    return { label: 'wrzesień 2026', cashNow: 5_000, cashAfter: statement.cashAfter, lowestCash: 5_000, revenue: 380_000, customers: 800, statement, profit: statement.result, gameOver: null, endedEarly: false, ...over };
+  };
+
+  it('wyciąg podglądu ma wiersz „Plan Centrali” z karą wśród potrąceń, a bez kary go nie ma', () => {
+    const { s, info } = world();
+    econ.value = { s, info, v: 1 };
+    monthPreview.value = { phase: 'done', result: previewOf({}, 1_240), ms: 1 };
+    expect(plain(textOf(shown()))).toContain(plain(`Plan Centrali${minusZl(1_240)}`));
+    monthPreview.value = { phase: 'done', result: previewOf(), ms: 1 };
+    expect(textOf(shown())).not.toContain('Plan Centrali');
+  });
+
+  it('ostrzeżenie przy gameOver === \'plan\': Centrala wypowie umowę za trzeci miesiąc bez planu (sklep i sieć)', () => {
+    const base = { endedEarly: false, cashAfter: 5_000, lowestCash: 5_000 };
+    const w = previewWarning({ ...base, gameOver: 'plan' })!;
+    expect(w.level).toBe('danger');
+    expect(w.text).toBe('Centrala wypowie umowę: trzeci miesiąc z rzędu bez planu sprzedaży.');
+    const { s, info } = world();
+    econ.value = { s, info, v: 1 };
+    monthPreview.value = { phase: 'done', result: previewOf({ gameOver: 'plan' }, 1_240), ms: 1 };
+    const alert = walk(shown()).find((v) => v.props.role === 'alert')!;
+    expect(textOf(alert)).toBe(w.text);
+    expect(String(alert.props.class)).toContain('danger');
+  });
+
+  it('„Na dziś” z planem: pasek planu (głowa, postęp, werdykt) z prognozy sklepu', () => {
+    const { s, info } = world();
+    s.franchisee.plan = planState({ openDays: 10 });
+    s.month.revenue = 100_000;
+    econ.value = { s, info, v: 1 };
+    openMonthPreview();
+    const o = forecastMonth(s, info).plan!;
+    expect(o).not.toBeNull();
+    const text = plain(textOf(shown()));
+    const l = planLines(o);
+    expect(text).toContain(plain(l.head));
+    expect(text).toContain(l.progress);
+    expect(text).toContain(plain(l.verdict));
+  });
+
+  it('sieć: zakładka „Sieć” pokazuje wynik planu przy każdym sklepie z FirmPreview.plans', () => {
+    const session = partnerSession();
+    openSecond(session);
+    const f = firmOf(session);
+    firm.value = { f, v: 1 };
+    econ.value = { s: session.econ, info: session.info, v: 1 };
+    const part = (id: number): FirmPreview['stores'][number] => ({ id, preview: previewOf() });
+    const p: FirmPreview = {
+      label: 'wrzesień 2026', cashNow: 5_000, cashAfter: 40_000, lowestCash: 5_000, stores: [part(1), part(2)], invest: 0, settlement: 0, gameOver: null, endedEarly: false,
+      plans: [{ storeId: 1, plan: planMonth({ hit: true, share: 1.04, fine: 0, stage: 0, streak: 4 }) }, { storeId: 2, plan: planMonth() }],
+    };
+    monthPreview.value = { phase: 'done', result: p.stores[0]!.preview, ms: 1, firm: p };
+    const text = plain(textOf(shown()));
+    expect(text).toContain(plain(`${storeName(f, 1)}Plan wykonany: 104% z ${zl(412_000)}.`));
+    expect(text).toContain(plain(`${storeName(f, 2)}Plan niewykonany (92%): kara ${zl(1_240)}, stopień 1 (Rozmowa z partnerem regionalnym).`));
+  });
+
+  it('część sklepu z końcem umowy za plan: ostrzeżenie dotyczy tej placówki, a pozostałe działają dalej', () => {
+    const session = partnerSession();
+    openSecond(session);
+    const f = firmOf(session);
+    firm.value = { f, v: 1 };
+    econ.value = { s: session.econ, info: session.info, v: 1 };
+    const p: FirmPreview = {
+      label: 'wrzesień 2026', cashNow: 5_000, cashAfter: 40_000, lowestCash: 5_000, invest: 0, settlement: 0, gameOver: null, endedEarly: false,
+      stores: [{ id: 1, preview: previewOf() }, { id: 2, preview: previewOf({ gameOver: 'plan' }, 1_240) }],
+      plans: [{ storeId: 2, plan: planMonth({ stage: 3, fine: 0 }) }],
+    };
+    monthPreview.value = { phase: 'done', result: p.stores[0]!.preview, ms: 1, firm: p };
+    click(buttonsOf(shown()).find((b) => textOf(b) === shortStoreName(f, 2))!);
+    const text = plain(textOf(shown()));
+    expect(text).toContain('Centrala wypowie umowę tej placówce: trzeci miesiąc z rzędu bez planu sprzedaży. Pozostałe działają dalej.');
+    expect(text).toContain('Plan niewykonany (92%): Centrala wypowie umowę na tę placówkę.');
   });
 });

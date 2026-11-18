@@ -390,6 +390,26 @@ describe('tłumacz rozpoznaje zdania z prawdziwej gry', () => {
     expect(unknown).toEqual([]);
   }, 120_000);
 
+  it('zdania planu Centrali, których bot nie wyprodukuje w 92 dniach (start, zapowiedź starego zapisu, brakuje do progu, koniec gry): angielskie wersje', () => {
+    // „zł” zostaje w angielskim tekście, więc przed szukaniem polskich liter wycinamy tylko tę jednostkę
+    const PL = /[ąćęłńóśźżĄĆĘŁŃÓŚŹŻ]/;
+    const sentences = [
+      'Gwarancja się skończyła. Od dziś Centrala przysyła plan sprzedaży: 412 000 zł w tym miesiącu. „Wierzymy w Ciebie. Liczbowo.”',
+      'Od przyszłego miesiąca ten sklep ma plan sprzedaży Centrali. W tym miesiącu jeszcze bez rozliczenia.',
+      'Do planu brakuje ok. 18 500 zł. Dobicie z kieszeni: ok. 9 250 zł. Bez dobicia: kara 3 700 zł i stopień 1.',
+      'Do planu brakuje ok. 18 500 zł. Dobicie z kieszeni: ok. 9 250 zł. Bez dobicia: Centrala wypowie umowę na tę placówkę.',
+      'Centrala wypowiada umowę franczyzową: trzeci miesiąc z rzędu bez planu sprzedaży. Dziękujemy za współpracę.',
+    ];
+    for (const pl of sentences) {
+      const en = localizeEn(pl);
+      expect(en, pl).not.toBeNull();
+      expect(en, pl).not.toBe(pl);
+      expect(en!.replace(/zł/g, 'PLN'), pl).not.toMatch(PL);
+    }
+    expect(localizeEn(sentences[2]!)).toContain('a 3,700 zł fine and stage 1');
+    expect(localizeEn(sentences[3]!)).toContain('Head Office will terminate the agreement for this shop');
+  });
+
   it('etykieta raty pakietu otwarcia: adres po angielsku (numer, ulica, „St.”), a ulica zostaje po polsku', () => {
     expect(localizeEn('Adaptacja lokalu: ul. Lipowa 3')).toBe('Premises fit-out: 3 Lipowa St.');
     for (const street of STREET_NAMES) expect(localizeEn(`Adaptacja lokalu: ul. ${street} 118`)).toBe(`Premises fit-out: 118 ${street} St.`);

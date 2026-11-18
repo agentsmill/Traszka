@@ -11,6 +11,7 @@ import { activeStore, applyStoreCommand, emptyStepOut, grantToFirm, openStores, 
 import type { FirmEvent, FirmStepOut } from '@/sim/firm/types';
 import { seasonBankrupt } from '@/sim/ranked';
 import { backgroundToastText, firmEventText, goalsToastText, refusalText, storeName } from '@/ui/city/firmText';
+import { planEventTitle } from '@/ui/game/planText';
 import type { Sfx } from '@/ui/sfx';
 import * as ui from '@/ui/state';
 import { bootMeta } from './bootMeta';
@@ -569,7 +570,7 @@ export function createShell(deps: ShellDeps): GameShell {
         continue;
       }
       if (!OWN_WINDOW.has(e.kind) && noticeLevel(e.kind, { unlocks: e.unlocks?.length ?? 0 }) === 'story') {
-        ui.pushStory(STORY_TITLE[e.kind] ?? STORY_FALLBACK_TITLE, e.text);
+        ui.pushStory(e.kind === 'plan' ? planEventTitle(e.plan) : STORY_TITLE[e.kind] ?? STORY_FALLBACK_TITLE, e.text);
         continue;
       }
       const sfx = sfxOf(e);
@@ -632,8 +633,8 @@ export function createShell(deps: ShellDeps): GameShell {
         ui.pushToast(backgroundToastText(f, b.storeId, b.event), b.event.kind);
         continue;
       }
-      if (!b.important || (b.event.kind !== 'trust-tier' && b.event.kind !== 'gameover')) continue;
-      const title = b.event.kind === 'gameover' ? tr('Koniec współpracy') : tr(STORY_TITLE[b.event.kind] ?? STORY_FALLBACK_TITLE);
+      if (!b.important || (b.event.kind !== 'trust-tier' && b.event.kind !== 'gameover' && b.event.kind !== 'plan')) continue;
+      const title = b.event.kind === 'gameover' ? tr('Koniec współpracy') : tr(b.event.kind === 'plan' ? planEventTitle(b.event.plan) : STORY_TITLE[b.event.kind] ?? STORY_FALLBACK_TITLE);
       ui.pushStory(`${storeName(f, b.storeId)}: ${title}`, b.event.text);   // tekst Centrali z symulacji tłumaczy okno przy rysowaniu
     }
 

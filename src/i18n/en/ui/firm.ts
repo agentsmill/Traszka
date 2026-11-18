@@ -51,6 +51,8 @@ export const FIRM_UI: Dict = {
   'Umowa zakończona: {0}': 'Agreement ended: {0}',
   'Umowa {0} wygasła. Lokal wraca na mapę jako „po Traszce”, z wyposażeniem. Pozostałe placówki działają dalej.':
     'The agreement for {0} has expired. The unit goes back on the map as “ex-Traszka”, fittings included. Your other branches carry on.',
+  'Trzeci miesiąc z rzędu {0} nie zrealizowała planu sprzedaży, więc Centrala wypowiedziała umowę. Lokal wraca na mapę jako „po Traszce”, z wyposażeniem. Pozostałe placówki działają dalej.':
+    'For the third month running {0} missed its sales plan, so Head Office has terminated the agreement. The unit goes back on the map as “ex-Traszka”, fittings included. Your other branches carry on.',
   'Zaufanie Centrali do {0} spadło do zera, więc Centrala wypowiedziała umowę. Lokal wraca na mapę jako „po Traszce”, z wyposażeniem. Pozostałe placówki działają dalej.':
     'Head Office’s trust in {0} has fallen to zero, so Head Office has terminated the agreement. The unit goes back on the map as “ex-Traszka”, fittings included. Your other branches carry on.',
   'Umowa ostatniej placówki wygasła. Centrala dziękuje za współpracę.':
@@ -161,6 +163,8 @@ export const FIRM_UI: Dict = {
   'To badanie jest już na najwyższym poziomie. Centrala nie ma czego więcej badać.':
     'This research is already at the top level. Head Office has nothing left to research.',
   'Tego celu nie da się teraz odebrać.': 'This goal cannot be claimed right now.',
+  'Ta placówka nie ma jeszcze planu sprzedaży. Centrala przysyła go od czwartego miesiąca umowy.':
+    'This branch has no sales plan yet. Head Office sends one from the fourth month of the agreement.',
   'Centrala odmawia.': 'Head Office declines.',
   // dodatkowy sklep nie ma gwarancji (§11.2): tekst Centrali w wyciągu i w podglądzie miesiąca
   'Gwarancja przysługuje nowym partnerom. Pan/Pani jest już strategiczny/a.':

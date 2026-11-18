@@ -8,8 +8,8 @@ import { clamp } from './time';
  * Zaufanie na zerze przy zamknięciu miesiąca to wypowiedzenie umowy (spec §10).
  */
 
-export type TrustReason = 'kpi' | 'karty' | 'okolnik' | 'audyt' | 'mandaty' | 'palety' | 'wynik' | 'inne';
-export const TRUST_REASONS: readonly TrustReason[] = ['kpi', 'karty', 'okolnik', 'audyt', 'mandaty', 'palety', 'wynik', 'inne'];
+export type TrustReason = 'kpi' | 'karty' | 'okolnik' | 'audyt' | 'mandaty' | 'palety' | 'wynik' | 'plan' | 'inne';
+export const TRUST_REASONS: readonly TrustReason[] = ['kpi', 'karty', 'okolnik', 'audyt', 'mandaty', 'palety', 'wynik', 'plan', 'inne'];
 export const TRUST_REASON_LABEL: Record<TrustReason, string> = {
   kpi: 'KPI tygodnia',
   karty: 'Decyzje dnia',
@@ -19,6 +19,7 @@ export const TRUST_REASON_LABEL: Record<TrustReason, string> = {
   // przyczyna z SIM_VERSION 4 i starszych (odesłane palety): nowa gra jej nie nalicza, ale stare raporty miesięczne ją mają
   palety: 'Odesłane palety',
   wynik: 'Wynik miesiąca',
+  plan: 'Plan Centrali',
   inne: 'Inne',
 };
 

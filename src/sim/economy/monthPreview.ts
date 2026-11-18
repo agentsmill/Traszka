@@ -3,6 +3,7 @@ import { DEBT_LIMIT } from './catalog';
 import { applyCommand } from './commands';
 import { awaitingDecision, stepMinute, type EconEvent, type EconomyState, type MonthReport } from './economy';
 import { buildStatement, type Statement } from './franchisee';
+import { planTerminates } from './plan';
 import type { StoreInfo } from './storeInfo';
 import { visibleCards } from './tycoon/cards';
 import { trustTerminates } from './tycoon/trust';
@@ -40,7 +41,7 @@ export interface MonthPreview {
   /** Wynik miesiąca bez rat, jak w raporcie i rankingu. */
   profit: number;
   /** Czy gra kończy się w tym scenariuszu (przed zamknięciem miesiąca albo przy nim) i dlaczego. */
-  gameOver: 'debt' | 'trust' | null;
+  gameOver: 'debt' | 'trust' | 'plan' | null;
   /** Gra skończyła się, zanim miesiąc zdążył się zamknąć (debet w środku miesiąca): sumy są wtedy częściowe. */
   endedEarly: boolean;
 }
@@ -82,9 +83,12 @@ export function previewProgress(startDay: number, lastDay: number, minute: numbe
   return { day: Math.min(days, Math.max(1, dayOf(minute) - startDay + 1)), days };
 }
 
-/** Powód końca gry sklepu: debet (gotówka poniżej granicy) przed zaufaniem; `null`, gdy sklep gra dalej. */
+/** Powód końca gry sklepu: debet (gotówka poniżej granicy), potem zaufanie, potem trzecia wpadka planu; `null`, gdy sklep gra dalej. */
 export function gameOverReason(s: EconomyState): MonthPreview['gameOver'] {
-  return !s.gameOver ? null : s.cash < DEBT_LIMIT ? 'debt' : trustTerminates(s.tycoon.trust.value) ? 'trust' : null;
+  if (!s.gameOver) return null;
+  if (s.cash < DEBT_LIMIT) return 'debt';
+  if (trustTerminates(s.tycoon.trust.value)) return 'trust';
+  return planTerminates(s.franchisee.plan) ? 'plan' : null;
 }
 
 /** Podgląd sklepu, który zamknął miesiąc: wyciąg, wynik i liczniki z raportu zamknięcia. `null`, gdy raport nie niesie wyciągu. */

@@ -1,9 +1,10 @@
 import { dateOfDay, isLastDayOfMonth, dayOf, minuteOfDay } from './calendar';
-import { DEBT_LIMIT, GUARANTEE, OPEN_FROM, OPEN_TO } from './catalog';
+import { DEBT_LIMIT, GUARANTEE, MINUTES_PER_DAY, OPEN_FROM, OPEN_TO } from './catalog';
 import {
   DEBT_WARN, estimatedDailyMargin, estimatedDailyRevenue, mediaPerDay, wagesPerDay, type EconomyState,
 } from './economy';
 import { buildStatement, installmentsDue, saldoOf, type Statement } from './franchisee';
+import { firstPlanPreview, monthLength, planOutlook, type PlanOutlook } from './plan';
 import type { StoreInfo } from './storeInfo';
 import { turnoverBonusShare } from './tycoon/trust';
 
@@ -29,6 +30,15 @@ export interface MonthForecast {
   net: number;
   /** Gotówka po zamknięciu miesiąca: gotówka teraz plus „Zostaje Ci”. */
   cashAfter: number;
+  /**
+   * Prognoza planu sprzedaży Centrali i kary, którą niesie (jest też w `statement.plan`); `null` bez planu albo w miesiącu zapowiedzi.
+   * To prognoza paska, nie rozliczenie: nie dolicza premii 1% obrotu za trafienie (`PLAN.bonusShare`), a dobicie każdego sklepu ocenia
+   * na całym portfelu, jakby inne sklepy nie dobijały. Gdy kilka sklepów dobija naraz blisko `DEBT_WARN`, pasek może więc pokazać
+   * `topup` tam, gdzie zamknięcie da `miss`; dokładny podgląd miesiąca (`monthPreview.ts`) idzie w prawdziwej kolejności zamknięć.
+   */
+  plan: PlanOutlook | null;
+  /** Cel pierwszego planu, gdy bloku jeszcze nie ma, a dziś jest pierwszy dzień czwartego miesiąca umowy; inaczej `null`. */
+  planFirst: number | null;
 }
 
 /**
@@ -45,6 +55,19 @@ function remaining(minute: number): { closes: number; days: number; elapsed: num
   return { closes: last - day + todayClose, days: last - day + todayOpen, elapsed: dateOfDay(day).date - 1 + (1 - todayOpen) };
 }
 
+/**
+ * Ile zamknięć dnia do końca miesiąca policzy się do planu: wszystkie, które jeszcze będą (`closes`), oprócz tych, przy których sklep
+ * nadal stoi w remoncie (`planDay` liczy dzień, gdy sklep nie jest zamknięty na remont).
+ */
+function openClosesAhead(s: EconomyState, closes: number): number {
+  if (s.remontUntil === null) return closes;
+  const day = dayOf(s.minute);
+  const first = minuteOfDay(s.minute) <= OPEN_TO ? day : day + 1;
+  let open = 0;
+  for (let k = 0; k < closes; k++) if ((first + k) * MINUTES_PER_DAY + OPEN_TO >= s.remontUntil) open++;
+  return open;
+}
+
 export function forecastMonth(s: EconomyState, info: StoreInfo): MonthForecast {
   const f = s.franchisee;
   const m = s.month;
@@ -55,7 +78,17 @@ export function forecastMonth(s: EconomyState, info: StoreInfo): MonthForecast {
   const pace = elapsed >= 1 ? { ...m, days: elapsed } : null;
   const margin = f.month.margin + days * (pace ? pace.margin / pace.days : estimatedDailyMargin(s, info));
   const revenue = m.revenue + days * (pace ? pace.revenue / pace.days : estimatedDailyRevenue(s, info));
-  const turnoverBonus = Math.round(turnoverBonusShare(s.tycoon.trust.value) * revenue);
+  const p = f.plan;
+  // plan Centrali: ta sama prognoza obrotu, a liczby (próg, kara, koszt dobicia) daje `planOutlook`
+  const plan = p
+    ? planOutlook(p, {
+      revenue: m.revenue, forecastRevenue: revenue, monthDays: monthLength(dayOf(s.minute)), openDaysAhead: openClosesAhead(s, closes),
+      cash: s.cash, debtWarn: DEBT_WARN,
+    })
+    : null;
+  // jak `closeMonth`: na stopniu 2 lub wyżej premia od obrotu wstrzymana
+  const cost = plan?.cost ?? 0;
+  const turnoverBonus = !p || p.stage < 2 ? Math.round(turnoverBonusShare(s.tycoon.trust.value) * revenue) : 0;
   // premie z miesiąca (KPI tygodnia, złote palety, karty) też w tym samym tempie
   const bonus = f.month.bonus + (pace ? (pace.bonus / pace.days) * days : 0) + turnoverBonus;
   // gwarancja z liczników całego miesiąca (jak `guaranteeTopUp`), przy dzisiejszym zaufaniu i bez mandatu w miesiącu
@@ -68,10 +101,14 @@ export function forecastMonth(s: EconomyState, info: StoreInfo): MonthForecast {
       margin, bonus, pallets: f.month.pallets,
       wages: f.month.wages + closes * wagesPerDay(s, info), media: f.month.media + closes * mediaPerDay(info),
     },
-    guarantee, installments, remanent: f.remanent.pending, spent: m.investments, fines: m.fines, other: m.other, cashBefore: s.cash,
-    partial: false, ownCosts: info.site?.ownCosts ?? true,
+    guarantee, installments, remanent: f.remanent.pending, spent: m.investments, fines: m.fines,
+    // dobicie planu schodzi z gotówki przed przelewem (`charge` w `closeMonth`) i obniża `other`; „Zostaje Ci” się nie zmienia
+    other: m.other - cost, cashBefore: s.cash - cost, partial: false, ownCosts: info.site?.ownCosts ?? true, plan: plan?.fine,
   });
-  return { saldo: saldoOf(f), installments, statement, net: statement.net, cashAfter: statement.cashAfter };
+  return {
+    saldo: saldoOf(f), installments, statement, net: statement.net, cashAfter: statement.cashAfter, plan,
+    planFirst: p ? null : firstPlanPreview(s.history, dayOf(s.minute)),
+  };
 }
 
 /**

@@ -12,6 +12,9 @@ import {
   buildStatement, createFranchisee, emptySettleMonth, installmentLimit, installmentsDue, payInstallments, planFor, remanentDayFrom,
   type FranchiseeState, type RemanentProtocol, type Statement,
 } from './franchisee';
+import {
+  PLAN, createPlan, monthLength, planDue, planTerminates, rollPlan, settlePlan, type PlanMonth, type PlanState,
+} from './plan';
 import { rand01 } from './rand';
 import { activeSite, hourCurveOf, siteDayTraffic, type NetMods, type SiteMods } from './site';
 import type { PalletLoc, StoreInfo } from './storeInfo';
@@ -112,6 +115,8 @@ export interface MonthReport {
   detail: TycoonMonthReport | null;
   /** Wyciąg od Centrali (SIM_VERSION 6): przelew, potrącenia, koszty własne, „Zostaje Ci”. `null` w raportach sprzed niego. */
   statement: Statement | null;
+  /** Rozliczenie planu Centrali (plan.ts). Klucz tylko w raporcie miesiąca, który plan rozliczył. */
+  plan?: PlanMonth;
 }
 
 export interface EconomyState {
@@ -174,10 +179,16 @@ export interface EconomyState {
 }
 
 export type EconEventKind = 'delivery' | 'order' | 'fine' | 'milestone' | 'day' | 'month' | 'remont' | 'info' | 'warning' | 'debt' | 'gameover'
-  | 'levelup' | 'golden' | 'trust-tier' | 'card' | 'card-result' | 'kpi-week' | 'remanent';
+  | 'levelup' | 'golden' | 'trust-tier' | 'card' | 'card-result' | 'kpi-week' | 'remanent' | 'plan';
+/** Zdarzenie planu Centrali: start planu, zapowiedź (stary zapis w środku miesiąca) albo ostrzeżenie przedostatniego dnia. Kwoty w zł. */
+export interface PlanEvent { reason: 'start' | 'announce' | 'short'; target?: number; missing?: number; cost?: number; fine?: number }
 export interface EconEvent {
-  kind: EconEventKind; text: string; report?: MonthReport; level?: number; unlocks?: string[]; remanent?: RemanentProtocol;
+  kind: EconEventKind; text: string; report?: MonthReport; level?: number; unlocks?: string[]; remanent?: RemanentProtocol; plan?: PlanEvent;
 }
+
+/** Plan sprzedaży Centrali sklepu; `undefined`, dopóki nie powstał. */
+export const planOf = (s: EconomyState): PlanState | undefined => s.franchisee.plan;
+export const PLAN_GAMEOVER_TEXT = 'Centrala wypowiada umowę franczyzową: trzeci miesiąc z rzędu bez planu sprzedaży. Dziękujemy za współpracę.';
 
 export const emptyCounters = (): Counters => ({
   customers: 0, lost: 0, revenue: 0, margin: 0, wages: 0, media: 0, zus: 0, vat: 0, accounting: 0, installments: 0, remanent: 0,
@@ -1096,8 +1107,50 @@ function closeDay(s: EconomyState, info: StoreInfo, out: EconEvent[]): void {
   s.today = emptyCounters();
   fatigueNight(s.tycoon.fatigue);   // noc oddaje część sił, reszta zmęczenia przechodzi na jutro
   closeStaffDay(s.tycoon.staff);    // statystyki dnia ludzi od zera (miesięczne zostają do raportu)
+  planDay(s, day, out);
 
   if (isLastDayOfMonth(day)) closeMonth(s, info, day, out);
+}
+
+/**
+ * Plan Centrali przy zamknięciu dnia (plan.ts): blok powstaje, gdy historia ma już miesiące gwarancji (zdarzenie `start`, a w środku
+ * miesiąca `announce`: plan od następnego). Dzień liczy się do planu, chyba że sklep stoi w remoncie. Przedostatniego dnia miesiąca
+ * prognoza liniowa (obrót miesiąca razy dni otwarte z jutrem przez dni otwarte) tuż pod planem daje ostrzeżenie z kwotą braku.
+ */
+function planDay(s: EconomyState, day: number, out: EconEvent[]): void {
+  const f = s.franchisee;
+  if (!f.plan && s.history.length >= PLAN.startMonths) {
+    const created = createPlan(s.history, day);
+    f.plan = created;
+    out.push(created.target > 0
+      ? {
+        kind: 'plan', plan: { reason: 'start', target: created.target },
+        text: `Gwarancja się skończyła. Od dziś Centrala przysyła plan sprzedaży: ${fmt(created.target)} zł w tym miesiącu. „Wierzymy w Ciebie. Liczbowo.”`,
+      }
+      : {
+        kind: 'plan', plan: { reason: 'announce' },
+        text: 'Od przyszłego miesiąca ten sklep ma plan sprzedaży Centrali. W tym miesiącu jeszcze bez rozliczenia.',
+      });
+  }
+  const p = f.plan;
+  if (!p || p.target <= 0) return;
+  if (!isClosedForRemont(s)) p.openDays += 1;
+  if (!isLastDayOfMonth(day + 1) || p.openDays === 0) return;
+  const forecast = s.month.revenue * (p.openDays + 1) / p.openDays;
+  const due = planDue({ ...p, openDays: p.openDays + 1 }, monthLength(day));
+  const share = due > 0 ? forecast / due : 1;
+  if (share < PLAN.noticeFrom || share >= 1) return;
+  const missing = Math.round(due - forecast);
+  const cost = Math.round(missing * PLAN.topUpCost);
+  const stageAfter = Math.min(PLAN.stageMax, p.stage + 1);
+  const fine = Math.round(PLAN.fineShare[stageAfter]! * missing);
+  const tail = stageAfter >= PLAN.stageMax
+    ? 'Bez dobicia: Centrala wypowie umowę na tę placówkę.'
+    : `Bez dobicia: kara ${fmt(fine)} zł i stopień ${stageAfter}.`;
+  out.push({
+    kind: 'plan', plan: { reason: 'short', missing, cost, fine },
+    text: `Do planu brakuje ok. ${fmt(missing)} zł. Dobicie z kieszeni: ok. ${fmt(cost)} zł. ${tail}`,
+  });
 }
 
 /** Zmiana zaufania ze znakiem i przecinkiem dziesiętnym („+1,5”, „−2”), a gdy nic się nie zmieniło, „bez zmian”. */
@@ -1164,15 +1217,24 @@ function closeMonth(s: EconomyState, info: StoreInfo, day: number, out: EconEven
   const m = s.month;
   const t = s.tycoon;
   const f = s.franchisee;
-  bonus(s, Math.round(turnoverBonusShare(t.trust.value) * m.revenue), 'month');
+  const p = f.plan;
+  // plan Centrali na stopniu 2 lub wyżej: premia od obrotu wstrzymana
+  if (!p || p.stage < 2) bonus(s, Math.round(turnoverBonusShare(t.trust.value) * m.revenue), 'month');
   const guarantee = guaranteeTopUp(s, info, out);
+  // plan: rozliczenie przed wyciągiem (kara to potrącenie, premia idzie na saldo); miesiąc zapowiedzi tylko dostaje plan po historii
+  const announce = p !== undefined && p.target === 0;
+  const r = p && !announce
+    ? settlePlan(p, { revenue: m.revenue, monthDays: monthLength(day), nextMonthDays: monthLength(day + 1), cash: s.cash, debtWarn: DEBT_WARN })
+    : null;
+  if (r && r.cost > 0) charge(s, 'other', r.cost, 'month');
+  if (r && r.bonus > 0) bonus(s, r.bonus, 'month');
   const partial = partialMonth(s);
   const installments = payInstallments(f);
   const remanentCharge = f.remanent.pending;
   f.remanent.pending = 0;
   const st = buildStatement({
     month: f.month, guarantee, installments, remanent: remanentCharge, spent: m.investments, fines: m.fines, other: m.other,
-    cashBefore: s.cash, partial, ownCosts: info.site?.ownCosts ?? true,
+    cashBefore: s.cash, partial, ownCosts: info.site?.ownCosts ?? true, plan: r?.fine,
   });
   s.cash += st.net;
   for (const k of ledgers(s, 'month')) {
@@ -1184,6 +1246,7 @@ function closeMonth(s: EconomyState, info: StoreInfo, day: number, out: EconEven
   }
   const profit = st.result;
   changeTrust(s, 'wynik', profit > 0 ? TRUST.monthProfit : TRUST.monthLoss, out);
+  if (r) changeTrust(s, 'plan', r.trust, out);
   // podsumowania modułów wchodzą do raportu raz każde i same zerują licznik miesiąca; zaufanie dopiero po zmianie z wyniku
   const detail = buildMonthReport({
     monthIndex: monthIndexOf(day),
@@ -1201,7 +1264,9 @@ function closeMonth(s: EconomyState, info: StoreInfo, day: number, out: EconEven
   closeWasteMonth(t.waste);
   const label = formatMonth(day);
   const report: MonthReport = { label, counters: { ...m }, profit, cash: s.cash, comment: reportCommentText(detail.commentId), detail, statement: st };
+  if (r) report.plan = r;
   s.history.push({ label, profit, revenue: m.revenue, transfer: st.transfer });
+  if (announce) rollPlan(p, s.history, day);
   s.lastReport = report;
   out.push({ kind: 'month', text: `Wyciąg od Centrali za ${label}: zostaje ${st.net >= 0 ? '+' : ''}${fmt(st.net)} zł.`, report });
   s.month = emptyCounters();
@@ -1210,6 +1275,11 @@ function closeMonth(s: EconomyState, info: StoreInfo, day: number, out: EconEven
   if (trustTerminates(t.trust.value)) {
     s.gameOver = true;
     out.push({ kind: 'gameover', text: 'Centrala wypowiada umowę franczyzową: zaufanie spadło do zera. Dziękujemy za współpracę.' });
+  }
+  // trzecia wpadka planu z rzędu; zaufanie na zerze ma pierwszeństwo (jeden komunikat końca gry)
+  if (!s.gameOver && planTerminates(f.plan)) {
+    s.gameOver = true;
+    out.push({ kind: 'gameover', text: PLAN_GAMEOVER_TEXT });
   }
 }
 
@@ -1635,6 +1705,8 @@ export function cardContext(s: EconomyState, info: StoreInfo): CardContext {
     ctx.district = site.district;
     ctx.difficult = site.difficult;
   }
+  const plan = s.franchisee.plan;
+  if (plan && plan.target > 0) ctx.planStage = plan.stage;   // talia (waga audytu) zna stopień planu tylko przy aktywnym planie
   return ctx;
 }
 

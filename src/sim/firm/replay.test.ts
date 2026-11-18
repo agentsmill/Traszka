@@ -356,3 +356,20 @@ describe('replayFirm: granice i dziennik od klienta', () => {
     expect(() => replayFirm(rec(junk), until)).not.toThrow();
   });
 });
+
+describe('replayFirm: polecenie planTopUp', () => {
+  it('przełącznik dobicia z dziennika wraca w odtworzeniu, a odtworzenie równa się żywej firmie', () => {
+    const l = live(SEED);
+    playTo(l, 92 * DAY + OPEN_FROM);   // plan grudnia powstał przy zamknięciu 1 grudnia
+    expect(activeStore(l.f).econ.franchisee.plan!.target).toBeGreaterThan(0);
+    expect(firm(l, { type: 'planTopUp', storeId: 1, on: true })).toBe(true);
+    tick(l);
+    playTo(l, clockOf(l) + 2 * DAY);
+    const replayed = replayFirm(recordOf(l), clockOf(l));
+    expect(activeStore(replayed).econ.franchisee.plan!.topUp).toBe(true);
+    expect(digest(replayed)).toBe(digest(l.f));
+    // bez polecenia w dzienniku odtworzenie ma przełącznik wyłączony
+    const without = replayFirm(recordOf(l, l.log.filter((e) => !('firm' in e))), clockOf(l));
+    expect(activeStore(without).econ.franchisee.plan!.topUp).toBe(false);
+  });
+});

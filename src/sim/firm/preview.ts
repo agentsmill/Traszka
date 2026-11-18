@@ -5,6 +5,7 @@ import {
   MAX_PREVIEW_MINUTES, closedMonthPreview, defaultAnswer, endedEarlyPreview, gameOverReason, lastDayOfMonthFrom, previewProgress,
   type MonthPreview, type PreviewProgress,
 } from '@/sim/economy/monthPreview';
+import type { PlanMonth } from '@/sim/economy/plan';
 import { visibleCards } from '@/sim/economy/tycoon/cards';
 import { activeStore, applyStoreCommand, emptyStepOut, refreshSites, stepFirmMinute } from './firm';
 import type { FirmState, FirmStore, NetworkSummary } from './types';
@@ -39,12 +40,14 @@ export interface FirmPreview {
   /** Rozliczenie końcowe sklepu, któremu w scenariuszu kończy się umowa (to samo pole co w podsumowaniu sieci); 0, gdy takiego nie ma. */
   settlement: number;
   /**
-   * Czy gra firmy kończy się w tym scenariuszu i dlaczego: debet całej gotówki (`debt`), zaufanie 0 w ostatnim sklepie (`trust`) albo
-   * koniec okresu wypowiedzenia ostatniego sklepu (`notice`). Sklep, który traci umowę, gdy inny gra dalej, gry nie kończy: ma wtedy
+   * Czy gra firmy kończy się w tym scenariuszu i dlaczego: debet całej gotówki (`debt`), zaufanie 0 w ostatnim sklepie (`trust`), trzecia wpadka planu
+   * w ostatnim sklepie (`plan`) albo koniec okresu wypowiedzenia ostatniego sklepu (`notice`). Sklep, który traci umowę, gdy inny gra dalej, gry nie kończy: ma wtedy
    * `gameOver: 'trust'` w swojej części, a firma `null`. Koniec po wypowiedzeniu widać tylko tutaj: część sklepu ma typ jak w podglądzie
    * pojedynczego sklepu, który zna tylko `debt` i `trust`.
    */
-  gameOver: 'debt' | 'trust' | 'notice' | null;
+  gameOver: 'debt' | 'trust' | 'notice' | 'plan' | null;
+  /** Rozliczenie planu Centrali każdego sklepu, który w scenariuszu rozliczył miesiąc (kara jest też w `stores[].preview.statement.plan`). */
+  plans: { storeId: number; plan: PlanMonth }[];
   /** Gra skończyła się, zanim którykolwiek sklep zdążył zamknąć miesiąc (debet w środku miesiąca): sumy są wtedy częściowe. */
   endedEarly: boolean;
 }
@@ -115,10 +118,16 @@ export function startFirmMonthPreview(f: FirmState): FirmPreviewJob {
     if (stores.length === 0) return;
     // debet całej gotówki; sklep zamknięty zaufaniem zostawia rozliczenie na portfelu, więc granicę przekracza dopiero ono (koniec gry
     // ogłasza wtedy pozostały sklep w następnej minucie). Zamknięcie ostatniego sklepu to zaufanie 0 albo koniec jego wypowiedzenia
-    const gameOver: FirmPreview['gameOver'] =
-      copy.person.wallet < DEBT_LIMIT ? 'debt' : copy.over === 'closed' ? (noticeEnd ? 'notice' : 'trust') : null;
+    // powód podaje sklep, którego zamknięcie skończyło grę firmy: pierwszy po `id` z tych, które zostały otwarte z `gameOver` (sklepy zamknięte
+    // wcześniej, czy to zaufaniem, czy planem, o końcu firmy nie decydują)
+    const endingId = copy.stores.find((st) => !st.closed && st.econ.gameOver)?.id;
+    const endingReason = stores.find((s) => s.id === endingId)?.preview.gameOver;
+    const gameOver: FirmPreview['gameOver'] = copy.person.wallet < DEBT_LIMIT
+      ? 'debt'
+      : copy.over === 'closed' ? (noticeEnd ? 'notice' : endingReason === 'plan' ? 'plan' : 'trust') : null;
     result = {
       label: stores.find((s) => !s.preview.endedEarly)?.preview.label ?? '', cashNow, cashAfter: copy.person.wallet, lowestCash: lowest, stores,
+      plans: stores.flatMap((s) => { const plan = reports.get(s.id)?.plan; return plan ? [{ storeId: s.id, plan }] : []; }),
       invest: summary?.invest ?? copy.monthInvest, settlement: summary?.settlement ?? 0, gameOver, endedEarly: reports.size === 0,
     };
   };

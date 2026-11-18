@@ -2,6 +2,7 @@ import type { ComponentChildren } from 'preact';
 import { DEBT_LIMIT, GUARANTEE } from '@/sim/economy/catalog';
 import { DEBT_WARN, debtWarningText } from '@/sim/economy/economy';
 import type { MonthPreview } from '@/sim/economy/monthPreview';
+import type { PlanMonth } from '@/sim/economy/plan';
 import { forecastFirm } from '@/sim/firm/forecast';
 import type { FirmPreview } from '@/sim/firm/preview';
 import type { NetworkSummary } from '@/sim/firm/types';
@@ -11,6 +12,8 @@ import { noGuarantee } from '../city/firmText';
 import { StoreTabs } from '../city/StoreTabs';
 import { nameOf, resolveTab, storeTabDefs, tabState } from '../city/tabState';
 import { forecastNow, isNetwork } from '../city/storeSwitcherModel';
+import { PlanSummary } from './plan';
+import { planGameOverWarning, planResultText, planStoreEndWarning } from './planText';
 import { closeMonthPreview, econ, firm, monthPreview } from '../state';
 import { int, minusZl, money, pct, signedZl, zl } from './format';
 import { runMonthPreview } from './monthPreviewRun';
@@ -44,6 +47,7 @@ export function previewWarning(r: WarningSource): { level: 'warn' | 'danger'; te
     return { level: 'danger', text: t`Centrala wypowie umowę: po zamknięciu miesiąca gotówka wyniesie ${signedZl(r.cashAfter)}, poniżej granicy debetu (${signedZl(DEBT_LIMIT)}).` };
   }
   if (r.gameOver === 'trust') return { level: 'danger', text: t`Centrala wypowie umowę: zaufanie spadnie do zera.` };
+  if (r.gameOver === 'plan') return { level: 'danger', text: planGameOverWarning() };
   if (r.gameOver === 'notice') return { level: 'danger', text: t`Gra skończy się po zamknięciu miesiąca: wygasa umowa ostatniej placówki po okresie wypowiedzenia.` };
   if (r.cashAfter < DEBT_WARN) return { level: 'warn', text: tr(debtWarningText(r.cashAfter)) };
   if (r.lowestCash < DEBT_WARN) return { level: 'warn', text: t`W trakcie miesiąca gotówka spadnie do ${signedZl(r.lowestCash)}, poniżej progu ostrzeżenia (${signedZl(DEBT_WARN)}).` };
@@ -52,13 +56,14 @@ export function previewWarning(r: WarningSource): { level: 'warn' | 'danger'; te
 
 /** Ostrzeżenie w części jednego sklepu z sieci: gotówka jest wspólna (ostrzega zakładka „Sieć”), więc tu tylko utrata umowy tego sklepu. */
 function storeWarning(r: MonthPreview): { level: 'warn' | 'danger'; text: string } | null {
+  if (r.gameOver === 'plan') return { level: 'danger', text: planStoreEndWarning() };
   return r.gameOver === 'trust' ? { level: 'danger', text: t`Centrala wypowie umowę tej placówce: zaufanie spadnie do zera. Pozostałe działają dalej.` } : null;
 }
 
 type Warning = ReturnType<typeof previewWarning>;
 
 /** Treść wyniku jednego sklepu: obrót, klienci, wyciąg, gotówka teraz i ostrzeżenie (zwykła funkcja: testy widzą jej wiersze w drzewie okna). */
-function previewRows(r: MonthPreview, warning: Warning, noGuarantee = false) {
+function previewRows(r: MonthPreview, warning: Warning, noGuarantee = false, plan?: PlanMonth) {
   const st = r.statement;
   return (
     <>
@@ -67,6 +72,7 @@ function previewRows(r: MonthPreview, warning: Warning, noGuarantee = false) {
       {st.guarantee > 0 && <p class="tt-hint">{t`Centrala dopłaca do ${zl(GUARANTEE.income)} przychodu w pierwszych ${GUARANTEE.months} miesiącach, o ile nie będzie mandatu i zaufanie nie spadnie poniżej ${GUARANTEE.minTrust}. „Wierzymy w Ciebie. Do odwołania.”`}</p>}
       {r.endedEarly && <p class="tt-hint">{t`To naliczenia do chwili końca gry: bez rat, dopłaty z gwarancji i premii od obrotu.`}</p>}
       {statementView(st, warning ? warning.level : 'ok', noGuarantee)}
+      {plan && <p class="tt-hint tt-plan-result" role="note">{planResultText(plan)}</p>}
       <Row label={t`Gotówka teraz`}>{money(r.cashNow)}</Row>
       {warning && <p class={`tt-hint warn tt-preview-warn ${warning.level}`} role="alert">{warning.text}</p>}
     </>
@@ -104,12 +110,18 @@ function FirmPreviewResult({ p }: { p: FirmPreview }) {
       <h3>{t`Jeśli nic nie zrobisz`}{p.label ? `: ${tr(p.label)}` : ''}</h3>
       {StoreTabs({ tabs, active, onPick: (id) => pickedPart.set(p, id) })}
       {part
-        ? (<><h3 class="tt-storetitle">{nameOf(f, part.id)}</h3>{previewRows(part.preview, storeWarning(part.preview), noGuarantee(store?.info, (store?.econ.history.length ?? 0) + 1))}</>)
+        ? (<><h3 class="tt-storetitle">{nameOf(f, part.id)}</h3>{previewRows(part.preview, storeWarning(part.preview), noGuarantee(store?.info, (store?.econ.history.length ?? 0) + 1), p.plans.find((x) => x.storeId === part.id)?.plan)}</>)
         : (
           <>
             {p.endedEarly && <p class="tt-hint">{t`To naliczenia do chwili końca gry: bez rat, dopłaty z gwarancji i premii od obrotu.`}</p>}
             <Row label={t`Gotówka teraz`}>{money(p.cashNow)}</Row>
             {NetworkSummaryView({ summary, f, tip: false })}
+            {p.plans.length > 0 && (
+              <section class="tt-plan-results" aria-label={t`Plan Centrali`}>
+                <h3>{t`Plan Centrali`}</h3>
+                {p.plans.map((x) => <Row key={x.storeId} label={nameOf(f, x.storeId)}>{planResultText(x.plan)}</Row>)}
+              </section>
+            )}
             {warning && <p class={`tt-hint warn tt-preview-warn ${warning.level}`} role="alert">{warning.text}</p>}
           </>
         )}
@@ -145,6 +157,9 @@ export function MonthPreviewModal() {
             : <Row label={t`Zostaje Ci po zamknięciu (prognoza)`} strong>{signedZl(f.net)}</Row>}
           <Row label={t`Gotówka teraz`}>{money(game.s.cash)}</Row>
           <Row label={t`Gotówka po zamknięciu`} strong><span class={`tt-free ${tone}`}>{money(f.cashAfter)}</span></Row>
+          {all
+            ? all.stores.map((x) => <PlanSummary key={x.id} plan={x.f.plan} first={x.f.planFirst} name={nameOf(net, x.id)} />)
+            : <PlanSummary plan={f.plan} first={f.planFirst} />}
           <p class="tt-hint">{t`Saldo to marża i premie z tego miesiąca. Centrala przeleje je przy zamknięciu, potrąci raty i palety, a Ty zapłacisz pensje, media, ZUS, VAT i księgową. Prognoza liczy resztę miesiąca z dotychczasowego obrotu.`}</p>
         </section>
         {view.phase === 'idle' && (

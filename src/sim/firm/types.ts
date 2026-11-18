@@ -97,5 +97,5 @@ export interface NetworkSummary {
 /** Zdarzenia jednej minuty firmy: aktywnego sklepu bez zmian, sklepów w tle z id i ważnością, firmy jako rodzaj z parametrami. */
 export interface FirmStepOut { active: EconEvent[]; background: BackgroundEvent[]; firm: FirmEvent[] }
 
-/** Odmowa polecenia firmy. Od 4b: `siec` (badanie wymaga dwóch otwartych sklepów), `max` (badanie na najwyższym poziomie), `goal` (celu nie da się odebrać). */
-export type FirmRefusal = 'ranked' | 'status' | 'limit' | 'lot' | 'gotowka' | 'raty' | 'store' | 'single' | 'over' | 'siec' | 'max' | 'goal';
+/** Odmowa polecenia firmy. Od 4b: `siec` (badanie wymaga dwóch otwartych sklepów), `max` (badanie na najwyższym poziomie), `goal` (celu nie da się odebrać). Od 5a: `plan` (sklep nie ma jeszcze bloku planu Centrali). */
+export type FirmRefusal = 'ranked' | 'status' | 'limit' | 'lot' | 'gotowka' | 'raty' | 'store' | 'single' | 'over' | 'siec' | 'max' | 'goal' | 'plan';

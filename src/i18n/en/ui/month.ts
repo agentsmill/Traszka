@@ -114,6 +114,34 @@ export const MONTH_UI: Dict = {
   'Liczę: dzień {0} z {1}…': 'Calculating: day {0} of {1}…',
   'Nie ma czego liczyć: gra już się skończyła.': 'Nothing to calculate: the game is already over.',
   'Zamknij': 'Close',
+  // plan sprzedaży Centrali: wyciąg, raport, podgląd miesiąca i koniec gry (ui/game/planText.ts, reportBody.tsx, statement.tsx)
+  'Plan Centrali': 'Head Office sales plan',
+  'Plan miesiąca': 'Monthly plan',
+  'Plan za dni otwarte': 'Plan for days open',
+  'Obrót w miesiącu': 'Turnover this month',
+  'Wykonanie': 'Achievement',
+  'Stopień': 'Stage',
+  'Premia za plan': 'Plan bonus',
+  'Plan zaliczony z dobiciem z kieszeni: towar za {0}, koszt {1}.': 'Plan met with an out-of-pocket top-up: goods worth {0}, cost {1}.',
+  'Plan wykonany: {0} z {1}.': 'Plan met: {0} of {1}.',
+  'Plan niewykonany ({0}): Centrala wypowie umowę na tę placówkę.': 'Plan missed ({0}): Head Office will terminate the agreement for this branch.',
+  'Plan niewykonany ({0}): kara {1}, stopień {2} ({3}).': 'Plan missed ({0}): penalty {1}, stage {2} ({3}).',
+  'Centrala wypowie umowę: trzeci miesiąc z rzędu bez planu sprzedaży.': 'Head Office will terminate the agreement: the third month in a row without hitting the sales plan.',
+  'Centrala wypowie umowę tej placówce: trzeci miesiąc z rzędu bez planu sprzedaży. Pozostałe działają dalej.':
+    'Head Office will terminate the agreement for this branch: the third month in a row without hitting the sales plan. Your other branches carry on.',
+  'Partner regionalny: „Widzimy spadek zaangażowania. Od dziś: {0}.”': 'Regional partner: “We note a decline in engagement. As of today: {0}.”',
+  'Partner regionalny: „Dziękujemy za powrót do standardu. Na razie.”': 'Regional partner: “Thank you for returning to standard. For now.”',
+  'wzrostu': 'growth',
+  'za pierwsze trafienie': 'for the first hit',
+  'za serię {0} trafień': 'for a streak of {0} hits',
+  'Nowy plan: {0}. Centrala łaskawie obniża bazę o {1}: {2} dziennie × {3} dni, plus {4} {5}.':
+    'New plan: {0}. Head Office graciously lowers the base by {1}: {2} a day × {3} days, plus {4} {5}.',
+  'Nowy plan: {0}. Średni obrót dzienny z trzech miesięcy {1} × {2} dni, plus {3} {4}.':
+    'New plan: {0}. Average daily turnover over three months {1} × {2} days, plus {3} {4}.',
+  'Koniec okresu wdrożenia. Od jutra obowiązuje plan sprzedaży Centrali: {0}.': 'End of the onboarding period. From tomorrow the Head Office sales plan applies: {0}.',
+  'Powód: trzeci miesiąc z rzędu bez planu sprzedaży.': 'Reason: the third month in a row without hitting the sales plan.',
+  'Przeżyte miesiące: {0} · gotówka: {1}': 'Months survived: {0} · cash: {1}',
+  'Ostatni plan: {0}, wykonane {1}.': 'Last plan: {0}, achieved {1}.',
 };
 
 export const MONTH_PLURALS: Plurals = {};
