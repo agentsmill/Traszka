@@ -598,4 +598,24 @@ describe('plan Centrali w podglądzie i prognozie sieci', () => {
   it('sklep bez planu: `plans` puste', () => {
     expect(runPreview(twoStores('raty'))!.plans).toEqual([]);
   });
+
+  it('powód końca gry firmy podaje sklep, którego zamknięcie skończyło grę (zaufanie w sklepie 1 i plan w sklepie 2 w tej samej minucie)', () => {
+    const f = twoStores('raty');
+    loseTrust(f, 1);
+    armMiss(f, 2, 2);   // trzecia wpadka: stopień 2 → 3
+    const preview = runPreview(f)!;
+    expect(preview.stores.map((s) => s.preview.gameOver)).toEqual(['trust', 'plan']);
+    expect(preview.gameOver).toBe('trust');   // sklep 1 zamknięty pierwszy kończy firmę; wcześniej wychodziło `plan`
+    playToClose(f);
+    expect(f.over).toBe('closed');
+  });
+
+  it('i na odwrót: zaufanie w sklepie 2, plan w sklepie 1 daje powód `plan`', () => {
+    const f = twoStores('raty');
+    armMiss(f, 1, 2);
+    loseTrust(f, 2);
+    const preview = runPreview(f)!;
+    expect(preview.stores.map((s) => s.preview.gameOver)).toEqual(['plan', 'trust']);
+    expect(preview.gameOver).toBe('plan');
+  });
 });

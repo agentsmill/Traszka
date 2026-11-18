@@ -118,8 +118,13 @@ export function startFirmMonthPreview(f: FirmState): FirmPreviewJob {
     if (stores.length === 0) return;
     // debet całej gotówki; sklep zamknięty zaufaniem zostawia rozliczenie na portfelu, więc granicę przekracza dopiero ono (koniec gry
     // ogłasza wtedy pozostały sklep w następnej minucie). Zamknięcie ostatniego sklepu to zaufanie 0 albo koniec jego wypowiedzenia
-    const gameOver: FirmPreview['gameOver'] =
-      copy.person.wallet < DEBT_LIMIT ? 'debt' : copy.over === 'closed' ? (noticeEnd ? 'notice' : stores.some((s) => s.preview.gameOver === 'plan') ? 'plan' : 'trust') : null;
+    // powód podaje sklep, którego zamknięcie skończyło grę firmy: pierwszy po `id` z tych, które zostały otwarte z `gameOver` (sklepy zamknięte
+    // wcześniej, czy to zaufaniem, czy planem, o końcu firmy nie decydują)
+    const endingId = copy.stores.find((st) => !st.closed && st.econ.gameOver)?.id;
+    const endingReason = stores.find((s) => s.id === endingId)?.preview.gameOver;
+    const gameOver: FirmPreview['gameOver'] = copy.person.wallet < DEBT_LIMIT
+      ? 'debt'
+      : copy.over === 'closed' ? (noticeEnd ? 'notice' : endingReason === 'plan' ? 'plan' : 'trust') : null;
     result = {
       label: stores.find((s) => !s.preview.endedEarly)?.preview.label ?? '', cashNow, cashAfter: copy.person.wallet, lowestCash: lowest, stores,
       plans: stores.flatMap((s) => { const plan = reports.get(s.id)?.plan; return plan ? [{ storeId: s.id, plan }] : []; }),
