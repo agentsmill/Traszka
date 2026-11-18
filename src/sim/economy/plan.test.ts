@@ -5,8 +5,8 @@ import {
 } from './plan';
 
 describe('plan sprzedaży Centrali', () => {
-  it('wzrost: 2% bez serii, +0,5 pp za trafienie, sufit 5%', () => {
-    expect(planGrowth(0)).toBeCloseTo(0.02); expect(planGrowth(3)).toBeCloseTo(0.035); expect(planGrowth(40)).toBeCloseTo(0.05);
+  it('wzrost: 1% bez serii, +0,25 pp za trafienie, sufit 3%', () => {
+    expect(planGrowth(0)).toBeCloseTo(0.01); expect(planGrowth(3)).toBeCloseTo(0.0175); expect(planGrowth(40)).toBeCloseTo(0.03);
   });
   it('baza: średnia z trzech miesięcy, ale nie mniej niż 95% poprzedniej', () => {
     expect(planBase([10_000, 11_000, 12_000], 0)).toBe(11_000);

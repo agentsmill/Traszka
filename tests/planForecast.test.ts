@@ -12,8 +12,8 @@ import { visibleCards } from '@/sim/economy/tycoon/cards';
 /*
  * Bramka P7 (etap 5a, Task 4): żadna kara planu nie przychodzi niespodzianką. Bot bez zakupów (karty z odpowiedzią domyślną) gra od
  * początku umowy; rano ostatniego dnia każdego miesiąca z planem uruchamiamy podgląd miesiąca i porównujemy go z prawdziwym zamknięciem.
- * Bezczynny sklep na prawdziwym planie wpada w miesiącach 6 i 7 i traci umowę przy zamknięciu 8 (stopień 3 nie niesie kary pieniężnej),
- * więc „8 miesięcy z planem” bywa nieosiągalne: bieg kończy się końcem gry albo ósmym miesiącem planu, zależnie co wcześniej.
+ * Bezczynny sklep na prawdziwym planie wpada od kilku miesięcy po starcie planu i po trzeciej wpadce z rzędu traci umowę (stopień 3 nie
+ * niesie kary pieniężnej), więc „8 miesięcy z planem” bywa nieosiągalne: bieg kończy się końcem gry albo ósmym miesiącem planu, zależnie co wcześniej.
  */
 
 const SEEDS = ['kiełbasa-42', 'żabka-7'];

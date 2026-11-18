@@ -14,7 +14,9 @@ export const PLAN = {
   startMonths: GUARANTEE.months,   // plan od czwartego miesiąca umowy
   recentMonths: 3,
   baseFloor: 0.95,   // baza nie spada szybciej niż o 5% miesięcznie
-  growthBase: 0.02, growthPerHit: 0.005, growthMax: 0.05,
+  // wzrost 1% + 0,25 pp za trafienie z rzędu, najwyżej 3% (start był 2% + 0,5 pp, sufit 5%: w rozbudowie sieci pierwsza wpadka
+  // przychodziła w m. 7–11, a gracz rozsądny tracił sklep startowy; pomiar na botach, etap 5a Zadanie 6)
+  growthBase: 0.01, growthPerHit: 0.0025, growthMax: 0.03,
   bonusShare: 0.01,   // premia za trafienie: 1% obrotu miesiąca
   trustHit: 2, trustMiss: -2,
   fineShare: [0, 0.10, 0.20, 0] as readonly number[],   // indeks = stopień po wpadce
