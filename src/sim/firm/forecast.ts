@@ -40,5 +40,9 @@ export function forecastFirm(f: FirmState): FirmForecast {
     ...list[0]!.statement, cashAfter, partial: list.some((m) => m.statement.partial),
     ...Object.fromEntries(SUMMED.map((k) => [k, sum(list, (m) => m.statement[k])])),
   };
+  // kara za plan (opcjonalny klucz, część `deductions`): suma po sklepach; bez kar klucza nie ma, jak w wyciągu jednego sklepu
+  const planFine = sum(list, (m) => m.statement.plan ?? 0);
+  if (planFine > 0) statement.plan = planFine;
+  else delete statement.plan;
   return { saldo: sum(list, (m) => m.saldo), installments: sum(list, (m) => m.installments), statement, net, cashAfter, plan: null, planFirst: null, stores };
 }

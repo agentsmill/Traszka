@@ -583,6 +583,23 @@ describe('plan Centrali w podglądzie i prognozie sieci', () => {
     expect(fc.stores[1]!.f.statement.plan).toBe(fc.stores[1]!.f.plan!.fine);
   });
 
+  it('wyciąg sumy sieci: kara za plan to suma kar sklepów (jak `deductions`), a bez kar klucza nie ma', () => {
+    const f = twoStores('raty');
+    expect(forecastFirm(f).statement.plan).toBeUndefined();
+    const factors = [1.3, 1.6];   // dwa różne cele, więc dwie różne kary
+    f.stores.forEach((st, i) => {
+      st.econ.franchisee.plan = { target: 1_000_000, base: 0, recent: [], streak: 0, stage: 0, openDays: 12, topUp: false };
+      const paced = forecastMonth(st.econ, st.info).plan!.forecastShare * 1_000_000;
+      st.econ.franchisee.plan.target = Math.round(paced * factors[i]!);
+    });
+    const fc = forecastFirm(f);
+    const fines = fc.stores.map((x) => x.f.statement.plan ?? 0);
+    expect(fines[0]).toBeGreaterThan(0);
+    expect(fines[1]).toBeGreaterThan(0);
+    expect(fines[0]).not.toBe(fines[1]);
+    expect(fc.statement.plan).toBe(fines[0]! + fines[1]!);
+  });
+
   it('podgląd niesie rozliczenie planu sklepów, a kara w wyciągu sklepu zgadza się z zamknięciem miesiąca', () => {
     const f = twoStores('raty');
     armMiss(f, 2);
