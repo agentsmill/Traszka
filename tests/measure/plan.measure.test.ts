@@ -16,8 +16,10 @@ const ALL_SEEDS = ['traszka-1', 'kopytka-541', 'makieta', 'lublin-9', 'seed-3'];
 const SEEDS = process.env.SEEDS ? process.env.SEEDS.split(',') : ALL_SEEDS;
 const MONTHS = Number(process.env.MONTHS ?? 24);
 const PLAN_STRATEGIES: readonly ProgStrategy[] = ['mistrz', 'jeden', 'siec12', 'rozsadny'];
+/** Warianty informacyjne ostrożnego bota (bez bramek: tylko tabela i sprawdzenie, że bieg się skończył). */
+const INFO_STRATEGIES: readonly ProgStrategy[] = ['rozsadny-sklep', 'rozsadny-dobicie'];
 /** `STRATEGIES=none`: nic nie gra, tylko liczy bramki z plików `MERGE`. */
-const STRATEGIES = (process.env.STRATEGIES ? process.env.STRATEGIES.split(',').filter((s) => s !== 'none') : PLAN_STRATEGIES) as ProgStrategy[];
+const STRATEGIES = (process.env.STRATEGIES ? process.env.STRATEGIES.split(',').filter((s) => s !== 'none') : [...PLAN_STRATEGIES, ...INFO_STRATEGIES]) as ProgStrategy[];
 /** Sklep startowy firmy (`createFirm`). */
 const START_ID = 1;
 
@@ -40,7 +42,7 @@ describe.skipIf(!process.env.MEASURE)('pomiar planu Centrali 5a', () => {
     const all = [...merged, ...played];
     const of = (s: ProgStrategy): ProgResult[] => ALL_SEEDS.map((seed) => all.find((r) => r.strategy === s && r.seed === seed)).filter((r): r is ProgResult => !!r);
 
-    for (const strategy of PLAN_STRATEGIES) {
+    for (const strategy of [...PLAN_STRATEGIES, ...INFO_STRATEGIES]) {
       const runs = of(strategy);
       if (runs.length === 0) continue;
       console.log(`== ${strategy} (seedy: ${runs.map((r) => r.seed).join(' ')})`);
@@ -52,8 +54,16 @@ describe.skipIf(!process.env.MEASURE)('pomiar planu Centrali 5a', () => {
           `| 1 mln: ${show(r.millionMonth)} | sklepy na końcu: ${r.remontsEnd.length} | koniec: ${r.over ?? '-'}${r.overMonth ? `@${r.overMonth}` : ''} | miesięcy: ${r.months.length}`,
           `| portfel tys. m.12/m.24/koniec: ${k(r.months[11]?.wallet)}/${k(r.months[23]?.wallet)}/${k(r.finalWallet)} | debet: ${r.debtWarnings}`,
         );
+        const peak = r.months.reduce((b, m) => (m.wallet > b.wallet ? m : b), r.months[0] ?? { wallet: 0, month: 0 });
+        console.log(`${' '.repeat(11)} | najwyższy portfel tys.: ${k(peak.wallet)} w m. ${peak.month} | sklepy w ostatnim zamkniętym m.: ${r.months.at(-1)?.stores ?? '-'}`,
+          `| dobicia: ${r.topUps.count}, koszt tys. ${k(r.topUps.cost)}`);
         console.log(`${' '.repeat(11)} | wykonanie % (! = wpadka): ${shares.join(' ')}`);
       }
+    }
+
+    // warianty informacyjne: bez bramek, tylko bieg doszedł do końca (24 miesiące albo koniec gry)
+    for (const r of all.filter((x) => INFO_STRATEGIES.includes(x.strategy))) {
+      expect(r.months.length >= MONTHS || r.over !== null, `${r.strategy} ${r.seed}: bieg przerwany`).toBe(true);
     }
 
     const complete = MONTHS >= 24 && PLAN_STRATEGIES.every((s) => of(s).length === ALL_SEEDS.length && of(s).every((r) => r.months.length >= 24 || r.over !== null));

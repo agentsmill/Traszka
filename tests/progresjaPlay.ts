@@ -3,6 +3,8 @@ import { lotEstimate } from '@/sim/city/traffic';
 import { minuteOfDay } from '@/sim/economy/calendar';
 import { MINUTES_PER_DAY } from '@/sim/economy/catalog';
 import type { Command } from '@/sim/economy/commands';
+import type { EconomyState } from '@/sim/economy/economy';
+import type { StoreInfo } from '@/sim/economy/storeInfo';
 import { awaitingDecision, findSlot, installmentRoom, nextRemont, upgradeBlocker, type EconEvent } from '@/sim/economy/economy';
 import { forecastMonth } from '@/sim/economy/forecast';
 import { planFor } from '@/sim/economy/franchisee';
@@ -31,11 +33,14 @@ import { keepPlansEasy } from './firmKit';
  *     tylko gra i krąży po sklepach: kiedy przychodzi milion graczowi, który rok rozbudowuje sieć, a potem zbiera;
  *   - `rozsadny` (etap 5a, bramka P6): `siec`, ale zakupy w sklepie i badania Sieci tylko wtedy, gdy prognoza planu Centrali któregoś otwartego
  *     sklepu (`forecastMonth(...).plan.forecastShare`) jest poniżej `PRUDENT_SHARE`; poza tym oszczędza (bez planu, czyli w m. 1–3, też).
- *     Sklepy wynajmuje jak `siec`. Przełącznika dobicia z kieszeni nie włącza.
+ *     Sklepy wynajmuje jak `siec`. Przełącznika dobicia z kieszeni nie włącza;
+ *   - `rozsadny-sklep` (informacyjny, bez bramki): jak `rozsadny`, ale warunek liczy się w sklepie, w którym bot akurat jest: kupuje w nim tylko przy
+ *     jego własnej prognozie planu poniżej `PRUDENT_SHARE`, badania Sieci tylko wtedy, gdy ten sklep spełnia warunek;
+ *   - `rozsadny-dobicie` (informacyjny, bez bramki): `rozsadny-sklep`, który włącza „dobij z własnej kieszeni” w każdym sklepie z blokiem planu.
  */
 
-export type ProgStrategy = 'bierny' | 'mistrz' | 'jeden' | 'trzy' | 'siec' | 'siec12' | 'rozsadny';
-export const PROG_STRATEGIES: readonly ProgStrategy[] = ['bierny', 'mistrz', 'jeden', 'trzy', 'siec', 'siec12', 'rozsadny'];
+export type ProgStrategy = 'bierny' | 'mistrz' | 'jeden' | 'trzy' | 'siec' | 'siec12' | 'rozsadny' | 'rozsadny-sklep' | 'rozsadny-dobicie';
+export const PROG_STRATEGIES: readonly ProgStrategy[] = ['bierny', 'mistrz', 'jeden', 'trzy', 'siec', 'siec12', 'rozsadny', 'rozsadny-sklep', 'rozsadny-dobicie'];
 
 /** `rozsadny` kupuje, gdy prognoza planu któregoś sklepu spada poniżej tylu (spec 5a §6.7: 105%). */
 export const PRUDENT_SHARE = 1.05;
@@ -45,11 +50,14 @@ export const RESEARCH_RESERVE = 50_000;
 
 /**
  * `stopAfter`: po tylu zamkniętych miesiącach gracz przestaje kupować (sklepy, badania, lokale); Infinity, gdy nie przestaje. `planGated`: zakupy
- * w sklepie i badania tylko przy prognozie planu któregoś sklepu poniżej `PRUDENT_SHARE` (`rozsadny`).
+ * w sklepie i badania tylko przy prognozie planu poniżej `PRUDENT_SHARE`: `'any'` któregoś otwartego sklepu (`rozsadny`), `'store'` sklepu, w którym
+ * bot akurat jest (`rozsadny-sklep`, `rozsadny-dobicie`). `topUp`: przełącznik dobicia włączony w każdym sklepie z planem.
  */
-interface Setup { bot: BotName; buy: boolean; extras: number; rotate: boolean; research: boolean; stopAfter: number; planGated: boolean }
+interface Setup {
+  bot: BotName; buy: boolean; extras: number; rotate: boolean; research: boolean; stopAfter: number; planGated: false | 'any' | 'store'; topUp: boolean;
+}
 function setupOf(s: ProgStrategy): Setup {
-  const base: Setup = { bot: 'mistrz', buy: false, extras: 0, rotate: false, research: false, stopAfter: Infinity, planGated: false };
+  const base: Setup = { bot: 'mistrz', buy: false, extras: 0, rotate: false, research: false, stopAfter: Infinity, planGated: false, topUp: false };
   switch (s) {
     case 'bierny': return { ...base, bot: 'bierny' };
     case 'mistrz': return base;
@@ -57,16 +65,20 @@ function setupOf(s: ProgStrategy): Setup {
     case 'trzy': return { ...base, extras: 2 };
     case 'siec': return { ...base, buy: true, extras: Infinity, rotate: true, research: true };
     case 'siec12': return { ...base, buy: true, extras: Infinity, rotate: true, research: true, stopAfter: 12 };
-    case 'rozsadny': return { ...base, buy: true, extras: Infinity, rotate: true, research: true, planGated: true };
+    case 'rozsadny': return { ...base, buy: true, extras: Infinity, rotate: true, research: true, planGated: 'any' };
+    case 'rozsadny-sklep': return { ...base, buy: true, extras: Infinity, rotate: true, research: true, planGated: 'store' };
+    case 'rozsadny-dobicie': return { ...base, buy: true, extras: Infinity, rotate: true, research: true, planGated: 'store', topUp: true };
   }
 }
 
-/** Czy któryś otwarty sklep ma plan Centrali z prognozą wykonania poniżej `PRUDENT_SHARE` (warunek zakupów `rozsadny`). */
-function planNeedsHelp(f: FirmState): boolean {
-  return openStores(f).some((st) => {
-    const o = forecastMonth(st.econ, st.info).plan;
-    return o !== null && o.forecastShare < PRUDENT_SHARE;
-  });
+const storeNeedsHelp = (st: { econ: EconomyState; info: StoreInfo }): boolean => {
+  const o = forecastMonth(st.econ, st.info).plan;
+  return o !== null && o.forecastShare < PRUDENT_SHARE;
+};
+
+/** Warunek zakupów: któryś otwarty sklep (`'any'`) albo aktywny sklep (`'store'`) ma prognozę planu poniżej `PRUDENT_SHARE`. */
+function planNeedsHelp(f: FirmState, scope: 'any' | 'store'): boolean {
+  return scope === 'store' ? storeNeedsHelp(activeStore(f)) : openStores(f).some(storeNeedsHelp);
 }
 
 // --- Zakupy w aktywnym sklepie (jak `buyMixed` z pomiaru miasta) ----------------------------------------------------------------
@@ -209,6 +221,8 @@ export interface ProgResult {
   over: null | 'debt' | 'closed' | 'trust'; overMonth: number | null;
   /** Sklepy, którym Centrala wypowiedziała umowę za trzecią wpadkę planu: `id` i zamknięty miesiąc z tą wpadką (także ostatni sklep, który kończy grę). */
   closedByPlan: { storeId: number; month: number }[];
+  /** Dobicia planu z własnej kieszeni (rozliczenia z `bought > 0`): liczba i suma kosztu z portfela. */
+  topUps: { count: number; cost: number };
   /** Ostrzeżenia o debecie (sklepu przy jednym sklepie, firmy od dwóch). */
   debtWarnings: number;
   finalWallet: number;
@@ -226,7 +240,7 @@ export function playProgresja(strategy: ProgStrategy, seed: string, months: numb
     strategy, seed, months: [], partnerMonth: null, opens: [], unlocks: [], millionMonth: null, millionDay: null, storesAtMillion: null,
     twoMillionMonth: null, unboughtAt2m: null, unboughtEnd: unboughtTotal(f), researchSpent: 0, researchLevels: 0, remontsEnd: [], levelsEnd: [],
     bought: { remont: 0, upgrade: 0, equipment: 0, raty: 0 }, level28Month: null, level34Month: null, over: null, overMonth: null, closedByPlan: [],
-    debtWarnings: 0, finalWallet: 0,
+    topUps: { count: 0, cost: 0 }, debtWarnings: 0, finalWallet: 0,
   };
   const dayNow = (): number => Math.floor(activeStore(f).econ.minute / MINUTES_PER_DAY);
   const statements = new Map<number, { net: number; result: number; installments: number }>();
@@ -242,6 +256,7 @@ export function playProgresja(strategy: ProgStrategy, seed: string, months: numb
         statements.set(id, { net: st.net, result: st.result, installments: st.installments });
         const p = event.report.plan;
         if (p) plans.push({ storeId: id, share: p.share, stage: p.stage, fine: p.fine, hit: p.hit, charged: st.plan ?? 0 });
+        if (p && p.bought > 0) { r.topUps.count++; r.topUps.cost += p.cost; }
         label = event.report.label;
       }
     }
@@ -294,7 +309,14 @@ export function playProgresja(strategy: ProgStrategy, seed: string, months: numb
     const mod = minuteOfDay(activeStore(f).econ.minute);
     const buying = r.months.length < setup.stopAfter;
     // `rozsadny`: o 8:00 i 9:00 (badania, zakupy) najpierw pyta prognozę planu; poza tymi chwilami nie liczy jej co minutę
-    const allowed = !setup.planGated || ((mod === 8 * 60 || mod === 9 * 60) && planNeedsHelp(f));
+    const allowed = !setup.planGated || ((mod === 8 * 60 || mod === 9 * 60) && planNeedsHelp(f, setup.planGated));
+    // `rozsadny-dobicie`: przełącznik dobicia w każdym sklepie, który ma już blok planu (raz na dobę wystarczy: blok powstaje 1. dnia 4. miesiąca)
+    if (setup.topUp && mod === 7 * 60) {
+      for (const st of openStores(f)) {
+        const p = st.econ.franchisee.plan;
+        if (p && !p.topUp) applyFirmCommand(f, { type: 'planTopUp', storeId: st.id, on: true }, emptyStepOut());
+      }
+    }
     if (setup.research && buying && allowed && mod === 8 * 60) {
       const price = buyCheapestResearch(f);
       if (price !== null) r.researchSpent += price;
