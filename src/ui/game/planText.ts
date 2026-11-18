@@ -70,16 +70,11 @@ export const planStoreEndWarning = (): string => t`Centrala wypowie umowę tej p
 export interface PlanCtx { history: readonly { revenue: number }[]; day: number; plan?: PlanState }
 export const planCtxOf = (s: EconomyState): PlanCtx => ({ history: s.history, day: dayOf(s.minute), plan: planOf(s) });
 
-/**
- * List partnera regionalnego, gdy stopień drabiny się zmienił, albo `null`. W górę: każda wpadka. W dół: trafienie, po którym stopień
- * jest nadal dodatni, albo trafienie z serią 1 (poprzedni miesiąc był wpadką, więc stopień był ≥ 1), z wyjątkiem pierwszego rozliczenia planu
- * (wtedy nie było żadnej wpadki wcześniej). Zejście 1→0 przy dłuższej serii listu nie dostaje: raport nie niesie poprzedniego stopnia.
- */
-export function planLetter(p: PlanMonth, ctx: PlanCtx): string | null {
-  if (!p.hit) return t`Partner regionalny: „Widzimy spadek zaangażowania. Od dziś: ${stageName(p.stage)}.”`;
-  const first = ctx.history.length === PLAN.startMonths + 1;
-  const down = p.stage > 0 || (p.streak === 1 && !first);
-  return down ? t`Partner regionalny: „Dziękujemy za powrót do standardu. Na razie.”` : null;
+/** List partnera regionalnego dokładnie wtedy, gdy stopień drabiny się zmienił (`stage` po rozliczeniu, `stageBefore` przed): w górę ostrzeżenie, w dół podziękowanie. */
+export function planLetter(p: PlanMonth): string | null {
+  if (p.stage > p.stageBefore) return t`Partner regionalny: „Widzimy spadek zaangażowania. Od dziś: ${stageName(p.stage)}.”`;
+  if (p.stage < p.stageBefore) return t`Partner regionalny: „Dziękujemy za powrót do standardu. Na razie.”`;
+  return null;
 }
 
 /** Ile dni miał miesiąc nowego planu: ten, dla którego `planTarget` daje zapisany cel (raport nie niesie liczby dni). */

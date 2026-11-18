@@ -309,7 +309,7 @@ function report(v: unknown): MonthReport | null {
 
 /** Pola rozliczenia planu w kolejności `settlePlan` (raport ma wracać z zapisu bajt w bajt); `hit` osobno, reszta to liczby. */
 const PLAN_MONTH_FIELDS = [
-  'target', 'due', 'turnover', 'bought', 'cost', 'share', 'hit', 'bonus', 'fine', 'trust', 'stage', 'streak', 'nextTarget', 'nextBase',
+  'target', 'due', 'turnover', 'bought', 'cost', 'share', 'hit', 'bonus', 'fine', 'trust', 'stage', 'stageBefore', 'streak', 'nextTarget', 'nextBase',
   'nextGrowth',
 ] as const satisfies readonly (keyof PlanMonth)[];
 
@@ -317,6 +317,6 @@ const PLAN_MONTH_FIELDS = [
 function planMonth(v: unknown): PlanMonth | undefined {
   if (!isRec(v)) return undefined;
   const out = {} as Record<string, number | boolean>;
-  for (const k of PLAN_MONTH_FIELDS) out[k] = k === 'hit' ? v.hit === true : money(v[k], 0);
+  for (const k of PLAN_MONTH_FIELDS) out[k] = k === 'hit' ? v.hit === true : k === 'stageBefore' && !isNum(v.stageBefore) ? money(v.stage, 0) : money(v[k], 0);   // raport bez `stageBefore`: bez zmiany stopnia
   return out as unknown as PlanMonth;
 }

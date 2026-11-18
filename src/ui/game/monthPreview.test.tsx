@@ -564,7 +564,7 @@ describe('plan Centrali w podglądzie miesiąca', () => {
   const planState = (over: Partial<PlanState> = {}): PlanState => ({ target: 412_000, base: 13_290, recent: [13_000, 13_200, 13_290], streak: 3, stage: 0, openDays: 10, topUp: false, ...over });
   const planMonth = (over: Partial<PlanMonth> = {}): PlanMonth => ({
     target: 412_000, due: 412_000, turnover: 380_000, bought: 0, cost: 0, share: 0.922, hit: false, bonus: 0, fine: 1_240, trust: -2,
-    stage: 1, streak: 0, nextTarget: 400_000, nextBase: 12_900, nextGrowth: 0.02, ...over,
+    stage: 1, stageBefore: 0, streak: 0, nextTarget: 400_000, nextBase: 12_900, nextGrowth: 0.02, ...over,
   });
   const noExtras = { month: { margin: 9_000, bonus: 0, pallets: 0, wages: 4_000, media: 0 }, guarantee: 0, installments: 0, remanent: 0, spent: 0, fines: 0, other: 0, cashBefore: 5_000, partial: false } as const;
   const previewOf = (over: Partial<MonthPreview> = {}, plan = 0): MonthPreview => {

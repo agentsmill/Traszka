@@ -101,7 +101,7 @@ describe('plan Centrali w ekonomii sklepu', () => {
     s.franchisee.plan!.target = 1_000;   // plan nie do chybienia
     runTo(s, info, 122 * DAY);
     expect(s.lastReport!.label).toBe('grudzień 2026');
-    expect(s.lastReport!.plan).toMatchObject({ hit: true, stage: 0, streak: 1, fine: 0, bought: 0 });
+    expect(s.lastReport!.plan).toMatchObject({ hit: true, stage: 0, stageBefore: 0, streak: 1, fine: 0, bought: 0 });
     expect(s.lastReport!.plan!.bonus).toBe(Math.round(0.01 * s.lastReport!.counters.revenue));
     expect('plan' in s.lastReport!.statement!).toBe(false);
     expect(s.franchisee.plan!.target).toBe(s.lastReport!.plan!.nextTarget);
@@ -120,6 +120,7 @@ describe('plan Centrali w ekonomii sklepu', () => {
     expect(st.deductions).toBe(st.installments + st.pallets + st.remanent + st.plan!);
     expect(s.lastReport!.detail!.trust.reasons.some(([r, v]) => r === 'plan' && v < 0)).toBe(true);
     expect(s.franchisee.plan!.stage).toBe(1);
+    expect(s.lastReport!.plan).toMatchObject({ stage: 1, stageBefore: 0 });
     expect(s.franchisee.plan!.streak).toBe(0);
   });
 
@@ -259,6 +260,10 @@ describe('plan Centrali w ekonomii sklepu', () => {
     runTo(hit, info, 122 * DAY);
     expect(hit.lastReport!.plan).toBeDefined();
     expect(roundTrip(hit)).toBe(JSON.stringify(hit));
+    // raport z zapisu bez `stageBefore`: wraca ze `stageBefore = stage` (bez zmiany stopnia, bez listu)
+    const old = JSON.parse(JSON.stringify(hit));
+    delete old.lastReport.plan.stageBefore;
+    expect(sanitizeEconomy(old, defaults, info)!.lastReport!.plan).toMatchObject({ stage: hit.lastReport!.plan!.stage, stageBefore: hit.lastReport!.plan!.stage });
     const miss = december(1.5);
     runTo(miss, info, 122 * DAY);
     expect(miss.lastReport!.statement!.plan).toBeGreaterThan(0);

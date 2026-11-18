@@ -44,7 +44,7 @@ export interface PlanState {
 export interface PlanMonth {
   target: number; due: number; turnover: number; bought: number; cost: number; share: number;
   hit: boolean; bonus: number; fine: number; trust: number;
-  stage: number; streak: number; nextTarget: number; nextBase: number; nextGrowth: number;
+  stage: number; stageBefore: number; streak: number; nextTarget: number; nextBase: number; nextGrowth: number;
 }
 
 export type PlanVerdict = 'hit' | 'topup' | 'miss';
@@ -129,6 +129,7 @@ export function settlePlan(p: PlanState, i: {
     return null;
   }
   const settledTarget = p.target;
+  const stageBefore = p.stage;
   const due = planDue(p, i.monthDays);
   const share = shareOf(i.revenue, due);
   const gap = Math.max(0, due - i.revenue);
@@ -158,7 +159,7 @@ export function settlePlan(p: PlanState, i: {
   p.openDays = 0;
   return {
     target: settledTarget, due, turnover: i.revenue, bought, cost, share, hit, bonus, fine, trust,
-    stage: p.stage, streak: p.streak, nextTarget: p.target, nextBase: p.base, nextGrowth: planGrowth(p.streak),
+    stage: p.stage, stageBefore, streak: p.streak, nextTarget: p.target, nextBase: p.base, nextGrowth: planGrowth(p.streak),
   };
 }
 

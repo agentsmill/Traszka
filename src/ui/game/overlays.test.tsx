@@ -1860,7 +1860,7 @@ describe('plan Centrali: zdarzenie „OK”, raport miesiąca i koniec gry', () 
   const plainText = (text: string): string => text.replace(/[\s  ]/g, ' ');
   const planMonth = (over: Partial<PlanMonth> = {}): PlanMonth => ({
     target: 412_000, due: 412_000, turnover: 380_000, bought: 0, cost: 0, share: 380_000 / 412_000, hit: false, bonus: 0, fine: 1_240, trust: -2,
-    stage: 1, streak: 0, nextTarget: planTarget(12_900, 31, 0), nextBase: 12_900, nextGrowth: 0.02, ...over,
+    stage: 1, stageBefore: 0, streak: 0, nextTarget: planTarget(12_900, 31, 0), nextBase: 12_900, nextGrowth: 0.02, ...over,
   });
   const planState = (over: Partial<PlanState> = {}): PlanState => ({ target: 400_000, base: 12_900, recent: [12_900, 12_900, 12_900], streak: 0, stage: 1, openDays: 0, topUp: false, ...over });
   const history = (n: number): { revenue: number }[] => Array.from({ length: n }, (_, i) => ({ revenue: 400_000 + i * 1_000 }));
@@ -1911,17 +1911,15 @@ describe('plan Centrali: zdarzenie „OK”, raport miesiąca i koniec gry', () 
       expect(plainText(textOf(byClass(t, 'tt-statement')))).toContain(plainText(`Plan Centrali${minusZl(1_240)}`));
     });
 
-    it('trafienie po wpadce (stopień w dół): list z podziękowaniem; zwykłe trafienie bez listu', () => {
-      const down = planMonth({ hit: true, share: 1.02, fine: 0, stage: 1, streak: 1, trust: 2, bonus: 3_800 });
-      expect(quotes(body(withPlan(down), ctxOf(6, planState({ streak: 1 }))))).toEqual(['Partner regionalny: „Dziękujemy za powrót do standardu. Na razie.”']);
-      // stopień 1 → 0 przy serii 1 (poprzedni miesiąc był wpadką), nie pierwsze rozliczenie planu
-      const back = planMonth({ hit: true, share: 1.02, fine: 0, stage: 0, streak: 1, trust: 2, bonus: 3_800 });
-      expect(quotes(body(withPlan(back), ctxOf(6, planState({ streak: 1, stage: 0 }))))).toEqual(['Partner regionalny: „Dziękujemy za powrót do standardu. Na razie.”']);
-      // pierwsze rozliczenie (historia = miesiące gwarancji + 1): seria 1 bez wpadki przed nią
-      expect(quotes(body(withPlan(back), ctxOf(PLAN.startMonths + 1, planState({ streak: 1, stage: 0 }))))).toEqual([]);
-      // kolejne trafienie z rzędu
-      const streak = planMonth({ hit: true, share: 1.02, fine: 0, stage: 0, streak: 4, trust: 2, bonus: 3_800 });
-      expect(quotes(body(withPlan(streak), ctxOf(8, planState({ streak: 4, stage: 0 }))))).toEqual([]);
+    it('list zależy od zmiany stopnia (`stageBefore` → `stage`), nie od serii ani historii', () => {
+      const hit = (over: Partial<PlanMonth>): PlanMonth => planMonth({ hit: true, share: 1.02, fine: 0, trust: 2, ...over });
+      const thanks = ['Partner regionalny: „Dziękujemy za powrót do standardu. Na razie.”'];
+      expect(quotes(body(withPlan(hit({ stageBefore: 2, stage: 1, streak: 1 })), ctxOf(6, planState())))).toEqual(thanks);
+      expect(quotes(body(withPlan(hit({ stageBefore: 1, stage: 0, streak: 2 })), ctxOf(8, planState())))).toEqual(thanks);
+      expect(quotes(body(withPlan(hit({ stageBefore: 0, stage: 0, streak: 1 })), ctxOf(PLAN.startMonths + 1, planState())))).toEqual([]);
+      expect(quotes(body(withPlan(hit({ stageBefore: 0, stage: 0, streak: 4 })), ctxOf(8, planState())))).toEqual([]);
+      // raport bez stageBefore z zapisu dostaje stageBefore = stage (bez listu): pokrywa test sanitizera
+      expect(quotes(body(withPlan(planMonth({ stageBefore: 1, stage: 2 })), ctxOf(8, planState())))).toEqual(['Partner regionalny: „Widzimy spadek zaangażowania. Od dziś: Program naprawczy.”']);
     });
 
     it('wynik z dobiciem: koszt i kupiony towar, bez premii', () => {

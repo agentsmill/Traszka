@@ -22,17 +22,17 @@ describe('plan sprzedaży Centrali', () => {
   it('trafienie: premia 1% obrotu, seria +1, stopień w dół', () => {
     const p: PlanState = { target: 400_000, base: 12_900, recent: [12_000, 12_500, 13_000], streak: 2, stage: 1, openDays: 31, topUp: false };
     const r = settlePlan(p, { revenue: 410_000, monthDays: 31, nextMonthDays: 30, cash: 0, debtWarn: -50_000 })!;
-    expect(r).toMatchObject({ hit: true, bonus: 4_100, fine: 0, trust: 2, stage: 0, streak: 3, bought: 0 });
+    expect(r).toMatchObject({ hit: true, bonus: 4_100, fine: 0, trust: 2, stage: 0, stageBefore: 1, streak: 3, bought: 0 });
     expect(p.openDays).toBe(0); expect(p.target).toBe(r.nextTarget);
   });
   it('wpadki: 10% i 20% brakującego obrotu, trzecia kończy umowę bez kary', () => {
     const p: PlanState = { target: 400_000, base: 12_900, recent: [], streak: 5, stage: 0, openDays: 30, topUp: false };
     const i = { revenue: 300_000, monthDays: 30, nextMonthDays: 30, cash: 0, debtWarn: -50_000 };
-    expect(settlePlan(p, i)).toMatchObject({ hit: false, fine: 10_000, stage: 1, streak: 0, trust: -2 });
+    expect(settlePlan(p, i)).toMatchObject({ hit: false, fine: 10_000, stage: 1, stageBefore: 0, streak: 0, trust: -2 });
     p.target = 400_000; p.openDays = 30;
-    expect(settlePlan(p, i)).toMatchObject({ fine: 20_000, stage: 2 });
+    expect(settlePlan(p, i)).toMatchObject({ fine: 20_000, stage: 2, stageBefore: 1 });
     p.target = 400_000; p.openDays = 30;
-    expect(settlePlan(p, i)).toMatchObject({ fine: 0, stage: 3 });
+    expect(settlePlan(p, i)).toMatchObject({ fine: 0, stage: 3, stageBefore: 2 });
     expect(planTerminates(p)).toBe(true);
   });
   it('baza po wpadce spada najwyżej o 5%', () => {
@@ -43,7 +43,7 @@ describe('plan sprzedaży Centrali', () => {
   it('dobicie: 92% wykonania i włączony przełącznik = trafienie bez premii, koszt 83% brakującego obrotu', () => {
     const p: PlanState = { target: 400_000, base: 12_900, recent: [], streak: 0, stage: 1, openDays: 30, topUp: true };
     const r = settlePlan(p, { revenue: 368_000, monthDays: 30, nextMonthDays: 30, cash: 100_000, debtWarn: -50_000 })!;
-    expect(r).toMatchObject({ hit: true, bought: 32_000, cost: 26_560, bonus: 0, stage: 0, streak: 1 });
+    expect(r).toMatchObject({ hit: true, bought: 32_000, cost: 26_560, bonus: 0, stage: 0, stageBefore: 1, streak: 1 });
     expect(p.recent.at(-1)).toBe(Math.round(400_000 / 30));     // dokupiony obrót podnosi bazę
   });
   it('dobicia nie ma poniżej 90%, przy wyłączonym przełączniku i gdy portfel spadłby poniżej progu ostrzeżenia', () => {

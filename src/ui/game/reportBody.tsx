@@ -35,7 +35,7 @@ function planSection(r: MonthReport, ctx?: PlanCtx) {
     const start = ctx ? planStartText(ctx) : null;
     return start ? <p class="tt-hint tt-plan-report tt-plan-start" role="note">{start}</p> : null;
   }
-  const letter = ctx ? planLetter(p, ctx) : null;
+  const letter = planLetter(p);
   return (
     <section class="tt-plan-report" aria-label={t`Plan Centrali`}>
       {letter && <p class="tt-quote tt-plan-letter">{letter}</p>}
