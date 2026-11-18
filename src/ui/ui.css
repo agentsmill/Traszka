@@ -526,6 +526,12 @@
   color: #c2410c;
 }
 
+/* powód wyłączonego przycisku (brak gotówki, rata ponad limit): informacja, nie ostrzeżenie, więc spokojny kolor opisu */
+.tt-spend.why {
+  color: #6b766f;
+  font-weight: 500;
+}
+
 .tt-spend.danger {
   color: #b91c1c;
   font-weight: 700;

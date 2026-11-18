@@ -97,20 +97,40 @@ export function ratyTitle(plan: InstallmentPlan, room: { limit: number; free: nu
 }
 
 /**
+ * Dlaczego przycisk zakupu o cenie `cost` jest wyłączony, zdaniem dla gracza: `cash` dla przycisku gotówkowego (ile gotówki brakuje, w górę do
+ * złotówki), `raty` dla przycisku rat (Centrala nie finansuje przy tym zaufaniu albo rata przekracza wolny limit). `null` to przycisk włączony
+ * z tego powodu. Te same warunki co w `buyButtons` i w symulacji (`pay`); okres wypowiedzenia ma własną notkę (`NOTICE_NO_CREDIT`), więc tu `raty`
+ * jest wtedy `null`. Zdania stoją pod opisem zakupu, bo podpowiedź przycisku (`title`) na telefonie nie istnieje: gracz widział wyszarzone
+ * przyciski bez słowa wyjaśnienia (zgłoszenie właściciela, 18.11.2026).
+ */
+export function buyBlocks(s: EconomyState, cost: number): { cash: string | null; raty: string | null } {
+  const short = Math.ceil(cost - s.cash);
+  const room = installmentRoom(s);
+  const raty = underNotice(s) ? null
+    : room.limit <= 0 ? tr('Centrala nie finansuje zakupów przy tak niskim zaufaniu.')
+    : planFor(cost).monthly > room.free ? t`Rata przekracza wolny limit rat: ${int(room.free)} z ${zl(room.limit)} miesięcznie.`
+    : null;
+  return { cash: short > 0 ? t`Brakuje ${zl(short)} gotówki.` : null, raty };
+}
+
+/**
  * Ostrzeżenia pod opisem zakupu o cenie `cost`: za gotówkę i na raty (pierwsza rata). Zwykła funkcja, nie komponent: testy `vnodeTree`
  * widzą wtedy `SpendNote` w drzewie panelu. `locked`: zakup zablokowany (poziom, wymagania), więc ostrzeżeń nie ma. Rata, której limit
- * nie przepuści, nie dostaje ostrzeżenia (przycisk jest wyłączony). W okresie wypowiedzenia rat nie ma wcale, więc zamiast ostrzeżenia
- * o racie stoi powód (`NOTICE_NO_CREDIT`).
+ * nie przepuści, nie dostaje ostrzeżenia (przycisk jest wyłączony), za to dostaje powód (`buyBlocks`), tak samo jak cena ponad gotówką.
+ * W okresie wypowiedzenia rat nie ma wcale, więc zamiast ostrzeżenia o racie stoi powód (`NOTICE_NO_CREDIT`).
  */
 export function buyNotes(s: EconomyState, info: StoreInfo, cost: number, locked: boolean) {
   if (locked) return null;
   const plan = planFor(cost);
   const notice = underNotice(s);
   const ratyOk = !notice && plan.monthly <= installmentRoom(s).free;
+  const why = buyBlocks(s, cost);
   return (
     <>
       <SpendNote s={s} info={info} price={cost} />
       {ratyOk && <SpendNote s={s} info={info} price={plan.monthly} rata />}
+      {why.cash && <span class="tt-spend why" role="note">{why.cash}</span>}
+      {why.raty && <span class="tt-spend why" role="note">{why.raty}</span>}
       {notice && <span class="tt-spend warn" role="note">{tr(NOTICE_NO_CREDIT)}</span>}
     </>
   );

@@ -314,6 +314,9 @@ export const GAME_UI: Dict = {
   'Pierwsza rata zejdzie z najbliższego przelewu. {0}': 'The first instalment comes off the next transfer. {0}',
   'Rata przekracza {0}.': 'The instalment exceeds your {0}.',
   'Mieści się w limicie: {0}.': 'It fits within the limit: {0}.',
+  // powód wyłączonego przycisku pod opisem zakupu (`buyBlocks`)
+  'Brakuje {0} gotówki.': 'You’re {0} short in cash.',
+  'Rata przekracza wolny limit rat: {0} z {1} miesięcznie.': 'The instalment exceeds your free instalment limit: {0} of {1} a month.',
   // lines.ts: dymki klientów (przez `tr` w worldOverlay.ts)
   'Znowu kolejka…': 'Another queue…',
   'Ja tylko po bułkę!': 'I only came in for a bread roll!',
