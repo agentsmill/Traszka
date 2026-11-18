@@ -600,6 +600,21 @@ describe('schemat 4: zapis i odczyt firmy', () => {
     expect(b.person.wallet).toBe(a.person.wallet);
   });
 
+  it('dobicie planu (planTopUp) przechodzi przez zapis: odczytana firma ma przełącznik i oba stany grają dalej tak samo', () => {
+    const a = newFirm();
+    playTo(a, 92 * DAY + OPEN_FROM);   // plan grudnia powstał przy zamknięciu 1 grudnia
+    expect(activeStore(a).econ.franchisee.plan!.target).toBeGreaterThan(0);
+    expect(command(a, { type: 'planTopUp', storeId: 1, on: true })).toEqual({ ok: true });
+    const b = opened(viaJson(a));
+    expect(activeStore(b).econ.franchisee.plan).toMatchObject({ topUp: true });
+    expect(activeStore(b).econ.franchisee.plan).toEqual(activeStore(a).econ.franchisee.plan);
+    for (let i = 0; i < 1000; i++) {
+      tick(a);
+      tick(b);
+    }
+    expect(hashOf(firmEnvelopeOf(b))).toBe(hashOf(firmEnvelopeOf(a)));
+  });
+
   it('premia sieci z mety wygrywa z zapisaną; dochód z sieci ma otwarty sklep o najniższym id (tu #2, bo #1 zamknięty)', () => {
     const partner = { points: 3, networkIncome: 200, stores: 2 };
     const live = structuredClone(scenario());

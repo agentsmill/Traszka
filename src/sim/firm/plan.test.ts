@@ -16,6 +16,7 @@ import type { FirmState, FirmStepOut, FirmStore } from './types';
  */
 
 const DAY = MINUTES_PER_DAY;
+const TRUST_GAMEOVER = 'Centrala wypowiada umowę franczyzową: zaufanie spadło do zera. Dziękujemy za współpracę.';
 /** Zamknięcie przedostatniego dnia września (dzień 28): wtedy ekonomia ostrzega, że do planu brakuje. */
 const SEPT_PENULT = 28 * DAY + OPEN_TO;
 
@@ -140,6 +141,27 @@ describe('zamknięcie sklepu planem', () => {
     expect(f.over).toBeNull();
     expect(st2.closed).toBe(true);
     expect(eventsOf(out).some((e) => e.kind === 'gameover')).toBe(false);
+    // plan naprawdę doszedł do stopnia 3 przy tym zamknięciu (powód zamknięcia to zaufanie tylko dlatego, że ma pierwszeństwo)
+    const month = out.background.find((b) => b.storeId === 2 && b.event.kind === 'month')!.event;
+    expect(month.report!.plan).toMatchObject({ hit: false, stage: 3, fine: 0 });
+  });
+
+  it('zaufanie 0 i plan naraz w ostatnim sklepie: jeden `gameover`, z tekstem zaufania', () => {
+    const s = partnerSession();
+    const f = firmOf(s);
+    const st1 = activeStore(f);
+    playTo(s, SEPT_CLOSE);
+    armPlan(st1, { target: missTarget(st1), stage: 2 });
+    st1.econ.tycoon.trust.value = 3;
+    st1.econ.franchisee.month = { margin: 0, bonus: 0, pallets: 0, wages: 40_000, media: 0 };
+    const out = tick(s);
+
+    expect(st1.econ.franchisee.plan).toMatchObject({ stage: 3 });
+    expect(ofKind(out.active, 'month')[0]!.report!.plan).toMatchObject({ hit: false, stage: 3 });
+    expect(f.over).toBe('closed');
+    const over = eventsOf(out).filter((e) => e.kind === 'gameover');
+    expect(over.map((e) => e.text)).toEqual([TRUST_GAMEOVER]);
+    expect(ofKind(out.firm, 'gameover')).toEqual([]);
   });
 
   it('dwa sklepy z dobiciem w tej samej minucie: drugi liczy na portfelu po pierwszym i nie schodzi poniżej DEBT_WARN', () => {
