@@ -604,10 +604,11 @@
 }
 
 /* --- Plan sprzedaży Centrali: wiersz pod paskiem prognozy (`game/plan.tsx`) --------------------------------------
- * Ten sam wygląd co kieszenie prognozy (`.tt-due`) i te same ostrzegawcze kolory (`warn`, `danger`). Na telefonie wiersz jest kolumną:
- * postęp i werdykt, pod nimi przełącznik na całą szerokość (cel dotyku min. 36 px), dopisek do przełącznika jest w podpowiedzi. Od 640 px
- * przełącznik stoi obok tekstu i dopisek jest widoczny. Pasek rośnie o ten wiersz, więc `--hud-h` (okna pod paskiem) rośnie razem z nim,
- * ale tylko gdy wiersz jest w drzewie (`:has`). */
+ * Ten sam wygląd co kieszenie prognozy (`.tt-due`) i te same ostrzegawcze kolory (`warn`, `danger`). Do 819 px wiersz jest kolumną: postęp i werdykt,
+ * pod nimi przełącznik na całą szerokość (cel dotyku min. 36 px), dopisek do przełącznika jest w podpowiedzi. Od 820 px (pasek w dwóch liniach siatki)
+ * przełącznik stoi obok tekstu, a jego dopisek jest widoczny. Pasek rośnie o ten wiersz, więc `--hud-h` (okna pod paskiem) rośnie razem z nim,
+ * ale tylko gdy wiersz jest w drzewie (`:has`). Wartości `--hud-h` zmierzył smoke 5a (`npm run city:smoke -- --etap 5a`) na prawdziwym pasku, także
+ * przy najdłuższych zdaniach planu (dwie linie werdyktu): 228 px (jeden sklep, kolumna), 256 px (sieć: dochodzi chip sklepu), 140 px od 820 px. */
 .tt-plan {
   flex-direction: column;
   align-items: stretch;
@@ -668,15 +669,7 @@
 .tt-plan-switch-text { display: flex; flex-direction: column; min-width: 0; font-weight: 600; }
 .tt-plan-note { display: none; font-weight: 400; opacity: 0.85; }
 
-.tt-ui:has(.tt-hud-plan) { --hud-h: 208px; }   /* 112 px trzech wierszy paska plus wiersz planu */
-
-@media (min-width: 640px) {
-  .tt-plan { flex-direction: row; align-items: center; gap: 12px; }
-  .tt-plan-text { flex: 1 1 auto; }
-  .tt-plan-switch { flex: 0 1 300px; }
-  .tt-plan-note { display: block; }
-  .tt-ui:has(.tt-hud-plan) { --hud-h: 176px; }
-}
+.tt-ui:has(.tt-hud-plan) { --hud-h: 228px; }   /* 112 px trzech wierszy paska plus wiersz planu; werdykt w dwóch liniach */
 
 /* podgląd miesiąca i lista sklepów: ten sam opis na jasnym tle okna */
 .tt-plan-sum { display: flex; flex-wrap: wrap; gap: 0 8px; margin: 8px 0 0; font-size: 12.5px; }
@@ -689,7 +682,11 @@
 .tt-plan-result.warn { color: #c2410c; }
 
 @media (min-width: 820px) {
-  .tt-ui:not(.tt-net):has(.tt-hud-plan) { --hud-h: 126px; }
+  .tt-plan { flex-direction: row; align-items: center; gap: 12px; }
+  .tt-plan-text { flex: 1 1 0; }
+  .tt-plan-switch { flex: 0 1 460px; }   /* szeroko: napis w jednej linii i dopisek w jednej-dwóch, wiersz nie rośnie przez wąską kolumnę */
+  .tt-plan-note { display: block; }
+  .tt-ui:has(.tt-hud-plan) { --hud-h: 140px; }
   .tt-ui:not(.tt-net) .tt-hud-plan { grid-column: 1 / -1; }
 }
 

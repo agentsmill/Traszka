@@ -509,11 +509,11 @@
 
 /* wiersz planu pod paskiem prognozy przy sieci: wyższy pasek, więc okna pod nim niżej (`:has` tylko, gdy wiersz planu jest w drzewie) */
 @media (max-width: 819px) {
-  .tt-ui.tt-net:has(.tt-hud-plan) { --hud-h: 242px; }
+  .tt-ui.tt-net:has(.tt-hud-plan) { --hud-h: 256px; }
 }
 
 @media (min-width: 820px) {
-  .tt-ui.tt-net:has(.tt-hud-plan) { --hud-h: 126px; }
+  .tt-ui.tt-net:has(.tt-hud-plan) { --hud-h: 140px; }
   .tt-net .tt-hud-plan { grid-column: 1 / -1; }
 }
 
