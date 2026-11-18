@@ -66,9 +66,9 @@ export function planResultText(p: PlanMonth): string {
 export const planGameOverWarning = (): string => t`Centrala wypowie umowę: trzeci miesiąc z rzędu bez planu sprzedaży.`;
 export const planStoreEndWarning = (): string => t`Centrala wypowie umowę tej placówce: trzeci miesiąc z rzędu bez planu sprzedaży. Pozostałe działają dalej.`;
 
-/** Dane stanu sklepu, z których raport składa zdania o planie (historia i dzień zamknięcia, plan po rozliczeniu). */
-export interface PlanCtx { history: readonly { revenue: number }[]; day: number; plan?: PlanState }
-export const planCtxOf = (s: EconomyState): PlanCtx => ({ history: s.history, day: dayOf(s.minute), plan: planOf(s) });
+/** Dane stanu sklepu, z których raport składa zdania o planie (historia i dzień zamknięcia, plan po rozliczeniu, czy gra się skończyła). */
+export interface PlanCtx { history: readonly { revenue: number }[]; day: number; plan?: PlanState; over?: boolean }
+export const planCtxOf = (s: EconomyState): PlanCtx => ({ history: s.history, day: dayOf(s.minute), plan: planOf(s), over: s.gameOver });
 
 /** List partnera regionalnego dokładnie wtedy, gdy stopień drabiny się zmienił (`stage` po rozliczeniu, `stageBefore` przed): w górę ostrzeżenie, w dół podziękowanie. */
 export function planLetter(p: PlanMonth): string | null {
@@ -100,8 +100,13 @@ export function planReasonText(p: PlanMonth, state?: PlanState): string {
   return t`Nowy plan: ${zl(p.nextTarget)}. Średni obrót dzienny z trzech miesięcy ${zl(p.nextBase)} × ${days} dni, plus ${growth} ${tail}.`;
 }
 
-/** Raport trzeciego miesiąca umowy: pierwszy plan od jutra albo `null` (to nie ten miesiąc). */
+/**
+ * Raport trzeciego miesiąca umowy: pierwszy plan od jutra albo `null` (to nie ten miesiąc albo gra się skończyła i planu nie będzie).
+ * Drugie podejście (`ctx.day`) nie jest martwe: po przewinięciu dni (`skip`) raport zamknięcia pokazuje się już pierwszego dnia
+ * nowego miesiąca, a wtedy `ctx.day + 1` to drugi dzień.
+ */
 export function planStartText(ctx: PlanCtx): string | null {
+  if (ctx.over) return null;
   const first = firstPlanPreview(ctx.history, ctx.day + 1) ?? firstPlanPreview(ctx.history, ctx.day);
   return first === null ? null : t`Koniec okresu wdrożenia. Od jutra obowiązuje plan sprzedaży Centrali: ${zl(first)}.`;
 }

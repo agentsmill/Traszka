@@ -168,9 +168,14 @@ export function terminationReason(s: EconomyState, f?: FirmState | null): string
   if (debt && distrust) return t`Powód: zaufanie Centrali spadło do zera, a gotówka spadła poniżej granicy debetu ${floor}.`;
   if (debt) return t`Powód: za duży debet. Gotówka spadła do ${signedZl(s.cash)}, poniżej granicy ${floor}, a wtedy Centrala od razu kończy współpracę.`;
   if (distrust) return t`Powód: zaufanie Centrali spadło do zera.`;
-  if (s.gameOver && planTerminates(planOf(s))) return planOverReason();
+  if (planEndedGame(s)) return planOverReason();
   if (s.gameOver && f?.stores.some((st) => st.econ === s && st.notice !== null)) return t`Powód: umowa ostatniej placówki wygasła po wypowiedzeniu.`;
   return null;
+}
+
+/** Koniec gry, którego powodem `terminationReason` jest plan: trzecia wpadka, ale bez debetu i bez zaufania zero (te mają pierwszeństwo). */
+function planEndedGame(s: EconomyState): boolean {
+  return s.gameOver && s.cash >= DEBT_LIMIT && !trustTerminates(s.tycoon.trust.value) && planTerminates(planOf(s));
 }
 
 /**
@@ -190,7 +195,7 @@ export function ReportModal({ game }: { game: GameActions }) {
   if (!r && !net && !over) return null;
   const title = over ? t`Koniec współpracy` : net ? t`Wyciągi od Centrali: ${tr(net.summary.label)}` : r!.statement ? t`Wyciąg od Centrali: ${tr(r!.label)}` : t`Raport: ${tr(r!.label)}`;
   const reason = over && view ? terminationReason(view.s, firm.value?.f) : null;
-  const planOver = over && !!view && !net && planTerminates(planOf(view.s));   // koniec gry za plan: przeżyte miesiące, gotówka i ostatni plan
+  const planOver = over && !!view && !net && planEndedGame(view.s);   // koniec gry za plan (powód z `terminationReason`): przeżyte miesiące, gotówka i ostatni plan
   const bankrupt = over && !!view && seasonBankrupt(view.s);   // koniec gry przed ostatnim raportem: poza rankingiem
   const seasonEnd = ranked.value?.phase === 'over' && !bankrupt;   // sezon doigrany (też z debetem z ostatniego zamknięcia): za raportem czeka okno z wynikiem
   const dismiss = (): void => { report.value = null; closeNetworkReport(); };

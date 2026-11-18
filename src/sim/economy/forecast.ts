@@ -30,7 +30,12 @@ export interface MonthForecast {
   net: number;
   /** Gotówka po zamknięciu miesiąca: gotówka teraz plus „Zostaje Ci”. */
   cashAfter: number;
-  /** Prognoza planu sprzedaży Centrali i kary, którą niesie (jest też w `statement.plan`); `null` bez planu albo w miesiącu zapowiedzi. */
+  /**
+   * Prognoza planu sprzedaży Centrali i kary, którą niesie (jest też w `statement.plan`); `null` bez planu albo w miesiącu zapowiedzi.
+   * To prognoza paska, nie rozliczenie: nie dolicza premii 1% obrotu za trafienie (`PLAN.bonusShare`), a dobicie każdego sklepu ocenia
+   * na całym portfelu, jakby inne sklepy nie dobijały. Gdy kilka sklepów dobija naraz blisko `DEBT_WARN`, pasek może więc pokazać
+   * `topup` tam, gdzie zamknięcie da `miss`; dokładny podgląd miesiąca (`monthPreview.ts`) idzie w prawdziwej kolejności zamknięć.
+   */
   plan: PlanOutlook | null;
   /** Cel pierwszego planu, gdy bloku jeszcze nie ma, a dziś jest pierwszy dzień czwartego miesiąca umowy; inaczej `null`. */
   planFirst: number | null;

@@ -33,7 +33,7 @@ import { App } from '../App';
 import { lang } from '@/i18n';
 import { ClaimChip, Hud, RankingButton, TrustChip } from './Hud';
 import { int, minusZl, money, percentOf, signedZl, zl } from './format';
-import { planEventTitle, type PlanCtx } from './planText';
+import { planEventTitle, planStartText, type PlanCtx } from './planText';
 import { Bar, PalletItem } from './panels';
 import { ENERGY_TITLE } from './tapBlock';
 import {
@@ -1951,6 +1951,16 @@ describe('plan Centrali: zdarzenie „OK”, raport miesiąca i koniec gry', () 
       // inny miesiąc umowy: wiersza nie ma
       expect(textOf(body(withPlan(undefined), ctxOf(PLAN.startMonths - 1, undefined, day)))).not.toContain('Koniec okresu wdrożenia');
     });
+
+    it('zapowiedź pierwszego planu: nie na raporcie skończonej gry; po przewinięciu dni także pierwszego dnia nowego miesiąca', () => {
+      const day = lastDayOfMonthFrom(40);
+      const ctx = ctxOf(PLAN.startMonths, undefined, day);
+      expect(planStartText(ctx)).not.toBeNull();
+      expect(planStartText({ ...ctx, over: true })).toBeNull();
+      expect(textOf(body(withPlan(undefined), { ...ctx, over: true }))).not.toContain('Koniec okresu wdrożenia');
+      expect(planStartText({ ...ctx, day: day + 1 })).toBe(planStartText(ctx));   // raport po `skip`: już 1. dzień miesiąca
+      expect(planStartText({ ...ctx, day: day + 2 })).toBeNull();
+    });
   });
 
   describe('koniec gry z powodu planu', () => {
@@ -1992,10 +2002,17 @@ describe('plan Centrali: zdarzenie „OK”, raport miesiąca i koniec gry', () 
       expect(modalText()).not.toContain('Ostatni plan');
     });
 
-    it('debet ma pierwszeństwo przed planem (jeden powód)', () => {
-      const { s } = planOver(7);
+    it('debet ma pierwszeństwo przed planem (jeden powód, bez wierszy i cytatu o planie)', () => {
+      const { s, info } = planOver(7);
       s.cash = DEBT_LIMIT - 1;
+      publishState(s, info);
       expect(terminationReason(s)).toContain('za duży debet');
+      expect(modalText()).toContain('za duży debet');
+      expect(modalText()).not.toContain('Przeżyte miesiące');
+      expect(modalText()).not.toContain('Ostatni plan');
+      expect(modalText()).not.toContain('trzeci miesiąc z rzędu bez planu');
+      const body = walk(ReportModal({ game: fakeGame() }) as Vnode).find((v) => v.type === ReportBody)!;
+      expect(body.props.closing).not.toBe(PLAN_GAMEOVER_TEXT);
     });
 
     it('zwykła gra bez planu: powodu o planie nie ma', () => {

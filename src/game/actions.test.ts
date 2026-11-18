@@ -1519,7 +1519,7 @@ describe('powłoka gry (createShell)', () => {
       expect(isModalOpen()).toBe(true);
     });
 
-    it('handleEvents: zdarzenia planu Centrali czekają na „OK” z własnym tytułem, w kolejności (nie toasty), a przewinięcie dni zbiera je w tej samej kolejce', () => {
+    it('handleEvents: zdarzenia planu Centrali czekają na „OK” z własnym tytułem, w kolejności przyjścia, i nie są toastami', () => {
       const h = harness();
       open(h);
       h.shell.handleEvents([
