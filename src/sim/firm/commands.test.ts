@@ -727,8 +727,8 @@ describe('lotState', () => {
 // --- Kształt poleceń --------------------------------------------------------------------------------------------------
 
 describe('FirmCommand', () => {
-  it('FIRM_COMMAND_TYPES to rentLot, switchStore, terminateStore, research i claimGoal', () => {
-    expect([...FIRM_COMMAND_TYPES]).toEqual(['rentLot', 'switchStore', 'terminateStore', 'research', 'claimGoal']);
+  it('FIRM_COMMAND_TYPES to rentLot, switchStore, terminateStore, research, claimGoal i planTopUp', () => {
+    expect([...FIRM_COMMAND_TYPES]).toEqual(['rentLot', 'switchStore', 'terminateStore', 'research', 'claimGoal', 'planTopUp']);
   });
 
   it('isFirmCommand: poprawne kształty przechodzą', () => {

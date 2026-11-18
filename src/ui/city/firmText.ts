@@ -150,6 +150,8 @@ export function firmEventText(f: FirmState, e: FirmEvent): { title: string; text
         title: t`Umowa zakończona: ${name}`,
         text: str(e, 'reason') === 'notice'
           ? t`Umowa ${name} wygasła. Lokal wraca na mapę jako „po Traszce”, z wyposażeniem. Pozostałe placówki działają dalej.`
+          : str(e, 'reason') === 'plan'
+          ? t`Trzeci miesiąc z rzędu ${name} nie zrealizowała planu sprzedaży, więc Centrala wypowiedziała umowę. Lokal wraca na mapę jako „po Traszce”, z wyposażeniem. Pozostałe placówki działają dalej.`
           : t`Zaufanie Centrali do ${name} spadło do zera, więc Centrala wypowiedziała umowę. Lokal wraca na mapę jako „po Traszce”, z wyposażeniem. Pozostałe placówki działają dalej.`,
       };
     case 'debt':
@@ -231,6 +233,7 @@ export function refusalText(reason: FirmRefusal, f?: FirmState, command?: FirmCo
     case 'siec': return t`Badania Sieci działają od dwóch placówek. Jeden sklep to dla Centrali jeszcze nie sieć.`;
     case 'max': return t`To badanie jest już na najwyższym poziomie. Centrala nie ma czego więcej badać.`;
     case 'goal': return t`Tego celu nie da się teraz odebrać.`;
+    case 'plan': return t`Ta placówka nie ma jeszcze planu sprzedaży. Centrala przysyła go od czwartego miesiąca umowy.`;
     default: {
       const unreachable: never = reason;
       void unreachable;

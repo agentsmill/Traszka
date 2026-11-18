@@ -14,6 +14,7 @@ import { activeStore, applyStoreCommand, createFirm, emptyStepOut, openStores, o
 import { RESEARCH, RESEARCH_IDS, researchCost, researchRefusal } from '@/sim/firm/research';
 import type { FirmState, FirmStepOut } from '@/sim/firm/types';
 import { freshRun } from '@/sim/run';
+import { keepPlansEasy } from './firmKit';
 
 /*
  * Strategie botów etapu 4b (spec §5.10, plan Zadanie 10) przez prawdziwą firmę: wspólne dla pomiaru (`tests/measure/progresja.measure.test.ts`)
@@ -243,6 +244,8 @@ export function playProgresja(strategy: ProgStrategy, seed: string, months: numb
     step: () => {
       if (awaitingDecision(activeStore(f).econ)) return false;
       const out = emptyStepOut();
+      // plan Centrali do trafienia (etap 5a): ta strategia mierzy rozrost sieci, nie plan; bez tego trzecia wpadka zamyka sklep bota
+      if (activeStore(f).econ.minute % MINUTES_PER_DAY === 0) keepPlansEasy(f);
       stepFirmMinute(f, out);
       onStep(out);
       return true;

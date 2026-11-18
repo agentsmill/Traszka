@@ -27,9 +27,10 @@ export type FirmCommand =
   | { type: 'switchStore'; storeId: number }
   | { type: 'terminateStore'; storeId: number }
   | { type: 'research'; id: ResearchId }
-  | { type: 'claimGoal'; id: string };
+  | { type: 'claimGoal'; id: string }
+  | { type: 'planTopUp'; storeId: number; on: boolean };
 
-export const FIRM_COMMAND_TYPES: readonly FirmCommand['type'][] = ['rentLot', 'switchStore', 'terminateStore', 'research', 'claimGoal'];
+export const FIRM_COMMAND_TYPES: readonly FirmCommand['type'][] = ['rentLot', 'switchStore', 'terminateStore', 'research', 'claimGoal', 'planTopUp'];
 
 const PAYS: readonly string[] = ['gotowka', 'raty'];
 const isInt = (x: unknown): x is number => typeof x === 'number' && Number.isInteger(x);
@@ -41,6 +42,7 @@ const VALID = {
   switchStore: (c) => isInt(c.storeId),
   terminateStore: (c) => isInt(c.storeId),
   research: (c) => typeof c.id === 'string' && (RESEARCH_IDS as readonly string[]).includes(c.id),
+  planTopUp: (c) => isInt(c.storeId) && typeof c.on === 'boolean',
   claimGoal: (c) => typeof c.id === 'string',   // nieznany tekst przejdzie kształt i dostanie odmowę `goal` w `claimGoal`
 } satisfies Record<FirmCommand['type'], (c: Fields) => boolean>;
 
@@ -317,6 +319,22 @@ function claimGoal(f: FirmState, id: string): FirmCommandResult {
   return { ok: true };
 }
 
+// --- Plan Centrali (5a) ------------------------------------------------------------------------------------------
+
+/**
+ * Przełącznik „dobij z własnej kieszeni” planu Centrali wskazanego sklepu (także tego w tle): sklep nieznany albo zamknięty to `store`,
+ * sklep bez bloku planu (jeszcze przed czwartym miesiącem umowy) to `plan`. Blok planu w miesiącu zapowiedzi przełącznik przyjmuje.
+ */
+function planTopUp(f: FirmState, storeId: number, on: boolean): FirmCommandResult {
+  if (f.over !== null || activeStore(f).econ.gameOver) return refuse('over');
+  const st = f.stores.find((s) => s.id === storeId);
+  if (!st || st.closed) return refuse('store');
+  const plan = st.econ.franchisee.plan;
+  if (!plan) return refuse('plan');
+  plan.topUp = on;
+  return { ok: true };
+}
+
 /**
  * Polecenie gracza na poziomie firmy. Odmowa nie rusza stanu i nie rzuca; zdarzenia firmy trafiają do `out.firm`. Polecenie jest
  * kopiowane raz na początku (obiekt z getterem nie da innego `type` przy walidacji i w gałęzi). Zły kształt dostaje `lot` (wynajem)
@@ -334,6 +352,7 @@ export function applyFirmCommand(f: FirmState, cmd: FirmCommand, out: FirmStepOu
     case 'terminateStore': return terminateStore(f, c.storeId, out);
     case 'research': return buyResearch(f, c.id, out);
     case 'claimGoal': return claimGoal(f, c.id);
+    case 'planTopUp': return planTopUp(f, c.storeId, c.on);
     default: {
       const unreachable: never = c;
       void unreachable;
