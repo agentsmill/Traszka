@@ -18,7 +18,8 @@ export const EARNED_13_MIN = 600_000;
 describe('progresja 4b: sieć botów przez 13 miesięcy', () => {
   for (const seed of ['traszka-1', 'kopytka-541']) {
     it(`${seed}: pięć sklepów, bez końca gry, suma „Zostaje Ci” m. 1–13 ≥ ${EARNED_13_MIN}`, () => {
-      const r = playProgresja('siec', seed, 13);
+      // mierzy tempo progresji bez planu Centrali; bramki samego planu: tests/planBalance.test.ts (Task 6)
+      const r = playProgresja('siec', seed, 13, { easyPlans: true });
       expect(r.months.length).toBe(13);
       expect(r.over).toBeNull();
       expect(r.debtWarnings).toBe(0);

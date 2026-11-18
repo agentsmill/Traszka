@@ -187,8 +187,11 @@ export interface ProgResult {
   finalWallet: number;
 }
 
-/** Bieg strategii na seedzie przez `months` zamkniętych miesięcy (albo do końca gry). */
-export function playProgresja(strategy: ProgStrategy, seed: string, months: number): ProgResult {
+/**
+ * Bieg strategii na seedzie przez `months` zamkniętych miesięcy (albo do końca gry). `easyPlans`: co dobę plan Centrali każdego sklepu
+ * dostaje łatwy cel (`keepPlansEasy`); domyślnie `false`, czyli prawdziwy plan.
+ */
+export function playProgresja(strategy: ProgStrategy, seed: string, months: number, opts: { easyPlans?: boolean } = {}): ProgResult {
   const setup = setupOf(strategy);
   const run = freshRun(seed);
   const f = createFirm(seed, { econ: run.state, layout: run.layout, info: run.info }, { ranked: false });
@@ -244,8 +247,7 @@ export function playProgresja(strategy: ProgStrategy, seed: string, months: numb
     step: () => {
       if (awaitingDecision(activeStore(f).econ)) return false;
       const out = emptyStepOut();
-      // plan Centrali do trafienia (etap 5a): ta strategia mierzy rozrost sieci, nie plan; bez tego trzecia wpadka zamyka sklep bota
-      if (activeStore(f).econ.minute % MINUTES_PER_DAY === 0) keepPlansEasy(f);
+      if (opts.easyPlans && activeStore(f).econ.minute % MINUTES_PER_DAY === 0) keepPlansEasy(f);
       stepFirmMinute(f, out);
       onStep(out);
       return true;
