@@ -206,7 +206,7 @@ export function ReportModal({ game }: { game: GameActions }) {
         {reason && <p class="tt-end-reason" role="note"><b>{reason}</b></p>}
         {planOver && view && planOverLines(view.s).map((line) => <p key={line} class="tt-end-reason tt-end-plan" role="note">{line}</p>)}
         {bankrupt && ranked.value && <p class="tt-end-reason" role="note">{tr(RANKED_BANKRUPT_TEXT)}</p>}
-        {net ? <NetworkReportBody view={net} /> : r ? <ReportBody r={r} closing={over ? (planOver ? PLAN_GAMEOVER_TEXT : TERMINATION) : undefined} noGuarantee={!!view && noGuarantee(view.info, view.s.history.length)} planCtx={view ? planCtxOf(view.s) : undefined} /> : centralaQuote(planOver ? PLAN_GAMEOVER_TEXT : TERMINATION)}
+        {net ? <NetworkReportBody view={net} /> : r ? <ReportBody r={r} closing={over ? (planOver ? PLAN_GAMEOVER_TEXT : TERMINATION) : undefined} noGuarantee={!!view && noGuarantee(view.info, view.s.history.length)} planCtx={view ? planCtxOf(view.s, !!ranked.value) : undefined} /> : centralaQuote(planOver ? PLAN_GAMEOVER_TEXT : TERMINATION)}
         {net && over && centralaQuote(TERMINATION)}
         <div class="tt-modal-foot">
           {over

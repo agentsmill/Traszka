@@ -79,8 +79,9 @@ export const planGameOverWarning = (): string => t`Centrala wypowie umowę: trze
 export const planStoreEndWarning = (): string => t`Centrala wypowie umowę tej placówce: trzeci miesiąc z rzędu bez planu sprzedaży. Pozostałe działają dalej.`;
 
 /** Dane stanu sklepu, z których raport składa zdania o planie (historia i dzień zamknięcia, plan po rozliczeniu, czy gra się skończyła). */
-export interface PlanCtx { history: readonly { revenue: number }[]; day: number; plan?: PlanState; over?: boolean }
-export const planCtxOf = (s: EconomyState): PlanCtx => ({ history: s.history, day: dayOf(s.minute), plan: planOf(s), over: s.gameOver });
+export interface PlanCtx { history: readonly { revenue: number }[]; day: number; plan?: PlanState; over?: boolean; ranked?: boolean }
+/** `ranked`: bieg rankingowy (sezon 3 miesięcy): raport trzeciego miesiąca zamyka sezon, więc planu nie będzie. */
+export const planCtxOf = (s: EconomyState, ranked = false): PlanCtx => ({ history: s.history, day: dayOf(s.minute), plan: planOf(s), over: s.gameOver, ranked });
 
 /** List partnera regionalnego dokładnie wtedy, gdy stopień drabiny się zmienił (`stage` po rozliczeniu, `stageBefore` przed): w górę ostrzeżenie, w dół podziękowanie. */
 export function planLetter(p: PlanMonth): string | null {
@@ -118,7 +119,7 @@ export function planReasonText(p: PlanMonth, state?: PlanState): string {
  * nowego miesiąca, a wtedy `ctx.day + 1` to drugi dzień.
  */
 export function planStartText(ctx: PlanCtx): string | null {
-  if (ctx.over) return null;
+  if (ctx.over || ctx.ranked) return null;   // gra skończona albo sezon rankingowy: bieg kończy się z tym raportem
   const first = firstPlanPreview(ctx.history, ctx.day + 1) ?? firstPlanPreview(ctx.history, ctx.day);
   return first === null ? null : t`Koniec okresu wdrożenia. Od jutra obowiązuje plan sprzedaży Centrali: ${zl(first)}.`;
 }

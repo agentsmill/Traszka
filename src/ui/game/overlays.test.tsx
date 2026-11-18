@@ -1952,6 +1952,13 @@ describe('plan Centrali: zdarzenie „OK”, raport miesiąca i koniec gry', () 
       expect(textOf(body(withPlan(undefined), ctxOf(PLAN.startMonths - 1, undefined, day)))).not.toContain('Koniec okresu wdrożenia');
     });
 
+    it('zapowiedź pierwszego planu: nie na raporcie zamykającym sezon rankingowy (bieg kończy się po trzecim miesiącu, planu nie będzie)', () => {
+      const ctx = ctxOf(PLAN.startMonths, undefined, lastDayOfMonthFrom(40));
+      expect(planStartText(ctx)).not.toBeNull();
+      expect(planStartText({ ...ctx, ranked: true })).toBeNull();
+      expect(textOf(body(withPlan(undefined), { ...ctx, ranked: true }))).not.toContain('Koniec okresu wdrożenia');
+    });
+
     it('zapowiedź pierwszego planu: nie na raporcie skończonej gry; po przewinięciu dni także pierwszego dnia nowego miesiąca', () => {
       const day = lastDayOfMonthFrom(40);
       const ctx = ctxOf(PLAN.startMonths, undefined, day);

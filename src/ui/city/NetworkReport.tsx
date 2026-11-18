@@ -1,7 +1,7 @@
 import { t, tr } from '@/i18n';
 import { DEBT_WARN, debtWarningText } from '@/sim/economy/economy';
 import type { FirmState, NetworkSummary } from '@/sim/firm/types';
-import { firm, type NetworkReportView } from '../state';
+import { firm, ranked, type NetworkReportView } from '../state';
 import { minusZl, money, signedZl } from '../game/format';
 import { planCtxOf } from '../game/planText';
 import { ReportBody } from '../game/reportBody';
@@ -64,7 +64,7 @@ export function NetworkReportBody({ view }: { view: NetworkReportView }) {
     <>
       {StoreTabs({ tabs, active, onPick: (id) => picked.set(view, id) })}
       {shown
-        ? <section class="tt-storereport" aria-label={nameOf(f, shown.storeId)}><h3 class="tt-storetitle">{nameOf(f, shown.storeId)}</h3>{ReportBody({ r: shown.report, noGuarantee: noGuarantee(store?.info, store?.econ.history.length ?? 0), planCtx: store ? planCtxOf(store.econ) : undefined })}</section>
+        ? <section class="tt-storereport" aria-label={nameOf(f, shown.storeId)}><h3 class="tt-storetitle">{nameOf(f, shown.storeId)}</h3>{ReportBody({ r: shown.report, noGuarantee: noGuarantee(store?.info, store?.econ.history.length ?? 0), planCtx: store ? planCtxOf(store.econ, !!ranked.value) : undefined })}</section>
         : NetworkSummaryView({ summary: view.summary, f })}
     </>
   );
