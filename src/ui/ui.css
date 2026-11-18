@@ -2520,6 +2520,12 @@
   white-space: nowrap;
 }
 
+/* zdanie o wyniku planu w podglądzie sieci (`.tt-plan-results`) jest zdaniem, nie kwotą: wolno mu się łamać na wąskim telefonie */
+.tt-preview .tt-plan-results .tt-row > span:last-child {
+  flex: 1 1 auto;
+  white-space: normal;
+}
+
 .tt-preview-progress {
   display: grid;
   gap: 2px;
