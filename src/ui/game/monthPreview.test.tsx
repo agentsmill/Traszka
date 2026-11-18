@@ -453,7 +453,7 @@ describe('podgląd końca miesiąca przy firmie', () => {
       id, preview: { label: 'wrzesień 2026', cashNow: 5_000, cashAfter: statement.cashAfter, lowestCash: 5_000, revenue: 90_000, customers: 800, statement, profit: statement.result, gameOver: null, endedEarly: false },
     });
     const withSettlement: FirmPreview = {
-      label: 'wrzesień 2026', cashNow: 5_000, cashAfter: 40_000, lowestCash: 5_000, stores: [part(1), part(2)], invest: 0, settlement: 12_300, gameOver: null, endedEarly: false,
+      label: 'wrzesień 2026', cashNow: 5_000, cashAfter: 40_000, lowestCash: 5_000, stores: [part(1), part(2)], plans: [], invest: 0, settlement: 12_300, gameOver: null, endedEarly: false,
     };
     monthPreview.value = { phase: 'done', result: withSettlement.stores[0]!.preview, ms: 1, firm: withSettlement };
     const text = plain(textOf(shown()));
@@ -481,7 +481,7 @@ describe('podgląd końca miesiąca przy firmie', () => {
     const part = (id: number): FirmPreview['stores'][number] => ({
       id, preview: { label: '', cashNow: 5_000, cashAfter: -150_000, lowestCash: -150_000, revenue: 0, customers: 0, statement, profit: 0, gameOver: 'debt', endedEarly: true },
     });
-    const early: FirmPreview = { label: '', cashNow: 5_000, cashAfter: -150_000, lowestCash: -150_000, stores: [part(1), part(2)], invest: 0, settlement: 0, gameOver: 'debt', endedEarly: true };
+    const early: FirmPreview = { label: '', cashNow: 5_000, cashAfter: -150_000, lowestCash: -150_000, stores: [part(1), part(2)], plans: [], invest: 0, settlement: 0, gameOver: 'debt', endedEarly: true };
     monthPreview.value = { phase: 'done', result: early.stores[0]!.preview, ms: 1, firm: early };
     const times = (): number => plain(textOf(shown())).split('To naliczenia do chwili końca gry').length - 1;
     expect(times()).toBe(1);   // zakładka „Sieć”

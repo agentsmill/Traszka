@@ -5,6 +5,7 @@ import { applyCommand } from './commands';
 import { DEBT_WARN, awaitingDecision, createEconomy, stepMinute, type EconEvent, type EconomyState } from './economy';
 import { forecastMonth, spendCheck, type MonthForecast } from './forecast';
 import { buildStatement, emptySettleMonth, installmentsDue } from './franchisee';
+import { firstPlanPreview, monthLength, planDue, type PlanState } from './plan';
 import { computeStoreInfo } from './storeInfo';
 import { visibleCards } from './tycoon/cards';
 
@@ -80,13 +81,98 @@ describe('forecastMonth: prognoza wyciągu od Centrali', () => {
   });
 });
 
+/** Blok planu na kopii stanu w połowie września; `openDays` 30 daje `due` równe `target` (miesiąc liczy 30 dni). */
+const withPlan = (s: EconomyState, p: Partial<PlanState> & { target: number }): EconomyState => {
+  s.franchisee.plan = { base: 0, recent: [], streak: 0, stage: 0, openDays: 30, topUp: false, ...p };
+  return s;
+};
+/** Prognozowany obrót reszty miesiąca: udział prognozy w planie `PROBE` razy `PROBE` (przy `due === target`). */
+const PROBE = 1_000_000;
+const forecastRevenueOf = (s: EconomyState): number => forecastMonth(withPlan(structuredClone(s), { target: PROBE }), info).plan!.forecastShare * PROBE;
+
+describe('forecastMonth: plan sprzedaży Centrali', () => {
+  const mid = (): EconomyState => playTo(fresh(), 15 * 1440 + 12 * 60);
+
+  it('bez planu prognoza jest taka jak dziś, a plan jest null', () => {
+    const s = mid();
+    const f = forecastMonth(s, info);
+    expect(f.plan).toBeNull();
+    expect(f.planFirst).toBeNull();
+    expect('plan' in f.statement).toBe(false);
+    // prognoza z blokiem planu w miesiącu zapowiedzi (target 0) niczego nie zmienia w liczbach
+    const announce = withPlan(structuredClone(s), { target: 0, openDays: 0 });
+    const g = forecastMonth(announce, info);
+    expect(g.plan).toBeNull();
+    expect(g.statement).toEqual(f.statement);
+  });
+
+  it('planFirst: pierwszy cel tylko gdy bloku nie ma, historia ma trzy miesiące, a dziś jest pierwszy dzień miesiąca', () => {
+    const s = fresh();
+    s.history = [1, 2, 3].map((i) => ({ label: `m${i}`, profit: 0, revenue: 90_000 * i, transfer: 0 }));
+    const first = firstPlanPreview(s.history, 0);
+    expect(first).toBeGreaterThan(0);
+    expect(forecastMonth(s, info).planFirst).toBe(first);
+    expect(forecastMonth(withPlan(structuredClone(s), { target: 5_000 }), info).planFirst).toBeNull();
+    const later = playTo(structuredClone(s), 3 * 1440);
+    expect(forecastMonth(later, info).planFirst).toBeNull();
+  });
+
+  it('prognoza poniżej planu niesie karę w wyciągu i stopień po rozliczeniu', () => {
+    const s = mid();
+    const revenue = forecastRevenueOf(s);
+    const f = forecastMonth(withPlan(s, { target: Math.round(revenue / 0.7) }), info);
+    expect(f.plan).toMatchObject({ verdict: 'miss', stageAfter: 1 });
+    expect(f.plan!.fine).toBeGreaterThan(0);
+    expect(f.statement.plan).toBe(f.plan!.fine);
+    const base = forecastMonth(withPlan(mid(), { target: 1 }), info);
+    expect(f.net).toBeCloseTo(base.net - f.plan!.fine, 0);   // kara to jedyna różnica (poza premią od obrotu, która przy stopniu 0 zostaje)
+  });
+
+  it('z włączonym dobiciem i prognozą 95%: werdykt topup, koszt w cashAfter, bez kary', () => {
+    const s = mid();
+    const revenue = forecastRevenueOf(s);
+    const off = forecastMonth(withPlan(structuredClone(s), { target: Math.round(revenue / 0.95) }), info);
+    expect(off.plan!.verdict).toBe('miss');   // bez przełącznika to wpadka
+    const on = forecastMonth(withPlan(structuredClone(s), { target: Math.round(revenue / 0.95), topUp: true }), info);
+    expect(on.plan).toMatchObject({ verdict: 'topup', fine: 0, stageAfter: 0 });
+    expect(on.plan!.cost).toBeGreaterThan(0);
+    expect('plan' in on.statement).toBe(false);
+    expect(on.cashAfter).toBeCloseTo(off.cashAfter + off.plan!.fine - on.plan!.cost, 0);
+  });
+
+  it('na stopniu 2 prognoza nie ma premii od obrotu (jak zamknięcie miesiąca)', () => {
+    const s = mid();
+    s.tycoon.trust.value = 80;
+    const stage0 = forecastMonth(withPlan(structuredClone(s), { target: 1, stage: 0 }), info);
+    const stage2 = forecastMonth(withPlan(structuredClone(s), { target: 1, stage: 2 }), info);
+    expect(stage2.plan).toMatchObject({ verdict: 'hit', stage: 2, stageAfter: 1 });
+    expect(stage2.statement.bonus).toBeLessThan(stage0.statement.bonus);
+  });
+
+  it('dni zasłonięte remontem nie liczą się do planu: należne `due` rośnie tylko o dni otwarte', () => {
+    const s = withPlan(mid(), { target: 90_000, openDays: 14 });
+    const open = forecastMonth(structuredClone(s), info).plan!;
+    s.remontUntil = s.minute + 40 * 1440;
+    const closed = forecastMonth(s, info).plan!;
+    expect(closed.due).toBe(planDue({ ...s.franchisee.plan!, openDays: 14 }, monthLength(15)));
+    expect(closed.due).toBeLessThan(open.due);
+  });
+
+  it('prognoza niczego nie zmienia w stanie z planem', () => {
+    const s = withPlan(mid(), { target: 90_000, openDays: 14, topUp: true });
+    const before = JSON.stringify(s);
+    forecastMonth(s, info);
+    expect(JSON.stringify(s)).toBe(before);
+  });
+});
+
 describe('spendCheck: ostrzeżenie przed wydatkiem (nigdy blokada)', () => {
   /** Prognoza z gotówką po zamknięciu równą `cashAfter`. */
   const forecast = (cashAfter: number): MonthForecast => {
     const statement = buildStatement({
       month: emptySettleMonth(), guarantee: 0, installments: 0, remanent: 0, spent: 0, fines: 0, other: 0, cashBefore: 0, partial: false,
     });
-    return { saldo: 0, installments: 0, statement, net: statement.net, cashAfter };
+    return { saldo: 0, installments: 0, statement, net: statement.net, cashAfter, plan: null, planFirst: null };
   };
 
   it('po zakupie zostaje nad zerem: bez ostrzeżenia', () => {

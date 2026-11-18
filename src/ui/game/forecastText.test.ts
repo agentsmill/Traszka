@@ -8,7 +8,7 @@ import { money, signedZl, zl } from './format';
 
 /** Prognoza z gotówką po zamknięciu `cashAfter` (reszta pól nie ma tu znaczenia dla ostrzeżeń). */
 const forecast = (cashAfter: number, parts: Partial<MonthForecast> = {}): MonthForecast => ({
-  saldo: 12_000, installments: 0, statement: {} as Statement, net: 8_000, cashAfter, ...parts,
+  saldo: 12_000, installments: 0, statement: {} as Statement, net: 8_000, cashAfter, plan: null, planFirst: null, ...parts,
 });
 
 describe('spendWarningText: napis ostrzeżenia przy wydatku', () => {

@@ -552,3 +552,50 @@ describe('forecastFirm', () => {
     expect(fc).toEqual({ ...forecastMonth(st.econ, st.info), stores: [{ id: 1, f: forecastMonth(st.econ, st.info) }] });
   });
 });
+
+// --- Plan Centrali w podglądzie i prognozie sieci -------------------------------------------------------------------------
+
+describe('plan Centrali w podglądzie i prognozie sieci', () => {
+  /**
+   * Plan sklepu ponad jego prawdziwy obrót z tego miesiąca (podgląd bez planu; udział ok. 77%, poniżej progu dobicia), z dniami otwartymi
+   * tak, by do zamknięcia we wrześniu (30 dni) wyszedł pełny miesiąc: dni 0–11 już za nami. Prognoza paska tu nie służy: sklep po
+   * otwarciu ma obrót dużo wyższy od tempa z kilku pierwszych dni.
+   */
+  function armMiss(f: FirmState, storeId: number, stage = 0): void {
+    const revenue = runPreview(f)!.stores.find((s) => s.id === storeId)!.preview.revenue;
+    f.stores.find((s) => s.id === storeId)!.econ.franchisee.plan = {
+      target: Math.round(revenue * 1.3), base: 0, recent: [], streak: 0, stage, openDays: 12, topUp: false,
+    };
+  }
+
+  it('prognoza sieci niesie plan każdego sklepu w `stores`, a suma sieci planu nie ma', () => {
+    const f = twoStores('raty');
+    const st2 = f.stores[1]!;
+    st2.econ.franchisee.plan = { target: 1_000_000, base: 0, recent: [], streak: 0, stage: 0, openDays: 12, topUp: false };
+    const paced = forecastMonth(st2.econ, st2.info).plan!.forecastShare * 1_000_000;   // prognoza obrotu paska
+    st2.econ.franchisee.plan.target = Math.round(paced * 1.3);
+    const fc = forecastFirm(f);
+    expect(fc.plan).toBeNull();
+    expect(fc.planFirst).toBeNull();
+    expect(fc.stores[0]!.f.plan).toBeNull();
+    expect(fc.stores[1]!.f.plan).toMatchObject({ verdict: 'miss', stageAfter: 1 });
+    expect(fc.statement.plan).toBeUndefined();   // klucz `plan` nie wchodzi do sumy sieci (SUMMED go nie zna)
+    expect(fc.stores[1]!.f.statement.plan).toBe(fc.stores[1]!.f.plan!.fine);
+  });
+
+  it('podgląd niesie rozliczenie planu sklepów, a kara w wyciągu sklepu zgadza się z zamknięciem miesiąca', () => {
+    const f = twoStores('raty');
+    armMiss(f, 2);
+    const preview = runPreview(f)!;
+    expect(preview.plans.map((p) => p.storeId)).toEqual([2]);   // sklep #1 nie ma planu
+    const real = playToClose(f);
+    expect(preview.plans[0]!.plan).toEqual(real.reports.get(2)!.plan);
+    expect(preview.plans[0]!.plan.fine).toBeGreaterThan(0);
+    expect(preview.stores[1]!.preview.statement.plan).toBe(preview.plans[0]!.plan.fine);
+    expectSameAsReal(preview, real);
+  });
+
+  it('sklep bez planu: `plans` puste', () => {
+    expect(runPreview(twoStores('raty'))!.plans).toEqual([]);
+  });
+});

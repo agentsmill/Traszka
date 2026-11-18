@@ -5,6 +5,7 @@ import {
   MAX_PREVIEW_MINUTES, closedMonthPreview, defaultAnswer, endedEarlyPreview, gameOverReason, lastDayOfMonthFrom, previewProgress,
   type MonthPreview, type PreviewProgress,
 } from '@/sim/economy/monthPreview';
+import type { PlanMonth } from '@/sim/economy/plan';
 import { visibleCards } from '@/sim/economy/tycoon/cards';
 import { activeStore, applyStoreCommand, emptyStepOut, refreshSites, stepFirmMinute } from './firm';
 import type { FirmState, FirmStore, NetworkSummary } from './types';
@@ -45,6 +46,8 @@ export interface FirmPreview {
    * pojedynczego sklepu, który zna tylko `debt` i `trust`.
    */
   gameOver: 'debt' | 'trust' | 'notice' | 'plan' | null;
+  /** Rozliczenie planu Centrali każdego sklepu, który w scenariuszu rozliczył miesiąc (kara jest też w `stores[].preview.statement.plan`). */
+  plans: { storeId: number; plan: PlanMonth }[];
   /** Gra skończyła się, zanim którykolwiek sklep zdążył zamknąć miesiąc (debet w środku miesiąca): sumy są wtedy częściowe. */
   endedEarly: boolean;
 }
@@ -119,6 +122,7 @@ export function startFirmMonthPreview(f: FirmState): FirmPreviewJob {
       copy.person.wallet < DEBT_LIMIT ? 'debt' : copy.over === 'closed' ? (noticeEnd ? 'notice' : stores.some((s) => s.preview.gameOver === 'plan') ? 'plan' : 'trust') : null;
     result = {
       label: stores.find((s) => !s.preview.endedEarly)?.preview.label ?? '', cashNow, cashAfter: copy.person.wallet, lowestCash: lowest, stores,
+      plans: stores.flatMap((s) => { const plan = reports.get(s.id)?.plan; return plan ? [{ storeId: s.id, plan }] : []; }),
       invest: summary?.invest ?? copy.monthInvest, settlement: summary?.settlement ?? 0, gameOver, endedEarly: reports.size === 0,
     };
   };
