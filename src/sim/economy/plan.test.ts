@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  createPlan, firstPlanPreview, planBase, planDue, planGrowth, planOutlook, planTarget,
+  createPlan, dailyFromHistory, firstPlanPreview, monthLength, planBase, planDue, planGrowth, planOutlook, planTarget,
   planTerminates, rollPlan, sanitizePlan, settlePlan, type PlanState,
 } from './plan';
 
@@ -87,5 +87,22 @@ describe('plan sprzedaży Centrali', () => {
     expect(sanitizePlan({ target: NaN, stage: 9, recent: [1, 2, 3, 4, 'x'] })).toMatchObject({ target: 0, stage: 3, recent: [2, 3, 4] });
     const p: PlanState = { target: 400_000, base: 12_900, recent: [1, 2, 3], streak: 2, stage: 1, openDays: 7, topUp: true };
     expect(JSON.stringify(sanitizePlan(JSON.parse(JSON.stringify(p))))).toBe(JSON.stringify(p));
+  });
+  it('długość miesiąca: luty ma 28 dni w 2027 i 29 w roku przestępnym 2028 (dzień 0 = 1 września 2026)', () => {
+    expect(monthLength(0)).toBe(30);                              // wrzesień 2026
+    expect(monthLength(153)).toBe(28);                            // 1 lutego 2027
+    expect(monthLength(153 + 27)).toBe(28);                       // 28 lutego 2027
+    expect(monthLength(153 + 28)).toBe(31);                       // 1 marca 2027
+    expect(monthLength(518)).toBe(29);                            // 1 lutego 2028
+    expect(monthLength(518 + 28)).toBe(29);                       // 29 lutego 2028
+    expect(monthLength(518 + 29)).toBe(31);                       // 1 marca 2028
+  });
+  it('dzienny obrót z historii: luty dzielony przez 28 albo 29 dni, miesiące liczone wstecz od poprzedzającego', () => {
+    // 1 marca 2027 (dzień 181): poprzednie miesiące to luty (28), styczeń (31), grudzień (31)
+    expect(dailyFromHistory([{ revenue: 3_100 }, { revenue: 6_200 }, { revenue: 2_800 }], 181)).toEqual([100, 200, 100]);
+    // 1 marca 2028 (dzień 547): luty ma 29 dni, styczeń 31, grudzień 31
+    expect(dailyFromHistory([{ revenue: 3_100 }, { revenue: 6_200 }, { revenue: 2_900 }], 547)).toEqual([100, 200, 100]);
+    // dwa wpisy historii: tylko luty i styczeń
+    expect(dailyFromHistory([{ revenue: 6_200 }, { revenue: 2_900 }], 547)).toEqual([200, 100]);
   });
 });
