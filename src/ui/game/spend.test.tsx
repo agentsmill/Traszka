@@ -21,7 +21,7 @@ import { ForecastChip, ForecastRow } from './Hud';
 import { forecastLabel } from './forecastText';
 import { SelectionCard } from './overlays';
 import { PeoplePanel, ShopPanel, remontsAway } from './panels';
-import { SpendNote, answerCashCost, ratyLabel, ratyTitle, spendLevel, spendRisk, underNotice } from './spend';
+import { SpendNote, answerCashCost, buyBlocks, ratyLabel, ratyTitle, spendLevel, spendRisk, underNotice } from './spend';
 import { int, money, signedZl, zl } from './format';
 import { buttonsOf, click, textOf, walk, type Vnode } from './vnodeTree';
 
@@ -367,6 +367,102 @@ describe('zakup na raty w panelu Ulepszenia', () => {
     const colored = raty(panel(deep.s, deep.info)).filter((r) => !r.props.disabled);
     expect(colored.length).toBeGreaterThan(0);
     for (const r of colored) expect(r.props['data-risk']).toBeDefined();
+  });
+});
+
+describe('powód wyłączonego przycisku: zdanie pod opisem (na telefonie nie ma podpowiedzi po najechaniu)', () => {
+  const panel = (s: EconomyState, info: StoreInfo) => ShopPanel({ s, info, game: fakeGame(), v: 1 });
+  const whys = (tree: unknown): Vnode[] => walk(tree as never).filter((v) => String(v.props.class ?? '') === 'tt-spend why');
+  const rows = (tree: unknown): Vnode[] => walk(tree as never).filter((v) => String(v.props.class ?? '').split(' ').includes('tt-item') && buttonsOf(v).some((b) => String(b.props.class).includes('tt-rata')));
+  /** Stan ze zgłoszenia właściciela: pierwszy miesiąc, gotówka 1485 zł, zaufanie 80, raty 10 216 zł z limitu 10 937 zł. */
+  function reported(): { s: EconomyState; info: StoreInfo } {
+    const { s, info } = shop(1_485);
+    s.tycoon.trust.value = 80;
+    s.franchisee.installments.push({ id: 1, label: 'wcześniejsze zakupy', price: 56_000, fee: 5_296, total: 61_296, monthly: 10_216, paid: 0, months: 6 });
+    return { s, info };
+  }
+
+  it('buyBlocks: brak gotówki podaje brakującą kwotę (w górę do złotówki), a zakup w zasięgu gotówki nie ma powodu', () => {
+    const { s } = reported();
+    expect(buyBlocks(s, 6_400).cash).toBe(`Brakuje ${zl(4_915)} gotówki.`);
+    s.cash = 1_484.4;
+    expect(buyBlocks(s, 6_400).cash).toBe(`Brakuje ${zl(4_916)} gotówki.`);
+    expect(buyBlocks(s, 1_484).cash).toBeNull();
+    s.cash = 6_400;
+    expect(buyBlocks(s, 6_400).cash).toBeNull();
+  });
+
+  it('buyBlocks: rata ponad wolny limit podaje wolny limit i cały limit; rata w limicie nie ma powodu', () => {
+    const { s } = reported();
+    const room = installmentRoom(s);
+    expect(room).toEqual({ used: 10_216, limit: 10_937, free: 721 });
+    expect(planFor(6_400).monthly).toBeGreaterThan(room.free);
+    expect(buyBlocks(s, 6_400).raty).toBe(`Rata przekracza wolny limit rat: ${int(721)} z ${zl(10_937)} miesięcznie.`);
+    const small = 1_500;
+    expect(planFor(small).monthly).toBeLessThanOrEqual(room.free);
+    expect(buyBlocks(s, small).raty).toBeNull();
+  });
+
+  it('buyBlocks: zaufanie poniżej progu finansowania daje zdanie Centrali z symulacji', () => {
+    const { s } = shop(1e7);
+    s.tycoon.trust.value = 10;
+    expect(buyBlocks(s, 6_400)).toEqual({ cash: null, raty: 'Centrala nie finansuje zakupów przy tak niskim zaufaniu.' });
+  });
+
+  it('panel Ulepszenia w stanie ze zgłoszenia: każdy wiersz z oboma przyciskami wyłączonymi mówi dlaczego (gotówka i raty)', () => {
+    const { s, info } = reported();
+    const tree = panel(s, info);
+    const dead = rows(tree).filter((r) => buttonsOf(r).filter((b) => /tt-buy|tt-rata/.test(String(b.props.class))).every((b) => b.props.disabled === true));
+    expect(dead.length).toBeGreaterThan(5);
+    const lockedCosts = new Set(lockedByRemont(s).map((u) => upgradeCost(u, 0)));
+    let explained = 0;
+    for (const r of dead) {
+      const cost = priceOf(buy(r)[0]!);
+      const texts = whys(r).map(textOf);
+      if (lockedCosts.has(cost) && texts.length === 0) continue;   // blokada remontem ma własny opis, bez powodu o pieniądzach
+      expect(texts, textOf(r)).toEqual([buyBlocks(s, cost).cash, buyBlocks(s, cost).raty]);
+      expect(texts[0]).toMatch(/^Brakuje /);
+      expect(texts[1]).toMatch(/^Rata przekracza wolny limit rat: 721 z /);
+      for (const w of whys(r)) expect(w.props.role).toBe('note');
+      explained++;
+    }
+    expect(explained).toBeGreaterThan(5);
+  });
+
+  it('włączony przycisk nie dostaje powodu: gruby portfel i raty w limicie to zero zdań, a rata ponad limit ma tylko zdanie o racie', () => {
+    const { s, info } = shop(1e7);
+    s.franchisee.installments.push({ id: 1, label: 'wcześniejsze zakupy', price: 44_000, fee: 4_000, total: 48_000, monthly: 8_000, paid: 0, months: 6 });
+    const tree = panel(s, info);
+    const room = installmentRoom(s);
+    expect(room.free).toBe(750);   // limit 8750 zł przy zaufaniu 50: mieszczą się tylko najtańsze zakupy
+    for (const r of rows(tree)) {
+      const rata = buttonsOf(r).find((b) => String(b.props.class).includes('tt-rata'))!;
+      const cash = buy(r)[0]!;
+      const texts = whys(r).map(textOf);
+      if (cash.props.disabled) { expect(texts).toEqual([]); continue; }   // przy 10 mln zł wyłącza tylko blokada (remont, poziom)
+      if (rata.props.disabled) expect(texts).toEqual([`Rata przekracza wolny limit rat: ${int(room.free)} z ${zl(room.limit)} miesięcznie.`]);
+      else expect(texts).toEqual([]);
+    }
+    expect(whys(tree).length).toBeGreaterThan(0);   // droższe zakupy: rata ponad wolne 750 zł
+    expect(whys(tree).length).toBeLessThan(rows(tree).length);
+  });
+
+  it('zablokowany zakup (za niski poziom) nie dostaje powodu o pieniądzach', () => {
+    const { s, info } = shop(10);
+    s.level = 1;
+    const locked = EQUIPMENT.find((e) => s.level < e.minLevel)!;
+    const row = rows(panel(s, info)).find((r) => textOf(r).includes(locked.name))!;
+    expect(row).toBeDefined();
+    expect(whys(row)).toEqual([]);
+  });
+
+  it('po angielsku oba zdania są przetłumaczone', () => {
+    const { s } = reported();
+    lang.value = 'en';
+    const b = buyBlocks(s, 6_400);
+    expect(b.cash).toMatch(/short/i);
+    expect(b.raty).toMatch(/instalment/i);
+    for (const text of [b.cash!, b.raty!]) expect(text.replace(/zł/g, '')).not.toMatch(/[ąćęłńóśźż]/i);
   });
 });
 
